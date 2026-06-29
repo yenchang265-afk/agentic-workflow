@@ -4,19 +4,10 @@ agent: explore
 subtask: true
 ---
 
-You are entering the **EXPLORE** stage of the agentic engineering loop
-(explore → plan → build → verify).
+Run the **EXPLORE** stage of the agentic engineering loop
+(explore → plan → build → verify) on:
 
-Target of this exploration: **$ARGUMENTS**
+**$ARGUMENTS**
 
-This runs as the read-only `explore` subtask. As that subagent:
-
-1. Locate the code relevant to the target — entry points, key types, call sites.
-2. Trace how the relevant pieces connect (who calls what, where data flows).
-3. Surface **existing functions, utilities, and patterns that can be reused**, so
-   later stages avoid writing net-new code.
-4. Return a concise `file:line` findings table plus a short prose summary.
-
-Goal of this stage is **understanding only**: no edits, no fixes, no
-implementation plan yet. Return the findings and stop — the next stage (plan)
-decides what to do with them.
+Delegated to the read-only `explore` subagent, which defines how exploration is
+performed. Relay its findings and stop — the next stage (plan) takes over.
