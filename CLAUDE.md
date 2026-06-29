@@ -4,34 +4,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-`agentic-loop` — a **dual-target** plugin that turns the engineer workflow into an
-agentic loop (`explore → plan → build → verify`). It targets two tools:
+`agentic-loop` — an [opencode](https://opencode.ai) plugin that turns the engineer
+workflow into an agentic loop (`explore → plan → build → verify`). It also wires
+session lifecycle events so an idle session can be re-driven toward an open goal
+instead of stopping after one turn.
 
-- **opencode** — a runtime plugin (`src/index.ts`) that re-drives idle sessions,
-  plus stage artifacts under `.opencode/`.
-- **Claude Code** — a marketplace + plugin (`.claude-plugin/`) shipping the same
-  stage artifacts as root-level markdown.
+## Workflow stages
 
-## Dual-target layout
+Each stage ships a command, a subagent, and a skill under `.opencode/`:
 
-The two ecosystems read different directories and use different frontmatter, so
-every stage artifact exists as **two copies** — keep them in sync:
+| Artifact | Path |
+|----------|------|
+| command  | `.opencode/commands/<stage>.md` (`agent`, `subtask`) |
+| subagent | `.opencode/agents/<stage>.md` (`mode`, `permission`) |
+| skill    | `.opencode/skills/<stage>/SKILL.md` |
 
-| Artifact | Claude Code (repo root) | opencode |
-|----------|-------------------------|----------|
-| command  | `commands/<stage>.md` (`argument-hint`) | `.opencode/commands/<stage>.md` (`agent`, `subtask`) |
-| subagent | `agents/<stage>.md` (`tools`) | `.opencode/agents/<stage>.md` (`mode`, `permission`) |
-| skill    | `skills/<stage>/SKILL.md` | `.opencode/skills/<stage>/SKILL.md` |
-
-Manifests: `.claude-plugin/marketplace.json` (lists the plugin, `source: "./"`) and
-`.claude-plugin/plugin.json` (points at the root `commands/`, `agents/`, `skills/`).
-The skill body is identical across copies; command/agent bodies are near-identical
-but differ in frontmatter only. **When editing a stage, update both copies.**
-
-The runtime loop (`src/index.ts`) is **opencode-only** — Claude Code has no JS plugin
-API. A Claude Code `Stop`-hook equivalent is intentionally not implemented yet.
-
-Currently implemented stages: **explore**.
+Currently implemented stages: **explore** (read-only locator; `/explore` delegates to
+the `explore` subagent, which maps code and surfaces reusable patterns — no edits/plans).
 
 ## Commands
 
