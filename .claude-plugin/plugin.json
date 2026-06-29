@@ -1,0 +1,10 @@
+{
+  "name": "agentic-loop",
+  "version": "0.0.1",
+  "description": "Transforms the engineer workflow into an agentic loop. Ships the EXPLORE stage: an /explore command, a read-only explore subagent, and an explore skill.",
+  "license": "Apache-2.0",
+  "keywords": ["agentic", "workflow", "explore", "agent"],
+  "commands": ["./commands/explore.md"],
+  "agents": ["./agents/explore.md"],
+  "skills": "./skills/"
+}
