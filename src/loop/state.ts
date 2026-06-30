@@ -14,6 +14,15 @@ export type Stage = "explore" | "plan" | "build" | "verify"
 /** The stages in loop order. */
 export const STAGES: readonly Stage[] = ["explore", "plan", "build", "verify"]
 
+/** Link to the backlog task driving the loop, when started from one. */
+export interface TaskRef {
+  readonly id: string
+  /** Current on-disk path of the task file (updated as it moves between folders). */
+  readonly path: string
+  /** Acceptance criteria threaded into the plan/verify prompts. */
+  readonly acceptance: readonly string[]
+}
+
 export interface LoopState {
   /** The goal the loop is driving toward. */
   readonly goal: string
@@ -25,6 +34,8 @@ export interface LoopState {
   readonly paused: boolean
   /** Captured output text per completed stage, used to thread context forward. */
   readonly artifacts: Readonly<Partial<Record<Stage, string>>>
+  /** Set when the loop was started from a backlog task; absent for free-text loops. */
+  readonly task?: TaskRef
 }
 
 /** What the driver should do next. All state changes are returned, not applied. */
@@ -38,15 +49,18 @@ export type Action =
 export interface Config {
   readonly maxIterations: number
   readonly gateBeforeBuild: boolean
+  /** Repo-relative root of the task backlog (folders are statuses). */
+  readonly tasksDir: string
 }
 
 /** Fresh state for a new loop; the driver fires explore right after creating it. */
-export const createState = (goal: string): LoopState => ({
+export const createState = (goal: string, task?: TaskRef): LoopState => ({
   goal,
   stage: "explore",
   iteration: 0,
   paused: false,
   artifacts: {},
+  ...(task ? { task } : {}),
 })
 
 const withArtifact = (state: LoopState, stage: Stage, output: string): LoopState => ({
@@ -57,16 +71,20 @@ const withArtifact = (state: LoopState, stage: Stage, output: string): LoopState
 /** Compose the prompt threaded into a stage command: goal + relevant prior artifacts. */
 export const composeArgs = (state: LoopState, target: Stage): string => {
   const a = state.artifacts
+  const accept = state.task?.acceptance ?? []
+  const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
   const parts: string[] = [`Goal: ${state.goal}`]
   if (target === "plan") {
     if (a.explore) parts.push(`Explore findings:\n${a.explore}`)
     if (a.plan) parts.push(`Previous plan:\n${a.plan}`)
     if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the plan must satisfy each):"))
   } else if (target === "build") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
   } else if (target === "verify") {
     if (a.plan) parts.push(`Plan & acceptance criteria:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the verdict must check each):"))
   }
   return parts.join("\n\n")
 }

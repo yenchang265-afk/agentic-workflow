@@ -15,11 +15,15 @@ import { hasLoop } from "./loop/state.ts"
  * on a verify PASS or after the iteration cap. The control surface lives in
  * `loop/driver.ts`; the pure state machine in `loop/state.ts`.
  */
-export const AgenticLoop: Plugin = async ({ client, directory }) => {
+export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
   const service = "agentic-loop"
 
   const log = (level: "info" | "warn" | "error", message: string) =>
     client.app.log({ body: { service, level, message } })
+
+  // Everything the driver needs from the host, bundled once. `$` (Bun shell) is
+  // used to move task files between status folders.
+  const deps: driver.Deps = { client, $, directory, log }
 
   // Load loop config once; fall back to defaults (and warn) on misconfig so a bad
   // config file degrades rather than breaking the plugin entirely.
@@ -34,12 +38,12 @@ export const AgenticLoop: Plugin = async ({ client, directory }) => {
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
       const { sessionID } = event.properties
-      await driver.onIdle(client, sessionID, config)
+      await driver.onIdle(deps, sessionID, config)
     },
 
     "command.execute.before": async (input) => {
       if (input.command !== "loop") return
-      await driver.handleCommand(client, input.sessionID, input.arguments)
+      await driver.handleCommand(deps, input.sessionID, input.arguments, config)
     },
 
     "tool.execute.before": async (input) => {

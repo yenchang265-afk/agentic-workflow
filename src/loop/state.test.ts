@@ -3,7 +3,7 @@ import { test } from "node:test"
 import type { Config } from "./state.ts"
 import { advanceOnIdle, composeArgs, createState, resume } from "./state.ts"
 
-const config: Config = { maxIterations: 3, gateBeforeBuild: true }
+const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks" }
 
 test("explore auto-advances to plan, threading findings", () => {
   const s = createState("add foo")
@@ -88,4 +88,24 @@ test("composeArgs threads only the relevant prior artifacts", () => {
   assert.match(composeArgs(s, "build"), /Approved plan:\nP/)
   assert.doesNotMatch(composeArgs(s, "build"), /Explore findings/)
   assert.match(composeArgs(s, "verify"), /Build summary:\nB/)
+})
+
+test("createState carries an optional task ref", () => {
+  const task = { id: "add-foo", path: "/r/docs/tasks/approved/add-foo.md", acceptance: ["x"] }
+  const s = createState("g", task)
+  assert.deepEqual(s.task, task)
+  assert.equal(createState("g").task, undefined)
+})
+
+test("composeArgs threads acceptance criteria into verify when a task supplies them", () => {
+  const task = { id: "t", path: "/p", acceptance: ["Returns 429 over limit", "Configurable per route"] }
+  const s = createState("g", task)
+  const verify = composeArgs(s, "verify")
+  assert.match(verify, /Acceptance criteria/)
+  assert.match(verify, /- Returns 429 over limit/)
+  assert.match(verify, /- Configurable per route/)
+})
+
+test("composeArgs omits the acceptance block when there is no task", () => {
+  assert.doesNotMatch(composeArgs(createState("g"), "verify"), /Acceptance criteria/)
 })

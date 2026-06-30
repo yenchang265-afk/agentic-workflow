@@ -7,6 +7,10 @@ Agentic loop control. The plugin intercepts this command to drive the loop;
 
 - **`/loop <goal>`** — start a new loop for `<goal>`. Runs EXPLORE, then PLAN
   automatically, then **pauses** for you to review the plan.
+- **`/loop next`** — pick the highest-priority task from `docs/tasks/approved/`
+  and start the loop on it (moves the file to `in-progress/`).
+- **`/loop task <id>`** — start the loop on a specific approved task (the `<id>`
+  is the task filename without `.md`).
 - **`/loop go`** — approve the pending plan and let the loop run BUILD → VERIFY.
 - **`/loop stop`** — abort the loop and clear its state.
 - **`/loop status`** — print the current stage, iteration, and pause state.

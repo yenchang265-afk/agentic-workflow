@@ -16,6 +16,8 @@ const ConfigSchema = z.object({
   maxIterations: z.number().int().positive().default(3),
   /** Pause for human approval after plan, before build edits anything. */
   gateBeforeBuild: z.boolean().default(true),
+  /** Repo-relative root of the task backlog; its subfolders are task statuses. */
+  tasksDir: z.string().min(1).default("docs/tasks"),
 })
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})

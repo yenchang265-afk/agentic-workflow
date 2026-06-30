@@ -28,6 +28,8 @@ Each command also works standalone, outside the loop.
 | Command | Effect |
 |---------|--------|
 | `/loop <goal>` | Start a loop: runs explore → plan, then pauses at the plan gate. |
+| `/loop next` | Run the highest-priority task from `docs/tasks/approved/`. |
+| `/loop task <id>` | Run a specific approved task by id (filename without `.md`). |
 | `/loop go` | Approve the plan and run build → verify. |
 | `/loop stop` | Abort and clear loop state. |
 | `/loop status` | Show current stage, iteration, and pause state. |
@@ -49,21 +51,36 @@ the command arguments, so each stage stays a clean subtask.
 until `maxIterations` (default 3) is reached. The verify-pass hand-off is the final human gate —
 you review the diff and open the PR yourself.
 
+## Task backlog
+
+Drive the loop from a filesystem backlog instead of a typed goal. A task is one
+markdown file under `docs/tasks/`; **the folder it lives in is its status**
+(`draft → approved → in-progress → completed`, plus `rejected`). You move a task
+into `approved/`; `/loop next` picks the highest-priority one, runs it, and the
+driver moves the file to `in-progress/` and then `completed/` on a verify PASS.
+On failure it stays in `in-progress/` with a note. Write task files by hand, or
+run `/task new <idea>` to have a subagent draft a schema-valid one into `draft/`.
+See
+[`docs/tasks/README.md`](docs/tasks/README.md) for the file schema and lifecycle.
+
 ### Config
 
 Optional `.agentic-loop.json` at the repo root (sane defaults if absent):
 
 ```jsonc
 {
-  "maxIterations": 3,      // stop after this many failed verify iterations
-  "gateBeforeBuild": true  // pause for human plan approval before build edits anything
+  "maxIterations": 3,         // stop after this many failed verify iterations
+  "gateBeforeBuild": true,    // pause for human plan approval before build edits anything
+  "tasksDir": "docs/tasks"    // root of the task backlog (folders are statuses)
 }
 ```
 
 ### Limitations
 
-- Loop state is in-memory — it does not survive an opencode restart.
-- Task ingestion (Azure DevOps / `/docs`) and PR-size gating are deferred (see git history).
+- Loop state is in-memory — it does not survive an opencode restart (the task
+  files on disk are the durable record).
+- Per-task git branch/worktree, PR-size gating, and an Azure DevOps task source
+  are deferred (see git history).
 
 ## Install
 
