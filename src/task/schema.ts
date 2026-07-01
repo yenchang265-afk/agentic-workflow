@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { parse as parseYaml } from "yaml"
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
 
 /**
  * Task schema for the filesystem backlog.
@@ -72,4 +72,61 @@ export const parseTask = (filename: string, content: string, path: string): Task
     body: (body ?? "").trim(),
     path,
   }
+}
+
+// --- Programmatic creation (the "automatic" path; parse's inverse) ---
+
+/** Fields for a new task. `title` is required; the rest default like the schema. */
+export interface TaskInput {
+  readonly title: string
+  readonly priority?: number
+  readonly acceptance?: readonly string[]
+  readonly body?: string
+}
+
+/** A generated task file: its id (unique among `taken`), filename, and content. */
+export interface TaskFile {
+  readonly id: string
+  readonly filename: string
+  readonly content: string
+}
+
+/** Kebab-case a title into a filename-safe slug (`"Add Rate Limit!"` → `add-rate-limit`). */
+export const slugify = (title: string): string =>
+  title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+
+/**
+ * Serialize a task to markdown (frontmatter + body) — the inverse of `parseTask`.
+ * Validates through the same schema, so `title` is required and defaults apply.
+ */
+export const serializeTask = (input: TaskInput): string => {
+  const fm = TaskFrontmatterSchema.parse({
+    title: input.title,
+    priority: input.priority,
+    acceptance: input.acceptance,
+  })
+  const frontmatter = stringifyYaml({
+    title: fm.title,
+    priority: fm.priority,
+    acceptance: fm.acceptance,
+  }).trimEnd()
+  const body = (input.body ?? "").trim()
+  return `---\n${frontmatter}\n---\n${body ? `${body}\n` : ""}`
+}
+
+/**
+ * Build a task file with an id that does not collide with `taken` (existing ids,
+ * without the `.md`). On a clash the slug gets a numeric suffix (`-2`, `-3`, …).
+ * Pure: it decides the id and content; writing to disk is `store.writeTask`.
+ */
+export const buildTaskFile = (input: TaskInput, taken: Iterable<string> = []): TaskFile => {
+  const content = serializeTask(input) // validates title before we bother with a slug
+  const base = slugify(input.title) || "task"
+  const takenSet = new Set(taken)
+  let id = base
+  for (let n = 2; takenSet.has(id); n++) id = `${base}-${n}`
+  return { id, filename: `${id}.md`, content }
 }

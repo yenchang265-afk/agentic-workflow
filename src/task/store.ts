@@ -1,6 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import path from "node:path"
-import { parseTask, type Task } from "./schema.ts"
+import { buildTaskFile, parseTask, type Task, type TaskInput } from "./schema.ts"
 
 /**
  * Filesystem IO for the task backlog. **Impure**: reads via the opencode client
@@ -96,4 +96,51 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
 /** Append a blockquote note to a task file in place. Best-effort. */
 export const appendNote = async ($: Shell, task: FileRef, note: string): Promise<void> => {
   await $`printf '\n> %s\n' ${note} >> ${task.path}`.quiet().nothrow()
+}
+
+/** Existing task ids (filenames without `.md`) in a status folder; `[]` if absent. */
+const listIds = async (client: Client, directory: string, rel: string): Promise<string[]> => {
+  try {
+    const res = await client.file.list({ query: { path: rel, directory } })
+    return (res.data ?? [])
+      .filter((n) => n.type === "file" && isMarkdown(n.name))
+      .map((n) => n.name.replace(/\.md$/i, ""))
+  } catch {
+    return []
+  }
+}
+
+/** Where a newly written task lands. Defaults to `draft/`, the human-review inbox. */
+export interface WriteLocation {
+  readonly directory: string
+  readonly tasksDir?: string
+  readonly status?: TaskStatus
+}
+
+/**
+ * Create a task file programmatically (the "automatic" path — scripts, sync
+ * adapters). Serializes + validates via `buildTaskFile`, picks a non-colliding
+ * filename against what's already in the folder, and writes it. Returns the new
+ * absolute path.
+ */
+export const writeTask = async (
+  $: Shell,
+  client: Client,
+  loc: WriteLocation,
+  input: TaskInput,
+): Promise<string> => {
+  const tasksDir = loc.tasksDir ?? "docs/tasks"
+  const status = loc.status ?? "draft"
+  const rel = `${tasksDir}/${status}`
+  const taken = await listIds(client, loc.directory, rel)
+  const { filename, content } = buildTaskFile(input, taken)
+
+  const destDir = path.join(loc.directory, rel)
+  const dest = path.join(destDir, filename)
+  await $`mkdir -p ${destDir}`.quiet().nothrow()
+  const out = await $`printf '%s' ${content} > ${dest}`.quiet().nothrow()
+  if (out.exitCode !== 0) {
+    throw new Error(`could not write task ${filename}: ${out.stderr.toString().trim()}`)
+  }
+  return dest
 }

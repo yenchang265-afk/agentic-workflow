@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { parseTask } from "./schema.ts"
+import { buildTaskFile, parseTask, serializeTask, slugify } from "./schema.ts"
 
 const PATH = "/repo/docs/tasks/approved/add-foo.md"
 
@@ -44,4 +44,54 @@ test("throws when there is no frontmatter block", () => {
 
 test("throws on invalid YAML in the frontmatter", () => {
   assert.throws(() => parseTask("t.md", "---\ntitle: : :\n  bad: indent\n---\nb", "/p"), /t\.md:/)
+})
+
+// --- serializeTask / slugify / buildTaskFile ---
+
+test("slugify kebab-cases a title", () => {
+  assert.equal(slugify("Add Rate Limiting to the API!"), "add-rate-limiting-to-the-api")
+  assert.equal(slugify("  Trim -- Edges  "), "trim-edges")
+  assert.equal(slugify("Café & Crème"), "caf-cr-me")
+})
+
+test("serializeTask round-trips through parseTask", () => {
+  const content = serializeTask({
+    title: "Add rate limiting",
+    priority: 2,
+    acceptance: ["Returns 429 over the limit", "Configurable per route"],
+    body: "Throttle callers to 100 req/min.",
+  })
+  const task = parseTask("add-rate-limiting.md", content, "/p/add-rate-limiting.md")
+  assert.equal(task.title, "Add rate limiting")
+  assert.equal(task.priority, 2)
+  assert.deepEqual(task.acceptance, ["Returns 429 over the limit", "Configurable per route"])
+  assert.equal(task.body, "Throttle callers to 100 req/min.")
+})
+
+test("serializeTask applies schema defaults (priority 0, acceptance [])", () => {
+  const task = parseTask("t.md", serializeTask({ title: "Just a title" }), "/p")
+  assert.equal(task.priority, 0)
+  assert.deepEqual(task.acceptance, [])
+  assert.equal(task.body, "")
+})
+
+test("serializeTask rejects an empty title", () => {
+  assert.throws(() => serializeTask({ title: "" }), /title is required/)
+})
+
+test("buildTaskFile derives id/filename from the title", () => {
+  const file = buildTaskFile({ title: "Add a foo helper" })
+  assert.equal(file.id, "add-a-foo-helper")
+  assert.equal(file.filename, "add-a-foo-helper.md")
+  assert.match(file.content, /title: Add a foo helper/)
+})
+
+test("buildTaskFile avoids id collisions with a numeric suffix", () => {
+  assert.equal(buildTaskFile({ title: "Foo" }, ["foo"]).id, "foo-2")
+  assert.equal(buildTaskFile({ title: "Foo" }, ["foo", "foo-2"]).id, "foo-3")
+  assert.equal(buildTaskFile({ title: "Foo" }, ["bar"]).id, "foo")
+})
+
+test("buildTaskFile falls back to 'task' when the title has no slug chars", () => {
+  assert.equal(buildTaskFile({ title: "!!!" }).id, "task")
 })
