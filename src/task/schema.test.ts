@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { buildTaskFile, parseTask, serializeTask, slugify } from "./schema.ts"
 
-const PATH = "/repo/docs/tasks/approved/add-foo.md"
+const PATH = "/repo/docs/tasks/in-progress/add-foo.md"
 
 test("parses frontmatter and separates the body", () => {
   const content = [

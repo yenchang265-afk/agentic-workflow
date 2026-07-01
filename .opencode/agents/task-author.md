@@ -61,7 +61,7 @@ Return:
 ## Hard rules
 
 - Write **exactly one** file, under `docs/tasks/draft/` only. Do not move it to
-  `approved/` — promotion is the human's gate.
+  `in-progress/` — promotion is the human's gate.
 - The frontmatter **must** parse: `title` present and non-empty, `priority` an
   integer, `acceptance` a YAML list of strings. No extra keys.
 - Do not edit source code, run the loop, or create more than one task.

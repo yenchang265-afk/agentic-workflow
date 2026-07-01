@@ -6,5 +6,5 @@ acceptance:
   - A unit test covers the happy path and an empty-name case
 ---
 Example task showing the schema. Add a small `greeting(name)` helper and a test
-for it. Move this file to `../approved/` and run `/loop next` to drive it through
-explore → plan → build → verify.
+for it. Move this file to `../in-progress/` and run `/loop next` to drive it through
+plan → build → verify.

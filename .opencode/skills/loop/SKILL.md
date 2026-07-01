@@ -1,18 +1,18 @@
 ---
 name: loop
-description: Reference for the automatic agentic engineering loop (explore → plan → build → verify). Use to understand how /loop drives the stages, where the human gate is, the verify verdict contract, and how the loop terminates.
+description: Reference for the automatic agentic engineering loop (plan → build → verify). Use to understand how /loop drives the stages, where the human gate is, the verify verdict contract, and how the loop terminates.
 ---
 
 # The agentic loop
 
 ```
-        ┌──────────────────────────────────────────────┐
-        ▼                                                │
-  /loop <goal> ─▶ EXPLORE ─auto─▶ PLAN ─GATE─▶ BUILD ─auto─▶ VERIFY
-                                    ▲   (/loop go)              │
-                                    └──── FAIL (re-plan) ───────┤
-                                                                ▼
-                                                    PASS → done (review diff, open PR)
+        ┌───────────────────────────────────┐
+        ▼                                     │
+  /loop <goal> ─▶ PLAN ─GATE─▶ BUILD ─auto─▶ VERIFY
+                    ▲   (/loop go)              │
+                    └──── FAIL (re-plan) ───────┤
+                                                 ▼
+                                     PASS → done (review diff, open PR)
 ```
 
 The loop turns the engineering workflow into a driven pipeline. A single
@@ -22,21 +22,20 @@ The loop turns the engineering workflow into a driven pipeline. A single
 
 | Stage | Writes code? | Role |
 |-------|--------------|------|
-| explore | no | map the code, find reusable patterns |
-| plan | no | ordered, review-sized plan + testable acceptance criteria |
+| plan | no | reads the code itself; ordered, review-sized plan + testable acceptance criteria |
 | build | **yes** | implement the approved plan test-first |
 | verify | no | run tests, check criteria, emit a verdict |
 
 ## Control commands
 
-- `/loop <goal>` — start; runs explore then plan, then pauses.
+- `/loop <goal>` — start; runs plan, then pauses.
 - `/loop go` — approve the plan gate; runs build then verify.
 - `/loop stop` — abort and clear state.
 - `/loop status` — show stage, iteration, paused.
 
 ## The human gate
 
-The loop auto-advances **explore → plan** unattended. It then **pauses before
+`/loop <goal>` fires **PLAN** — the loop's first stage — then **pauses before
 build** — the only stage that edits files — so a human reviews the plan and runs
 `/loop go`. This keeps autonomy high while a human signs off before any code is
 written. The verify-pass hand-off is the final gate: you review the diff and open

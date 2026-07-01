@@ -1,7 +1,7 @@
 import { parseVerdict } from "./verdict.ts"
 
 /**
- * Loop state machine for the agentic loop (explore → plan → build → verify).
+ * Loop state machine for the agentic loop (plan → build → verify).
  *
  * The transition helpers here are **pure**: given a state (and config) they
  * return a new state plus an `Action` describing what the driver should do, and
@@ -9,10 +9,10 @@ import { parseVerdict } from "./verdict.ts"
  * without opencode. The impure orchestration lives in `driver.ts`.
  */
 
-export type Stage = "explore" | "plan" | "build" | "verify"
+export type Stage = "plan" | "build" | "verify"
 
 /** The stages in loop order. */
-export const STAGES: readonly Stage[] = ["explore", "plan", "build", "verify"]
+export const STAGES: readonly Stage[] = ["plan", "build", "verify"]
 
 /** Link to the backlog task driving the loop, when started from one. */
 export interface TaskRef {
@@ -53,10 +53,10 @@ export interface Config {
   readonly tasksDir: string
 }
 
-/** Fresh state for a new loop; the driver fires explore right after creating it. */
+/** Fresh state for a new loop; the driver fires plan right after creating it. */
 export const createState = (goal: string, task?: TaskRef): LoopState => ({
   goal,
-  stage: "explore",
+  stage: "plan",
   iteration: 0,
   paused: false,
   artifacts: {},
@@ -75,7 +75,6 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
   const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
   const parts: string[] = [`Goal: ${state.goal}`]
   if (target === "plan") {
-    if (a.explore) parts.push(`Explore findings:\n${a.explore}`)
     if (a.plan) parts.push(`Previous plan:\n${a.plan}`)
     if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
     if (accept.length) parts.push(acceptBlock("Acceptance criteria (the plan must satisfy each):"))
@@ -106,9 +105,6 @@ export const advanceOnIdle = (
   const s = withArtifact(state, state.stage, output)
 
   switch (s.stage) {
-    case "explore":
-      return fire(s, "plan")
-
     case "plan":
       if (config.gateBeforeBuild) {
         return {

@@ -11,4 +11,4 @@ Create a new backlog task from this idea (ignore a leading `new`):
 Delegated to the `task-author` subagent, which turns the idea into a
 schema-valid task file (`title`, `priority`, testable `acceptance`, body) and
 writes it to `docs/tasks/draft/`. Review the draft, then move it to
-`docs/tasks/approved/` to make it runnable with `/loop next`.
+`docs/tasks/in-progress/` to make it runnable with `/loop next`.

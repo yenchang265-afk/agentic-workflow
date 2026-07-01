@@ -1,23 +1,23 @@
 ---
-description: Drive the full agentic loop (explore → plan → build → verify) toward a goal, with a human gate before any code is written
+description: Drive the full agentic loop (plan → build → verify) toward a goal, with a human gate before any code is written
 ---
 
 Agentic loop control. The plugin intercepts this command to drive the loop;
 `$ARGUMENTS` selects the mode:
 
-- **`/loop <goal>`** — start a new loop for `<goal>`. Runs EXPLORE, then PLAN
-  automatically, then **pauses** for you to review the plan.
-- **`/loop next`** — pick the highest-priority task from `docs/tasks/approved/`
-  and start the loop on it (moves the file to `in-progress/`).
-- **`/loop task <id>`** — start the loop on a specific approved task (the `<id>`
-  is the task filename without `.md`).
+- **`/loop <goal>`** — start a new loop for `<goal>`. Runs PLAN, then
+  **pauses** for you to review the plan.
+- **`/loop next`** — pick the highest-priority task from `docs/tasks/in-progress/`
+  and start the loop on it.
+- **`/loop task <id>`** — start the loop on a specific in-progress task (the
+  `<id>` is the task filename without `.md`).
 - **`/loop go`** — approve the pending plan and let the loop run BUILD → VERIFY.
 - **`/loop stop`** — abort the loop and clear its state.
 - **`/loop status`** — print the current stage, iteration, and pause state.
 
 **$ARGUMENTS**
 
-The loop auto-advances explore → plan, gates before build (you review the plan),
+The loop runs PLAN, gates before build (you review the plan),
 and finishes when VERIFY emits `LOOP_VERIFY: PASS` or after the iteration cap.
 On a verify FAIL within the cap it re-plans with the failure feedback. When it
 finishes, review the diff and open a PR yourself — that is the final human gate.

@@ -1,31 +1,34 @@
 ---
 name: plan
-description: Reference for the PLAN stage of the agentic engineering loop. Use after exploring an area and before writing code — to turn understanding into an ordered, review-sized implementation plan with testable acceptance criteria.
+description: Reference for the PLAN stage of the agentic engineering loop — the loop's first stage. Use to turn a goal into an ordered, review-sized implementation plan with testable acceptance criteria; PLAN reads the relevant code itself before planning.
 ---
 
 # PLAN stage
 
-The second stage of the agentic engineering loop:
+The first stage of the agentic engineering loop:
 
 ```
-explore → PLAN → build → verify
-   ▲                        │
-   └────────  loop  ────────┘
+PLAN → build → verify
+   ▲                │
+   └──────  loop  ───┘
 ```
 
-PLAN converts the evidence gathered in EXPLORE into a concrete, ordered set of
-steps a human can review **before** any code is written. In the automatic loop
-this is the gate: explore → plan runs unattended, then the loop pauses for a
-human to approve the plan (`/loop go`) before build edits anything.
+PLAN reads the relevant code itself, then converts what it finds into a
+concrete, ordered set of steps a human can review **before** any code is
+written. In the automatic loop this is the gate: `/loop <goal>` fires PLAN
+first, then the loop pauses for a human to approve the plan (`/loop go`)
+before build edits anything.
 
 ## When to run it
 
-- After EXPLORE, once you understand the area and what is reusable.
+- First thing when starting on any change — PLAN reads what it needs directly.
 - Before BUILD on any non-trivial change.
 
 ## Inputs & outputs
 
-- **Input:** a goal + the EXPLORE findings (`file:line` map, reusable patterns).
+- **Input:** a goal (free text, or a backlog task's title/body/acceptance
+  criteria) — PLAN reads the relevant code itself; there's no separate
+  findings hand-off.
 - **Output:** an ordered step list naming files to touch, a checklist of
   **testable acceptance criteria**, the existing code to reuse, and any risks.
   Output is a plan — never code or edits.
@@ -48,4 +51,5 @@ human to approve the plan (`/loop go`) before build edits anything.
 - **Vague acceptance criteria** — "works well" is not testable; the verify stage
   needs concrete conditions.
 - **Oversized plans** — a plan too big to review in one sitting should be sliced.
-- **Ignoring explore** — re-deriving what EXPLORE already found wastes the loop.
+- **Skipping the read** — planning without reading the relevant code first
+  produces a plan BUILD can't execute.

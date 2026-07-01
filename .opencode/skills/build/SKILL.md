@@ -5,12 +5,12 @@ description: Reference for the BUILD stage of the agentic engineering loop. Use 
 
 # BUILD stage
 
-The third stage of the agentic engineering loop:
+The second stage of the agentic engineering loop:
 
 ```
-explore → plan → BUILD → verify
-   ▲                        │
-   └────────  loop  ────────┘
+plan → BUILD → verify
+   ▲                │
+   └──────  loop  ───┘
 ```
 
 BUILD turns the approved plan into code. It is the **only writing stage**, which

@@ -16,9 +16,9 @@ type Log = (level: "info" | "warn" | "error", message: string) => unknown
 /** Anything with an id + on-disk path can be moved or annotated. */
 type FileRef = { readonly id: string; readonly path: string }
 
-export type TaskStatus = "draft" | "approved" | "in-progress" | "completed" | "rejected"
+export type TaskStatus = "draft" | "in-progress" | "completed" | "abandoned"
 
-const approvedDir = (tasksDir: string): string => `${tasksDir}/approved`
+const inProgressDir = (tasksDir: string): string => `${tasksDir}/in-progress`
 const isMarkdown = (name: string): boolean => name.toLowerCase().endsWith(".md")
 
 /** Pick the next task: lowest priority number, ties broken by id. Pure. */
@@ -27,17 +27,44 @@ export const selectNext = (tasks: readonly Task[]): Task | null => {
   return sorted[0] ?? null
 }
 
+/** Marks a task as planned, awaiting approval — appended to its body by `appendPlan`. */
+export const PLAN_HEADING = "## Implementation Plan"
+
+/** Whether a task already has a plan persisted (appended at a prior approval gate). Pure. */
+export const hasPlan = (task: Task): boolean => task.body.includes(PLAN_HEADING)
+
+/** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
+export const extractPlan = (task: Task): string | undefined => {
+  const idx = task.body.indexOf(PLAN_HEADING)
+  if (idx === -1) return undefined
+  return task.body.slice(idx + PLAN_HEADING.length).trim()
+}
+
 /**
- * List and parse every task in `approved/`. Invalid files are skipped (logged)
- * rather than failing the whole pick. Returns `[]` when the folder is absent.
+ * Whether the task's last recorded BUILD run has no matching "finished" note —
+ * i.e. the process likely died mid-build, possibly leaving a half-finished diff
+ * in the working tree. Only BUILD is tracked: it's the sole stage that writes
+ * code. Pure.
  */
-export const listApproved = async (
+export const wasInterrupted = (task: Task): boolean => {
+  const lastStart = task.body.lastIndexOf("> BUILD started")
+  if (lastStart === -1) return false
+  const lastFinish = task.body.lastIndexOf("> BUILD finished")
+  return lastFinish < lastStart
+}
+
+/**
+ * List and parse every task in `in-progress/`. Invalid files are skipped
+ * (logged) rather than failing the whole pick. Returns `[]` when the folder
+ * is absent.
+ */
+export const listInProgress = async (
   client: Client,
   directory: string,
   tasksDir: string,
   log?: Log,
 ): Promise<Task[]> => {
-  const dir = approvedDir(tasksDir)
+  const dir = inProgressDir(tasksDir)
   let nodes
   try {
     const res = await client.file.list({ query: { path: dir, directory } })
@@ -61,7 +88,7 @@ export const listApproved = async (
   return tasks
 }
 
-/** Resolve a specific approved task by id, or null if missing/invalid. */
+/** Resolve a specific in-progress task by id, or null if missing/invalid. */
 export const findById = async (
   client: Client,
   directory: string,
@@ -69,7 +96,7 @@ export const findById = async (
   id: string,
 ): Promise<Task | null> => {
   const filename = `${id}.md`
-  const rel = `${approvedDir(tasksDir)}/${filename}`
+  const rel = `${inProgressDir(tasksDir)}/${filename}`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
   const content = read?.data?.content
   if (!content) return null
@@ -96,6 +123,11 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
 /** Append a blockquote note to a task file in place. Best-effort. */
 export const appendNote = async ($: Shell, task: FileRef, note: string): Promise<void> => {
   await $`printf '\n> %s\n' ${note} >> ${task.path}`.quiet().nothrow()
+}
+
+/** Append a plan under `PLAN_HEADING` to a task file in place. Best-effort. */
+export const appendPlan = async ($: Shell, task: FileRef, plan: string): Promise<void> => {
+  await $`printf '\n%s\n\n%s\n' ${PLAN_HEADING} ${plan} >> ${task.path}`.quiet().nothrow()
 }
 
 /** Existing task ids (filenames without `.md`) in a status folder; `[]` if absent. */

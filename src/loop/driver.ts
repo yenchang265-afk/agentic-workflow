@@ -1,6 +1,16 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { Task } from "../task/schema.ts"
-import { appendNote, findById, listApproved, moveTask, selectNext } from "../task/store.ts"
+import {
+  appendNote,
+  appendPlan,
+  extractPlan,
+  findById,
+  hasPlan,
+  listInProgress,
+  moveTask,
+  selectNext,
+  wasInterrupted,
+} from "../task/store.ts"
 import type { Action, Config, LoopState, TaskRef } from "./state.ts"
 import {
   advanceOnIdle,
@@ -24,9 +34,12 @@ import {
  * marker selects what to run and a driving lock prevents re-entrancy from the
  * idle events the driver's own commands generate.
  *
- * When the loop is started from a backlog task, the driver also moves the task
- * file across its status folders: approved → in-progress on start, → completed on
- * a verify PASS; on a stop/failure it appends a note and leaves it in-progress.
+ * A task starts the loop already sitting in `in-progress/` — moving it there is
+ * the human gate. The driver only moves it onward: → completed on a verify PASS;
+ * on a stop/failure it appends a note and leaves it in-progress. The first time
+ * a task's plan gates for approval, it is also persisted onto the task file
+ * (`## Implementation Plan`), so `/loop next` can skip already-planned tasks and
+ * `/loop task <id>` can resume one after a stopped/restarted session.
  */
 
 type Client = PluginInput["client"]
@@ -87,7 +100,11 @@ const drive = async (
   while (step.action.kind === "fire") {
     setLoop(sessionID, step.state)
     const { stage, arguments: args } = step.action
+    const { task, iteration } = step.state
+    const trackBuild = stage === "build" && task
+    if (trackBuild) await appendNote(deps.$, task, `BUILD started (iteration ${iteration + 1})`)
     const output = await runStage(client, sessionID, stage, args)
+    if (trackBuild) await appendNote(deps.$, task, `BUILD finished (iteration ${iteration + 1})`)
     step = advanceOnIdle(step.state, config, output)
   }
 
@@ -95,6 +112,13 @@ const drive = async (
   switch (action.kind) {
     case "gate":
       setLoop(sessionID, state)
+      if (state.task && state.iteration === 0) {
+        try {
+          await appendPlan(deps.$, state.task, state.artifacts.plan ?? "")
+        } catch (err) {
+          await deps.log("warn", `plan gated but persisting it failed: ${(err as Error).message}`)
+        }
+      }
       await toast(client, action.message, "info")
       return
     case "done":
@@ -137,8 +161,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     if (work.kind === "start") {
       await drive(deps, sessionID, config, firstStep(createState(work.goal)))
     } else if (work.kind === "start-task") {
-      const newPath = await moveTask(deps.$, work.task, "in-progress")
-      const ref = taskRef(work.task, newPath)
+      const ref = taskRef(work.task, work.task.path)
       await drive(deps, sessionID, config, firstStep(createState(work.goal, ref)))
     } else {
       const state = getLoop(sessionID)
@@ -163,7 +186,7 @@ const TASK_PREFIX = "task "
 const queueTask = async (deps: Deps, sessionID: string, task: Task): Promise<void> => {
   clearLoop(sessionID)
   pending.set(sessionID, { kind: "start-task", task, goal: taskGoal(task) })
-  await toast(deps.client, `Loop started on "${task.title}" — exploring then planning…`, "info")
+  await toast(deps.client, `Loop started on "${task.title}" — planning…`, "info")
 }
 
 /** Parse and handle a `/loop ...` command. */
@@ -188,15 +211,30 @@ export const handleCommand = async (
 
   if (lower === "stop" || lower === "abort") {
     pending.delete(sessionID)
+    const state = getLoop(sessionID)
+    if (state?.task) {
+      await appendNote(
+        deps.$,
+        state.task,
+        `Loop stopped by /loop stop — was at ${state.stage} (iteration ${state.iteration + 1}).`,
+      )
+    }
     const existed = clearLoop(sessionID)
     await toast(client, existed ? "Loop stopped." : "No active loop to stop.", "info")
     return
   }
 
   if (lower === "next") {
-    const tasks = await listApproved(client, deps.directory, config.tasksDir, deps.log)
-    const task = selectNext(tasks)
-    if (!task) return void (await toast(client, `No approved tasks in ${config.tasksDir}/approved.`, "warning"))
+    const tasks = await listInProgress(client, deps.directory, config.tasksDir, deps.log)
+    const unplanned = tasks.filter((t) => !hasPlan(t))
+    const task = selectNext(unplanned)
+    if (!task) {
+      const message =
+        tasks.length === 0
+          ? `No tasks in ${config.tasksDir}/in-progress.`
+          : "All in-progress tasks already have a plan — run /loop task <id> to review and approve one."
+      return void (await toast(client, message, "warning"))
+    }
     await queueTask(deps, sessionID, task)
     return
   }
@@ -205,7 +243,29 @@ export const handleCommand = async (
     const id = arg.slice(TASK_PREFIX.length).trim()
     if (!id) return void (await toast(client, "Usage: /loop task <id>.", "warning"))
     const task = await findById(client, deps.directory, config.tasksDir, id)
-    if (!task) return void (await toast(client, `No approved task "${id}".`, "warning"))
+    if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
+    if (hasPlan(task)) {
+      clearLoop(sessionID)
+      const ref = taskRef(task, task.path)
+      const state: LoopState = {
+        goal: taskGoal(task),
+        stage: "plan",
+        iteration: 0,
+        paused: true,
+        artifacts: { plan: extractPlan(task) ?? "" },
+        task: ref,
+      }
+      setLoop(sessionID, state)
+      const warning = wasInterrupted(task)
+        ? " ⚠ A previous build looks interrupted — check git status/diff before approving."
+        : ""
+      await toast(
+        client,
+        `Plan already on file for "${task.title}" — review it, then /loop go to build.${warning}`,
+        "info",
+      )
+      return
+    }
     await queueTask(deps, sessionID, task)
     return
   }
@@ -222,5 +282,5 @@ export const handleCommand = async (
   // Anything else is a free-text goal → start a new loop (replacing any existing one).
   clearLoop(sessionID)
   pending.set(sessionID, { kind: "start", goal: arg })
-  await toast(client, "Loop started — exploring then planning…", "info")
+  await toast(client, "Loop started — planning…", "info")
 }

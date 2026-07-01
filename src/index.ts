@@ -8,10 +8,10 @@ import { hasLoop } from "./loop/state.ts"
  *
  * opencode plugin that drives the engineering workflow as an automatic loop:
  *
- *   explore → plan → build → verify   (repeat)
+ *   plan → build → verify   (repeat)
  *
- * `/loop <goal>` starts it; the plugin runs explore → plan automatically, pauses
- * for a human plan-approval gate (`/loop go`), then runs build → verify, finishing
+ * `/loop <goal>` starts it; the plugin runs plan, pauses for a human
+ * plan-approval gate (`/loop go`), then runs build → verify, finishing
  * on a verify PASS or after the iteration cap. The control surface lives in
  * `loop/driver.ts`; the pure state machine in `loop/state.ts`.
  */

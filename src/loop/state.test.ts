@@ -5,16 +5,8 @@ import { advanceOnIdle, composeArgs, createState, resume } from "./state.ts"
 
 const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks" }
 
-test("explore auto-advances to plan, threading findings", () => {
-  const s = createState("add foo")
-  const { state, action } = advanceOnIdle(s, config, "explore findings here")
-  assert.equal(action.kind, "fire")
-  assert.equal(state.stage, "plan")
-  if (action.kind === "fire") {
-    assert.equal(action.stage, "plan")
-    assert.match(action.arguments, /Goal: add foo/)
-    assert.match(action.arguments, /explore findings here/)
-  }
+test("createState starts the loop at plan", () => {
+  assert.equal(createState("add foo").stage, "plan")
 })
 
 test("plan gates before build when gateBeforeBuild is on", () => {
@@ -84,14 +76,13 @@ test("an unparseable verify verdict is treated as FAIL", () => {
 })
 
 test("composeArgs threads only the relevant prior artifacts", () => {
-  const s = { ...createState("goalX"), artifacts: { explore: "E", plan: "P", build: "B" } }
+  const s = { ...createState("goalX"), artifacts: { plan: "P", build: "B" } }
   assert.match(composeArgs(s, "build"), /Approved plan:\nP/)
-  assert.doesNotMatch(composeArgs(s, "build"), /Explore findings/)
   assert.match(composeArgs(s, "verify"), /Build summary:\nB/)
 })
 
 test("createState carries an optional task ref", () => {
-  const task = { id: "add-foo", path: "/r/docs/tasks/approved/add-foo.md", acceptance: ["x"] }
+  const task = { id: "add-foo", path: "/r/docs/tasks/in-progress/add-foo.md", acceptance: ["x"] }
   const s = createState("g", task)
   assert.deepEqual(s.task, task)
   assert.equal(createState("g").task, undefined)

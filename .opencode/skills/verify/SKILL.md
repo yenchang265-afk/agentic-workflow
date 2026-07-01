@@ -5,12 +5,12 @@ description: Reference for the VERIFY stage of the agentic engineering loop. Use
 
 # VERIFY stage
 
-The fourth stage of the agentic engineering loop:
+The third stage of the agentic engineering loop:
 
 ```
-explore → plan → build → VERIFY
-   ▲                        │
-   └────────  loop  ────────┘
+plan → build → VERIFY
+   ▲                │
+   └──────  loop  ───┘
 ```
 
 VERIFY closes the loop. It runs the tests, checks the build against the plan's

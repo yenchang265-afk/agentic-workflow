@@ -1,56 +1,53 @@
 ---
 name: explore
-description: Reference for the EXPLORE stage of the agentic engineering loop. Use when starting work on an unfamiliar area, when scope is uncertain, or before planning a change — to understand existing code and find reusable patterns first.
+description: Reference for the standalone repo-improvement scanner. Use to understand when to run /explore, what it looks for, how it dedupes and caps findings, and how it differs from /task new. Not part of the /loop pipeline.
 ---
 
-# EXPLORE stage
+# Repo improvement scan
 
-The first stage of the agentic engineering loop:
-
-```
-EXPLORE → plan → build → verify
-   ▲                        │
-   └────────  loop  ────────┘
-```
-
-EXPLORE exists to **replace assumptions with evidence** before any plan or code is
-written. Skipping it is the most common cause of rework: code that duplicates an
-existing utility, plans built on a misread of how the system actually works.
+`/explore` is a **standalone** command — independent of `/loop`. It scans the
+repo for improvements nobody has asked for yet (refactors, dead code,
+duplicated logic, tech debt, stale docs) and files each one as a draft
+backlog task for a human to review.
 
 ## When to run it
 
-- Starting on an unfamiliar area or codebase.
-- Scope is uncertain or spans multiple subsystems.
-- Before proposing a plan for any non-trivial change.
+- Periodically, or whenever the repo feels due for a cleanup pass.
+- Scoped to an area: `/explore src/loop` focuses the scan on a path.
+- **Not** as part of an active `/loop` run — it has no relationship to a
+  specific goal; `/loop` starts at `PLAN` directly (see the `loop` skill).
 
-Skip it only for truly isolated, well-understood edits (a typo, a one-line fix in
-a file you already know).
+## Output
 
-## Inputs & outputs
+- Up to **5** new task files per run, written to `docs/tasks/draft/`, each
+  matching the task schema (`title`/`priority`/`acceptance`/`body`).
+- A summary of what was filed, what was skipped as a duplicate, and what was
+  left over the cap.
 
-- **Input:** a target — an area, file, feature, or question.
-- **Output:** a `file:line` findings map, a summary of how the pieces connect, a
-  list of **reusable** functions/patterns, and open questions for the plan stage.
-  Output is *understanding*, never edits or a plan.
+## Dedupe & cap
 
-## How to run it
+Before filing anything, `explore` reads the existing titles in
+`docs/tasks/draft/` and `docs/tasks/in-progress/` and skips findings that
+overlap. This keeps repeated runs from flooding the backlog with the same
+finding restated. The 5-task cap is a per-run ceiling, not a total — run it
+again later for more.
 
-The stage ships two tools:
+## How it differs from `/task new`
 
-- **`/explore <target>`** — the command that enters the stage and delegates to the subagent.
-- **`explore` subagent** — a read-only locator (Read/Grep/Glob only) that produces the findings.
+- **`/task new <idea>`** — you already have an idea; `task-author` turns it
+  into one schema-valid task.
+- **`/explore [path]`** — you don't have an idea yet; `explore` proactively
+  scans and finds several, filing each as its own task.
 
-## Checklist
-
-- [ ] Found the entry points and key types for the target.
-- [ ] Traced the main call paths / data flow.
-- [ ] Searched for existing utilities and patterns to reuse.
-- [ ] Captured `file:line` references, not vague descriptions.
-- [ ] Listed open questions for the plan stage.
+Both land in `docs/tasks/draft/` and use the same human gate: you review, then
+move what you want to `docs/tasks/in-progress/`.
 
 ## Anti-patterns
 
-- **Coding during explore** — no edits or fixes; this stage only reads.
-- **Planning prematurely** — defer the "what to do" to the plan stage.
-- **Shallow search** — one grep is not exploration; cover naming variants and call sites.
-- **Ignoring reuse** — failing to surface existing code leads to duplication later.
+- **Feature ideas** — this is repo-health scanning, not product brainstorming.
+  Stick to refactors, dead code, tech debt, stale docs.
+- **Editing source** — `explore` only ever writes task files.
+- **Ignoring the cap** — filing more than ~5 per run turns review into a chore;
+  respect it and let a human triage before the next pass.
+- **Duplicate filings** — always dedupe against `draft/` and `in-progress/`
+  before writing.
