@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * validate-skills.js
+ * validate-skills.cjs
  *
  * Validates every skill in skills/ against the rules in docs/skill-anatomy.md.
  *

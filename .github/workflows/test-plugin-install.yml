@@ -18,7 +18,7 @@ jobs:
           node-version: '20'
 
       - name: Validate all skills
-        run: node scripts/validate-skills.js
+        run: node scripts/validate-skills.cjs
 
   validate-commands:
     name: Validate command parity and description sync
@@ -32,7 +32,7 @@ jobs:
           node-version: '20'
 
       - name: Validate commands across all tool directories
-        run: node scripts/validate-commands.js
+        run: node scripts/validate-commands.cjs
 
   validate:
     name: Validate plugin structure

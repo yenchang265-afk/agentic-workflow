@@ -123,7 +123,11 @@ Add skill contents to your Windsurf rules configuration. See [docs/windsurf-setu
 <details>
 <summary><b>OpenCode</b></summary>
 
-Uses agent-driven skill execution via AGENTS.md and the `skill` tool.
+Ships as a real OpenCode plugin, **`agentic-loop`**: `/loop <goal>` drives the
+full DEFINE→PLAN→BUILD→VERIFY→REVIEW→SHIP lifecycle as one automatic pipeline
+with two human gates (before build, before ship). Outside the loop, one-off
+requests still get agent-driven skill execution via AGENTS.md and the `skill`
+tool.
 
 See [docs/opencode-setup.md](docs/opencode-setup.md).
 

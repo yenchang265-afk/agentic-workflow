@@ -8,9 +8,21 @@ A collection of skills for Claude.ai and Claude Code for senior software enginee
 
 ## OpenCode Integration
 
-OpenCode uses a **skill-driven execution model** powered by the `skill` tool and this repository's `/skills` directory.
+This repo ships two ways to use OpenCode, for two different situations:
 
-### Core Rules
+1. **The automatic agentic loop** (`/loop`) — a real OpenCode plugin
+   (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
+   drives the full DEFINE→PLAN→BUILD→VERIFY→REVIEW→SHIP lifecycle as one
+   pipeline with two human gates. Use this when a goal should run the whole
+   lifecycle largely unattended. See the `loop-orchestration` skill for the
+   pipeline, gates, and verdict contracts, and `task-backlog-management` for
+   driving it from `docs/tasks/`.
+2. **Ad-hoc, skill-driven execution** — for a single request that doesn't
+   warrant starting a loop, OpenCode still has a **skill-driven execution
+   model** powered by the `skill` tool and this repository's `skills/`
+   directory. The rules below govern that mode.
+
+### Core Rules (ad-hoc mode)
 
 - If a task matches a skill, you MUST invoke it
 - Skills are located in `skills/<skill-name>/SKILL.md`
@@ -28,12 +40,13 @@ The agent should automatically map user intent to skills:
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
+- Run the whole lifecycle on a goal, largely unattended → `/loop <goal>` (see `loop-orchestration`), not a manual skill chain
 
-### Lifecycle Mapping (Implicit Commands)
+### Lifecycle Mapping
 
-OpenCode does not support slash commands like `/spec` or `/plan`.
-
-Instead, the agent must internally follow this lifecycle:
+`/loop` implements this lifecycle as real pipeline stages (see
+`loop-orchestration`). Outside the loop, follow it as an implicit sequence of
+skill invocations instead:
 
 - DEFINE → `spec-driven-development`
 - PLAN → `planning-and-task-breakdown`
@@ -42,9 +55,9 @@ Instead, the agent must internally follow this lifecycle:
 - REVIEW → `code-review-and-quality`
 - SHIP → `shipping-and-launch`
 
-### Execution Model
+### Execution Model (ad-hoc mode)
 
-For every request:
+For every request that isn't handed to `/loop`:
 
 1. Determine if any skill applies (even 1% chance)
 2. Invoke the appropriate skill using the `skill` tool

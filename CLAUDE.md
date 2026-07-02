@@ -11,6 +11,8 @@ hooks/        → Session lifecycle hooks
 .claude/commands/ → Slash commands (/spec, /plan, /build, /test, /review, /code-simplify, /ship; plus /webperf specialist audit)
 references/   → Supplementary checklists (testing, performance, security, accessibility, observability)
 docs/         → Setup guides for different tools
+src/          → OpenCode plugin (agentic-loop): the /loop state machine, driver, and task backlog IO
+.opencode/    → OpenCode-native agents/commands for /loop's stages; .opencode/skills symlinks to skills/
 ```
 
 ## Skills by Phase
@@ -21,6 +23,7 @@ docs/         → Setup guides for different tools
 **Verify:** browser-testing-with-devtools, debugging-and-error-recovery
 **Review:** code-review-and-quality, code-simplification, security-and-hardening, performance-optimization
 **Ship:** git-workflow-and-versioning, ci-cd-and-automation, deprecation-and-migration, documentation-and-adrs, observability-and-instrumentation, shipping-and-launch
+**Orchestrate:** loop-orchestration, task-backlog-management
 
 ## Conventions
 
@@ -37,8 +40,8 @@ Before adding a new skill or significantly reworking an existing one, run the pr
 
 ## Commands
 
-- `npm test` — Not applicable (this is a documentation project)
-- Validate: Check that all SKILL.md files have valid YAML frontmatter with name and description
+- `npm install && npm run typecheck && npm test` — the `agentic-loop` OpenCode plugin's own checks: `tsc --noEmit` and the `src/**/*.test.ts` unit tests for the loop state machine and task backlog. The skills catalog itself has no test suite.
+- Validate: `node scripts/validate-skills.cjs` (SKILL.md frontmatter/sections) and `node scripts/validate-commands.cjs` (command parity across `.claude/`, `.gemini/`, `commands/`)
 
 ## Pull Requests
 

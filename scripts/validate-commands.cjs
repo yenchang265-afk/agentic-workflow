@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * validate-commands.js
+ * validate-commands.cjs
  *
  * Guards against silent drift across the three slash-command directories:
  *   .claude/commands/  (.md — Claude Code)
