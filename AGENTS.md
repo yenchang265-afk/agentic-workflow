@@ -8,11 +8,15 @@ Guidance for AI coding agents working in this repository.
 
 1. **The automatic agentic loop** (`/loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   drives the full DEFINE→PLAN→BUILD→VERIFY→REVIEW lifecycle as one
-   pipeline with a human gate before build. Use this when a goal should run the whole
-   lifecycle largely unattended. See the `loop-orchestration` skill for the
-   pipeline, gates, and verdict contracts, and `task-backlog-management` for
-   driving it from `docs/tasks/`.
+   drives the full DEFINE→PLAN→BUILD→VERIFY→REVIEW lifecycle across **two
+   sessions**: DEFINE/PLAN plan interactively (with, for an underspecified
+   free-text goal, a conditional `interview-me`-backed clarification before
+   DEFINE) and park the approved plan as a task; a separate `/loop watch`
+   session claims and builds it (BUILD→VERIFY→REVIEW). Use this when a goal
+   should run the whole lifecycle largely unattended. See the
+   `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
+   and `task-backlog-management` for driving it from
+   `docs/tasks/`.
 2. **Ad-hoc, skill-driven execution** — for a single request that doesn't
    warrant starting a loop, OpenCode still has a **skill-driven execution
    model** powered by the `skill` tool and the `skills/` directory bundled

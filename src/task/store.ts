@@ -33,6 +33,15 @@ export const PLAN_HEADING = "## Implementation Plan"
 /** Whether a task already has a plan persisted (appended at a prior approval gate). Pure. */
 export const hasPlan = (task: Task): boolean => task.body.includes(PLAN_HEADING)
 
+/**
+ * Eligible for `/loop watch` to claim: planned, and never had ANY
+ * "> BUILD started" note — not just "last pair unmatched" (that's
+ * `wasInterrupted`, below). Any marker at all means another live LoopState
+ * is driving it right now, or it crashed and needs manual recovery — a
+ * watch session must never silently reclaim either case. Pure.
+ */
+export const isClaimable = (task: Task): boolean => hasPlan(task) && !task.body.includes("> BUILD started")
+
 /** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
 export const extractPlan = (task: Task): string | undefined => {
   const idx = task.body.indexOf(PLAN_HEADING)
@@ -54,17 +63,18 @@ export const wasInterrupted = (task: Task): boolean => {
 }
 
 /**
- * List and parse every task in `in-planning/`. Invalid files are skipped
- * (logged) rather than failing the whole pick. Returns `[]` when the folder
- * is absent.
+ * List and parse every task in a given status folder. Invalid files are
+ * skipped (logged) rather than failing the whole pick. Returns `[]` when the
+ * folder is absent.
  */
-export const listInPlanning = async (
+export const listByStatus = async (
   client: Client,
   directory: string,
   tasksDir: string,
+  status: TaskStatus,
   log?: Log,
 ): Promise<Task[]> => {
-  const dir = inPlanningDir(tasksDir)
+  const dir = `${tasksDir}/${status}`
   let nodes
   try {
     const res = await client.file.list({ query: { path: dir, directory } })
@@ -87,6 +97,14 @@ export const listInPlanning = async (
   }
   return tasks
 }
+
+/** List and parse every task in `in-planning/`. See `listByStatus`. */
+export const listInPlanning = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
+  listByStatus(client, directory, tasksDir, "in-planning", log)
+
+/** List and parse every task in `in-progress/` — the pool `/loop watch` claims from. */
+export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
+  listByStatus(client, directory, tasksDir, "in-progress", log)
 
 /** Resolve a specific in-planning task by id, or null if missing/invalid. */
 export const findById = async (
@@ -158,19 +176,19 @@ export interface WriteLocation {
  * OpenCode and can reach the Azure DevOps MCP server; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
- * writes it. Returns the new absolute path.
+ * writes it. Returns the new task's id and absolute path.
  */
 export const writeTask = async (
   $: Shell,
   client: Client,
   loc: WriteLocation,
   input: TaskInput,
-): Promise<string> => {
+): Promise<{ id: string; path: string }> => {
   const tasksDir = loc.tasksDir ?? "docs/tasks"
   const status = loc.status ?? "draft"
   const rel = `${tasksDir}/${status}`
   const taken = await listIds(client, loc.directory, rel)
-  const { filename, content } = buildTaskFile(input, taken)
+  const { id, filename, content } = buildTaskFile(input, taken)
 
   const destDir = path.join(loc.directory, rel)
   const dest = path.join(destDir, filename)
@@ -179,5 +197,5 @@ export const writeTask = async (
   if (out.exitCode !== 0) {
     throw new Error(`could not write task ${filename}: ${out.stderr.toString().trim()}`)
   }
-  return dest
+  return { id, path: dest }
 }

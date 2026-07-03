@@ -18,8 +18,14 @@ improvising the linking flow here.
 
 A free-text idea (a leading `new` is just the subcommand — ignore it). It may be
 one line or a paragraph. If it is too vague to write testable acceptance
-criteria, state the ambiguity and make the most reasonable interpretation rather
-than inventing unrelated scope.
+criteria, invoke the `interview-me` skill and run its process with the user —
+you already have a live, responsive user here (you ask about Azure DevOps
+linkage and show the draft for confirmation below), so this is a normal,
+allowed use of that skill. Fold the confirmed restate (outcome, success,
+constraint, out of scope) into the acceptance bullets and body. Fall back to
+stating the ambiguity and making the most reasonable interpretation only when
+the user is unavailable or has asked for speed over verification — never
+invent unrelated scope either way.
 
 ## The task schema (must match exactly)
 

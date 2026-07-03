@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Task } from "./schema.ts"
-import { extractPlan, hasPlan, PLAN_HEADING, selectNext, wasInterrupted } from "./store.ts"
+import { extractPlan, hasPlan, isClaimable, PLAN_HEADING, selectNext, wasInterrupted } from "./store.ts"
 
 const task = (id: string, priority: number, body = ""): Task => ({
   id,
@@ -71,4 +71,26 @@ test("wasInterrupted is true when only the latest pair is unmatched", () => {
     "> BUILD started (iteration 2)",
   ].join("\n")
   assert.equal(wasInterrupted(task("a", 0, body)), true)
+})
+
+test("isClaimable is false when there is no plan", () => {
+  assert.equal(isClaimable(task("a", 0, "Some description.")), false)
+})
+
+test("isClaimable is false when a plan exists but a build already started and finished", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.\n\n> BUILD started (iteration 1)\n> BUILD finished (iteration 1)`
+  assert.equal(isClaimable(task("a", 0, body)), false)
+})
+
+test("isClaimable is false when a plan exists and the last build start is unmatched (interrupted)", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.\n\n> BUILD started (iteration 1)`
+  // Distinct from wasInterrupted, which is also true here — isClaimable cares
+  // about ANY build marker, not just whether the last pair is unmatched.
+  assert.equal(wasInterrupted(task("a", 0, body)), true)
+  assert.equal(isClaimable(task("a", 0, body)), false)
+})
+
+test("isClaimable is true when a plan exists and there are zero build markers", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.`
+  assert.equal(isClaimable(task("a", 0, body)), true)
 })

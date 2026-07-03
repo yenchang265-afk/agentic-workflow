@@ -20,8 +20,10 @@ this backlog instead of a hand-typed goal.
   backlog.
 - Use when reviewing what `/explore` or `/task new` filed, or when moving a
   task between `draft/`, `in-planning/`, and `abandoned/`.
-- Not needed for a quick, single-session `/loop <goal>` run — free-text goals
-  work without ever touching a task file.
+- A free-text `/loop <goal>` doesn't need one to *start* — but once its plan
+  is approved, it's promoted into a real task file in `in-progress/` too (see
+  `loop-orchestration`'s planning/execution split), so it isn't entirely
+  outside this backlog after all; only the draft/in-planning stage is skipped.
 
 ## The folders
 
@@ -86,8 +88,10 @@ stage so the verdict checks each criterion.
    `/loop status` or the toast message to see it's waiting.
 4. **Approve the plan** (`/loop go`) — this is the second gate, and the only
    one that's automatic on the folder side: the driver moves the file
-   `in-planning/ → in-progress/` itself, then runs BUILD→VERIFY→REVIEW.
-   See `loop-orchestration` for the full pipeline.
+   `in-planning/ → in-progress/` itself. This **parks** it — nothing builds
+   in this session anymore. A separate `/loop watch` session claims it later
+   and runs BUILD→VERIFY→REVIEW. See `loop-orchestration` for the full
+   planning/execution split.
 
 ### Linking a task to Azure DevOps
 
@@ -140,8 +144,8 @@ PR description can reference the source work item.
 | Transition | Who | When |
 |------------|-----|------|
 | `draft → in-planning` | **you** | the task is worth planning; this is the first human gate |
-| `in-planning → in-progress` | driver | automatic, the instant a plan is approved (`/loop go` at the plan gate) |
-| `in-progress → completed` | driver | the loop finishes (verify PASS and review PASS) |
+| `in-planning → in-progress` | driver | automatic, the instant a plan is approved (`/loop go` at the plan gate) — parks it; a later `/loop watch` session claims and builds it |
+| `in-progress → completed` | driver | the loop finishes (verify PASS and review PASS), from inside whichever `/loop watch` session claimed it |
 | stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
 | `→ abandoned` | **you** | you decide not to do it, from any status |
 
@@ -176,7 +180,13 @@ itself. What's on the task file tells you what happened:
   half-finished diff in the working tree. `/loop task <id>` surfaces this as a
   warning when resuming an already-planned task.
 - **No markers at all, just `## Implementation Plan`** — safe: planned and
-  waiting for approval, nothing has written code yet.
+  waiting for approval, nothing has written code yet. This is exactly the
+  `isClaimable` predicate a `/loop watch` session uses to pick its next task:
+  has a plan, and has never had *any* `> BUILD started` note — not just "the
+  last one is unmatched" (that's `wasInterrupted`, above). A task with any
+  build marker at all, matched or not, is either being driven by a live
+  watch session right now, or crashed and needs the manual recovery below —
+  a watcher must never silently reclaim either case.
 
 **Recovery boundary:** `/loop task <id>` only searches `in-planning/`. If a
 session dies while a task is already in `in-progress/` (mid-BUILD, VERIFY, or
@@ -194,7 +204,9 @@ re-plan and restart it cleanly (or finish/fix it up by hand).
   then open the PR yourself. There is no per-task branch/worktree.
 - Promotion (`draft → in-planning`, `→ abandoned`) is a manual file move —
   there is no approve command. `in-planning → in-progress` is the one
-  automatic move on the "start" side, driven by `/loop go`.
+  automatic move on the "start" side, driven by `/loop go` — it parks the
+  task; nothing builds it until a human explicitly runs `/loop watch` in
+  some session (see `loop-orchestration`).
 - Azure DevOps linking depends on the `microsoft/azure-devops-mcp` server
   being connected in your OpenCode setup. It's optional — task creation
   never blocks on it (see "Linking a task to Azure DevOps" above).

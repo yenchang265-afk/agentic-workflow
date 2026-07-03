@@ -13,6 +13,14 @@ import { LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict } from "./verdict.ts"
  * Two check stages can fail and loop back: a VERIFY FAIL re-plans (the plan
  * itself may be wrong); a REVIEW FAIL re-builds (the plan was fine, the
  * implementation wasn't). Both share one iteration counter and cap.
+ *
+ * DEFINE and PLAN are the **planning** phase — approving the plan gate parks
+ * it as a backlog task rather than continuing into BUILD in the same
+ * session (see `driver.ts`'s `parkApprovedPlan`). A `/loop watch` session
+ * later claims a parked task and enters this same state machine directly at
+ * `build` via `resumeAtBuild` — the transition logic below doesn't know or
+ * care whether it got there via `createState`'s "define" start or a claim's
+ * "build" start; `composeArgs`/`advanceOnIdle` are identical either way.
  */
 
 export type Stage = "define" | "plan" | "build" | "verify" | "review"
@@ -72,6 +80,29 @@ export const createState = (goal: string, task?: TaskRef): LoopState => ({
   ...(task ? { task } : {}),
 })
 
+/** Reconstruct a LoopState paused at the plan gate for an already-planned
+ *  task (e.g. `/loop task <id>` resuming a persisted plan). */
+export const resumeAtPlanGate = (goal: string, task: TaskRef, plan: string): LoopState => ({
+  goal,
+  stage: "plan",
+  iteration: 0,
+  paused: true,
+  artifacts: { plan },
+  task,
+})
+
+/** Reconstruct a LoopState entering execution directly at build, for a
+ *  claimed in-progress task whose plan was already approved in a prior
+ *  (planning) session. */
+export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): LoopState => ({
+  goal,
+  stage: "build",
+  iteration: 0,
+  paused: false,
+  artifacts: { plan },
+  task,
+})
+
 const withArtifact = (state: LoopState, stage: Stage, output: string): LoopState => ({
   ...state,
   artifacts: { ...state.artifacts, [stage]: output },
@@ -129,10 +160,11 @@ export const advanceOnIdle = (
 
     case "plan":
       if (config.gateBeforeBuild) {
-        return {
-          state: { ...s, paused: true },
-          action: { kind: "gate", message: "Plan ready — review it, then run /loop go to build." },
-        }
+        const message =
+          s.iteration === 0
+            ? "Plan ready — review it, then run /loop go to approve and park it for execution."
+            : "Plan ready — review it, then run /loop go to build."
+        return { state: { ...s, paused: true }, action: { kind: "gate", message } }
       }
       return fire(s, "build")
 
@@ -180,6 +212,12 @@ export const resume = (state: LoopState): { state: LoopState; action: Action } =
   if (state.stage === "plan") return fire(state, "build")
   return { state, action: { kind: "noop" } }
 }
+
+/** The first step to drive for a freshly-constructed state — fires its own stage. */
+export const firstStep = (state: LoopState): { state: LoopState; action: Action } => ({
+  state,
+  action: { kind: "fire", stage: state.stage, arguments: composeArgs(state, state.stage) },
+})
 
 // --- In-memory store (lost on opencode restart; see README known limitations) ---
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Config } from "./state.ts"
-import { advanceOnIdle, composeArgs, createState, resume } from "./state.ts"
+import { advanceOnIdle, composeArgs, createState, resume, resumeAtBuild, resumeAtPlanGate } from "./state.ts"
 
 const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks" }
 
@@ -26,6 +26,21 @@ test("plan gates before build when gateBeforeBuild is on", () => {
   const { state, action } = advanceOnIdle(s, config, "the plan")
   assert.equal(action.kind, "gate")
   assert.equal(state.paused, true)
+})
+
+test("the first plan gate (iteration 0) tells the human it will park, not build", () => {
+  const s = { ...createState("g"), stage: "plan" as const, iteration: 0 }
+  const { action } = advanceOnIdle(s, config, "the plan")
+  if (action.kind === "gate") assert.match(action.message, /park/)
+})
+
+test("a re-plan gate (iteration > 0) tells the human it will build, not park", () => {
+  const s = { ...createState("g"), stage: "plan" as const, iteration: 1 }
+  const { action } = advanceOnIdle(s, config, "the plan")
+  if (action.kind === "gate") {
+    assert.match(action.message, /build/)
+    assert.doesNotMatch(action.message, /park/)
+  }
 })
 
 test("plan fires build directly when gating is off", () => {
@@ -54,6 +69,39 @@ test("resume is a noop when not paused", () => {
 test("resume is a noop for a stage that never gates (e.g. build)", () => {
   const s = { ...createState("g"), stage: "build" as const, paused: true }
   assert.equal(resume(s).action.kind, "noop")
+})
+
+// --- resuming/claiming a task from disk (planning and execution split) ---
+
+const task = { id: "add-foo", path: "/r/docs/tasks/in-progress/add-foo.md", acceptance: [] }
+
+test("resumeAtPlanGate reconstructs a paused plan-gate state with the persisted plan threaded", () => {
+  const s = resumeAtPlanGate("add foo", task, "PLAN BODY")
+  assert.equal(s.stage, "plan")
+  assert.equal(s.paused, true)
+  assert.equal(s.iteration, 0)
+  assert.equal(s.artifacts.plan, "PLAN BODY")
+  assert.deepEqual(s.task, task)
+})
+
+test("resumeAtBuild reconstructs an unpaused build-entry state with the approved plan threaded", () => {
+  const s = resumeAtBuild("add foo", task, "PLAN BODY")
+  assert.equal(s.stage, "build")
+  assert.equal(s.paused, false)
+  assert.equal(s.iteration, 0)
+  assert.equal(s.artifacts.plan, "PLAN BODY")
+})
+
+test("composeArgs threads the approved plan when entering directly at build via resumeAtBuild", () => {
+  const s = resumeAtBuild("add foo", task, "PLAN BODY")
+  assert.match(composeArgs(s, "build"), /Approved plan:\nPLAN BODY/)
+})
+
+test("a resumeAtBuild-shaped state still advances build → verify like a normal loop", () => {
+  const s = resumeAtBuild("add foo", task, "PLAN BODY")
+  const { state, action } = advanceOnIdle(s, config, "diff summary")
+  assert.equal(state.stage, "verify")
+  assert.equal(action.kind, "fire")
 })
 
 // --- build → verify ---

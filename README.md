@@ -5,29 +5,37 @@ supervised state machine instead of a chat back-and-forth.
 
 ## What it does
 
-`/loop <goal>` moves a goal through five stages, pausing only where a human
-decision actually matters:
+`/loop <goal>` moves a goal through five stages across **two sessions**,
+pausing only where a human decision actually matters. An underspecified goal
+is interviewed (`interview-me`) before DEFINE even starts; a clear goal
+skips straight through:
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
 | DEFINE | Turns the goal into a spec | no |
-| PLAN | Breaks the spec into tasks | **yes — approve the plan** |
-| BUILD | Implements task-driven, test-first | no |
+| PLAN | Breaks the spec into tasks | **yes — approve & park the plan** |
+| BUILD | Implements task-driven, test-first | no (runs in a `/loop watch` session) |
 | VERIFY | Runs tests; FAIL re-plans with the failure | no |
 | REVIEW | Checks the diff; FAIL re-builds with feedback | no |
 
-Re-plan/re-build loops are capped by `maxIterations` in config — the loop
-gives up and reports rather than spinning forever. The loop never pushes or
-opens a PR itself; you always do that last step after a REVIEW PASS.
+Approving the plan **parks** it as a task instead of building it in the same
+session — run `/loop watch` in another session (or the same one, later) to
+claim and build it. Re-plan/re-build loops are capped by `maxIterations` in
+config — the loop gives up and reports rather than spinning forever. The
+loop never pushes or opens a PR itself; you always do that last step after a
+REVIEW PASS.
 
 ## Commands
 
-- `/loop <goal>` — start; runs DEFINE + PLAN, then pauses
+- `/loop <goal>` — clarify if needed, then start; runs DEFINE + PLAN, then pauses
 - `/loop next` — start on the top task in `docs/tasks/in-planning/`
 - `/loop task <id>` — start on a specific in-planning task
-- `/loop go` — approve the current gate, continue
-- `/loop stop` — abort, clear state
-- `/loop status` — print stage, iteration count, pause state
+- `/loop go` — approve the current gate (first approval parks it for execution)
+- `/loop watch` — turn this session into an execution worker: claims and
+  builds parked, approved tasks on idle
+- `/loop unwatch` — stop this session from claiming new work
+- `/loop stop` — abort, clear state, and exit watch mode
+- `/loop status` — print stage, iteration count, pause state, watch status
 
 Outside `/loop`, one-off requests are handled ad hoc: see [AGENTS.md](AGENTS.md)
 for the intent-to-skill mapping — the plugin bundles a `skills/` library
