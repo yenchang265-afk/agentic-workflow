@@ -3,6 +3,7 @@ import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
 import * as driver from "./loop/driver.ts"
 import { hasLoop } from "./loop/state.ts"
+import { listInProgress, wasInterrupted } from "./task/store.ts"
 
 /**
  * agentic-loop
@@ -40,6 +41,22 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
     config = await loadConfig(client, directory)
   } catch (err) {
     await log("warn", `using default config: ${(err as Error).message}`)
+  }
+
+  // Startup reconciliation: a restart mid-BUILD leaves a task in in-progress/
+  // with an unmatched "BUILD started" note that no watcher will ever claim.
+  // Surface those instead of letting them sit stuck forever.
+  try {
+    const tasks = await listInProgress(client, directory, config.tasksDir, log)
+    const interrupted = tasks.filter(wasInterrupted).map((t) => t.id)
+    if (interrupted.length) {
+      await log(
+        "warn",
+        `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /loop recover <id> to resume`,
+      )
+    }
+  } catch (err) {
+    await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
   }
 
   return {

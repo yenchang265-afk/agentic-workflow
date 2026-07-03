@@ -220,6 +220,11 @@ export const firstStep = (state: LoopState): { state: LoopState; action: Action 
 const store = new Map<string, LoopState>()
 
 export const getLoop = (sessionID: string): LoopState | undefined => store.get(sessionID)
+/** The session whose live loop is driving the given task id, if any (this plugin instance only). */
+export const findSessionDriving = (taskId: string): string | undefined => {
+  for (const [sessionID, state] of store) if (state.task?.id === taskId) return sessionID
+  return undefined
+}
 export const setLoop = (sessionID: string, state: LoopState): void => void store.set(sessionID, state)
 export const clearLoop = (sessionID: string): boolean => store.delete(sessionID)
 export const hasLoop = (sessionID: string): boolean => store.has(sessionID)

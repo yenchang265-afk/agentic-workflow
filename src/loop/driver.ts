@@ -3,10 +3,13 @@ import type { Task } from "../task/schema.ts"
 import {
   appendNote,
   appendPlan,
+  claimTask,
   extractPlan,
   findById,
+  findByIdIn,
   hasPlan,
   isClaimable,
+  isRecoverable,
   listInPlanning,
   listInProgress,
   moveTask,
@@ -19,6 +22,7 @@ import {
   advanceOnIdle,
   clearLoop,
   createState,
+  findSessionDriving,
   firstStep,
   getLoop,
   resume,
@@ -103,6 +107,7 @@ type Pending =
   | { readonly kind: "clarify"; readonly rawGoal: string }
   | { readonly kind: "start"; readonly goal: string }
   | { readonly kind: "start-task"; readonly task: Task; readonly goal: string }
+  | { readonly kind: "recover"; readonly task: Task }
   | { readonly kind: "proceed" }
 
 const pending = new Map<string, Pending>()
@@ -269,6 +274,9 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
   const tasks = await listInProgress(deps.client, deps.directory, config.tasksDir, deps.log)
   const task = selectNext(tasks.filter(isClaimable))
   if (!task) return // nothing ready; try again next idle tick
+  // Atomic claim marker: only one watcher on this filesystem wins the task,
+  // even when several saw it as claimable on the same idle tick.
+  if (!(await claimTask(deps.$, task))) return
   const ref = taskRef(task, task.path)
   const state = resumeAtBuild(taskGoal(task), ref, extractPlan(task) ?? "")
   await toast(deps.client, `Watch: claimed "${task.title}" — building…`, "info")
@@ -297,6 +305,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     } else if (work?.kind === "start-task") {
       const ref = taskRef(work.task, work.task.path)
       await drive(deps, sessionID, config, firstStep(createState(work.goal, ref)))
+    } else if (work?.kind === "recover") {
+      // A human-forced resume of a started-but-dead task: re-enter the state
+      // machine at build with the persisted plan, in this session.
+      const ref = taskRef(work.task, work.task.path)
+      const state = resumeAtBuild(taskGoal(work.task), ref, extractPlan(work.task) ?? "")
+      await drive(deps, sessionID, config, firstStep(state))
     } else if (work?.kind === "proceed") {
       const state = getLoop(sessionID)
       if (state?.paused && state.stage === "plan") {
@@ -436,6 +450,33 @@ export const handleCommand = async (
       return void (await toast(client, message, "warning"))
     }
     await queueTask(deps, sessionID, task)
+    return
+  }
+
+  if (lower === "recover" || lower.startsWith("recover ")) {
+    const id = arg.slice("recover".length).trim()
+    if (!id) return void (await toast(client, "Usage: /loop recover <id>.", "warning"))
+    const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-progress", id)
+    if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
+    const driving = findSessionDriving(id)
+    if (driving) {
+      return void (await toast(client, `Task "${id}" is being driven by a live loop — nothing to recover.`, "warning"))
+    }
+    if (isClaimable(task)) {
+      return void (await toast(client, `Task "${id}" was never started — /loop watch will claim it.`, "info"))
+    }
+    if (!isRecoverable(task)) {
+      return void (await toast(client, `Task "${id}" has no persisted plan — move it back to in-planning and re-run /loop task ${id}.`, "warning"))
+    }
+    await claimTask(deps.$, task) // re-mark; the marker may already exist from the dead run
+    await appendNote(deps.$, task, "Recovered by /loop recover — resuming BUILD from the persisted plan.")
+    clearLoop(sessionID)
+    pending.set(sessionID, { kind: "recover", task })
+    await toast(
+      client,
+      `Recovering "${task.title}" — check git status/diff for leftovers from the interrupted run; building…`,
+      "info",
+    )
     return
   }
 

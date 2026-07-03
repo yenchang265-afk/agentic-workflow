@@ -1,7 +1,17 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Config } from "./state.ts"
-import { advanceOnIdle, composeArgs, createState, resume, resumeAtBuild, resumeAtPlanGate } from "./state.ts"
+import {
+  advanceOnIdle,
+  clearLoop,
+  composeArgs,
+  createState,
+  findSessionDriving,
+  resume,
+  resumeAtBuild,
+  resumeAtPlanGate,
+  setLoop,
+} from "./state.ts"
 
 const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks" }
 
@@ -222,4 +232,26 @@ test("composeArgs omits the URL suffix when only azureId is set", () => {
 test("composeArgs omits the Azure line entirely when the task has no azureId", () => {
   const task = { id: "t", path: "/p", acceptance: [] }
   assert.doesNotMatch(composeArgs(createState("g", task), "plan"), /Azure DevOps/)
+})
+
+// --- findSessionDriving (recover's live-loop guard) ---
+
+test("findSessionDriving locates the session whose loop drives a task id", () => {
+  const task = { id: "add-foo", path: "/p", acceptance: [] }
+  setLoop("ses-1", createState("g", task))
+  try {
+    assert.equal(findSessionDriving("add-foo"), "ses-1")
+    assert.equal(findSessionDriving("other-task"), undefined)
+  } finally {
+    clearLoop("ses-1")
+  }
+})
+
+test("findSessionDriving ignores free-text loops with no task ref", () => {
+  setLoop("ses-2", createState("just a goal"))
+  try {
+    assert.equal(findSessionDriving("just a goal"), undefined)
+  } finally {
+    clearLoop("ses-2")
+  }
 })

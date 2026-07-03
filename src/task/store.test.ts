@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Task } from "./schema.ts"
-import { extractPlan, hasPlan, isClaimable, PLAN_HEADING, selectNext, wasInterrupted } from "./store.ts"
+import { extractPlan, hasPlan, isClaimable, isRecoverable, PLAN_HEADING, selectNext, wasInterrupted } from "./store.ts"
 
 const task = (id: string, priority: number, body = ""): Task => ({
   id,
@@ -93,4 +93,23 @@ test("isClaimable is false when a plan exists and the last build start is unmatc
 test("isClaimable is true when a plan exists and there are zero build markers", () => {
   const body = `${PLAN_HEADING}\n\n1. Do the thing.`
   assert.equal(isClaimable(task("a", 0, body)), true)
+})
+
+test("isRecoverable is false when there is no plan", () => {
+  assert.equal(isRecoverable(task("a", 0, "> BUILD started (iteration 1)")), false)
+})
+
+test("isRecoverable is false when a planned task was never started", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.`
+  assert.equal(isRecoverable(task("a", 0, body)), false)
+})
+
+test("isRecoverable is true once a planned task has any build marker", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.\n\n> BUILD started (iteration 1)`
+  assert.equal(isRecoverable(task("a", 0, body)), true)
+})
+
+test("isRecoverable stays true after a matched finish (recover is for any stuck started task)", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do it.\n\n> BUILD started (iteration 1)\n> BUILD finished (iteration 1)`
+  assert.equal(isRecoverable(task("a", 0, body)), true)
 })

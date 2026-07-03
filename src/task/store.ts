@@ -18,7 +18,6 @@ type FileRef = { readonly id: string; readonly path: string }
 
 export type TaskStatus = "draft" | "in-planning" | "in-progress" | "completed" | "abandoned"
 
-const inPlanningDir = (tasksDir: string): string => `${tasksDir}/in-planning`
 const isMarkdown = (name: string): boolean => name.toLowerCase().endsWith(".md")
 
 /** Pick the next task: lowest priority number, ties broken by id. Pure. */
@@ -48,6 +47,13 @@ export const extractPlan = (task: Task): string | undefined => {
   if (idx === -1) return undefined
   return task.body.slice(idx + PLAN_HEADING.length).trim()
 }
+
+/**
+ * Planned and started at least once — no longer claimable by `/loop watch`,
+ * but a human can force-resume it with `/loop recover <id>` once no live
+ * loop is driving it (crashed runs, restarted plugins). Pure.
+ */
+export const isRecoverable = (task: Task): boolean => hasPlan(task) && task.body.includes("> BUILD started")
 
 /**
  * Whether the task's last recorded BUILD run has no matching "finished" note —
@@ -106,15 +112,16 @@ export const listInPlanning = (client: Client, directory: string, tasksDir: stri
 export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "in-progress", log)
 
-/** Resolve a specific in-planning task by id, or null if missing/invalid. */
-export const findById = async (
+/** Resolve a specific task by id within a status folder, or null if missing/invalid. */
+export const findByIdIn = async (
   client: Client,
   directory: string,
   tasksDir: string,
+  status: TaskStatus,
   id: string,
 ): Promise<Task | null> => {
   const filename = `${id}.md`
-  const rel = `${inPlanningDir(tasksDir)}/${filename}`
+  const rel = `${tasksDir}/${status}/${filename}`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
   const content = read?.data?.content
   if (!content) return null
@@ -123,6 +130,30 @@ export const findById = async (
   } catch {
     return null
   }
+}
+
+/** Resolve a specific in-planning task by id, or null if missing/invalid. */
+export const findById = (client: Client, directory: string, tasksDir: string, id: string): Promise<Task | null> =>
+  findByIdIn(client, directory, tasksDir, "in-planning", id)
+
+/** Directory of atomic claim markers, alongside the task files of one status folder. */
+const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
+
+/**
+ * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
+ * the marker either succeeds — claim won — or fails because another watcher
+ * on this filesystem already holds it. Closes the window between listing
+ * claimable tasks and appending the `> BUILD started` note.
+ */
+export const claimTask = async ($: Shell, task: FileRef): Promise<boolean> => {
+  await $`mkdir -p ${claimsDir(task.path)}`.quiet().nothrow()
+  const out = await $`mkdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
+  return out.exitCode === 0
+}
+
+/** Release a task's claim marker, if present. Best-effort. */
+export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
+  await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
 }
 
 /** Move a task file into a new status folder. Returns its new absolute path. */
@@ -135,6 +166,7 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
   if (out.exitCode !== 0) {
     throw new Error(`could not move ${task.id} → ${toStatus}: ${out.stderr.toString().trim()}`)
   }
+  await releaseClaim($, task) // a claim belongs to the status folder it was taken in
   return dest
 }
 
