@@ -80,7 +80,7 @@ stage so the verdict checks each criterion.
    first human gate; it's the decision to start planning it.
 3. **Plan it** — `/loop next` picks the lowest-`priority` task in
    `in-planning/` that doesn't already have a plan (ties by id) and starts
-   the loop on it (DEFINE→PLAN). `/loop task <id>` runs one specific task; if
+   the loop on it (PLAN). `/loop task <id>` runs one specific task; if
    it already has a persisted plan, this resumes straight to the
    plan-approval gate instead of re-planning. The task stays in
    `in-planning/` through this whole step, including while the generated

@@ -23,7 +23,7 @@ const ConfigSchema = z.object({
    * branched on in plugin code — validated here so a typo'd value fails
    * fast like every other knob.
    */
-  interviewBeforeDefine: z.boolean().default(true),
+  interviewBeforePlan: z.boolean().default(true),
   /** Repo-relative root of the task backlog; its subfolders are task statuses. */
   tasksDir: z.string().min(1).default("docs/tasks"),
 })

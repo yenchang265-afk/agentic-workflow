@@ -3,7 +3,7 @@ import { LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict } from "./verdict.ts"
 /**
  * Loop state machine for the agentic loop:
  *
- *   define → plan → [gate] → build → verify → review
+ *   plan → [gate] → build → verify → review
  *
  * The transition helpers here are **pure**: given a state (and config) they
  * return a new state plus an `Action` describing what the driver should do, and
@@ -14,19 +14,19 @@ import { LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict } from "./verdict.ts"
  * itself may be wrong); a REVIEW FAIL re-builds (the plan was fine, the
  * implementation wasn't). Both share one iteration counter and cap.
  *
- * DEFINE and PLAN are the **planning** phase — approving the plan gate parks
- * it as a backlog task rather than continuing into BUILD in the same
- * session (see `driver.ts`'s `parkApprovedPlan`). A `/loop watch` session
- * later claims a parked task and enters this same state machine directly at
- * `build` via `resumeAtBuild` — the transition logic below doesn't know or
- * care whether it got there via `createState`'s "define" start or a claim's
- * "build" start; `composeArgs`/`advanceOnIdle` are identical either way.
+ * PLAN is the **planning** phase — approving the plan gate parks it as a
+ * backlog task rather than continuing into BUILD in the same session (see
+ * `driver.ts`'s `parkApprovedPlan`). A `/loop watch` session later claims a
+ * parked task and enters this same state machine directly at `build` via
+ * `resumeAtBuild` — the transition logic below doesn't know or care whether
+ * it got there via `createState`'s "plan" start or a claim's "build" start;
+ * `composeArgs`/`advanceOnIdle` are identical either way.
  */
 
-export type Stage = "define" | "plan" | "build" | "verify" | "review"
+export type Stage = "plan" | "build" | "verify" | "review"
 
 /** The stages in loop order. */
-export const STAGES: readonly Stage[] = ["define", "plan", "build", "verify", "review"]
+export const STAGES: readonly Stage[] = ["plan", "build", "verify", "review"]
 
 /** Link to the backlog task driving the loop, when started from one. */
 export interface TaskRef {
@@ -70,10 +70,10 @@ export interface Config {
   readonly tasksDir: string
 }
 
-/** Fresh state for a new loop; the driver fires define right after creating it. */
+/** Fresh state for a new loop; the driver fires plan right after creating it. */
 export const createState = (goal: string, task?: TaskRef): LoopState => ({
   goal,
-  stage: "define",
+  stage: "plan",
   iteration: 0,
   paused: false,
   artifacts: {},
@@ -120,7 +120,6 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
     parts.push(`Linked Azure DevOps work item: #${azureId}${azureUrl ? ` — ${azureUrl}` : ""}`)
   }
   if (target === "plan") {
-    if (a.define) parts.push(`Spec:\n${a.define}`)
     if (a.plan) parts.push(`Previous plan:\n${a.plan}`)
     if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
     if (accept.length) parts.push(acceptBlock("Acceptance criteria (the plan must satisfy each):"))
@@ -155,9 +154,6 @@ export const advanceOnIdle = (
   const s = withArtifact(state, state.stage, output)
 
   switch (s.stage) {
-    case "define":
-      return fire(s, "plan")
-
     case "plan":
       if (config.gateBeforeBuild) {
         const message =

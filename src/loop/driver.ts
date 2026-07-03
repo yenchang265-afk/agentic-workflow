@@ -48,8 +48,8 @@ import {
  * requirement out of the unattended stage loop entirely — nothing is queued
  * until a human turn explicitly calls `loop_begin`.
  *
- * DEFINE and PLAN are the **planning phase** — fully interactive, one
- * session. Approving the plan gate for the first time (`state.iteration ===
+ * PLAN is the **planning phase** — fully interactive, one session.
+ * Approving the plan gate for the first time (`state.iteration ===
  * 0`) does **not** continue into BUILD in this session anymore — it **parks**
  * the approved plan as a durable task in `in-progress/` (`parkApprovedPlan`).
  * A task-driven loop's plan is already on disk from the gate, so parking

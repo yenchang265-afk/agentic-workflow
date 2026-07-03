@@ -5,7 +5,7 @@ subtask: true
 ---
 
 Run the **VERIFY** stage of the agentic engineering loop
-(define → plan → build → verify → review) on:
+(plan → build → verify → review) on:
 
 **$ARGUMENTS**
 

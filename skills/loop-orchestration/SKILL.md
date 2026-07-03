@@ -1,30 +1,33 @@
 ---
 name: loop-orchestration
-description: Explains the automatic agentic engineering loop (define → plan → build → verify → review) driven by the OpenCode `/loop` plugin command. Use when you need to understand how /loop advances stages, where the human gate is, the LOOP_VERIFY/LOOP_REVIEW verdict contracts, or how the loop terminates.
+description: Explains the automatic agentic engineering loop (plan → build → verify → review) driven by the OpenCode `/loop` plugin command. Use when you need to understand how /loop advances stages, where the human gate is, the LOOP_VERIFY/LOOP_REVIEW verdict contracts, or how the loop terminates.
 ---
 
 # The agentic loop
 
 ## Overview
 
-`/loop <goal>` drives the full engineering lifecycle — DEFINE, PLAN, BUILD,
-VERIFY, REVIEW — as one automatic pipeline instead of five manual slash
+`/loop <goal>` drives the full engineering lifecycle — PLAN, BUILD,
+VERIFY, REVIEW — as one automatic pipeline instead of four manual slash
 commands. The OpenCode plugin (`src/index.ts` → `src/loop/`) advances stages on
 `session.idle`, threading each stage's output into the next as context, and
 pausing at one human gate so nothing gets edited without sign-off.
 
-There used to be a sixth stage, SHIP, that drafted a PR description and
-rollback plan after REVIEW passed. It's been removed pending a redesign — a
-REVIEW PASS now finishes the loop directly; ship the diff yourself.
+There used to be a separate DEFINE stage before PLAN (turning the raw goal
+into a spec) and a SHIP stage after REVIEW (drafting a PR description and
+rollback plan). Both have been removed: DEFINE's scoping job (problem,
+non-goals, assumptions) was folded into PLAN's own output, since its spec was
+only ever consumed once, by the very next stage; a REVIEW PASS now finishes
+the loop directly — ship the diff yourself.
 
-The pipeline is split across **two sessions**: DEFINE/PLAN are the
-interactive **planning** phase; BUILD/VERIFY/REVIEW are the **execution**
-phase, run by a separate `/loop watch` session that claims a parked, approved
-plan. See "Planning and execution are separate sessions" below.
+The pipeline is split across **two sessions**: PLAN is the interactive
+**planning** phase; BUILD/VERIFY/REVIEW are the **execution** phase, run by
+a separate `/loop watch` session that claims a parked, approved plan. See
+"Planning and execution are separate sessions" below.
 
 ## When to Use
 
-- Use when a goal or backlog task should run the whole DEFINE→REVIEW lifecycle
+- Use when a goal or backlog task should run the whole PLAN→REVIEW lifecycle
   unattended after the gate, instead of invoking `/spec`, `/plan`, `/build`,
   `/test`, `/review` one at a time.
 - Use when picking up or resuming a task from `docs/tasks/in-planning/`
@@ -39,7 +42,7 @@ plan. See "Planning and execution are separate sessions" below.
 
 ```
 planning session:
-  /loop <goal> ─▶ [clarify?] ─▶ DEFINE ─▶ PLAN ─GATE(/loop go)─▶ [park]
+  /loop <goal> ─▶ [clarify?] ─▶ PLAN ─GATE(/loop go)─▶ [park]
                                                                      │
                                                      durable task in in-progress/
                                                                      │
@@ -54,12 +57,12 @@ watch session (/loop watch, separate session, polls on session.idle):
                                                                               (iteration++, inline)
 ```
 
-A free-text `/loop <goal>` doesn't queue DEFINE directly — the `/loop`
+A free-text `/loop <goal>` doesn't queue PLAN directly — the `/loop`
 command's own turn first judges the goal against `interview-me`'s own
 criteria and, if it's underspecified, runs a live interview with the user
 right there. Either way, that turn calls the `loop_begin` plugin tool with
-the final goal text, which is what actually queues DEFINE. This is
-conditional and configurable (see `interviewBeforeDefine` below) — a clear
+the final goal text, which is what actually queues PLAN. This is
+conditional and configurable (see `interviewBeforePlan` below) — a clear
 goal skips straight through with no questions. `/loop next` / `/loop task
 <id>` skip this entirely; a backlog task has already been through
 `task-author`'s own interview/confirmation and the `draft/ → in-planning/`
@@ -67,15 +70,14 @@ human gate (see `task-backlog-management`).
 
 | Stage | Writes code? | Role |
 |-------|--------------|------|
-| define | no | turns the raw goal into a short spec (problem, goals, non-goals, acceptance boundaries) |
-| plan | no | reads the code itself; ordered, review-sized plan + testable acceptance criteria |
+| plan | no | reads the code itself; sharpens the raw goal into a bounded problem statement (problem, non-goals, assumptions), then an ordered, review-sized plan + testable acceptance criteria |
 | build | **yes** | implements the approved plan test-first, or applies a REVIEW stage's fix requests on a re-build |
 | verify | no | runs tests, checks acceptance criteria, emits `LOOP_VERIFY: PASS`/`FAIL` |
 | review | no | five-axis code review of the diff, emits `LOOP_REVIEW: PASS`/`FAIL` |
 
 ## Process
 
-1. `/loop <goal>` — start; runs DEFINE then PLAN, then pauses at the plan gate.
+1. `/loop <goal>` — start; runs PLAN, then pauses at the plan gate.
 2. `/loop go` — approve the plan. **The first approval parks it**: a
    task-driven loop's plan was already persisted at the gate, so parking just
    moves the file to `in-progress/`; a free-text loop is promoted into a real
@@ -100,14 +102,14 @@ human gate (see `task-backlog-management`).
 
 ## Planning and execution are separate sessions
 
-- **Clarify (conditional, before DEFINE).** Only for a free-text `/loop
+- **Clarify (conditional, before PLAN).** Only for a free-text `/loop
   <goal>` judged underspecified. Runs live in `/loop`'s own turn, backed by
   the `interview-me` skill — one question at a time until there's an
   explicit yes on a restated intent. Nothing is queued until that turn calls
-  `loop_begin`. Configurable (`interviewBeforeDefine`); off entirely for
+  `loop_begin`. Configurable (`interviewBeforePlan`); off entirely for
   task-driven starts, which already went through `task-author` and the
   `draft/ → in-planning/` gate instead.
-- **Plan → park (always on by default).** DEFINE and PLAN never touch a
+- **Plan → park (always on by default).** PLAN never touches a
   file. Nothing gets edited until a human runs `/loop go` at the plan gate —
   that is the sign-off before any code is written. The first `/loop go`
   parks the approved plan as a task in `in-progress/` rather than continuing
@@ -176,7 +178,7 @@ Optional `.agentic-loop.json` at the repo root — every field has a default:
 {
   "maxIterations": 3,           // shared cap on verify-FAIL re-plans + review-FAIL re-builds
   "gateBeforeBuild": true,      // pause for plan approval before build edits anything
-  "interviewBeforeDefine": true, // allow interview-me on an underspecified free-text goal, before DEFINE
+  "interviewBeforePlan": true,  // allow interview-me on an underspecified free-text goal, before PLAN
   "tasksDir": "docs/tasks"      // root of the task backlog — see task-backlog-management
 }
 ```

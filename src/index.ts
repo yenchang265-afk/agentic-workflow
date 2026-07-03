@@ -9,10 +9,10 @@ import { hasLoop } from "./loop/state.ts"
  *
  * opencode plugin that drives the engineering workflow as an automatic loop:
  *
- *   define → plan → build → verify → review
+ *   plan → build → verify → review
  *
- * `/loop <goal>` starts it; the plugin runs define then plan, pauses for a
- * human plan-approval gate (`/loop go`), then runs build → verify → review
+ * `/loop <goal>` starts it; the plugin runs plan, pauses for a human
+ * plan-approval gate (`/loop go`), then runs build → verify → review
  * to completion. A verify FAIL re-plans; a review FAIL re-builds — both
  * within the iteration cap. The control surface lives in `loop/driver.ts`;
  * the pure state machine in `loop/state.ts`.
@@ -68,7 +68,7 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
           "either judged unambiguous per the interview-me skill's own criteria, or confirmed via a " +
           "live interview-me exchange with the user. Call exactly once, at the end of that command's " +
           "own turn, with the final goal text (the confirmed restatement if an interview ran). Never " +
-          "call this from inside the automatic define/plan/build/verify/review stages.",
+          "call this from inside the automatic plan/build/verify/review stages.",
         args: {
           goal: tool.schema.string().min(1).describe("The final goal text to start the loop with."),
         },

@@ -5,21 +5,11 @@ import { advanceOnIdle, composeArgs, createState, resume, resumeAtBuild, resumeA
 
 const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks" }
 
-// --- define ---
-
-test("createState starts the loop at define", () => {
-  assert.equal(createState("add foo").stage, "define")
-})
-
-test("define auto-advances to plan", () => {
-  const s = { ...createState("g"), stage: "define" as const }
-  const { state, action } = advanceOnIdle(s, config, "the spec")
-  assert.equal(state.stage, "plan")
-  assert.equal(action.kind, "fire")
-  if (action.kind === "fire") assert.equal(action.stage, "plan")
-})
-
 // --- plan → build gate ---
+
+test("createState starts the loop at plan", () => {
+  assert.equal(createState("add foo").stage, "plan")
+})
 
 test("plan gates before build when gateBeforeBuild is on", () => {
   const s = { ...createState("g"), stage: "plan" as const }
@@ -180,8 +170,7 @@ test("an unparseable review verdict is treated as FAIL", () => {
 // --- composeArgs ---
 
 test("composeArgs threads only the relevant prior artifacts", () => {
-  const s = { ...createState("goalX"), artifacts: { define: "SPEC", plan: "P", build: "B", review: "R" } }
-  assert.match(composeArgs(s, "plan"), /Spec:\nSPEC/)
+  const s = { ...createState("goalX"), artifacts: { plan: "P", build: "B", review: "R" } }
   assert.match(composeArgs(s, "build"), /Approved plan:\nP/)
   assert.match(composeArgs(s, "build"), /Review feedback to address:\nR/)
   assert.match(composeArgs(s, "verify"), /Build summary:\nB/)
@@ -218,7 +207,7 @@ test("composeArgs threads the linked Azure DevOps work item into every stage", (
     azureUrl: "https://dev.azure.com/acme/Platform/_workitems/edit/1234",
   }
   const s = createState("g", task)
-  for (const stage of ["define", "plan", "build", "verify", "review"] as const) {
+  for (const stage of ["plan", "build", "verify", "review"] as const) {
     const args = composeArgs(s, stage)
     assert.match(args, /Linked Azure DevOps work item: #1234 — https:\/\/dev\.azure\.com/)
   }

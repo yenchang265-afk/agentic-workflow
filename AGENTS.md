@@ -8,10 +8,10 @@ Guidance for AI coding agents working in this repository.
 
 1. **The automatic agentic loop** (`/loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   drives the full DEFINE→PLAN→BUILD→VERIFY→REVIEW lifecycle across **two
-   sessions**: DEFINE/PLAN plan interactively (with, for an underspecified
+   drives the full PLAN→BUILD→VERIFY→REVIEW lifecycle across **two
+   sessions**: PLAN plans interactively (with, for an underspecified
    free-text goal, a conditional `interview-me`-backed clarification before
-   DEFINE) and park the approved plan as a task; a separate `/loop watch`
+   PLAN) and parks the approved plan as a task; a separate `/loop watch`
    session claims and builds it (BUILD→VERIFY→REVIEW). Use this when a goal
    should run the whole lifecycle largely unattended. See the
    `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
@@ -46,8 +46,7 @@ Guidance for AI coding agents working in this repository.
 `loop-orchestration`). Outside the loop, follow it as an implicit sequence of
 skill invocations instead:
 
-- DEFINE → `spec-driven-development`
-- PLAN → `planning-and-task-breakdown`
+- PLAN → `spec-driven-development` + `planning-and-task-breakdown`
 - BUILD → `incremental-implementation` + `test-driven-development`
 - VERIFY → `debugging-and-error-recovery`
 - REVIEW → `code-review-and-quality`
@@ -75,7 +74,7 @@ Correct behavior: always check for and use skills first.
 
 - `src/index.ts`, `src/loop/`, `src/task/`, `src/config.ts` — plugin implementation (state machine, driver, task backlog IO)
 - `.opencode/agents/` — the agent personas backing each `/loop` stage
-- `.opencode/commands/` — the slash commands (`/loop`, `/define`, `/plan`, `/build`, `/verify`, `/review`, `/task`)
+- `.opencode/commands/` — the slash commands (`/loop`, `/plan`, `/build`, `/verify`, `/review`, `/task`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

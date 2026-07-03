@@ -5,15 +5,14 @@ supervised state machine instead of a chat back-and-forth.
 
 ## What it does
 
-`/loop <goal>` moves a goal through five stages across **two sessions**,
+`/loop <goal>` moves a goal through four stages across **two sessions**,
 pausing only where a human decision actually matters. An underspecified goal
-is interviewed (`interview-me`) before DEFINE even starts; a clear goal
+is interviewed (`interview-me`) before PLAN even starts; a clear goal
 skips straight through:
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
-| DEFINE | Turns the goal into a spec | no |
-| PLAN | Breaks the spec into tasks | **yes — approve & park the plan** |
+| PLAN | Turns the goal into a spec-bounded, ordered plan | **yes — approve & park the plan** |
 | BUILD | Implements task-driven, test-first | no (runs in a `/loop watch` session) |
 | VERIFY | Runs tests; FAIL re-plans with the failure | no |
 | REVIEW | Checks the diff; FAIL re-builds with feedback | no |
@@ -27,7 +26,7 @@ REVIEW PASS.
 
 ## Commands
 
-- `/loop <goal>` — clarify if needed, then start; runs DEFINE + PLAN, then pauses
+- `/loop <goal>` — clarify if needed, then start; runs PLAN, then pauses
 - `/loop next` — start on the top task in `docs/tasks/in-planning/`
 - `/loop task <id>` — start on a specific in-planning task
 - `/loop go` — approve the current gate (first approval parks it for execution)
