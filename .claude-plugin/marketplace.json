@@ -1,0 +1,11 @@
+{
+  "name": "agentic-loop",
+  "owner": { "name": "agentic-loop" },
+  "plugins": [
+    {
+      "name": "agentic-loop",
+      "source": "./claude-plugin",
+      "description": "Supervised PLAN → BUILD → VERIFY → REVIEW loop for Claude Code: human plan gate, git isolation, trusted verdicts, task backlog, audit trail."
+    }
+  ]
+}
