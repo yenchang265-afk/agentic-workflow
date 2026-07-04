@@ -95,14 +95,16 @@ human gate (see `task-backlog-management`).
      in that same watch session — only the *first* approval parks.
 4. On a REVIEW PASS, the loop is done and the task moves to `in-review/` —
    the human diff gate. Review `git diff <base>...loop/<id>` yourself, push
-   and open the PR, then move the task to `completed/` when it ships — the
-   loop never does those steps for you.
+   and open the PR, then run `/loop ship <id>` to move the task to
+   `completed/` (an audited move) — the loop never does those steps for you.
 5. `/loop stop` aborts, cancels a clarification, and exits watch mode, all at
    once; `/loop unwatch` exits watch mode alone (a build already claimed still
-   finishes); `/loop status` shows the current stage, iteration, pause state,
-   and whether this session is watching; `/loop recover <id>` resumes an
-   in-progress task whose run died mid-build (crash/restart) from its
-   persisted plan — plugin startup logs any such interrupted tasks it finds.
+   finishes); `/loop status` shows the current loop plus a whole-backlog
+   roll-up (counts + gated/claimable/interrupted/in-review flags); `/loop
+   recover <id>` resumes an in-progress task whose run died mid-build
+   (crash/restart) — from its **state snapshot** at the exact stage it
+   reached, or from the persisted plan when no valid snapshot exists. Plugin
+   startup logs any interrupted tasks and leftover snapshots it finds.
 
 ## Planning and execution are separate sessions
 
@@ -144,11 +146,15 @@ another watcher on the same filesystem got there first. The
 `> BUILD started` note remains the human-readable audit record; the marker
 directory is the lock.
 
-Within one opencode instance, a per-directory execution lock additionally
-serializes drives — all sessions share one working tree and one checked-out
-branch, so only one loop may run stages in it at a time. **Not covered:**
-separate opencode *processes* sharing one clone. Run additional watchers in
-their own clones or git worktrees.
+In **shared-tree mode** (default), a per-directory execution lock additionally
+serializes drives within one opencode instance — all sessions share one
+working tree and one checked-out branch, so only one loop may run stages in it
+at a time. In **worktree mode** (`worktreesDir` set) each loop owns its own
+worktree, so that lock is dropped and multiple `/loop watch` sessions can
+drive different tasks concurrently in one instance. **Not covered either way:**
+separate opencode *processes* racing the same backlog clone on `index.lock`
+during backlog commits (best-effort). Run additional watchers in their own
+clones for hard isolation.
 
 ## The verdict contracts
 
@@ -169,11 +175,18 @@ ERROR    # the check itself could not run (broken environment) → stop for a hu
 No tool call at all is treated as FAIL, not as a stall — the loop still
 terminates via the iteration cap rather than hanging indefinitely.
 
+The tool also accepts optional `reason` (a one-line summary) and `criteria`
+(per-acceptance-criterion `{criterion, pass}` results). These steer only the
+**next iteration's prompt** — the failed criteria are threaded ahead of the
+stage's prose so the re-plan/re-build leads with what actually failed — never
+control flow, which remains `verdict` alone. They arrive through the same
+trusted tool call as the verdict, so they carry no extra trust.
+
 ## Termination
 
 - **REVIEW PASS** → loop done; the task moves to `in-review/`. Review
-  `git diff <base>...loop/<id>`, push/open the PR, then move the task to
-  `completed/` when it ships.
+  `git diff <base>...loop/<id>`, push/open the PR, then run `/loop ship <id>`
+  to move the task to `completed/`.
 - **FAIL** (verify or review) and `iteration + 1 < maxIterations` → loop back
   (re-plan or re-build) with the failure feedback threaded in.
 - **FAIL** and the cap is reached → stop and report. Default `maxIterations`
@@ -186,11 +199,17 @@ terminates via the iteration cap rather than hanging indefinitely.
 ## Audit trail
 
 Every lifecycle event — plan recorded, plan approved (with the approver's
-git identity), build start/finish, each verdict, stop, recovery, completion
-— is appended to the task file as a timestamped note, and each stage's full
-output is written to `<tasksDir>/runs/<id>.md`. Planning-phase backlog
-mutations are committed scoped to the tasks dir; execution-phase notes ride
-the branch checkpoints. See `docs/design/threat-model.md`.
+git identity), build start/finish, each verdict (with its reason and any
+failed criteria), stop, recovery, completion — is appended to the task file
+as a timestamped note, and each stage's full output is written to
+`<tasksDir>/runs/<id>.md`. On termination the run log also gets a
+`## Run summary` table: per-stage wall-clock, verdict history, and iterations
+used. Secrets echoed into any of these durable artifacts are shape-redacted
+(`AKIA…`, `sk-…`, tokens, PEM blocks, `key/secret/token: …`) before they are
+written. Planning-phase backlog mutations are committed scoped to the tasks
+dir; execution-phase notes ride the branch checkpoints in shared-tree mode, or
+are committed to the main tree per terminal event in worktree mode. See
+`docs/design/threat-model.md`.
 
 ## Config
 
@@ -202,9 +221,28 @@ Optional `.agentic-loop.json` at the repo root — every field has a default:
   "gateBeforeBuild": true,      // pause for plan approval before build edits anything
   "interviewBeforePlan": true,  // allow interview-me on an underspecified free-text goal, before PLAN
   "tasksDir": "docs/tasks",     // root of the task backlog — see task-backlog-management
-  "stageTimeoutMinutes": 60     // wall-clock cap per stage; exceeding it fails the loop
+  "stageTimeoutMinutes": 60,    // wall-clock cap per stage; exceeding it fails the loop
+  "worktreesDir": ".loop-worktrees", // OPTIONAL: per-task git worktree isolation (unset ⇒ shared-tree branch switching)
+  "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out)
+  "reviewLenses": ["correctness", "security", "test-adequacy"] // OPTIONAL: multi-pass review, worst verdict wins
 }
 ```
+
+**Worktree isolation** (`worktreesDir`): each loop's BUILD/VERIFY/REVIEW runs
+in its own `git worktree` on the `loop/<id>` branch instead of switching the
+shared checkout's branch. The human's tree is never touched, and multiple
+`/loop watch` sessions can drive tasks concurrently in one instance (the
+per-directory serialization lock is dropped in this mode). Stage prompts carry
+a `Worktree:` line pinning all reads/edits/tests there; VERIFY/REVIEW
+allowlists accept `cd <worktree> && <runner>` and `git -C <worktree> …`. The
+task backlog stays canonical in the main tree — audit notes and moves are
+committed there per terminal event. Off by default. See
+`docs/design/improvements/01`.
+
+**Multi-lens review** (`reviewLenses`): REVIEW runs once per lens, each pass
+focused on that lens, and the loop takes the **worst** verdict across passes —
+a single prompt-injected reviewer can't wave a change through (threat model
+T1). Costs ~N× review time. Off by default (single review).
 
 ## Common Rationalizations
 
@@ -231,7 +269,7 @@ Optional `.agentic-loop.json` at the repo root — every field has a default:
 - A stale `.claims/<id>` marker for a task with no live loop — the claiming
   run died; `/loop recover <id>` re-claims and resumes it.
 - A task sitting in `in-review/` — that's not a stall, it's the human diff
-  gate; review the branch and move it to `completed/` when it ships.
+  gate; review the branch and run `/loop ship <id>` when it ships.
 
 ## Verification
 

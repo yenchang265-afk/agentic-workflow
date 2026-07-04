@@ -39,7 +39,11 @@ persuading the agent the check passed.
   tool call is a FAIL. Injected text cannot call tools by itself.
 - **Residual:** an injection that persuades the *agent* to call the tool
   with PASS. Mitigated by the iteration cap, the human diff review after
-  REVIEW, and the loop never pushing.
+  REVIEW, and the loop never pushing. Optionally hardened further by
+  `reviewLenses`: REVIEW runs once per lens and the loop takes the worst
+  verdict, so a single persuaded reviewer can't flip the outcome — an
+  injection would have to survive every lens's independent pass. Residual
+  shrinks to N simultaneous persuasions.
 
 ### T2. A "read-only" check stage mutates state or exfiltrates data
 
@@ -62,11 +66,17 @@ One task's half-finished diff leaks into another task's build or review.
 
 - **Control:** each execution runs on its own `loop/<id>` branch with a
   commit checkpoint per build iteration; REVIEW is told the exact
-  `git diff base...branch` boundary. A per-directory lock serializes
-  drives within one opencode instance; an atomic claim marker prevents two
-  watchers from taking the same task.
-- **Residual:** two *separate opencode processes* sharing one clone are not
-  serialized — run extra watchers in their own clones or worktrees.
+  `git diff base...branch` boundary; an atomic claim marker prevents two
+  watchers from taking the same task. In shared-tree mode a per-directory
+  lock also serializes drives within one opencode instance. With
+  `worktreesDir` set, each execution runs in its **own git worktree**, so the
+  shared checkout is never branch-switched under a concurrent drive and the
+  serialization lock is unnecessary — same-instance concurrent watchers are
+  safe.
+- **Residual:** two *separate opencode processes* sharing one clone still
+  race the main tree's `index.lock` when committing backlog mutations
+  (best-effort, degrades gracefully). Run extra watchers in their own clones
+  for hard isolation.
 
 ### T4. Unauditable or spoofable approvals
 
@@ -76,8 +86,10 @@ Change management needs who/what/when for every gate decision.
   start/finish, verdicts, stop, recovery, completion) is appended to the
   task file as a timestamped note attributed to the machine's git identity,
   and backlog mutations are committed (planning-phase commits scoped to the
-  tasks dir; execution-phase notes ride the branch checkpoints). Full stage
-  outputs land in `<tasksDir>/runs/<id>.md`.
+  tasks dir; execution-phase notes ride the branch checkpoints in shared-tree
+  mode, or are committed to the main tree per terminal event in worktree
+  mode). Full stage outputs land in `<tasksDir>/runs/<id>.md`, plus a
+  `## Run summary` with per-stage timings and verdict history on termination.
 - **Residual:** the actor is the *configured* git identity, not an
   authenticated one. For hard identity guarantees, gate approvals through
   your forge instead (protected branches + PR review of the parked plan).
@@ -96,12 +108,17 @@ A stage hangs forever, or FAIL loops burn unbounded tokens.
 Plans, build summaries, and run logs are written to files that may be
 committed.
 
-- **Control (partial):** stages have no reason to read secret files, and
-  REVIEW's checklist flags secret handling in the diff.
-- **Residual:** nothing redacts a secret an agent echoes into its output
-  before it lands in `runs/` or a task note. Keep secrets out of the
-  working tree (use a secret manager); treat `runs/` as sensitive when the
-  environment holds credentials.
+- **Control:** every write to a durable artifact (audit notes, persisted
+  plans, run logs) passes through a **shape-based redactor** first — AWS
+  keys, `sk-`/`sk-ant-` keys, GitHub/Slack tokens, JWTs, PEM private-key
+  blocks, and `key/secret/token/password: …` assignments are replaced with
+  `[REDACTED:<pattern>]` (the pattern names, never values, are logged). Stages
+  also have no reason to read secret files, and REVIEW's checklist flags
+  secret handling in the diff.
+- **Residual:** redaction is shape-based, so a custom-format secret (e.g. an
+  internal token shaped like a UUID) can still slip through. Defense in depth
+  remains: keep secrets out of the working tree (use a secret manager) and
+  treat `runs/` as sensitive when the environment holds credentials.
 
 ## Non-goals
 

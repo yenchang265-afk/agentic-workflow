@@ -1,6 +1,6 @@
 ---
 name: task-backlog-management
-description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running /loop next or /loop task <id>, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/completed/abandoned).
+description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running /loop next or /loop task <id>, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
 ---
 
 # The task backlog
@@ -32,7 +32,8 @@ docs/tasks/
   draft/        # WIP, not ready                ← you write here
   in-planning/  # queued for / undergoing plan   ← you move here (gate 1)
   in-progress/  # build → verify → review        ← the driver moves here (on plan approval)
-  completed/    # loop finished (review passed)  ← the driver moves here
+  in-review/    # review passed, human diff gate ← the driver moves here automatically
+  completed/    # shipped                        ← you move here, once the PR merges
   abandoned/    # won't do                       ← you move here, from any status
 ```
 
@@ -145,13 +146,15 @@ PR description can reference the source work item.
 |------------|-----|------|
 | `draft → in-planning` | **you** | the task is worth planning; this is the first human gate |
 | `in-planning → in-progress` | driver | automatic, the instant a plan is approved (`/loop go` at the plan gate) — parks it; a later `/loop watch` session claims and builds it |
-| `in-progress → completed` | driver | the loop finishes (verify PASS and review PASS), from inside whichever `/loop watch` session claimed it |
+| `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS, from inside whichever `/loop watch` session claimed it — parks it as the human diff gate |
+| `in-review → completed` | **you** | you've reviewed the diff and shipped it — run `/loop ship <id>` (an audited move + commit) or move the file by hand; the loop never does this move on its own |
 | stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
 | `→ abandoned` | **you** | you decide not to do it, from any status |
 
-Only one status transition is manual on the "start" side: `draft →
-in-planning`. Everything past that point — `in-planning → in-progress` on
-plan approval, `in-progress → completed` on a review PASS — is the driver
+Only two status transitions are manual: `draft → in-planning` (the
+decision to plan it) and `in-review → completed` (the decision that it's
+actually shipped). Everything in between — `in-planning → in-progress` on
+plan approval, `in-progress → in-review` on a review PASS — is the driver
 recording a decision that already happened (a human ran `/loop go`, or the
 pipeline finished), not a second layer of file-moving bureaucracy.
 
@@ -220,7 +223,7 @@ re-plan and restart it cleanly (or finish/fix it up by hand).
 | "Skip in-planning/, edit the task straight in draft/ to 'run' it" | `/loop next` and `/loop task <id>` only look in `in-planning/` — moving it there isn't bureaucracy, it's the actual trigger and the human gate. |
 | "The MCP server's connected, just create the Azure work item without asking" | Creating a work item is a write to a real, shared Azure DevOps project — always confirm title/project/description first, same as every other external-write gate in this repo (plan gate). |
 | "The fetched Azure work item is obviously right, skip showing the draft" | The draft-then-confirm checkpoint exists precisely because ADO fields don't map 1:1 onto acceptance criteria — a human needs to see what got inferred before it becomes the loop's goal. |
-| "Add a 6th status for 'plan ready, waiting on /loop go'" | That moment is already visible via `hasPlan()`/the toast message inside `in-planning/`. Five statuses, not six. |
+| "Add another status for 'plan ready, waiting on /loop go'" | That moment is already visible via `hasPlan()`/the toast message inside `in-planning/` — it doesn't need its own folder. `in-review` earned its own status because it's a real, driver-driven transition (review PASS), not because every gate needs one. |
 
 ## Red Flags
 
@@ -230,9 +233,14 @@ re-plan and restart it cleanly (or finish/fix it up by hand).
   that nobody has checked `git status` against yet.
 - More than ~5 new draft tasks appearing from a single `/explore` run — the
   subagent is supposed to cap at 5 and name the overflow instead.
+- A task sitting in `in-review/` — that's not a stall, it's the human diff
+  gate; review the branch and run `/loop ship <id>` when it ships.
 - A task in `completed/` whose diff was never actually reviewed/PR'd by a
-  human — the loop moves the file on completion, but shipping the PR is still
-  a manual step.
+  human — only a human moves a task into `completed/`, so this means someone
+  moved the file (or ran `/loop ship`) without doing the review step first.
+- A task in `completed/` with no "Shipped" audit note — it was moved by a raw
+  `mv` instead of `/loop ship <id>`, so the completion isn't in the audit
+  trail.
 - An Azure DevOps work item created without the user confirming title,
   project, and description first.
 - A local task file written without ever showing its draft to the user for
@@ -251,8 +259,8 @@ re-plan and restart it cleanly (or finish/fix it up by hand).
 - [ ] Every task in `in-planning/` with a `## Implementation Plan` heading is
       either paused at the gate or actively being planned — not silently
       abandoned.
-- [ ] `docs/tasks/{draft,in-planning,in-progress,completed,abandoned}/` all
-      exist (even if empty, via `.gitkeep`) so `/explore`, `/task new`, and
+- [ ] `docs/tasks/{draft,in-planning,in-progress,in-review,completed,abandoned}/`
+      all exist (even if empty, via `.gitkeep`) so `/explore`, `/task new`, and
       the driver never fail on a missing folder.
 - [ ] Every task with `azureId` set was linked (or created) only after the
       user confirmed the details — never silently.
