@@ -44,6 +44,12 @@ export interface TaskRef {
 export interface GitRef {
   readonly base: string
   readonly branch: string
+  /**
+   * Absolute path to this loop's dedicated worktree, when worktree isolation is
+   * enabled (`worktreesDir` config). Absent ⇒ shared-tree mode: `branch` is
+   * checked out in the main tree. Present ⇒ stages run pinned to this directory.
+   */
+  readonly worktree?: string
 }
 
 export interface LoopState {
@@ -78,6 +84,12 @@ export interface Config {
   readonly tasksDir: string
   /** Wall-clock cap on a single stage before the loop gives up on it. */
   readonly stageTimeoutMinutes: number
+  /** Per-task worktree root; unset ⇒ shared-tree branch switching. */
+  readonly worktreesDir?: string
+  /** Shell command run in a fresh worktree after creation. */
+  readonly worktreeSetup?: string
+  /** Extra REVIEW lenses; each runs one more focused review pass. */
+  readonly reviewLenses: readonly string[]
 }
 
 /** Fresh state for a new loop; the driver fires plan right after creating it. */
@@ -144,11 +156,25 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)
     if (state.git) {
+      const wt = state.git.worktree
+      const diffCmd = wt
+        ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
+        : `git diff ${state.git.base}...${state.git.branch}`
       parts.push(
         `Diff boundary: this loop's work is the commits on branch ${state.git.branch} since ${state.git.base} — ` +
-          `review exactly \`git diff ${state.git.base}...${state.git.branch}\`, nothing outside it.`,
+          `review exactly \`${diffCmd}\`, nothing outside it.`,
       )
     }
+  }
+  // Worktree pinning: BUILD/VERIFY/REVIEW run in the one plugin instance, so the
+  // isolated checkout is threaded in as an instruction rather than a real cwd.
+  if (target !== "plan" && state.git?.worktree) {
+    parts.push(
+      `Worktree: this loop's isolated checkout is ${state.git.worktree} — every file you read, edit, or ` +
+        `test lives THERE, not in the repo root. Use absolute paths under it for edit/read; prefix every ` +
+        `shell command with \`cd ${state.git.worktree} && \` (or use \`git -C ${state.git.worktree} …\`). ` +
+        `Never modify anything outside it.`,
+    )
   }
   return parts.join("\n\n")
 }

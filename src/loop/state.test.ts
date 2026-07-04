@@ -13,7 +13,13 @@ import {
   setLoop,
 } from "./state.ts"
 
-const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks", stageTimeoutMinutes: 60 }
+const config: Config = {
+  maxIterations: 3,
+  gateBeforeBuild: true,
+  tasksDir: "docs/tasks",
+  stageTimeoutMinutes: 60,
+  reviewLenses: [],
+}
 
 // --- plan → build gate ---
 
@@ -271,6 +277,32 @@ test("composeArgs does not thread the diff boundary into build or verify", () =>
   const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo" } }
   assert.doesNotMatch(composeArgs(s, "build"), /Diff boundary/)
   assert.doesNotMatch(composeArgs(s, "verify"), /Diff boundary/)
+})
+
+// --- worktree isolation pinning ---
+
+test("composeArgs threads a Worktree pinning block into build/verify/review when a worktree is set", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" } }
+  for (const stage of ["build", "verify", "review"] as const) {
+    const args = composeArgs(s, stage)
+    assert.match(args, /Worktree: this loop's isolated checkout is \/wt\/add-foo/)
+    assert.match(args, /cd \/wt\/add-foo &&/)
+  }
+})
+
+test("composeArgs never threads the Worktree block into plan", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" } }
+  assert.doesNotMatch(composeArgs(s, "plan"), /Worktree:/)
+})
+
+test("composeArgs omits the Worktree block when git isolation has no worktree (shared-tree mode)", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo" } }
+  assert.doesNotMatch(composeArgs(s, "build"), /Worktree:/)
+})
+
+test("composeArgs review diff boundary uses git -C <worktree> in worktree mode", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" } }
+  assert.match(composeArgs(s, "review"), /git -C \/wt\/add-foo diff main\.\.\.loop\/add-foo/)
 })
 
 // --- findSessionDriving (recover's live-loop guard) ---

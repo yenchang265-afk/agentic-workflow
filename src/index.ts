@@ -1,9 +1,15 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
 import * as driver from "./loop/driver.ts"
-import { hasLoop } from "./loop/state.ts"
+import { listWorktrees, pruneWorktrees } from "./loop/git.ts"
+import { listSnapshotIds } from "./loop/persist.ts"
+import { getLoop, hasLoop } from "./loop/state.ts"
 import { listInProgress, wasInterrupted } from "./task/store.ts"
+
+/** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
+const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 
 /**
  * agentic-loop
@@ -55,8 +61,36 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
         `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /loop recover <id> to resume`,
       )
     }
+    // A leftover state snapshot is the strongest "this died mid-run" signal —
+    // /loop recover will resume it at the exact stage it reached.
+    const snapshots = await listSnapshotIds(client, directory, config.tasksDir)
+    if (snapshots.length) {
+      await log(
+        "warn",
+        `loop state snapshot(s) present: ${snapshots.join(", ")} — /loop recover <id> resumes at the exact stage`,
+      )
+    }
   } catch (err) {
     await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
+  }
+
+  // Worktree reconciliation: prune vanished registrations, then surface any
+  // surviving loop worktrees (a crashed run's) so a human knows they exist —
+  // never auto-delete (another process may own it; a crashed diff is evidence).
+  if (config.worktreesDir) {
+    try {
+      await pruneWorktrees($, directory)
+      const root = path.resolve(directory, config.worktreesDir)
+      const stale = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
+      for (const w of stale) {
+        await log(
+          "warn",
+          `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /loop recover will reuse it, or 'git worktree remove' it`,
+        )
+      }
+    } catch (err) {
+      await log("warn", `worktree reconciliation failed: ${(err as Error).message}`)
+    }
   }
 
   return {
@@ -71,10 +105,25 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
       await driver.handleCommand(deps, input.sessionID, input.arguments, config)
     },
 
-    "tool.execute.before": async (input) => {
+    "tool.execute.before": async (input, output) => {
       // Only trace tool calls while a loop is actively driving this session.
       if (hasLoop(input.sessionID)) {
         await log("info", `tool ${input.tool} starting (call ${input.callID})`)
+      }
+      // Worktree pinning enforcement (best-effort): while a worktree-mode loop
+      // drives this session, a file-writing tool must not touch an absolute
+      // path outside the worktree. Relative paths and non-edit tools pass
+      // through (bash pinning stays prompt-enforced — a documented residual).
+      const wt = getLoop(input.sessionID)?.git?.worktree
+      if (!wt || !EDIT_TOOLS.has(input.tool)) return
+      const filePath: unknown = output.args?.filePath ?? output.args?.path
+      if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return
+      const rel = path.relative(wt, path.resolve(filePath))
+      if (rel === "" || rel.startsWith("..")) {
+        throw new Error(
+          `agentic-loop: this loop is isolated to its worktree ${wt} — edit ${filePath} is outside it. ` +
+            `Use an absolute path under the worktree.`,
+        )
       }
     },
 

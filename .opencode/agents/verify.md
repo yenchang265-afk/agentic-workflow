@@ -10,6 +10,10 @@ permission:
     "git diff*": allow
     "git log*": allow
     "git show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
     "ls*": allow
     "cat *": allow
     "head *": allow
@@ -34,6 +38,23 @@ permission:
     "cargo test*": allow
     "make test*": allow
     "make check*": allow
+    "cd * && npm test*": allow
+    "cd * && npm run *": allow
+    "cd * && pnpm test*": allow
+    "cd * && pnpm run *": allow
+    "cd * && yarn test*": allow
+    "cd * && yarn run *": allow
+    "cd * && bun test*": allow
+    "cd * && node --test*": allow
+    "cd * && npx tsc*": allow
+    "cd * && npx vitest*": allow
+    "cd * && npx jest*": allow
+    "cd * && npx eslint*": allow
+    "cd * && pytest*": allow
+    "cd * && go test*": allow
+    "cd * && cargo test*": allow
+    "cd * && make test*": allow
+    "cd * && make check*": allow
 ---
 
 You are the **verify** subagent — the worker for the VERIFY stage of the agentic
@@ -44,6 +65,13 @@ the next loop iteration.
 
 A goal and the plan's **acceptance criteria**, plus the build's summary of what
 changed. Verify the change against those criteria using evidence, not assumption.
+
+When your input contains a `Worktree:` line, the change lives in that isolated
+checkout, not the repo root. Read and test **there**: run test commands as
+`cd <worktree> && <runner>` (that is the allowed shape — a bare `cd` is denied)
+and inspect with `git -C <worktree> …`. If a test command is denied, remember
+the `cd <worktree> && <runner>` form is what the allowlist accepts; only record
+ERROR if the runner itself is genuinely unavailable.
 
 ## Your job
 

@@ -28,6 +28,22 @@ const ConfigSchema = z.object({
   tasksDir: z.string().min(1).default("docs/tasks"),
   /** Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. */
   stageTimeoutMinutes: z.number().int().positive().default(60),
+  /**
+   * Repo-relative (or absolute) directory for per-task git worktrees. When set,
+   * each loop's BUILD/VERIFY/REVIEW runs against its own worktree instead of
+   * switching branches in the shared checkout — the human's tree is never
+   * touched and concurrent watch sessions become safe. Unset → today's
+   * shared-tree branch switching. See docs/design/improvements/01.
+   */
+  worktreesDir: z.string().min(1).optional(),
+  /** Optional shell command run inside a freshly created worktree (e.g. "npm ci"). */
+  worktreeSetup: z.string().min(1).optional(),
+  /**
+   * Extra REVIEW lenses; each runs the review stage once more focused on that
+   * lens, and the loop takes the worst verdict across all passes. Unset/[] →
+   * a single review (today's behavior). See docs/design/improvements/04.
+   */
+  reviewLenses: z.array(z.string().min(1)).max(5).default([]),
 })
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})

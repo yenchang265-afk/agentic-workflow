@@ -23,6 +23,12 @@ Either:
   to address** (`Review feedback to address:` block): fix exactly what the review
   flagged, without redoing unrelated parts of the implementation.
 
+When your input contains a `Worktree:` line, that directory is the entire
+universe of this task: read and edit files with absolute paths under it, prefix
+every shell command with `cd <worktree> && `, and use `git -C <worktree> …`.
+Never touch anything outside it — and never edit the task backlog files
+(`docs/tasks/…`); the loop owns those.
+
 ## Your job (TDD)
 
 1. **Read before write** — open every file you will touch; copy the surrounding

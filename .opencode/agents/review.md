@@ -11,6 +11,11 @@ permission:
     "git log*": allow
     "git show*": allow
     "git blame*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "git -C * blame*": allow
     "ls*": allow
     "cat *": allow
     "head *": allow
@@ -38,7 +43,10 @@ A goal, the approved plan, and the build's summary of what changed (VERIFY has
 already confirmed the change works — this stage checks whether it's *good*).
 When a `Diff boundary:` line is present, the loop ran the build isolated on
 its own branch — review exactly that `git diff <base>...<branch>` range, no
-more and no less; do not trust the build summary over the actual diff.
+more and no less; do not trust the build summary over the actual diff. When a
+`Worktree:` line is present too, that isolated checkout is where the code
+lives — run the diff and read files with `git -C <worktree> …` and absolute
+paths under it, not the repo root.
 
 ## Your job
 

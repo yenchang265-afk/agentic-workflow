@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import path from "node:path"
 import { slugify, type Task } from "../task/schema.ts"
 import {
   appendNote,
@@ -12,16 +13,43 @@ import {
   hasPlan,
   isClaimable,
   isRecoverable,
+  listByStatus,
   listInPlanning,
   listInProgress,
   moveTask,
   selectNext,
+  STATUSES,
+  summarizeBacklog,
+  type TaskStatus,
   wasInterrupted,
   writeTask,
 } from "../task/store.ts"
-import { checkoutBranch, commitAll, commitPaths, currentBranch, gitActor, isDirty, isGitRepo } from "./git.ts"
-import { LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict, type Verdict } from "./verdict.ts"
-import type { Action, Config, LoopState, TaskRef } from "./state.ts"
+import {
+  addWorktree,
+  checkoutBranch,
+  commitAll,
+  commitPaths,
+  currentBranch,
+  ensureExcluded,
+  gitActor,
+  isDirty,
+  isGitRepo,
+  pruneWorktrees,
+  removeWorktree,
+  worktreeForBranch,
+} from "./git.ts"
+import { clearState, loadState, saveState } from "./persist.ts"
+import { type Outcome, renderRunSummary, type StageSample } from "./metrics.ts"
+import {
+  failedCriteriaBlock,
+  LOOP_REVIEW_TAG,
+  LOOP_VERIFY_TAG,
+  parseVerdict,
+  type Verdict,
+  type VerdictRecord,
+  worstOf,
+} from "./verdict.ts"
+import type { Action, Config, LoopState, Stage, TaskRef } from "./state.ts"
 import {
   advanceOnIdle,
   clearLoop,
@@ -179,35 +207,89 @@ const taskRef = (task: Task, path: string): TaskRef => ({
 /** A short stable id for branch names and checkpoint messages. */
 const loopId = (state: LoopState): string => state.task?.id ?? (slugify(titleAndBody(state.goal).title) || "goal")
 
+/** Absolute path to a task's dedicated worktree under the configured root. Pure. */
+export const worktreePathFor = (directory: string, worktreesDir: string, id: string): string =>
+  path.resolve(directory, worktreesDir, id)
+
+/** Run the configured worktree-setup command in a fresh worktree. Warn-and-continue. */
+const runWorktreeSetup = async (deps: Deps, config: Config, wtPath: string): Promise<void> => {
+  if (!config.worktreeSetup) return
+  const out = await deps.$`${{ raw: config.worktreeSetup }}`.cwd(wtPath).quiet().nothrow()
+  if (out.exitCode !== 0) {
+    await deps.log("warn", `loop: worktreeSetup failed in ${wtPath}: ${out.stderr.toString().trim()}`)
+  }
+}
+
 /**
- * Isolate execution on its own `loop/<id>` branch, cut from whatever branch
- * the session is on (recorded as `base`). Degrades to no isolation — with a
- * warning — outside a git repo, on a detached HEAD, or when checkout fails;
- * an existing branch (e.g. a recovered run's) is reused, never reset.
+ * Isolate execution for this loop. Two modes:
+ *
+ * - **Worktree mode** (`config.worktreesDir` set): each loop gets its own
+ *   `git worktree` on `loop/<id>`, cut from `base`. The human's checkout is
+ *   never touched and concurrent drives are safe. If the worktree can't be
+ *   created it **throws** — never falls back to shared-tree branch switching,
+ *   which could clobber a concurrent drive's checked-out branch.
+ * - **Shared-tree mode** (default): checks out `loop/<id>` in the main tree,
+ *   as before. Degrades to no isolation (with a warning) outside a git repo,
+ *   on a detached HEAD, or when checkout fails.
+ *
+ * An existing branch (e.g. a recovered run's) is reused, never reset.
  */
-const ensureBranch = async (deps: Deps, state: LoopState): Promise<LoopState> => {
+const ensureIsolation = async (deps: Deps, config: Config, state: LoopState): Promise<LoopState> => {
   if (state.git) {
-    // Already isolated — just make sure the tree is back on this loop's branch
-    // (something else may have moved it while the loop was gated).
+    if (state.git.worktree) {
+      // Worktree mode — never touch the shared tree. Recreate a vanished worktree.
+      if (!(await isGitRepo(deps.$, state.git.worktree))) {
+        await pruneWorktrees(deps.$, deps.directory)
+        if (!(await addWorktree(deps.$, deps.directory, state.git.worktree, state.git.branch, state.git.base))) {
+          throw new Error(`could not recreate worktree ${state.git.worktree} for ${state.git.branch}`)
+        }
+        await runWorktreeSetup(deps, config, state.git.worktree)
+      }
+      return state
+    }
+    // Shared mode — make sure the tree is back on this loop's branch.
     const cur = await currentBranch(deps.$, deps.directory)
     if (cur !== state.git.branch && !(await checkoutBranch(deps.$, deps.directory, state.git.branch))) {
       await deps.log("warn", `loop: could not return to ${state.git.branch} — building on ${cur ?? "detached HEAD"}`)
     }
     return state
   }
+
   if (!(await isGitRepo(deps.$, deps.directory))) return state
   const base = await currentBranch(deps.$, deps.directory)
   if (!base) {
     await deps.log("warn", "loop: detached HEAD — building without branch isolation")
     return state
   }
+  const branch = `loop/${loopId(state)}`
+
+  if (config.worktreesDir) {
+    const wtPath = worktreePathFor(deps.directory, config.worktreesDir, loopId(state))
+    await ensureExcluded(deps.$, deps.directory, config.worktreesDir)
+    if (await isDirty(deps.$, deps.directory)) {
+      await deps.log("info", "loop: main tree has uncommitted changes — they are NOT visible in this loop's worktree")
+    }
+    // Reuse a worktree already registered for this branch (a recovered run).
+    const existing = await worktreeForBranch(deps.$, deps.directory, branch)
+    if (existing) {
+      if (existing !== wtPath) await deps.log("info", `loop: reusing existing worktree ${existing} for ${branch}`)
+      return { ...state, git: { base, branch, worktree: existing } }
+    }
+    // A leftover directory with no registration — prune, then let add try.
+    if (await isGitRepo(deps.$, wtPath)) await pruneWorktrees(deps.$, deps.directory)
+    if (!(await addWorktree(deps.$, deps.directory, wtPath, branch, base))) {
+      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /loop recover`)
+    }
+    await runWorktreeSetup(deps, config, wtPath)
+    return { ...state, git: { base, branch, worktree: wtPath } }
+  }
+
   if (await isDirty(deps.$, deps.directory)) {
     await deps.log(
       "warn",
       "loop: working tree dirty at build start — pre-existing changes will land in this loop's checkpoints",
     )
   }
-  const branch = `loop/${loopId(state)}`
   if (!(await checkoutBranch(deps.$, deps.directory, branch))) {
     await deps.log("warn", `loop: could not check out ${branch} — building without branch isolation`)
     return state
@@ -215,18 +297,46 @@ const ensureBranch = async (deps: Deps, state: LoopState): Promise<LoopState> =>
   return { ...state, git: { base, branch } }
 }
 
-/** Commit everything as a checkpoint on the loop branch. No-op without isolation. */
+/** The working directory a loop's stages operate in: its worktree, else the main tree. */
+const workTree = (deps: Deps, state: LoopState): string => state.git?.worktree ?? deps.directory
+
+/** Commit everything as a checkpoint on the loop branch/worktree. No-op without isolation. */
 const checkpoint = async (deps: Deps, state: LoopState, message: string): Promise<void> => {
   if (!state.git) return
-  await commitAll(deps.$, deps.directory, message)
+  await commitAll(deps.$, workTree(deps, state), message)
 }
 
-/** Return the session to the branch it was on before the loop branched off. */
-const restoreBase = async (deps: Deps, state: LoopState): Promise<void> => {
+/**
+ * Tear down this loop's isolation. Worktree mode: remove the worktree if it's
+ * clean (the branch is kept for human review); a dirty worktree or a failed
+ * removal is left in place with a warning. Shared mode: return the main tree to
+ * the branch it was on before the loop branched off.
+ */
+const teardownIsolation = async (deps: Deps, state: LoopState): Promise<void> => {
   if (!state.git) return
+  if (state.git.worktree) {
+    if (!(await removeWorktree(deps.$, deps.directory, state.git.worktree))) {
+      await deps.log(
+        "info",
+        `loop: worktree ${state.git.worktree} left in place (dirty or locked) — branch ${state.git.branch} holds the committed work`,
+      )
+    }
+    return
+  }
   if (!(await checkoutBranch(deps.$, deps.directory, state.git.base))) {
     await deps.log("warn", `loop: could not return to ${state.git.base} — still on ${state.git.branch}`)
   }
+}
+
+/**
+ * Commit backlog mutations (audit notes, task moves) on the MAIN tree. In
+ * shared mode these ride the loop-branch checkpoints; in worktree mode the
+ * checkpoints commit the worktree, so terminal-event backlog changes must be
+ * committed on the human's branch explicitly. No-op in shared mode.
+ */
+const commitBacklog = async (deps: Deps, config: Config, state: LoopState, message: string): Promise<void> => {
+  if (!state.git?.worktree) return
+  await commitPaths(deps.$, deps.directory, [config.tasksDir], message)
 }
 
 /**
@@ -360,16 +470,19 @@ const drive = async (
         try {
           await appendNote(deps.$, state.task, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor))
           await moveTask(deps.$, state.task, "in-review")
+          await commitBacklog(deps, config, state, `loop(${state.task.id}): done — parked in in-review`)
         } catch (err) {
           await deps.log("warn", `loop done but task move failed: ${(err as Error).message}`)
         }
       }
+      await renderMetrics(deps, sessionID, config, state, "done", "review passed")
       await checkpoint(deps, state, `loop(${loopId(state)}): done — review passed`)
-      await restoreBase(deps, state)
+      await teardownIsolation(deps, state)
+      if (state.task) await clearState(deps.$, deps.directory, config.tasksDir, state.task.id)
       clearLoop(sessionID)
       const where = state.git ? ` on branch ${state.git.branch}` : ""
       const next = state.task
-        ? ` Review the diff${where}, then move ${config.tasksDir}/in-review/${state.task.id}.md to completed/ when it ships.`
+        ? ` Review the diff${where}, then run /loop ship ${state.task.id} when it ships.`
         : where
           ? ` Review the diff${where}.`
           : ""
@@ -378,9 +491,14 @@ const drive = async (
     }
     case "stop": {
       // Per design: a failed/stopped task stays in-progress, annotated for a human.
-      if (state.task) await appendNote(deps.$, state.task, auditNote(action.message, new Date(), actor))
+      if (state.task) {
+        await appendNote(deps.$, state.task, auditNote(action.message, new Date(), actor))
+        await commitBacklog(deps, config, state, `loop(${state.task.id}): stopped — ${action.message}`)
+      }
+      await renderMetrics(deps, sessionID, config, state, "stopped", action.message)
       await checkpoint(deps, state, `loop(${loopId(state)}): incomplete — ${action.message}`)
-      await restoreBase(deps, state)
+      await teardownIsolation(deps, state)
+      if (state.task) await clearState(deps.$, deps.directory, config.tasksDir, state.task.id)
       clearLoop(sessionID)
       const where = state.git ? ` Partial work is preserved on branch ${state.git.branch}.` : ""
       await toast(client, `${action.message}${where}`, "warning")
@@ -492,21 +610,32 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   // watch session with no loop of its own currently running.
   const shouldWatch = watching.has(sessionID) && !getLoop(sessionID)
   if (!work && !shouldWatch) return
-  // One drive per working tree: while another session's loop holds this
-  // directory, leave the pending work queued and retry on a later idle tick.
-  if (executingDirs.has(deps.directory)) return
+  // Serialize drives per working tree ONLY in shared-tree mode — there, two
+  // loops would switch branches out from under each other. In worktree mode
+  // each drive owns its own checkout, so concurrent drives are safe and the
+  // lock is skipped (`ensureIsolation` throws rather than falling back to
+  // shared-tree switching, so the main tree's HEAD is never touched).
+  const serialize = !config.worktreesDir
+  if (serialize && executingDirs.has(deps.directory)) return
   if (work) pending.delete(sessionID)
   driving.add(sessionID)
-  executingDirs.add(deps.directory)
+  if (serialize) executingDirs.add(deps.directory)
   try {
     if (work?.kind === "start") {
       await drive(deps, sessionID, config, firstStep(createState(work.goal)))
     } else if (work?.kind === "start-task") {
       const ref = taskRef(work.task, work.task.path)
       await drive(deps, sessionID, config, firstStep(createState(work.goal, ref)))
+    } else if (work?.kind === "recover-state") {
+      // A snapshot-based resume: re-enter at the exact stage the crash caught,
+      // with artifacts intact. A paused-at-gate snapshot resumes the gate;
+      // anything else re-fires its stage from its own inputs.
+      const state = work.state
+      const step = state.paused && state.stage === "plan" ? resume(state) : firstStep(state)
+      await drive(deps, sessionID, config, step)
     } else if (work?.kind === "recover") {
-      // A human-forced resume of a started-but-dead task: re-enter the state
-      // machine at build with the persisted plan, in this session.
+      // A human-forced resume of a started-but-dead task with no valid snapshot:
+      // re-enter the state machine at build with the persisted plan.
       const ref = taskRef(work.task, work.task.path)
       const state = resumeAtBuild(taskGoal(work.task), ref, extractPlan(work.task) ?? "")
       await drive(deps, sessionID, config, firstStep(state))
@@ -551,14 +680,18 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     }
     // Preserve whatever the failed run left behind and put the tree back.
     if (state) {
+      await renderMetrics(deps, sessionID, config, state, "error", message)
+      if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
       await checkpoint(deps, state, `loop(${loopId(state)}): incomplete — loop error`)
-      await restoreBase(deps, state)
+      await teardownIsolation(deps, state)
+    } else {
+      runSamples.delete(sessionID)
     }
     clearLoop(sessionID)
     await toast(deps.client, `Loop error: ${message}`, "error")
   } finally {
     driving.delete(sessionID)
-    executingDirs.delete(deps.directory)
+    if (serialize) executingDirs.delete(deps.directory)
   }
 }
 
