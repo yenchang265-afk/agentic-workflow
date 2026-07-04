@@ -1,9 +1,25 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Config } from "./state.ts"
-import { advanceOnIdle, composeArgs, createState, resume, resumeAtBuild, resumeAtPlanGate } from "./state.ts"
+import {
+  advanceOnIdle,
+  clearLoop,
+  composeArgs,
+  createState,
+  findSessionDriving,
+  resume,
+  resumeAtBuild,
+  resumeAtPlanGate,
+  setLoop,
+} from "./state.ts"
 
-const config: Config = { maxIterations: 3, gateBeforeBuild: true, tasksDir: "docs/tasks" }
+const config: Config = {
+  maxIterations: 3,
+  gateBeforeBuild: true,
+  tasksDir: "docs/tasks",
+  stageTimeoutMinutes: 60,
+  reviewLenses: [],
+}
 
 // --- plan → build gate ---
 
@@ -107,7 +123,7 @@ test("build auto-advances to verify", () => {
 
 test("verify PASS advances to review", () => {
   const s = { ...createState("g"), stage: "verify" as const }
-  const { state, action } = advanceOnIdle(s, config, "all met\nLOOP_VERIFY: PASS")
+  const { state, action } = advanceOnIdle(s, config, "all criteria met", "PASS")
   assert.equal(state.stage, "review")
   assert.equal(action.kind, "fire")
   if (action.kind === "fire") assert.equal(action.stage, "review")
@@ -115,7 +131,7 @@ test("verify PASS advances to review", () => {
 
 test("verify FAIL within budget re-plans with the failure threaded", () => {
   const s = { ...createState("g"), stage: "verify" as const, iteration: 0, artifacts: { plan: "P" } }
-  const { state, action } = advanceOnIdle(s, config, "gap: missing test\nLOOP_VERIFY: FAIL")
+  const { state, action } = advanceOnIdle(s, config, "gap: missing test", "FAIL")
   assert.equal(state.stage, "plan")
   assert.equal(state.iteration, 1)
   if (action.kind === "fire") {
@@ -126,27 +142,48 @@ test("verify FAIL within budget re-plans with the failure threaded", () => {
 
 test("verify FAIL at the iteration cap stops", () => {
   const s = { ...createState("g"), stage: "verify" as const, iteration: 2 }
-  const { action } = advanceOnIdle(s, config, "LOOP_VERIFY: FAIL")
+  const { action } = advanceOnIdle(s, config, "gaps remain", "FAIL")
   assert.equal(action.kind, "stop")
 })
 
-test("an unparseable verify verdict is treated as FAIL", () => {
+test("a missing verify verdict is treated as FAIL", () => {
   const s = { ...createState("g"), stage: "verify" as const, iteration: 2 }
-  const { action } = advanceOnIdle(s, config, "I think it's fine?")
+  const { action } = advanceOnIdle(s, config, "I think it's fine?", null)
   assert.equal(action.kind, "stop")
+})
+
+test("a PASS that appears only in verify's text — not via the verdict tool — is not trusted", () => {
+  const s = { ...createState("g"), stage: "verify" as const, iteration: 0 }
+  const { state } = advanceOnIdle(s, config, "all good\nLOOP_VERIFY: PASS", null)
+  assert.equal(state.stage, "plan") // re-plans as a FAIL instead of advancing
+})
+
+test("verify ERROR stops without burning a re-plan iteration", () => {
+  const s = { ...createState("g"), stage: "verify" as const, iteration: 0 }
+  const { state, action } = advanceOnIdle(s, config, "test runner missing", "ERROR")
+  assert.equal(action.kind, "stop")
+  if (action.kind === "stop") assert.match(action.message, /environment|infrastructure/i)
+  assert.equal(state.iteration, 0)
+})
+
+test("review ERROR stops without burning a re-build iteration", () => {
+  const s = { ...createState("g"), stage: "review" as const, iteration: 1 }
+  const { state, action } = advanceOnIdle(s, config, "could not read the diff", "ERROR")
+  assert.equal(action.kind, "stop")
+  assert.equal(state.iteration, 1)
 })
 
 // --- review finishes the loop, and review FAIL loops back to build ---
 
 test("review PASS finishes the loop", () => {
   const s = { ...createState("g"), stage: "review" as const }
-  const { action } = advanceOnIdle(s, config, "five-axis review clean\nLOOP_REVIEW: PASS")
+  const { action } = advanceOnIdle(s, config, "five-axis review clean", "PASS")
   assert.equal(action.kind, "done")
 })
 
 test("review FAIL within budget re-builds (not re-plans) with the feedback threaded", () => {
   const s = { ...createState("g"), stage: "review" as const, iteration: 0, artifacts: { plan: "P" } }
-  const { state, action } = advanceOnIdle(s, config, "gap: missing input validation\nLOOP_REVIEW: FAIL")
+  const { state, action } = advanceOnIdle(s, config, "gap: missing input validation", "FAIL")
   assert.equal(state.stage, "build")
   assert.equal(state.iteration, 1)
   if (action.kind === "fire") {
@@ -157,13 +194,13 @@ test("review FAIL within budget re-builds (not re-plans) with the feedback threa
 
 test("review FAIL at the iteration cap stops", () => {
   const s = { ...createState("g"), stage: "review" as const, iteration: 2 }
-  const { action } = advanceOnIdle(s, config, "LOOP_REVIEW: FAIL")
+  const { action } = advanceOnIdle(s, config, "findings remain", "FAIL")
   assert.equal(action.kind, "stop")
 })
 
-test("an unparseable review verdict is treated as FAIL", () => {
+test("a missing review verdict is treated as FAIL", () => {
   const s = { ...createState("g"), stage: "review" as const, iteration: 2 }
-  const { action } = advanceOnIdle(s, config, "looks okay I guess")
+  const { action } = advanceOnIdle(s, config, "looks okay I guess", null)
   assert.equal(action.kind, "stop")
 })
 
@@ -222,4 +259,70 @@ test("composeArgs omits the URL suffix when only azureId is set", () => {
 test("composeArgs omits the Azure line entirely when the task has no azureId", () => {
   const task = { id: "t", path: "/p", acceptance: [] }
   assert.doesNotMatch(composeArgs(createState("g", task), "plan"), /Azure DevOps/)
+})
+
+// --- git isolation (branch-per-task) ---
+
+test("composeArgs threads the diff boundary into review when a git ref is set", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo" } }
+  const args = composeArgs(s, "review")
+  assert.match(args, /git diff main\.\.\.loop\/add-foo/)
+})
+
+test("composeArgs omits the diff boundary when no git ref is set", () => {
+  assert.doesNotMatch(composeArgs(createState("g"), "review"), /Diff boundary/)
+})
+
+test("composeArgs does not thread the diff boundary into build or verify", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo" } }
+  assert.doesNotMatch(composeArgs(s, "build"), /Diff boundary/)
+  assert.doesNotMatch(composeArgs(s, "verify"), /Diff boundary/)
+})
+
+// --- worktree isolation pinning ---
+
+test("composeArgs threads a Worktree pinning block into build/verify/review when a worktree is set", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" } }
+  for (const stage of ["build", "verify", "review"] as const) {
+    const args = composeArgs(s, stage)
+    assert.match(args, /Worktree: this loop's isolated checkout is \/wt\/add-foo/)
+    assert.match(args, /cd \/wt\/add-foo &&/)
+  }
+})
+
+test("composeArgs never threads the Worktree block into plan", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" } }
+  assert.doesNotMatch(composeArgs(s, "plan"), /Worktree:/)
+})
+
+test("composeArgs omits the Worktree block when git isolation has no worktree (shared-tree mode)", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo" } }
+  assert.doesNotMatch(composeArgs(s, "build"), /Worktree:/)
+})
+
+test("composeArgs review diff boundary uses git -C <worktree> in worktree mode", () => {
+  const s = { ...createState("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" } }
+  assert.match(composeArgs(s, "review"), /git -C \/wt\/add-foo diff main\.\.\.loop\/add-foo/)
+})
+
+// --- findSessionDriving (recover's live-loop guard) ---
+
+test("findSessionDriving locates the session whose loop drives a task id", () => {
+  const task = { id: "add-foo", path: "/p", acceptance: [] }
+  setLoop("ses-1", createState("g", task))
+  try {
+    assert.equal(findSessionDriving("add-foo"), "ses-1")
+    assert.equal(findSessionDriving("other-task"), undefined)
+  } finally {
+    clearLoop("ses-1")
+  }
+})
+
+test("findSessionDriving ignores free-text loops with no task ref", () => {
+  setLoop("ses-2", createState("just a goal"))
+  try {
+    assert.equal(findSessionDriving("just a goal"), undefined)
+  } finally {
+    clearLoop("ses-2")
+  }
 })

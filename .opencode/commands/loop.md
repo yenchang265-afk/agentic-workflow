@@ -21,10 +21,19 @@ Agentic loop control. The plugin intercepts this command to drive the loop;
   planned — see below.
 - **`/loop unwatch`** — take this session out of watch mode (a build already
   in progress still finishes).
+- **`/loop recover <id>`** — resume an in-progress task whose run died
+  mid-build (crash/restart): re-claims it and resumes from its state snapshot
+  at the exact stage it reached (or, with no valid snapshot, re-enters at
+  BUILD from the persisted plan). Check `git status`/`git diff` first.
+- **`/loop ship <id>`** — move a reviewed task from `in-review/` to
+  `completed/`, appending an audited "Shipped" note and committing the move.
+  The recommended final-gate action (a raw `mv` still works but isn't audited).
 - **`/loop stop`** (alias: `abort`) — abort the loop, cancel a clarification
   in progress, and exit watch mode, all in this session.
-- **`/loop status`** — print the current stage, iteration, pause state, and
-  whether this session is watching. Bare `/loop` (no arguments) does the same.
+- **`/loop status`** — print the current loop (stage, iteration, pause/watch
+  state) plus a whole-backlog roll-up: counts per folder and the actionable
+  flags (gated, claimable, interrupted, awaiting review). Bare `/loop` (no
+  arguments) does the same.
 
 **$ARGUMENTS**
 
@@ -54,12 +63,21 @@ user**, before calling the `loop_begin` tool:
 
 ## The pipeline
 
-The loop runs PLAN, gates before build (you review the plan). On a
-VERIFY FAIL within the iteration cap it re-plans with the failure feedback;
-on a REVIEW FAIL within the cap it re-builds with the review's feedback (the
-plan is assumed sound). On a REVIEW PASS the loop is done — it never pushes
-or opens a PR itself; review the diff yourself and push/open the PR. That is
-the final human gate.
+The loop runs PLAN, gates before build (you review the plan). Execution is
+isolated on a `loop/<id>` git branch with a commit checkpoint per build
+iteration. On a VERIFY FAIL within the iteration cap it re-plans with the
+failure feedback; on a REVIEW FAIL within the cap it re-builds with the
+review's feedback (the plan is assumed sound); on a VERIFY/REVIEW ERROR
+(the check itself couldn't run) it stops for a human instead of iterating.
+On a REVIEW PASS the loop is done and the task parks in `in-review/` — it
+never pushes or opens a PR itself; review the branch diff yourself,
+push/open the PR, then run `/loop ship <id>` to move the task to
+`completed/`. That is the final human gate.
+
+When `worktreesDir` is configured, execution runs in a per-task `git
+worktree` instead of the shared checkout — the stage prompts carry a
+`Worktree:` line pinning all reads/edits/tests there. When `reviewLenses` is
+configured, REVIEW runs once per lens and the loop takes the worst verdict.
 
 ## Two sessions: planning and execution
 

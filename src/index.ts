@@ -1,9 +1,16 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
 import type { Config } from "./loop/state.ts"
 import * as driver from "./loop/driver.ts"
-import { hasLoop } from "./loop/state.ts"
+import { listWorktrees, pruneWorktrees } from "./loop/git.ts"
+import { listSnapshotIds } from "./loop/persist.ts"
+import { getLoop, hasLoop } from "./loop/state.ts"
+import { listInProgress, wasInterrupted } from "./task/store.ts"
+
+/** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
+const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 
 /**
  * agentic-loop
@@ -48,22 +55,92 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
       return DEFAULT_CONFIG
     }))
 
+  // Startup reconciliation runs on the FIRST hook, not during plugin init — any
+  // `client` call from the initializer is a circular wait into the still-
+  // bootstrapping instance and hangs opencode (same reason config loads lazily
+  // above). Guarded to run exactly once.
+  let reconciled = false
+  const reconcileOnce = async (): Promise<void> => {
+    if (reconciled) return
+    reconciled = true
+    const config = await getConfig()
+    // A restart mid-BUILD leaves a task in in-progress/ with an unmatched
+    // "BUILD started" note that no watcher will ever claim — surface those, plus
+    // any leftover state snapshot (the strongest "this died mid-run" signal;
+    // /loop recover resumes it at the exact stage).
+    try {
+      const tasks = await listInProgress(client, directory, config.tasksDir, log)
+      const interrupted = tasks.filter(wasInterrupted).map((t) => t.id)
+      if (interrupted.length) {
+        await log(
+          "warn",
+          `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /loop recover <id> to resume`,
+        )
+      }
+      const snapshots = await listSnapshotIds(client, directory, config.tasksDir)
+      if (snapshots.length) {
+        await log(
+          "warn",
+          `loop state snapshot(s) present: ${snapshots.join(", ")} — /loop recover <id> resumes at the exact stage`,
+        )
+      }
+    } catch (err) {
+      await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
+    }
+
+    // Worktree reconciliation: prune vanished registrations, then surface any
+    // surviving loop worktrees (a crashed run's) so a human knows they exist —
+    // never auto-delete (another process may own it; a crashed diff is evidence).
+    if (config.worktreesDir) {
+      try {
+        await pruneWorktrees($, directory)
+        const root = path.resolve(directory, config.worktreesDir)
+        const stale = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
+        for (const w of stale) {
+          await log(
+            "warn",
+            `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /loop recover will reuse it, or 'git worktree remove' it`,
+          )
+        }
+      } catch (err) {
+        await log("warn", `worktree reconciliation failed: ${(err as Error).message}`)
+      }
+    }
+  }
+
   return {
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
+      await reconcileOnce()
       const { sessionID } = event.properties
       await driver.onIdle(deps, sessionID, await getConfig())
     },
 
     "command.execute.before": async (input) => {
       if (input.command !== "loop") return
+      await reconcileOnce()
       await driver.handleCommand(deps, input.sessionID, input.arguments, await getConfig())
     },
 
-    "tool.execute.before": async (input) => {
+    "tool.execute.before": async (input, output) => {
       // Only trace tool calls while a loop is actively driving this session.
       if (hasLoop(input.sessionID)) {
         await log("info", `tool ${input.tool} starting (call ${input.callID})`)
+      }
+      // Worktree pinning enforcement (best-effort): while a worktree-mode loop
+      // drives this session, a file-writing tool must not touch an absolute
+      // path outside the worktree. Relative paths and non-edit tools pass
+      // through (bash pinning stays prompt-enforced — a documented residual).
+      const wt = getLoop(input.sessionID)?.git?.worktree
+      if (!wt || !EDIT_TOOLS.has(input.tool)) return
+      const filePath: unknown = output.args?.filePath ?? output.args?.path
+      if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return
+      const rel = path.relative(wt, path.resolve(filePath))
+      if (rel === "" || rel.startsWith("..")) {
+        throw new Error(
+          `agentic-loop: this loop is isolated to its worktree ${wt} — edit ${filePath} is outside it. ` +
+            `Use an absolute path under the worktree.`,
+        )
       }
     },
 
@@ -79,6 +156,43 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
           goal: tool.schema.string().min(1).describe("The final goal text to start the loop with."),
         },
         execute: async (args, ctx) => driver.beginAfterClarification(deps, ctx.sessionID, args.goal),
+      }),
+
+      loop_verdict: tool({
+        description:
+          "Record the VERIFY or REVIEW stage's machine-readable verdict for the running loop. This tool " +
+          "call is the loop's ONLY trusted verdict channel — a PASS/FAIL written in plain text is ignored. " +
+          "Call exactly once, at the end of the check stage's turn, after gathering the evidence. Only the " +
+          "stage the loop is currently running may record; calls from any other stage or session are ignored.",
+        args: {
+          stage: tool.schema.enum(["verify", "review"]).describe("Which check stage this verdict belongs to."),
+          verdict: tool.schema
+            .enum(["PASS", "FAIL", "ERROR"])
+            .describe(
+              "PASS only on observed evidence; FAIL when criteria are unmet; ERROR only when the check itself " +
+                "could not run at all (broken environment, missing test runner) — never for failing tests.",
+            ),
+          reason: tool.schema
+            .string()
+            .max(500)
+            .optional()
+            .describe("One-sentence summary of why. Give it on every FAIL or ERROR so the next iteration knows what to fix."),
+          criteria: tool.schema
+            .array(
+              tool.schema.object({
+                criterion: tool.schema.string().describe("The acceptance criterion text, as given to you."),
+                pass: tool.schema.boolean().describe("Whether this criterion is met, on observed evidence."),
+              }),
+            )
+            .optional()
+            .describe("Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt."),
+        },
+        execute: async (args, ctx) =>
+          driver.recordVerdict(ctx.sessionID, args.stage, {
+            verdict: args.verdict,
+            ...(args.reason !== undefined ? { reason: args.reason } : {}),
+            ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
+          }),
       }),
     },
   }

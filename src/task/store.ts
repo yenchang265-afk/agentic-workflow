@@ -1,5 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import path from "node:path"
+import { redact } from "./redact.ts"
 import { buildTaskFile, parseTask, type Task, type TaskInput } from "./schema.ts"
 
 /**
@@ -16,9 +17,8 @@ type Log = (level: "info" | "warn" | "error", message: string) => unknown
 /** Anything with an id + on-disk path can be moved or annotated. */
 type FileRef = { readonly id: string; readonly path: string }
 
-export type TaskStatus = "draft" | "in-planning" | "in-progress" | "completed" | "abandoned"
+export type TaskStatus = "draft" | "in-planning" | "in-progress" | "in-review" | "completed" | "abandoned"
 
-const inPlanningDir = (tasksDir: string): string => `${tasksDir}/in-planning`
 const isMarkdown = (name: string): boolean => name.toLowerCase().endsWith(".md")
 
 /** Pick the next task: lowest priority number, ties broken by id. Pure. */
@@ -50,6 +50,13 @@ export const extractPlan = (task: Task): string | undefined => {
 }
 
 /**
+ * Planned and started at least once — no longer claimable by `/loop watch`,
+ * but a human can force-resume it with `/loop recover <id>` once no live
+ * loop is driving it (crashed runs, restarted plugins). Pure.
+ */
+export const isRecoverable = (task: Task): boolean => hasPlan(task) && task.body.includes("> BUILD started")
+
+/**
  * Whether the task's last recorded BUILD run has no matching "finished" note —
  * i.e. the process likely died mid-build, possibly leaving a half-finished diff
  * in the working tree. Only BUILD is tracked: it's the sole stage that writes
@@ -60,6 +67,44 @@ export const wasInterrupted = (task: Task): boolean => {
   if (lastStart === -1) return false
   const lastFinish = task.body.lastIndexOf("> BUILD finished")
   return lastFinish < lastStart
+}
+
+/** The status folders, in lifecycle order. */
+export const STATUSES: readonly TaskStatus[] = [
+  "draft",
+  "in-planning",
+  "in-progress",
+  "in-review",
+  "completed",
+  "abandoned",
+]
+
+/** A per-status roll-up of the backlog for `/loop status`. Pure. */
+export interface BacklogSummary {
+  readonly counts: Readonly<Record<TaskStatus, number>>
+  /** in-planning tasks that already have a persisted plan (gated, awaiting /loop go). */
+  readonly gated: readonly string[]
+  /** in-progress tasks parked and never started (a watcher will claim them). */
+  readonly claimable: readonly string[]
+  /** in-progress tasks whose last build looks interrupted (crashed — /loop recover). */
+  readonly interrupted: readonly string[]
+  /** in-review tasks awaiting a human diff review (/loop ship). */
+  readonly awaitingReview: readonly string[]
+}
+
+/** Roll up tasks-by-status into counts and actionable flag lists. Pure. */
+export const summarizeBacklog = (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>): BacklogSummary => {
+  const counts = Object.fromEntries(STATUSES.map((s) => [s, byStatus[s]?.length ?? 0])) as Record<TaskStatus, number>
+  const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
+  const inPlanning = byStatus["in-planning"] ?? []
+  const inProgress = byStatus["in-progress"] ?? []
+  return {
+    counts,
+    gated: ids(inPlanning.filter(hasPlan)),
+    claimable: ids(inProgress.filter(isClaimable)),
+    interrupted: ids(inProgress.filter(wasInterrupted)),
+    awaitingReview: ids(byStatus["in-review"] ?? []),
+  }
 }
 
 /**
@@ -106,15 +151,16 @@ export const listInPlanning = (client: Client, directory: string, tasksDir: stri
 export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "in-progress", log)
 
-/** Resolve a specific in-planning task by id, or null if missing/invalid. */
-export const findById = async (
+/** Resolve a specific task by id within a status folder, or null if missing/invalid. */
+export const findByIdIn = async (
   client: Client,
   directory: string,
   tasksDir: string,
+  status: TaskStatus,
   id: string,
 ): Promise<Task | null> => {
   const filename = `${id}.md`
-  const rel = `${inPlanningDir(tasksDir)}/${filename}`
+  const rel = `${tasksDir}/${status}/${filename}`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
   const content = read?.data?.content
   if (!content) return null
@@ -123,6 +169,30 @@ export const findById = async (
   } catch {
     return null
   }
+}
+
+/** Resolve a specific in-planning task by id, or null if missing/invalid. */
+export const findById = (client: Client, directory: string, tasksDir: string, id: string): Promise<Task | null> =>
+  findByIdIn(client, directory, tasksDir, "in-planning", id)
+
+/** Directory of atomic claim markers, alongside the task files of one status folder. */
+const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
+
+/**
+ * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
+ * the marker either succeeds — claim won — or fails because another watcher
+ * on this filesystem already holds it. Closes the window between listing
+ * claimable tasks and appending the `> BUILD started` note.
+ */
+export const claimTask = async ($: Shell, task: FileRef): Promise<boolean> => {
+  await $`mkdir -p ${claimsDir(task.path)}`.quiet().nothrow()
+  const out = await $`mkdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
+  return out.exitCode === 0
+}
+
+/** Release a task's claim marker, if present. Best-effort. */
+export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
+  await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
 }
 
 /** Move a task file into a new status folder. Returns its new absolute path. */
@@ -135,17 +205,60 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
   if (out.exitCode !== 0) {
     throw new Error(`could not move ${task.id} → ${toStatus}: ${out.stderr.toString().trim()}`)
   }
+  await releaseClaim($, task) // a claim belongs to the status folder it was taken in
   return dest
 }
 
-/** Append a blockquote note to a task file in place. Best-effort. */
-export const appendNote = async ($: Shell, task: FileRef, note: string): Promise<void> => {
-  await $`printf '\n> %s\n' ${note} >> ${task.path}`.quiet().nothrow()
+/** Warn about redaction hits without ever echoing the secret (names only). */
+const warnRedaction = (hits: readonly { pattern: string; count: number }[], where: string, log?: Log): void => {
+  if (!hits.length || !log) return
+  const summary = hits.map((h) => `${h.pattern} ×${h.count}`).join(", ")
+  log("warn", `redacted secret-shaped strings from ${where}: ${summary}`)
 }
 
-/** Append a plan under `PLAN_HEADING` to a task file in place. Best-effort. */
-export const appendPlan = async ($: Shell, task: FileRef, plan: string): Promise<void> => {
-  await $`printf '\n%s\n\n%s\n' ${PLAN_HEADING} ${plan} >> ${task.path}`.quiet().nothrow()
+/** Append a blockquote note to a task file in place. Secrets redacted. Best-effort. */
+export const appendNote = async ($: Shell, task: FileRef, note: string, log?: Log): Promise<void> => {
+  const { text, hits } = redact(note)
+  warnRedaction(hits, `note on ${task.id}`, log)
+  await $`printf '\n> %s\n' ${text} >> ${task.path}`.quiet().nothrow()
+}
+
+/**
+ * Render an audit event note: the event text with a timestamp-and-actor
+ * suffix. The suffix comes last so marker greps (`> BUILD started`, …) keep
+ * matching. Pure.
+ */
+export const auditNote = (text: string, at: Date, actor?: string | null): string =>
+  `${text} [${at.toISOString()}${actor ? ` by ${actor}` : ""}]`
+
+/**
+ * Append a stage's captured output to the loop's run log,
+ * `<tasksDir>/runs/<id>.md` — the durable record of what each stage actually
+ * said (verdict evidence, review findings), which the in-memory artifacts
+ * are not. Best-effort.
+ */
+export const appendRunLog = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  id: string,
+  header: string,
+  text: string,
+  log?: Log,
+): Promise<void> => {
+  const dir = path.join(directory, tasksDir, "runs")
+  await $`mkdir -p ${dir}`.quiet().nothrow()
+  const file = path.join(dir, `${id}.md`)
+  const clean = redact(text)
+  warnRedaction(clean.hits, `run log ${id}.md`, log)
+  await $`printf '\n## %s\n\n%s\n' ${header} ${clean.text} >> ${file}`.quiet().nothrow()
+}
+
+/** Append a plan under `PLAN_HEADING` to a task file in place. Secrets redacted. Best-effort. */
+export const appendPlan = async ($: Shell, task: FileRef, plan: string, log?: Log): Promise<void> => {
+  const { text, hits } = redact(plan)
+  warnRedaction(hits, `plan on ${task.id}`, log)
+  await $`printf '\n%s\n\n%s\n' ${PLAN_HEADING} ${text} >> ${task.path}`.quiet().nothrow()
 }
 
 /** Existing task ids (filenames without `.md`) in a status folder; `[]` if absent. */
