@@ -120,12 +120,12 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
     },
 
     "command.execute.before": async (input) => {
-      if (input.command === "loop") {
+      if (input.command === "agent-loop") {
         await reconcileOnce()
         await driver.handleCommand(deps, input.sessionID, input.arguments, await getConfig())
         return
       }
-      if (input.command === "loop-plan") {
+      if (input.command === "agent-loop-plan") {
         await reconcileOnce()
         await driver.handlePlanCommand(deps, input.sessionID, input.arguments, await getConfig())
       }
