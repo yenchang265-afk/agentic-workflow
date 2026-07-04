@@ -47,7 +47,7 @@ acceptance:                            # 2-5 concrete, testable criteria
   src/http/", not "clean up http code").
 - **acceptance** — each item must be something the verify stage can *check*.
 - **body** — the why/what, including the `file:line` evidence for the finding.
-  Do not design the implementation — that's the plan stage's job.
+  Do not design the implementation — that's `/loop-plan`'s job.
 
 ## Filename
 
@@ -65,8 +65,9 @@ Return:
 ## Hard rules
 
 - **Never** edit, create, or delete source files — you only write task files.
-- Write only into `docs/tasks/draft/`. Never move a file to `in-planning/` —
-  promotion is the human's gate, same as `/task new`.
+- Write only into `docs/tasks/draft/`. Never move a file between status
+  folders — planning a draft is `/loop-plan task <id>`'s job, and promotion
+  to the approved queue is `/loop-plan approve <id>`'s.
 - Exactly one file per finding; each must parse (title non-empty, priority an
   integer, acceptance a YAML list of strings, no extra keys).
 - Do not run the loop, and do not scope-creep into implementing anything.
