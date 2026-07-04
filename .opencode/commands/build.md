@@ -1,6 +1,6 @@
 ---
 description: Enter the BUILD stage of the agentic loop — implement the approved plan test-first, or apply a REVIEW stage's fix requests
-agent: build
+agent: loop-build
 subtask: true
 ---
 

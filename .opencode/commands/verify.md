@@ -1,6 +1,6 @@
 ---
 description: Enter the VERIFY stage of the agentic loop — check the build against the acceptance criteria and emit a verdict
-agent: verify
+agent: loop-verify
 subtask: true
 ---
 

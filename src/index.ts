@@ -2,6 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
+import type { Config } from "./loop/state.ts"
 import * as driver from "./loop/driver.ts"
 import { listWorktrees, pruneWorktrees } from "./loop/git.ts"
 import { listSnapshotIds } from "./loop/persist.ts"
@@ -40,69 +41,85 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
   // used to move task files between status folders.
   const deps: driver.Deps = { client, $, directory, log }
 
-  // Load loop config once; fall back to defaults (and warn) on misconfig so a bad
-  // config file degrades rather than breaking the plugin entirely.
-  let config = DEFAULT_CONFIG
-  try {
-    config = await loadConfig(client, directory)
-  } catch (err) {
-    await log("warn", `using default config: ${(err as Error).message}`)
-  }
+  // Load loop config lazily, on the first hook invocation. The plugin
+  // initializer runs inside opencode's instance bootstrap, and any `client`
+  // call made from it (file.read, app.log, …) is a request back into the same
+  // still-bootstrapping instance — a circular wait that hangs opencode startup
+  // forever. Hooks only fire after bootstrap completes, so client calls are
+  // safe there. Fall back to defaults (and warn) on misconfig so a bad config
+  // file degrades rather than breaking the plugin entirely.
+  let configPromise: Promise<Config> | undefined
+  const getConfig = (): Promise<Config> =>
+    (configPromise ??= loadConfig(client, directory).catch(async (err) => {
+      await log("warn", `using default config: ${(err as Error).message}`)
+      return DEFAULT_CONFIG
+    }))
 
-  // Startup reconciliation: a restart mid-BUILD leaves a task in in-progress/
-  // with an unmatched "BUILD started" note that no watcher will ever claim.
-  // Surface those instead of letting them sit stuck forever.
-  try {
-    const tasks = await listInProgress(client, directory, config.tasksDir, log)
-    const interrupted = tasks.filter(wasInterrupted).map((t) => t.id)
-    if (interrupted.length) {
-      await log(
-        "warn",
-        `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /loop recover <id> to resume`,
-      )
-    }
-    // A leftover state snapshot is the strongest "this died mid-run" signal —
-    // /loop recover will resume it at the exact stage it reached.
-    const snapshots = await listSnapshotIds(client, directory, config.tasksDir)
-    if (snapshots.length) {
-      await log(
-        "warn",
-        `loop state snapshot(s) present: ${snapshots.join(", ")} — /loop recover <id> resumes at the exact stage`,
-      )
-    }
-  } catch (err) {
-    await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
-  }
-
-  // Worktree reconciliation: prune vanished registrations, then surface any
-  // surviving loop worktrees (a crashed run's) so a human knows they exist —
-  // never auto-delete (another process may own it; a crashed diff is evidence).
-  if (config.worktreesDir) {
+  // Startup reconciliation runs on the FIRST hook, not during plugin init — any
+  // `client` call from the initializer is a circular wait into the still-
+  // bootstrapping instance and hangs opencode (same reason config loads lazily
+  // above). Guarded to run exactly once.
+  let reconciled = false
+  const reconcileOnce = async (): Promise<void> => {
+    if (reconciled) return
+    reconciled = true
+    const config = await getConfig()
+    // A restart mid-BUILD leaves a task in in-progress/ with an unmatched
+    // "BUILD started" note that no watcher will ever claim — surface those, plus
+    // any leftover state snapshot (the strongest "this died mid-run" signal;
+    // /loop recover resumes it at the exact stage).
     try {
-      await pruneWorktrees($, directory)
-      const root = path.resolve(directory, config.worktreesDir)
-      const stale = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
-      for (const w of stale) {
+      const tasks = await listInProgress(client, directory, config.tasksDir, log)
+      const interrupted = tasks.filter(wasInterrupted).map((t) => t.id)
+      if (interrupted.length) {
         await log(
           "warn",
-          `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /loop recover will reuse it, or 'git worktree remove' it`,
+          `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /loop recover <id> to resume`,
+        )
+      }
+      const snapshots = await listSnapshotIds(client, directory, config.tasksDir)
+      if (snapshots.length) {
+        await log(
+          "warn",
+          `loop state snapshot(s) present: ${snapshots.join(", ")} — /loop recover <id> resumes at the exact stage`,
         )
       }
     } catch (err) {
-      await log("warn", `worktree reconciliation failed: ${(err as Error).message}`)
+      await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
+    }
+
+    // Worktree reconciliation: prune vanished registrations, then surface any
+    // surviving loop worktrees (a crashed run's) so a human knows they exist —
+    // never auto-delete (another process may own it; a crashed diff is evidence).
+    if (config.worktreesDir) {
+      try {
+        await pruneWorktrees($, directory)
+        const root = path.resolve(directory, config.worktreesDir)
+        const stale = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
+        for (const w of stale) {
+          await log(
+            "warn",
+            `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /loop recover will reuse it, or 'git worktree remove' it`,
+          )
+        }
+      } catch (err) {
+        await log("warn", `worktree reconciliation failed: ${(err as Error).message}`)
+      }
     }
   }
 
   return {
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
+      await reconcileOnce()
       const { sessionID } = event.properties
-      await driver.onIdle(deps, sessionID, config)
+      await driver.onIdle(deps, sessionID, await getConfig())
     },
 
     "command.execute.before": async (input) => {
       if (input.command !== "loop") return
-      await driver.handleCommand(deps, input.sessionID, input.arguments, config)
+      await reconcileOnce()
+      await driver.handleCommand(deps, input.sessionID, input.arguments, await getConfig())
     },
 
     "tool.execute.before": async (input, output) => {

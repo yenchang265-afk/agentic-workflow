@@ -1,6 +1,6 @@
 ---
 description: Enter the PLAN stage of the agentic loop — turn a raw goal (or a re-plan request) into a spec-bounded, review-sized implementation plan
-agent: plan
+agent: loop-plan
 subtask: true
 ---
 
