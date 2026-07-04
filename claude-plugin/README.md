@@ -18,8 +18,8 @@ metrics. See `skills/loop-orchestration/SKILL.md` for the exact protocol.
 
 ```bash
 # from the repo root
-cd claude-plugin
-./install.sh            # builds the MCP server + links the shared skills/references
+./install.sh claude     # builds the MCP server + links the shared skills/references
+# equivalent: cd claude-plugin && ./install.sh
 ```
 
 Then load the plugin:
@@ -89,9 +89,11 @@ planning always goes through `/loop-plan`.
 
 Optional `.agentic-loop.json` at the repo root (all fields default):
 `maxIterations`, `tasksDir`, `stageTimeoutMinutes`, `worktreesDir`,
-`worktreeSetup`, `reviewLenses`. Same schema as the OpenCode plugin **minus**
-`watchIntervalMinutes` (no watch mode here — see below). The removed
-`gateBeforeBuild`/`interviewBeforePlan` keys are silently ignored.
+`worktreeSetup`, `reviewLenses` — field reference in
+[`docs/configuration.md`](../docs/configuration.md). Same schema as the
+OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode here — see
+below). The removed `gateBeforeBuild`/`interviewBeforePlan` keys are
+silently ignored.
 
 ## Known limitations
 

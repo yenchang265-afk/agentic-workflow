@@ -26,6 +26,13 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Install-script check
+        run: |
+          bash -n install.sh claude-plugin/install.sh
+          d=$(mktemp -d)
+          ./install.sh opencode "$d"
+          ./install.sh opencode "$d"
+
   test-mcp-server:
     name: Typecheck and unit tests (claude-plugin mcp-server)
     runs-on: ubuntu-latest
