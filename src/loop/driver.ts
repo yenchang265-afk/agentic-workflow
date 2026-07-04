@@ -113,7 +113,8 @@ import {
  * from `draft/` is the first human gate. The driver moves it once more
  * automatically, to `in-progress/`, the moment its plan is approved (see
  * above); a stop/failure while building appends a note and leaves it in
- * `in-progress/`; the loop finishing (review PASS) moves it to `completed/`.
+ * `in-progress/`; the loop finishing (review PASS) moves it to `in-review/`,
+ * the human diff gate — a human moves it to `completed/` once it ships.
  * The first time a task's plan gates for approval, it is also persisted onto
  * the task file (`## Implementation Plan`), so `/loop next` can skip
  * already-planned tasks and `/loop task <id>` can resume one after a
@@ -140,6 +141,7 @@ type Pending =
   | { readonly kind: "start"; readonly goal: string }
   | { readonly kind: "start-task"; readonly task: Task; readonly goal: string }
   | { readonly kind: "recover"; readonly task: Task }
+  | { readonly kind: "recover-state"; readonly state: LoopState }
   | { readonly kind: "proceed" }
 
 const pending = new Map<string, Pending>()
@@ -817,16 +819,32 @@ export const handleCommand = async (
       return void (await toast(client, `Task "${id}" has no persisted plan — move it back to in-planning and re-run /loop task ${id}.`, "warning"))
     }
     await claimTask(deps.$, task) // re-mark; the marker may already exist from the dead run
+    // Prefer an exact-stage resume from the state snapshot; fall back to
+    // re-entering at BUILD from the persisted plan when there's no valid one.
+    const snap = await loadState(client, deps.directory, config.tasksDir, id)
+    const actor = await gitActor(deps.$, deps.directory)
+    clearLoop(sessionID)
+    if (snap && snap.task?.id === id) {
+      // Refresh the task path from disk — the file may have moved since the snapshot.
+      const state: LoopState = { ...snap, task: { ...snap.task, path: task.path } }
+      await appendNote(
+        deps.$,
+        task,
+        auditNote(`Recovered by /loop recover — resuming from snapshot at ${snap.stage}.`, new Date(), actor),
+      )
+      pending.set(sessionID, { kind: "recover-state", state })
+      await toast(
+        client,
+        `Recovering "${task.title}" from snapshot at ${snap.stage} — check git status/diff for leftovers; resuming…`,
+        "info",
+      )
+      return
+    }
     await appendNote(
       deps.$,
       task,
-      auditNote(
-        "Recovered by /loop recover — resuming BUILD from the persisted plan.",
-        new Date(),
-        await gitActor(deps.$, deps.directory),
-      ),
+      auditNote("Recovered by /loop recover — resuming BUILD from the persisted plan.", new Date(), actor),
     )
-    clearLoop(sessionID)
     pending.set(sessionID, { kind: "recover", task })
     await toast(
       client,
