@@ -68,6 +68,44 @@ export const wasInterrupted = (task: Task): boolean => {
   return lastFinish < lastStart
 }
 
+/** The status folders, in lifecycle order. */
+export const STATUSES: readonly TaskStatus[] = [
+  "draft",
+  "in-planning",
+  "in-progress",
+  "in-review",
+  "completed",
+  "abandoned",
+]
+
+/** A per-status roll-up of the backlog for `/loop status`. Pure. */
+export interface BacklogSummary {
+  readonly counts: Readonly<Record<TaskStatus, number>>
+  /** in-planning tasks that already have a persisted plan (gated, awaiting /loop go). */
+  readonly gated: readonly string[]
+  /** in-progress tasks parked and never started (a watcher will claim them). */
+  readonly claimable: readonly string[]
+  /** in-progress tasks whose last build looks interrupted (crashed — /loop recover). */
+  readonly interrupted: readonly string[]
+  /** in-review tasks awaiting a human diff review (/loop ship). */
+  readonly awaitingReview: readonly string[]
+}
+
+/** Roll up tasks-by-status into counts and actionable flag lists. Pure. */
+export const summarizeBacklog = (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>): BacklogSummary => {
+  const counts = Object.fromEntries(STATUSES.map((s) => [s, byStatus[s]?.length ?? 0])) as Record<TaskStatus, number>
+  const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
+  const inPlanning = byStatus["in-planning"] ?? []
+  const inProgress = byStatus["in-progress"] ?? []
+  return {
+    counts,
+    gated: ids(inPlanning.filter(hasPlan)),
+    claimable: ids(inProgress.filter(isClaimable)),
+    interrupted: ids(inProgress.filter(wasInterrupted)),
+    awaitingReview: ids(byStatus["in-review"] ?? []),
+  }
+}
+
 /**
  * List and parse every task in a given status folder. Invalid files are
  * skipped (logged) rather than failing the whole pick. Returns `[]` when the

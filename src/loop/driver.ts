@@ -598,6 +598,34 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
   await drive(deps, sessionID, config, firstStep(state))
 }
 
+/** Which status folder a task id currently lives in, or null. For error messages. */
+const findAnyStatus = async (deps: Deps, config: Config, id: string): Promise<TaskStatus | null> => {
+  for (const status of STATUSES) {
+    if (await findByIdIn(deps.client, deps.directory, config.tasksDir, status, id)) return status
+  }
+  return null
+}
+
+/** Load every status folder and roll it up. One list call per folder. */
+const backlogSummary = async (deps: Deps, config: Config) => {
+  const byStatus = {} as Record<TaskStatus, Task[]>
+  for (const status of STATUSES) {
+    byStatus[status] = await listByStatus(deps.client, deps.directory, config.tasksDir, status, deps.log)
+  }
+  return summarizeBacklog(byStatus)
+}
+
+/** Human-readable one-liner of the backlog roll-up. Pure. */
+const formatBacklog = (s: Awaited<ReturnType<typeof backlogSummary>>): string => {
+  const c = s.counts
+  const planning = c["in-planning"] > 0 ? `${c["in-planning"]} planning (${s.gated.length} gated)` : "0 planning"
+  const progress =
+    c["in-progress"] > 0
+      ? `${c["in-progress"]} in-progress (${s.claimable.length} ready, ${s.interrupted.length} interrupted)`
+      : "0 in-progress"
+  return `backlog: ${c.draft} draft · ${planning} · ${progress} · ${c["in-review"]} in-review · ${c.completed} completed · ${c.abandoned} abandoned`
+}
+
 /**
  * Consume any pending loop work for a session that just went idle. Guarded so the
  * idle events the driver's own commands generate do not re-enter it.
@@ -854,6 +882,27 @@ export const handleCommand = async (
     return
   }
 
+  if (lower === "ship" || lower.startsWith("ship ")) {
+    const id = arg.slice("ship".length).trim()
+    if (!id) return void (await toast(client, "Usage: /loop ship <id>.", "warning"))
+    const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-review", id)
+    if (!task) {
+      // Locate it for a precise error instead of a bare "not found".
+      const elsewhere = await findAnyStatus(deps, config, id)
+      const detail = elsewhere ? `it's in ${elsewhere}, not in-review — the loop hasn't finished it` : `no task "${id}" found`
+      return void (await toast(client, `Can't ship "${id}": ${detail}.`, "warning"))
+    }
+    try {
+      await appendNote(deps.$, task, auditNote("Shipped — moved to completed", new Date(), await gitActor(deps.$, deps.directory)))
+      await moveTask(deps.$, task, "completed")
+      await commitPaths(deps.$, deps.directory, [config.tasksDir], `loop(${id}): shipped — completed`)
+      await toast(client, `"${task.title}" completed.`, "success")
+    } catch (err) {
+      await toast(client, `Ship failed for "${id}": ${(err as Error).message}`, "error")
+    }
+    return
+  }
+
   if (lower.startsWith(TASK_PREFIX)) {
     const id = arg.slice(TASK_PREFIX.length).trim()
     if (!id) return void (await toast(client, "Usage: /loop task <id>.", "warning"))
@@ -881,21 +930,33 @@ export const handleCommand = async (
   if (lower === "status" || lower === "") {
     const isWatching = watching.has(sessionID)
     const state = getLoop(sessionID)
+    // Backlog roll-up accompanies the session-loop line — a whole-backlog view,
+    // not just this session's loop. Detailed flag lists go to the log.
+    const summary = await backlogSummary(deps, config).catch(() => null)
+    if (summary) {
+      if (summary.interrupted.length) {
+        await deps.log("warn", `interrupted (run /loop recover <id>): ${summary.interrupted.join(", ")}`)
+      }
+      if (summary.awaitingReview.length) {
+        await deps.log("info", `awaiting diff review (run /loop ship <id>): ${summary.awaitingReview.join(", ")}`)
+      }
+    }
+    const backlogLine = summary ? ` · ${formatBacklog(summary)}` : ""
     if (!state) {
       const clarifying = pending.get(sessionID)
-      const message =
+      const head =
         clarifying?.kind === "clarify"
           ? `Loop pending — clarifying "${clarifying.rawGoal}" (answer above, or /loop stop to cancel).`
           : isWatching
             ? "Watching — no claimable task right now."
             : "No active loop."
-      await toast(client, message, "info")
+      await toast(client, `${head}${backlogLine}`, "info")
       return
     }
     const where = state.paused ? `${state.stage} (paused at gate)` : state.stage
     const what = state.task ? `task ${state.task.id}` : state.goal
     const prefix = isWatching ? "Watching. " : ""
-    await toast(client, `${prefix}Loop: ${where} · iteration ${state.iteration + 1} · ${what}`, "info")
+    await toast(client, `${prefix}Loop: ${where} · iteration ${state.iteration + 1} · ${what}${backlogLine}`, "info")
     return
   }
 

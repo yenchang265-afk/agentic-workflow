@@ -9,6 +9,9 @@ import {
   isRecoverable,
   PLAN_HEADING,
   selectNext,
+  STATUSES,
+  summarizeBacklog,
+  type TaskStatus,
   wasInterrupted,
 } from "./store.ts"
 
@@ -142,4 +145,41 @@ test("audit-suffixed build markers still satisfy the claim/interrupt greps", () 
   const body = `${PLAN_HEADING}\n\n1. Do it.\n\n${started}`
   assert.equal(isClaimable(task("a", 0, body)), false)
   assert.equal(wasInterrupted(task("a", 0, body)), true)
+})
+
+// --- summarizeBacklog (the /loop status roll-up) ---
+
+const empty = () =>
+  Object.fromEntries(STATUSES.map((s) => [s, []])) as unknown as Record<TaskStatus, ReturnType<typeof task>[]>
+
+test("summarizeBacklog counts every status and empty flag lists", () => {
+  const s = summarizeBacklog(empty())
+  assert.deepEqual(s.counts, {
+    draft: 0,
+    "in-planning": 0,
+    "in-progress": 0,
+    "in-review": 0,
+    completed: 0,
+    abandoned: 0,
+  })
+  assert.deepEqual(s.gated, [])
+  assert.deepEqual(s.claimable, [])
+  assert.deepEqual(s.interrupted, [])
+  assert.deepEqual(s.awaitingReview, [])
+})
+
+test("summarizeBacklog splits in-planning gated vs unplanned and flags in-progress/in-review", () => {
+  const byStatus = empty()
+  byStatus["in-planning"] = [task("gated", 0, `${PLAN_HEADING}\n\n1. Go.`), task("raw", 0, "just an idea")]
+  byStatus["in-progress"] = [
+    task("ready", 0, `${PLAN_HEADING}\n\n1. Go.`),
+    task("crashed", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`),
+  ]
+  byStatus["in-review"] = [task("shipme", 0, "")]
+  const s = summarizeBacklog(byStatus)
+  assert.equal(s.counts["in-planning"], 2)
+  assert.deepEqual(s.gated, ["gated"])
+  assert.deepEqual(s.claimable, ["ready"])
+  assert.deepEqual(s.interrupted, ["crashed"])
+  assert.deepEqual(s.awaitingReview, ["shipme"])
 })
