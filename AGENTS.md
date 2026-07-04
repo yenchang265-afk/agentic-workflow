@@ -6,14 +6,15 @@ Guidance for AI coding agents working in this repository.
 
 `agentic-loop` is an OpenCode plugin. It provides:
 
-1. **The automatic agentic loop** (`/loop`) — a real plugin
+1. **The automatic agentic loop** (`/loop-plan` + `/loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   drives the full PLAN→BUILD→VERIFY→REVIEW lifecycle across **two
-   sessions**: PLAN plans interactively (with, for an underspecified
-   free-text goal, a conditional `interview-me`-backed clarification before
-   PLAN) and parks the approved plan as a task; a separate `/loop watch`
-   session claims and builds it (BUILD→VERIFY→REVIEW). Use this when a goal
-   should run the whole lifecycle largely unattended. See the
+   splits the lifecycle into two commands: `/loop-plan` authors a backlog
+   task **with** its `## Implementation Plan` (interviewing you first when
+   the idea is underspecified) and `approve <id>` parks it in the approved
+   queue; `/loop` is a pure executor that claims approved tasks
+   (`task <id>`, or a `watch [interval]` worker session polling on idle
+   events plus a timer) and drives BUILD→VERIFY→REVIEW unattended. Use this
+   when a goal should run the whole lifecycle largely unattended. See the
    `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
    and `task-backlog-management` for driving it from
    `docs/tasks/`.
@@ -38,7 +39,7 @@ Guidance for AI coding agents working in this repository.
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/loop <goal>` (see `loop-orchestration`), not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/loop-plan new <idea>` then `/loop-plan approve <id>` then `/loop task <id>` (see `loop-orchestration`), not a manual skill chain
 
 ### Lifecycle Mapping
 
@@ -74,7 +75,7 @@ Correct behavior: always check for and use skills first.
 
 - `src/index.ts`, `src/loop/`, `src/task/`, `src/config.ts` — plugin implementation (state machine, driver, task backlog IO)
 - `.opencode/agents/` — the agent personas backing each `/loop` stage
-- `.opencode/commands/` — the slash commands (`/loop`, `/plan`, `/build`, `/verify`, `/review`, `/task`)
+- `.opencode/commands/` — the slash commands (`/loop`, `/loop-plan`, `/plan`, `/build`, `/verify`, `/review`, `/explore`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

@@ -82,7 +82,7 @@ export const STATUSES: readonly TaskStatus[] = [
 /** A per-status roll-up of the backlog for `/loop status`. Pure. */
 export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
-  /** in-planning tasks that already have a persisted plan (gated, awaiting /loop go). */
+  /** in-planning tasks that already have a persisted plan (awaiting /loop-plan approve). */
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
@@ -285,8 +285,8 @@ export interface WriteLocation {
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
  * command. For creating (and optionally Azure DevOps-linking) a task today,
- * use `/task new <idea>` — the `task-author` subagent, which runs inside
- * OpenCode and can reach the Azure DevOps MCP server; see the
+ * use `/loop-plan new <idea>` — the `loop-plan-author` subagent, which runs
+ * inside OpenCode and can reach the Azure DevOps MCP server; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
  * writes it. Returns the new task's id and absolute path.

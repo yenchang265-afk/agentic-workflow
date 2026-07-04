@@ -54,6 +54,18 @@ echo "Installing agentic-loop ($MODE) into $CONFIG_DIR"
 mkdir -p "$CONFIG_DIR/agents" "$CONFIG_DIR/commands" "$CONFIG_DIR/skills" \
          "$CONFIG_DIR/references" "$CONFIG_DIR/plugins"
 
+# Drop symlinks that point back into this repo but whose source is gone —
+# e.g. commands/task.md after its rename to loop-plan.md.
+for dir in agents commands skills references; do
+  for link in "$CONFIG_DIR/$dir"/*; do
+    [ -L "$link" ] || continue
+    target="$(readlink "$link")"
+    case "$target" in
+      "$REPO_DIR"/*) [ -e "$link" ] || { rm "$link"; echo "removed (dangling): $link"; } ;;
+    esac
+  done
+done
+
 for f in "$REPO_DIR"/.opencode/agents/*.md; do
   link_or_copy "$f" "$CONFIG_DIR/agents/$(basename "$f")"
 done

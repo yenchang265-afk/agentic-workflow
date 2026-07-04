@@ -33,9 +33,9 @@ Apply this skill when:
 
 ## Loading Constraints
 
-This skill needs a live, responsive user. **Do not invoke inside an automatic, unattended pipeline** — the define/plan/build/verify/review stage turns `/loop` drives via `session.idle`, CI pipelines, scheduled runs, or autonomous-loop. If you're in one of those and the ask is underspecified, flag that as a blocker for the user instead of guessing.
+This skill needs a live, responsive user. **Do not invoke inside an automatic, unattended pipeline** — the build/verify/review stage turns `/loop` drives via `session.idle`, CI pipelines, scheduled runs, or autonomous-loop. If you're in one of those and the ask is underspecified, flag that as a blocker for the user instead of guessing.
 
-It **is** expected to run in `/loop <goal>`'s own initial turn, before anything is queued — that turn is still live and interactive; the `loop_begin` tool call is what actually queues the automatic pipeline, and only happens after this skill (if it ran) has already produced a confirmed restate. It's also expected inside `task-author`, which already has a live, responsive user via its own confirmation step.
+It **is** expected to run inside `/loop-plan new <idea>` — the `loop-plan-author` agent has a live, responsive user via its own draft-confirmation step, and nothing is queued for execution until a human later runs `/loop-plan approve <id>`.
 
 ## The Process
 

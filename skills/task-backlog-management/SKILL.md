@@ -1,6 +1,6 @@
 ---
 name: task-backlog-management
-description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running /loop next or /loop task <id>, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
+description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running /loop-plan or /loop task <id>, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
 ---
 
 # The task backlog
@@ -9,32 +9,28 @@ description: Explains the filesystem task backlog under docs/tasks/ that feeds t
 
 A task is one markdown file under `docs/tasks/`. **The folder it lives in is
 its status** — there is no `status:` field, so the two can never drift. The
-`/loop` command (see `loop-orchestration`) can drive the loop straight from
-this backlog instead of a hand-typed goal.
+`/loop-plan` command authors and approves tasks here; the `/loop` command
+(see `loop-orchestration`) executes the approved ones.
 
 ## When to Use
 
-- Use when you want a goal to persist across sessions instead of being a
-  one-off `/loop <goal>` invocation that's lost if the session restarts.
-- Use before running `/loop next` or `/loop task <id>` — both read from this
-  backlog.
-- Use when reviewing what `/explore` or `/task new` filed, or when moving a
-  task between `draft/`, `in-planning/`, and `abandoned/`.
-- A free-text `/loop <goal>` doesn't need one to *start* — but once its plan
-  is approved, it's promoted into a real task file in `in-progress/` too (see
-  `loop-orchestration`'s planning/execution split), so it isn't entirely
-  outside this backlog after all; only the draft/in-planning stage is skipped.
+- Use when you want a goal to persist across sessions as a durable, auditable
+  backlog record.
+- Use before running `/loop-plan task <id>`, `/loop-plan approve <id>`, or
+  `/loop task <id>` — all read from this backlog.
+- Use when reviewing what `/explore` or `/loop-plan new` filed, or when moving
+  a task to `abandoned/`.
 
 ## The folders
 
 ```
 docs/tasks/
-  draft/        # WIP, not ready                ← you write here
-  in-planning/  # queued for / undergoing plan   ← you move here (gate 1)
-  in-progress/  # build → verify → review        ← the driver moves here (on plan approval)
-  in-review/    # review passed, human diff gate ← the driver moves here automatically
-  completed/    # shipped                        ← you move here, once the PR merges
-  abandoned/    # won't do                       ← you move here, from any status
+  draft/        # planless stubs (from /explore or hand-written) ← you or /explore write here
+  in-planning/  # planned, awaiting approval                     ← /loop-plan writes here
+  in-progress/  # approved queue + build → verify → review       ← /loop-plan approve moves here
+  in-review/    # review passed, human diff gate                 ← the driver moves here automatically
+  completed/    # shipped                                        ← you move here (/loop ship), once the PR merges
+  abandoned/    # won't do                                       ← you move here, from any status
 ```
 
 ## Task file schema
@@ -54,8 +50,13 @@ azureRepo: platform-api                 # optional; the ADO repo it was created 
 azureUrl: https://dev.azure.com/acme/Platform/_workitems/edit/1234  # optional
 ---
 Throttle authenticated callers to 100 req/min. The body is the description /
-context; it becomes the loop's goal, with `acceptance` threaded into the verify
-stage so the verdict checks each criterion.
+context; it becomes the loop's goal, with `acceptance` threaded into the build
+and verify stages so the verdict checks each criterion.
+
+## Implementation Plan
+
+The plan — written by /loop-plan (new or task <id>). Its presence (this exact
+heading) is what makes the task approvable and, once approved, claimable.
 ```
 
 - **id** = the filename without `.md` (`add-foo.md` becomes `add-foo`). Stable, human-visible.
@@ -67,38 +68,34 @@ stage so the verdict checks each criterion.
   task can carry none, just an id, or the full set. When `azureId` is set,
   `/loop` threads a `Linked Azure DevOps work item: #<id> — <url>` line into
   every stage's context (see "Linking a task to Azure DevOps" below).
+- **`## Implementation Plan`** — the literal heading the plugin greps for.
+  Without it, `/loop-plan approve` refuses and the loop can never claim the task.
 
 ## Process
 
-1. **Create a task** — by hand (write the file above into `draft/`), via
-   `/task new <idea>` (the `task-author` subagent drafts a schema-valid file
-   into `draft/`, and asks about Azure DevOps linkage — see below), or via
-   `/explore` (scans the repo for improvement opportunities and files up to
-   5 as draft tasks, deduped against what's already there). New tasks always
-   land in `draft/`, never straight into `in-planning/` — a human decides
-   what's worth planning.
-2. **Review**, then move it to `in-planning/` yourself — that move is the
-   first human gate; it's the decision to start planning it.
-3. **Plan it** — `/loop next` picks the lowest-`priority` task in
-   `in-planning/` that doesn't already have a plan (ties by id) and starts
-   the loop on it (PLAN). `/loop task <id>` runs one specific task; if
-   it already has a persisted plan, this resumes straight to the
-   plan-approval gate instead of re-planning. The task stays in
-   `in-planning/` through this whole step, including while the generated
-   plan waits for your review — there's no separate folder for that; check
-   `/loop status` or the toast message to see it's waiting.
-4. **Approve the plan** (`/loop go`) — this is the second gate, and the only
-   one that's automatic on the folder side: the driver moves the file
-   `in-planning/ → in-progress/` itself. This **parks** it — nothing builds
-   in this session anymore. A separate `/loop watch` session claims it later
-   and runs BUILD→VERIFY→REVIEW. See `loop-orchestration` for the full
-   planning/execution split.
+1. **Author a planned task** — `/loop-plan new <idea>`: the `loop-plan-author`
+   subagent drafts a schema-valid task (interviewing you if the idea is too
+   vague, and asking about Azure DevOps linkage — see below), confirms the
+   draft with you, then reads the relevant code and writes task **plus**
+   `## Implementation Plan` to `in-planning/`. Your live confirmation in that
+   turn is the draft-review gate — no manual folder move needed.
+   - Planless stubs still land in `draft/`: `/explore` files up to 5 per run
+     (deduped against what's already there), and you can write one by hand.
+     Plan a stub with `/loop-plan task <id>` — the plan is written onto the
+     file in place.
+2. **Approve** — `/loop-plan approve <id>`: deterministic plugin code checks
+   the `## Implementation Plan` heading exists, moves the file (from
+   `in-planning/` or `draft/`) to `in-progress/`, appends an audited
+   "Plan approved" note, and commits. This is the human sign-off before any
+   code is written.
+3. **Execute** — `/loop task <id>` (one task, now) or `/loop watch [interval]`
+   (standing worker). See `loop-orchestration`.
 
 ### Linking a task to Azure DevOps
 
-Any agent authoring a task (`task-author` via `/task new`, or you writing one
-by hand) should follow this exact script when the work traces to Azure
-DevOps. This is the *only* place this protocol is written down — don't
+Any agent authoring a task (`loop-plan-author` via `/loop-plan new`, or you
+writing one by hand) should follow this exact script when the work traces to
+Azure DevOps. This is the *only* place this protocol is written down — don't
 duplicate it into an agent's own prompt; have the agent invoke this skill
 instead.
 
@@ -135,44 +132,36 @@ DevOps (step 3), one before writing the local file (steps 2 and 3 both end
 here). Neither is optional, and neither can be skipped because "the details
 seem obvious."
 
-Linking is metadata, not scope — it does not change what the loop plans,
-builds, or verifies. It only threads a `Linked Azure DevOps work item: #<id>`
-line into every stage's context (see `loop-orchestration`) so the eventual
-PR description can reference the source work item.
+Linking is metadata, not scope — it does not change what the loop builds or
+verifies. It only threads a `Linked Azure DevOps work item: #<id>` line into
+every stage's context (see `loop-orchestration`) so the eventual PR
+description can reference the source work item.
 
 ## Lifecycle — who moves what
 
 | Transition | Who | When |
 |------------|-----|------|
-| `draft → in-planning` | **you** | the task is worth planning; this is the first human gate |
-| `in-planning → in-progress` | driver | automatic, the instant a plan is approved (`/loop go` at the plan gate) — parks it; a later `/loop watch` session claims and builds it |
-| `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS, from inside whichever `/loop watch` session claimed it — parks it as the human diff gate |
+| into `draft/` | you or `/explore` | a planless stub worth remembering |
+| into `in-planning/` | `/loop-plan new` | authored with its plan, awaiting your approval |
+| `draft → in-planning` | *(optional, you)* | not required — `/loop-plan approve` finds planned tasks in `draft/` too |
+| `in-planning (or draft) → in-progress` | **`/loop-plan approve <id>`** | the human plan-approval gate; audited note + commit |
+| `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS — parks it as the human diff gate |
 | `in-review → completed` | **you** | you've reviewed the diff and shipped it — run `/loop ship <id>` (an audited move + commit) or move the file by hand; the loop never does this move on its own |
 | stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
 | `→ abandoned` | **you** | you decide not to do it, from any status |
 
-Only two status transitions are manual: `draft → in-planning` (the
-decision to plan it) and `in-review → completed` (the decision that it's
-actually shipped). Everything in between — `in-planning → in-progress` on
-plan approval, `in-progress → in-review` on a review PASS — is the driver
-recording a decision that already happened (a human ran `/loop go`, or the
-pipeline finished), not a second layer of file-moving bureaucracy.
-
 A failed or stopped task is **left in `in-progress/`** with a note appended, so
-it is visibly stuck for a human rather than silently re-queued. Run `/loop task
-<id>` yourself to retry, or move it to `abandoned/` to give up on it — but see
-the recovery boundary below: `/loop task <id>` only looks in `in-planning/`.
+it is visibly stuck for a human rather than silently re-queued. `/loop recover
+<id>` resumes it; if the plan itself was the problem, re-plan with `/loop-plan
+task <id>` and approve again; or move it to `abandoned/` to give up on it.
 
-The first time a task's plan gates for approval, it is also **persisted onto
-the task file** under a `## Implementation Plan` heading — the on-disk marker
-that the task is planned and awaiting a human. This survives a `/loop stop` or
-an opencode restart, when the in-memory loop state does not — only the plan
-is durable.
+The `## Implementation Plan` section is the durable on-disk record — it
+survives a `/loop stop` or an opencode restart, when the in-memory loop state
+does not (state snapshots under `runs/` cover exact-stage crash recovery).
 
 ### Identifying an interrupted loop
 
-Loop state is in-memory only — a crash or restart mid-loop leaves no trace by
-itself. What's on the task file tells you what happened:
+What's on the task file tells you what happened:
 
 - **A blockquote note** (`> ...`) — either a manual `/loop stop`/`/loop abort`,
   or an automatic iteration-cap stop (from a VERIFY or a REVIEW failure).
@@ -180,36 +169,28 @@ itself. What's on the task file tells you what happened:
   it) — the only stage that edits files died mid-run, most likely a crash or a
   `/loop stop` issued while BUILD was active. Treat this as "check `git
   status`/`git diff` before doing anything else" — there may be a
-  half-finished diff in the working tree. `/loop task <id>` surfaces this as a
-  warning when resuming an already-planned task.
-- **No markers at all, just `## Implementation Plan`** — safe: planned and
-  waiting for approval, nothing has written code yet. This is exactly the
-  `isClaimable` predicate a `/loop watch` session uses to pick its next task:
-  has a plan, and has never had *any* `> BUILD started` note — not just "the
-  last one is unmatched" (that's `wasInterrupted`, above). A task with any
-  build marker at all, matched or not, is either being driven by a live
-  watch session right now, or crashed and needs the manual recovery below —
-  a watcher must never silently reclaim either case.
-
-**Recovery boundary:** `/loop task <id>` only searches `in-planning/`. If a
-session dies while a task is already in `in-progress/` (mid-BUILD, VERIFY, or
-REVIEW), `/loop task <id>` won't find it there — the loop has no way
-to resume exactly where it left off past the plan gate. The recovery is
-manual: check `git status`/`git diff` against the BUILD markers above, then
-move the file back to `in-planning/` and run `/loop task <id>` again to
-re-plan and restart it cleanly (or finish/fix it up by hand).
+  half-finished diff. `/loop recover <id>` resumes it (snapshot-exact, or at
+  BUILD from the persisted plan).
+- **No markers at all, just `## Implementation Plan`** — safe: approved and
+  waiting, nothing has written code yet. This is exactly the `isClaimable`
+  predicate a `/loop watch` session uses to pick its next task: has a plan,
+  and has never had *any* `> BUILD started` note — not just "the last one is
+  unmatched" (that's `wasInterrupted`, above). A task with any build marker
+  at all, matched or not, is either being driven by a live watch session
+  right now, or crashed and needs `/loop recover` — a watcher must never
+  silently reclaim either case.
 
 ## Notes & limits
 
 - The backlog path defaults to `docs/tasks` and is configurable via `tasksDir`
   in `.agentic-loop.json`.
-- The loop edits the current working tree; after it finishes, review the diff,
-  then open the PR yourself. There is no per-task branch/worktree.
-- Promotion (`draft → in-planning`, `→ abandoned`) is a manual file move —
-  there is no approve command. `in-planning → in-progress` is the one
-  automatic move on the "start" side, driven by `/loop go` — it parks the
-  task; nothing builds it until a human explicitly runs `/loop watch` in
-  some session (see `loop-orchestration`).
+- Execution is isolated on a `loop/<id>` branch (or per-task worktree, when
+  configured); after the loop finishes, review the diff, then open the PR
+  yourself.
+- `→ abandoned` is a manual file move — there is no abandon command.
+  `in-planning → in-progress` is `/loop-plan approve`'s move; `in-progress →
+  in-review` is the driver recording a review PASS. Neither is a second layer
+  of file-moving bureaucracy — each records a decision that already happened.
 - Azure DevOps linking depends on the `microsoft/azure-devops-mcp` server
   being connected in your OpenCode setup. It's optional — task creation
   never blocks on it (see "Linking a task to Azure DevOps" above).
@@ -220,10 +201,10 @@ re-plan and restart it cleanly (or finish/fix it up by hand).
 |---|---|
 | "I'll add a status: field, it's clearer" | The whole point is that the folder *is* the status — a separate field can drift from the folder and lie about the task's real state. |
 | "This task failed once, just delete the note and retry silently" | The note is the audit trail for why a human needs to look before retrying (especially an unmatched BUILD-started marker, which can mean a half-finished diff). Deleting it hides that signal from the next person. |
-| "Skip in-planning/, edit the task straight in draft/ to 'run' it" | `/loop next` and `/loop task <id>` only look in `in-planning/` — moving it there isn't bureaucracy, it's the actual trigger and the human gate. |
-| "The MCP server's connected, just create the Azure work item without asking" | Creating a work item is a write to a real, shared Azure DevOps project — always confirm title/project/description first, same as every other external-write gate in this repo (plan gate). |
+| "Just mv the file to in-progress/, approve is bureaucracy" | A raw `mv` skips the plan validation, the audit note, and the commit that records who approved what. The command is one line and is the gate. |
+| "The MCP server's connected, just create the Azure work item without asking" | Creating a work item is a write to a real, shared Azure DevOps project — always confirm title/project/description first, same as every other external-write gate in this repo (plan approval). |
 | "The fetched Azure work item is obviously right, skip showing the draft" | The draft-then-confirm checkpoint exists precisely because ADO fields don't map 1:1 onto acceptance criteria — a human needs to see what got inferred before it becomes the loop's goal. |
-| "Add another status for 'plan ready, waiting on /loop go'" | That moment is already visible via `hasPlan()`/the toast message inside `in-planning/` — it doesn't need its own folder. `in-review` earned its own status because it's a real, driver-driven transition (review PASS), not because every gate needs one. |
+| "Add another status for 'approved, waiting for a watcher'" | That moment is already visible: an in-progress task with a plan and no build markers is exactly `isClaimable`. It doesn't need its own folder. |
 
 ## Red Flags
 
@@ -241,26 +222,24 @@ re-plan and restart it cleanly (or finish/fix it up by hand).
 - A task in `completed/` with no "Shipped" audit note — it was moved by a raw
   `mv` instead of `/loop ship <id>`, so the completion isn't in the audit
   trail.
+- A task in `in-progress/` with no "Plan approved" audit note — it was moved
+  by a raw `mv` instead of `/loop-plan approve <id>`.
 - An Azure DevOps work item created without the user confirming title,
   project, and description first.
 - A local task file written without ever showing its draft to the user for
   a "does this look right?" confirmation.
 - A task file with `azureProject`/`azureRepo`/`azureUrl` set but no
   `azureId` — the id is the anchor; the others are only meaningful alongside it.
-- A task found sitting in `in-progress/` that a human is trying to resume
-  with `/loop task <id>` — that command only searches `in-planning/`; see
-  the recovery boundary above.
 
 ## Verification
 
 - [ ] Every task file in `docs/tasks/**/*.md` parses against the schema
       (`title` required, `priority` an integer, `acceptance` a list of strings).
 - [ ] No task file has a `status:` frontmatter key.
-- [ ] Every task in `in-planning/` with a `## Implementation Plan` heading is
-      either paused at the gate or actively being planned — not silently
-      abandoned.
+- [ ] Every task in `in-progress/` carries an `## Implementation Plan`
+      heading and a "Plan approved" audit note.
 - [ ] `docs/tasks/{draft,in-planning,in-progress,in-review,completed,abandoned}/`
-      all exist (even if empty, via `.gitkeep`) so `/explore`, `/task new`, and
+      all exist (even if empty, via `.gitkeep`) so `/explore`, `/loop-plan`, and
       the driver never fail on a missing folder.
 - [ ] Every task with `azureId` set was linked (or created) only after the
       user confirmed the details — never silently.

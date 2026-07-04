@@ -5,32 +5,34 @@ supervised state machine instead of a chat back-and-forth.
 
 ## What it does
 
-`/loop <goal>` moves a goal through four stages across **two sessions**,
-pausing only where a human decision actually matters. An underspecified goal
-is interviewed (`interview-me`) before PLAN even starts; a clear goal
-skips straight through:
+Planning and execution are two commands. **`/loop-plan`** authors a backlog
+task *with* its `## Implementation Plan` (interviewing you first if the idea
+is underspecified) and `approve <id>` is the explicit human gate that parks
+it in the approved queue. **`/loop`** is a pure executor over that queue:
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
-| PLAN | Turns the goal into a spec-bounded, ordered plan | **yes — approve & park the plan** |
-| BUILD | Implements task-driven, test-first, on its own `loop/<id>` branch | no (runs in a `/loop watch` session) |
-| VERIFY | Runs tests; FAIL re-plans with the failure | no |
+| *(plan — in `/loop-plan`, before the loop)* | Authors the task + spec-bounded, ordered plan; `approve` parks it | **yes — the approval is the gate** |
+| BUILD | Implements the approved plan test-first, on its own `loop/<id>` branch | no |
+| VERIFY | Runs tests; FAIL re-builds with the failure | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
 
-Approving the plan **parks** it as a task instead of building it in the same
-session — run `/loop watch` in another session (or the same one, later) to
-claim and build it. Execution is isolated on a `loop/<id>` git branch with a
-commit checkpoint per build iteration; VERIFY/REVIEW record their verdicts
-through a `loop_verdict` plugin tool (free-text verdicts are ignored), and
-every gate approval, verdict, and build run is appended to the task file as
-a timestamped, attributed audit note. Re-plan/re-build loops are capped by
-`maxIterations`; a stage that outlives `stageTimeoutMinutes` fails the loop
-instead of hanging it. On a REVIEW PASS the task parks in `in-review/` — the
-loop never pushes or opens a PR itself; you review the branch diff, then run
+Execution runs either on demand (`/loop task <id>`) or in a `/loop watch
+[interval]` worker session, which claims approved tasks on every idle tick
+plus a polling timer (default 5m, e.g. `/loop watch 30s`). Execution is
+isolated on a `loop/<id>` git branch with a commit checkpoint per build
+iteration; VERIFY/REVIEW record their verdicts through a `loop_verdict`
+plugin tool (free-text verdicts are ignored), and every approval, verdict,
+and build run is appended to the task file as a timestamped, attributed
+audit note. Re-build loops are capped by `maxIterations` — if the cap trips,
+the plan itself is suspect and a human re-plans with `/loop-plan task <id>`.
+A stage that outlives `stageTimeoutMinutes` fails the loop instead of
+hanging it. On a REVIEW PASS the task parks in `in-review/` — the loop never
+pushes or opens a PR itself; you review the branch diff, then run
 `/loop ship <id>` to move it to `completed/`. A run that dies mid-build is
 resumed with `/loop recover <id>` — loop state is snapshotted after every
-stage, so recovery resumes at the exact stage it reached rather than
-re-planning. See `docs/design/threat-model.md` for the security posture, and
+stage, so recovery resumes at the exact stage it reached. See
+`docs/design/threat-model.md` for the security posture, and
 `docs/design/improvements/` for the design of the hardening features below.
 
 ### Optional hardening (config in `.agentic-loop.json`)
@@ -53,21 +55,34 @@ re-planning. See `docs/design/threat-model.md` for the security posture, and
 
 ## Commands
 
-- `/loop <goal>` — clarify if needed, then start; runs PLAN, then pauses
-- `/loop next` — start on the top task in `docs/tasks/in-planning/`
-- `/loop task <id>` — start on a specific in-planning task
-- `/loop go` — approve the current gate (first approval parks it for execution)
-- `/loop watch` — turn this session into an execution worker: claims and
-  builds parked, approved tasks on idle
-- `/loop unwatch` — stop this session from claiming new work
+Planning (`/loop-plan`):
+
+- `/loop-plan new <idea>` — author a task **with** its Implementation Plan
+  into `docs/tasks/in-planning/` (interviews you if the idea is vague)
+- `/loop-plan task <id>` — plan an existing `draft/`/`in-planning/` task in
+  place (also how you re-plan one whose loop hit the iteration cap)
+- `/loop-plan approve <id>` — validate the plan and park the task in
+  `docs/tasks/in-progress/` (the approved queue), audited + committed
+
+Execution (`/loop`):
+
+- `/loop task <id>` — execute one approved task now, entering at BUILD
+- `/loop watch [interval]` — turn this session into an execution worker:
+  claims and builds approved tasks on idle events plus a polling timer
+  (`30s`, `5m`, `2h`, bare number = minutes; default `watchIntervalMinutes`)
+- `/loop unwatch` — stop this session from claiming new work (timer included)
 - `/loop recover <id>` — resume an in-progress task whose run died mid-build
   (crash, restart), from its state snapshot (or its persisted plan)
 - `/loop ship <id>` — move a reviewed `in-review/` task to `completed/`, audited
 - `/loop stop` — abort, clear state, and exit watch mode
-- `/loop status` — print the current loop (stage, iteration, pause/watch state)
-  plus a whole-backlog roll-up (counts, gated/claimable/interrupted/in-review)
+- `/loop status` — print the current loop (stage, iteration, watch cadence)
+  plus a whole-backlog roll-up (counts, awaiting-approval/claimable/
+  interrupted/in-review)
 
-Outside `/loop`, one-off requests are handled ad hoc: see [AGENTS.md](AGENTS.md)
+The old `/loop <goal>` free-text mode, `/loop next`, and `/loop go` are gone —
+planning always goes through `/loop-plan`.
+
+Outside the loop, one-off requests are handled ad hoc: see [AGENTS.md](AGENTS.md)
 for the intent-to-skill mapping — the plugin bundles a `skills/` library
 (spec-driven-development, test-driven-development, code-review-and-quality,
 and 20+ others) that both the loop's stage agents and ad-hoc requests invoke
@@ -89,6 +104,19 @@ session. It's idempotent — re-run after `git pull` for updates. Use
 `--copy` instead of symlinks, or pass a directory to install somewhere other
 than the default OpenCode config dir.
 
+### Migrating from the PLAN-stage versions
+
+- Re-run `./install.sh` after updating — the `/task` command was renamed to
+  `/loop-plan` (and its agent to `loop-plan-author`), so a previously
+  installed `commands/task.md` symlink now dangles; delete it if it lingers.
+- Tasks already in `in-planning/` without a plan: run `/loop-plan task <id>`.
+- Old `*.state.json` snapshots taken at the removed PLAN stage are invalidated
+  by design — `/loop recover <id>` falls back to the plan persisted on the
+  task file.
+- `gateBeforeBuild` and `interviewBeforePlan` in `.agentic-loop.json` are
+  ignored now (the gate is `/loop-plan approve`; interviewing lives in
+  `/loop-plan new`).
+
 ## Layout
 
 - `src/index.ts`, `src/loop/`, `src/task/`, `src/config.ts` — the state
@@ -97,7 +125,7 @@ than the default OpenCode config dir.
   behind each stage and slash command; `.opencode/skills` symlinks to `skills/`
 - `skills/`, `references/` — the workflow library the stage agents and ad-hoc
   requests pull from
-- `docs/tasks/` — the filesystem task backlog `/loop next` and `/loop task`
+- `docs/tasks/` — the filesystem task backlog `/loop-plan` and `/loop task`
   read from
 - `install.sh` — installs this plugin into an OpenCode config directory
   (global by default)
