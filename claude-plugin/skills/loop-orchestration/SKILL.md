@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: The protocol for driving the agentic engineering loop (build → verify → review) inside Claude Code. Use when running /loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the loop_verdict contract, and how the loop terminates. Planning and approval happen before the loop, in /loop-plan.
+description: The protocol for driving the agentic engineering loop (build → verify → review) inside Claude Code. Use when running /agent-loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the loop_verdict contract, and how the loop terminates. Planning and approval happen before the loop, in /agent-loop-plan.
 ---
 
 # Driving the agentic loop (Claude Code)
@@ -15,12 +15,12 @@ your own control flow.
 ## The pipeline
 
 ```
-planning (the /loop-plan command, interactive, BEFORE the loop):
-  /loop-plan new <idea> ──▶ interview (main agent) ──▶ planless draft in draft/
-  /loop-plan task <id>  ──▶ loop_plan_task moves draft ▶ in-planning/ + plan written in place
-  /loop-plan approve <id> ─▶ loop_plan_approve validates + parks in in-progress/  ← the human gate
+planning (the /agent-loop-plan command, interactive, BEFORE the loop):
+  /agent-loop-plan new <idea> ──▶ interview (main agent) ──▶ planless draft in draft/
+  /agent-loop-plan task <id>  ──▶ loop_plan_task moves draft ▶ in-planning/ + plan written in place
+  /agent-loop-plan approve <id> ─▶ loop_plan_approve validates + parks in in-progress/  ← the human gate
 
-execution (/loop task <id> or /loop claim — this skill):
+execution (/agent-loop task <id> or /agent-loop claim — this skill):
   loop_start/loop_claim ─▶ loop_stage(build) ─▶ spawn loop-build ─▶ loop_advance
         ─▶ loop_stage(verify) ─▶ spawn loop-verify ─▶ loop_advance
         ─▶ loop_stage(review) ─▶ spawn loop-review ─▶ loop_advance ─▶ done (task → in-review/)
@@ -62,10 +62,10 @@ is no in-loop plan stage and no gate action — an unapproved task cannot start.
      The MCP server combines them worst-wins. Then a single `loop_advance`.
 5. **Terminate.** On `{done}` the server has moved the task to `in-review/`,
    torn down the worktree, and written the `## Run summary`. Tell the user to
-   review the branch diff and run `/loop ship <id>` when it ships. On `{stop}`
+   review the branch diff and run `/agent-loop ship <id>` when it ships. On `{stop}`
    the task stays in `in-progress/` with an audit note — report why. When the
    iteration cap tripped, the plan itself is suspect: the fix is
-   `/loop-plan task <id>` (re-plan) then `/loop-plan approve <id>`.
+   `/agent-loop-plan task <id>` (re-plan) then `/agent-loop-plan approve <id>`.
 
 ## The verdict contract
 
@@ -91,19 +91,19 @@ of the next iteration's prompt automatically.
 ## Termination summary
 
 - **REVIEW PASS** → done; task in `in-review/`; human reviews the diff and runs
-  `/loop ship <id>`.
+  `/agent-loop ship <id>`.
 - **VERIFY or REVIEW FAIL** within `maxIterations` → re-build with the feedback.
 - **FAIL** at the cap, **ERROR**, or a stage past its deadline → stop; task
   stays in `in-progress/` with a note.
 
 ## What is different from the OpenCode version
 
-- **No `/loop watch`.** Watch needs an autonomous driver firing stages on idle
+- **No `/agent-loop watch`.** Watch needs an autonomous driver firing stages on idle
   events and timers; here the main agent is the driver and the MCP server
-  cannot spawn subagents. `/loop claim` is the pull equivalent — one human
+  cannot spawn subagents. `/agent-loop claim` is the pull equivalent — one human
   trigger claims and drives the next approved task. Within your turn,
   BUILD → VERIFY → REVIEW still advance without human turns.
-- **The interview runs in the main agent.** `/loop-plan new` interviews the
+- **The interview runs in the main agent.** `/agent-loop-plan new` interviews the
   user directly (Task subagents can't converse); the `loop-plan-author`
   subagent only writes the confirmed file.
 - Verdicts and all deterministic operations go through the `agentic-loop` MCP
@@ -111,7 +111,7 @@ of the next iteration's prompt automatically.
 
 ## Red flags
 
-- Executing a task that never went through `/loop-plan approve` — impossible
+- Executing a task that never went through `/agent-loop-plan approve` — impossible
   via the tools (`loop_start` only reads `in-progress/`); never work around it.
 - Spawning a stage subagent without first calling `loop_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.

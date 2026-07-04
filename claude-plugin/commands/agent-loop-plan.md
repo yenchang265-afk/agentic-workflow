@@ -1,10 +1,10 @@
 ---
-description: Draft a backlog task by interviewing the user, plan it, or approve the plan for execution by /loop
+description: Draft a backlog task by interviewing the user, plan it, or approve the plan for execution by /agent-loop
 argument-hint: new <idea> | task <id> | approve <id>
 ---
 
 Plan authoring for the agentic loop — planning happens **here**, before the
-loop; `/loop` only executes approved plans.
+loop; `/agent-loop` only executes approved plans.
 
 **Argument:** `$ARGUMENTS`
 
@@ -26,7 +26,7 @@ Dispatch:
   4. Spawn the **`loop-plan-author`** subagent (Task tool) with the
      confirmed details to write the single draft file. Drafting and planning
      are two steps by design — the human reviews the draft before plan
-     effort is spent. The next step is `/loop-plan task <id>`.
+     effort is spent. The next step is `/agent-loop-plan task <id>`.
 - **`task <id>`** — plan a task. Call
   `mcp__agentic-loop__loop_plan_task({id})` **first** — it deterministically
   moves a `draft/` task to `docs/tasks/in-planning/` (audited + committed)
@@ -43,4 +43,4 @@ Dispatch:
 
 The flow is two-step by design: `new` (interview → draft) → human reviews →
 `task <id>` (plan written) → human reviews the plan → `approve <id>` → then
-`/loop task <id>` or `/loop claim` executes it.
+`/agent-loop task <id>` or `/agent-loop claim` executes it.

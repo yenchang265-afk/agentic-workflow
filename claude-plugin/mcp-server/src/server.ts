@@ -49,13 +49,13 @@ import {
  * driver is gone (no Claude Code equivalent) — the agent is the driver; this
  * server is the trusted state + git/backlog substrate.
  *
- * Planning happens before the loop, in `/loop-plan`: `new` interviews the user
+ * Planning happens before the loop, in `/agent-loop-plan`: `new` interviews the user
  * into a draft (main-agent turn), `loop_plan_task` moves a draft to
  * `in-planning/` for the plan-writing turn, and `loop_plan_approve` validates
  * the plan and parks the task in `in-progress/` — the approved queue that
  * `loop_start`/`loop_claim` execute from, entering at BUILD.
  *
- * There is no `/loop watch` here, deliberately: watch needs an autonomous
+ * There is no `/agent-loop watch` here, deliberately: watch needs an autonomous
  * driver firing stages on idle events/timers, and the MCP server can't spawn
  * subagents. `loop_claim` is the pull equivalent — one human trigger claims
  * the next approved task.
@@ -162,7 +162,7 @@ server.registerTool(
   "loop_start",
   {
     description:
-      "Execute one approved task now: claims it from in-progress/ (the queue /loop-plan approve fills), isolates execution (loop/<id> branch or worktree), initializes the state machine at BUILD, and returns the composed BUILD prompt. Call loop_stage('build') right before spawning the build subagent.",
+      "Execute one approved task now: claims it from in-progress/ (the queue /agent-loop-plan approve fills), isolates execution (loop/<id> branch or worktree), initializes the state machine at BUILD, and returns the composed BUILD prompt. Call loop_stage('build') right before spawning the build subagent.",
     inputSchema: { id: z.string().min(1).describe("The approved task's id (filename without .md) in in-progress/.") },
   },
   async ({ id }) => {
@@ -173,7 +173,7 @@ server.registerTool(
       const elsewhere = await findAnyStatus(id)
       return fail(
         elsewhere
-          ? `Task "${id}" is in ${path.basename(path.dirname(elsewhere.path))} — only approved in-progress tasks can be executed. Plan it with /loop-plan task ${id} and approve it first.`
+          ? `Task "${id}" is in ${path.basename(path.dirname(elsewhere.path))} — only approved in-progress tasks can be executed. Plan it with /agent-loop-plan task ${id} and approve it first.`
           : `No task "${id}" found.`,
       )
     }
@@ -181,7 +181,7 @@ server.registerTool(
       return fail(
         isRecoverable(t)
           ? `Task "${id}" has already started — resume it with loop_recover instead.`
-          : `Task "${id}" has no Implementation Plan — run /loop-plan task ${id}, then approve it.`,
+          : `Task "${id}" has no Implementation Plan — run /agent-loop-plan task ${id}, then approve it.`,
       )
     }
     const started = await startTask(t)
@@ -199,7 +199,7 @@ server.registerTool(
   "loop_claim",
   {
     description:
-      "Claim the next approved task from in-progress/ (lowest priority number first) and start it at BUILD — the pull equivalent of the OpenCode plugin's /loop watch. Returns null when the queue is empty.",
+      "Claim the next approved task from in-progress/ (lowest priority number first) and start it at BUILD — the pull equivalent of the OpenCode plugin's /agent-loop watch. Returns null when the queue is empty.",
     inputSchema: {},
   },
   async () => {
@@ -315,7 +315,7 @@ server.registerTool(
     if (isOverdue(stageDeadline, Date.now())) {
       const action: Action = {
         kind: "stop",
-        message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /loop recover the task.`,
+        message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agent-loop recover the task.`,
       }
       samples.push({ stage, iteration: active.iteration, ms: Date.now() - lastFireAt })
       await runTerminal(action)
@@ -369,7 +369,7 @@ server.registerTool(
     if (!active) return ok({ stopped: false, note: "no active loop" })
     const action: Action = {
       kind: "stop",
-      message: `Loop stopped by /loop stop at ${active.stage} (iteration ${active.iteration + 1}).`,
+      message: `Loop stopped by /agent-loop stop at ${active.stage} (iteration ${active.iteration + 1}).`,
     }
     await runTerminal(action)
     return ok({ stopped: true })
@@ -437,7 +437,7 @@ server.registerTool(
   "loop_plan_task",
   {
     description:
-      "Deterministic pre-turn work for /loop-plan task <id>: if the task sits in draft/, move it to in-planning/ (audited note + commit) so folder semantics stay honest — the agent then writes the Implementation Plan onto the file in place. Idempotent for tasks already in in-planning/.",
+      "Deterministic pre-turn work for /agent-loop-plan task <id>: if the task sits in draft/, move it to in-planning/ (audited note + commit) so folder semantics stay honest — the agent then writes the Implementation Plan onto the file in place. Idempotent for tasks already in in-planning/.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -466,7 +466,7 @@ server.registerTool(
   "loop_plan_approve",
   {
     description:
-      "Deterministic /loop-plan approve <id>: validate the task has an ## Implementation Plan, move it to in-progress/ (the approved queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing.",
+      "Deterministic /agent-loop-plan approve <id>: validate the task has an ## Implementation Plan, move it to in-progress/ (the approved queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -482,7 +482,7 @@ server.registerTool(
           : `Can't approve "${id}": no task found.`,
       )
     }
-    if (!hasPlan(task)) return fail(`Task "${id}" has no Implementation Plan yet — run /loop-plan task ${id} first.`)
+    if (!hasPlan(task)) return fail(`Task "${id}" has no Implementation Plan yet — run /agent-loop-plan task ${id} first.`)
     const actor = await gitActor(sh, directory)
     await appendNote(sh, task, auditNote("Plan approved — parked for execution", new Date(), actor), log)
     const newPath = await moveTask(sh, task, "in-progress")
@@ -537,7 +537,7 @@ server.registerTool(
     const t = await findByIdIn(fsClient, directory, config.tasksDir, "in-progress", id)
     if (!t) return fail(`No in-progress task "${id}".`)
     if (isClaimable(t)) return fail(`Task "${id}" never started — start it with loop_start or loop_claim.`)
-    if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — re-plan with /loop-plan task ${id}.`)
+    if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — re-plan with /agent-loop-plan task ${id}.`)
     await claimTask(sh, t) // re-mark; the dead run's claim marker may linger
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     samples = []
@@ -576,7 +576,7 @@ async function main() {
   if (config.worktreesDir) {
     await pruneWorktrees(sh, directory)
     const worktrees = (await listWorktrees(sh, directory)).filter((w) => w.branch?.startsWith("loop/"))
-    for (const w of worktrees) await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — /loop recover its task or remove it`)
+    for (const w of worktrees) await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — /agent-loop recover its task or remove it`)
   }
   await log("info", `agentic-loop MCP server ready (directory=${directory})`)
   const transport = new StdioServerTransport()

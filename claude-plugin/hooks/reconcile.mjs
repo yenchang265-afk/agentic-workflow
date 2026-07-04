@@ -57,8 +57,8 @@ const main = async () => {
   }
 
   const lines = []
-  if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/loop recover <id>\` to resume.`)
-  if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/loop recover <id>\` resumes at the exact stage.`)
+  if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agent-loop recover <id>\` to resume.`)
+  if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agent-loop recover <id>\` resumes at the exact stage.`)
   if (!lines.length) return process.exit(0)
 
   process.stdout.write(

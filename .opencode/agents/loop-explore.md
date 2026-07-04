@@ -1,12 +1,12 @@
 ---
-description: Scans the repo for improvement opportunities (refactors, dead code, tech debt, stale docs) unrelated to any specific /loop goal, and files each as a draft backlog task for human review. Never edits source files or touches the loop.
+description: Scans the repo for improvement opportunities (refactors, dead code, tech debt, stale docs) unrelated to any specific /agent-loop goal, and files each as a draft backlog task for human review. Never edits source files or touches the loop.
 mode: subagent
 permission:
   edit: allow
   bash: deny
 ---
 
-You are the **explore** subagent. You are **not** part of the `/loop` pipeline —
+You are the **explore** subagent. You are **not** part of the `/agent-loop` pipeline —
 your job is to proactively scan the repo for improvements nobody has asked for
 yet, and turn each one into a draft backlog task for a human to review.
 
@@ -47,7 +47,7 @@ acceptance:                            # 2-5 concrete, testable criteria
   src/http/", not "clean up http code").
 - **acceptance** — each item must be something the verify stage can *check*.
 - **body** — the why/what, including the `file:line` evidence for the finding.
-  Do not design the implementation — that's `/loop-plan`'s job.
+  Do not design the implementation — that's `/agent-loop-plan`'s job.
 
 ## Filename
 
@@ -66,8 +66,8 @@ Return:
 
 - **Never** edit, create, or delete source files — you only write task files.
 - Write only into `docs/tasks/draft/`. Never move a file between status
-  folders — planning a draft is `/loop-plan task <id>`'s job, and promotion
-  to the approved queue is `/loop-plan approve <id>`'s.
+  folders — planning a draft is `/agent-loop-plan task <id>`'s job, and promotion
+  to the approved queue is `/agent-loop-plan approve <id>`'s.
 - Exactly one file per finding; each must parse (title non-empty, priority an
   integer, acceptance a YAML list of strings, no extra keys).
 - Do not run the loop, and do not scope-creep into implementing anything.

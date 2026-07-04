@@ -34,7 +34,7 @@ export const PLAN_HEADING = "## Implementation Plan"
 export const hasPlan = (task: Task): boolean => task.body.includes(PLAN_HEADING)
 
 /**
- * Eligible for `/loop watch` to claim: planned, and never had ANY
+ * Eligible for `/agent-loop watch` to claim: planned, and never had ANY
  * "> BUILD started" note — not just "last pair unmatched" (that's
  * `wasInterrupted`, below). Any marker at all means another live LoopState
  * is driving it right now, or it crashed and needs manual recovery — a
@@ -50,8 +50,8 @@ export const extractPlan = (task: Task): string | undefined => {
 }
 
 /**
- * Planned and started at least once — no longer claimable by `/loop watch`,
- * but a human can force-resume it with `/loop recover <id>` once no live
+ * Planned and started at least once — no longer claimable by `/agent-loop watch`,
+ * but a human can force-resume it with `/agent-loop recover <id>` once no live
  * loop is driving it (crashed runs, restarted plugins). Pure.
  */
 export const isRecoverable = (task: Task): boolean => hasPlan(task) && task.body.includes("> BUILD started")
@@ -79,16 +79,16 @@ export const STATUSES: readonly TaskStatus[] = [
   "abandoned",
 ]
 
-/** A per-status roll-up of the backlog for `/loop status`. Pure. */
+/** A per-status roll-up of the backlog for `/agent-loop status`. Pure. */
 export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
-  /** in-planning tasks that already have a persisted plan (awaiting /loop-plan approve). */
+  /** in-planning tasks that already have a persisted plan (awaiting /agent-loop-plan approve). */
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
-  /** in-progress tasks whose last build looks interrupted (crashed — /loop recover). */
+  /** in-progress tasks whose last build looks interrupted (crashed — /agent-loop recover). */
   readonly interrupted: readonly string[]
-  /** in-review tasks awaiting a human diff review (/loop ship). */
+  /** in-review tasks awaiting a human diff review (/agent-loop ship). */
   readonly awaitingReview: readonly string[]
 }
 
@@ -147,7 +147,7 @@ export const listByStatus = async (
 export const listInPlanning = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "in-planning", log)
 
-/** List and parse every task in `in-progress/` — the pool `/loop watch` claims from. */
+/** List and parse every task in `in-progress/` — the pool `/agent-loop watch` claims from. */
 export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "in-progress", log)
 
@@ -285,7 +285,7 @@ export interface WriteLocation {
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
  * command. For creating (and optionally Azure DevOps-linking) a task today,
- * use `/loop-plan new <idea>` — the `loop-plan-author` subagent, which runs
+ * use `/agent-loop-plan new <idea>` — the `loop-plan-author` subagent, which runs
  * inside OpenCode and can reach the Azure DevOps MCP server; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and

@@ -147,7 +147,7 @@ test("audit-suffixed build markers still satisfy the claim/interrupt greps", () 
   assert.equal(wasInterrupted(task("a", 0, body)), true)
 })
 
-// --- summarizeBacklog (the /loop status roll-up) ---
+// --- summarizeBacklog (the /agent-loop status roll-up) ---
 
 const empty = () =>
   Object.fromEntries(STATUSES.map((s) => [s, []])) as unknown as Record<TaskStatus, ReturnType<typeof task>[]>

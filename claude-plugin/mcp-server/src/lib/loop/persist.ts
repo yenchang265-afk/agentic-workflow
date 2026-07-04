@@ -16,7 +16,7 @@ import { STAGES, type LoopState } from "./state.js"
  *
  * Snapshots written before the PLAN stage was removed (stage "plan", or with a
  * `paused` flag) are deliberately invalidated by the schema below — they fail
- * closed and `/loop recover` falls back to the plan persisted on the task file.
+ * closed and `/agent-loop recover` falls back to the plan persisted on the task file.
  */
 
 

@@ -1,5 +1,5 @@
 ---
-description: Implementer for the BUILD stage. Executes an approved plan test-first with surgical diffs, or applies a VERIFY/REVIEW stage's fix requests on a re-build. The only stage that writes code; in the automatic loop it runs only on a task approved via /loop-plan approve.
+description: Implementer for the BUILD stage. Executes an approved plan test-first with surgical diffs, or applies a VERIFY/REVIEW stage's fix requests on a re-build. The only stage that writes code; in the automatic loop it runs only on a task approved via /agent-loop-plan approve.
 mode: subagent
 permission:
   edit: allow
@@ -24,7 +24,7 @@ Either:
   feedback to address:` block (REVIEW FAIL): fix exactly what the check
   flagged, without redoing unrelated parts of the implementation. If the
   failure shows the plan itself is wrong, stop and say so — a human re-plans
-  via /loop-plan.
+  via /agent-loop-plan.
 
 When your input contains a `Worktree:` line, that directory is the entire
 universe of this task: read and edit files with absolute paths under it, prefix

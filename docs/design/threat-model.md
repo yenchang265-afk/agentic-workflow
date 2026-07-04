@@ -2,7 +2,7 @@
 
 What can go wrong when PLAN → BUILD → VERIFY → REVIEW runs largely
 unattended, and which control answers it. The audience is a team adopting
-`/loop` in an environment where unreviewed code changes, data exfiltration,
+`/agent-loop` in an environment where unreviewed code changes, data exfiltration,
 or unauditable approvals are real costs, not hypotheticals.
 
 ## Assets
@@ -17,7 +17,7 @@ or unauditable approvals are real costs, not hypotheticals.
 
 The loop's agents consume three kinds of input with very different trust:
 
-1. **Human input** — the goal, the plan approval, `/loop` commands. Trusted.
+1. **Human input** — the goal, the plan approval, `/agent-loop` commands. Trusted.
 2. **Loop-internal context** — prior stage artifacts threaded between
    stages. Semi-trusted: produced by our own agents, but those agents read
    untrusted input, so anything in an artifact may be attacker-influenced.

@@ -137,7 +137,7 @@ recommends perspective-diverse verification).
 
 - A lens pass times out → that pass throws, the loop errors (same as a
   review timeout today). Simpler and safer than partial-lens verdicts.
-- `/loop stop` between passes → the existing `!getLoop(sessionID)` check
+- `/agent-loop stop` between passes → the existing `!getLoop(sessionID)` check
   (`driver.ts:304`) runs per pass; add it to the lens loop.
 - `reviewLenses` set but `maxIterations` reached — unchanged interaction;
   lenses change verdict quality, not iteration accounting.
@@ -153,7 +153,7 @@ recommends perspective-diverse verification).
 
 ## Docs to update
 
-- `README.md` + `.opencode/commands/loop.md` — `reviewLenses` knob, cost
+- `README.md` + `.opencode/commands/agent-loop.md` — `reviewLenses` knob, cost
   note; verdict tool's richer args.
 - `skills/loop-orchestration/SKILL.md` — verdict contract section
   (reason/criteria), multi-lens review description.

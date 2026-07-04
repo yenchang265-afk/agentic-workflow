@@ -63,25 +63,25 @@ import {
  * completed stage's assistant message, so the driver fires a stage, captures its
  * output, feeds it back into the pure `advanceOnIdle` decision, and repeats until
  * a non-`fire` action (gate / done / stop). `session.idle` is used only as the
- * trigger to begin a drive once the `/loop` command's own turn settles; a pending
+ * trigger to begin a drive once the `/agent-loop` command's own turn settles; a pending
  * marker selects what to run and a driving lock prevents re-entrancy from the
  * idle events the driver's own commands generate.
  *
- * Planning happens **before** the loop, in the `/loop-plan` command:
+ * Planning happens **before** the loop, in the `/agent-loop-plan` command:
  * `new <idea>` interviews the user into a planless draft, `task <id>` moves the
  * draft to `in-planning/` (plugin-side, in `handlePlanCommand`) and has the
  * agent write the `## Implementation Plan` in place, and the deterministic
- * `/loop-plan approve <id>` subcommand validates the plan and parks the task in
+ * `/agent-loop-plan approve <id>` subcommand validates the plan and parks the task in
  * `in-progress/` — the approved queue. The loop itself is a pure executor: it
  * never plans, and every state enters at `build` via `resumeAtBuild` with the
  * approved plan threaded in as an artifact.
  *
- * BUILD → VERIFY → REVIEW runs either on demand (`/loop task <id>` claims one
+ * BUILD → VERIFY → REVIEW runs either on demand (`/agent-loop task <id>` claims one
  * approved task) or via **watch mode** (the `watching` set + `tryClaim`): a
  * watching session scans `in-progress/` for one claimable task (`isClaimable`:
  * has a persisted plan, never started) and, if found, claims it and drives it.
  * Watch is triggered two ways — every `session.idle` event, plus a per-session
- * interval timer (`/loop watch [interval]`) whose ticks call `onIdle` only when
+ * interval timer (`/agent-loop watch [interval]`) whose ticks call `onIdle` only when
  * the session is actually idle (queried via `client.session.status()`), so a
  * task approved while the session sat quiet still gets picked up. A VERIFY or
  * REVIEW FAIL loops back to `build` **inside this same session**, with the
@@ -89,13 +89,13 @@ import {
  * tick could both see a task as claimable before either claims it; the atomic
  * `claimTask` marker resolves the race.
  *
- * Task lifecycle: `/loop-plan` authors into `in-planning/` (or plans a `draft/`
- * stub in place); `/loop-plan approve <id>` moves it to `in-progress/`; a
+ * Task lifecycle: `/agent-loop-plan` authors into `in-planning/` (or plans a `draft/`
+ * stub in place); `/agent-loop-plan approve <id>` moves it to `in-progress/`; a
  * stop/failure while building appends a note and leaves it in `in-progress/`;
  * the loop finishing (review PASS) moves it to `in-review/`, the human diff
- * gate — a human runs `/loop ship <id>` to move it to `completed/`. If the
+ * gate — a human runs `/agent-loop ship <id>` to move it to `completed/`. If the
  * plan itself turns out wrong (the iteration cap stops the loop), a human
- * re-plans with `/loop-plan task <id>`.
+ * re-plans with `/agent-loop-plan task <id>`.
  */
 
 type Client = PluginInput["client"]
@@ -117,7 +117,7 @@ type Pending =
 
 const pending = new Map<string, Pending>()
 const driving = new Set<string>()
-/** Sessions in `/loop watch` mode — a standing flag, not a one-shot `Pending`,
+/** Sessions in `/agent-loop watch` mode — a standing flag, not a one-shot `Pending`,
  *  since it must survive many no-op idle ticks between claims. */
 const watching = new Set<string>()
 /** Per-watching-session polling timers and their cadence (for status display). */
@@ -266,7 +266,7 @@ const ensureIsolation = async (deps: Deps, config: Config, state: LoopState): Pr
     // A leftover directory with no registration — prune, then let add try.
     if (await isGitRepo(deps.$, wtPath)) await pruneWorktrees(deps.$, deps.directory)
     if (!(await addWorktree(deps.$, deps.directory, wtPath, branch, base))) {
-      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /loop recover`)
+      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /agent-loop recover`)
     }
     await runWorktreeSetup(deps, config, wtPath)
     return { ...state, git: { base, branch, worktree: wtPath } }
@@ -392,7 +392,7 @@ const combineRecords = (records: readonly (VerdictRecord | null)[], lenses: read
  * verdicts are combined worst-wins and non-PASS pass outputs concatenated, so
  * a single injected reviewer can't flip the outcome (threat model T1). All
  * other stages run exactly once. Stops firing further lens passes if a
- * `/loop stop` clears the loop mid-pass.
+ * `/agent-loop stop` clears the loop mid-pass.
  */
 const runStageWithLenses = async (
   deps: Deps,
@@ -435,7 +435,7 @@ const runStageWithLenses = async (
       ...(isCheck ? { verdict: passRecord?.verdict ?? "none" } : {}),
       ...(lens ? { lens } : {}),
     })
-    if (!getLoop(sessionID)) break // /loop stop mid-pass — don't fire the rest
+    if (!getLoop(sessionID)) break // /agent-loop stop mid-pass — don't fire the rest
   }
 
   if (!isCheck) return { output: outputs[0] ?? "", verdict: null, record: null }
@@ -495,7 +495,7 @@ const drive = async (
     // Every stage runs isolated: its own worktree (worktree mode) or the
     // loop/<id> branch in the shared tree (default). Created on the first build;
     // reconciled before every stage in case the tree/worktree moved — including
-    // a snapshot-based `/loop recover` that re-enters directly at verify/review,
+    // a snapshot-based `/agent-loop recover` that re-enters directly at verify/review,
     // where isolation must be re-established, not assumed.
     step = { ...step, state: await ensureIsolation(deps, config, step.state) }
     setLoop(sessionID, step.state)
@@ -513,14 +513,14 @@ const drive = async (
       iteration,
     )
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD finished (iteration ${iteration + 1})`, new Date(), actor), deps.log)
-    // A /loop stop while the stage ran cleared this session's loop — halt the
+    // A /agent-loop stop while the stage ran cleared this session's loop — halt the
     // chain, preserving whatever the stage did as a checkpoint on the branch.
     if (!getLoop(sessionID)) {
       await renderMetrics(deps, sessionID, config, step.state, "stopped", `stopped during ${stage}`)
       await checkpoint(deps, step.state, `loop(${loopId(step.state)}): incomplete — stopped during ${stage}`)
       await teardownIsolation(deps, step.state)
-      // A deliberate /loop stop ends the run — drop the snapshot so a later
-      // /loop recover doesn't silently resurrect it from stale state.
+      // A deliberate /agent-loop stop ends the run — drop the snapshot so a later
+      // /agent-loop recover doesn't silently resurrect it from stale state.
       if (step.state.task) await clearState(deps.$, deps.directory, config.tasksDir, step.state.task.id)
       return
     }
@@ -571,7 +571,7 @@ const drive = async (
       clearLoop(sessionID)
       const where = state.git ? ` on branch ${state.git.branch}` : ""
       const next = state.task
-        ? ` Review the diff${where}, then run /loop ship ${state.task.id} when it ships.`
+        ? ` Review the diff${where}, then run /agent-loop ship ${state.task.id} when it ships.`
         : where
           ? ` Review the diff${where}.`
           : ""
@@ -599,7 +599,7 @@ const drive = async (
 }
 
 /**
- * A `/loop watch` session's own idle check: look for one claimable task in
+ * A `/agent-loop watch` session's own idle check: look for one claimable task in
  * `in-progress/` (planned, never started) and, if found, drive it straight
  * through BUILD → VERIFY → REVIEW. FAIL-driven re-plans/re-builds happen
  * inline in this same session, exactly like a normal loop's iteration cap.
@@ -669,7 +669,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   if (serialize) executingDirs.add(deps.directory)
   try {
     if (work?.kind === "start-task" || work?.kind === "recover") {
-      // `start-task`: a `/loop task <id>` claim entering execution at build.
+      // `start-task`: a `/agent-loop task <id>` claim entering execution at build.
       // `recover`: a human-forced resume of a started-but-dead task with no
       // valid snapshot. Both re-enter the state machine at build with the
       // persisted plan.
@@ -712,7 +712,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   }
 }
 
-// --- /loop command handling (parses the mode; deferred work runs on next idle) ---
+// --- /agent-loop command handling (parses the mode; deferred work runs on next idle) ---
 
 const TASK_PREFIX = "task "
 
@@ -724,7 +724,7 @@ const formatInterval = (ms: number): string =>
 const MIN_WATCH_INTERVAL_MS = 10_000
 
 /**
- * Parse the interval spec of `/loop watch [interval]`. Accepts `""` (use the
+ * Parse the interval spec of `/agent-loop watch [interval]`. Accepts `""` (use the
  * config default), `30s`, `5m`, `2h`, a bare number (minutes), and an
  * optional `--interval ` prefix. Clamped to at least 10 seconds. Pure.
  */
@@ -759,7 +759,7 @@ export const disposeWatch = (): void => {
 /**
  * One watch-timer tick: claim work only when this session is genuinely quiet.
  * The `session.idle` event path stays the fast trigger; the timer exists for
- * the case that path misses — a task approved (by `/loop-plan approve` in
+ * the case that path misses — a task approved (by `/agent-loop-plan approve` in
  * another session) while this session sat idle generating no new events.
  * Idleness is queried, not tracked: absent from the status map counts as idle.
  * Never throws — an unhandled rejection inside a timer would crash the host.
@@ -776,11 +776,11 @@ const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise
   }
 }
 
-/** Parsed `/loop-plan` arguments: which subcommand needs plugin work, if any. */
+/** Parsed `/agent-loop-plan` arguments: which subcommand needs plugin work, if any. */
 export type PlanArgs = { mode: "approve" | "task"; id: string } | { mode: "passthrough" }
 
 /**
- * Classify `/loop-plan` arguments. `approve <id>` and `task <id>` get
+ * Classify `/agent-loop-plan` arguments. `approve <id>` and `task <id>` get
  * deterministic plugin work before the agent turn; everything else (including
  * `new <idea>`) passes through untouched. An empty id is preserved so the
  * caller can toast a usage hint.
@@ -797,10 +797,10 @@ export const parsePlanArgs = (args: string): PlanArgs => {
 }
 
 /**
- * Handle a `/loop-plan ...` command. Two subcommands get deterministic plugin
+ * Handle a `/agent-loop-plan ...` command. Two subcommands get deterministic plugin
  * work before the agent turn; `new <idea>` passes through untouched (its
  * authoring — interview, draft — is the agent's job, see
- * `.opencode/commands/loop-plan.md`):
+ * `.opencode/commands/agent-loop-plan.md`):
  *
  * - `task <id>` — if the task sits in `draft/`, move it to `in-planning/`
  *   (audited + committed) so folder semantics stay honest: `draft/` means no
@@ -816,7 +816,7 @@ export const handlePlanCommand = async (deps: Deps, _sessionID: string, args: st
   if (parsed.mode === "passthrough") return
   const { id } = parsed
   if (parsed.mode === "task") {
-    if (!id) return void (await toast(client, "Usage: /loop-plan task <id>.", "warning"))
+    if (!id) return void (await toast(client, "Usage: /agent-loop-plan task <id>.", "warning"))
     if (await findByIdIn(client, deps.directory, config.tasksDir, "in-planning", id)) return
     const draft = await findByIdIn(client, deps.directory, config.tasksDir, "draft", id)
     if (!draft) {
@@ -833,7 +833,7 @@ export const handlePlanCommand = async (deps: Deps, _sessionID: string, args: st
     }
     return
   }
-  if (!id) return void (await toast(client, "Usage: /loop-plan approve <id>.", "warning"))
+  if (!id) return void (await toast(client, "Usage: /agent-loop-plan approve <id>.", "warning"))
   const task =
     (await findByIdIn(client, deps.directory, config.tasksDir, "in-planning", id)) ??
     (await findByIdIn(client, deps.directory, config.tasksDir, "draft", id))
@@ -845,7 +845,7 @@ export const handlePlanCommand = async (deps: Deps, _sessionID: string, args: st
     return void (await toast(client, `Can't approve "${id}": ${detail}.`, "warning"))
   }
   if (!hasPlan(task)) {
-    return void (await toast(client, `Task "${id}" has no Implementation Plan yet — run /loop-plan task ${id} first.`, "warning"))
+    return void (await toast(client, `Task "${id}" has no Implementation Plan yet — run /agent-loop-plan task ${id} first.`, "warning"))
   }
   try {
     const actor = await gitActor(deps.$, deps.directory)
@@ -854,7 +854,7 @@ export const handlePlanCommand = async (deps: Deps, _sessionID: string, args: st
     await commitPaths(deps.$, deps.directory, [config.tasksDir], `loop(${id}): plan approved — parked for execution`)
     await toast(
       client,
-      `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/. /loop watch (or /loop task ${id}) will build it.`,
+      `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/. /agent-loop watch (or /agent-loop task ${id}) will build it.`,
       "success",
     )
   } catch (err) {
@@ -862,7 +862,7 @@ export const handlePlanCommand = async (deps: Deps, _sessionID: string, args: st
   }
 }
 
-/** Parse and handle a `/loop ...` command. */
+/** Parse and handle a `/agent-loop ...` command. */
 export const handleCommand = async (
   deps: Deps,
   sessionID: string,
@@ -876,7 +876,7 @@ export const handleCommand = async (
   if (lower === "go" || lower === "approve" || lower.startsWith("approve ")) {
     await toast(
       client,
-      "The plan gate moved: approve plans with /loop-plan approve <id>. The loop only executes approved tasks.",
+      "The plan gate moved: approve plans with /agent-loop-plan approve <id>. The loop only executes approved tasks.",
       "warning",
     )
     return
@@ -885,7 +885,7 @@ export const handleCommand = async (
   if (lower === "next") {
     await toast(
       client,
-      "/loop next was removed — author and approve a plan with /loop-plan, then /loop task <id> or /loop watch.",
+      "/agent-loop next was removed — author and approve a plan with /agent-loop-plan, then /agent-loop task <id> or /agent-loop watch.",
       "warning",
     )
     return
@@ -901,7 +901,7 @@ export const handleCommand = async (
         deps.$,
         state.task,
         auditNote(
-          `Loop stopped by /loop stop — was at ${state.stage} (iteration ${state.iteration + 1}).`,
+          `Loop stopped by /agent-loop stop — was at ${state.stage} (iteration ${state.iteration + 1}).`,
           new Date(),
           await gitActor(deps.$, deps.directory),
         ),
@@ -937,7 +937,7 @@ export const handleCommand = async (
 
   if (lower === "recover" || lower.startsWith("recover ")) {
     const id = arg.slice("recover".length).trim()
-    if (!id) return void (await toast(client, "Usage: /loop recover <id>.", "warning"))
+    if (!id) return void (await toast(client, "Usage: /agent-loop recover <id>.", "warning"))
     const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-progress", id)
     if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
     const driving = findSessionDriving(id)
@@ -945,10 +945,10 @@ export const handleCommand = async (
       return void (await toast(client, `Task "${id}" is being driven by a live loop — nothing to recover.`, "warning"))
     }
     if (isClaimable(task)) {
-      return void (await toast(client, `Task "${id}" was never started — /loop watch will claim it.`, "info"))
+      return void (await toast(client, `Task "${id}" was never started — /agent-loop watch will claim it.`, "info"))
     }
     if (!isRecoverable(task)) {
-      return void (await toast(client, `Task "${id}" has no persisted plan — re-plan it with /loop-plan task ${id}, then approve it again.`, "warning"))
+      return void (await toast(client, `Task "${id}" has no persisted plan — re-plan it with /agent-loop-plan task ${id}, then approve it again.`, "warning"))
     }
     await claimTask(deps.$, task) // re-mark; the marker may already exist from the dead run
     // Prefer an exact-stage resume from the state snapshot; fall back to
@@ -962,7 +962,7 @@ export const handleCommand = async (
       await appendNote(
         deps.$,
         task,
-        auditNote(`Recovered by /loop recover — resuming from snapshot at ${snap.stage}.`, new Date(), actor),
+        auditNote(`Recovered by /agent-loop recover — resuming from snapshot at ${snap.stage}.`, new Date(), actor),
       )
       pending.set(sessionID, { kind: "recover-state", state })
       await toast(
@@ -975,7 +975,7 @@ export const handleCommand = async (
     await appendNote(
       deps.$,
       task,
-      auditNote("Recovered by /loop recover — resuming BUILD from the persisted plan.", new Date(), actor),
+      auditNote("Recovered by /agent-loop recover — resuming BUILD from the persisted plan.", new Date(), actor),
     )
     pending.set(sessionID, { kind: "recover", task })
     await toast(
@@ -988,7 +988,7 @@ export const handleCommand = async (
 
   if (lower === "ship" || lower.startsWith("ship ")) {
     const id = arg.slice("ship".length).trim()
-    if (!id) return void (await toast(client, "Usage: /loop ship <id>.", "warning"))
+    if (!id) return void (await toast(client, "Usage: /agent-loop ship <id>.", "warning"))
     const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-review", id)
     if (!task) {
       // Locate it for a precise error instead of a bare "not found".
@@ -1009,13 +1009,13 @@ export const handleCommand = async (
 
   if (lower === "task" || lower.startsWith(TASK_PREFIX)) {
     const id = arg.slice("task".length).trim()
-    if (!id) return void (await toast(client, "Usage: /loop task <id>.", "warning"))
+    if (!id) return void (await toast(client, "Usage: /agent-loop task <id>.", "warning"))
     const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-progress", id)
     if (!task) {
       const elsewhere = await findAnyStatus(deps, config, id)
       const detail =
         elsewhere === "in-planning" || elsewhere === "draft"
-          ? `it's in ${elsewhere} — approve its plan first with /loop-plan approve ${id}`
+          ? `it's in ${elsewhere} — approve its plan first with /agent-loop-plan approve ${id}`
           : elsewhere
             ? `it's in ${elsewhere}`
             : `no task "${id}" found`
@@ -1026,8 +1026,8 @@ export const handleCommand = async (
     }
     if (!isClaimable(task)) {
       const detail = isRecoverable(task)
-        ? `was already started — resume it with /loop recover ${id}`
-        : `has no persisted plan — run /loop-plan task ${id}, then /loop-plan approve ${id}`
+        ? `was already started — resume it with /agent-loop recover ${id}`
+        : `has no persisted plan — run /agent-loop-plan task ${id}, then /agent-loop-plan approve ${id}`
       return void (await toast(client, `Task "${id}" ${detail}.`, "warning"))
     }
     if (!(await claimTask(deps.$, task))) {
@@ -1047,10 +1047,10 @@ export const handleCommand = async (
     const summary = await backlogSummary(deps, config).catch(() => null)
     if (summary) {
       if (summary.interrupted.length) {
-        await deps.log("warn", `interrupted (run /loop recover <id>): ${summary.interrupted.join(", ")}`)
+        await deps.log("warn", `interrupted (run /agent-loop recover <id>): ${summary.interrupted.join(", ")}`)
       }
       if (summary.awaitingReview.length) {
-        await deps.log("info", `awaiting diff review (run /loop ship <id>): ${summary.awaitingReview.join(", ")}`)
+        await deps.log("info", `awaiting diff review (run /agent-loop ship <id>): ${summary.awaitingReview.join(", ")}`)
       }
     }
     const backlogLine = summary ? ` · ${formatBacklog(summary)}` : ""
@@ -1071,8 +1071,8 @@ export const handleCommand = async (
   // unrecognized gets usage help instead of silently becoming a goal.
   await toast(
     client,
-    `Unknown /loop mode "${arg}". Usage: /loop task <id> · watch [interval] · unwatch · recover <id> · ship <id> · stop · status. ` +
-      "Author and approve plans with /loop-plan.",
+    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · watch [interval] · unwatch · recover <id> · ship <id> · stop · status. ` +
+      "Author and approve plans with /agent-loop-plan.",
     "warning",
   )
 }

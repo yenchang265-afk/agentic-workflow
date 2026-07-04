@@ -45,4 +45,4 @@ done
 
 echo
 echo "Done. Load with:  claude --plugin-dir \"$PLUGIN_DIR\""
-echo "Then run:  /loop-plan new <idea>   (draft → plan → approve → /loop task <id>)"
+echo "Then run:  /agent-loop-plan new <idea>   (draft → plan → approve → /agent-loop task <id>)"

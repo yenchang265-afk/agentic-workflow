@@ -27,7 +27,7 @@ const mk = (goal: string, task?: TaskRef): LoopState => ({
   ...(task ? { task } : {}),
 })
 
-// --- entering the loop at build (plan approved via /loop-plan) ---
+// --- entering the loop at build (plan approved via /agent-loop-plan) ---
 
 const task: TaskRef = { id: "add-foo", path: "/r/docs/tasks/in-progress/add-foo.md", acceptance: [] }
 
@@ -83,11 +83,11 @@ test("a verify-FAIL re-build drops stale review feedback from an older build", (
   if (action.kind === "fire") assert.doesNotMatch(action.arguments, /OLD REVIEW/)
 })
 
-test("verify FAIL at the iteration cap stops and points at /loop-plan task", () => {
+test("verify FAIL at the iteration cap stops and points at /agent-loop-plan task", () => {
   const s = { ...mk("g"), stage: "verify" as const, iteration: 2 }
   const { action } = advanceOnIdle(s, config, "gaps remain", "FAIL")
   assert.equal(action.kind, "stop")
-  if (action.kind === "stop") assert.match(action.message, /\/loop-plan task/)
+  if (action.kind === "stop") assert.match(action.message, /\/agent-loop-plan task/)
 })
 
 test("a missing verify verdict is treated as FAIL", () => {

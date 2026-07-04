@@ -126,7 +126,7 @@ Replace `ensureBranch` with `ensureIsolation(deps, config, state)`:
      mode the drive may run concurrently with another; silently checking out
      branches in the shared tree would reintroduce exactly the race
      worktrees remove. (`onIdle`'s catch at `driver.ts:543` annotates the
-     task and toasts; the human fixes and runs `/loop recover`.)
+     task and toasts; the human fixes and runs `/agent-loop recover`.)
    - If `config.worktreeSetup`: run it via the Bun shell's `.cwd(wtPath)`
      (verified in `plugin/dist/shell.d.ts:25`); warn-and-continue on failure
      (BUILD can self-recover; VERIFY will ERROR loudly if not).
@@ -247,9 +247,9 @@ prefix-style (`"npm test*": allow`, default `"*": deny`).
 After the interrupted-task scan, when `config.worktreesDir` is set:
 `pruneWorktrees` (safe), then `worktree list --porcelain` and log a `warn`
 for each worktree under `worktreesDir`: "stale loop worktree <path> (branch
-<b>) — /loop recover <id> will reuse it, or `git worktree remove` it".
+<b>) — /agent-loop recover <id> will reuse it, or `git worktree remove` it".
 **Never auto-delete**: another opencode process may own it, and a crashed
-BUILD's uncommitted diff is evidence. `/loop recover` reuses it via
+BUILD's uncommitted diff is evidence. `/agent-loop recover` reuses it via
 `ensureIsolation`'s `worktreeForBranch` path.
 
 ## 10. Optional hardening (small, recommended)
@@ -269,8 +269,8 @@ structurally. Bash remains prompt-enforced — documented residual.
 | Path exists on disk but unregistered (crash + pruned registration) | `pruneWorktrees` then retry; still failing → loop error, human cleans up |
 | `worktree add` fails (locks, perms) | Loop error (note + toast); **never** falls back to shared-tree branch switching |
 | Dirty worktree at teardown (checkpoint commit failed) | Left in place with warn; branch keeps whatever was committed |
-| `/loop stop` mid-stage | Existing `driver.ts:304-308` path: checkpoint into worktree → teardown (remove if clean) |
-| Plugin crash mid-drive | Worktree survives; startup logs it; `/loop recover` reuses branch + worktree |
+| `/agent-loop stop` mid-stage | Existing `driver.ts:304-308` path: checkpoint into worktree → teardown (remove if clean) |
+| Plugin crash mid-drive | Worktree survives; startup logs it; `/agent-loop recover` reuses branch + worktree |
 | Not a git repo / detached HEAD | Same degraded no-isolation path as today (worktree mode needs a base branch) |
 | Main tree dirty at claim | Worktree is clean-from-base; log that uncommitted human changes are invisible to the build |
 | `worktreesDir` inside the repo | Hidden from `git status` via `.git/info/exclude`, not a tracked `.gitignore` edit |
@@ -294,7 +294,7 @@ structurally. Bash remains prompt-enforced — documented residual.
 - **Manual/e2e checklist:** the §7 matcher spike; a full worktree-mode loop
   on a sample project with `worktreeSetup: "npm ci"`; confirm the human
   checkout's HEAD never moves during a drive; two watch sessions driving two
-  tasks concurrently; `/loop stop` mid-BUILD then `/loop recover`;
+  tasks concurrently; `/agent-loop stop` mid-BUILD then `/agent-loop recover`;
   crash-kill opencode mid-BUILD → restart log → recover.
 - All 85 existing tests pass unchanged with `worktreesDir` unset.
 
@@ -314,7 +314,7 @@ structurally. Bash remains prompt-enforced — documented residual.
 
 - `README.md` — the two knobs, the "one drive per tree" limitation lifted in
   worktree mode, backlog-commit behavior change.
-- `.opencode/commands/loop.md` — concurrency note.
+- `.opencode/commands/agent-loop.md` — concurrency note.
 - `skills/loop-orchestration/SKILL.md` — isolation section, watch
   concurrency.
 - `docs/design/threat-model.md` — T3 (residual shrinks), T4 (execution-phase

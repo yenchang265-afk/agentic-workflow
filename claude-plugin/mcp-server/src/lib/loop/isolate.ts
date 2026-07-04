@@ -103,7 +103,7 @@ export const ensureIsolation = async (
     // A leftover directory with no registration — prune, then let add try.
     if (await isGitRepo($, wtPath)) await pruneWorktrees($, directory)
     if (!(await addWorktree($, directory, wtPath, branch, base))) {
-      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /loop recover`)
+      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /agent-loop recover`)
     }
     await runWorktreeSetup($, log, config, wtPath)
     return { ...state, git: { base, branch, worktree: wtPath } }
