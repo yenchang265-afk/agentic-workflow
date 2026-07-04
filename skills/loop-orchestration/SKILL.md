@@ -39,8 +39,8 @@ finishes the loop directly — ship the diff yourself.)
 
 ```
 planning (the /loop-plan command, interactive):
-  /loop-plan new <idea> ──▶ task + ## Implementation Plan in in-planning/
-  /loop-plan task <id>  ──▶ plan written onto an existing draft/in-planning task
+  /loop-plan new <idea> ──▶ interview ──▶ planless draft in draft/
+  /loop-plan task <id>  ──▶ moves draft to in-planning/ + writes ## Implementation Plan
   /loop-plan approve <id> ─▶ validated + parked in in-progress/   ← the human gate
 
 execution (the /loop command, unattended):
@@ -61,12 +61,14 @@ execution (the /loop command, unattended):
 
 ## Process
 
-1. `/loop-plan new <idea>` — the `loop-plan-author` agent interviews if the
-   idea is vague, drafts the task, confirms it with you, reads the relevant
-   code, and writes task + `## Implementation Plan` to `in-planning/`.
-   (`/loop-plan task <id>` does the same for an existing draft/in-planning
-   task, in place — including re-planning one whose loop hit the iteration
-   cap.)
+1. `/loop-plan new <idea>` — the `loop-plan-author` agent **always
+   interviews you** (a restate-and-confirm at minimum, a full interview when
+   the idea is vague) to pin down the goal and testable acceptance criteria,
+   confirms the draft with you, and writes a planless draft to `draft/`.
+   Then `/loop-plan task <id>` — after you review the draft — moves it to
+   `in-planning/` (plugin-side, audited + committed) and writes the
+   `## Implementation Plan` onto the file in place (the same command re-plans
+   a task whose loop hit the iteration cap).
 2. `/loop-plan approve <id>` — the plugin validates the plan exists, moves
    the file to `in-progress/`, appends an audited note, and commits. This is
    the human sign-off before any code is written.
@@ -97,11 +99,12 @@ execution (the /loop command, unattended):
 
 ## Planning is a command, execution is the loop
 
-- **Interview (conditional, inside `/loop-plan new`).** If the idea is too
-  vague for testable acceptance criteria, the author agent runs the
-  `interview-me` skill live with you — one question at a time until there's
-  an explicit yes on a restated intent. It also confirms the drafted task
-  before writing anything.
+- **Interview (always, inside `/loop-plan new`).** The author agent runs the
+  `interview-me` skill live with you on every `new` — a single
+  restate-and-confirm when the idea already carries a clear goal and testable
+  criteria, one question at a time until there's an explicit yes on a
+  restated intent when it doesn't. It also confirms the drafted task before
+  writing anything.
 - **Approve (always, `/loop-plan approve <id>`).** Nothing gets executed
   until a human approves the plan — deterministic plugin code validates the
   `## Implementation Plan` heading and parks the task in `in-progress/`.

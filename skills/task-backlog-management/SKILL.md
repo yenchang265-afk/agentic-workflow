@@ -9,8 +9,8 @@ description: Explains the filesystem task backlog under docs/tasks/ that feeds t
 
 A task is one markdown file under `docs/tasks/`. **The folder it lives in is
 its status** — there is no `status:` field, so the two can never drift. The
-`/loop-plan` command authors and approves tasks here; the `/loop` command
-(see `loop-orchestration`) executes the approved ones.
+`/loop-plan` command drafts (via interview), plans, and approves tasks here;
+the `/loop` command (see `loop-orchestration`) executes the approved ones.
 
 ## When to Use
 
@@ -25,8 +25,8 @@ its status** — there is no `status:` field, so the two can never drift. The
 
 ```
 docs/tasks/
-  draft/        # planless stubs (from /explore or hand-written) ← you or /explore write here
-  in-planning/  # planned, awaiting approval                     ← /loop-plan writes here
+  draft/        # interviewed stubs, no plan (from /loop-plan new, /explore, or hand-written)
+  in-planning/  # being planned / planned, awaiting approval     ← /loop-plan task moves + writes here
   in-progress/  # approved queue + build → verify → review       ← /loop-plan approve moves here
   in-review/    # review passed, human diff gate                 ← the driver moves here automatically
   completed/    # shipped                                        ← you move here (/loop ship), once the PR merges
@@ -55,7 +55,7 @@ and verify stages so the verdict checks each criterion.
 
 ## Implementation Plan
 
-The plan — written by /loop-plan (new or task <id>). Its presence (this exact
+The plan — written by /loop-plan task <id>. Its presence (this exact
 heading) is what makes the task approvable and, once approved, claimable.
 ```
 
@@ -73,22 +73,24 @@ heading) is what makes the task approvable and, once approved, claimable.
 
 ## Process
 
-1. **Author a planned task** — `/loop-plan new <idea>`: the `loop-plan-author`
-   subagent drafts a schema-valid task (interviewing you if the idea is too
-   vague, and asking about Azure DevOps linkage — see below), confirms the
-   draft with you, then reads the relevant code and writes task **plus**
-   `## Implementation Plan` to `in-planning/`. Your live confirmation in that
-   turn is the draft-review gate — no manual folder move needed.
-   - Planless stubs still land in `draft/`: `/explore` files up to 5 per run
-     (deduped against what's already there), and you can write one by hand.
-     Plan a stub with `/loop-plan task <id>` — the plan is written onto the
-     file in place.
-2. **Approve** — `/loop-plan approve <id>`: deterministic plugin code checks
+1. **Draft** — `/loop-plan new <idea>`: the `loop-plan-author` subagent
+   **always interviews you** (a single restate-and-confirm when the idea is
+   already sharp, a full interview when it's vague) to pin down the goal and
+   testable acceptance criteria, asks about Azure DevOps linkage (see below),
+   confirms the draft with you, and writes a **planless draft** to `draft/`.
+   - Stubs also land in `draft/` from `/explore` (up to 5 per run, deduped
+     against what's already there), and you can write one by hand.
+2. **Plan** — `/loop-plan task <id>`: the plugin first moves the file
+   `draft/ → in-planning/` (audited note + commit), then the subagent reads
+   the relevant code and writes the `## Implementation Plan` onto the file in
+   place. Drafting and planning are two steps by design — you review the
+   draft before plan effort is spent.
+3. **Approve** — `/loop-plan approve <id>`: deterministic plugin code checks
    the `## Implementation Plan` heading exists, moves the file (from
    `in-planning/` or `draft/`) to `in-progress/`, appends an audited
    "Plan approved" note, and commits. This is the human sign-off before any
    code is written.
-3. **Execute** — `/loop task <id>` (one task, now) or `/loop watch [interval]`
+4. **Execute** — `/loop task <id>` (one task, now) or `/loop watch [interval]`
    (standing worker). See `loop-orchestration`.
 
 ### Linking a task to Azure DevOps
@@ -141,9 +143,8 @@ description can reference the source work item.
 
 | Transition | Who | When |
 |------------|-----|------|
-| into `draft/` | you or `/explore` | a planless stub worth remembering |
-| into `in-planning/` | `/loop-plan new` | authored with its plan, awaiting your approval |
-| `draft → in-planning` | *(optional, you)* | not required — `/loop-plan approve` finds planned tasks in `draft/` too |
+| into `draft/` | `/loop-plan new`, you, or `/explore` | an interviewed (or filed) planless stub |
+| `draft → in-planning` | **`/loop-plan task <id>`** | the plugin moves it (audited note + commit) the moment planning starts; the plan is then written in place |
 | `in-planning (or draft) → in-progress` | **`/loop-plan approve <id>`** | the human plan-approval gate; audited note + commit |
 | `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS — parks it as the human diff gate |
 | `in-review → completed` | **you** | you've reviewed the diff and shipped it — run `/loop ship <id>` (an audited move + commit) or move the file by hand; the loop never does this move on its own |
@@ -224,6 +225,8 @@ What's on the task file tells you what happened:
   trail.
 - A task in `in-progress/` with no "Plan approved" audit note — it was moved
   by a raw `mv` instead of `/loop-plan approve <id>`.
+- A task in `in-planning/` with no "Planning started" audit note — it was
+  moved by a raw `mv` instead of `/loop-plan task <id>`.
 - An Azure DevOps work item created without the user confirming title,
   project, and description first.
 - A local task file written without ever showing its draft to the user for

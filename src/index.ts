@@ -19,8 +19,9 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  *
  *   build → verify → review
  *
- * Planning lives in the `/loop-plan` command: its agent authors a task file
- * with an `## Implementation Plan`, and `/loop-plan approve <id>` (handled
+ * Planning lives in the `/loop-plan` command: `new` interviews the user into
+ * a draft, `task <id>` writes its `## Implementation Plan`, and
+ * `/loop-plan approve <id>` (handled
  * deterministically below) parks it in `in-progress/`. `/loop task <id>`
  * executes one approved task; `/loop watch [interval]` polls for them — on
  * every `session.idle` event plus a per-session interval timer. A verify or

@@ -10,10 +10,11 @@ import type { Verdict } from "./verdict.ts"
  * never touch a client or the store. That keeps the loop logic unit-testable
  * without opencode. The impure orchestration lives in `driver.ts`.
  *
- * Planning happens **before** the loop, in the `/loop-plan` command: it authors
- * the task file with its `## Implementation Plan` and `/loop-plan approve <id>`
- * parks it in `in-progress/`. The loop is a pure executor — every state enters
- * at `build` via `resumeAtBuild` with the approved plan as an artifact.
+ * Planning happens **before** the loop, in the `/loop-plan` command: `new`
+ * interviews the user into a draft task, `task <id>` writes its
+ * `## Implementation Plan`, and `/loop-plan approve <id>` parks it in
+ * `in-progress/`. The loop is a pure executor — every state enters at
+ * `build` via `resumeAtBuild` with the approved plan as an artifact.
  *
  * Two check stages can fail and loop back, and both re-**build**: a VERIFY
  * FAIL re-builds with the failure threaded into the build prompt; a REVIEW

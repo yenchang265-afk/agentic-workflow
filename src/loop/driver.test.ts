@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { parseWatchArgs } from "./driver.ts"
+import { parsePlanArgs, parseWatchArgs } from "./driver.ts"
 
 /**
  * The watch-mode plumbing (timers, idle queries, claiming) is exercised
@@ -41,4 +41,30 @@ test("garbage yields an error, not a silent default", () => {
     const parsed = parseWatchArgs(bad)
     assert.ok("error" in parsed, `expected an error for ${JSON.stringify(bad)}`)
   }
+})
+
+/**
+ * `/loop-plan` argument classification: `approve`/`task` get plugin work,
+ * everything else passes through to the agent turn.
+ */
+
+test("approve and task subcommands are recognized with their id", () => {
+  assert.deepEqual(parsePlanArgs("approve my-task"), { mode: "approve", id: "my-task" })
+  assert.deepEqual(parsePlanArgs("task my-task"), { mode: "task", id: "my-task" })
+})
+
+test("casing and surrounding whitespace are tolerated, ids keep their case", () => {
+  assert.deepEqual(parsePlanArgs("  Approve My-Task  "), { mode: "approve", id: "My-Task" })
+  assert.deepEqual(parsePlanArgs("TASK  my-task"), { mode: "task", id: "my-task" })
+})
+
+test("a bare subcommand keeps an empty id for the usage toast", () => {
+  assert.deepEqual(parsePlanArgs("approve"), { mode: "approve", id: "" })
+  assert.deepEqual(parsePlanArgs("task   "), { mode: "task", id: "" })
+})
+
+test("new and free text pass through", () => {
+  assert.deepEqual(parsePlanArgs("new add rate limiting"), { mode: "passthrough" })
+  assert.deepEqual(parsePlanArgs(""), { mode: "passthrough" })
+  assert.deepEqual(parsePlanArgs("tasky thing"), { mode: "passthrough" })
 })

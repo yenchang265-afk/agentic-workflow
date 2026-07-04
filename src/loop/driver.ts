@@ -67,12 +67,14 @@ import {
  * marker selects what to run and a driving lock prevents re-entrancy from the
  * idle events the driver's own commands generate.
  *
- * Planning happens **before** the loop, in the `/loop-plan` command: its agent
- * authors the task file with an `## Implementation Plan`, and the deterministic
- * `/loop-plan approve <id>` subcommand (`handlePlanCommand`) validates the plan
- * and parks the task in `in-progress/` — the approved queue. The loop itself is
- * a pure executor: it never plans, and every state enters at `build` via
- * `resumeAtBuild` with the approved plan threaded in as an artifact.
+ * Planning happens **before** the loop, in the `/loop-plan` command:
+ * `new <idea>` interviews the user into a planless draft, `task <id>` moves the
+ * draft to `in-planning/` (plugin-side, in `handlePlanCommand`) and has the
+ * agent write the `## Implementation Plan` in place, and the deterministic
+ * `/loop-plan approve <id>` subcommand validates the plan and parks the task in
+ * `in-progress/` — the approved queue. The loop itself is a pure executor: it
+ * never plans, and every state enters at `build` via `resumeAtBuild` with the
+ * approved plan threaded in as an artifact.
  *
  * BUILD → VERIFY → REVIEW runs either on demand (`/loop task <id>` claims one
  * approved task) or via **watch mode** (the `watching` set + `tryClaim`): a
@@ -774,18 +776,63 @@ const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise
   }
 }
 
+/** Parsed `/loop-plan` arguments: which subcommand needs plugin work, if any. */
+export type PlanArgs = { mode: "approve" | "task"; id: string } | { mode: "passthrough" }
+
 /**
- * Handle a `/loop-plan ...` command. Only `approve <id>` is plugin work — it
- * is deterministic backlog surgery, so it must not be left to the agent turn.
- * `new <idea>` and `task <id>` are authored live by the command's own agent
- * (see `.opencode/commands/loop-plan.md`) and pass through here untouched.
+ * Classify `/loop-plan` arguments. `approve <id>` and `task <id>` get
+ * deterministic plugin work before the agent turn; everything else (including
+ * `new <idea>`) passes through untouched. An empty id is preserved so the
+ * caller can toast a usage hint.
+ */
+export const parsePlanArgs = (args: string): PlanArgs => {
+  const arg = args.trim()
+  const lower = arg.toLowerCase()
+  for (const mode of ["approve", "task"] as const) {
+    if (lower === mode || lower.startsWith(`${mode} `)) {
+      return { mode, id: arg.slice(mode.length).trim() }
+    }
+  }
+  return { mode: "passthrough" }
+}
+
+/**
+ * Handle a `/loop-plan ...` command. Two subcommands get deterministic plugin
+ * work before the agent turn; `new <idea>` passes through untouched (its
+ * authoring — interview, draft — is the agent's job, see
+ * `.opencode/commands/loop-plan.md`):
+ *
+ * - `task <id>` — if the task sits in `draft/`, move it to `in-planning/`
+ *   (audited + committed) so folder semantics stay honest: `draft/` means no
+ *   planning attempted, `in-planning/` means planning started or done. The
+ *   agent then writes the `## Implementation Plan` onto the file in place.
+ *   Failures never block the turn — the agent also looks in `draft/`.
+ * - `approve <id>` — deterministic backlog surgery: validate the plan exists
+ *   and park the task in `in-progress/` (the approved queue).
  */
 export const handlePlanCommand = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const arg = args.trim()
-  const lower = arg.toLowerCase()
-  if (!(lower === "approve" || lower.startsWith("approve "))) return
-  const id = arg.slice("approve".length).trim()
+  const parsed = parsePlanArgs(args)
+  if (parsed.mode === "passthrough") return
+  const { id } = parsed
+  if (parsed.mode === "task") {
+    if (!id) return void (await toast(client, "Usage: /loop-plan task <id>.", "warning"))
+    if (await findByIdIn(client, deps.directory, config.tasksDir, "in-planning", id)) return
+    const draft = await findByIdIn(client, deps.directory, config.tasksDir, "draft", id)
+    if (!draft) {
+      return void (await toast(client, `No draft/in-planning task "${id}" found — the agent will report what it sees.`, "warning"))
+    }
+    try {
+      const actor = await gitActor(deps.$, deps.directory)
+      await appendNote(deps.$, draft, auditNote("Planning started — moved to in-planning", new Date(), actor))
+      await moveTask(deps.$, draft, "in-planning")
+      await commitPaths(deps.$, deps.directory, [config.tasksDir], `loop(${id}): planning started`)
+      await toast(client, `"${draft.title}" moved to ${config.tasksDir}/in-planning/ — the plan will be written there.`, "success")
+    } catch (err) {
+      await toast(client, `Couldn't move "${id}" to in-planning: ${(err as Error).message} — planning continues in draft/.`, "error")
+    }
+    return
+  }
   if (!id) return void (await toast(client, "Usage: /loop-plan approve <id>.", "warning"))
   const task =
     (await findByIdIn(client, deps.directory, config.tasksDir, "in-planning", id)) ??

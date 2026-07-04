@@ -8,9 +8,10 @@ Guidance for AI coding agents working in this repository.
 
 1. **The automatic agentic loop** (`/loop-plan` + `/loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   splits the lifecycle into two commands: `/loop-plan` authors a backlog
-   task **with** its `## Implementation Plan` (interviewing you first when
-   the idea is underspecified) and `approve <id>` parks it in the approved
+   splits the lifecycle into two commands: `/loop-plan` interviews you into
+   a planless draft task (`new <idea>` — always), writes its
+   `## Implementation Plan` on request after you review the draft
+   (`task <id>`), and `approve <id>` parks it in the approved
    queue; `/loop` is a pure executor that claims approved tasks
    (`task <id>`, or a `watch [interval]` worker session polling on idle
    events plus a timer) and drives BUILD→VERIFY→REVIEW unattended. Use this
@@ -39,7 +40,7 @@ Guidance for AI coding agents working in this repository.
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/loop-plan new <idea>` then `/loop-plan approve <id>` then `/loop task <id>` (see `loop-orchestration`), not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/loop-plan new <idea>` then `/loop-plan task <id>` then `/loop-plan approve <id>` then `/loop task <id>` (see `loop-orchestration`), not a manual skill chain
 
 ### Lifecycle Mapping
 
