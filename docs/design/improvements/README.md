@@ -19,7 +19,7 @@ against source at time of writing), the residual risks in
 | 02 | [State persistence](./02-state-persistence.md) | Crash/restart resumes at the exact stage with artifacts, not a re-plan | `src/loop/persist.ts`; `persist.test.ts` |
 | 03 | [Ship + status commands](./03-ship-and-status-commands.md) | Audited `in-review → completed` move; backlog dashboard | `/loop ship` + status in `src/loop/driver.ts`, `summarizeBacklog` in `src/task/store.ts`; `store.test.ts` |
 | 04 | [Verdict quality](./04-verdict-quality.md) | Structured failure reasons feed re-builds; optional multi-lens review | `src/loop/verdict.ts`, `runStageWithLenses` in `src/loop/driver.ts`; `verdict.test.ts` |
-| 05 | [Secret redaction](./05-secret-redaction.md) | Secrets scrubbed from durable artifacts before write | `src/loop/redact.ts`, wired in `src/task/store.ts`; `redact.test.ts` |
+| 05 | [Secret redaction](./05-secret-redaction.md) | Secrets scrubbed from durable artifacts before write | `src/task/redact.ts`, wired in `src/task/store.ts`; `redact.test.ts` |
 | 06 | [Run metrics](./06-run-metrics.md) | Per-run stage timings + verdict history in the run log | `src/loop/metrics.ts`; `metrics.test.ts` |
 
 Residuals each plan explicitly deferred (bash worktree pinning, cross-process

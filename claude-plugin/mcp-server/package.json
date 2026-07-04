@@ -2,7 +2,7 @@
   "name": "agentic-loop-mcp",
   "version": "0.0.1",
   "description": "MCP server backing the agentic-loop Claude Code plugin — verdicts, git isolation, backlog, snapshots, metrics",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "agentic-loop-mcp": "dist/server.js"

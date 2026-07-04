@@ -116,10 +116,11 @@ recommends perspective-diverse verification).
   3. **Combined verdict = worst of N** (`ERROR` > `FAIL` > `PASS`
      precedence: any ERROR stops the loop; else any FAIL fails; else PASS).
      Missing verdict on any pass = FAIL for that pass, as today.
-  4. Audit note per pass (`REVIEW verdict (lens: security): PASS …`) plus a
-     combined note; run log gets each pass's output (the existing
-     `appendRunLog` call runs per pass with the lens in the header).
-  5. The stored review artifact = concatenation of failing passes' outputs
+  4. One **combined** audit note on the task file, whose reason carries
+     `[lens]`-prefixed objections merged by `combineRecords`; the run log
+     gets each pass's output with the lens in the header (the per-lens
+     breakdown lives in the run log, not as separate task-file notes).
+  5. The stored review artifact = concatenation of all passes' outputs
      (structured-reasons block from feature A included), so the re-build
      prompt sees every lens's objections.
 

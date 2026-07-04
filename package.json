@@ -2,7 +2,7 @@
   "name": "agentic-loop",
   "version": "0.0.1",
   "description": "opencode plugin for transforming engineer workflow into an agentic loop",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "type": "module",
   "main": "src/index.ts",
   "module": "src/index.ts",
