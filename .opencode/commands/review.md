@@ -1,6 +1,6 @@
 ---
 description: Enter the REVIEW stage of the agentic loop — five-axis code review of the build, emitting a verdict
-agent: review
+agent: loop-review
 subtask: true
 ---
 

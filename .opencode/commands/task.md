@@ -1,6 +1,6 @@
 ---
 description: Author a structured backlog task from a rough idea, optionally linked to an Azure DevOps work item, and write it to docs/tasks/draft/
-agent: task-author
+agent: loop-task-author
 subtask: true
 ---
 

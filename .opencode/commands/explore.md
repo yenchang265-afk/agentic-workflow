@@ -1,6 +1,6 @@
 ---
 description: Scan the repo for improvement opportunities (refactors, dead code, tech debt) unrelated to any /loop goal, and file them as draft backlog tasks
-agent: explore
+agent: loop-explore
 subtask: true
 ---
 
