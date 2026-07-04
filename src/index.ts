@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
+import type { Config } from "./loop/state.ts"
 import * as driver from "./loop/driver.ts"
 import { hasLoop } from "./loop/state.ts"
 
@@ -33,25 +34,30 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
   // used to move task files between status folders.
   const deps: driver.Deps = { client, $, directory, log }
 
-  // Load loop config once; fall back to defaults (and warn) on misconfig so a bad
-  // config file degrades rather than breaking the plugin entirely.
-  let config = DEFAULT_CONFIG
-  try {
-    config = await loadConfig(client, directory)
-  } catch (err) {
-    await log("warn", `using default config: ${(err as Error).message}`)
-  }
+  // Load loop config lazily, on the first hook invocation. The plugin
+  // initializer runs inside opencode's instance bootstrap, and any `client`
+  // call made from it (file.read, app.log, …) is a request back into the same
+  // still-bootstrapping instance — a circular wait that hangs opencode startup
+  // forever. Hooks only fire after bootstrap completes, so client calls are
+  // safe there. Fall back to defaults (and warn) on misconfig so a bad config
+  // file degrades rather than breaking the plugin entirely.
+  let configPromise: Promise<Config> | undefined
+  const getConfig = (): Promise<Config> =>
+    (configPromise ??= loadConfig(client, directory).catch(async (err) => {
+      await log("warn", `using default config: ${(err as Error).message}`)
+      return DEFAULT_CONFIG
+    }))
 
   return {
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
       const { sessionID } = event.properties
-      await driver.onIdle(deps, sessionID, config)
+      await driver.onIdle(deps, sessionID, await getConfig())
     },
 
     "command.execute.before": async (input) => {
       if (input.command !== "loop") return
-      await driver.handleCommand(deps, input.sessionID, input.arguments, config)
+      await driver.handleCommand(deps, input.sessionID, input.arguments, await getConfig())
     },
 
     "tool.execute.before": async (input) => {
