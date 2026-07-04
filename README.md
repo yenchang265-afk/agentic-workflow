@@ -3,6 +3,13 @@
 OpenCode plugin. Runs a goal through a full engineering lifecycle as one
 supervised state machine instead of a chat back-and-forth.
 
+> **Using Claude Code instead of OpenCode?** A parallel Claude Code plugin lives
+> in [`claude-plugin/`](claude-plugin/README.md) — same PLAN → BUILD → VERIFY →
+> REVIEW pipeline, human plan gate, git isolation, trusted verdicts, backlog, and
+> audit trail, re-expressed as a main-agent-driven loop backed by a bundled MCP
+> server (Claude Code has no autonomous background driver). Install:
+> `cd claude-plugin && ./install.sh`.
+
 ## What it does
 
 `/loop <goal>` moves a goal through four stages across **two sessions**,

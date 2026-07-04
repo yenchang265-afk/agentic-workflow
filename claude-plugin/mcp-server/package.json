@@ -1,0 +1,25 @@
+{
+  "name": "agentic-loop-mcp",
+  "version": "0.0.1",
+  "description": "MCP server backing the agentic-loop Claude Code plugin — verdicts, git isolation, backlog, snapshots, metrics",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "agentic-loop-mcp": "dist/server.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test src/lib/loop/*.test.ts src/lib/task/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.0"
+  }
+}
