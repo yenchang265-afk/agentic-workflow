@@ -1,6 +1,6 @@
 {
   "name": "agentic-loop",
-  "description": "Drives an engineering goal through PLAN → BUILD → VERIFY → REVIEW as a supervised, main-agent-driven loop with a human plan gate, git isolation, trusted verdicts, a task backlog, and an audit trail.",
+  "description": "Executes approved plans through BUILD → VERIFY → REVIEW as a supervised, main-agent-driven loop with git isolation, trusted verdicts, a task backlog, and an audit trail. Planning and approval happen first in /loop-plan (interview → draft → plan → approve).",
   "version": "0.0.1",
   "author": { "name": "agentic-loop" },
   "keywords": ["agentic", "workflow", "loop", "plan-build-verify-review", "tdd"]

@@ -37,6 +37,8 @@ const main = async () => {
     for (const name of fs.readdirSync(inProgress)) {
       if (!name.endsWith(".md")) continue
       const body = fs.readFileSync(path.join(inProgress, name), "utf8")
+      // Inline re-implementation of store.ts's `wasInterrupted` (a .mjs hook
+      // can't import the TS lib without depending on dist/) — keep in sync.
       const lastStart = body.lastIndexOf("> BUILD started")
       const lastFinish = body.lastIndexOf("> BUILD finished")
       if (lastStart !== -1 && lastFinish < lastStart) notes.push(name.replace(/\.md$/, ""))

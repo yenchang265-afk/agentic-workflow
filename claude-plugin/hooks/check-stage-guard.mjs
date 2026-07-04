@@ -67,6 +67,17 @@ const main = async () => {
   const tool = input.tool_name
   const ti = input.tool_input || {}
 
+  // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
+  // tools so it returns control; loop_advance then stops the loop.
+  if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
+    if (["Bash", "Edit", "Write", "MultiEdit"].includes(tool)) {
+      return block(
+        `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
+          `stop working, summarize what you have, and return control so the loop can stop cleanly.`,
+      )
+    }
+  }
+
   // (1) bash allowlist for check stages
   if (tool === "Bash" && (marker.stage === "verify" || marker.stage === "review")) {
     const cmd = String(ti.command ?? "")

@@ -1,6 +1,6 @@
 ---
 name: loop-build
-description: Implementer for the BUILD stage of the agentic loop. Executes an approved plan test-first with surgical diffs, or applies a REVIEW stage's fix requests on a re-build. The only stage that writes code.
+description: Implementer for the BUILD stage of the agentic loop. Executes an approved plan test-first with surgical diffs, or applies a VERIFY or REVIEW stage's feedback on a re-build. The only stage that writes code.
 tools: Read, Edit, Write, Bash, Grep, Glob
 ---
 
@@ -13,9 +13,11 @@ follow them exactly.
 ## Your input
 
 Either the approved plan (ordered steps, files, acceptance criteria, code to
-reuse), or on a re-build after a REVIEW FAIL, the approved plan plus the review
-feedback to address. Implement the plan — do not redesign it. If the plan is
-wrong or impossible, stop and say so rather than improvising.
+reuse), or on a re-build, the approved plan plus a `Verify failure to address:`
+or `Review feedback to address:` block. Implement the plan and fix exactly
+what the check flagged — do not redesign it. If the failure shows the plan
+itself is wrong or impossible, stop and say so rather than improvising; a
+human re-plans with `/loop-plan task <id>`.
 
 **Worktree isolation:** if your input contains a `Worktree:` line, that directory
 is the entire universe of this task — read and edit files with absolute paths

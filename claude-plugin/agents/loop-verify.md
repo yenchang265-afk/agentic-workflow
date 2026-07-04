@@ -21,7 +21,7 @@ change against those criteria using evidence, not assumption. If your input has 
 2. **Check each acceptance criterion** — map each to evidence; mark met or not.
 3. **Decide** — PASS only if every criterion is met and tests are green; else FAIL.
 4. On a FAIL, invoke `debugging-and-error-recovery` to root-cause (not fix) so the
-   next PLAN iteration can act precisely.
+   next BUILD iteration can act precisely.
 
 ## Recording your verdict — THE ONLY TRUSTED CHANNEL
 

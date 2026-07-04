@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Typecheck and unit tests
+    name: Typecheck and unit tests (opencode plugin)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -18,7 +18,30 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+  test-mcp-server:
+    name: Typecheck and unit tests (claude-plugin mcp-server)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: claude-plugin/mcp-server
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
 
       - name: Typecheck
         run: npm run typecheck

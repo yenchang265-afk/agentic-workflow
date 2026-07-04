@@ -22,9 +22,10 @@ echo "Building the agentic-loop MCP server…"
 echo "Linking shared skills + references…"
 mkdir -p "$PLUGIN_DIR/skills" "$PLUGIN_DIR/references"
 
-# Loop-specific skills are authored for Claude Code directly in the plugin and
-# must NOT be overwritten by the OpenCode versions.
-CLAUDE_OWNED_SKILLS="loop-orchestration task-backlog-management"
+# Loop-specific skills authored for Claude Code directly in the plugin and
+# must NOT be overwritten by the OpenCode versions. task-backlog-management is
+# substrate-agnostic and ships as a committed symlink to the canonical copy.
+CLAUDE_OWNED_SKILLS="loop-orchestration"
 
 # Relative symlinks so they survive a fresh clone (git tracks them).
 for d in "$REPO_DIR"/skills/*/; do
@@ -44,4 +45,4 @@ done
 
 echo
 echo "Done. Load with:  claude --plugin-dir \"$PLUGIN_DIR\""
-echo "Then run:  /loop <goal>"
+echo "Then run:  /loop-plan new <idea>   (draft → plan → approve → /loop task <id>)"
