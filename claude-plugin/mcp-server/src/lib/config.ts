@@ -16,9 +16,9 @@ const ConfigSchema = z.object({
   /** Pause for human approval after plan, before build edits anything. */
   gateBeforeBuild: z.boolean().default(true),
   /**
-   * Whether a free-text `/loop <goal>` may run a live `interview-me` pass on
+   * Whether a free-text `/agent-loop <goal>` may run a live `interview-me` pass on
    * an underspecified goal before queuing the automatic pipeline. Read by
-   * the `/loop` command's own prompt (`.opencode/commands/loop.md`), not
+   * the `/agent-loop` command's own prompt (`.opencode/commands/agent-loop.md`), not
    * branched on in plugin code — validated here so a typo'd value fails
    * fast like every other knob.
    */

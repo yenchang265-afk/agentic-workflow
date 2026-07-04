@@ -6,13 +6,13 @@ Guidance for AI coding agents working in this repository.
 
 `agentic-loop` is an OpenCode plugin. It provides:
 
-1. **The automatic agentic loop** (`/loop-plan` + `/loop`) — a real plugin
+1. **The automatic agentic loop** (`/agent-loop-plan` + `/agent-loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   splits the lifecycle into two commands: `/loop-plan` interviews you into
+   splits the lifecycle into two commands: `/agent-loop-plan` interviews you into
    a planless draft task (`new <idea>` — always), writes its
    `## Implementation Plan` on request after you review the draft
    (`task <id>`), and `approve <id>` parks it in the approved
-   queue; `/loop` is a pure executor that claims approved tasks
+   queue; `/agent-loop` is a pure executor that claims approved tasks
    (`task <id>`, or a `watch [interval]` worker session polling on idle
    events plus a timer) and drives BUILD→VERIFY→REVIEW unattended. Use this
    when a goal should run the whole lifecycle largely unattended. See the
@@ -40,11 +40,11 @@ Guidance for AI coding agents working in this repository.
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/loop-plan new <idea>` then `/loop-plan task <id>` then `/loop-plan approve <id>` then `/loop task <id>` (see `loop-orchestration`), not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agent-loop-plan new <idea>` then `/agent-loop-plan task <id>` then `/agent-loop-plan approve <id>` then `/agent-loop task <id>` (see `loop-orchestration`), not a manual skill chain
 
 ### Lifecycle Mapping
 
-`/loop` implements this lifecycle as real pipeline stages (see
+`/agent-loop` implements this lifecycle as real pipeline stages (see
 `loop-orchestration`). Outside the loop, follow it as an implicit sequence of
 skill invocations instead:
 
@@ -55,7 +55,7 @@ skill invocations instead:
 
 ### Execution Model (ad-hoc mode)
 
-For every request that isn't handed to `/loop`:
+For every request that isn't handed to `/agent-loop`:
 
 1. Determine if any skill applies (even 1% chance)
 2. Invoke the appropriate skill using the `skill` tool
@@ -75,8 +75,8 @@ Correct behavior: always check for and use skills first.
 ## Plugin Structure
 
 - `src/index.ts`, `src/loop/`, `src/task/`, `src/config.ts` — plugin implementation (state machine, driver, task backlog IO)
-- `.opencode/agents/` — the agent personas backing each `/loop` stage
-- `.opencode/commands/` — the slash commands (`/loop`, `/loop-plan`, `/plan`, `/build`, `/verify`, `/review`, `/explore`)
+- `.opencode/agents/` — the agent personas backing each `/agent-loop` stage
+- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-plan`, `/plan`, `/build`, `/verify`, `/review`, `/explore`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

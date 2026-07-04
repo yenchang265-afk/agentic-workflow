@@ -54,13 +54,13 @@ execution is unattended and machine-gated.
 
 | Stage | Command → agent | Permissions (host-enforced) | Skills invoked (prompt-only) | Hard (code) enforcement |
 |---|---|---|---|---|
-| Draft | `/loop-plan new <idea>` → `loop-plan-author` | `edit: allow`, `bash: deny` | `interview-me` (mandatory), `task-backlog-management` | none at write time — agent-written files are validated lazily on next parse (`src/task/store.ts:139-141`) |
-| Plan | `/loop-plan task <id>` → plugin move, then `loop-plan-author` | same | `planning-and-task-breakdown`, `task-backlog-management` | plugin moves `draft/ → in-planning/` with audit note + commit before the turn (`src/loop/driver.ts:818-834`) |
-| Approve | `/loop-plan approve <id>` → plugin only | agent writes nothing | — | `hasPlan` heading check, move to `in-progress/`, audit note, commit (`src/loop/driver.ts:836-862`, `src/task/store.ts:31-34`) |
+| Draft | `/agent-loop-plan new <idea>` → `loop-plan-author` | `edit: allow`, `bash: deny` | `interview-me` (mandatory), `task-backlog-management` | none at write time — agent-written files are validated lazily on next parse (`src/task/store.ts:139-141`) |
+| Plan | `/agent-loop-plan task <id>` → plugin move, then `loop-plan-author` | same | `planning-and-task-breakdown`, `task-backlog-management` | plugin moves `draft/ → in-planning/` with audit note + commit before the turn (`src/loop/driver.ts:818-834`) |
+| Approve | `/agent-loop-plan approve <id>` → plugin only | agent writes nothing | — | `hasPlan` heading check, move to `in-progress/`, audit note, commit (`src/loop/driver.ts:836-862`, `src/task/store.ts:31-34`) |
 | BUILD | driver-fired `loop-build` | `edit: allow`, `bash: allow` (full shell) | `incremental-implementation`, `test-driven-development` | commit checkpoint per iteration (`src/loop/driver.ts:527-529`); worktree pinning for edit tools only (`src/index.ts:134-154`) |
 | VERIFY | driver-fired `loop-verify` | `edit: deny`, `webfetch: deny`, default-deny bash allowlist (test runners + read tools) | `debugging-and-error-recovery` on FAIL | verdict only via `loop_verdict` tool gated to session+stage; missing verdict = FAIL (`src/index.ts:156-192`, `src/loop/driver.ts:163-178`) |
 | REVIEW | driver-fired `loop-review` | `edit: deny`, `webfetch: deny`, tighter allowlist (git inspection, no test runners) | `code-review-and-quality`; `security-and-hardening` / `performance-optimization` conditionally | same verdict channel; optional `reviewLenses` worst-of-N (`src/loop/driver.ts:397-453`, `src/loop/verdict.ts:48-52`) |
-| Ship | `/loop ship <id>` → plugin only | — | — | refuses unless task is in `in-review/`; audited move + commit (`src/loop/driver.ts:989-1008`) — **a local folder move, not a PR** |
+| Ship | `/agent-loop ship <id>` → plugin only | — | — | refuses unless task is in `in-review/`; audited move + commit (`src/loop/driver.ts:989-1008`) — **a local folder move, not a PR** |
 
 Control flow between stages is the pure state machine `advanceOnIdle`
 (`src/loop/state.ts:175-248`): verify FAIL/review FAIL re-build within a
@@ -99,7 +99,7 @@ enforced in code.
   incremental scope discipline, five-axis review depth, conditional
   security/performance review passes.
 - The interview actually running (and reaching real confidence) in
-  `/loop-plan new`.
+  `/agent-loop-plan new`.
 - Acceptance criteria being *testable* — Zod accepts any strings, including
   an **empty list** (`acceptance` defaults to `[]`,
   `src/task/schema.ts:19`).
@@ -124,7 +124,7 @@ diff gate.
 | # | Gap | Evidence | Enterprise impact |
 |---|---|---|---|
 | G1 | **Unauthenticated actor identity.** Every audit note's "by <actor>" is the machine's configured `git config user.name/email` (`src/loop/git.ts:64-69`) — spoofable, and identical for the loop and the human. | threat-model T4 names this residual explicitly | Audit trail cannot prove *who* approved; fails change-management review |
-| G2 | **Ungated approvals.** `/loop-plan approve` and `/loop ship` execute for whoever types them; no approver roles, no policy. | `src/loop/driver.ts:836-862`, `:989-1008` | No separation of duties; any user (or compromised session) can approve and ship |
+| G2 | **Ungated approvals.** `/agent-loop-plan approve` and `/agent-loop ship` execute for whoever types them; no approver roles, no policy. | `src/loop/driver.ts:836-862`, `:989-1008` | No separation of duties; any user (or compromised session) can approve and ship |
 | G3 | **Mutable, non-evidentiary audit trail.** Audit notes are appended markdown (`printf >>`, `src/task/store.ts:223`); a raw edit rewrites history undetectably (only git history, itself rewritable pre-push, backstops it). | task-backlog SKILL red-flags raw `mv` bypasses but can't detect note tampering | Not compliance-grade; no SIEM ingestion path |
 | G4 | **Plan-content gate is a heading check.** A task with zero acceptance criteria and a one-line garbage plan is approvable and claimable. | `hasPlan` = `includes("## Implementation Plan")`; `acceptance` may be `[]` | VERIFY has nothing concrete to check; "verified" becomes vacuous |
 | G5 | **Lazy validation of agent-written files.** The authoring agent writes via the `edit` tool with no write-time schema gate; malformed files are *silently skipped with a warning* on the next listing. | `src/task/store.ts:139-141`; the validating `writeTask` path exists but is unused (`src/task/store.ts:284-293`) | Drafts can vanish from every listing without a loud error |
@@ -135,7 +135,7 @@ diff gate.
 
 | # | Gap | Evidence | Enterprise impact |
 |---|---|---|---|
-| C1 | **No PR automation.** The loop never pushes, opens PRs, or merges (deliberate non-goal, threat-model "Non-goals"); `/loop ship` is a local folder move + commit. | `src/loop/driver.ts:989-1008` | The last mile of every task is manual; forge-side gates (protected branches, required reviews) never see loop output unless a human wires it |
+| C1 | **No PR automation.** The loop never pushes, opens PRs, or merges (deliberate non-goal, threat-model "Non-goals"); `/agent-loop ship` is a local folder move + commit. | `src/loop/driver.ts:989-1008` | The last mile of every task is manual; forge-side gates (protected branches, required reviews) never see loop output unless a human wires it |
 | C2 | **No CI as a second verifier.** VERIFY and REVIEW are the same model family reading the same artifact chain — the loop grades its own homework. `reviewLenses` mitigates within-model; nothing independent ever runs. | threat-model boundary 2 | A model-family blind spot passes both check stages |
 | C3 | **No CI for the plugin repo itself.** No `.github/workflows`; typecheck and tests are manual (`README.md` Develop section). | confirmed absent | Regressions land silently; bad signal for adopters |
 | C4 | **Task-system integration is prompt-only.** ADO linking assumes a pre-connected MCP server; nothing in this repo registers, configures, or verifies it. Fetched linkage is mapped once at draft time and never re-synced. | `skills/task-backlog-management/SKILL.md` "Linking a task to Azure DevOps" | Local tasks silently diverge from the system of record |
@@ -185,7 +185,7 @@ docs updated as part of done.
 **1a. Authenticated approvals** *(closes G1, G2 — medium)*
 - New config: `approvers: string[]` (forge usernames) and
   `forge: "github" | "azdo"`. When set, `handlePlanCommand` approve and
-  `/loop ship` resolve the live forge identity (`gh api user` / ADO profile
+  `/agent-loop ship` resolve the live forge identity (`gh api user` / ADO profile
   via the connected MCP or CLI) and refuse unless it is in `approvers`.
 - Audit note records **both** identities: `approved by <forge-user> (machine
   actor <git-actor>)` — separating "who decided" from "which machine ran it".
@@ -210,7 +210,7 @@ docs updated as part of done.
 - Hash-chain audit notes: each `auditNote` gains
   `[… sha256:<hash-of-previous-note+content>]`; a pure verifier walks the
   chain and flags breaks. Bootstrap: first note hashes from the task id.
-- New `/loop audit export [<id>]` — emits JSONL (task id, transition, both
+- New `/agent-loop audit export [<id>]` — emits JSONL (task id, transition, both
   identities, ISO timestamp, backlog commit SHA, verdict record incl.
   per-criterion results) to `runs/audit.jsonl` for SIEM ingestion. Redaction
   applied at write, same as run logs.
@@ -219,7 +219,7 @@ docs updated as part of done.
   `src/loop/metrics.ts` (verdict record source).
 
 **1d. Requirements traceability** *(closes G7 — small/medium)*
-- `/loop-plan new` persists the interview's confirmed restate into the task
+- `/agent-loop-plan new` persists the interview's confirmed restate into the task
   file as an `## Intent` section (outcome, success, constraint, out of
   scope) — the durable link from idea to acceptance bullets. Prompt change
   in `.opencode/agents/loop-plan-author.md` + schema note; no code needed
@@ -235,10 +235,10 @@ docs updated as part of done.
 ### Phase 2 — CI/CD & toolchain
 
 **2e. PR automation behind the human gate** *(closes C1, half of C5 — medium)*
-- `/loop ship <id> --pr` (requires `forge` config): push `loop/<id>`,
+- `/agent-loop ship <id> --pr` (requires `forge` config): push `loop/<id>`,
   open a **draft PR** via `gh pr create` / ADO API with the task body,
   acceptance, `## Run summary`, and audit-note excerpt as the description;
-  then do today's audited move to `completed/`. Plain `/loop ship` unchanged.
+  then do today's audited move to `completed/`. Plain `/agent-loop ship` unchanged.
 - The loop still never merges; the forge's protected branches + required
   reviews become the hard change-management layer the threat model defers to.
 - Includes writing the missing `docs/design/explore-task-fetch-and-pr-gating.md`
@@ -253,7 +253,7 @@ docs updated as part of done.
 - Ship workflow templates in `templates/ci/` (GitHub Actions + Azure
   Pipelines): checkout the `loop/<id>` branch, run the repo's test command,
   report a status check.
-- New config `requireCi: true`: `/loop ship` polls the forge's checks for
+- New config `requireCi: true`: `/agent-loop ship` polls the forge's checks for
   the loop branch head and **refuses to ship on red or pending** — an
   independent (non-LLM) verifier now gates the exit, breaking the
   grades-its-own-homework loop.
@@ -266,16 +266,16 @@ docs updated as part of done.
 
 **2h. Task ingestion adapter** *(closes C4, other half of C5 — large)*
 - Activate the dormant `writeTask` path (`src/task/store.ts:284-314`): a
-  `/loop-plan sync` command (or watch-mode hook) that queries the configured
+  `/agent-loop-plan sync` command (or watch-mode hook) that queries the configured
   forge/ADO for work items tagged for the loop, files them as schema-valid
   drafts (code-side Zod validation at write — no lazy-validation gap), and
   on re-sync warns when a linked work item drifted from the local task.
 - Ingested drafts still flow through the mandatory interview? No — they
   carry the work item's acceptance; the human review happens at
-  `/loop-plan task` + `approve`. Document the distinction.
+  `/agent-loop-plan task` + `approve`. Document the distinction.
 - Key files: `src/task/store.ts` (`writeTask`, already built),
   new `src/task/sync.ts`, `src/loop/driver.ts` (command routing),
-  `.opencode/commands/loop-plan.md`.
+  `.opencode/commands/agent-loop-plan.md`.
 
 **2i. Supply chain** *(closes C6 — small)*
 - Pin `@opencode-ai/plugin` to a tested version; publish the package with a
@@ -339,14 +339,14 @@ An enterprise can pilot the current plugin safely with this posture:
 
 | Agent | Command | Permissions | Role |
 |---|---|---|---|
-| `loop-plan-author` | `/loop-plan` | `edit: allow`, `bash: deny` | interview → draft; plan-in-place; approve is report-only |
+| `loop-plan-author` | `/agent-loop-plan` | `edit: allow`, `bash: deny` | interview → draft; plan-in-place; approve is report-only |
 | `loop-plan` | `/plan` | `edit: deny`, `bash: deny` | standalone ad-hoc planner, chat-only output |
 | `loop-explore` | `/explore` | `edit: allow`, `bash: deny` | repo-health scan; files ≤5 deduped drafts |
 | `loop-build` | `/build` + driver | `edit: allow`, `bash: allow` | the only code-writing agent |
 | `loop-verify` | `/verify` + driver | `edit: deny`, `webfetch: deny`, bash allowlist (test runners + read) | runs tests, records verdict |
 | `loop-review` | `/review` + driver | `edit: deny`, `webfetch: deny`, bash allowlist (git inspection only) | five-axis review, records verdict |
 
-`/loop` itself binds no agent — the plugin intercepts it and drives the
+`/agent-loop` itself binds no agent — the plugin intercepts it and drives the
 stage subagents programmatically.
 
 ### 6.2 Skills (26 total)

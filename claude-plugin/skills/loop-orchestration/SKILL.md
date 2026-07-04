@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: The protocol for driving the agentic engineering loop (plan → build → verify → review) inside Claude Code. Use when running /loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, where the human plan gate is, the loop_verdict contract, and how the loop terminates.
+description: The protocol for driving the agentic engineering loop (plan → build → verify → review) inside Claude Code. Use when running /agent-loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, where the human plan gate is, the loop_verdict contract, and how the loop terminates.
 ---
 
 # Driving the agentic loop (Claude Code)
@@ -15,7 +15,7 @@ your own control flow.
 ## The pipeline
 
 ```
-/loop <goal>
+/agent-loop <goal>
   → loop_start ──▶ spawn loop-plan ──▶ loop_advance ─GATE(human approves)─▶ loop_approve
                                                                                 │
                               ┌─────────────────────────────────────────────────┘
@@ -64,7 +64,7 @@ task and written the run summary; just report it).
      combines them worst-wins. Then a single `loop_advance`.
 8. **Terminate.** On `{done}` the server has moved the task to `in-review/`, torn
    down the worktree, and written the `## Run summary`. Tell the user to review the
-   branch diff and run `/loop ship <id>` when it ships. On `{stop}` the task stays
+   branch diff and run `/agent-loop ship <id>` when it ships. On `{stop}` the task stays
    in `in-progress/` with an audit note — report why.
 
 ## The verdict contract
@@ -88,17 +88,17 @@ of the next iteration's prompt automatically.
 ## Termination summary
 
 - **REVIEW PASS** → done; task in `in-review/`; human reviews the diff and runs
-  `/loop ship <id>`.
+  `/agent-loop ship <id>`.
 - **FAIL** within `maxIterations` → re-plan (verify) or re-build (review).
 - **FAIL** at the cap, or **ERROR** → stop; task stays in `in-progress/` with a note.
 
 ## What is different from the OpenCode version
 
-- No background/two-session `/loop watch` autonomy — you drive one loop per
+- No background/two-session `/agent-loop watch` autonomy — you drive one loop per
   session, under the human's supervision. BUILD→VERIFY→REVIEW still advance
   without human turns *within your turn* (you spawn each stage back-to-back); only
   the plan gate pauses for a human.
-- The plan gate is a natural conversational pause, not a `/loop go` command.
+- The plan gate is a natural conversational pause, not a `/agent-loop go` command.
 - Verdicts and all deterministic operations go through the `agentic-loop` MCP
   tools, not in-process plugin hooks.
 

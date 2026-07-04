@@ -10,9 +10,9 @@ import type { Verdict } from "./verdict.ts"
  * never touch a client or the store. That keeps the loop logic unit-testable
  * without opencode. The impure orchestration lives in `driver.ts`.
  *
- * Planning happens **before** the loop, in the `/loop-plan` command: `new`
+ * Planning happens **before** the loop, in the `/agent-loop-plan` command: `new`
  * interviews the user into a draft task, `task <id>` writes its
- * `## Implementation Plan`, and `/loop-plan approve <id>` parks it in
+ * `## Implementation Plan`, and `/agent-loop-plan approve <id>` parks it in
  * `in-progress/`. The loop is a pure executor — every state enters at
  * `build` via `resumeAtBuild` with the approved plan as an artifact.
  *
@@ -20,7 +20,7 @@ import type { Verdict } from "./verdict.ts"
  * FAIL re-builds with the failure threaded into the build prompt; a REVIEW
  * FAIL re-builds with the review feedback. Both share one iteration counter
  * and cap. If the plan itself is wrong, the cap stops the loop and a human
- * re-plans via `/loop-plan task <id>`.
+ * re-plans via `/agent-loop-plan task <id>`.
  */
 
 export type Stage = "build" | "verify" | "review"
@@ -81,7 +81,7 @@ export interface Config {
   readonly tasksDir: string
   /** Wall-clock cap on a single stage before the loop gives up on it. */
   readonly stageTimeoutMinutes: number
-  /** Default polling cadence for `/loop watch` (overridable per-session: `/loop watch 30s`). */
+  /** Default polling cadence for `/agent-loop watch` (overridable per-session: `/agent-loop watch 30s`). */
   readonly watchIntervalMinutes: number
   /** Per-task worktree root; unset ⇒ shared-tree branch switching. */
   readonly worktreesDir?: string
@@ -92,7 +92,7 @@ export interface Config {
 }
 
 /** Construct a LoopState entering execution at build, for a claimed
- *  in-progress task whose plan was approved via `/loop-plan approve`. */
+ *  in-progress task whose plan was approved via `/agent-loop-plan approve`. */
 export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): LoopState => ({
   goal,
   stage: "build",
@@ -195,7 +195,7 @@ export const advanceOnIdle = (
           state: s,
           action: {
             kind: "stop",
-            message: "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /loop recover the task.",
+            message: "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
           },
         }
       }
@@ -209,7 +209,7 @@ export const advanceOnIdle = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Loop stopped — verify failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /loop-plan task <id>.`,
+          message: `✗ Loop stopped — verify failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /agent-loop-plan task <id>.`,
         },
       }
     }
@@ -226,7 +226,7 @@ export const advanceOnIdle = (
           state: s,
           action: {
             kind: "stop",
-            message: "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /loop recover the task.",
+            message: "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
           },
         }
       }
@@ -240,7 +240,7 @@ export const advanceOnIdle = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Loop stopped — review failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /loop-plan task <id>.`,
+          message: `✗ Loop stopped — review failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /agent-loop-plan task <id>.`,
         },
       }
     }

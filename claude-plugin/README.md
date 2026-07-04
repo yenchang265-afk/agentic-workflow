@@ -6,7 +6,7 @@ trusted verdict channel, a filesystem task backlog, and an audit trail.
 
 This is the Claude Code port of the OpenCode `agentic-loop` plugin. Because Claude
 Code has no autonomous background-driver primitive, the loop is **driven by the
-main agent**: `/loop <goal>` makes the agent spawn each stage as a subagent (via
+main agent**: `/agent-loop <goal>` makes the agent spawn each stage as a subagent (via
 the Task tool) while a bundled **MCP server** owns the state machine, git
 isolation, verdicts, backlog moves, snapshots, and metrics. See
 `skills/loop-orchestration/SKILL.md` for the exact protocol.
@@ -38,12 +38,12 @@ runs the built `mcp-server/dist/server.js`) and creates relative symlinks for th
 
 ## Commands
 
-- `/loop <goal>` — start a loop; runs PLAN, then **pauses for you to approve the
+- `/agent-loop <goal>` — start a loop; runs PLAN, then **pauses for you to approve the
   plan**, then drives BUILD → VERIFY → REVIEW.
-- `/loop next` — start on the top task in `docs/tasks/in-planning/`.
-- `/loop status` — the active loop plus a whole-backlog roll-up.
-- `/loop ship <id>` — move a reviewed task from `in-review/` to `completed/` (audited).
-- `/loop recover <id>` — resume an interrupted loop from its state snapshot.
+- `/agent-loop next` — start on the top task in `docs/tasks/in-planning/`.
+- `/agent-loop status` — the active loop plus a whole-backlog roll-up.
+- `/agent-loop ship <id>` — move a reviewed task from `in-review/` to `completed/` (audited).
+- `/agent-loop recover <id>` — resume an interrupted loop from its state snapshot.
 - `/task new <idea>` — draft a backlog task (via the `loop-task-author` subagent).
 - `/explore` — file up to 5 improvement drafts (via the `loop-explore` subagent).
 
@@ -66,7 +66,7 @@ Optional `.agentic-loop.json` at the repo root (all fields default): `maxIterati
 
 ## Known limitations
 
-- **No background/two-session `/loop watch` autonomy** — Claude Code has no
+- **No background/two-session `/agent-loop watch` autonomy** — Claude Code has no
   equivalent to OpenCode's `session.idle` driver. The main agent drives one loop
   per session under your supervision (BUILD → VERIFY → REVIEW still advance without
   human turns *within* the agent's turn; only the plan gate pauses for you).

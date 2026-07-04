@@ -100,4 +100,4 @@ if [ ! -d "$REPO_DIR/node_modules" ]; then
 fi
 
 echo
-echo "Done. /loop and the bundled skills are available in every OpenCode session."
+echo "Done. /agent-loop and the bundled skills are available in every OpenCode session."

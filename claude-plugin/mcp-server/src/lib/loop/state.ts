@@ -16,7 +16,7 @@ import type { Verdict } from "./verdict.js"
  *
  * PLAN is the **planning** phase — approving the plan gate parks it as a
  * backlog task rather than continuing into BUILD in the same session (see
- * `driver.ts`'s `parkApprovedPlan`). A `/loop watch` session later claims a
+ * `driver.ts`'s `parkApprovedPlan`). A `/agent-loop watch` session later claims a
  * parked task and enters this same state machine directly at `build` via
  * `resumeAtBuild` — the transition logic below doesn't know or care whether
  * it got there via `createState`'s "plan" start or a claim's "build" start;
@@ -103,7 +103,7 @@ export const createState = (goal: string, task?: TaskRef): LoopState => ({
 })
 
 /** Reconstruct a LoopState paused at the plan gate for an already-planned
- *  task (e.g. `/loop task <id>` resuming a persisted plan). */
+ *  task (e.g. `/agent-loop task <id>` resuming a persisted plan). */
 export const resumeAtPlanGate = (goal: string, task: TaskRef, plan: string): LoopState => ({
   goal,
   stage: "plan",
@@ -205,8 +205,8 @@ export const advanceOnIdle = (
       if (config.gateBeforeBuild) {
         const message =
           s.iteration === 0
-            ? "Plan ready — review it, then run /loop go to approve and park it for execution."
-            : "Plan ready — review it, then run /loop go to build."
+            ? "Plan ready — review it, then run /agent-loop go to approve and park it for execution."
+            : "Plan ready — review it, then run /agent-loop go to build."
         return { state: { ...s, paused: true }, action: { kind: "gate", message } }
       }
       return fire(s, "build")
@@ -225,7 +225,7 @@ export const advanceOnIdle = (
           state: s,
           action: {
             kind: "stop",
-            message: "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /loop recover the task.",
+            message: "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
           },
         }
       }
@@ -252,7 +252,7 @@ export const advanceOnIdle = (
           state: s,
           action: {
             kind: "stop",
-            message: "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /loop recover the task.",
+            message: "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
           },
         }
       }
@@ -269,7 +269,7 @@ export const advanceOnIdle = (
   }
 }
 
-/** Resume from a human gate (`/loop go`): proceed to whatever the paused stage gates into. */
+/** Resume from a human gate (`/agent-loop go`): proceed to whatever the paused stage gates into. */
 export const resume = (state: LoopState): { state: LoopState; action: Action } => {
   if (!state.paused) return { state, action: { kind: "noop" } }
   if (state.stage === "plan") return fire(state, "build")

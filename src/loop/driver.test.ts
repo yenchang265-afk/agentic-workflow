@@ -44,7 +44,7 @@ test("garbage yields an error, not a silent default", () => {
 })
 
 /**
- * `/loop-plan` argument classification: `approve`/`task` get plugin work,
+ * `/agent-loop-plan` argument classification: `approve`/`task` get plugin work,
  * everything else passes through to the agent turn.
  */
 

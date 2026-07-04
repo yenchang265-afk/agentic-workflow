@@ -44,4 +44,4 @@ done
 
 echo
 echo "Done. Load with:  claude --plugin-dir \"$PLUGIN_DIR\""
-echo "Then run:  /loop <goal>"
+echo "Then run:  /agent-loop <goal>"

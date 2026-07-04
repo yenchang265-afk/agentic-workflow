@@ -13,5 +13,5 @@ itself, sharpens and bounds the raw goal into a short problem/non-goals
 framing, then turns that into an ordered, review-sized implementation plan
 with explicit acceptance criteria. Relay its plan and stop. This is a
 standalone tool — to plan a backlog task for the automatic loop (build →
-verify → review), use `/loop-plan` instead, which persists the plan onto the
+verify → review), use `/agent-loop-plan` instead, which persists the plan onto the
 task file.

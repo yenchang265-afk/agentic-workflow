@@ -19,11 +19,11 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  *
  *   build → verify → review
  *
- * Planning lives in the `/loop-plan` command: `new` interviews the user into
+ * Planning lives in the `/agent-loop-plan` command: `new` interviews the user into
  * a draft, `task <id>` writes its `## Implementation Plan`, and
- * `/loop-plan approve <id>` (handled
- * deterministically below) parks it in `in-progress/`. `/loop task <id>`
- * executes one approved task; `/loop watch [interval]` polls for them — on
+ * `/agent-loop-plan approve <id>` (handled
+ * deterministically below) parks it in `in-progress/`. `/agent-loop task <id>`
+ * executes one approved task; `/agent-loop watch [interval]` polls for them — on
  * every `session.idle` event plus a per-session interval timer. A verify or
  * review FAIL re-builds within the iteration cap. The control surface lives
  * in `loop/driver.ts`; the pure state machine in `loop/state.ts`.
@@ -64,21 +64,21 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
     // A restart mid-BUILD leaves a task in in-progress/ with an unmatched
     // "BUILD started" note that no watcher will ever claim — surface those, plus
     // any leftover state snapshot (the strongest "this died mid-run" signal;
-    // /loop recover resumes it at the exact stage).
+    // /agent-loop recover resumes it at the exact stage).
     try {
       const tasks = await listInProgress(client, directory, config.tasksDir, log)
       const interrupted = tasks.filter(wasInterrupted).map((t) => t.id)
       if (interrupted.length) {
         await log(
           "warn",
-          `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /loop recover <id> to resume`,
+          `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /agent-loop recover <id> to resume`,
         )
       }
       const snapshots = await listSnapshotIds(client, directory, config.tasksDir)
       if (snapshots.length) {
         await log(
           "warn",
-          `loop state snapshot(s) present: ${snapshots.join(", ")} — /loop recover <id> resumes at the exact stage`,
+          `loop state snapshot(s) present: ${snapshots.join(", ")} — /agent-loop recover <id> resumes at the exact stage`,
         )
       }
     } catch (err) {
@@ -96,7 +96,7 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
         for (const w of stale) {
           await log(
             "warn",
-            `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /loop recover will reuse it, or 'git worktree remove' it`,
+            `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /agent-loop recover will reuse it, or 'git worktree remove' it`,
           )
         }
       } catch (err) {

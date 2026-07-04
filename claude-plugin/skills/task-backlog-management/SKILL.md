@@ -1,6 +1,6 @@
 ---
 name: task-backlog-management
-description: The filesystem task backlog under docs/tasks/ that feeds the agentic loop in Claude Code. Use when writing, filing, or moving a task file, when running /loop next or starting a loop from a backlog task, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
+description: The filesystem task backlog under docs/tasks/ that feeds the agentic loop in Claude Code. Use when writing, filing, or moving a task file, when running /agent-loop next or starting a loop from a backlog task, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
 ---
 
 # The task backlog
@@ -8,7 +8,7 @@ description: The filesystem task backlog under docs/tasks/ that feeds the agenti
 ## Overview
 
 A task is one markdown file under `docs/tasks/`. **The folder it lives in is its
-status** — there is no `status:` field, so the two can never drift. The `/loop`
+status** — there is no `status:` field, so the two can never drift. The `/agent-loop`
 command can drive a goal straight from this backlog instead of a hand-typed goal.
 The `agentic-loop` MCP tools move task files between folders as the loop advances;
 humans make the two manual moves (`draft → in-planning` and `in-review →
@@ -18,11 +18,11 @@ completed`).
 
 ```
 docs/tasks/
-  draft/        # WIP, not ready                ← you write here (/task new, /loop explore)
+  draft/        # WIP, not ready                ← you write here (/task new, /agent-loop explore)
   in-planning/  # queued for planning            ← a human moves here (gate 1)
   in-progress/  # plan → build → verify → review ← loop_start moves here
   in-review/    # review passed, human diff gate  ← the loop moves here on a REVIEW PASS
-  completed/    # shipped                         ← you move here via /loop ship <id>
+  completed/    # shipped                         ← you move here via /agent-loop ship <id>
   abandoned/    # won't do                        ← you move here, from any status
 ```
 
@@ -58,30 +58,30 @@ becomes the loop's goal, with `acceptance` threaded into the verify stage.
 | `draft → in-planning` | **you (human)** | the task is worth planning — the first gate |
 | `in-planning → in-progress` | `loop_start({taskId})` | the loop is started on it |
 | `in-progress → in-review` | the loop (`loop_advance` on REVIEW PASS) | the pipeline finished; awaiting human diff review |
-| `in-review → completed` | **you**, via `/loop ship <id>` | you reviewed the diff and shipped it |
+| `in-review → completed` | **you**, via `/agent-loop ship <id>` | you reviewed the diff and shipped it |
 | stays `in-progress` + note | the loop | a FAIL hit the iteration cap, or the loop was stopped |
 | `→ abandoned` | **you** | you decide not to do it, from any status |
 
 Two moves are manual: `draft → in-planning` (decide to plan it) and `in-review →
-completed` (decide it's shipped, via `/loop ship <id>` — an audited move). Prefer
-`/loop ship` over a raw `mv` so the completion lands in the audit trail.
+completed` (decide it's shipped, via `/agent-loop ship <id>` — an audited move). Prefer
+`/agent-loop ship` over a raw `mv` so the completion lands in the audit trail.
 
 ## Process
 
 1. **Create a task** — by hand into `draft/`, via `/task new <idea>` (the
    `loop-task-author` subagent drafts a schema-valid file and asks about Azure
-   linkage), or via `/loop explore` (the `loop-explore` subagent files up to 5
+   linkage), or via `/agent-loop explore` (the `loop-explore` subagent files up to 5
    drafts). New tasks always land in `draft/`.
 2. **Review, then move it to `in-planning/`** yourself — the first human gate.
-3. **Start it** — `/loop next` picks the lowest-priority un-planned task in
+3. **Start it** — `/agent-loop next` picks the lowest-priority un-planned task in
    `in-planning/`; or start a specific one. `loop_start` moves it to `in-progress/`
    and the main agent drives PLAN → (gate) → BUILD → VERIFY → REVIEW (see
    `loop-orchestration`).
 4. **Approve the plan** at the gate — a conversational approval; the agent then
-   calls `loop_approve` and proceeds. There is no `/loop go` command and no
+   calls `loop_approve` and proceeds. There is no `/agent-loop go` command and no
    separate watch session in Claude Code.
 5. **Ship it** — on a REVIEW PASS the task parks in `in-review/`; review the branch
-   diff and run `/loop ship <id>` to complete it.
+   diff and run `/agent-loop ship <id>` to complete it.
 
 ### Linking a task to Azure DevOps
 
@@ -119,14 +119,14 @@ verifies.
 Loop state is snapshotted after every transition (`docs/tasks/runs/<id>.state.json`)
 and the task file carries the audit trail. What tells you what happened:
 
-- **A snapshot file present** — the strongest "died mid-run" signal; `/loop recover
+- **A snapshot file present** — the strongest "died mid-run" signal; `/agent-loop recover
   <id>` resumes at the exact stage it reached.
 - **An unmatched `> BUILD started` note** (no matching `> BUILD finished`) — BUILD
   died mid-run; check `git status`/`git diff` for a half-finished diff before
   recovering.
 - The SessionStart hook surfaces both at the start of a session.
 
-`/loop recover <id>` re-claims an `in-progress/` task and resumes from its snapshot
+`/agent-loop recover <id>` re-claims an `in-progress/` task and resumes from its snapshot
 (or, absent a valid one, from the persisted plan at BUILD).
 
 ## Common rationalizations
@@ -135,7 +135,7 @@ and the task file carries the audit trail. What tells you what happened:
 |---|---|
 | "I'll add a `status:` field, it's clearer" | The folder *is* the status — a separate field can drift and lie about the real state. |
 | "This failed once, delete the note and retry silently" | The note (especially an unmatched BUILD-started marker) is the audit trail for why a human should look before retrying. |
-| "Skip `in-planning/`, run it straight from `draft/`" | `/loop next` only looks in `in-planning/` — moving it there is the actual trigger and the human gate. |
+| "Skip `in-planning/`, run it straight from `draft/`" | `/agent-loop next` only looks in `in-planning/` — moving it there is the actual trigger and the human gate. |
 | "The MCP server's connected, just create the Azure work item" | Creating a work item is a write to a shared project — always confirm title/project/description first. |
 
 ## Red flags
@@ -144,7 +144,7 @@ and the task file carries the audit trail. What tells you what happened:
 - A task in `in-progress/` with an unmatched `> BUILD started` note nobody has
   checked `git status` against.
 - A task sitting in `in-review/` — not a stall, the human diff gate; review and run
-  `/loop ship <id>`.
+  `/agent-loop ship <id>`.
 - A task in `completed/` with no "Shipped" note — it was moved by a raw `mv`
-  instead of `/loop ship <id>`, so the completion isn't audited.
+  instead of `/agent-loop ship <id>`, so the completion isn't audited.
 - An Azure DevOps work item created without the user confirming details first.

@@ -4,38 +4,38 @@ description: Execute approved plans through the agentic loop (build → verify �
 
 Agentic loop control. The plugin intercepts this command to drive the loop;
 `$ARGUMENTS` selects the mode. The loop is a **pure executor** — planning and
-approval happen first, in `/loop-plan` (`new <idea>` / `task <id>` author the
+approval happen first, in `/agent-loop-plan` (`new <idea>` / `task <id>` author the
 plan; `approve <id>` parks the task in `docs/tasks/in-progress/`, the
 approved queue).
 
-- **`/loop task <id>`** — execute one approved task from
+- **`/agent-loop task <id>`** — execute one approved task from
   `docs/tasks/in-progress/` (the `<id>` is the task filename without `.md`).
   Claims it and enters the loop directly at BUILD with the approved plan.
-- **`/loop watch [interval]`** — put **this** session into execution-worker
+- **`/agent-loop watch [interval]`** — put **this** session into execution-worker
   mode: it looks for one approved, unstarted task and builds it through
   VERIFY → REVIEW. Two triggers: every idle tick, plus a polling timer at
   `interval` — `30s`, `5m`, `2h`, or a bare number of minutes (default: the
   `watchIntervalMinutes` config, 5m; floor: 10s). The timer only claims work
   while the session is actually idle, so a task approved elsewhere gets
   picked up even if this session generates no events.
-- **`/loop unwatch`** — take this session out of watch mode and stop its
+- **`/agent-loop unwatch`** — take this session out of watch mode and stop its
   polling timer (a build already in progress still finishes).
-- **`/loop recover <id>`** — resume an in-progress task whose run died
+- **`/agent-loop recover <id>`** — resume an in-progress task whose run died
   mid-build (crash/restart): re-claims it and resumes from its state snapshot
   at the exact stage it reached (or, with no valid snapshot, re-enters at
   BUILD from the persisted plan). Check `git status`/`git diff` first.
-- **`/loop ship <id>`** — move a reviewed task from `in-review/` to
+- **`/agent-loop ship <id>`** — move a reviewed task from `in-review/` to
   `completed/`, appending an audited "Shipped" note and committing the move.
   The recommended final-gate action (a raw `mv` still works but isn't audited).
-- **`/loop stop`** (alias: `abort`) — abort the loop and exit watch mode
+- **`/agent-loop stop`** (alias: `abort`) — abort the loop and exit watch mode
   (timer included), in this session.
-- **`/loop status`** — print the current loop (stage, iteration, watch state
+- **`/agent-loop status`** — print the current loop (stage, iteration, watch state
   and cadence) plus a whole-backlog roll-up: counts per folder and the
   actionable flags (awaiting approval, claimable, interrupted, awaiting
-  review). Bare `/loop` (no arguments) does the same.
+  review). Bare `/agent-loop` (no arguments) does the same.
 
 There is no free-text goal mode and no in-loop plan gate anymore — author
-plans with `/loop-plan new <idea>`, approve them with `/loop-plan approve
+plans with `/agent-loop-plan new <idea>`, approve them with `/agent-loop-plan approve
 <id>`, then execute here.
 
 **$ARGUMENTS**
@@ -49,10 +49,10 @@ iteration cap it **re-builds** with the failure feedback; on a REVIEW FAIL
 within the cap it re-builds with the review's feedback; on a VERIFY/REVIEW
 ERROR (the check itself couldn't run) it stops for a human instead of
 iterating. If the iteration cap trips, the plan itself is suspect — re-plan
-with `/loop-plan task <id>` and approve again. On a REVIEW PASS the loop is
+with `/agent-loop-plan task <id>` and approve again. On a REVIEW PASS the loop is
 done and the task parks in `in-review/` — it never pushes or opens a PR
 itself; review the branch diff yourself, push/open the PR, then run
-`/loop ship <id>` to move the task to `completed/`. That is the final human
+`/agent-loop ship <id>` to move the task to `completed/`. That is the final human
 gate.
 
 When `worktreesDir` is configured, execution runs in a per-task `git
@@ -62,9 +62,9 @@ configured, REVIEW runs once per lens and the loop takes the worst verdict.
 
 ## Planning and execution are separate commands
 
-Planning is `/loop-plan` — interactive, with you in the loop: it authors the
+Planning is `/agent-loop-plan` — interactive, with you in the loop: it authors the
 task, produces the plan, and `approve` is your explicit gate. Execution is
-`/loop` — unattended: `task <id>` for one task now, `watch` for a standing
-worker. A single session can do both jobs (plan and approve, then `/loop
+`/agent-loop` — unattended: `task <id>` for one task now, `watch` for a standing
+worker. A single session can do both jobs (plan and approve, then `/agent-loop
 watch` here too), but they are separate commands, and approval always happens
 before execution starts.

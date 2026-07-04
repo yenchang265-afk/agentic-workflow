@@ -73,7 +73,7 @@ greps get old — don't build it speculatively.
 - Stage throws (timeout) → no sample for the aborted stage, but the summary
   still renders on the error path with what was collected; outcome names
   the error.
-- `/loop stop` mid-stage → same: partial samples + `stopped` outcome.
+- `/agent-loop stop` mid-stage → same: partial samples + `stopped` outcome.
 - Restart mid-run loses the accumulator (in-memory) — acceptable; if plan
   02 is in, the recovered run's summary covers the post-recovery samples
   only and says so (`outcome: done (recovered run — pre-crash stages not

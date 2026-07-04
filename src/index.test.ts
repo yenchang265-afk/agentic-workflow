@@ -61,7 +61,7 @@ test("the loop-plan command is dispatched (it triggers a config read)", async ()
     hooks["command.execute.before"]?.({ command: "loop-plan", sessionID: "ses_x", arguments: "approve x" } as never, {} as never),
     timeout,
   ])
-  assert.ok(calls.includes("file.read"), "a /loop-plan command must reach the plugin handler")
+  assert.ok(calls.includes("file.read"), "a /agent-loop-plan command must reach the plugin handler")
 })
 
 test("the plugin exposes dispose (watch-timer cleanup) and no loop_begin tool", async () => {
@@ -69,7 +69,7 @@ test("the plugin exposes dispose (watch-timer cleanup) and no loop_begin tool", 
   assert.notEqual(hooks, undefined)
   assert.equal(typeof (hooks as { dispose?: unknown }).dispose, "function")
   const tools = (hooks as { tool?: Record<string, unknown> }).tool ?? {}
-  assert.ok(!("loop_begin" in tools), "loop_begin was removed with the free-text /loop mode")
+  assert.ok(!("loop_begin" in tools), "loop_begin was removed with the free-text /agent-loop mode")
   assert.ok("loop_verdict" in tools)
   await (hooks as { dispose: () => Promise<void> }).dispose() // must not throw with no timers
 })

@@ -6,11 +6,11 @@ Loop state is in-memory only (`src/loop/state.ts:261`, a `Map` keyed by
 sessionID; README lists this as a known limitation). The only durable
 artifact is the plan (`## Implementation Plan` appended to the task file at
 the gate). A crash or opencode restart mid-VERIFY loses the stage, iteration
-count, and all artifacts — `/loop recover <id>` can only re-enter at BUILD
+count, and all artifacts — `/agent-loop recover <id>` can only re-enter at BUILD
 from the persisted plan (`resumeAtBuild`, `driver.ts:508-513`), discarding
 completed work context and burning tokens re-doing stages that already ran.
 
-Fix: snapshot the `LoopState` to disk after every transition; `/loop
+Fix: snapshot the `LoopState` to disk after every transition; `/agent-loop
 recover` resumes at the exact stage with artifacts intact.
 
 ## Design
@@ -59,7 +59,7 @@ inject arbitrary state.
   have no durable identity; they already lose state on restart today and
   the plan gate parks them into a task anyway.
 
-### `/loop recover <id>` upgrade (`driver.ts:672-705`)
+### `/agent-loop recover <id>` upgrade (`driver.ts:672-705`)
 
 Current flow re-enters at BUILD via `resumeAtBuild`. New flow:
 
@@ -82,7 +82,7 @@ Current flow re-enters at BUILD via `resumeAtBuild`. New flow:
 
 Alongside the interrupted-task warning, list orphaned `*.state.json` files
 in `<tasksDir>/runs/` and include them in the log line — a snapshot with no
-live loop is the strongest "this task died mid-flight, run /loop recover"
+live loop is the strongest "this task died mid-flight, run /agent-loop recover"
 signal, stronger than the BUILD-note heuristic.
 
 ### Gitignore

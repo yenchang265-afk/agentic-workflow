@@ -365,7 +365,7 @@ server.registerTool(
 
 server.registerTool(
   "loop_next",
-  { description: "Pick the highest-priority un-planned task in in-planning/ (the /loop next target). Returns its id and goal, or null.", inputSchema: {} },
+  { description: "Pick the highest-priority un-planned task in in-planning/ (the /agent-loop next target). Returns its id and goal, or null.", inputSchema: {} },
   async () => {
     await loadCfg()
     const tasks = (await listInPlanning(fsClient, directory, config.tasksDir, log)).filter((t) => !hasPlan(t))
