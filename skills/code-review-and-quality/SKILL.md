@@ -63,7 +63,7 @@ Does the change fit the system's design?
 
 ### 4. Security
 
-For detailed security guidance, see `security-and-hardening`. Does the change introduce vulnerabilities?
+For detailed security guidance — and how to weigh what you find (exploitability first, severity by impact, defense-in-depth gaps as hardening notes not blockers) — see `security-and-hardening`. Does the change introduce vulnerabilities?
 
 - Is user input validated and sanitized?
 - Are secrets kept out of code, logs, and version control?
@@ -359,6 +359,7 @@ Part of code review is dependency review:
 - Review that only checks if tests pass (ignoring other axes)
 - "LGTM" without evidence of actual review
 - Security-sensitive changes without security-focused review
+- Security findings reported as "potential" or "theoretical" with no concrete exploit path
 - Large PRs that are "too big to review properly" (split them)
 - No regression tests with bug fix PRs
 - Review comments without severity labels — makes it unclear what's required vs optional

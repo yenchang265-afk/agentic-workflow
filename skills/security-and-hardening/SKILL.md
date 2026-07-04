@@ -1,6 +1,6 @@
 ---
 name: security-and-hardening
-description: Hardens code against vulnerabilities. Use when handling user input, authentication, data storage, or external integrations. Use when building any feature that accepts untrusted data, manages user sessions, or interacts with third-party services.
+description: Hardens code against vulnerabilities and audits for them. Use when handling user input, authentication, data storage, or external integrations. Use when building any feature that accepts untrusted data, manages user sessions, or interacts with third-party services, or when auditing or reviewing code for exploitable vulnerabilities.
 ---
 
 # Security and Hardening
@@ -376,6 +376,49 @@ try {
 await runAllowlistedAction(intent.action, intent.params);
 container.textContent = await llm.reply(userMessage);
 ```
+
+## Auditing for Vulnerabilities
+
+The patterns above are about *building* secure code. Auditing is the opposite direction — you're hunting for what's already broken and deciding what's worth reporting. Different discipline, different failure modes.
+
+### Exploitability first
+
+Every finding names the attacker, the action, and what they get. "An attacker could theoretically…" is not a finding; "send this request, get that result" is. If you can't describe the concrete damage, the severity is lower than you think.
+
+### Severity = likelihood × impact
+
+Rate on both axes — how hard to exploit and what access it needs, against what damage it achieves — not on deviation from a checklist:
+
+- **CRITICAL** — unauthenticated RCE, full data dump, admin takeover without credentials.
+- **HIGH** — authenticated RCE, SQL injection with exfiltration, stored XSS firing for all users, auth bypass, or an explicit role/permission boundary fully defeated for a consequential action.
+- **MEDIUM** — conditional or targeted XSS, CSRF with meaningful state change, secret/credential disclosure, business-logic bypass confined to the attacker's own data.
+- **LOW** — non-secret information disclosure, DoS requiring sustained effort, hardening and defense-in-depth gaps.
+
+The line between HIGH and MEDIUM: **does the finding defeat an explicit security boundary?** A user performing an action the system explicitly gates behind a higher role is HIGH. A data inconsistency, a bug that needs privileged access to reach, or one with limited blast radius is MEDIUM.
+
+### Defense-in-depth gaps are not vulnerabilities
+
+If an existing layer already blocks the attack, a missing second layer is a hardening note, not a blocking finding — don't inflate its severity. "Missing validation where the query builder already parameterizes" is not HIGH.
+
+### Hunting lenses beyond scanner classes
+
+SQLi, XSS, and SSRF are what scanners already catch. Manual review earns its keep on the classes they can't:
+
+- **Business logic** — state-machine violations (skip steps, replay a completed flow, partial-failure rollback), check-then-act races (double-spend, double-approve), numeric manipulation (negative, zero, overflow, string↔number coercion), time and expiry boundary logic, and the security posture of default/fallback behavior when config is missing or a feature flag is off.
+- **Feature abuse & data leakage** — export/backup as exfiltration (low-privilege user triggers an export that includes data above their access), import/restore as injection, search/filter/sort as an oracle for content the user can't directly access, enumeration via differing error messages / timing / status codes, and preview/draft leakage through search, RSS, sitemaps, or CDN cache.
+- **Chained & second-order** — individually-safe behaviors dangerous in combination (info-disclosure + IDOR + missing rate limit; open-redirect + OAuth callback = token theft), and data safe when stored but dangerous when later used in a different context (a field name safe in SQL becomes a JSON-path key; a slug safe in a URL becomes part of a file path; a config string gets parsed as a regex, URL, or template).
+
+### Adversarial validation
+
+Before a security finding is reported, a fresh reviewer — a different agent or model, with no stake in the find — tries to **disprove** it: read the actual code at each step, construct the concrete triggering input, and check for a mitigating layer, framework default, or database constraint that already blocks it. It returns CONFIRMED (with the code that makes it exploitable) or REJECTED (with what the trace got wrong). The reviewer that validates a finding is never the one that found it. Kill false positives aggressively; an honest "nothing exploitable here" is a valid result.
+
+### Audit anti-patterns
+
+- Flagging every OWASP deviation as a bug — OWASP is a checklist, not a bug list.
+- Rating defense-in-depth gaps CRITICAL or HIGH.
+- Padding a report with LOWs — three real findings beat thirty theoretical ones.
+- "Potential" or "theoretical" findings with no concrete exploit path.
+- Not acknowledging what the code does well (solid auth, parameterized queries) — saying so calibrates trust in the findings that remain.
 
 ## Security Review Checklist
 
