@@ -3,37 +3,37 @@ import type { Verdict } from "./verdict.js"
 /**
  * Loop state machine for the agentic loop:
  *
- *   plan → [gate] → build → verify → review
+ *   build → verify → review
  *
  * The transition helpers here are **pure**: given a state (and config) they
  * return a new state plus an `Action` describing what the driver should do, and
- * never touch a client or the store. That keeps the loop logic unit-testable
- * without opencode. The impure orchestration lives in `driver.ts`.
+ * never touch the store or the shell. That keeps the loop logic unit-testable
+ * without Claude Code. The impure orchestration lives in `server.ts`.
  *
- * Two check stages can fail and loop back: a VERIFY FAIL re-plans (the plan
- * itself may be wrong); a REVIEW FAIL re-builds (the plan was fine, the
- * implementation wasn't). Both share one iteration counter and cap.
+ * Planning happens **before** the loop, in the `/loop-plan` command: `new`
+ * interviews the user into a draft task, `task <id>` writes its
+ * `## Implementation Plan`, and `/loop-plan approve <id>` parks it in
+ * `in-progress/`. The loop is a pure executor — every state enters at
+ * `build` via `resumeAtBuild` with the approved plan as an artifact.
  *
- * PLAN is the **planning** phase — approving the plan gate parks it as a
- * backlog task rather than continuing into BUILD in the same session (see
- * `driver.ts`'s `parkApprovedPlan`). A `/loop watch` session later claims a
- * parked task and enters this same state machine directly at `build` via
- * `resumeAtBuild` — the transition logic below doesn't know or care whether
- * it got there via `createState`'s "plan" start or a claim's "build" start;
- * `composeArgs`/`advanceOnIdle` are identical either way.
+ * Two check stages can fail and loop back, and both re-**build**: a VERIFY
+ * FAIL re-builds with the failure threaded into the build prompt; a REVIEW
+ * FAIL re-builds with the review feedback. Both share one iteration counter
+ * and cap. If the plan itself is wrong, the cap stops the loop and a human
+ * re-plans via `/loop-plan task <id>`.
  */
 
-export type Stage = "plan" | "build" | "verify" | "review"
+export type Stage = "build" | "verify" | "review"
 
 /** The stages in loop order. */
-export const STAGES: readonly Stage[] = ["plan", "build", "verify", "review"]
+export const STAGES: readonly Stage[] = ["build", "verify", "review"]
 
 /** Link to the backlog task driving the loop, when started from one. */
 export interface TaskRef {
   readonly id: string
   /** Current on-disk path of the task file (updated as it moves between folders). */
   readonly path: string
-  /** Acceptance criteria threaded into the plan/verify prompts. */
+  /** Acceptance criteria threaded into the build/verify prompts. */
   readonly acceptance: readonly string[]
   /** Linked Azure DevOps work item, if the task has one. Threaded into every stage's context. */
   readonly azureId?: string
@@ -57,13 +57,12 @@ export interface LoopState {
   readonly goal: string
   /** The stage currently running or most recently completed. */
   readonly stage: Stage
-  /** 0-based loop iteration; incremented on a verify FAIL re-plan or a review FAIL re-build. */
+  /** 0-based loop iteration; incremented on a verify-FAIL or review-FAIL re-build. */
   readonly iteration: number
-  /** True while paused at the plan→build human gate. */
-  readonly paused: boolean
-  /** Captured output text per completed stage, used to thread context forward. */
-  readonly artifacts: Readonly<Partial<Record<Stage, string>>>
-  /** Set when the loop was started from a backlog task; absent for free-text loops. */
+  /** Captured output text per completed stage, used to thread context forward.
+   *  Also carries the approved plan under the `plan` key. */
+  readonly artifacts: Readonly<Partial<Record<Stage | "plan", string>>>
+  /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /** Set by the driver once execution is isolated on its own git branch. */
   readonly git?: GitRef
@@ -72,18 +71,20 @@ export interface LoopState {
 /** What the driver should do next. All state changes are returned, not applied. */
 export type Action =
   | { readonly kind: "fire"; readonly stage: Stage; readonly arguments: string }
-  | { readonly kind: "gate"; readonly message: string }
   | { readonly kind: "done"; readonly message: string }
   | { readonly kind: "stop"; readonly message: string }
   | { readonly kind: "noop" }
 
 export interface Config {
   readonly maxIterations: number
-  readonly gateBeforeBuild: boolean
   /** Repo-relative root of the task backlog (folders are statuses). */
   readonly tasksDir: string
   /** Wall-clock cap on a single stage before the loop gives up on it. */
   readonly stageTimeoutMinutes: number
+  // No `watchIntervalMinutes` here, deliberately: the OpenCode plugin's
+  // `/loop watch` needs an autonomous driver (idle events + timers) that this
+  // port cannot have — the main agent is the driver and the MCP server can't
+  // spawn stages. The pull equivalent is `/loop claim` (see server.ts).
   /** Per-task worktree root; unset ⇒ shared-tree branch switching. */
   readonly worktreesDir?: string
   /** Shell command run in a fresh worktree after creation. */
@@ -92,35 +93,12 @@ export interface Config {
   readonly reviewLenses: readonly string[]
 }
 
-/** Fresh state for a new loop; the driver fires plan right after creating it. */
-export const createState = (goal: string, task?: TaskRef): LoopState => ({
-  goal,
-  stage: "plan",
-  iteration: 0,
-  paused: false,
-  artifacts: {},
-  ...(task ? { task } : {}),
-})
-
-/** Reconstruct a LoopState paused at the plan gate for an already-planned
- *  task (e.g. `/loop task <id>` resuming a persisted plan). */
-export const resumeAtPlanGate = (goal: string, task: TaskRef, plan: string): LoopState => ({
-  goal,
-  stage: "plan",
-  iteration: 0,
-  paused: true,
-  artifacts: { plan },
-  task,
-})
-
-/** Reconstruct a LoopState entering execution directly at build, for a
- *  claimed in-progress task whose plan was already approved in a prior
- *  (planning) session. */
+/** Construct a LoopState entering execution at build, for a claimed
+ *  in-progress task whose plan was approved via `/loop-plan approve`. */
 export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): LoopState => ({
   goal,
   stage: "build",
   iteration: 0,
-  paused: false,
   artifacts: { plan },
   task,
 })
@@ -129,6 +107,12 @@ const withArtifact = (state: LoopState, stage: Stage, output: string): LoopState
   ...state,
   artifacts: { ...state.artifacts, [stage]: output },
 })
+
+/** Drop a stale check artifact so a re-build doesn't thread outdated feedback. */
+const withoutArtifact = (state: LoopState, stage: Stage): LoopState => {
+  const { [stage]: _dropped, ...rest } = state.artifacts
+  return { ...state, artifacts: rest }
+}
 
 /** Compose the prompt threaded into a stage command: goal + relevant prior artifacts. */
 export const composeArgs = (state: LoopState, target: Stage): string => {
@@ -141,13 +125,11 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
     const azureUrl = state.task?.azureUrl
     parts.push(`Linked Azure DevOps work item: #${azureId}${azureUrl ? ` — ${azureUrl}` : ""}`)
   }
-  if (target === "plan") {
-    if (a.plan) parts.push(`Previous plan:\n${a.plan}`)
-    if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
-    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the plan must satisfy each):"))
-  } else if (target === "build") {
+  if (target === "build") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
+    if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
     if (a.review) parts.push(`Review feedback to address:\n${a.review}`)
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the build must satisfy each):"))
   } else if (target === "verify") {
     if (a.plan) parts.push(`Plan & acceptance criteria:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)
@@ -166,9 +148,10 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
       )
     }
   }
-  // Worktree pinning: BUILD/VERIFY/REVIEW run in the one plugin instance, so the
-  // isolated checkout is threaded in as an instruction rather than a real cwd.
-  if (target !== "plan" && state.git?.worktree) {
+  // Worktree pinning: BUILD/VERIFY/REVIEW subagents run with the main repo as
+  // cwd, so the isolated checkout is threaded in as an instruction rather than
+  // a real cwd (and enforced by the PreToolUse stage guard).
+  if (state.git?.worktree) {
     parts.push(
       `Worktree: this loop's isolated checkout is ${state.git.worktree} — every file you read, edit, or ` +
         `test lives THERE, not in the repo root. Use absolute paths under it for edit/read; prefix every ` +
@@ -180,15 +163,15 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
 }
 
 const fire = (state: LoopState, stage: Stage): { state: LoopState; action: Action } => ({
-  state: { ...state, stage, paused: false },
+  state: { ...state, stage },
   action: { kind: "fire", stage, arguments: composeArgs({ ...state, stage }, stage) },
 })
 
 /**
- * Decide what to do when the session goes idle after `state.stage` completed.
- * `output` is that stage's captured assistant text (stored as its artifact).
+ * Decide what to do when `state.stage` completed.
+ * `output` is that stage's captured subagent text (stored as its artifact).
  * `verdict` is the check stage's resolved verdict — recorded via the
- * `loop_verdict` tool and resolved by the driver, never parsed out of
+ * `loop_verdict` tool and resolved by the server, never parsed out of
  * `output` here (free text is an untrusted channel; see verdict.ts). A
  * missing verdict is a FAIL, not a stall.
  */
@@ -201,16 +184,6 @@ export const advanceOnIdle = (
   const s = withArtifact(state, state.stage, output)
 
   switch (s.stage) {
-    case "plan":
-      if (config.gateBeforeBuild) {
-        const message =
-          s.iteration === 0
-            ? "Plan ready — review it, then run /loop go to approve and park it for execution."
-            : "Plan ready — review it, then run /loop go to build."
-        return { state: { ...s, paused: true }, action: { kind: "gate", message } }
-      }
-      return fire(s, "build")
-
     case "build":
       return fire(s, "verify")
 
@@ -220,7 +193,7 @@ export const advanceOnIdle = (
       }
       if (verdict === "ERROR") {
         // The check itself couldn't run — a broken environment, not a bad
-        // plan. Re-planning would burn iterations on something no plan fixes.
+        // build. Re-building would burn iterations on something no build fixes.
         return {
           state: s,
           action: {
@@ -229,14 +202,18 @@ export const advanceOnIdle = (
           },
         }
       }
-      // FAIL (or no recorded verdict): re-plan if budget remains, else stop.
+      // FAIL (or no recorded verdict): re-build if budget remains, else stop.
       if (s.iteration + 1 < config.maxIterations) {
-        const next = { ...s, iteration: s.iteration + 1 }
-        return fire(next, "plan")
+        // Drop any stale review feedback — it judged an older build.
+        const next = { ...withoutArtifact(s, "review"), iteration: s.iteration + 1 }
+        return fire(next, "build")
       }
       return {
         state: s,
-        action: { kind: "stop", message: `✗ Loop stopped — verify failed after ${config.maxIterations} iterations.` },
+        action: {
+          kind: "stop",
+          message: `✗ Loop stopped — verify failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /loop-plan task <id>.`,
+        },
       }
     }
 
@@ -258,22 +235,19 @@ export const advanceOnIdle = (
       }
       // FAIL (or no recorded verdict): re-build if budget remains, else stop.
       if (s.iteration + 1 < config.maxIterations) {
-        const next = { ...s, iteration: s.iteration + 1 }
+        // Drop the stale verify output — it passed on an older build.
+        const next = { ...withoutArtifact(s, "verify"), iteration: s.iteration + 1 }
         return fire(next, "build")
       }
       return {
         state: s,
-        action: { kind: "stop", message: `✗ Loop stopped — review failed after ${config.maxIterations} iterations.` },
+        action: {
+          kind: "stop",
+          message: `✗ Loop stopped — review failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /loop-plan task <id>.`,
+        },
       }
     }
   }
-}
-
-/** Resume from a human gate (`/loop go`): proceed to whatever the paused stage gates into. */
-export const resume = (state: LoopState): { state: LoopState; action: Action } => {
-  if (!state.paused) return { state, action: { kind: "noop" } }
-  if (state.stage === "plan") return fire(state, "build")
-  return { state, action: { kind: "noop" } }
 }
 
 /** The first step to drive for a freshly-constructed state — fires its own stage. */
@@ -282,12 +256,12 @@ export const firstStep = (state: LoopState): { state: LoopState; action: Action 
   action: { kind: "fire", stage: state.stage, arguments: composeArgs(state, state.stage) },
 })
 
-// --- In-memory store (lost on opencode restart; see README known limitations) ---
+// --- In-memory store (lost on MCP server restart; snapshots cover recovery) ---
 
 const store = new Map<string, LoopState>()
 
 export const getLoop = (sessionID: string): LoopState | undefined => store.get(sessionID)
-/** The session whose live loop is driving the given task id, if any (this plugin instance only). */
+/** The session whose live loop is driving the given task id, if any (this server instance only). */
 export const findSessionDriving = (taskId: string): string | undefined => {
   for (const [sessionID, state] of store) if (state.task?.id === taskId) return sessionID
   return undefined
