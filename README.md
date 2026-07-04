@@ -12,14 +12,16 @@ supervised state machine instead of a chat back-and-forth.
 
 ## What it does
 
-Planning and execution are two commands. **`/loop-plan`** authors a backlog
-task *with* its `## Implementation Plan` (interviewing you first if the idea
-is underspecified) and `approve <id>` is the explicit human gate that parks
-it in the approved queue. **`/loop`** is a pure executor over that queue:
+Planning and execution are two commands. **`/loop-plan`** interviews you into
+a draft task (`new <idea>` — always, so the goal and testable acceptance
+criteria come from you, not a guess), plans it as a separate step after you
+review the draft (`task <id>`), and `approve <id>` is the explicit human gate
+that parks it in the approved queue. **`/loop`** is a pure executor over that
+queue:
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
-| *(plan — in `/loop-plan`, before the loop)* | Authors the task + spec-bounded, ordered plan; `approve` parks it | **yes — the approval is the gate** |
+| *(plan — in `/loop-plan`, before the loop)* | Interviews → draft; plans on request; `approve` parks it | **yes — draft review and the approval are the gates** |
 | BUILD | Implements the approved plan test-first, on its own `loop/<id>` branch | no |
 | VERIFY | Runs tests; FAIL re-builds with the failure | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
@@ -64,10 +66,12 @@ stage, so recovery resumes at the exact stage it reached. See
 
 Planning (`/loop-plan`):
 
-- `/loop-plan new <idea>` — author a task **with** its Implementation Plan
-  into `docs/tasks/in-planning/` (interviews you if the idea is vague)
-- `/loop-plan task <id>` — plan an existing `draft/`/`in-planning/` task in
-  place (also how you re-plan one whose loop hit the iteration cap)
+- `/loop-plan new <idea>` — interview you (always — at minimum a
+  restate-and-confirm) into a **planless draft** in `docs/tasks/draft/`
+- `/loop-plan task <id>` — plan a draft (the plugin moves it to
+  `docs/tasks/in-planning/`, audited + committed) or re-plan an
+  `in-planning/` task in place (also how you re-plan one whose loop hit the
+  iteration cap)
 - `/loop-plan approve <id>` — validate the plan and park the task in
   `docs/tasks/in-progress/` (the approved queue), audited + committed
 
@@ -123,6 +127,9 @@ than the default OpenCode config dir.
 - `gateBeforeBuild` and `interviewBeforePlan` in `.agentic-loop.json` are
   ignored now (the gate is `/loop-plan approve`; interviewing lives in
   `/loop-plan new`).
+- `/loop-plan new` no longer writes a plan — it interviews you into a
+  planless draft in `draft/`; run `/loop-plan task <id>` after reviewing
+  the draft.
 
 ## Layout
 
