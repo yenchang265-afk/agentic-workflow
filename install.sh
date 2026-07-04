@@ -43,12 +43,11 @@ done
 
 link_or_copy() {
   local src="$1" dest="$2"
-  if [ -e "$dest" ] || [ -L "$dest" ]; then
-    if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$src" ]; then
-      return 0
-    fi
-    echo "skip (exists): $dest"
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$src" ]; then
     return 0
+  fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    rm -rf "$dest"
   fi
   if [ "$MODE" = symlink ]; then
     ln -s "$src" "$dest"
@@ -101,12 +100,8 @@ install_opencode() {
   # point. OpenCode auto-loads any file dropped in plugins/, no opencode.json
   # edit needed. Requires `npm install` to have been run in $REPO_DIR.
   PLUGIN_FILE="$CONFIG_DIR/plugins/agentic-loop.ts"
-  if [ -e "$PLUGIN_FILE" ] || [ -L "$PLUGIN_FILE" ]; then
-    echo "skip (exists): $PLUGIN_FILE"
-  else
-    printf 'export * from "%s/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
-    echo "installed: $PLUGIN_FILE"
-  fi
+  printf 'export * from "%s/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
+  echo "installed: $PLUGIN_FILE"
 
   if [ ! -d "$REPO_DIR/node_modules" ]; then
     echo

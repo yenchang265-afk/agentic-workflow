@@ -34,13 +34,27 @@ for d in "$REPO_DIR"/skills/*/; do
     *" $name "*) continue ;;   # keep the Claude-specific version
   esac
   dest="$PLUGIN_DIR/skills/$name"
-  [ -e "$dest" ] || [ -L "$dest" ] || ln -s "../../skills/$name" "$dest"
+  target="../../skills/$name"
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$target" ]; then
+    continue
+  fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    rm -rf "$dest"
+  fi
+  ln -s "$target" "$dest"
 done
 
 for f in "$REPO_DIR"/references/*.md; do
   base="$(basename "$f")"
   dest="$PLUGIN_DIR/references/$base"
-  [ -e "$dest" ] || [ -L "$dest" ] || ln -s "../../references/$base" "$dest"
+  target="../../references/$base"
+  if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$target" ]; then
+    continue
+  fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    rm -rf "$dest"
+  fi
+  ln -s "$target" "$dest"
 done
 
 echo
