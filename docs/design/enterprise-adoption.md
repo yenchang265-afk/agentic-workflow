@@ -85,7 +85,7 @@ enforced in code.
 3. Worktree pinning for edit/write/patch tools — throws outside the worktree
    (`src/index.ts:134-154`). **Bash is not pinned** — documented residual.
 4. Secret shape-redaction at every durable-write boundary
-   (`src/loop/redact.ts`, wired in `src/task/store.ts:220-262`).
+   (`src/task/redact.ts`, wired in `src/task/store.ts:220-262`).
 5. Iteration cap, stage timeout, ERROR-stops, fail-closed Zod snapshot
    validation (`src/loop/persist.ts:70-88`), atomic `mkdir` claim markers
    (`src/task/store.ts:187-191`), git isolation + checkpoints, worst-of lens
@@ -137,7 +137,7 @@ diff gate.
 |---|---|---|---|
 | C1 | **No PR automation.** The loop never pushes, opens PRs, or merges (deliberate non-goal, threat-model "Non-goals"); `/loop ship` is a local folder move + commit. | `src/loop/driver.ts:989-1008` | The last mile of every task is manual; forge-side gates (protected branches, required reviews) never see loop output unless a human wires it |
 | C2 | **No CI as a second verifier.** VERIFY and REVIEW are the same model family reading the same artifact chain — the loop grades its own homework. `reviewLenses` mitigates within-model; nothing independent ever runs. | threat-model boundary 2 | A model-family blind spot passes both check stages |
-| C3 | **No CI for the plugin repo itself.** No `.github/workflows`; typecheck and tests are manual (`README.md` Develop section). | confirmed absent | Regressions land silently; bad signal for adopters |
+| C3 | **CI covers only the root package.** `.github/workflows/test.yml` runs typecheck + tests on push/PR, but only for the OpenCode plugin — `claude-plugin/mcp-server` has no CI job — and it uses `npm install` rather than reproducible `npm ci`. | `.github/workflows/test.yml` | Port regressions land silently; installs not reproducible |
 | C4 | **Task-system integration is prompt-only.** ADO linking assumes a pre-connected MCP server; nothing in this repo registers, configures, or verifies it. Fetched linkage is mapped once at draft time and never re-synced. | `skills/task-backlog-management/SKILL.md` "Linking a task to Azure DevOps" | Local tasks silently diverge from the system of record |
 | C5 | **Dangling design pointer.** `src/task/store.ts:285` cites `docs/design/explore-task-fetch-and-pr-gating.md` — the file does not exist. The dormant `writeTask` sync path was built for it. | grep confirms absence | The two things an enterprise wants most (task fetch, PR gating) have a stub and no design |
 | C6 | **Unpinned plugin dependency.** `@opencode-ai/plugin` at `"*"` (peer) / `"latest"` (dev); distribution is clone-and-symlink `install.sh`, no versioned artifact, no checksums. | `package.json:29,33` | Non-reproducible installs; supply-chain exposure |
@@ -260,9 +260,11 @@ docs updated as part of done.
 - Key files: `src/forge.ts` (checks API), `src/loop/driver.ts` (ship gate),
   `templates/ci/*`.
 
-**2g. Dogfood CI** *(closes C3 — trivial)*
-- `.github/workflows/ci.yml`: `npm ci && npm run typecheck && npm test` on
-  push/PR. Also runs the audit-chain verifier's tests once 1c lands.
+**2g. Extend CI** *(closes C3 — trivial)*
+- `.github/workflows/test.yml` already runs root typecheck + tests; add a
+  `claude-plugin/mcp-server` job (`npm ci && npm run typecheck && npm test`)
+  and switch the root job to `npm ci`. Also runs the audit-chain verifier's
+  tests once 1c lands.
 
 **2h. Task ingestion adapter** *(closes C4, other half of C5 — large)*
 - Activate the dormant `writeTask` path (`src/task/store.ts:284-314`): a
