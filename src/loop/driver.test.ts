@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "../task/store.ts"
 import { serializeTask } from "../task/schema.ts"
 import type { Config } from "./state.ts"
-import { claimSkipReason, handlePlanCommand, parsePlanArgs, parseWatchArgs, type Deps } from "./driver.ts"
+import { claimSkipReason, handleTaskCommand, parseTaskArgs, parseWatchArgs, type Deps } from "./driver.ts"
 
 /**
  * The watch-mode plumbing (timers, idle queries) is exercised manually
@@ -53,68 +53,79 @@ test("garbage yields an error, not a silent default", () => {
  * backlog is the only non-actionable outcome.
  */
 
-test("an empty in-progress folder is the only non-actionable reason", () => {
-  const r = claimSkipReason(0, 0, [], [])
+test("an empty backlog (both pools) is the only non-actionable reason", () => {
+  const r = claimSkipReason(0, 0, 0, [], [])
   assert.equal(r.actionable, false)
-  assert.match(r.message, /in-progress\/ is empty/)
+  assert.match(r.message, /queued\/ and in-progress\/ are both empty/)
 })
 
 test("held claim markers are reported with ids and the auto-release window", () => {
-  const r = claimSkipReason(2, 1, [], ["stuck-task"])
+  const r = claimSkipReason(2, 1, 0, [], ["stuck-task"])
   assert.equal(r.actionable, true)
   assert.match(r.message, /claim marker held for stuck-task/)
   assert.match(r.message, /auto-releases after \d+m/)
 })
 
 test("held markers outrank the already-started case", () => {
-  const r = claimSkipReason(2, 1, ["other"], ["stuck-task"])
+  const r = claimSkipReason(2, 1, 0, ["other"], ["stuck-task"])
   assert.match(r.message, /claim marker held/)
 })
 
 test("started-but-unclaimed tasks point at /agent-loop recover", () => {
-  const r = claimSkipReason(2, 0, ["crashed-a", "crashed-b"], [])
+  const r = claimSkipReason(2, 0, 0, ["crashed-a", "crashed-b"], [])
   assert.equal(r.actionable, true)
   assert.match(r.message, /crashed-a, crashed-b/)
   assert.match(r.message, /\/agent-loop recover <id>/)
 })
 
 test("a backlog with neither started nor held tasks falls back to the no-plan hint", () => {
-  const r = claimSkipReason(1, 0, [], [])
+  const r = claimSkipReason(1, 0, 0, [], [])
   assert.equal(r.actionable, true)
   assert.match(r.message, /no persisted plan/)
 })
 
 /**
- * `/agent-loop-plan` argument classification: `approve`/`task` get plugin work,
- * everything else passes through to the agent turn.
+ * `/agent-loop-task` argument classification: `approve`/`approve-plan`/`replan`
+ * are plugin work, everything else passes through to the agent turn.
  */
 
-test("approve and task subcommands are recognized with their id", () => {
-  assert.deepEqual(parsePlanArgs("approve my-task"), { mode: "approve", id: "my-task" })
-  assert.deepEqual(parsePlanArgs("task my-task"), { mode: "task", id: "my-task" })
+test("approve, approve-plan, and replan subcommands are recognized with their id", () => {
+  assert.deepEqual(parseTaskArgs("approve my-task"), { mode: "approve", id: "my-task" })
+  assert.deepEqual(parseTaskArgs("approve-plan my-task"), { mode: "approve-plan", id: "my-task" })
+  assert.deepEqual(parseTaskArgs("replan my-task"), { mode: "replan", id: "my-task" })
+})
+
+test("replan captures an optional free-text reason", () => {
+  assert.deepEqual(parseTaskArgs("replan my-task plan misses the cache layer"), {
+    mode: "replan",
+    id: "my-task",
+    reason: "plan misses the cache layer",
+  })
+})
+
+test("approve-plan wins the prefix collision with approve", () => {
+  assert.deepEqual(parseTaskArgs("approve-plan x"), { mode: "approve-plan", id: "x" })
 })
 
 test("casing and surrounding whitespace are tolerated, ids keep their case", () => {
-  assert.deepEqual(parsePlanArgs("  Approve My-Task  "), { mode: "approve", id: "My-Task" })
-  assert.deepEqual(parsePlanArgs("TASK  my-task"), { mode: "task", id: "my-task" })
+  assert.deepEqual(parseTaskArgs("  Approve My-Task  "), { mode: "approve", id: "My-Task" })
+  assert.deepEqual(parseTaskArgs("REPLAN  my-task"), { mode: "replan", id: "my-task" })
 })
 
 test("a bare subcommand keeps an empty id for the usage toast", () => {
-  assert.deepEqual(parsePlanArgs("approve"), { mode: "approve", id: "" })
-  assert.deepEqual(parsePlanArgs("task   "), { mode: "task", id: "" })
+  assert.deepEqual(parseTaskArgs("approve"), { mode: "approve", id: "" })
+  assert.deepEqual(parseTaskArgs("approve-plan   "), { mode: "approve-plan", id: "" })
 })
 
 test("new and free text pass through", () => {
-  assert.deepEqual(parsePlanArgs("new add rate limiting"), { mode: "passthrough" })
-  assert.deepEqual(parsePlanArgs(""), { mode: "passthrough" })
-  assert.deepEqual(parsePlanArgs("tasky thing"), { mode: "passthrough" })
+  assert.deepEqual(parseTaskArgs("new add rate limiting"), { mode: "passthrough" })
+  assert.deepEqual(parseTaskArgs(""), { mode: "passthrough" })
+  assert.deepEqual(parseTaskArgs("approver thing"), { mode: "passthrough" })
 })
 
 /**
- * `handlePlanCommand("approve …")` must never skip the in-planning stage —
- * not even for a draft task someone hand-edited a plan heading onto. Fakes
- * `client.file.read`/`client.tui.showToast`; `$` throws if invoked at all,
- * proving no move is attempted.
+ * `handleTaskCommand` gates. Fakes `client.file.read`/`client.tui.showToast`;
+ * the exploding `$` proves no move is attempted on a refusal.
  */
 
 const explodingShell = ((..._args: unknown[]) => {
@@ -148,18 +159,6 @@ const testConfig: Config = {
   reviewLenses: [],
 }
 
-test("approve refuses a draft task even when it already has a plan heading", async () => {
-  const draftBody = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
-  const { client, toasts } = makeClient({ "docs/tasks/draft/my-task.md": draftBody })
-  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
-
-  await handlePlanCommand(deps, "sess", "approve my-task", testConfig)
-
-  assert.equal(toasts.length, 1)
-  assert.match(toasts[0]?.message ?? "", /still in draft/)
-  assert.match(toasts[0]?.message ?? "", /agent-loop-plan task my-task/)
-})
-
 /** Mirrors the fake shell in `../task/store.test.ts` / `git.test.ts` — always succeeds, records commands. */
 const makeSucceedingShell = (log: string[]) => {
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
@@ -187,15 +186,84 @@ const makeSucceedingShell = (log: string[]) => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-test("approve succeeds for a task already in in-planning with a plan", async () => {
-  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
-  const { client, toasts } = makeClient({ "docs/tasks/in-planning/my-task.md": planned })
+test("approve moves a draft to queued/ without requiring a plan", async () => {
+  const draft = serializeTask({ title: "Do the thing", body: "Some context." })
+  const { client, toasts } = makeClient({ "docs/tasks/draft/my-task.md": draft })
   const log: string[] = []
   const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
 
-  await handlePlanCommand(deps, "sess", "approve my-task", testConfig)
+  await handleTaskCommand(deps, "sess", "approve my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+})
+
+test("approve refuses a task that is not in draft/", async () => {
+  const queued = serializeTask({ title: "Do the thing", body: "Some context." })
+  const { client, toasts } = makeClient({ "docs/tasks/queued/my-task.md": queued })
+  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "approve my-task", testConfig)
 
   assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /it's in queued/)
+})
+
+test("approve-plan refuses a queued task that the loop has not planned yet", async () => {
+  const queued = serializeTask({ title: "Do the thing", body: "Some context." })
+  const { client, toasts } = makeClient({ "docs/tasks/queued/my-task.md": queued })
+  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "approve-plan my-task", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /still queued/)
+})
+
+test("approve-plan refuses a plan-review task whose plan heading is missing", async () => {
+  const planless = serializeTask({ title: "Do the thing", body: "Some context, no plan." })
+  const { client, toasts } = makeClient({ "docs/tasks/plan-review/my-task.md": planless })
+  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "approve-plan my-task", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /no Implementation Plan/)
+})
+
+test("approve-plan moves a planned plan-review task to in-progress/", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { client, toasts } = makeClient({ "docs/tasks/plan-review/my-task.md": planned })
+  const log: string[] = []
+  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "approve-plan my-task", testConfig)
+
   assert.equal(toasts[0]?.variant, "success")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")))
+})
+
+test("replan sends a plan-review task back to queued/ with the reason noted", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { client, toasts } = makeClient({ "docs/tasks/plan-review/my-task.md": planned })
+  const log: string[] = []
+  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.ok(log.some((cmd) => cmd.includes("misses the cache layer")))
+})
+
+test("replan also accepts a cap-tripped in-progress task", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { client, toasts } = makeClient({ "docs/tasks/in-progress/my-task.md": planned })
+  const log: string[] = []
+  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "replan my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
 })

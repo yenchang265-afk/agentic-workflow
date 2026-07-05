@@ -6,15 +6,16 @@ Guidance for AI coding agents working in this repository.
 
 `agentic-loop` is an OpenCode plugin. It provides:
 
-1. **The automatic agentic loop** (`/agent-loop-plan` + `/agent-loop`) — a real plugin
+1. **The automatic agentic loop** (`/agent-loop-task` + `/agent-loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   splits the lifecycle into two commands: `/agent-loop-plan` interviews you into
-   a planless draft task (`new <idea>` — always), writes its
-   `## Implementation Plan` on request after you review the draft
-   (`task <id>`), and `approve <id>` parks it in the approved
-   queue; `/agent-loop` is a pure executor that claims approved tasks
-   (`task <id>`, or a `watch [interval]` worker session polling on idle
-   events plus a timer) and drives BUILD→VERIFY→REVIEW unattended. Use this
+   splits the lifecycle into two commands: `/agent-loop-task` interviews you
+   into a planless draft task (`new <idea>` — always), `approve <id>` queues
+   it, and `approve-plan <id>` / `replan <id>` are the plan gate;
+   `/agent-loop` claims work (`task <id>`, or a `watch [interval]` worker
+   session polling on idle events plus a timer), plans a queued task right
+   before execution (PLAN parks the plan in `plan-review/` for your gate and
+   exits), and drives BUILD→VERIFY→REVIEW unattended on plan-approved
+   tasks. Use this
    when a goal should run the whole lifecycle largely unattended. See the
    `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
    and `task-backlog-management` for driving it from
@@ -40,7 +41,7 @@ Guidance for AI coding agents working in this repository.
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/agent-loop-plan new <idea>` then `/agent-loop-plan task <id>` then `/agent-loop-plan approve <id>` then `/agent-loop task <id>` (see `loop-orchestration`), not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agent-loop-task new <idea>` then `/agent-loop-task approve <id>` then `/agent-loop task <id>` (plans + parks) then `/agent-loop-task approve-plan <id>` then `/agent-loop task <id>` (builds) — see `loop-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
 
@@ -76,7 +77,7 @@ Correct behavior: always check for and use skills first.
 
 - `src/index.ts`, `src/loop/`, `src/task/`, `src/config.ts` — plugin implementation (state machine, driver, task backlog IO)
 - `.opencode/agents/` — the agent personas backing each `/agent-loop` stage
-- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-plan`, `/plan`, `/build`, `/verify`, `/review`, `/explore`)
+- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-task`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, `/explore`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

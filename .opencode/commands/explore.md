@@ -11,8 +11,8 @@ that are not part of any active `/agent-loop` goal.
 **$ARGUMENTS**
 
 Delegated to the `explore` subagent, which scans, dedupes against existing
-`docs/tasks/draft/`, `docs/tasks/in-planning/`, and `docs/tasks/in-progress/`
+`docs/tasks/draft/`, `docs/tasks/queued/`, `docs/tasks/plan-review/`, and `docs/tasks/in-progress/`
 tasks, caps at ~5 findings per run, and writes one schema-valid task file per
 surviving finding into `docs/tasks/draft/`. Review the drafts, then plan the
-ones you want with `/agent-loop-plan task <id>` and approve them with
-`/agent-loop-plan approve <id>`.
+ones you want with `/agent-loop-task approve <id>` — the loop plans them
+right before execution.

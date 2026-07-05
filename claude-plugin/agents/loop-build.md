@@ -17,7 +17,7 @@ reuse), or on a re-build, the approved plan plus a `Verify failure to address:`
 or `Review feedback to address:` block. Implement the plan and fix exactly
 what the check flagged — do not redesign it. If the failure shows the plan
 itself is wrong or impossible, stop and say so rather than improvising; a
-human re-plans with `/agent-loop-plan task <id>`.
+human sends it back to planning with `/agent-loop-task replan <id>`.
 
 **Worktree isolation:** if your input contains a `Worktree:` line, that directory
 is the entire universe of this task — read and edit files with absolute paths

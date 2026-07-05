@@ -7,7 +7,7 @@ import * as driver from "./loop/driver.ts"
 import { listWorktrees, pruneWorktrees } from "./loop/git.ts"
 import { listSnapshotIds } from "./loop/persist.ts"
 import { findSessionDriving, getLoop, hasLoop } from "./loop/state.ts"
-import { listClaimIds, listInProgress, releaseOrphanedClaims, wasInterrupted } from "./task/store.ts"
+import { isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "./task/store.ts"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
@@ -19,14 +19,17 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  *
  *   build → verify → review
  *
- * Planning lives in the `/agent-loop-plan` command: `new` interviews the user into
- * a draft, `task <id>` writes its `## Implementation Plan`, and
- * `/agent-loop-plan approve <id>` (handled
- * deterministically below) parks it in `in-progress/`. `/agent-loop task <id>`
- * executes one approved task; `/agent-loop watch [interval]` polls for them — on
- * every `session.idle` event plus a per-session interval timer. A verify or
- * review FAIL re-builds within the iteration cap. The control surface lives
- * in `loop/driver.ts`; the pure state machine in `loop/state.ts`.
+ * Task authoring lives in the `/agent-loop-task` command: `new` interviews the
+ * user into a draft, and the deterministic `approve <id>` parks it planless in
+ * `queued/`. The loop plans right before execution: a claimed queued task runs
+ * the PLAN stage, writes its `## Implementation Plan`, and parks in
+ * `plan-review/`; `/agent-loop-task approve-plan <id>` releases it to
+ * `in-progress/`, the build-ready queue. `/agent-loop task <id>` claims one
+ * task (planning or building it as its folder dictates); `/agent-loop watch
+ * [interval]` polls for work — on every `session.idle` event plus a
+ * per-session interval timer. A verify or review FAIL re-builds within the
+ * iteration cap. The control surface lives in `loop/driver.ts`; the pure
+ * state machine in `loop/state.ts`.
  */
 export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
   const service = "agentic-loop"
@@ -99,6 +102,20 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
         const stillHeld = claimIds.filter((id) => !released.includes(id))
         if (stillHeld.length) await log("info", `claim marker(s) held: ${stillHeld.join(", ")}`)
       }
+      // Same sweep for queued/ — a run that died mid-PLAN leaves a marker that
+      // blocks every future plan claim of that task. PLAN writes no code, so a
+      // stale, undriven marker is always safe to release.
+      const planClaimIds = await listClaimIds($, directory, config.tasksDir, "queued")
+      if (planClaimIds.length) {
+        const queued = await listQueued(client, directory, config.tasksDir, log)
+        const released = await releaseOrphanedClaims($, queued, planClaimIds, path.join(directory, config.tasksDir, "queued"), {
+          isDriving: (id) => findSessionDriving(id) !== undefined,
+          isOrphaned: isOrphanedPlanClaim,
+        })
+        if (released.length) {
+          await log("warn", `released orphaned plan-claim marker(s): ${released.join(", ")} — a prior run died mid-PLAN; watch will re-claim`)
+        }
+      }
     } catch (err) {
       await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
     }
@@ -143,9 +160,9 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
         await driver.handleCommand(deps, input.sessionID, input.arguments, await getConfig())
         return
       }
-      if (input.command === "agent-loop-plan") {
+      if (input.command === "agent-loop-task") {
         await reconcileOnce()
-        await driver.handlePlanCommand(deps, input.sessionID, input.arguments, await getConfig())
+        await driver.handleTaskCommand(deps, input.sessionID, input.arguments, await getConfig())
       }
     },
 

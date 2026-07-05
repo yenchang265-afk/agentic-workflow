@@ -1,5 +1,5 @@
 ---
-description: Read-only ad-hoc planner for the standalone /plan command. Reads the relevant code itself, sharpens a raw goal into a bounded problem statement, then turns it into an ordered, review-sized implementation plan with explicit acceptance criteria. Never edits files or writes code. (The loop's own plans are authored by loop-plan-author via /agent-loop-plan.)
+description: Read-only ad-hoc planner for the standalone /plan command. Reads the relevant code itself, sharpens a raw goal into a bounded problem statement, then turns it into an ordered, review-sized implementation plan with explicit acceptance criteria. Never edits files or writes code. (The loop's own plans are authored by loop-plan-author in its PLAN stage.)
 mode: subagent
 permission:
   edit: deny

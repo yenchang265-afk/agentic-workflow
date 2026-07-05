@@ -7,15 +7,20 @@ details. For the shared pipeline picture see
 
 ## Execution model
 
-Execution runs either on demand (`/agent-loop task <id>`) or in a `/agent-loop watch
-[interval]` worker session, which claims approved tasks on every idle tick
-plus a polling timer (default 5m, e.g. `/agent-loop watch 30s`). Execution is
+Work runs either on demand (`/agent-loop task <id>`) or in a `/agent-loop watch
+[interval]` worker session, which claims tasks on every idle tick plus a
+polling timer (default 5m, e.g. `/agent-loop watch 30s`) — build-ready
+`in-progress/` tasks first, then `queued/` tasks to plan. A claimed queued
+task runs the PLAN stage: the plan is written onto the task file (main tree,
+no branch) and the task **parks in `plan-review/`** for the human plan gate
+— the loop exits rather than blocking. Execution is
 isolated on a `loop/<id>` git branch with a commit checkpoint per build
 iteration; VERIFY/REVIEW record their verdicts through a `loop_verdict`
 plugin tool (free-text verdicts are ignored), and every approval, verdict,
 and build run is appended to the task file as a timestamped, attributed
 audit note. Re-build loops are capped by `maxIterations` — if the cap trips,
-the plan itself is suspect and a human re-plans with `/agent-loop-plan task <id>`.
+the plan itself is suspect and a human sends it back with
+`/agent-loop-task replan <id> <why>`.
 A stage that outlives `stageTimeoutMinutes` fails the loop instead of
 hanging it. On a REVIEW PASS the task parks in `in-review/` — the loop never
 pushes or opens a PR itself; you review the branch diff, then run
@@ -29,23 +34,26 @@ see [configuration.md](configuration.md).
 
 ## Commands
 
-Planning (`/agent-loop-plan`):
+Authoring + gates (`/agent-loop-task`):
 
-- `/agent-loop-plan new <idea>` — interview you (always — at minimum a
+- `/agent-loop-task new <idea>` — interview you (always — at minimum a
   restate-and-confirm) into a **planless draft** in `docs/tasks/draft/`
-- `/agent-loop-plan task <id>` — plan a draft (the plugin moves it to
-  `docs/tasks/in-planning/`, audited + committed) or re-plan an
-  `in-planning/` task in place (also how you re-plan one whose loop hit the
-  iteration cap)
-- `/agent-loop-plan approve <id>` — validate the plan and park the task in
-  `docs/tasks/in-progress/` (the approved queue), audited + committed
+- `/agent-loop-task approve <id>` — the task gate: park the reviewed draft in
+  `docs/tasks/queued/` (audited + committed); the loop plans it on claim
+- `/agent-loop-task approve-plan <id>` — the plan gate: validate the parked
+  plan and move the task to `docs/tasks/in-progress/` (the build-ready
+  queue), audited + committed
+- `/agent-loop-task replan <id> [reason]` — reject a parked plan (or send a
+  cap-tripped task back): moves it to `queued/` with the reason audited
 
-Execution (`/agent-loop`):
+The loop (`/agent-loop`):
 
-- `/agent-loop task <id>` — execute one approved task now, entering at BUILD
-- `/agent-loop watch [interval]` — turn this session into an execution worker:
-  claims and builds approved tasks on idle events plus a polling timer
-  (`30s`, `5m`, `2h`, bare number = minutes; default `watchIntervalMinutes`)
+- `/agent-loop task <id>` — run one task now: a `queued/` task enters at PLAN
+  (plans, parks in `plan-review/`, exits); an `in-progress/` task enters at
+  BUILD
+- `/agent-loop watch [interval]` — turn this session into a worker: claims
+  work on idle events plus a polling timer (`30s`, `5m`, `2h`, bare number =
+  minutes; default `watchIntervalMinutes`); build work beats plan work
 - `/agent-loop unwatch` — stop this session from claiming new work (timer included)
 - `/agent-loop recover <id>` — resume an in-progress task whose run died mid-build
   (crash, restart), from its state snapshot (or its persisted plan)
@@ -56,7 +64,7 @@ Execution (`/agent-loop`):
   interrupted/in-review)
 
 The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/agent-loop go` are gone —
-planning always goes through `/agent-loop-plan`.
+task authoring and both gates always go through `/agent-loop-task`.
 
 Outside the loop, one-off requests are handled ad hoc: see
 [AGENTS.md](../AGENTS.md) for the intent-to-skill mapping — the plugin

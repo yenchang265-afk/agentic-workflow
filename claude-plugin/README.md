@@ -1,11 +1,13 @@
 # agentic-loop — Claude Code plugin
 
-Executes approved backlog tasks through **BUILD → VERIFY → REVIEW** as a
+Drives backlog tasks through **PLAN / BUILD → VERIFY → REVIEW** as a
 supervised, main-agent-driven loop, with git isolation, a trusted verdict
-channel, a filesystem task backlog, and an audit trail. Planning happens
-**before** the loop in `/agent-loop-plan`: a mandatory interview turns your idea
-into a draft, the plan is written as a separate reviewed step, and an explicit
-approval parks the task in the executable queue.
+channel, a filesystem task backlog, and an audit trail. Tasks are authored
+and gated in `/agent-loop-task`: a mandatory interview turns your idea into a
+draft and `approve` queues it; the loop plans it **right before execution**
+(so plans don't rot while tasks sit parked) and parks the plan in
+`plan-review/` for the explicit `approve-plan` gate — it never blocks on
+you.
 
 This is the Claude Code port of the OpenCode `agentic-loop` plugin. Because
 Claude Code has no autonomous background-driver primitive, the loop is
@@ -41,22 +43,27 @@ platform-agnostic skills and the reference checklists.
 
 ## Commands
 
-Planning (`/agent-loop-plan`):
+Authoring + gates (`/agent-loop-task`):
 
-- `/agent-loop-plan new <idea>` — the main agent **always interviews you** (at
+- `/agent-loop-task new <idea>` — the main agent **always interviews you** (at
   minimum a restate-and-confirm) to pin down the goal and testable acceptance
   criteria, then writes a **planless draft** into `docs/tasks/draft/`.
-- `/agent-loop-plan task <id>` — plan a draft: the MCP server moves it to
-  `docs/tasks/in-planning/` (audited + committed), then the plan is written
-  onto the file in place. Also how you re-plan after an iteration-cap stop.
-- `/agent-loop-plan approve <id>` — validate the plan and park the task in
-  `docs/tasks/in-progress/` (the approved queue), audited + committed.
+- `/agent-loop-task approve <id>` — the task gate: queue the reviewed draft
+  in `docs/tasks/queued/` (audited + committed). No plan yet, by design.
+- `/agent-loop-task approve-plan <id>` — the plan gate: validate the parked
+  plan and move the task to `docs/tasks/in-progress/` (the build-ready
+  queue), audited + committed.
+- `/agent-loop-task replan <id> [reason]` — reject a parked plan or send a
+  cap-tripped task back to `queued/`, with the reason audited.
 
-Execution (`/agent-loop`):
+The loop (`/agent-loop`):
 
-- `/agent-loop task <id>` — execute one approved task now, entering at BUILD.
-- `/agent-loop claim` — claim the next approved task (lowest priority number
-  first) and execute it — the pull equivalent of the OpenCode `/agent-loop watch`.
+- `/agent-loop task <id>` — run one task now: a `queued/` task enters at PLAN
+  (writes the plan, parks it in `plan-review/`, and the loop ends there); an
+  `in-progress/` task enters at BUILD.
+- `/agent-loop claim` — claim the next task (build-ready `in-progress/` tasks
+  beat planless `queued/` ones; lowest priority number first) — the pull
+  equivalent of the OpenCode `/agent-loop watch`.
 - `/agent-loop status` — the active loop plus a whole-backlog roll-up.
 - `/agent-loop ship <id>` — move a reviewed task from `in-review/` to `completed/` (audited).
 - `/agent-loop recover <id>` — resume an interrupted loop from its state snapshot.
@@ -68,13 +75,14 @@ Ancillary:
 - `/explore` — file up to 5 improvement drafts (via the `loop-explore` subagent).
 
 The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/task new` are gone —
-planning always goes through `/agent-loop-plan`.
+task authoring and both gates always go through `/agent-loop-task`.
 
 ## What's inside
 
-- `agents/` — `loop-plan-author` (writes the confirmed draft / the plan),
-  `loop-plan` (standalone read-only planner), `loop-explore`, and the three
-  stage subagents `loop-build` / `loop-verify` / `loop-review`.
+- `agents/` — `loop-plan-author` (writes the confirmed draft; runs the
+  loop's PLAN stage in task mode), `loop-plan` (standalone read-only
+  planner), `loop-explore`, and the three build-phase stage subagents
+  `loop-build` / `loop-verify` / `loop-review`.
 - `skills/` — `loop-orchestration` (Claude-specific driving protocol), plus
   the shared workflow-skill library (symlinked, including
   `task-backlog-management`).
@@ -103,7 +111,7 @@ silently ignored.
   one human trigger claims and drives the next approved task. Within a turn,
   BUILD → VERIFY → REVIEW still advance without human input.
 - **The interview runs in the main agent** — Task subagents cannot converse
-  with you, so `/agent-loop-plan new`'s mandatory interview happens in the main
+  with you, so `/agent-loop-task new`'s mandatory interview happens in the main
   conversation before the author subagent writes the file.
 - Skill/reference symlinks resolve on Unix/WSL; on Windows without symlink
   support, copy them instead.

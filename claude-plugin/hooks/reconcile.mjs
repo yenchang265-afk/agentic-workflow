@@ -55,10 +55,19 @@ const main = async () => {
   } catch {
     /* none */
   }
+  // A claim marker in queued/.claims/ with no live loop means a run died
+  // mid-PLAN — it blocks every future claim of that task until removed.
+  let planClaims = []
+  try {
+    planClaims = fs.readdirSync(path.join(cwd, tasksDir, "queued", ".claims"))
+  } catch {
+    /* none */
+  }
 
   const lines = []
   if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agent-loop recover <id>\` to resume.`)
   if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agent-loop recover <id>\` resumes at the exact stage.`)
+  if (planClaims.length) lines.push(`agentic-loop: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`rmdir\` the marker(s) so the task can be claimed again.`)
   if (!lines.length) return process.exit(0)
 
   process.stdout.write(

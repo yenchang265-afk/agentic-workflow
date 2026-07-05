@@ -156,28 +156,33 @@ test("summarizeBacklog counts every status and empty flag lists", () => {
   const s = summarizeBacklog(empty())
   assert.deepEqual(s.counts, {
     draft: 0,
-    "in-planning": 0,
+    queued: 0,
+    "plan-review": 0,
     "in-progress": 0,
     "in-review": 0,
     completed: 0,
     abandoned: 0,
   })
+  assert.deepEqual(s.awaitingPlan, [])
   assert.deepEqual(s.gated, [])
   assert.deepEqual(s.claimable, [])
   assert.deepEqual(s.interrupted, [])
   assert.deepEqual(s.awaitingReview, [])
 })
 
-test("summarizeBacklog splits in-planning gated vs unplanned and flags in-progress/in-review", () => {
+test("summarizeBacklog flags queued, gated plan-review, and in-progress/in-review states", () => {
   const byStatus = empty()
-  byStatus["in-planning"] = [task("gated", 0, `${PLAN_HEADING}\n\n1. Go.`), task("raw", 0, "just an idea")]
+  byStatus["queued"] = [task("planme", 0, "just an idea")]
+  byStatus["plan-review"] = [task("gated", 0, `${PLAN_HEADING}\n\n1. Go.`)]
   byStatus["in-progress"] = [
     task("ready", 0, `${PLAN_HEADING}\n\n1. Go.`),
     task("crashed", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`),
   ]
   byStatus["in-review"] = [task("shipme", 0, "")]
   const s = summarizeBacklog(byStatus)
-  assert.equal(s.counts["in-planning"], 2)
+  assert.equal(s.counts["queued"], 1)
+  assert.equal(s.counts["plan-review"], 1)
+  assert.deepEqual(s.awaitingPlan, ["planme"])
   assert.deepEqual(s.gated, ["gated"])
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])

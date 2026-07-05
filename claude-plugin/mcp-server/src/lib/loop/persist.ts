@@ -14,9 +14,12 @@ import { STAGES, type LoopState } from "./state.js"
  * closed**: a garbled or tampered file returns null (→ plan-based recovery),
  * never injects arbitrary state.
  *
- * Snapshots written before the PLAN stage was removed (stage "plan", or with a
- * `paused` flag) are deliberately invalidated by the schema below — they fail
- * closed and `/agent-loop recover` falls back to the plan persisted on the task file.
+ * A snapshot at stage "plan" is deliberately invalidated by the schema below:
+ * the PLAN stage never snapshots (it writes no code — a died PLAN simply
+ * leaves the task in queued/, and the next pass re-plans from the task
+ * file). Any such snapshot is either pre-refactor state or tampering — it
+ * fails closed and `/agent-loop recover` falls back to the plan persisted on the
+ * task file.
  */
 
 
@@ -32,9 +35,12 @@ const TaskRefSchema = z.object({
   acceptance: z.array(z.string()),
 })
 
+/** The stages a snapshot may resume at — every stage except `plan` (see module doc). */
+const SNAPSHOT_STAGES = STAGES.filter((s) => s !== "plan")
+
 const LoopStateSchema = z.object({
   goal: z.string(),
-  stage: z.enum(STAGES as unknown as [string, ...string[]]),
+  stage: z.enum(SNAPSHOT_STAGES as unknown as [string, ...string[]]),
   iteration: z.number().int().min(0),
   // Partial map of stage → captured output. String keys (not an enum) because
   // this zod version treats an enum-keyed record as exhaustive; the state

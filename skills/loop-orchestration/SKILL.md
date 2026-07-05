@@ -1,27 +1,30 @@
 ---
 name: loop-orchestration
-description: Explains the automatic agentic engineering loop (build → verify → review) driven by the OpenCode `/agent-loop` plugin command, and the `/agent-loop-plan` command that authors and approves plans for it. Use when you need to understand how /agent-loop executes stages, how plans get authored/approved, the LOOP_VERIFY/LOOP_REVIEW verdict contracts, or how the loop terminates.
+description: Explains the automatic agentic engineering loop (plan → build → verify → review) driven by the OpenCode `/agent-loop` plugin command, and the `/agent-loop-task` command that authors tasks and holds the human gates. Use when you need to understand how /agent-loop plans and executes stages, how the park-at-gate plan review works, the LOOP_VERIFY/LOOP_REVIEW verdict contracts, or how the loop terminates.
 ---
 
 # The agentic loop
 
 ## Overview
 
-The lifecycle is split into two commands. **`/agent-loop-plan`** is the planning
-side: its agent authors a backlog task *with* an `## Implementation Plan`
-(`new <idea>`), or plans an existing task in place (`task <id>`), and
-`approve <id>` is the explicit human gate that parks the task in
-`in-progress/` — the approved queue. **`/agent-loop`** is the execution side: a
-pure executor that drives BUILD, VERIFY, REVIEW as one automatic pipeline
-over an approved task, entering directly at BUILD with the persisted plan.
+The lifecycle is split into two commands. **`/agent-loop-task`** is the
+authoring-and-gates side: its agent interviews you into a planless draft
+(`new <idea>`), `approve <id>` is the task gate that parks it in `queued/`,
+and `approve-plan <id>` / `replan <id>` are the plan gate. **`/agent-loop`** is
+the loop side: it plans a queued task **right before execution** (so plans
+don't rot while tasks sit parked) and drives BUILD, VERIFY, REVIEW as one
+automatic pipeline over a plan-approved task. The PLAN stage never blocks on
+a human: it writes the `## Implementation Plan` onto the task file, **parks
+the task in `plan-review/`, and exits** — park-at-gate, not block-at-gate.
 The OpenCode plugin (`src/index.ts` → `src/loop/`) advances stages on
 `session.idle`, threading each stage's output into the next as context.
 
-There used to be an in-loop PLAN stage with a `/agent-loop go` gate; planning moved
-out of the loop entirely — the plan is authored, reviewed, and approved
-before the loop ever starts, so the running pipeline needs no mid-flight
-human gate. (Earlier still there were DEFINE and SHIP stages; a REVIEW PASS
-finishes the loop directly — ship the diff yourself.)
+(Historical note: an earlier design had planning fully outside the loop in a
+`/agent-loop-plan` command, and before that an in-loop PLAN with a blocking
+`/agent-loop go` gate. The current shape keeps planning in the loop for
+freshness but replaces the blocking gate with the plan-review park. Earlier
+still there were DEFINE and SHIP stages; a REVIEW PASS finishes the loop
+directly — ship the diff yourself.)
 
 ## When to Use
 
@@ -38,57 +41,66 @@ finishes the loop directly — ship the diff yourself.)
 ## The pipeline
 
 ```
-planning (the /agent-loop-plan command, interactive):
-  /agent-loop-plan new <idea> ──▶ interview ──▶ planless draft in draft/
-  /agent-loop-plan task <id>  ──▶ moves draft to in-planning/ + writes ## Implementation Plan
-  /agent-loop-plan approve <id> ─▶ validated + parked in in-progress/   ← the human gate
+authoring + gates (the /agent-loop-task command, interactive):
+  /agent-loop-task new <idea>      ──▶ interview ──▶ planless draft in draft/
+  /agent-loop-task approve <id>    ──▶ parked in queued/            ← the task gate
+  /agent-loop-task approve-plan <id> ▶ plan-review/ → in-progress/  ← the plan gate
+  /agent-loop-task replan <id> [why] ▶ back to queued/ (audited rejection)
 
-execution (the /agent-loop command, unattended):
-  /agent-loop task <id>  — claim one approved task now
-  /agent-loop watch [interval] — claim them as they appear (idle events + polling timer)
-                     ▼
-        claim ─▶ BUILD ─▶ VERIFY ─▶ REVIEW ─▶ done (task → in-review/)
-                   ▲        │FAIL              │FAIL
-                   └────────┴──────────────────┘
-                   (re-build, iteration++, inline)
+the loop (the /agent-loop command, unattended — never blocks on a human):
+  /agent-loop task <id>  — run one task now
+  /agent-loop watch [interval] — claim work as it appears (idle events + polling timer)
+
+  queued task:      claim ─▶ PLAN ─▶ park (task → plan-review/, loop exits)
+  in-progress task: claim ─▶ BUILD ─▶ VERIFY ─▶ REVIEW ─▶ done (task → in-review/)
+                              ▲        │FAIL              │FAIL
+                              └────────┴──────────────────┘
+                              (re-build, iteration++, inline)
 ```
 
 | Stage | Writes code? | Role |
 |-------|--------------|------|
+| plan | no (task file only) | reads the task + relevant code and writes the `## Implementation Plan` onto the task file in place, in the main tree; terminates with a park — the task moves to `plan-review/` for the human gate |
 | build | **yes** | implements the approved plan test-first on the loop's own `loop/<id>` branch, or applies a VERIFY/REVIEW stage's feedback on a re-build; each iteration is committed as a checkpoint |
 | verify | no | runs tests (bash allowlist), checks acceptance criteria, records `PASS`/`FAIL`/`ERROR` via the `loop_verdict` tool |
 | review | no | five-axis code review of exactly `git diff base...branch` (read-only bash allowlist), records `PASS`/`FAIL`/`ERROR` via the `loop_verdict` tool |
 
 ## Process
 
-1. `/agent-loop-plan new <idea>` — the `loop-plan-author` agent **always
+1. `/agent-loop-task new <idea>` — the `loop-plan-author` agent **always
    interviews you** (a restate-and-confirm at minimum, a full interview when
    the idea is vague) to pin down the goal and testable acceptance criteria,
    confirms the draft with you, and writes a planless draft to `draft/`.
-   Then `/agent-loop-plan task <id>` — after you review the draft — moves it to
-   `in-planning/` (plugin-side, audited + committed) and writes the
-   `## Implementation Plan` onto the file in place (the same command re-plans
-   a task whose loop hit the iteration cap).
-2. `/agent-loop-plan approve <id>` — the plugin validates the plan exists, moves
-   the file to `in-progress/`, appends an audited note, and commits. This is
-   the human sign-off before any code is written.
-3. Execute: `/agent-loop task <id>` claims that task now, in this session; or
-   `/agent-loop watch [interval]` turns this session into a standing execution
-   worker that claims approved tasks as they appear — on every idle tick,
-   plus a polling timer (default cadence `watchIntervalMinutes`, override
-   per-session: `/agent-loop watch 30s`). The loop enters at BUILD with the plan
-   threaded in.
+2. `/agent-loop-task approve <id>` — after you review the draft — the plugin
+   moves it to `queued/` with an audited "Task approved" note and commits.
+   No plan yet, by design.
+3. The loop plans it: `/agent-loop task <id>` now, or a `/agent-loop watch`
+   session when no build work remains. The PLAN stage (the
+   `loop-plan-author` agent in task mode) reads the code, writes the
+   `## Implementation Plan` onto the task file in place, and the driver
+   parks the task in `plan-review/` — the loop exits rather than waiting.
+4. `/agent-loop-task approve-plan <id>` — the plugin validates the plan
+   exists, moves the file to `in-progress/`, appends an audited note, and
+   commits. This is the human sign-off before any code is written.
+   `/agent-loop-task replan <id> <why>` rejects instead: back to `queued/`
+   with the reason audited, and the next PLAN pass must address it.
+5. Execute: `/agent-loop task <id>` claims that task now, in this session; or
+   `/agent-loop watch [interval]` turns this session into a standing worker
+   that claims work as it appears — on every idle tick, plus a polling timer
+   (default cadence `watchIntervalMinutes`, override per-session:
+   `/agent-loop watch 30s`). Build-ready tasks beat queued ones. The loop
+   enters at BUILD with the approved plan threaded in.
    - A VERIFY FAIL within `maxIterations` **re-builds** with the failure fed
      back in, inline in this same session.
    - A REVIEW FAIL within `maxIterations` re-builds with the review's
      findings fed back in, same session.
    - The cap tripping means the plan itself is suspect — the loop stops and
-     a human re-plans via `/agent-loop-plan task <id>`, then re-approves.
-4. On a REVIEW PASS, the loop is done and the task moves to `in-review/` —
+     a human sends it back via `/agent-loop-task replan <id> <why>`.
+6. On a REVIEW PASS, the loop is done and the task moves to `in-review/` —
    the human diff gate. Review `git diff <base>...loop/<id>` yourself, push
    and open the PR, then run `/agent-loop ship <id>` to move the task to
    `completed/` (an audited move) — the loop never does those steps for you.
-5. `/agent-loop stop` aborts and exits watch mode (timer included); `/agent-loop unwatch`
+7. `/agent-loop stop` aborts and exits watch mode (timer included); `/agent-loop unwatch`
    exits watch mode alone (a build already claimed still finishes); `/agent-loop
    status` shows the current loop plus a whole-backlog roll-up (counts +
    awaiting-approval/claimable/interrupted/in-review flags); `/agent-loop recover
@@ -97,23 +109,28 @@ execution (the /agent-loop command, unattended):
    reached, or from the persisted plan when no valid snapshot exists. Plugin
    startup logs any interrupted tasks and leftover snapshots it finds.
 
-## Planning is a command, execution is the loop
+## The gates are a command, planning and execution are the loop
 
-- **Interview (always, inside `/agent-loop-plan new`).** The author agent runs the
-  `interview-me` skill live with you on every `new` — a single
+- **Interview (always, inside `/agent-loop-task new`).** The author agent runs
+  the `interview-me` skill live with you on every `new` — a single
   restate-and-confirm when the idea already carries a clear goal and testable
   criteria, one question at a time until there's an explicit yes on a
   restated intent when it doesn't. It also confirms the drafted task before
   writing anything.
-- **Approve (always, `/agent-loop-plan approve <id>`).** Nothing gets executed
-  until a human approves the plan — deterministic plugin code validates the
-  `## Implementation Plan` heading and parks the task in `in-progress/`.
-  There is no way to start the loop on an unapproved task: `/agent-loop task <id>`
-  only searches `in-progress/`.
-- **Watch → claim (explicit opt-in, `/agent-loop watch`).** No session builds
-  anything just because it went idle. A human must run `/agent-loop watch` in a
-  session for it to become an execution worker; that session then claims and
-  drives approved tasks unattended until `/agent-loop unwatch`/`/agent-loop stop`.
+- **Two approvals (always, `/agent-loop-task`).** `approve <id>` gates the
+  task (scope + acceptance) into `queued/`; `approve-plan <id>` gates the
+  loop-written plan into `in-progress/`. Nothing gets built until a human
+  has approved both — deterministic plugin code validates the
+  `## Implementation Plan` heading at the plan gate. There is no way to
+  build an ungated task: BUILD only ever claims from `in-progress/`.
+- **Park, don't block.** The PLAN stage ends its loop by parking the task in
+  `plan-review/`. A watcher can plan an entire queue overnight and exit each
+  time; you batch-review the plans whenever suits and approve or replan each
+  — the pipeline never sits blocked inside a live session.
+- **Watch → claim (explicit opt-in, `/agent-loop watch`).** No session plans or
+  builds anything just because it went idle. A human must run
+  `/agent-loop watch` in a session for it to become a worker; that session then
+  claims and drives work unattended until `/agent-loop unwatch`/`/agent-loop stop`.
 
 ## Execution: `/agent-loop watch`
 
@@ -124,16 +141,19 @@ the server whether the session is actually idle (`client.session.status()`)
 and does nothing otherwise — the timer exists for the case idle events miss:
 a task approved in *another* session while this one sat quiet.
 
-When it fires, the watcher scans `docs/tasks/in-progress/` for tasks where
-`isClaimable(task)` is true — has a persisted plan (`## Implementation
+When it fires, the watcher first scans `docs/tasks/in-progress/` for tasks
+where `isClaimable(task)` is true — has a persisted plan (`## Implementation
 Plan`), and has **never** had any `> BUILD started` note (not just "the last
 one is unmatched" — that's `wasInterrupted`, a different check used for crash
-recovery). It picks the lowest-priority claimable task (ties by id) and
-claims it **atomically**: a non-recursive `mkdir` of
-`in-progress/.claims/<id>` either succeeds (claim won) or fails because
-another watcher on the same filesystem got there first. The
+recovery). With no build work, it falls back to `docs/tasks/queued/` for a
+task to plan-and-park — build work always beats plan work, so tasks in
+flight finish before new ones spin up. Either way it picks the
+lowest-priority claimable task (ties by id) and claims it **atomically**: a
+non-recursive `mkdir` of `<folder>/.claims/<id>` either succeeds (claim won)
+or fails because another watcher on the same filesystem got there first. The
 `> BUILD started` note remains the human-readable audit record; the marker
-directory is the lock.
+directory is the lock. (A queued claim marker orphaned by a crashed PLAN is
+always safe to release once stale — PLAN writes no code.)
 
 In **shared-tree mode** (default), a per-directory execution lock additionally
 serializes drives within one opencode instance — all sessions share one
@@ -180,8 +200,8 @@ trusted tool call as the verdict, so they carry no extra trust.
   with the failure feedback threaded in (a verify-FAIL re-build drops stale
   review feedback and vice versa — old feedback judged an older build).
 - **FAIL** and the cap is reached → stop and report; if the plan itself is
-  wrong, re-plan with `/agent-loop-plan task <id>`. Default `maxIterations` is 3,
-  shared across both feedback loops (configurable).
+  wrong, send it back with `/agent-loop-task replan <id> <why>`. Default
+  `maxIterations` is 3, shared across both feedback loops (configurable).
 - **ERROR** (verify or review) → stop immediately for a human; fix the
   environment, then `/agent-loop recover <id>`.
 - A stage exceeding `stageTimeoutMinutes` fails the loop (partial work is
@@ -189,7 +209,8 @@ trusted tool call as the verdict, so they carry no extra trust.
 
 ## Audit trail
 
-Every lifecycle event — plan approved (with the approver's git identity),
+Every lifecycle event — task approved, plan written/parked, plan approved or
+rejected (with the approver's git identity and the rejection reason),
 build start/finish, each verdict (with its reason and any failed criteria),
 stop, recovery, completion — is appended to the task file as a timestamped
 note, and each stage's full output is written to `<tasksDir>/runs/<id>.md`.
@@ -217,9 +238,10 @@ Optional `.agentic-loop.json` at the repo root — every field has a default:
 }
 ```
 
-(`gateBeforeBuild` and `interviewBeforePlan` no longer exist — the gate is
-`/agent-loop-plan approve`, and interviewing lives inside `/agent-loop-plan new`. Old
-config files carrying them still parse; the keys are ignored.)
+(`gateBeforeBuild` and `interviewBeforePlan` no longer exist — the gates are
+`/agent-loop-task approve` and `approve-plan`, and interviewing lives inside
+`/agent-loop-task new`. Old config files carrying them still parse; the keys
+are ignored.)
 
 **Worktree isolation** (`worktreesDir`): each loop's BUILD/VERIFY/REVIEW runs
 in its own `git worktree` on the `loop/<id>` branch instead of switching the
@@ -241,9 +263,9 @@ T1). Costs ~N× review time. Off by default (single review).
 
 | Rationalization | Reality |
 |---|---|
-| "The plan looks obviously right, skip approve" | BUILD is the only stage that edits files — a bad plan compounds into a bad diff. `/agent-loop-plan approve <id>` is one command; it also writes the audit note and commit that say who approved what. |
+| "The plan looks obviously right, skip approve-plan" | BUILD is the only stage that edits files — a bad plan compounds into a bad diff. `/agent-loop-task approve-plan <id>` is one command; it also writes the audit note and commit that say who approved what. |
 | "Just run /build directly, the loop is overhead" | Fine for a single isolated change. Once VERIFY/REVIEW feedback loops matter (multi-step goals, backlog tasks), the loop's re-build wiring is exactly the part you'd otherwise hand-roll. |
-| "The verify keeps failing, the loop should re-plan itself" | Rejected on purpose — planning needs a human in the loop. The iteration cap stops execution, and `/agent-loop-plan task <id>` re-plans with you watching. |
+| "The verify keeps failing, the loop should re-plan itself" | Rejected on purpose — a plan only enters BUILD through the human gate. The iteration cap stops execution; `/agent-loop-task replan <id> <why>` re-queues it and the next PLAN pass runs with the failure context, but its output parks for your review again. |
 | "Any idle session should just pick up ready work" | Rejected on purpose — an ordinary chat session must never spontaneously start writing code because it went idle. `/agent-loop watch` is explicit opt-in, per session. |
 | "Poll every second so pickup is instant" | The interval floor is 10s and the default 5m for a reason — each tick costs a status query and a folder scan, and the idle-event path already gives instant pickup in the common case. |
 
@@ -254,14 +276,16 @@ T1). Costs ~N× review time. Off by default (single review).
 - A check stage that wrote a `LOOP_VERIFY`/`LOOP_REVIEW` text line but never
   called `loop_verdict` — the loop logs the discrepancy and records FAIL;
   the subagent didn't follow its contract.
-- An approved task sitting in `in-progress/` indefinitely — nothing is
-  watching it. `/agent-loop watch` in some session, or `/agent-loop task <id>` it directly.
+- An approved task sitting in `queued/` or `in-progress/` indefinitely —
+  nothing is watching it. `/agent-loop watch` in some session, or
+  `/agent-loop task <id>` it directly.
 - A stale `.claims/<id>` marker for a task with no live loop — the claiming
   run died; `/agent-loop recover <id>` re-claims and resumes it.
 - A task sitting in `in-review/` — that's not a stall, it's the human diff
   gate; review the branch and run `/agent-loop ship <id>` when it ships.
-- A task in `in-planning/` with a plan that nobody approves or rejects —
-  the queue only moves when a human runs `/agent-loop-plan approve <id>`.
+- A task in `plan-review/` that nobody approves or rejects — the pipeline
+  only moves when a human runs `/agent-loop-task approve-plan <id>` (or
+  `replan <id>`).
 
 ## Verification
 
@@ -269,17 +293,19 @@ T1). Costs ~N× review time. Off by default (single review).
       the watch cadence when watching.
 - [ ] Every VERIFY and REVIEW turn calls `loop_verdict` exactly once, and its
       text line matches the recorded verdict.
-- [ ] No file was edited by a task that never got `/agent-loop-plan approve`d, and
-      every build edit landed on the `loop/<id>` branch, never the base branch.
+- [ ] No file was edited by a task that never got `/agent-loop-task
+      approve-plan`d, and every build edit landed on the `loop/<id>` branch,
+      never the base branch (the PLAN stage edits only the task file).
 - [ ] A stopped/failed loop leaves its task (if any) in `in-progress/` with a
       timestamped note — never silently disappears or is left in `completed/`.
 - [ ] A REVIEW PASS parks the task in `in-review/`; only a human moves it to
       `completed/`.
-- [ ] `/agent-loop-plan approve <id>` refuses a task with no `## Implementation
-      Plan` heading.
-- [ ] A `/agent-loop watch` session only ever claims a task that `isClaimable`
-      would return `true` for, and holds its `.claims/<id>` marker while
-      driving it.
+- [ ] `/agent-loop-task approve-plan <id>` refuses a task with no
+      `## Implementation Plan` heading, and the PLAN stage never parks a
+      planless task in `plan-review/`.
+- [ ] A `/agent-loop watch` session only ever claims a build task that
+      `isClaimable` returns `true` for (or a queued task for PLAN), and
+      holds its `.claims/<id>` marker while driving it.
 - [ ] No session builds anything without a human having run `/agent-loop watch`
       (or `/agent-loop task <id>`) in it first.
 - [ ] `/agent-loop unwatch` and `/agent-loop stop` stop the polling timer — no further
