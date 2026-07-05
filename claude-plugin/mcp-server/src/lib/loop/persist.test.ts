@@ -95,7 +95,7 @@ test("loadState fails closed on a schema violation (unknown stage)", async () =>
   assert.equal(await loadState(fakeClient(dir), dir, "docs/tasks", "bad"), null)
 })
 
-test("loadState fails closed on a pre-refactor snapshot at the removed PLAN stage", async () => {
+test("loadState fails closed on a snapshot at the PLAN stage (PLAN never snapshots)", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(

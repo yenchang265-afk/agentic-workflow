@@ -203,28 +203,33 @@ test("summarizeBacklog counts every status and empty flag lists", () => {
   const s = summarizeBacklog(empty())
   assert.deepEqual(s.counts, {
     draft: 0,
-    "in-planning": 0,
+    queued: 0,
+    "plan-review": 0,
     "in-progress": 0,
     "in-review": 0,
     completed: 0,
     abandoned: 0,
   })
+  assert.deepEqual(s.awaitingPlan, [])
   assert.deepEqual(s.gated, [])
   assert.deepEqual(s.claimable, [])
   assert.deepEqual(s.interrupted, [])
   assert.deepEqual(s.awaitingReview, [])
 })
 
-test("summarizeBacklog splits in-planning gated vs unplanned and flags in-progress/in-review", () => {
+test("summarizeBacklog flags queued, gated plan-review, and in-progress/in-review states", () => {
   const byStatus = empty()
-  byStatus["in-planning"] = [task("gated", 0, `${PLAN_HEADING}\n\n1. Go.`), task("raw", 0, "just an idea")]
+  byStatus["queued"] = [task("planme", 0, "just an idea")]
+  byStatus["plan-review"] = [task("gated", 0, `${PLAN_HEADING}\n\n1. Go.`)]
   byStatus["in-progress"] = [
     task("ready", 0, `${PLAN_HEADING}\n\n1. Go.`),
     task("crashed", 0, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`),
   ]
   byStatus["in-review"] = [task("shipme", 0, "")]
   const s = summarizeBacklog(byStatus)
-  assert.equal(s.counts["in-planning"], 2)
+  assert.equal(s.counts["queued"], 1)
+  assert.equal(s.counts["plan-review"], 1)
+  assert.deepEqual(s.awaitingPlan, ["planme"])
   assert.deepEqual(s.gated, ["gated"])
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])
@@ -234,8 +239,9 @@ test("summarizeBacklog splits in-planning gated vs unplanned and flags in-progre
 // --- canTransition / statusOf / moveTask (stage-order enforcement) ---
 
 test("canTransition allows each adjacent forward hop", () => {
-  assert.equal(canTransition("draft", "in-planning"), true)
-  assert.equal(canTransition("in-planning", "in-progress"), true)
+  assert.equal(canTransition("draft", "queued"), true)
+  assert.equal(canTransition("queued", "plan-review"), true)
+  assert.equal(canTransition("plan-review", "in-progress"), true)
   assert.equal(canTransition("in-progress", "in-review"), true)
   assert.equal(canTransition("in-review", "completed"), true)
 })
@@ -244,20 +250,27 @@ test("canTransition rejects any forward skip", () => {
   assert.equal(canTransition("draft", "in-progress"), false)
   assert.equal(canTransition("draft", "in-review"), false)
   assert.equal(canTransition("draft", "completed"), false)
-  assert.equal(canTransition("in-planning", "in-review"), false)
-  assert.equal(canTransition("in-planning", "completed"), false)
+  assert.equal(canTransition("queued", "in-progress"), false)
+  assert.equal(canTransition("plan-review", "completed"), false)
   assert.equal(canTransition("in-progress", "completed"), false)
 })
 
-test("canTransition rejects backward moves", () => {
+test("canTransition rejects backward moves except the replan escape", () => {
   assert.equal(canTransition("in-progress", "draft"), false)
-  assert.equal(canTransition("in-review", "in-planning"), false)
+  assert.equal(canTransition("in-review", "plan-review"), false)
+  assert.equal(canTransition("in-review", "queued"), false)
   assert.equal(canTransition("completed", "in-review"), false)
+})
+
+test("canTransition allows the replan escape back to queued", () => {
+  assert.equal(canTransition("plan-review", "queued"), true)
+  assert.equal(canTransition("in-progress", "queued"), true)
 })
 
 test("canTransition allows abandoning any active stage", () => {
   assert.equal(canTransition("draft", "abandoned"), true)
-  assert.equal(canTransition("in-planning", "abandoned"), true)
+  assert.equal(canTransition("queued", "abandoned"), true)
+  assert.equal(canTransition("plan-review", "abandoned"), true)
   assert.equal(canTransition("in-progress", "abandoned"), true)
   assert.equal(canTransition("in-review", "abandoned"), true)
 })
@@ -280,8 +293,8 @@ test("statusOf throws for a path outside a known status folder", () => {
 test("moveTask succeeds on a valid adjacent hop and records the mv", async () => {
   const log: string[] = []
   const $ = makeShell(() => ({ exitCode: 0 }), log)
-  const dest = await moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "in-planning")
-  assert.equal(dest, "/r/docs/tasks/in-planning/a.md")
+  const dest = await moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued")
+  assert.equal(dest, "/r/docs/tasks/queued/a.md")
   assert.ok(log.some((cmd) => cmd.startsWith("mv ")))
 })
 

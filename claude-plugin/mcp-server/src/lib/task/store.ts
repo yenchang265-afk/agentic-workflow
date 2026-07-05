@@ -15,7 +15,7 @@ type Log = (level: "info" | "warn" | "error", message: string) => unknown
 /** Anything with an id + on-disk path can be moved or annotated. */
 type FileRef = { readonly id: string; readonly path: string }
 
-export type TaskStatus = "draft" | "in-planning" | "in-progress" | "in-review" | "completed" | "abandoned"
+export type TaskStatus = "draft" | "queued" | "plan-review" | "in-progress" | "in-review" | "completed" | "abandoned"
 
 const isMarkdown = (name: string): boolean => name.toLowerCase().endsWith(".md")
 
@@ -70,7 +70,8 @@ export const wasInterrupted = (task: Task): boolean => {
 /** The status folders, in lifecycle order. */
 export const STATUSES: readonly TaskStatus[] = [
   "draft",
-  "in-planning",
+  "queued",
+  "plan-review",
   "in-progress",
   "in-review",
   "completed",
@@ -80,7 +81,9 @@ export const STATUSES: readonly TaskStatus[] = [
 /** A per-status roll-up of the backlog for `/agent-loop status`. Pure. */
 export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
-  /** in-planning tasks that already have a persisted plan (gated, awaiting /agent-loop go). */
+  /** queued tasks awaiting the loop's PLAN stage. */
+  readonly awaitingPlan: readonly string[]
+  /** plan-review tasks whose plan is parked for human review (/agent-loop-task approve-plan). */
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
@@ -94,11 +97,11 @@ export interface BacklogSummary {
 export const summarizeBacklog = (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>): BacklogSummary => {
   const counts = Object.fromEntries(STATUSES.map((s) => [s, byStatus[s]?.length ?? 0])) as Record<TaskStatus, number>
   const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
-  const inPlanning = byStatus["in-planning"] ?? []
   const inProgress = byStatus["in-progress"] ?? []
   return {
     counts,
-    gated: ids(inPlanning.filter(hasPlan)),
+    awaitingPlan: ids(byStatus["queued"] ?? []),
+    gated: ids((byStatus["plan-review"] ?? []).filter(hasPlan)),
     claimable: ids(inProgress.filter(isClaimable)),
     interrupted: ids(inProgress.filter(wasInterrupted)),
     awaitingReview: ids(byStatus["in-review"] ?? []),
@@ -141,9 +144,9 @@ export const listByStatus = async (
   return tasks
 }
 
-/** List and parse every task in `in-planning/`. See `listByStatus`. */
-export const listInPlanning = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
-  listByStatus(client, directory, tasksDir, "in-planning", log)
+/** List and parse every task in `queued/` — approved, awaiting the loop's PLAN stage. */
+export const listQueued = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
+  listByStatus(client, directory, tasksDir, "queued", log)
 
 /** List and parse every task in `in-progress/` — the pool `/agent-loop watch` claims from. */
 export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
@@ -168,10 +171,6 @@ export const findByIdIn = async (
     return null
   }
 }
-
-/** Resolve a specific in-planning task by id, or null if missing/invalid. */
-export const findById = (client: Client, directory: string, tasksDir: string, id: string): Promise<Task | null> =>
-  findByIdIn(client, directory, tasksDir, "in-planning", id)
 
 /** Directory of atomic claim markers, alongside the task files of one status folder. */
 const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
@@ -282,7 +281,7 @@ export interface WriteLocation {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating a task today, use `/agent-loop-plan new <idea>` — the
+ * command. For creating a task today, use `/agent-loop-task new <idea>` — the
  * interview runs in the main agent, then the `loop-plan-author` subagent
  * writes the draft; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,

@@ -8,6 +8,7 @@ import {
   findSessionDriving,
   resumeAtBuild,
   setLoop,
+  startAtPlan,
 } from "./state.ts"
 
 const config: Config = {
@@ -27,7 +28,7 @@ const mk = (goal: string, task?: TaskRef): LoopState => ({
   ...(task ? { task } : {}),
 })
 
-// --- entering the loop at build (plan approved via /agent-loop-plan) ---
+// --- entering the loop at build (plan approved via /agent-loop-task approve-plan) ---
 
 const task: TaskRef = { id: "add-foo", path: "/r/docs/tasks/in-progress/add-foo.md", acceptance: [] }
 
@@ -42,6 +43,32 @@ test("resumeAtBuild constructs a build-entry state with the approved plan thread
 test("composeArgs threads the approved plan when entering at build via resumeAtBuild", () => {
   const s = resumeAtBuild("add foo", task, "PLAN BODY")
   assert.match(composeArgs(s, "build"), /Approved plan:\nPLAN BODY/)
+})
+
+// --- the PLAN stage: enters at plan, terminates with a park ---
+
+test("startAtPlan constructs a plan-entry state, threading a prior plan only on a replan", () => {
+  const s = startAtPlan("add foo", task)
+  assert.equal(s.stage, "plan")
+  assert.equal(s.artifacts.plan, undefined)
+  const r = startAtPlan("add foo", task, "OLD PLAN")
+  assert.equal(r.artifacts.plan, "OLD PLAN")
+})
+
+test("composeArgs for plan threads the prior plan and acceptance criteria", () => {
+  const t: TaskRef = { id: "t", path: "/p", acceptance: ["Returns 429 over limit"] }
+  const args = composeArgs(startAtPlan("g", t, "OLD PLAN"), "plan")
+  assert.match(args, /Prior plan/)
+  assert.match(args, /OLD PLAN/)
+  assert.match(args, /Acceptance criteria/)
+  assert.doesNotMatch(composeArgs(startAtPlan("g", t), "plan"), /Prior plan/)
+})
+
+test("a completed PLAN stage parks — it never advances into build", () => {
+  const s = startAtPlan("add foo", task)
+  const { action } = advanceOnIdle(s, config, "plan written")
+  assert.equal(action.kind, "park")
+  if (action.kind === "park") assert.match(action.message, /plan-review/)
 })
 
 // --- build → verify ---
@@ -83,11 +110,11 @@ test("a verify-FAIL re-build drops stale review feedback from an older build", (
   if (action.kind === "fire") assert.doesNotMatch(action.arguments, /OLD REVIEW/)
 })
 
-test("verify FAIL at the iteration cap stops and points at /agent-loop-plan task", () => {
+test("verify FAIL at the iteration cap stops and points at /agent-loop-task replan", () => {
   const s = { ...mk("g"), stage: "verify" as const, iteration: 2 }
   const { action } = advanceOnIdle(s, config, "gaps remain", "FAIL")
   assert.equal(action.kind, "stop")
-  if (action.kind === "stop") assert.match(action.message, /\/agent-loop-plan task/)
+  if (action.kind === "stop") assert.match(action.message, /\/agent-loop-task replan/)
 })
 
 test("a missing verify verdict is treated as FAIL", () => {

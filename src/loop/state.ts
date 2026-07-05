@@ -3,30 +3,34 @@ import type { Verdict } from "./verdict.ts"
 /**
  * Loop state machine for the agentic loop:
  *
- *   build → verify → review
+ *   plan → (park for plan review) · build → verify → review
  *
  * The transition helpers here are **pure**: given a state (and config) they
  * return a new state plus an `Action` describing what the driver should do, and
  * never touch a client or the store. That keeps the loop logic unit-testable
  * without opencode. The impure orchestration lives in `driver.ts`.
  *
- * Planning happens **before** the loop, in the `/agent-loop-plan` command: `new`
- * interviews the user into a draft task, `task <id>` writes its
- * `## Implementation Plan`, and `/agent-loop-plan approve <id>` parks it in
- * `in-progress/`. The loop is a pure executor — every state enters at
- * `build` via `resumeAtBuild` with the approved plan as an artifact.
+ * Task authoring happens **before** the loop, in the `/agent-loop-task`
+ * command: `new` interviews the user into a draft task and `approve <id>`
+ * parks it planless in `queued/`. The loop claims a queued task and enters at
+ * `plan` via `startAtPlan` — the PLAN stage writes the task's
+ * `## Implementation Plan` right before execution, so plans don't rot while a
+ * task sits parked. PLAN never blocks on a human: it terminates with a `park`
+ * action (the driver moves the task to `plan-review/` and the loop exits).
+ * `/agent-loop-task approve-plan <id>` is the human plan gate; the next claim
+ * enters at `build` via `resumeAtBuild` with the approved plan as an artifact.
  *
  * Two check stages can fail and loop back, and both re-**build**: a VERIFY
  * FAIL re-builds with the failure threaded into the build prompt; a REVIEW
  * FAIL re-builds with the review feedback. Both share one iteration counter
  * and cap. If the plan itself is wrong, the cap stops the loop and a human
- * re-plans via `/agent-loop-plan task <id>`.
+ * sends the task back to the PLAN stage via `/agent-loop-task replan <id>`.
  */
 
-export type Stage = "build" | "verify" | "review"
+export type Stage = "plan" | "build" | "verify" | "review"
 
-/** The stages in loop order. */
-export const STAGES: readonly Stage[] = ["build", "verify", "review"]
+/** The stages in loop order. `plan` terminates with a park, not an advance. */
+export const STAGES: readonly Stage[] = ["plan", "build", "verify", "review"]
 
 /** Link to the backlog task driving the loop, when started from one. */
 export interface TaskRef {
@@ -69,6 +73,8 @@ export interface LoopState {
 export type Action =
   | { readonly kind: "fire"; readonly stage: Stage; readonly arguments: string }
   | { readonly kind: "done"; readonly message: string }
+  /** PLAN finished: the driver validates the written plan, moves the task to `plan-review/`, and the loop exits. */
+  | { readonly kind: "park"; readonly message: string }
   | { readonly kind: "stop"; readonly message: string }
   | { readonly kind: "noop" }
 
@@ -89,12 +95,23 @@ export interface Config {
 }
 
 /** Construct a LoopState entering execution at build, for a claimed
- *  in-progress task whose plan was approved via `/agent-loop-plan approve`. */
+ *  in-progress task whose plan was approved via `/agent-loop-task approve-plan`. */
 export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): LoopState => ({
   goal,
   stage: "build",
   iteration: 0,
   artifacts: { plan },
+  task,
+})
+
+/** Construct a LoopState entering at the PLAN stage, for a claimed `queued/`
+ *  task. `priorPlan` carries a rejected/capped plan on a replan so the new
+ *  plan addresses why the old one failed instead of repeating it. */
+export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string): LoopState => ({
+  goal,
+  stage: "plan",
+  iteration: 0,
+  artifacts: priorPlan ? { plan: priorPlan } : {},
   task,
 })
 
@@ -115,7 +132,14 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
   const accept = state.task?.acceptance ?? []
   const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
   const parts: string[] = [`Goal: ${state.goal}`]
-  if (target === "build") {
+  if (target === "plan") {
+    if (a.plan) {
+      parts.push(
+        `Prior plan (rejected or capped out — the new plan must address why this one failed, using the task file's audit notes):\n${a.plan}`,
+      )
+    }
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the plan must lead to satisfying each):"))
+  } else if (target === "build") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
     if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
     if (a.review) parts.push(`Review feedback to address:\n${a.review}`)
@@ -173,6 +197,18 @@ export const advanceOnIdle = (
   const s = withArtifact(state, state.stage, output)
 
   switch (s.stage) {
+    case "plan":
+      // PLAN never advances into BUILD directly — the human plan gate sits
+      // between them. The driver validates the written plan, moves the task
+      // to plan-review/, and ends the loop.
+      return {
+        state: s,
+        action: {
+          kind: "park",
+          message: "Plan written — parked in plan-review/ for human review. Approve with /agent-loop-task approve-plan.",
+        },
+      }
+
     case "build":
       return fire(s, "verify")
 
@@ -201,7 +237,7 @@ export const advanceOnIdle = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Loop stopped — verify failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /agent-loop-plan task <id>.`,
+          message: `✗ Loop stopped — verify failed after ${config.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>.`,
         },
       }
     }
@@ -232,7 +268,7 @@ export const advanceOnIdle = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Loop stopped — review failed after ${config.maxIterations} iterations. If the plan itself is wrong, re-plan with /agent-loop-plan task <id>.`,
+          message: `✗ Loop stopped — review failed after ${config.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>.`,
         },
       }
     }
