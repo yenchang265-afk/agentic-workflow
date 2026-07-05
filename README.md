@@ -8,16 +8,16 @@ git isolation, trusted verdicts, backlog, and audit trail.
 
 ## What it does
 
-Planning and execution are two commands. **`/agent-loop-plan`** interviews you into
-a draft task (`new <idea>` — always, so the goal and testable acceptance
-criteria come from you, not a guess), plans it as a separate step after you
-review the draft (`task <id>`), and `approve <id>` is the explicit human gate
-that parks it in the approved queue. **`/agent-loop`** is a pure executor over that
-queue:
+Authoring and execution are two commands. **`/agent-loop-task`** interviews
+you into a draft task (`new <idea>` — always, so the goal and testable
+acceptance criteria come from you, not a guess), `approve <id>` queues the
+reviewed draft, and `approve-plan <id>` / `replan <id>` are the plan gate.
+**`/agent-loop`** plans a queued task **right before execution** — so plans
+don't rot while tasks sit parked — and builds plan-approved ones:
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
-| *(plan — in `/agent-loop-plan`, before the loop)* | Interviews → draft; plans on request; `approve` parks it | **yes — draft review and the approval are the gates** |
+| PLAN | Writes the `## Implementation Plan` onto the claimed queued task, then **parks it in `plan-review/` and exits** | parks — `approve-plan` / `replan` is the gate, the loop never blocks |
 | BUILD | Implements the approved plan test-first, on its own `loop/<id>` branch | no |
 | VERIFY | Runs tests; FAIL re-builds with the failure | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
@@ -47,10 +47,11 @@ Idempotent — re-run after `git pull` for updates.
 
 ## Commands
 
-- `/agent-loop-plan new <idea>` · `task <id>` · `approve <id>` — interview → draft →
-  plan → human approval
+- `/agent-loop-task new <idea>` · `approve <id>` · `approve-plan <id>` ·
+  `replan <id> [why]` — interview → draft → task gate → (the loop plans) →
+  plan gate
 - `/agent-loop task <id>` · `watch` · `ship <id>` · `recover <id>` · `stop` · `status` —
-  execute the approved queue
+  plan the queue and execute the plan-approved tasks
 
 Full command reference: [docs/opencode.md](docs/opencode.md) (OpenCode) ·
 [`claude-plugin/README.md`](claude-plugin/README.md) (Claude Code — `/agent-loop claim`
@@ -67,8 +68,8 @@ skills library via [AGENTS.md](AGENTS.md).
   commands, known limitations
 - [docs/configuration.md](docs/configuration.md) — `.agentic-loop.json`
   reference and optional hardening (worktrees, review lenses, redaction)
-- [docs/migration.md](docs/migration.md) — migrating from the PLAN-stage
-  versions
+- [docs/migration.md](docs/migration.md) — migrating from earlier layouts
+  (`/agent-loop-plan`, `in-planning/`, the blocking PLAN gate)
 - [docs/design/](docs/design/) — threat model, hardening design record,
   enterprise gap analysis
 
@@ -82,7 +83,7 @@ skills library via [AGENTS.md](AGENTS.md).
   bundled MCP server that drives the loop
 - `skills/`, `references/` — the workflow library the stage agents and ad-hoc
   requests pull from (shared by both plugins)
-- `docs/tasks/` — the filesystem task backlog `/agent-loop-plan` and `/agent-loop task`
+- `docs/tasks/` — the filesystem task backlog `/agent-loop-task` and `/agent-loop task`
   read from
 - `install.sh` — installs either or both plugins
 
