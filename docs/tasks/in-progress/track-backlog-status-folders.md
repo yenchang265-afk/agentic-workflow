@@ -51,3 +51,7 @@ that list.
 > Plan written — parked for plan review [2026-07-05T13:14:22.141Z]
 
 > Plan approved — parked for execution [2026-07-05T13:14:39.360Z]
+
+> BUILD started (iteration 1) [2026-07-05T13:14:57.537Z]
+
+> BUILD finished (iteration 1) [2026-07-05T13:15:17.540Z]
