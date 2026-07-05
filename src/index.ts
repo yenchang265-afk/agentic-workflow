@@ -6,8 +6,8 @@ import type { Config } from "./loop/state.ts"
 import * as driver from "./loop/driver.ts"
 import { listWorktrees, pruneWorktrees } from "./loop/git.ts"
 import { listSnapshotIds } from "./loop/persist.ts"
-import { getLoop, hasLoop } from "./loop/state.ts"
-import { listInProgress, wasInterrupted } from "./task/store.ts"
+import { findSessionDriving, getLoop, hasLoop } from "./loop/state.ts"
+import { listClaimIds, listInProgress, releaseOrphanedClaims, wasInterrupted } from "./task/store.ts"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
@@ -80,6 +80,24 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
           "warn",
           `loop state snapshot(s) present: ${snapshots.join(", ")} — /agent-loop recover <id> resumes at the exact stage`,
         )
+      }
+      // Claim-marker sweep: a run that died between claiming and its first
+      // "BUILD started" note leaves a marker that silently blocks every future
+      // watch claim of that task. Release the stale ones; keep anything a live
+      // loop drives or that may still be inside the claim→BUILD window.
+      const claimIds = await listClaimIds($, directory, config.tasksDir)
+      if (claimIds.length) {
+        const released = await releaseOrphanedClaims($, tasks, claimIds, path.join(directory, config.tasksDir, "in-progress"), {
+          isDriving: (id) => findSessionDriving(id) !== undefined,
+        })
+        if (released.length) {
+          await log(
+            "warn",
+            `released orphaned claim marker(s): ${released.join(", ")} — a prior run died before BUILD started; watch will re-claim`,
+          )
+        }
+        const stillHeld = claimIds.filter((id) => !released.includes(id))
+        if (stillHeld.length) await log("info", `claim marker(s) held: ${stillHeld.join(", ")}`)
       }
     } catch (err) {
       await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)

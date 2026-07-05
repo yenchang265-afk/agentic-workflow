@@ -3,12 +3,13 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "../task/store.ts"
 import { serializeTask } from "../task/schema.ts"
 import type { Config } from "./state.ts"
-import { handlePlanCommand, parsePlanArgs, parseWatchArgs, type Deps } from "./driver.ts"
+import { claimSkipReason, handlePlanCommand, parsePlanArgs, parseWatchArgs, type Deps } from "./driver.ts"
 
 /**
- * The watch-mode plumbing (timers, idle queries, claiming) is exercised
- * manually against a live opencode; the pure interval parser is unit-tested
- * here — it's the part with real input-space corners.
+ * The watch-mode plumbing (timers, idle queries) is exercised manually
+ * against a live opencode; the pure parts — the interval parser, the
+ * skip-reason computation, and the claim walk (`claimFirst`, in
+ * `../task/store.test.ts`) — are unit-tested.
  */
 
 test("an empty spec means 'use the config default'", () => {
@@ -44,6 +45,43 @@ test("garbage yields an error, not a silent default", () => {
     const parsed = parseWatchArgs(bad)
     assert.ok("error" in parsed, `expected an error for ${JSON.stringify(bad)}`)
   }
+})
+
+/**
+ * `claimSkipReason`: every no-claim tick must explain itself. Held markers
+ * outrank the other cases (they block otherwise-ready work); an empty
+ * backlog is the only non-actionable outcome.
+ */
+
+test("an empty in-progress folder is the only non-actionable reason", () => {
+  const r = claimSkipReason(0, 0, [], [])
+  assert.equal(r.actionable, false)
+  assert.match(r.message, /in-progress\/ is empty/)
+})
+
+test("held claim markers are reported with ids and the auto-release window", () => {
+  const r = claimSkipReason(2, 1, [], ["stuck-task"])
+  assert.equal(r.actionable, true)
+  assert.match(r.message, /claim marker held for stuck-task/)
+  assert.match(r.message, /auto-releases after \d+m/)
+})
+
+test("held markers outrank the already-started case", () => {
+  const r = claimSkipReason(2, 1, ["other"], ["stuck-task"])
+  assert.match(r.message, /claim marker held/)
+})
+
+test("started-but-unclaimed tasks point at /agent-loop recover", () => {
+  const r = claimSkipReason(2, 0, ["crashed-a", "crashed-b"], [])
+  assert.equal(r.actionable, true)
+  assert.match(r.message, /crashed-a, crashed-b/)
+  assert.match(r.message, /\/agent-loop recover <id>/)
+})
+
+test("a backlog with neither started nor held tasks falls back to the no-plan hint", () => {
+  const r = claimSkipReason(1, 0, [], [])
+  assert.equal(r.actionable, true)
+  assert.match(r.message, /no persisted plan/)
 })
 
 /**

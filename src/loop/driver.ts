@@ -5,6 +5,7 @@ import {
   appendNote,
   appendRunLog,
   auditNote,
+  claimFirst,
   claimTask,
   extractPlan,
   findByIdIn,
@@ -12,9 +13,12 @@ import {
   isClaimable,
   isRecoverable,
   listByStatus,
+  listClaimIds,
   listInProgress,
   moveTask,
-  selectNext,
+  releaseClaim,
+  selectOrder,
+  STALE_CLAIM_MINUTES,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
@@ -123,6 +127,13 @@ const watching = new Set<string>()
 /** Per-watching-session polling timers and their cadence (for status display). */
 const watchTimers = new Map<string, ReturnType<typeof setInterval>>()
 const watchIntervalsMs = new Map<string, number>()
+/**
+ * Last no-claim reason toasted per watch session. Every tick logs its reason,
+ * but the toast fires only when the reason CHANGES — a held marker or an
+ * unplanned backlog would otherwise re-toast every 10s tick. Cleared on
+ * successful claim, stop, unwatch, and (re-)watch so a re-arm re-toasts.
+ */
+const lastSkipReason = new Map<string, string>()
 /**
  * Working directories with a drive in flight. All sessions of one opencode
  * instance share a single working tree and checked-out branch, so at most one
@@ -596,23 +607,91 @@ const drive = async (
   }
 }
 
+/** Why a watch tick claimed nothing — the message, and whether a human can act on it. */
+export interface ClaimSkipReason {
+  readonly message: string
+  readonly actionable: boolean
+}
+
+/**
+ * Compute why a watch tick claimed nothing, from what the claim walk saw.
+ * Held markers win (they block otherwise-ready work); then empty backlog;
+ * then started-but-unclaimed (recover); then the no-plan fallback. Pure.
+ */
+export const claimSkipReason = (
+  inProgressCount: number,
+  claimableCount: number,
+  startedIds: readonly string[],
+  heldIds: readonly string[],
+): ClaimSkipReason => {
+  if (heldIds.length) {
+    return {
+      message:
+        `watch: claim marker held for ${heldIds.join(", ")} — another watcher may be building it; ` +
+        `a stale marker auto-releases after ${STALE_CLAIM_MINUTES}m`,
+      actionable: true,
+    }
+  }
+  if (inProgressCount === 0) {
+    return { message: "watch: nothing to claim — in-progress/ is empty", actionable: false }
+  }
+  if (claimableCount === 0 && startedIds.length) {
+    return {
+      message:
+        `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
+        `${startedIds.join(", ")} (run /agent-loop recover <id>)`,
+      actionable: true,
+    }
+  }
+  return {
+    message: "watch: 0 claimable — in-progress task(s) have no persisted plan (re-approve via /agent-loop-plan)",
+    actionable: true,
+  }
+}
+
 /**
  * A `/agent-loop watch` session's own idle check: look for one claimable task in
  * `in-progress/` (planned, never started) and, if found, drive it straight
  * through BUILD → VERIFY → REVIEW. FAIL-driven re-plans/re-builds happen
  * inline in this same session, exactly like a normal loop's iteration cap.
+ * Never silent: when nothing is claimed, the reason is always logged, and
+ * toasted when actionable (deduped until the reason changes).
  */
 const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
   const tasks = await listInProgress(deps.client, deps.directory, config.tasksDir, deps.log)
-  const task = selectNext(tasks.filter(isClaimable))
-  if (!task) return // nothing ready; try again next idle tick
-  // Atomic claim marker: only one watcher on this filesystem wins the task,
-  // even when several saw it as claimable on the same idle tick.
-  if (!(await claimTask(deps.$, task))) return
-  const ref = taskRef(task, task.path)
-  const state = resumeAtBuild(taskGoal(task), ref, extractPlan(task) ?? "")
-  await toast(deps.client, `Watch: claimed "${task.title}" — building…`, "info")
-  await drive(deps, sessionID, config, firstStep(state))
+  const candidates = selectOrder(tasks.filter(isClaimable))
+  // Atomic claim markers: only one watcher on this filesystem wins a task, even
+  // when several saw it as claimable on the same idle tick. A held marker skips
+  // to the next candidate instead of wedging the queue; an orphaned marker
+  // (stale, claimer died before BUILD started) is released and retried inline.
+  const { claimed, heldIds } = await claimFirst(deps.$, candidates, {
+    isDriving: (id) => findSessionDriving(id) !== undefined,
+    log: deps.log,
+  })
+  if (!claimed) {
+    const started = tasks.filter(isRecoverable).map((t) => t.id)
+    const reason = claimSkipReason(tasks.length, candidates.length, started, heldIds)
+    await deps.log(reason.actionable ? "warn" : "info", reason.message)
+    if (reason.actionable && lastSkipReason.get(sessionID) !== reason.message) {
+      lastSkipReason.set(sessionID, reason.message)
+      await toast(deps.client, reason.message, "warning")
+    }
+    return
+  }
+  lastSkipReason.delete(sessionID)
+  const ref = taskRef(claimed, claimed.path)
+  const state = resumeAtBuild(taskGoal(claimed), ref, extractPlan(claimed) ?? "")
+  await toast(deps.client, `Watch: claimed "${claimed.title}" — building…`, "info")
+  try {
+    await drive(deps, sessionID, config, firstStep(state))
+  } catch (err) {
+    // Died before the first "> BUILD started" note (e.g. ensureIsolation threw,
+    // before setLoop ran — onIdle's catch can't see the task): the claim is ours
+    // and the body is still claimable, so release it or watch stays wedged.
+    const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "in-progress", claimed.id)
+    if (fresh && isClaimable(fresh)) await releaseClaim(deps.$, claimed)
+    throw err
+  }
 }
 
 /** Which status folder a task id currently lives in, or null. For error messages. */
@@ -629,7 +708,8 @@ const backlogSummary = async (deps: Deps, config: Config) => {
   for (const status of STATUSES) {
     byStatus[status] = await listByStatus(deps.client, deps.directory, config.tasksDir, status, deps.log)
   }
-  return summarizeBacklog(byStatus)
+  const claimedIds = await listClaimIds(deps.$, deps.directory, config.tasksDir)
+  return summarizeBacklog(byStatus, claimedIds)
 }
 
 /** Human-readable one-liner of the backlog roll-up. Pure. */
@@ -637,9 +717,10 @@ const formatBacklog = (s: Awaited<ReturnType<typeof backlogSummary>>): string =>
   const c = s.counts
   const planning =
     c["in-planning"] > 0 ? `${c["in-planning"]} planning (${s.gated.length} awaiting approval)` : "0 planning"
+  const held = s.claimHeld.length ? `, ${s.claimHeld.length} claim-held` : ""
   const progress =
     c["in-progress"] > 0
-      ? `${c["in-progress"]} in-progress (${s.claimable.length} ready, ${s.interrupted.length} interrupted)`
+      ? `${c["in-progress"]} in-progress (${s.claimable.length} ready${held}, ${s.interrupted.length} interrupted)`
       : "0 in-progress"
   return `backlog: ${c.draft} draft · ${planning} · ${progress} · ${c["in-review"]} in-review · ${c.completed} completed · ${c.abandoned} abandoned`
 }
@@ -692,6 +773,14 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
         state.task,
         auditNote(`Loop error: ${message}`, new Date(), await gitActor(deps.$, deps.directory)),
       )
+    }
+    // A claim that died before its first "> BUILD started" note leaves the
+    // task body claimable but the marker held — release it so no watcher is
+    // wedged on it forever. (For `recover`, the body already carries BUILD
+    // notes, so `isClaimable` is false and this is a no-op.)
+    if (work?.kind === "start-task" || work?.kind === "recover") {
+      const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "in-progress", work.task.id)
+      if (fresh && isClaimable(fresh)) await releaseClaim(deps.$, work.task)
     }
     // Preserve whatever the failed run left behind and put the tree back.
     if (state) {
@@ -900,6 +989,7 @@ export const handleCommand = async (
   if (lower === "stop" || lower === "abort") {
     const wasWatching = watching.delete(sessionID)
     stopWatchTimer(sessionID)
+    lastSkipReason.delete(sessionID)
     pending.delete(sessionID)
     const state = getLoop(sessionID)
     if (state?.task) {
@@ -930,13 +1020,19 @@ export const handleCommand = async (
       setInterval(() => void watchTick(deps, sessionID, config), intervalMs),
     )
     watchIntervalsMs.set(sessionID, intervalMs)
+    lastSkipReason.delete(sessionID) // a fresh arm re-toasts whatever reason comes next
     await toast(client, `Watching for approved tasks to build (polling every ${formatInterval(intervalMs)}).`, "info")
+    // Immediate first pull — don't make the user wait for the next idle event
+    // or timer tick. watchTick self-guards: it claims only when the session is
+    // actually idle, and never throws.
+    void watchTick(deps, sessionID, config)
     return
   }
 
   if (lower === "unwatch") {
     const was = watching.delete(sessionID)
     stopWatchTimer(sessionID)
+    lastSkipReason.delete(sessionID)
     await toast(client, was ? "Stopped watching." : "Not watching.", "info")
     return
   }
@@ -1063,7 +1159,10 @@ export const handleCommand = async (
     const cadence = watchIntervalsMs.get(sessionID)
     const watchLabel = cadence ? `Watching (every ${formatInterval(cadence)})` : "Watching"
     if (!state) {
-      const head = isWatching ? `${watchLabel} — no claimable task right now.` : "No active loop."
+      // Prefer the remembered skip reason over a bare "no claimable task" —
+      // it says WHY the watcher isn't picking anything up.
+      const why = lastSkipReason.get(sessionID)
+      const head = isWatching ? `${watchLabel} — ${why ?? "no claimable task right now."}` : "No active loop."
       await toast(client, `${head}${backlogLine}`, "info")
       return
     }

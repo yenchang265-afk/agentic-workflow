@@ -21,11 +21,12 @@ export type TaskStatus = "draft" | "in-planning" | "in-progress" | "in-review" |
 
 const isMarkdown = (name: string): boolean => name.toLowerCase().endsWith(".md")
 
+/** All tasks in claim order: lowest priority number first, ties broken by id. Pure. */
+export const selectOrder = (tasks: readonly Task[]): Task[] =>
+  [...tasks].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+
 /** Pick the next task: lowest priority number, ties broken by id. Pure. */
-export const selectNext = (tasks: readonly Task[]): Task | null => {
-  const sorted = [...tasks].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
-  return sorted[0] ?? null
-}
+export const selectNext = (tasks: readonly Task[]): Task | null => selectOrder(tasks)[0] ?? null
 
 /** Marks a task as planned, awaiting approval — appended to its body by `appendPlan`. */
 export const PLAN_HEADING = "## Implementation Plan"
@@ -86,22 +87,34 @@ export interface BacklogSummary {
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
+  /** in-progress tasks whose body is claimable but whose claim marker is currently held. */
+  readonly claimHeld: readonly string[]
   /** in-progress tasks whose last build looks interrupted (crashed — /agent-loop recover). */
   readonly interrupted: readonly string[]
   /** in-review tasks awaiting a human diff review (/agent-loop ship). */
   readonly awaitingReview: readonly string[]
 }
 
-/** Roll up tasks-by-status into counts and actionable flag lists. Pure. */
-export const summarizeBacklog = (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>): BacklogSummary => {
+/**
+ * Roll up tasks-by-status into counts and actionable flag lists. `claimedIds`
+ * (ids holding a claim marker, see `listClaimIds`) splits body-claimable tasks
+ * into truly claimable vs claim-held, so status never reports a task "ready"
+ * that no watcher can actually claim. Pure.
+ */
+export const summarizeBacklog = (
+  byStatus: Readonly<Record<TaskStatus, readonly Task[]>>,
+  claimedIds: readonly string[] = [],
+): BacklogSummary => {
   const counts = Object.fromEntries(STATUSES.map((s) => [s, byStatus[s]?.length ?? 0])) as Record<TaskStatus, number>
   const ids = (tasks: readonly Task[]): string[] => tasks.map((t) => t.id)
   const inPlanning = byStatus["in-planning"] ?? []
   const inProgress = byStatus["in-progress"] ?? []
+  const held = new Set(claimedIds)
   return {
     counts,
     gated: ids(inPlanning.filter(hasPlan)),
-    claimable: ids(inProgress.filter(isClaimable)),
+    claimable: ids(inProgress.filter((t) => isClaimable(t) && !held.has(t.id))),
+    claimHeld: ids(inProgress.filter((t) => isClaimable(t) && held.has(t.id))),
     interrupted: ids(inProgress.filter(wasInterrupted)),
     awaitingReview: ids(byStatus["in-review"] ?? []),
   }
@@ -193,6 +206,118 @@ export const claimTask = async ($: Shell, task: FileRef): Promise<boolean> => {
 /** Release a task's claim marker, if present. Best-effort. */
 export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
   await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
+}
+
+/**
+ * A claim marker older than this, on a task with no BUILD note and no live
+ * loop, is treated as orphaned — its claimer died between `claimTask` and the
+ * first "BUILD started" note. Must exceed the worst-case claim→BUILD-note
+ * window, including a slow `worktreeSetup` (e.g. npm ci).
+ */
+export const STALE_CLAIM_MINUTES = 15
+
+/**
+ * Whether a `FileRef`'s claim marker exists and is older than `minutes`.
+ * `find -mmin +N` prints the path only when strictly older (GNU and BSD).
+ * Any failure — marker absent, or a `find` without `-mmin` semantics — reads
+ * as "not stale", degrading safely to "marker stays held".
+ */
+export const claimOlderThan = async ($: Shell, task: FileRef, minutes: number): Promise<boolean> => {
+  const marker = path.join(claimsDir(task.path), task.id)
+  const out = await $`find ${marker} -maxdepth 0 -mmin +${String(minutes)}`.quiet().nothrow()
+  return out.exitCode === 0 && out.stdout.toString().trim().length > 0
+}
+
+/** Ids currently holding a claim marker in a status folder's `.claims/`. `[]` when absent. */
+export const listClaimIds = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  status: TaskStatus = "in-progress",
+): Promise<string[]> => {
+  const dir = path.join(directory, tasksDir, status, ".claims")
+  const out = await $`ls -1 ${dir}`.quiet().nothrow()
+  if (out.exitCode !== 0) return []
+  return out.stdout
+    .toString()
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean)
+}
+
+/**
+ * An orphaned claim: the task body never recorded a BUILD (still claimable),
+ * no live loop is driving it, and the marker has aged past the crash window.
+ * Only such markers may be released without racing a live claimer. Pure.
+ */
+export const isOrphanedClaim = (
+  task: Task,
+  opts: { readonly drivenByLiveLoop: boolean; readonly markerStale: boolean },
+): boolean => isClaimable(task) && !opts.drivenByLiveLoop && opts.markerStale
+
+/** Result of walking the claim candidates: the winner, and the ids whose markers stayed held. */
+export interface ClaimAttempt {
+  readonly claimed: Task | null
+  readonly heldIds: readonly string[]
+}
+
+/**
+ * Try candidates (already in `selectOrder`) until one claim wins — a single
+ * held marker must not block the tasks queued behind it. A failed claim whose
+ * marker looks orphaned is released and retried ONCE; failing the retry means
+ * another instance raced us — treat as held and move on.
+ */
+export const claimFirst = async (
+  $: Shell,
+  candidates: readonly Task[],
+  opts: {
+    readonly isDriving: (id: string) => boolean
+    readonly staleMinutes?: number
+    readonly log?: Log
+  },
+): Promise<ClaimAttempt> => {
+  const heldIds: string[] = []
+  for (const task of candidates) {
+    if (await claimTask($, task)) return { claimed: task, heldIds }
+    const markerStale = await claimOlderThan($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
+    if (isOrphanedClaim(task, { drivenByLiveLoop: opts.isDriving(task.id), markerStale })) {
+      opts.log?.("warn", `releasing orphaned claim marker for ${task.id} — its claimer died before BUILD started`)
+      await releaseClaim($, task)
+      if (await claimTask($, task)) return { claimed: task, heldIds }
+    }
+    heldIds.push(task.id)
+  }
+  return { claimed: null, heldIds }
+}
+
+/**
+ * Startup sweep: release claim markers left behind by dead runs. Two shapes —
+ * a marker whose task body is still claimable (crashed between `claimTask`
+ * and the BUILD note), and a marker with no task file at all (crashed between
+ * `moveTask`'s `mv` and `rmdir`). Both only when stale and not live-driven.
+ * Returns the released ids.
+ */
+export const releaseOrphanedClaims = async (
+  $: Shell,
+  inProgress: readonly Task[],
+  claimIds: readonly string[],
+  inProgressDir: string,
+  opts: { readonly isDriving: (id: string) => boolean; readonly staleMinutes?: number },
+): Promise<string[]> => {
+  const byId = new Map(inProgress.map((t) => [t.id, t]))
+  const released: string[] = []
+  for (const id of claimIds) {
+    const task = byId.get(id)
+    const ref: FileRef = task ?? { id, path: path.join(inProgressDir, `${id}.md`) }
+    const markerStale = await claimOlderThan($, ref, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
+    const orphaned = task
+      ? isOrphanedClaim(task, { drivenByLiveLoop: opts.isDriving(id), markerStale })
+      : markerStale && !opts.isDriving(id)
+    if (!orphaned) continue
+    await releaseClaim($, ref)
+    released.push(id)
+  }
+  return released
 }
 
 /** The forward lifecycle order (excludes `abandoned`, which is a cancellation escape, not a stage). */

@@ -13,11 +13,14 @@ approved queue).
   Claims it and enters the loop directly at BUILD with the approved plan.
 - **`/agent-loop watch [interval]`** — put **this** session into execution-worker
   mode: it looks for one approved, unstarted task and builds it through
-  VERIFY → REVIEW. Two triggers: every idle tick, plus a polling timer at
-  `interval` — `30s`, `5m`, `2h`, or a bare number of minutes (default: the
-  `watchIntervalMinutes` config, 5m; floor: 10s). The timer only claims work
-  while the session is actually idle, so a task approved elsewhere gets
-  picked up even if this session generates no events.
+  VERIFY → REVIEW. It tries an immediate first pull, then keeps two triggers:
+  every idle tick, plus a polling timer at `interval` — `30s`, `5m`, `2h`, or
+  a bare number of minutes (default: the `watchIntervalMinutes` config, 5m;
+  floor: 10s). The timer only claims work while the session is actually idle,
+  so a task approved elsewhere gets picked up even if this session generates
+  no events. A tick that claims nothing always logs why (empty queue, tasks
+  already started, claim marker held); actionable reasons are toasted once. A
+  claim marker orphaned by a crashed run auto-releases after 15 minutes.
 - **`/agent-loop unwatch`** — take this session out of watch mode and stop its
   polling timer (a build already in progress still finishes).
 - **`/agent-loop recover <id>`** — resume an in-progress task whose run died
@@ -31,8 +34,9 @@ approved queue).
   (timer included), in this session.
 - **`/agent-loop status`** — print the current loop (stage, iteration, watch state
   and cadence) plus a whole-backlog roll-up: counts per folder and the
-  actionable flags (awaiting approval, claimable, interrupted, awaiting
-  review). Bare `/agent-loop` (no arguments) does the same.
+  actionable flags (awaiting approval, claimable, claim-held, interrupted,
+  awaiting review). A watching session with nothing claimed shows the reason
+  its last tick skipped. Bare `/agent-loop` (no arguments) does the same.
 
 There is no free-text goal mode and no in-loop plan gate anymore — author
 plans with `/agent-loop-plan new <idea>`, approve them with `/agent-loop-plan approve
