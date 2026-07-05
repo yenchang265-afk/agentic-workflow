@@ -7,20 +7,20 @@ details. For the shared pipeline picture see
 
 ## Execution model
 
-Execution runs either on demand (`/loop task <id>`) or in a `/loop watch
+Execution runs either on demand (`/agent-loop task <id>`) or in a `/agent-loop watch
 [interval]` worker session, which claims approved tasks on every idle tick
-plus a polling timer (default 5m, e.g. `/loop watch 30s`). Execution is
+plus a polling timer (default 5m, e.g. `/agent-loop watch 30s`). Execution is
 isolated on a `loop/<id>` git branch with a commit checkpoint per build
 iteration; VERIFY/REVIEW record their verdicts through a `loop_verdict`
 plugin tool (free-text verdicts are ignored), and every approval, verdict,
 and build run is appended to the task file as a timestamped, attributed
 audit note. Re-build loops are capped by `maxIterations` — if the cap trips,
-the plan itself is suspect and a human re-plans with `/loop-plan task <id>`.
+the plan itself is suspect and a human re-plans with `/agent-loop-plan task <id>`.
 A stage that outlives `stageTimeoutMinutes` fails the loop instead of
 hanging it. On a REVIEW PASS the task parks in `in-review/` — the loop never
 pushes or opens a PR itself; you review the branch diff, then run
-`/loop ship <id>` to move it to `completed/`. A run that dies mid-build is
-resumed with `/loop recover <id>` — loop state is snapshotted after every
+`/agent-loop ship <id>` to move it to `completed/`. A run that dies mid-build is
+resumed with `/agent-loop recover <id>` — loop state is snapshotted after every
 stage, so recovery resumes at the exact stage it reached.
 
 Both knobs above (and the optional hardening: worktrees, review lenses,
@@ -29,34 +29,34 @@ see [configuration.md](configuration.md).
 
 ## Commands
 
-Planning (`/loop-plan`):
+Planning (`/agent-loop-plan`):
 
-- `/loop-plan new <idea>` — interview you (always — at minimum a
+- `/agent-loop-plan new <idea>` — interview you (always — at minimum a
   restate-and-confirm) into a **planless draft** in `docs/tasks/draft/`
-- `/loop-plan task <id>` — plan a draft (the plugin moves it to
+- `/agent-loop-plan task <id>` — plan a draft (the plugin moves it to
   `docs/tasks/in-planning/`, audited + committed) or re-plan an
   `in-planning/` task in place (also how you re-plan one whose loop hit the
   iteration cap)
-- `/loop-plan approve <id>` — validate the plan and park the task in
+- `/agent-loop-plan approve <id>` — validate the plan and park the task in
   `docs/tasks/in-progress/` (the approved queue), audited + committed
 
-Execution (`/loop`):
+Execution (`/agent-loop`):
 
-- `/loop task <id>` — execute one approved task now, entering at BUILD
-- `/loop watch [interval]` — turn this session into an execution worker:
+- `/agent-loop task <id>` — execute one approved task now, entering at BUILD
+- `/agent-loop watch [interval]` — turn this session into an execution worker:
   claims and builds approved tasks on idle events plus a polling timer
   (`30s`, `5m`, `2h`, bare number = minutes; default `watchIntervalMinutes`)
-- `/loop unwatch` — stop this session from claiming new work (timer included)
-- `/loop recover <id>` — resume an in-progress task whose run died mid-build
+- `/agent-loop unwatch` — stop this session from claiming new work (timer included)
+- `/agent-loop recover <id>` — resume an in-progress task whose run died mid-build
   (crash, restart), from its state snapshot (or its persisted plan)
-- `/loop ship <id>` — move a reviewed `in-review/` task to `completed/`, audited
-- `/loop stop` — abort, clear state, and exit watch mode
-- `/loop status` — print the current loop (stage, iteration, watch cadence)
+- `/agent-loop ship <id>` — move a reviewed `in-review/` task to `completed/`, audited
+- `/agent-loop stop` — abort, clear state, and exit watch mode
+- `/agent-loop status` — print the current loop (stage, iteration, watch cadence)
   plus a whole-backlog roll-up (counts, awaiting-approval/claimable/
   interrupted/in-review)
 
-The old `/loop <goal>` free-text mode, `/loop next`, and `/loop go` are gone —
-planning always goes through `/loop-plan`.
+The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/agent-loop go` are gone —
+planning always goes through `/agent-loop-plan`.
 
 Outside the loop, one-off requests are handled ad hoc: see
 [AGENTS.md](../AGENTS.md) for the intent-to-skill mapping — the plugin
@@ -76,7 +76,7 @@ npm install
 
 `./install.sh opencode` symlinks the agents, commands, skills, and references
 into `~/.config/opencode/` (or `$OPENCODE_CONFIG_DIR`) and registers the
-plugin as a local plugin file, so `/loop` and the bundled skills work in
+plugin as a local plugin file, so `/agent-loop` and the bundled skills work in
 every OpenCode session. It's idempotent — re-run after `git pull` for
 updates. Use `--copy` instead of symlinks, or pass a directory to install
 somewhere other than the default OpenCode config dir. Bare `./install.sh`

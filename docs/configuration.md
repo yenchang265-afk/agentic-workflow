@@ -6,10 +6,10 @@ falling back.
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `maxIterations` | `3` | Max loop iterations before stopping on repeated VERIFY/REVIEW failures. When the cap trips, the plan is suspect — re-plan with `/loop-plan task <id>`. |
+| `maxIterations` | `3` | Max loop iterations before stopping on repeated VERIFY/REVIEW failures. When the cap trips, the plan is suspect — re-plan with `/agent-loop-plan task <id>`. |
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
-| `watchIntervalMinutes` | `5` | Default polling cadence for `/loop watch` (OpenCode only); overridable per session via `/loop watch <interval>`. |
+| `watchIntervalMinutes` | `5` | Default polling cadence for `/agent-loop watch` (OpenCode only); overridable per session via `/agent-loop watch <interval>`. |
 | `worktreesDir` | unset | See hardening below. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
@@ -22,7 +22,7 @@ The Claude Code plugin reads the same file with the same schema **minus**
 
 - **`worktreesDir`** — run each loop in its own `git worktree` instead of
   switching branches in the shared checkout. The human's tree is never
-  touched and multiple `/loop watch` sessions can build concurrently in one
+  touched and multiple `/agent-loop watch` sessions can build concurrently in one
   instance. Off by default (a fresh worktree has no installed deps — pair it
   with `worktreeSetup`, e.g. `"npm ci"`). Audit notes and task moves stay in
   the main tree and are committed there per terminal event.
