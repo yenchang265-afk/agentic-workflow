@@ -193,8 +193,42 @@ export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
   await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
 }
 
-/** Move a task file into a new status folder. Returns its new absolute path. */
+/** The forward lifecycle order (excludes `abandoned`, which is a cancellation escape, not a stage). */
+const FORWARD_ORDER: readonly TaskStatus[] = ["draft", "in-planning", "in-progress", "in-review", "completed"]
+
+/**
+ * Whether a task may move from `from` to `to`. Tasks advance exactly one
+ * stage at a time — no skipping — except that any non-terminal stage may be
+ * abandoned directly (cancellation isn't a forward skip). `completed` and
+ * `abandoned` are terminal: nothing moves out of them. Pure.
+ */
+export const canTransition = (from: TaskStatus, to: TaskStatus): boolean => {
+  if (from === "completed" || from === "abandoned") return false
+  if (to === "abandoned") return true
+  const fromIdx = FORWARD_ORDER.indexOf(from)
+  const toIdx = FORWARD_ORDER.indexOf(to)
+  return fromIdx !== -1 && toIdx === fromIdx + 1
+}
+
+/** The status folder a task file currently lives in, derived from its path. */
+export const statusOf = (task: FileRef): TaskStatus => {
+  const status = path.basename(path.dirname(task.path))
+  if (!STATUSES.includes(status as TaskStatus)) {
+    throw new Error(`${task.path} is not inside a known status folder`)
+  }
+  return status as TaskStatus
+}
+
+/**
+ * Move a task file into a new status folder. Returns its new absolute path.
+ * Enforces the lifecycle order via `canTransition` — throws rather than
+ * skipping a stage.
+ */
 export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): Promise<string> => {
+  const fromStatus = statusOf(task)
+  if (!canTransition(fromStatus, toStatus)) {
+    throw new Error(`cannot move ${task.id} from ${fromStatus} to ${toStatus} — tasks must advance one stage at a time`)
+  }
   const root = path.dirname(path.dirname(task.path)) // …/docs/tasks
   const destDir = path.join(root, toStatus)
   const dest = path.join(destDir, `${task.id}.md`)

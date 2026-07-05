@@ -464,19 +464,20 @@ server.registerTool(
   "loop_plan_approve",
   {
     description:
-      "Deterministic /agent-loop-plan approve <id>: validate the task has an ## Implementation Plan, move it to in-progress/ (the approved queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing.",
+      "Deterministic /agent-loop-plan approve <id>: validate the task has an ## Implementation Plan, move it to in-progress/ (the approved queue), append an audited note, and commit. Refuses planless tasks and tasks still in draft/ — no stage is ever skipped. The agent writes nothing.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
     await loadCfg()
-    const task =
-      (await findByIdIn(fsClient, directory, config.tasksDir, "in-planning", id)) ??
-      (await findByIdIn(fsClient, directory, config.tasksDir, "draft", id))
+    const task = await findByIdIn(fsClient, directory, config.tasksDir, "in-planning", id)
     if (!task) {
+      if (await findByIdIn(fsClient, directory, config.tasksDir, "draft", id)) {
+        return fail(`Task "${id}" is still in draft — run loop_plan_task first so no stage is skipped.`)
+      }
       const elsewhere = await findAnyStatus(id)
       return fail(
         elsewhere
-          ? `Can't approve "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only draft/in-planning tasks can be approved.`
+          ? `Can't approve "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only in-planning tasks can be approved.`
           : `Can't approve "${id}": no task found.`,
       )
     }

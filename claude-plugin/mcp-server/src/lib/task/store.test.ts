@@ -3,12 +3,15 @@ import { test } from "node:test"
 import type { Task } from "./schema.js"
 import {
   auditNote,
+  canTransition,
   extractPlan,
   hasPlan,
   isClaimable,
   isRecoverable,
+  moveTask,
   PLAN_HEADING,
   selectNext,
+  statusOf,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
@@ -182,4 +185,104 @@ test("summarizeBacklog splits in-planning gated vs unplanned and flags in-progre
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])
   assert.deepEqual(s.awaitingReview, ["shipme"])
+})
+
+/**
+ * The sequential lifecycle guard — mirrors src/task/store.test.ts in the
+ * OpenCode plugin; the two state machines must stay behaviorally identical.
+ * moveTask shells out via `$`, faked below (as in ../loop/git.test.ts).
+ */
+type FakeResult = { exitCode?: number; stdout?: string; stderr?: string }
+
+const makeShell = (handler: (cmd: string) => FakeResult, log?: string[]) => {
+  const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
+    let cmd = ""
+    strings.forEach((s, i) => {
+      cmd += s
+      if (i < exprs.length) {
+        const e = exprs[i]
+        cmd += Array.isArray(e) ? e.join(" ") : String(e)
+      }
+    })
+    cmd = cmd.trim().replace(/\s+/g, " ")
+    log?.push(cmd)
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
+        const r = handler(cmd)
+        return Promise.resolve({
+          exitCode: r.exitCode ?? 0,
+          stdout: { toString: () => r.stdout ?? "" },
+          stderr: { toString: () => r.stderr ?? "" },
+        }).then(resolve, reject)
+      },
+    }
+    return chain
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
+}
+
+test("canTransition allows each adjacent forward hop", () => {
+  assert.equal(canTransition("draft", "in-planning"), true)
+  assert.equal(canTransition("in-planning", "in-progress"), true)
+  assert.equal(canTransition("in-progress", "in-review"), true)
+  assert.equal(canTransition("in-review", "completed"), true)
+})
+
+test("canTransition rejects any forward skip", () => {
+  assert.equal(canTransition("draft", "in-progress"), false)
+  assert.equal(canTransition("draft", "in-review"), false)
+  assert.equal(canTransition("draft", "completed"), false)
+  assert.equal(canTransition("in-planning", "in-review"), false)
+  assert.equal(canTransition("in-planning", "completed"), false)
+  assert.equal(canTransition("in-progress", "completed"), false)
+})
+
+test("canTransition rejects backward moves", () => {
+  assert.equal(canTransition("in-progress", "draft"), false)
+  assert.equal(canTransition("in-review", "in-planning"), false)
+  assert.equal(canTransition("completed", "in-review"), false)
+})
+
+test("canTransition allows abandoning any active stage", () => {
+  assert.equal(canTransition("draft", "abandoned"), true)
+  assert.equal(canTransition("in-planning", "abandoned"), true)
+  assert.equal(canTransition("in-progress", "abandoned"), true)
+  assert.equal(canTransition("in-review", "abandoned"), true)
+})
+
+test("canTransition treats completed and abandoned as terminal", () => {
+  assert.equal(canTransition("completed", "abandoned"), false)
+  assert.equal(canTransition("abandoned", "in-progress"), false)
+  assert.equal(canTransition("abandoned", "abandoned"), false)
+})
+
+test("statusOf derives the status from the task's containing folder", () => {
+  assert.equal(statusOf({ id: "a", path: "/r/docs/tasks/draft/a.md" }), "draft")
+  assert.equal(statusOf({ id: "a", path: "/r/docs/tasks/in-review/a.md" }), "in-review")
+})
+
+test("statusOf throws for a path outside a known status folder", () => {
+  assert.throws(() => statusOf({ id: "a", path: "/r/docs/tasks/wherever/a.md" }))
+})
+
+test("moveTask succeeds on a valid adjacent hop and records the mv", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  const dest = await moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "in-planning")
+  assert.equal(dest, "/r/docs/tasks/in-planning/a.md")
+  assert.ok(log.some((cmd) => cmd.startsWith("mv ")))
+})
+
+test("moveTask throws on a stage-skip attempt without touching the shell", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await assert.rejects(
+    () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "in-progress"),
+    /cannot move a from draft to in-progress/,
+  )
+  assert.deepEqual(log, [])
 })
