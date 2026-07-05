@@ -89,8 +89,6 @@ const taskRef = (t: Task, p: string): TaskRef => ({
   id: t.id,
   path: p,
   acceptance: t.acceptance,
-  ...(t.azureId !== undefined ? { azureId: t.azureId } : {}),
-  ...(t.azureUrl !== undefined ? { azureUrl: t.azureUrl } : {}),
 })
 const stageMarkerPath = () => path.join(directory, config.tasksDir, "runs", ".stage.json")
 

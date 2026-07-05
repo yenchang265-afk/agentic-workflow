@@ -1,6 +1,6 @@
 ---
 name: task-backlog-management
-description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running /agent-loop-plan or /agent-loop task <id>, when linking a task to an Azure DevOps work item, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
+description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running /agent-loop-plan or /agent-loop task <id>, or when you need the task file schema and the folder-as-status lifecycle (draft/in-planning/in-progress/in-review/completed/abandoned).
 ---
 
 # The task backlog
@@ -44,10 +44,6 @@ priority: 2                             # optional; lower runs first (default 0)
 acceptance:                             # optional; testable criteria → verify
   - Returns 429 over the limit
   - Limit is configurable per route
-azureId: '1234'                         # optional; linked Azure DevOps work item id
-azureProject: Platform                  # optional; the ADO project it lives in
-azureRepo: platform-api                 # optional; the ADO repo it was created under
-azureUrl: https://dev.azure.com/acme/Platform/_workitems/edit/1234  # optional
 ---
 Throttle authenticated callers to 100 req/min. The body is the description /
 context; it becomes the loop's goal, with `acceptance` threaded into the build
@@ -64,20 +60,16 @@ heading) is what makes the task approvable and, once approved, claimable.
 - **acceptance** is optional but strongly recommended — it is what VERIFY checks.
   "What tests are needed" folds in here as concrete bullets rather than a
   separate field.
-- **azureId/azureProject/azureRepo/azureUrl** are independently optional — a
-  task can carry none, just an id, or the full set. When `azureId` is set,
-  `/agent-loop` threads a `Linked Azure DevOps work item: #<id> — <url>` line into
-  every stage's context (see "Linking a task to Azure DevOps" below).
 - **`## Implementation Plan`** — the literal heading the plugin greps for.
   Without it, `/agent-loop-plan approve` refuses and the loop can never claim the task.
 
 ## Process
 
-1. **Draft** — `/agent-loop-plan new <idea>`: the `loop-plan-author` subagent
-   **always interviews you** (a single restate-and-confirm when the idea is
-   already sharp, a full interview when it's vague) to pin down the goal and
-   testable acceptance criteria, asks about Azure DevOps linkage (see below),
-   confirms the draft with you, and writes a **planless draft** to `draft/`.
+1. **Draft** — `/agent-loop-plan new <idea>`: the calling agent **always
+   interviews you** (a single restate-and-confirm when the idea is already
+   sharp, a full interview when it's vague) to pin down the goal and
+   testable acceptance criteria, confirms the draft with you, and hands it
+   to the `loop-plan-author` subagent to write a **planless draft** to `draft/`.
    - Stubs also land in `draft/` from `/explore` (up to 5 per run, deduped
      against what's already there), and you can write one by hand.
 2. **Plan** — `/agent-loop-plan task <id>`: the plugin first moves the file
@@ -92,52 +84,6 @@ heading) is what makes the task approvable and, once approved, claimable.
    code is written.
 4. **Execute** — `/agent-loop task <id>` (one task, now) or `/agent-loop watch [interval]`
    (standing worker). See `loop-orchestration`.
-
-### Linking a task to Azure DevOps
-
-Any agent authoring a task (`loop-plan-author` via `/agent-loop-plan new`, or you
-writing one by hand) should follow this exact script when the work traces to
-Azure DevOps. This is the *only* place this protocol is written down — don't
-duplicate it into an agent's own prompt; have the agent invoke this skill
-instead.
-
-1. **Ask** whether an Azure DevOps work item already exists for this task.
-
-2. **If yes** — ask for **both** the **project name** and the **work item
-   id** (not just the id). Use the connected Azure DevOps MCP server's
-   `work-items` tools to fetch it. Draft the local task from what was
-   fetched — map the work item's title, description (→ body), and any
-   acceptance-criteria-shaped fields into `acceptance` — and **show that
-   draft to the user, asking whether it looks like a good fit** before
-   writing anything. Revise on feedback; only once confirmed, write the file
-   with `azureId`/`azureProject`/`azureUrl` set from what was fetched.
-
-3. **If no** — ask the user for the task's details: title, description, and
-   acceptance criteria (fold "what tests are needed" in as concrete
-   acceptance bullets — no separate field for it). Then ask which
-   **project** and **repo** the new work item should be created under, and
-   confirm the full set of details back to the user before creating
-   anything — never create a work item silently. Once confirmed, create it
-   via the MCP server's work-item tools, capture the returned id/url, and
-   set `azureId`/`azureProject`/`azureRepo`/`azureUrl`. Show the resulting
-   local task draft for the same "does this look right?" confirmation as
-   step 2 before writing it.
-
-4. **Either branch** — if the Azure DevOps MCP server isn't connected or
-   configured, skip linking gracefully: write the local task file without
-   the `azure*` fields and say so in your output. A missing MCP server is
-   not a reason to block local task creation; a human can add the linkage by
-   hand later.
-
-Two confirmation checkpoints, always: one before creating anything on Azure
-DevOps (step 3), one before writing the local file (steps 2 and 3 both end
-here). Neither is optional, and neither can be skipped because "the details
-seem obvious."
-
-Linking is metadata, not scope — it does not change what the loop builds or
-verifies. It only threads a `Linked Azure DevOps work item: #<id>` line into
-every stage's context (see `loop-orchestration`) so the eventual PR
-description can reference the source work item.
 
 ## Lifecycle — who moves what
 
@@ -192,9 +138,6 @@ What's on the task file tells you what happened:
   `in-planning → in-progress` is `/agent-loop-plan approve`'s move; `in-progress →
   in-review` is the driver recording a review PASS. Neither is a second layer
   of file-moving bureaucracy — each records a decision that already happened.
-- Azure DevOps linking depends on the `microsoft/azure-devops-mcp` server
-  being connected in your OpenCode setup. It's optional — task creation
-  never blocks on it (see "Linking a task to Azure DevOps" above).
 
 ## Common Rationalizations
 
@@ -203,8 +146,6 @@ What's on the task file tells you what happened:
 | "I'll add a status: field, it's clearer" | The whole point is that the folder *is* the status — a separate field can drift from the folder and lie about the task's real state. |
 | "This task failed once, just delete the note and retry silently" | The note is the audit trail for why a human needs to look before retrying (especially an unmatched BUILD-started marker, which can mean a half-finished diff). Deleting it hides that signal from the next person. |
 | "Just mv the file to in-progress/, approve is bureaucracy" | A raw `mv` skips the plan validation, the audit note, and the commit that records who approved what. The command is one line and is the gate. |
-| "The MCP server's connected, just create the Azure work item without asking" | Creating a work item is a write to a real, shared Azure DevOps project — always confirm title/project/description first, same as every other external-write gate in this repo (plan approval). |
-| "The fetched Azure work item is obviously right, skip showing the draft" | The draft-then-confirm checkpoint exists precisely because ADO fields don't map 1:1 onto acceptance criteria — a human needs to see what got inferred before it becomes the loop's goal. |
 | "Add another status for 'approved, waiting for a watcher'" | That moment is already visible: an in-progress task with a plan and no build markers is exactly `isClaimable`. It doesn't need its own folder. |
 
 ## Red Flags
@@ -227,12 +168,8 @@ What's on the task file tells you what happened:
   by a raw `mv` instead of `/agent-loop-plan approve <id>`.
 - A task in `in-planning/` with no "Planning started" audit note — it was
   moved by a raw `mv` instead of `/agent-loop-plan task <id>`.
-- An Azure DevOps work item created without the user confirming title,
-  project, and description first.
 - A local task file written without ever showing its draft to the user for
   a "does this look right?" confirmation.
-- A task file with `azureProject`/`azureRepo`/`azureUrl` set but no
-  `azureId` — the id is the anchor; the others are only meaningful alongside it.
 
 ## Verification
 
@@ -244,9 +181,5 @@ What's on the task file tells you what happened:
 - [ ] `docs/tasks/{draft,in-planning,in-progress,in-review,completed,abandoned}/`
       all exist (even if empty, via `.gitkeep`) so `/explore`, `/agent-loop-plan`, and
       the driver never fail on a missing folder.
-- [ ] Every task with `azureId` set was linked (or created) only after the
-      user confirmed the details — never silently.
-- [ ] Every locally-drafted task, whether Azure-linked or not, was shown to
-      the user for confirmation before being written to disk.
-- [ ] A task authored with no Azure DevOps MCP server connected still got
-      written successfully, just without `azure*` fields.
+- [ ] Every locally-drafted task was shown to the user for confirmation
+      before being written to disk.

@@ -30,8 +30,6 @@ const TaskRefSchema = z.object({
   id: z.string(),
   path: z.string(),
   acceptance: z.array(z.string()),
-  azureId: z.string().optional(),
-  azureUrl: z.string().optional(),
 })
 
 const LoopStateSchema = z.object({

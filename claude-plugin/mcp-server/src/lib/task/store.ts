@@ -282,9 +282,9 @@ export interface WriteLocation {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating (and optionally Azure DevOps-linking) a task today,
- * use `/agent-loop-plan new <idea>` — the interview runs in the main agent, then the
- * `loop-plan-author` subagent writes the draft; see the
+ * command. For creating a task today, use `/agent-loop-plan new <idea>` — the
+ * interview runs in the main agent, then the `loop-plan-author` subagent
+ * writes the draft; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
  * writes it. Returns the new task's id and absolute path.

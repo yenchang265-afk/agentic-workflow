@@ -181,32 +181,6 @@ test("composeArgs omits the acceptance block when there is no task", () => {
   assert.doesNotMatch(composeArgs(mk("g"), "verify"), /Acceptance criteria/)
 })
 
-test("composeArgs threads the linked Azure DevOps work item into every stage", () => {
-  const t: TaskRef = {
-    id: "t",
-    path: "/p",
-    acceptance: [],
-    azureId: "1234",
-    azureUrl: "https://dev.azure.com/acme/Platform/_workitems/edit/1234",
-  }
-  const s = mk("g", t)
-  for (const stage of ["build", "verify", "review"] as const) {
-    const args = composeArgs(s, stage)
-    assert.match(args, /Linked Azure DevOps work item: #1234 — https:\/\/dev\.azure\.com/)
-  }
-})
-
-test("composeArgs omits the URL suffix when only azureId is set", () => {
-  const t: TaskRef = { id: "t", path: "/p", acceptance: [], azureId: "1234" }
-  const args = composeArgs(mk("g", t), "build")
-  assert.match(args, /Linked Azure DevOps work item: #1234$/m)
-})
-
-test("composeArgs omits the Azure line entirely when the task has no azureId", () => {
-  const t: TaskRef = { id: "t", path: "/p", acceptance: [] }
-  assert.doesNotMatch(composeArgs(mk("g", t), "build"), /Azure DevOps/)
-})
-
 // --- git isolation (branch-per-task) ---
 
 test("composeArgs threads the diff boundary into review when a git ref is set", () => {
