@@ -20,6 +20,15 @@ planning (the /agent-loop-plan command, interactive, BEFORE the loop):
   /agent-loop-plan task <id>  ──▶ loop_plan_task moves draft ▶ in-planning/ + plan written in place
   /agent-loop-plan approve <id> ─▶ loop_plan_approve validates + parks in in-progress/  ← the human gate
 
+  After `new`, each gate can also be taken conversationally in the same
+  session: the main agent offers "continue to planning?" (yes →
+  loop_plan_task + the plan written in place), then "approve and build
+  now?" (yes → loop_plan_approve + loop_start, flowing straight into this
+  skill's drive protocol). Every gate still requires its own explicit human
+  yes — one yes covers one gate only — and the manual subcommands remain
+  the fallback and re-entry points. The server enforces the sequential
+  moves either way: draft → in-planning → in-progress, never skipping.
+
 execution (/agent-loop task <id> or /agent-loop claim — this skill):
   loop_start/loop_claim ─▶ loop_stage(build) ─▶ spawn loop-build ─▶ loop_advance
         ─▶ loop_stage(verify) ─▶ spawn loop-verify ─▶ loop_advance

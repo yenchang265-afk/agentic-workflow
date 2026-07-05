@@ -43,6 +43,13 @@ planning (the /agent-loop-plan command, interactive):
   /agent-loop-plan task <id>  ──▶ moves draft to in-planning/ + writes ## Implementation Plan
   /agent-loop-plan approve <id> ─▶ validated + parked in in-progress/   ← the human gate
 
+  After `new`, each gate can also be taken conversationally in the same
+  session: the agent offers "continue to planning?" (yes → the
+  `loop_plan_task` tool + the plan written in place), then "approve and
+  build now?" (yes → `loop_plan_approve` + `loop_start`). Every gate still
+  requires its own explicit human yes; the manual subcommands remain the
+  fallback and re-entry points.
+
 execution (the /agent-loop command, unattended):
   /agent-loop task <id>  — claim one approved task now
   /agent-loop watch [interval] — claim them as they appear (idle events + polling timer)
@@ -71,7 +78,11 @@ execution (the /agent-loop command, unattended):
    a task whose loop hit the iteration cap).
 2. `/agent-loop-plan approve <id>` — the plugin validates the plan exists, moves
    the file to `in-progress/`, appends an audited note, and commits. This is
-   the human sign-off before any code is written.
+   the human sign-off before any code is written. Both this gate and the
+   draft→planning one can be taken in-chat right after `new`: the agent
+   offers each continuation and, on an explicit yes, calls the
+   `loop_plan_task` / `loop_plan_approve` / `loop_start` tools — the same
+   audited, sequential transitions as the manual subcommands.
 3. Execute: `/agent-loop task <id>` claims that task now, in this session; or
    `/agent-loop watch [interval]` turns this session into a standing execution
    worker that claims approved tasks as they appear — on every idle tick,
@@ -246,6 +257,7 @@ T1). Costs ~N× review time. Off by default (single review).
 | "The verify keeps failing, the loop should re-plan itself" | Rejected on purpose — planning needs a human in the loop. The iteration cap stops execution, and `/agent-loop-plan task <id>` re-plans with you watching. |
 | "Any idle session should just pick up ready work" | Rejected on purpose — an ordinary chat session must never spontaneously start writing code because it went idle. `/agent-loop watch` is explicit opt-in, per session. |
 | "Poll every second so pickup is instant" | The interval floor is 10s and the default 5m for a reason — each tick costs a status query and a folder scan, and the idle-event path already gives instant pickup in the common case. |
+| "The user said yes to planning, so approval is implied — skip the second gate" | Each gate needs its own explicit yes. A yes to "continue to planning" authorizes exactly one transition (draft → in-planning); approving the plan and starting the build are separate human decisions. |
 
 ## Red Flags
 
@@ -284,3 +296,6 @@ T1). Costs ~N× review time. Off by default (single review).
       (or `/agent-loop task <id>`) in it first.
 - [ ] `/agent-loop unwatch` and `/agent-loop stop` stop the polling timer — no further
       tick fires after either.
+- [ ] A chained same-session run (yes at both conversational gates) still
+      produced the per-transition audit notes and commits, and the task
+      passed through `in-planning/` — never draft → in-progress directly.

@@ -78,12 +78,19 @@ heading) is what makes the task approvable and, once approved, claimable.
    place. Drafting and planning are two steps by design — you review the
    draft before plan effort is spent.
 3. **Approve** — `/agent-loop-plan approve <id>`: deterministic plugin code checks
-   the `## Implementation Plan` heading exists, moves the file (from
-   `in-planning/` or `draft/`) to `in-progress/`, appends an audited
-   "Plan approved" note, and commits. This is the human sign-off before any
-   code is written.
+   the `## Implementation Plan` heading exists, moves the file from
+   `in-planning/` to `in-progress/`, appends an audited "Plan approved"
+   note, and commits. This is the human sign-off before any code is
+   written. A task still in `draft/` is never approved directly — it must
+   go through `task <id>` first, so no stage is skipped.
 4. **Execute** — `/agent-loop task <id>` (one task, now) or `/agent-loop watch [interval]`
    (standing worker). See `loop-orchestration`.
+
+Steps 2–4 can also chain conversationally right after step 1: the agent
+offers "continue to planning?" and then "approve and start the build?",
+advancing on each explicit yes via the same audited plugin transitions
+(`loop_plan_task`, `loop_plan_approve`, `loop_start`). Declining at any
+gate leaves the file where it is; the commands above resume from there.
 
 ## Lifecycle — who moves what
 
@@ -91,7 +98,7 @@ heading) is what makes the task approvable and, once approved, claimable.
 |------------|-----|------|
 | into `draft/` | `/agent-loop-plan new`, you, or `/explore` | an interviewed (or filed) planless stub |
 | `draft → in-planning` | **`/agent-loop-plan task <id>`** | the plugin moves it (audited note + commit) the moment planning starts; the plan is then written in place |
-| `in-planning (or draft) → in-progress` | **`/agent-loop-plan approve <id>`** | the human plan-approval gate; audited note + commit |
+| `in-planning → in-progress` | **`/agent-loop-plan approve <id>`** | the human plan-approval gate; audited note + commit (only from `in-planning/` — a draft must be planned first) |
 | `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS — parks it as the human diff gate |
 | `in-review → completed` | **you** | you've reviewed the diff and shipped it — run `/agent-loop ship <id>` (an audited move + commit) or move the file by hand; the loop never does this move on its own |
 | stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
