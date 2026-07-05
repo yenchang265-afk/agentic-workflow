@@ -157,6 +157,7 @@ const testConfig: Config = {
   stageTimeoutMinutes: 10,
   watchIntervalMinutes: 5,
   reviewLenses: [],
+  loops: {},
 }
 
 /** Mirrors the fake shell in `../task/store.test.ts` / `git.test.ts` — always succeeds, records commands. */

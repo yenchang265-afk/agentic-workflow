@@ -18,7 +18,15 @@ export declare const ConfigSchema: z.ZodObject<{
     worktreesDir: z.ZodOptional<z.ZodString>;
     worktreeSetup: z.ZodOptional<z.ZodString>;
     reviewLenses: z.ZodDefault<z.ZodArray<z.ZodString>>;
+    loops: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodObject<{
+        enabled: z.ZodDefault<z.ZodBoolean>;
+    }, z.core.$loose>>>;
 }, z.core.$strip>;
+/**
+ * The loop kinds this config activates, in claim-priority order: engineering
+ * first (unless disabled), then any opted-in kinds in config order. Pure.
+ */
+export declare const enabledLoopKinds: (config: Config) => string[];
 export declare const DEFAULT_CONFIG: Config;
 /** A zod schema whose parse produces some host's config shape. */
 type ConfigSchemaLike<T> = {

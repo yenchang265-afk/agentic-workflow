@@ -16,7 +16,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test src/loop/*.test.ts src/task/*.test.ts src/manifest/*.test.ts src/*.test.ts"
+    "test": "node --import tsx --test src/loop/*.test.ts src/task/*.test.ts src/manifest/*.test.ts src/source/*.test.ts src/scheduler/*.test.ts src/*.test.ts"
   },
   "dependencies": {
     "yaml": "^2.9.0",

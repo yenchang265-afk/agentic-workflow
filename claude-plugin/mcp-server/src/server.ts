@@ -15,8 +15,13 @@ import {
   type TaskRef,
 } from "@agentic-loop/core/loop/state"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
+import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
 import { loadManifest } from "@agentic-loop/core/manifest/load"
-import { stageDef } from "@agentic-loop/core/manifest/schema"
+import { stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
+import { pollOnce } from "@agentic-loop/core/scheduler/scheduler"
+import { makeBacklogSource } from "@agentic-loop/core/source/backlog"
+import type { WorkSource } from "@agentic-loop/core/source/types"
+import { enabledLoopKinds } from "@agentic-loop/core/config"
 import { fileURLToPath } from "node:url"
 import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
@@ -35,11 +40,8 @@ import {
   isClaimable,
   isRecoverable,
   listByStatus,
-  listInProgress,
-  listQueued,
   moveTask,
   releaseClaim,
-  selectNext,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
@@ -73,8 +75,19 @@ const directory = process.env.AGENTIC_LOOP_DIR ?? process.cwd()
 /** The loop-kind manifests shipped with this repo (loops/<kind>/) — resolved
  *  relative to this module so the server works from any cwd. */
 const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..", "loops")
-/** The engineering loop kind — the only kind this server drives until the multi-kind scheduler lands. */
 const eng = loadManifest(LOOPS_DIR, "engineering")
+registerEngineeringHooks()
+
+/** Loaded manifests by kind — engineering eagerly, other enabled kinds on first poll. */
+const manifests = new Map<string, LoadedManifest>([["engineering", eng]])
+const manifestFor = (kind: string): LoadedManifest => {
+  let loaded = manifests.get(kind)
+  if (!loaded) {
+    loaded = loadManifest(LOOPS_DIR, kind)
+    manifests.set(kind, loaded)
+  }
+  return loaded
+}
 const log = (level: "info" | "warn" | "error", message: string) =>
   fsClient.app.log({ body: { service: "agentic-loop", level, message } })
 
@@ -155,6 +168,26 @@ const findAnyStatus = async (id: string): Promise<Task | null> => {
   }
   return null
 }
+
+/** The work sources loop_claim polls, in claim-priority order (config order). */
+const sourcesFor = (): WorkSource[] =>
+  enabledLoopKinds(config).flatMap((kind): WorkSource[] => {
+    const loaded = manifestFor(kind)
+    // The github-pr source lands with the PR sitter kind.
+    if (loaded.manifest.workSource.type !== "backlog") return []
+    return [
+      makeBacklogSource({
+        $: sh,
+        client: fsClient,
+        directory,
+        tasksDir: config.tasksDir,
+        log,
+        loaded,
+        // Single active loop per server; a claim only happens when no loop is live.
+        isDriving: (id) => active?.task?.id === id,
+      }),
+    ]
+  })
 
 /** Claim an approved in-progress task and construct its build-entry state.
  *  Shared by loop_start and loop_claim. */
@@ -253,18 +286,25 @@ server.registerTool(
   async () => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    const tasks = (await listInProgress(fsClient, directory, config.tasksDir, log)).filter(isClaimable)
-    const t = selectNext(tasks)
-    if (t) {
-      const started = await startTask(t)
-      if ("error" in started) return fail(started.error)
-      return ok(firePayload(started.state, t.id))
+    const { claim, skips } = await pollOnce(sourcesFor())
+    if (!claim) return ok(skips.length ? { claimed: null, skips } : null)
+    let state = claim.item.state
+    samples = []
+    pending = null
+    const loaded = manifestFor(claim.item.loopKind)
+    if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
+      try {
+        state = await ensureIsolation(sh, log, directory, config, state)
+      } catch (err) {
+        await claim.source.release(claim.item)
+        return fail((err as Error).message)
+      }
+      active = state
+      await snapshot()
+    } else {
+      active = state
     }
-    const queued = selectNext(await listQueued(fsClient, directory, config.tasksDir, log))
-    if (!queued) return ok(null)
-    const started = await startPlan(queued)
-    if ("error" in started) return fail(started.error)
-    return ok(firePayload(started.state, queued.id))
+    return ok(firePayload(state, claim.item.id))
   },
 )
 

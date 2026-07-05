@@ -36,7 +36,28 @@ export const ConfigSchema = z.object({
    * a single review (today's behavior). See docs/design/improvements/04.
    */
   reviewLenses: z.array(z.string().min(1)).max(5).default([]),
+  /**
+   * Per-loop-kind sections keyed by kind (a `loops/<kind>/` manifest).
+   * Engineering runs unless explicitly disabled; every other kind is opt-in
+   * (`enabled: true`). Kind-specific knobs ride along and are validated by
+   * the kind itself. See docs/configuration.md.
+   */
+  loops: z.record(z.string(), z.looseObject({ enabled: z.boolean().default(true) })).default({}),
 })
+
+/**
+ * The loop kinds this config activates, in claim-priority order: engineering
+ * first (unless disabled), then any opted-in kinds in config order. Pure.
+ */
+export const enabledLoopKinds = (config: Config): string[] => {
+  const sections = config.loops
+  const kinds: string[] = []
+  if (sections["engineering"]?.enabled !== false) kinds.push("engineering")
+  for (const [kind, section] of Object.entries(sections)) {
+    if (kind !== "engineering" && section.enabled === true) kinds.push(kind)
+  }
+  return kinds
+}
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})
 

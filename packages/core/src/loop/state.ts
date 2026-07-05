@@ -80,6 +80,13 @@ export type Action =
   | { readonly kind: "stop"; readonly message: string }
   | { readonly kind: "noop" }
 
+/** Per-loop-kind settings under the config's `loops.<kind>` section. */
+export interface LoopKindConfig {
+  readonly enabled: boolean
+  /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
+  readonly [key: string]: unknown
+}
+
 export interface Config {
   readonly maxIterations: number
   /** Repo-relative root of the task backlog (folders are statuses). */
@@ -92,6 +99,8 @@ export interface Config {
   readonly worktreeSetup?: string
   /** Extra REVIEW lenses; each runs one more focused review pass. */
   readonly reviewLenses: readonly string[]
+  /** Per-loop-kind sections; engineering is on unless explicitly disabled, other kinds are opt-in. */
+  readonly loops: Readonly<Record<string, LoopKindConfig>>
 }
 
 /** Construct a LoopState entering execution at build, for a claimed

@@ -1,4 +1,5 @@
 import type { LoopState } from "../loop/state.js";
+import type { Task } from "../task/schema.js";
 import type { TemplateContext } from "./template.js";
 /**
  * The TS escape hatch for logic a manifest can't express. Hooks are plain
@@ -16,9 +17,14 @@ export type ComposeHook = (ctx: TemplateContext, state: LoopState) => TemplateCo
  * run these (they need IO); the engine itself stays pure.
  */
 export type ValidateHook = (state: LoopState) => Promise<string | null> | string | null;
+/** Whether a backlog task is claimable for a manifest pool (`pools[].claimPredicate`). */
+export type ClaimPredicate = (task: Task) => boolean;
 export declare const registerComposeHook: (ref: string, hook: ComposeHook) => void;
 export declare const registerValidateHook: (ref: string, hook: ValidateHook) => void;
 /** Resolve a compose hook by ref; throws on a dangling manifest reference. */
 export declare const resolveComposeHook: (ref: string) => ComposeHook;
 /** Resolve a validate hook by ref, or null when the manifest names none. */
 export declare const resolveValidateHook: (ref: string | undefined) => ValidateHook | null;
+export declare const registerClaimPredicate: (ref: string, predicate: ClaimPredicate) => void;
+/** Resolve a claim predicate by ref; throws on a dangling manifest reference. */
+export declare const resolveClaimPredicate: (ref: string) => ClaimPredicate;

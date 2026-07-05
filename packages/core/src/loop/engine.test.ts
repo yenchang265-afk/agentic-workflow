@@ -25,6 +25,7 @@ const config: Config = {
   tasksDir: "docs/tasks",
   stageTimeoutMinutes: 60,
   reviewLenses: [],
+  loops: {},
 }
 
 // --- the frozen oracle (verbatim from the pre-manifest state.ts) ---

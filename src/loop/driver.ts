@@ -3,8 +3,12 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { type Task } from "@agentic-loop/core/task/schema"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
+import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
 import { loadManifest } from "@agentic-loop/core/manifest/load"
-import { stageDef } from "@agentic-loop/core/manifest/schema"
+import { stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
+import { combineSkips, pollOnce } from "@agentic-loop/core/scheduler/scheduler"
+import { makeBacklogSource } from "@agentic-loop/core/source/backlog"
+import type { WorkSource } from "@agentic-loop/core/source/types"
 import {
   ensureIsolation as coreEnsureIsolation,
   loopId,
@@ -59,6 +63,7 @@ import {
   type VerdictRecord,
   worstOf,
 } from "@agentic-loop/core/loop/verdict"
+import { enabledLoopKinds } from "@agentic-loop/core/config"
 import type { Config } from "../config.ts"
 import type { Action, LoopState, Stage, TaskRef } from "@agentic-loop/core/loop/state"
 import {
@@ -121,8 +126,38 @@ import {
 
 /** The loop-kind manifests shipped with this repo (loops/<kind>/). */
 const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "loops")
-/** The engineering loop kind — the only kind this driver runs until the multi-kind scheduler lands. */
 const eng = loadManifest(LOOPS_DIR, "engineering")
+registerEngineeringHooks()
+
+/** Loaded manifests by kind — engineering eagerly, other enabled kinds on first poll. */
+const manifests = new Map<string, LoadedManifest>([["engineering", eng]])
+const manifestFor = (kind: string): LoadedManifest => {
+  let loaded = manifests.get(kind)
+  if (!loaded) {
+    loaded = loadManifest(LOOPS_DIR, kind)
+    manifests.set(kind, loaded)
+  }
+  return loaded
+}
+
+/** The work sources the scheduler polls, in claim-priority order (config order). */
+const sourcesFor = (deps: Deps, config: Config): WorkSource[] =>
+  enabledLoopKinds(config).flatMap((kind): WorkSource[] => {
+    const loaded = manifestFor(kind)
+    // The github-pr source lands with the PR sitter kind.
+    if (loaded.manifest.workSource.type !== "backlog") return []
+    return [
+      makeBacklogSource({
+        $: deps.$,
+        client: deps.client,
+        directory: deps.directory,
+        tasksDir: config.tasksDir,
+        log: deps.log,
+        loaded,
+        isDriving: (id) => findSessionDriving(id) !== undefined,
+      }),
+    ]
+  })
 
 type Client = PluginInput["client"]
 type Shell = PluginInput["$"]
@@ -565,50 +600,8 @@ const drive = async (
   }
 }
 
-/** Why a watch tick claimed nothing — the message, and whether a human can act on it. */
-export interface ClaimSkipReason {
-  readonly message: string
-  readonly actionable: boolean
-}
-
-/**
- * Compute why a watch tick claimed nothing, from what the claim walk saw
- * across both pools (`in-progress/` build work, then `queued/` plan work).
- * Held markers win (they block otherwise-ready work); then empty backlog;
- * then started-but-unclaimed (recover); then the no-plan fallback. Pure.
- */
-export const claimSkipReason = (
-  inProgressCount: number,
-  claimableCount: number,
-  queuedCount: number,
-  startedIds: readonly string[],
-  heldIds: readonly string[],
-): ClaimSkipReason => {
-  if (heldIds.length) {
-    return {
-      message:
-        `watch: claim marker held for ${heldIds.join(", ")} — another watcher may be working it; ` +
-        `a stale marker auto-releases after ${STALE_CLAIM_MINUTES}m`,
-      actionable: true,
-    }
-  }
-  if (inProgressCount === 0 && queuedCount === 0) {
-    return { message: "watch: nothing to claim — queued/ and in-progress/ are both empty", actionable: false }
-  }
-  if (claimableCount === 0 && startedIds.length) {
-    return {
-      message:
-        `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
-        `${startedIds.join(", ")} (run /agent-loop recover <id>)`,
-      actionable: true,
-    }
-  }
-  return {
-    message:
-      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agent-loop-task replan <id>)",
-    actionable: true,
-  }
-}
+export { claimSkipReason } from "@agentic-loop/core/source/backlog"
+export type { ClaimSkipReason } from "@agentic-loop/core/source/types"
 
 /**
  * A `/agent-loop watch` session's own idle check, over two pools in order:
@@ -623,49 +616,10 @@ export const claimSkipReason = (
  * reason changes).
  */
 const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
-  const tasks = await listInProgress(deps.client, deps.directory, config.tasksDir, deps.log)
-  const candidates = selectOrder(tasks.filter(isClaimable))
-  // Atomic claim markers: only one watcher on this filesystem wins a task, even
-  // when several saw it as claimable on the same idle tick. A held marker skips
-  // to the next candidate instead of wedging the queue; an orphaned marker
-  // (stale, claimer died before BUILD started) is released and retried inline.
-  const { claimed, heldIds } = await claimFirst(deps.$, candidates, {
-    isDriving: (id) => findSessionDriving(id) !== undefined,
-    log: deps.log,
-  })
-  if (claimed) {
-    lastSkipReason.delete(sessionID)
-    const ref = taskRef(claimed, claimed.path)
-    const state = resumeAtBuild(taskGoal(claimed), ref, extractPlan(claimed) ?? "")
-    await toast(deps.client, `Watch: claimed "${claimed.title}" — building…`, "info")
-    try {
-      await drive(deps, sessionID, config, firstStep(eng, state))
-    } catch (err) {
-      // Died before the first "> BUILD started" note (e.g. ensureIsolation threw,
-      // before setLoop ran — onIdle's catch can't see the task): the claim is ours
-      // and the body is still claimable, so release it or watch stays wedged.
-      const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "in-progress", claimed.id)
-      if (fresh && isClaimable(fresh)) await releaseClaim(deps.$, claimed)
-      throw err
-    }
-    return
-  }
-
-  // No build work — look for a queued task to plan. The planless-orphan
-  // predicate applies: PLAN writes no code, so a stale undriven marker is
-  // always safe to release.
-  const queued = await listQueued(deps.client, deps.directory, config.tasksDir, deps.log)
-  const planWalk = await claimFirst(deps.$, selectOrder(queued), {
-    isDriving: (id) => findSessionDriving(id) !== undefined,
-    isOrphaned: isOrphanedPlanClaim,
-    log: deps.log,
-  })
-  if (!planWalk.claimed) {
-    const started = tasks.filter(isRecoverable).map((t) => t.id)
-    const reason = claimSkipReason(tasks.length, candidates.length, queued.length, started, [
-      ...heldIds,
-      ...planWalk.heldIds,
-    ])
+  const { claim, skips } = await pollOnce(sourcesFor(deps, config))
+  if (!claim) {
+    const reason = combineSkips(skips)
+    if (!reason) return
     await deps.log(reason.actionable ? "warn" : "info", reason.message)
     if (reason.actionable && lastSkipReason.get(sessionID) !== reason.message) {
       lastSkipReason.set(sessionID, reason.message)
@@ -674,15 +628,16 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
     return
   }
   lastSkipReason.delete(sessionID)
-  const task = planWalk.claimed
-  const state = startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task))
-  await toast(deps.client, `Watch: claimed "${task.title}" — planning…`, "info")
+  const { item } = claim
+  await toast(deps.client, item.claimMessage, "info")
   try {
-    await drive(deps, sessionID, config, firstStep(eng, state))
+    await drive(deps, sessionID, config, firstStep(manifestFor(item.loopKind), item.state))
   } catch (err) {
-    // A PLAN that died leaves the task in queued/ with our marker — release it.
-    const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "queued", task.id)
-    if (fresh) await releaseClaim(deps.$, task)
+    // Died before real work started (e.g. ensureIsolation threw, before
+    // setLoop ran — onIdle's catch can't see the task): the claim is ours, so
+    // release it or watch stays wedged. The source knows what "real work"
+    // means per pool (a BUILD-started note keeps the marker for recovery).
+    await claim.source.release(item)
     throw err
   }
 }

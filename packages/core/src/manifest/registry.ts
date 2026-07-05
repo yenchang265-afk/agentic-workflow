@@ -1,4 +1,5 @@
 import type { LoopState } from "../loop/state.js"
+import type { Task } from "../task/schema.js"
 import type { TemplateContext } from "./template.js"
 
 /**
@@ -20,8 +21,12 @@ export type ComposeHook = (ctx: TemplateContext, state: LoopState) => TemplateCo
  */
 export type ValidateHook = (state: LoopState) => Promise<string | null> | string | null
 
+/** Whether a backlog task is claimable for a manifest pool (`pools[].claimPredicate`). */
+export type ClaimPredicate = (task: Task) => boolean
+
 const composeHooks = new Map<string, ComposeHook>()
 const validateHooks = new Map<string, ValidateHook>()
+const claimPredicates = new Map<string, ClaimPredicate>()
 
 export const registerComposeHook = (ref: string, hook: ComposeHook): void => void composeHooks.set(ref, hook)
 export const registerValidateHook = (ref: string, hook: ValidateHook): void => void validateHooks.set(ref, hook)
@@ -36,3 +41,13 @@ export const resolveComposeHook = (ref: string): ComposeHook => {
 /** Resolve a validate hook by ref, or null when the manifest names none. */
 export const resolveValidateHook = (ref: string | undefined): ValidateHook | null =>
   ref ? (validateHooks.get(ref) ?? null) : null
+
+export const registerClaimPredicate = (ref: string, predicate: ClaimPredicate): void =>
+  void claimPredicates.set(ref, predicate)
+
+/** Resolve a claim predicate by ref; throws on a dangling manifest reference. */
+export const resolveClaimPredicate = (ref: string): ClaimPredicate => {
+  const predicate = claimPredicates.get(ref)
+  if (!predicate) throw new Error(`unknown claim predicate "${ref}" — register it before polling this loop kind`)
+  return predicate
+}
