@@ -49,3 +49,5 @@ name typo diverging from `STATUSES` — the acceptance check compares against
 that list.
 
 > Plan written — parked for plan review [2026-07-05T13:14:22.141Z]
+
+> Plan approved — parked for execution [2026-07-05T13:14:39.360Z]
