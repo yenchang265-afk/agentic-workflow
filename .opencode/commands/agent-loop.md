@@ -16,11 +16,13 @@ you**.
   filename without `.md`). A `queued/` task enters at PLAN (plans, parks in
   `plan-review/`, exits); an `in-progress/` task enters at BUILD with its
   approved plan.
-- **`/agent-loop watch [interval]`** — put **this** session into worker mode:
-  it claims one build-ready `in-progress/` task and drives BUILD → VERIFY →
-  REVIEW, falling back to a `queued/` task to plan-and-park when no build
-  work exists (build work always beats plan work, so tasks in flight finish
-  first). It tries an immediate first pull, then keeps two triggers:
+- **`/agent-loop watch [interval]`** — put **this** session into worker mode.
+  Each tick polls **all enabled loop kinds** in claim-priority order: the
+  engineering backlog first — one build-ready `in-progress/` task to drive
+  BUILD → VERIFY → REVIEW, falling back to a `queued/` task to plan-and-park
+  when no build work exists (build work always beats plan work, so tasks in
+  flight finish first) — then any other kinds enabled in `.agentic-loop.json`
+  (e.g. pr-sitter PRs). It tries an immediate first pull, then keeps two triggers:
   every idle tick, plus a polling timer at `interval` — `30s`, `5m`, `2h`, or
   a bare number of minutes (default: the `watchIntervalMinutes` config, 5m;
   floor: 10s). The timer only claims work while the session is actually idle,

@@ -14,6 +14,12 @@ its status** — there is no `status:` field, so the two can never drift. The
 `loop-orchestration`) plans a queued task right before execution and builds
 plan-approved ones.
 
+This folder lifecycle is the **engineering loop kind's work source** (bound
+via `loops/engineering/loop.json`). Other loop kinds don't use these folders
+— e.g. `pr-sitter` keeps its state on GitHub itself plus a per-PR dedup
+ledger under `<tasksDir>/runs/pr-sitter/`. Everything below (statuses, gates,
+who moves what) is the engineering backlog, unchanged.
+
 ## When to Use
 
 - Use when you want a goal to persist across sessions as a durable, auditable

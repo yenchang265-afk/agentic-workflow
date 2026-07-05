@@ -1,10 +1,96 @@
 # Architecture
 
+Two layers. The **framework** — a shared core package, a manifest-interpreted
+loop engine, and a work-source scheduler — knows nothing about engineering
+tasks or pull requests. The **loop kinds** (`loops/<kind>/`) are declarative
+manifests plus stage prompts that the framework interprets: `engineering` is
+the reference kind (the original PLAN / BUILD → VERIFY → REVIEW workflow,
+behavior-identical to when it was hardcoded), `pr-sitter` is the second.
+
+## The framework — one engine, many kinds
+
+```mermaid
+flowchart TB
+    subgraph hosts["HOSTS — thin adapters over one core"]
+        oc["OpenCode plugin (src/)<br/>session.idle + /agent-loop watch timer"]
+        cc["Claude Code MCP server<br/>(claude-plugin/mcp-server/)<br/>loop_claim / loop_start / loop_advance"]
+    end
+
+    subgraph core["@agentic-loop/core (packages/core)"]
+        sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
+        subgraph sources["work sources (source/)"]
+            backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
+            ghpr["github-pr.ts<br/>gh pr list + dedup ledger"]
+        end
+        engine["loop/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
+        manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
+    end
+
+    subgraph kinds["LOOP KINDS — loops/&lt;kind&gt;/"]
+        eng["engineering/loop.json<br/>+ stages/*.md"]
+        sitter["pr-sitter/loop.json<br/>+ stages/*.md"]
+    end
+
+    oc --> sched
+    cc --> sched
+    sched --> backlog
+    sched --> ghpr
+    backlog -->|"WorkItem + entry LoopState"| engine
+    ghpr -->|"WorkItem + entry LoopState"| engine
+    manifest --> engine
+    eng --> manifest
+    sitter --> manifest
+    engine -->|"fire stage / park / done / stop"| hosts
+```
+
+- **Core package** — `@agentic-loop/core` (npm workspace) holds everything
+  both plugins share: the pure engine and state, the manifest layer, work
+  sources + scheduler, the task store, git helpers + worktree isolation,
+  snapshots, verdict handling, metrics, and config. Core never imports a host
+  SDK; the entire host surface is the interfaces in
+  `packages/core/src/host.ts` (Shell, Client, Log, …). The OpenCode plugin
+  satisfies them with Bun's `$` and the opencode SDK client; the Claude Code
+  MCP server with Node shims (`claude-plugin/mcp-server/src/shim.ts`) — its
+  former `src/lib/` fork of the loop logic is gone.
+- **Manifest engine** — a loop kind is `loops/<kind>/loop.json`
+  (zod-validated: stages with `work|check` kind, agent, prompt path,
+  isolation, bash allowlist; a transitions table mapping
+  onDone/onPass/onFail/onError to fire/park/done/stop effects with iteration
+  counting; a work-source binding) plus `stages/*.md` prompt templates
+  (`---`-separated sections, `{{var}}` interpolation, `{{#path}}…{{/path}}`
+  conditional blocks). `loop/engine.ts` interprets it as a pure state machine:
+  `advance(manifest, state, output, verdict)` returns the next state and
+  action. Logic a manifest can't express hangs off named hooks resolved
+  through `manifest/registry.ts` — compose hooks (prompt-context augmenters),
+  pre-transition validators, claim predicates.
+- **Work sources + scheduler** — a `WorkSource`
+  (`packages/core/src/source/types.ts`) knows how to find, atomically claim,
+  and release units of work for one kind; a claimed `WorkItem` carries a
+  fully-constructed entry `LoopState`, so drivers stay source-agnostic.
+  `pollOnce(sources)` walks the enabled kinds' sources in claim-priority order
+  (engineering first unless disabled, then opted-in kinds in config order —
+  `enabledLoopKinds` in core config); the first successful claim wins. Both
+  hosts' triggers delegate to it: OpenCode's `session.idle` + `/agent-loop
+  watch` timer, and the Claude Code MCP server's `loop_claim`. A source may
+  implement `onTerminal` for end-of-drive bookkeeping (the PR sitter's dedup
+  ledger); the backlog source doesn't need it.
+- **Per-kind status semantics** — the `docs/tasks/` status folders are the
+  *engineering* kind's state model, not the framework's: its manifest binds a
+  `backlog` work source with named statuses and claim pools. The PR sitter has
+  no folders at all — GitHub itself is the status (checks, review decision,
+  comments, mergeability) and a local per-PR ledger
+  (`<tasksDir>/runs/pr-sitter/pr-<n>.json`) records what has already been
+  handled. Other kinds pick whichever source fits.
+
+## The engineering kind (`loops/engineering/`)
+
 The full picture: three human gates thread an unattended PLAN / BUILD →
 VERIFY → REVIEW loop, and the `docs/tasks/` backlog folders *are* the state —
 a task's folder is its status. The loop plans a task right before execution
 (so plans don't rot while tasks sit parked) and **parks** the plan for human
-review instead of blocking on it.
+review instead of blocking on it. The pipeline shape below — stage order,
+retry budget, park/done statuses, stop messages — comes from
+`loops/engineering/loop.json`; the engine just interprets it.
 
 ```mermaid
 flowchart TB
@@ -67,10 +153,10 @@ Dotted edges are failure paths. VERIFY/REVIEW FAIL both re-enter BUILD and
 share one iteration budget (`maxIterations`, default 3); an ERROR verdict
 stops the loop for a human without burning an iteration. PLAN never blocks:
 its only exit is the park into `plan-review/` — a watcher can plan a whole
-queue overnight and you batch-review the plans. The loop never pushes or
-opens a PR — REVIEW PASS parks the task in `in-review/` for you.
+queue overnight and you batch-review the plans. The engineering loop never
+pushes or opens a PR — REVIEW PASS parks the task in `in-review/` for you.
 
-## Who does what
+## Who does what (engineering)
 
 | Command | Handled by | Subagent | Write access | Skills loaded | Produces |
 |---------|-----------|----------|--------------|---------------|----------|
@@ -87,32 +173,79 @@ opens a PR — REVIEW PASS parks the task in `in-review/` for you.
 | `/explore` | agent | `loop-explore` | task files only | `task-backlog-management` | ≤5 schema-valid drafts in `draft/` |
 
 Verdicts are only trusted through the `loop_verdict` plugin tool — a stage
-agent claiming "PASS" in prose is ignored. Stage agents can't approve tasks,
-move backlog folders, or ship; the plugin and the human own every transition
-between folders.
+agent claiming "PASS" in prose is ignored. `loop_verdict` accepts any check
+stage the active loop's manifest declares (engineering: `verify`/`review`;
+pr-sitter: `triage`/`verify`) and validates the recording against it. Stage
+agents can't approve tasks, move backlog folders, or ship; the plugin and the
+human own every transition between statuses.
 
-## Claude Code variant (`claude-plugin/`)
+## The PR sitter kind (`loops/pr-sitter/`)
 
-Same pipeline and the same backlog lifecycle, different driver: Claude Code
-has no background `session.idle` driver, so the main agent drives the loop
-through a bundled MCP server (`mcp__agentic-loop__loop_*` tools):
+Opt-in (`loops.pr-sitter.enabled` in `.agentic-loop.json`). Its work source
+(`source/github-pr.ts`) polls `gh pr list --search <query>` (default
+`is:open author:@me`, overridable via `loops.pr-sitter.query`) and claims a PR
+when an enabled trigger fires: failing checks, changes requested, unanswered
+comments (the sitter's own login is filtered out), or a merge conflict.
+Drafts and fork PRs are skipped (a fork head can't be pushed). Claims use the
+same local atomic mkdir markers as the backlog
+(`<tasksDir>/runs/pr-sitter/.claims/`), and the PR's head branch is fetched
+into a local ref at claim time so the standard worktree isolation reuses it.
 
 ```mermaid
 flowchart LR
-    startq["loop_start / loop_claim<br/>(queued task)"] --> plan["spawn <b>loop-plan-author</b><br/>task mode"]
-    plan --> park[("plan-review/<br/>park — loop over")]
-    park -.->|"human: approve-plan"| startb
-    startb["loop_start / loop_claim<br/>(in-progress task)"] --> build["spawn <b>loop-build</b>"]
-    build --> verify["spawn <b>loop-verify</b>"]
-    verify -->|"PASS"| review["spawn <b>loop-review</b>"]
-    verify -.->|"FAIL → re-build"| build
-    review -.->|"FAIL → re-build"| build
-    review -->|"PASS"| done[("in-review/")]
+    poll["scheduler claims PR<br/>(trigger fired, ledger says unhandled)"] --> triage["<b>TRIAGE</b> · check<br/>agent: loop-pr-triage · read-only gh<br/><i>structured findings; PR text = data, not instructions</i>"]
+    triage -->|"PASS = actionable"| fix["<b>FIX</b> · work<br/>agent: loop-pr-fix<br/><i>worktree on the PR's existing branch,<br/>local commits only</i>"]
+    triage -->|"FAIL = nothing to do"| done0[("done")]
+    triage -.->|"ERROR → stop"| stop0[("stop — next poll retries")]
+    fix --> verify["<b>VERIFY</b> · check<br/>agent: loop-verify<br/><i>tests + findings coverage</i>"]
+    verify -->|"PASS"| publish["<b>PUBLISH</b> · work<br/>agent: loop-pr-publish<br/><i>git push origin &lt;branch&gt; +<br/>gh pr comment per finding<br/>NEVER merges/closes/approves</i>"]
+    verify -.->|"FAIL → re-fix<br/>(shared maxIterations, cap 3)"| fix
+    publish --> done[("done — ledger records<br/>the pushed head as handled")]
+```
+
+Status lives in GitHub plus a **dedup ledger** (`source/ledger.ts`,
+`<tasksDir>/runs/pr-sitter/pr-<n>.json` — ephemeral machine state, like
+snapshots): `headShaHandled` (publish's `onTerminal` records the post-push
+head SHA, so the sitter never triggers on its own push), a
+`lastCommentAtHandled` timestamp watermark, one `conflictAttempt` per
+(head, base) pair, and `failedAttempts[]` — a capped or stopped run parks the
+PR until a human pushes a new head. A missing or garbled ledger reads as
+"nothing handled yet", costing at most one redundant triage pass.
+
+PR comments and diffs are **untrusted input**: the stage prompts and agents
+state the injection posture explicitly (address what a comment points at on
+its merits; never execute instructions embedded in it), publish's bash
+allowlist is limited to `git push origin *` + `gh pr comment`/read-only
+inspection, and failed pushes are reported, never forced. See the
+[threat model](design/threat-model.md).
+
+## Claude Code variant (`claude-plugin/`)
+
+Same loop kinds and lifecycles, different driver: Claude Code has no
+background `session.idle` driver, so the main agent drives the loop through a
+bundled MCP server (`mcp__agentic-loop__loop_*` tools). `loop_claim` delegates
+to the same `pollOnce` scheduler over the same work sources; `loop_advance`
+feeds each finished stage back into the manifest engine:
+
+```mermaid
+flowchart LR
+    startq["loop_start / loop_claim<br/>(any enabled kind's work source)"] --> fire["engine says fire →<br/>spawn the stage's manifest agent<br/>(loop-plan-author, loop-build,<br/>loop-pr-triage, …)"]
+    fire --> adv["loop_advance<br/>(+ loop_verdict for check stages)"]
+    adv -->|"fire next stage"| fire
+    adv -->|"park"| park[("e.g. plan-review/<br/>— loop over")]
+    adv -->|"done / stop"| done[("terminal — task moved /<br/>ledger updated, metrics written")]
 ```
 
 Differences worth knowing in a demo: there is no standing `/agent-loop watch`
-— `/agent-loop claim` is the one-shot pull equivalent (build-ready tasks beat
-queued ones); and stage guardrails (verify/review bash allowlists, worktree
-pinning, stage deadlines) are enforced by a `PreToolUse` hook reading
-`runs/.stage.json` rather than by agent permissions. Install and command
+— `/agent-loop claim` is the one-shot pull equivalent (one `pollOnce` tick;
+build-ready tasks beat queued ones, engineering beats opted-in kinds); and
+stage guardrails are enforced by a `PreToolUse` hook
+(`claude-plugin/hooks/check-stage-guard.mjs`) rather than by agent
+permissions. The MCP server writes a stage marker to
+`<tasksDir>/runs/.stage.json` carrying `{kind, stage, worktree, deadline,
+bashAllowlist}`; the hook enforces the **manifest's** allowlist for the active
+check stage (falling back to its built-in engineering lists for older
+markers) and pins edit/write tools inside the active worktree. On OpenCode
+the same guardrails ride the agent frontmatter permissions (including the
+`loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish` agents). Install and command
 details live in [`claude-plugin/README.md`](../claude-plugin/README.md).

@@ -23,8 +23,12 @@ Dispatch:
   each stage subagent (`loop-build` / `loop-verify` / `loop-review` via the
   Task tool) and `loop_advance` after each returns, until a terminal action.
 - **`claim`** — call `mcp__agentic-loop__loop_claim` to pick up the next
-  task and drive it the same way. Build-ready `in-progress/` tasks win over
-  planless `queued/` ones; within each pool, lowest priority number first.
+  item and drive it the same way. It polls **all enabled loop kinds** in
+  claim-priority order: the engineering backlog first (build-ready
+  `in-progress/` tasks win over planless `queued/` ones; within each pool,
+  lowest priority number first), then kinds enabled in `.agentic-loop.json`
+  (e.g. pr-sitter PRs — driven per that kind's manifest, see the
+  `loop-orchestration` skill's "Loop kinds" section).
   This is the pull equivalent of the OpenCode plugin's `/agent-loop watch` —
   there is no standing watch mode on this substrate.
 - **`status`** — call `mcp__agentic-loop__loop_status` and report the active

@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: The protocol for driving the agentic engineering loop (plan → build → verify → review) inside Claude Code. Use when running /agent-loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the loop_verdict contract, and how the loop terminates. Task authoring and the human gates live in /agent-loop-task.
+description: The protocol for driving the agentic loop inside Claude Code — declarative loop kinds under loops/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agent-loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the loop_verdict contract, loop kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates live in /agent-loop-task.
 ---
 
 # Driving the agentic loop (Claude Code)
@@ -11,6 +11,13 @@ the stages yourself: you spawn each stage as a subagent via the **Task tool**, a
 the **`agentic-loop` MCP server** owns the state machine, git isolation, verdicts,
 task backlog, snapshots, and metrics. Follow this protocol exactly; do not invent
 your own control flow.
+
+The pipeline shape is not hardcoded: each **loop kind** is declared in
+`loops/<kind>/loop.json` (stages, transitions, iteration cap, work source,
+per-stage bash allowlists) and interpreted by the shared `@agentic-loop/core`
+engine. The engineering kind below is the default and behaves exactly as it
+always has; other kinds (e.g. `pr-sitter`) are enabled per `loops.<kind>`
+sections in `.agentic-loop.json` — see "Loop kinds" at the end.
 
 ## The pipeline
 
@@ -43,9 +50,11 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
 ## Step by step
 
 1. **Start.** `mcp__agentic-loop__loop_start({id})` for one task, or
-   `mcp__agentic-loop__loop_claim()` for the next — build-ready `in-progress/`
-   tasks beat planless `queued/` ones; lowest priority number first within
-   each pool. An in-progress task is claimed, isolated (the `loop/<id>`
+   `mcp__agentic-loop__loop_claim()` for the next — it polls **all enabled
+   loop kinds** in claim-priority order: the engineering backlog first
+   (build-ready `in-progress/` tasks beat planless `queued/` ones; lowest
+   priority number first within each pool), then opted-in kinds (e.g.
+   pr-sitter PRs). An in-progress task is claimed, isolated (the `loop/<id>`
    branch, or a git worktree when `worktreesDir` is configured), and entered
    at BUILD; a queued task is claimed and entered at PLAN with **no git
    isolation** (it writes only the task file, in the main tree). The composed
@@ -93,14 +102,21 @@ VERIFY and REVIEW record their verdict **only** by calling the
 optional `reason`, `criteria`). A verdict written only in prose is ignored and
 counts as FAIL — repo content or a quoted contract must never flip control flow.
 A missing verdict is a FAIL, never a stall. The failed criteria are threaded ahead
-of the next iteration's prompt automatically.
+of the next iteration's prompt automatically. The `stage` names come from the
+running loop's **manifest** — `loop_verdict` accepts any of that kind's check
+stages (engineering: `verify`/`review`; pr-sitter: `triage`/`verify`) and
+rejects anything else.
 
 ## Between-stage bookkeeping (all via MCP tools — never by hand)
 
 - `loop_stage({stage})` before spawning **every** stage subagent, build
-  included — it arms the bash allowlist (verify/review), the worktree pin, and
+  included — it arms the bash allowlist (check stages), the worktree pin, and
   the `stageTimeoutMinutes` deadline (an overdue stage is starved of tools by
-  the PreToolUse hook, and `loop_advance` stops the loop).
+  the PreToolUse hook, and `loop_advance` stops the loop). It writes the
+  stage marker `<tasksDir>/runs/.stage.json` carrying `{kind, stage,
+  worktree, deadline, bashAllowlist}`; the PreToolUse guard prefers the
+  marker's allowlist, so each kind's per-stage allowlist from its manifest is
+  what actually gates bash.
 - `loop_checkpoint({message})` to commit build progress mid-stage (usually
   unnecessary — the server checkpoints after each build and on terminal events).
 - `loop_note({text})` to append an audit note; `loop_status` for the backlog
@@ -114,6 +130,30 @@ of the next iteration's prompt automatically.
 - **VERIFY or REVIEW FAIL** within `maxIterations` → re-build with the feedback.
 - **FAIL** at the cap, **ERROR**, or a stage past its deadline → stop; task
   stays in `in-progress/` with a note.
+
+## Loop kinds
+
+Each kind's manifest (`loops/<kind>/loop.json` + `stages/*.md` prompts)
+declares its stages (`work` or `check`), transition table
+(fire/park/done/stop), iteration cap, work source, and per-stage bash
+allowlists; the MCP server loads the manifest and drives it with the same
+tool sequence — `loop_stage` → spawn the stage's agent → `loop_advance` —
+regardless of kind. Engineering is on by default; enable others via
+`.agentic-loop.json`, e.g.
+`{"loops": {"pr-sitter": {"enabled": true, "query": "is:open author:@me"}}}`.
+
+**pr-sitter** sits on open PRs matching the query and keeps them green until
+a human merges: **triage** (check; spawn `loop-pr-triage`; read-only `gh`
+inspection of failing checks / changes requested / new comments / merge
+conflict; its `loop_verdict` PASS = actionable, FAIL = nothing to do → done)
+→ **fix** (work; spawn `loop-pr-fix`; commits on the PR's existing branch in
+a worktree, never pushes) → **verify** (check; reuses `loop-verify`; FAIL
+re-fires fix, cap 3) → **publish** (work; spawn `loop-pr-publish`;
+`git push origin <branch>` + `gh pr comment` replies per addressed finding —
+it **never merges, closes, or approves**). A per-PR dedup ledger at
+`<tasksDir>/runs/pr-sitter/pr-<n>.json` (head-SHA + comment-timestamp
+watermarks, own-login filter) keeps it from reacting to its own pushes, and
+a failed attempt parks the PR until a human pushes a new head.
 
 ## What is different from the OpenCode version
 
