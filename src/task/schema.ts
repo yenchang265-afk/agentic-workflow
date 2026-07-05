@@ -17,14 +17,6 @@ export const TaskFrontmatterSchema = z.object({
   priority: z.number().int().default(0),
   /** Testable criteria threaded into the verify stage. Optional. */
   acceptance: z.array(z.string()).default([]),
-  /** Linked Azure DevOps work item id, if this task traces to one. Optional. */
-  azureId: z.string().min(1).optional(),
-  /** Azure DevOps project the linked work item lives in. Optional. */
-  azureProject: z.string().min(1).optional(),
-  /** Azure DevOps repo the linked work item was created under. Optional. */
-  azureRepo: z.string().min(1).optional(),
-  /** Direct link to the linked Azure DevOps work item. Optional. */
-  azureUrl: z.url().optional(),
 })
 
 export type TaskFrontmatter = z.infer<typeof TaskFrontmatterSchema>
@@ -39,10 +31,6 @@ export interface Task {
   readonly body: string
   /** Absolute path to the task file on disk. */
   readonly path: string
-  readonly azureId?: string
-  readonly azureProject?: string
-  readonly azureRepo?: string
-  readonly azureUrl?: string
 }
 
 /** Leading `---\n…\n---` frontmatter block, then the body. */
@@ -83,10 +71,6 @@ export const parseTask = (filename: string, content: string, path: string): Task
     acceptance: fm.acceptance,
     body: (body ?? "").trim(),
     path,
-    ...(fm.azureId !== undefined ? { azureId: fm.azureId } : {}),
-    ...(fm.azureProject !== undefined ? { azureProject: fm.azureProject } : {}),
-    ...(fm.azureRepo !== undefined ? { azureRepo: fm.azureRepo } : {}),
-    ...(fm.azureUrl !== undefined ? { azureUrl: fm.azureUrl } : {}),
   }
 }
 
@@ -98,10 +82,6 @@ export interface TaskInput {
   readonly priority?: number
   readonly acceptance?: readonly string[]
   readonly body?: string
-  readonly azureId?: string
-  readonly azureProject?: string
-  readonly azureRepo?: string
-  readonly azureUrl?: string
 }
 
 /** A generated task file: its id (unique among `taken`), filename, and content. */
@@ -127,19 +107,11 @@ export const serializeTask = (input: TaskInput): string => {
     title: input.title,
     priority: input.priority,
     acceptance: input.acceptance,
-    azureId: input.azureId,
-    azureProject: input.azureProject,
-    azureRepo: input.azureRepo,
-    azureUrl: input.azureUrl,
   })
   const frontmatter = stringifyYaml({
     title: fm.title,
     priority: fm.priority,
     acceptance: fm.acceptance,
-    ...(fm.azureId !== undefined ? { azureId: fm.azureId } : {}),
-    ...(fm.azureProject !== undefined ? { azureProject: fm.azureProject } : {}),
-    ...(fm.azureRepo !== undefined ? { azureRepo: fm.azureRepo } : {}),
-    ...(fm.azureUrl !== undefined ? { azureUrl: fm.azureUrl } : {}),
   }).trimEnd()
   const body = (input.body ?? "").trim()
   return `---\n${frontmatter}\n---\n${body ? `${body}\n` : ""}`

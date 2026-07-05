@@ -35,9 +35,6 @@ export interface TaskRef {
   readonly path: string
   /** Acceptance criteria threaded into the build/verify prompts. */
   readonly acceptance: readonly string[]
-  /** Linked Azure DevOps work item, if the task has one. Threaded into every stage's context. */
-  readonly azureId?: string
-  readonly azureUrl?: string
 }
 
 /** The git isolation for one loop's execution: work happens on `branch`, cut from `base`. */
@@ -118,11 +115,6 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
   const accept = state.task?.acceptance ?? []
   const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
   const parts: string[] = [`Goal: ${state.goal}`]
-  const azureId = state.task?.azureId
-  if (azureId) {
-    const azureUrl = state.task?.azureUrl
-    parts.push(`Linked Azure DevOps work item: #${azureId}${azureUrl ? ` — ${azureUrl}` : ""}`)
-  }
   if (target === "build") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
     if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)

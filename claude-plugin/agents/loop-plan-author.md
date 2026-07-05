@@ -15,9 +15,9 @@ pure executor that only runs tasks a human has approved via
 Invoke the `task-backlog-management` skill for the task file schema. The
 interview and all user confirmations already happened in the **main agent's**
 turn (you cannot converse with the user) — your prompt carries the confirmed
-title, priority, acceptance criteria, body, and any Azure DevOps linkage.
-Write exactly what was confirmed; if something essential is missing from your
-prompt, return an error naming it instead of guessing.
+title, priority, acceptance criteria, and body. Write exactly what was
+confirmed; if something essential is missing from your prompt, return an
+error naming it instead of guessing.
 
 ## Mode `new` — write the confirmed draft
 
@@ -29,7 +29,6 @@ title: <confirmed one-line title>       # required, non-empty
 priority: <integer>                     # lower runs first; default 0
 acceptance:                             # the 2–5 confirmed testable criteria
   - <observable, checkable outcome>
-azureId / azureProject / azureRepo / azureUrl   # only if linkage was confirmed
 ---
 <body: 1–4 sentences of description / context that the loop uses as the goal>
 ```
@@ -80,6 +79,5 @@ literal string to decide a task is approvable.
   folders — the server does that.
 - Mode `new` **never writes an `## Implementation Plan`**.
 - The frontmatter **must** parse: `title` non-empty, `priority` an integer,
-  `acceptance` a YAML list of strings; `azure*` fields only when linkage was
-  confirmed in the main agent's turn. No other keys, never a `status:` key.
+  `acceptance` a YAML list of strings. No other keys, never a `status:` key.
 - Do not edit source code, run the loop, or create more than one task.

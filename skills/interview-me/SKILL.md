@@ -35,7 +35,7 @@ Apply this skill when:
 
 This skill needs a live, responsive user. **Do not invoke inside an automatic, unattended pipeline** — the build/verify/review stage turns `/agent-loop` drives via `session.idle`, CI pipelines, scheduled runs, or autonomous-loop. If you're in one of those and the ask is underspecified, flag that as a blocker for the user instead of guessing.
 
-It is **mandatory** inside `/agent-loop-plan new <idea>` — every run interviews the user before the draft is written; when the idea already states a clear goal and testable criteria, the floor is a single restate-and-confirm question, never a silent skip. The `loop-plan-author` agent has a live, responsive user via its own draft-confirmation step, and nothing is queued for execution until a human later runs `/agent-loop-plan approve <id>`.
+It is **mandatory** inside `/agent-loop-plan new <idea>` — every run interviews the user before the draft is written; when the idea already states a clear goal and testable criteria, the floor is a single restate-and-confirm question, never a silent skip. The interview runs in the **calling agent's own turn** (subagents cannot converse with the user); only after the user confirms the draft does the calling agent hand the confirmed intent to the `loop-plan-author` subagent to write the file, and nothing is queued for execution until a human later runs `/agent-loop-plan approve <id>`.
 
 ## The Process
 

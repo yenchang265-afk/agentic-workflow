@@ -187,8 +187,6 @@ const taskRef = (task: Task, path: string): TaskRef => ({
   id: task.id,
   path,
   acceptance: task.acceptance,
-  ...(task.azureId !== undefined ? { azureId: task.azureId } : {}),
-  ...(task.azureUrl !== undefined ? { azureUrl: task.azureUrl } : {}),
 })
 
 /** A short stable id for branch names and checkpoint messages. Every loop is

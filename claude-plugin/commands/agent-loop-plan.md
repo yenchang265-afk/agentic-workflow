@@ -18,12 +18,9 @@ Dispatch:
      restate-and-confirm question suffices; when anything is vague, run the
      full one-question-at-a-time interview. Pin down the goal and 2–5
      testable acceptance criteria.
-  2. Follow the Azure DevOps linkage protocol in the
-     `task-backlog-management` skill (ask; skip gracefully if that MCP
-     server is not connected).
-  3. Show the drafted task (title, priority, acceptance, body) and get an
+  2. Show the drafted task (title, priority, acceptance, body) and get an
      explicit "looks right" from the user.
-  4. Spawn the **`loop-plan-author`** subagent (Task tool) with the
+  3. Spawn the **`loop-plan-author`** subagent (Task tool) with the
      confirmed details to write the single draft file. Drafting and planning
      are two steps by design — the human reviews the draft before plan
      effort is spent. The next step is `/agent-loop-plan task <id>`.
