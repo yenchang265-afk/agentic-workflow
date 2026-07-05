@@ -22,7 +22,7 @@ An optional target path or area (`$ARGUMENTS`). Empty means scan the whole repo.
    missing tests, stale docs. This is repo-health work, not product work — do
    not propose speculative new features.
 3. **Dedupe** — before filing anything, list the existing files in
-   `docs/tasks/draft/`, `docs/tasks/in-planning/`, and `docs/tasks/in-progress/`
+   `docs/tasks/draft/`, `docs/tasks/queued/`, `docs/tasks/plan-review/`, and `docs/tasks/in-progress/`
    and read their titles. Skip any finding that substantially overlaps an
    existing task.
 4. **Cap** — file at most **5** tasks this run. If you found more candidates,
@@ -47,7 +47,7 @@ acceptance:                            # 2-5 concrete, testable criteria
   src/http/", not "clean up http code").
 - **acceptance** — each item must be something the verify stage can *check*.
 - **body** — the why/what, including the `file:line` evidence for the finding.
-  Do not design the implementation — that's `/agent-loop-plan`'s job.
+  Do not design the implementation — that's the loop's PLAN stage's job.
 
 ## Filename
 
@@ -66,8 +66,8 @@ Return:
 
 - **Never** edit, create, or delete source files — you only write task files.
 - Write only into `docs/tasks/draft/`. Never move a file between status
-  folders — planning a draft is `/agent-loop-plan task <id>`'s job, and promotion
-  to the approved queue is `/agent-loop-plan approve <id>`'s.
+  folders — queueing a reviewed draft is `/agent-loop-task approve <id>`'s
+  job, and the loop's PLAN stage plans it right before execution.
 - Exactly one file per finding; each must parse (title non-empty, priority an
   integer, acceptance a YAML list of strings, no extra keys).
 - Do not run the loop, and do not scope-creep into implementing anything.

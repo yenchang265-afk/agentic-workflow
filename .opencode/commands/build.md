@@ -12,5 +12,5 @@ Run the **BUILD** stage of the agentic engineering loop
 Delegated to the `build` subagent, which implements the approved plan test-first
 with surgical diffs — or, on a re-build after a VERIFY or REVIEW FAIL, applies
 that check's feedback. This is the only stage that writes code; in an automatic
-loop it runs only on a task whose plan was approved via `/agent-loop-plan approve`.
+loop it runs only on a task whose plan was approved via `/agent-loop-task approve-plan`.
 Relay the diff summary and stop — the next stage (verify) takes over.

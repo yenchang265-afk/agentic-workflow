@@ -135,6 +135,9 @@ export const composeArgs = (state: LoopState, target: Stage): string => {
   const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
   const parts: string[] = [`Goal: ${state.goal}`]
   if (target === "plan") {
+    if (state.task) {
+      parts.push(`Task file: ${state.task.path} — write the ## Implementation Plan onto this file in place.`)
+    }
     if (a.plan) {
       parts.push(
         `Prior plan (rejected or capped out — the new plan must address why this one failed, using the task file's audit notes):\n${a.plan}`,
