@@ -1,0 +1,24 @@
+import type { LoopState } from "../loop/state.js";
+import type { TemplateContext } from "./template.js";
+/**
+ * The TS escape hatch for logic a manifest can't express. Hooks are plain
+ * functions registered under `"<kind>.<name>"` refs; manifests point at them
+ * by ref (`hooks.compose`, `hooks.validateBeforeTransition`). Loop kinds
+ * shipping with core register theirs at import time; external kinds register
+ * from their host plugin before the first drive.
+ */
+/** Augment (or replace) a stage's prompt-template context before rendering. */
+export type ComposeHook = (ctx: TemplateContext, state: LoopState) => TemplateContext;
+/**
+ * Veto a terminal transition (park/done) when its side conditions don't hold —
+ * e.g. engineering's "the PLAN stage must have actually written a plan onto
+ * the task file". Returns an error message to veto, or null to allow. Hosts
+ * run these (they need IO); the engine itself stays pure.
+ */
+export type ValidateHook = (state: LoopState) => Promise<string | null> | string | null;
+export declare const registerComposeHook: (ref: string, hook: ComposeHook) => void;
+export declare const registerValidateHook: (ref: string, hook: ValidateHook) => void;
+/** Resolve a compose hook by ref; throws on a dangling manifest reference. */
+export declare const resolveComposeHook: (ref: string) => ComposeHook;
+/** Resolve a validate hook by ref, or null when the manifest names none. */
+export declare const resolveValidateHook: (ref: string | undefined) => ValidateHook | null;

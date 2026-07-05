@@ -7,9 +7,6 @@ import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-loop/core/config"
 import {
-  advanceOnIdle,
-  composeArgs,
-  firstStep,
   resumeAtBuild,
   startAtPlan,
   type Action,
@@ -17,6 +14,10 @@ import {
   type LoopState,
   type TaskRef,
 } from "@agentic-loop/core/loop/state"
+import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
+import { loadManifest } from "@agentic-loop/core/manifest/load"
+import { stageDef } from "@agentic-loop/core/manifest/schema"
+import { fileURLToPath } from "node:url"
 import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { commitAll, commitPaths, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
@@ -69,6 +70,11 @@ import {
  */
 
 const directory = process.env.AGENTIC_LOOP_DIR ?? process.cwd()
+/** The loop-kind manifests shipped with this repo (loops/<kind>/) — resolved
+ *  relative to this module so the server works from any cwd. */
+const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..", "loops")
+/** The engineering loop kind — the only kind this server drives until the multi-kind scheduler lands. */
+const eng = loadManifest(LOOPS_DIR, "engineering")
 const log = (level: "info" | "warn" | "error", message: string) =>
   fsClient.app.log({ body: { service: "agentic-loop", level, message } })
 
@@ -110,10 +116,17 @@ const writeStageMarker = (stage: string | null) => {
       stageDeadline = null
       fs.rmSync(stageMarkerPath(), { force: true })
     } else {
-      stageDeadline = Date.now() + config.stageTimeoutMinutes * 60_000
+      const def = stageDef(eng.manifest, stage)
+      stageDeadline = Date.now() + (def.timeoutMinutes ?? config.stageTimeoutMinutes) * 60_000
       fs.writeFileSync(
         stageMarkerPath(),
-        JSON.stringify({ stage, worktree: active?.git?.worktree ?? null, deadline: stageDeadline }),
+        JSON.stringify({
+          kind: eng.manifest.kind,
+          stage,
+          worktree: active?.git?.worktree ?? null,
+          deadline: stageDeadline,
+          ...(def.kind === "check" ? { bashAllowlist: def.bashAllowlist } : {}),
+        }),
       )
     }
   } catch {
@@ -177,7 +190,7 @@ const firePayload = (state: LoopState, id: string) => ({
   action: { kind: "fire", stage: state.stage },
   taskId: id,
   isolation: state.git ?? null,
-  prompt: composeArgs(state, state.stage),
+  prompt: composePrompt(eng, state, state.stage),
   ...(state.stage === "plan"
     ? { note: "PLAN stage: spawn loop-plan-author in task mode; on loop_advance the task parks in plan-review/ for the human gate" }
     : {}),
@@ -263,7 +276,7 @@ server.registerTool(
   },
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
-    return ok({ prompt: composeArgs(active, stage) })
+    return ok({ prompt: composePrompt(eng, active, stage) })
   },
 )
 
@@ -322,8 +335,8 @@ server.registerTool(
   },
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
-    if (stage !== "plan") {
-      // PLAN runs in the main tree — no branch, no worktree to reconcile.
+    if (stageDef(eng.manifest, stage).isolation !== "none") {
+      // A no-isolation stage (engineering's PLAN) runs in the main tree — no branch, no worktree to reconcile.
       try {
         active = await ensureIsolation(sh, log, directory, config, active) // reconcile a moved/vanished worktree
       } catch (err) {
@@ -365,7 +378,7 @@ server.registerTool(
       stage,
       iteration: active.iteration,
       ms: Date.now() - lastFireAt,
-      ...(stage === "verify" || stage === "review" ? { verdict: (pending?.verdict ?? "none") as Verdict | "none" } : {}),
+      ...(stageDef(eng.manifest, stage).kind === "check" ? { verdict: (pending?.verdict ?? "none") as Verdict | "none" } : {}),
     })
     // thread failed criteria ahead of the prose for the next iteration
     const block = failedCriteriaBlock(pending)
@@ -375,12 +388,12 @@ server.registerTool(
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
       await commitAll(sh, workTree(), `loop(${loopId(active)}): build checkpoint (iteration ${active.iteration + 1})`)
     }
-    if ((stage === "verify" || stage === "review") && active.task) {
+    if (stageDef(eng.manifest, stage).kind === "check" && active.task) {
       const failed = pending?.criteria?.filter((c) => !c.pass).length ?? 0
       await appendNote(sh, active.task, auditNote(`${stage.toUpperCase()} verdict: ${pending?.verdict ?? "none → FAIL"}${failed ? ` (${failed} criteria unmet)` : ""} (iteration ${active.iteration + 1})`, new Date(), actor), log)
     }
-    const verdict = stage === "verify" || stage === "review" ? (pending?.verdict ?? null) : null
-    const { state, action } = advanceOnIdle(active, config, threaded, verdict)
+    const verdict = stageDef(eng.manifest, stage).kind === "check" ? (pending?.verdict ?? null) : null
+    const { state, action } = advance(eng, active, config, threaded, verdict)
     active = state
     pending = null
 
@@ -388,7 +401,7 @@ server.registerTool(
       await snapshot()
       return ok({
         action: { kind: "fire", stage: action.stage },
-        prompt: composeArgs(active, action.stage),
+        prompt: composePrompt(eng, active, action.stage),
         note: "call loop_stage before spawning the subagent",
       })
     }
@@ -431,7 +444,7 @@ const runPark = async (
     return { error: `PLAN failed for "${id}" — ${why}. It stays in queued/.` }
   }
   await appendNote(sh, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), log)
-  const newPath = await moveTask(sh, fresh, "plan-review") // also releases the queued/ claim marker
+  const newPath = await moveTask(sh, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
   await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan written — parked for review`)
   const summary = renderRunSummary(samples, "done", "plan parked for review", config.maxIterations, new Date().toISOString())
   await appendRunLog(sh, directory, config.tasksDir, id, "run · done", summary, log)
@@ -473,7 +486,7 @@ const runTerminal = async (action: Action) => {
   if (active.task) {
     if (action.kind === "done") {
       await appendNote(sh, active.task, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
-      await moveTask(sh, active.task, "in-review")
+      await moveTask(sh, active.task, ((action as { toStatus?: string }).toStatus ?? "in-review") as TaskStatus)
     } else {
       await appendNote(sh, active.task, auditNote((action as { message: string }).message, new Date(), actor), log)
       // A loop stopped mid-PLAN leaves the task in queued/ — release its claim
@@ -671,7 +684,7 @@ server.registerTool(
         return fail((err as Error).message)
       }
       await appendNote(sh, active.task as TaskRef, auditNote(`Recovered from snapshot at ${active.stage}`, new Date(), actor), log)
-      const step = firstStep(active)
+      const step = firstStep(eng, active)
       return ok({ resumedFrom: "snapshot", stage: active.stage, action: step.action, note: "call loop_stage before spawning the subagent" })
     }
     active = resumeAtBuild(taskGoal(t), taskRef(t, t.path), extractPlan(t) ?? "")
@@ -683,7 +696,7 @@ server.registerTool(
     }
     await appendNote(sh, active.task as TaskRef, auditNote("Recovered from persisted plan — re-entering at BUILD", new Date(), actor), log)
     await snapshot()
-    return ok({ resumedFrom: "plan", stage: "build", prompt: composeArgs(active, "build"), note: "call loop_stage before spawning the subagent" })
+    return ok({ resumedFrom: "plan", stage: "build", prompt: composePrompt(eng, active, "build"), note: "call loop_stage before spawning the subagent" })
   },
 )
 

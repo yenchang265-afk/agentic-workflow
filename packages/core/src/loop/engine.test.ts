@@ -4,15 +4,17 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { loadManifest } from "../manifest/load.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
-import type { Config, LoopState, TaskRef } from "./state.js"
-import { advanceOnIdle, composeArgs, resumeAtBuild, startAtPlan } from "./state.js"
+import type { Action, Config, LoopState, TaskRef } from "./state.js"
+import { resumeAtBuild, startAtPlan } from "./state.js"
 import type { Verdict } from "./verdict.js"
 
 /**
- * Parity suite: the manifest-interpreted engine must reproduce the hardcoded
- * engineering state machine exactly — identical actions AND byte-identical
- * composed prompts — before `advanceOnIdle`/`composeArgs` may be deleted.
- * Loads the real `loops/engineering/` manifest, not a fixture.
+ * Parity suite: the manifest-interpreted engine must reproduce the original
+ * hardcoded engineering state machine exactly. The pre-manifest
+ * `composeArgs`/`advanceOnIdle` implementations are FROZEN below as the
+ * oracle — do not "fix" them; they define the golden behavior the
+ * `loops/engineering/` manifest transcribes. Loads the real manifest, not a
+ * fixture.
  */
 
 const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..", "loops")
@@ -25,6 +27,147 @@ const config: Config = {
   reviewLenses: [],
 }
 
+// --- the frozen oracle (verbatim from the pre-manifest state.ts) ---
+
+const oracleComposeArgs = (state: LoopState, target: string): string => {
+  const a = state.artifacts
+  const accept = state.task?.acceptance ?? []
+  const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
+  const parts: string[] = [`Goal: ${state.goal}`]
+  if (target === "plan") {
+    if (state.task) {
+      parts.push(`Task file: ${state.task.path} — write the ## Implementation Plan onto this file in place.`)
+    }
+    if (a.plan) {
+      parts.push(
+        `Prior plan (rejected or capped out — the new plan must address why this one failed, using the task file's audit notes):\n${a.plan}`,
+      )
+    }
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the plan must lead to satisfying each):"))
+  } else if (target === "build") {
+    if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
+    if (a.verify) parts.push(`Verify failure to address:\n${a.verify}`)
+    if (a.review) parts.push(`Review feedback to address:\n${a.review}`)
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the build must satisfy each):"))
+  } else if (target === "verify") {
+    if (a.plan) parts.push(`Plan & acceptance criteria:\n${a.plan}`)
+    if (a.build) parts.push(`Build summary:\n${a.build}`)
+    if (accept.length) parts.push(acceptBlock("Acceptance criteria (the verdict must check each):"))
+  } else if (target === "review") {
+    if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
+    if (a.build) parts.push(`Build summary:\n${a.build}`)
+    if (state.git) {
+      const wt = state.git.worktree
+      const diffCmd = wt
+        ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
+        : `git diff ${state.git.base}...${state.git.branch}`
+      parts.push(
+        `Diff boundary: this loop's work is the commits on branch ${state.git.branch} since ${state.git.base} — ` +
+          `review exactly \`${diffCmd}\`, nothing outside it.`,
+      )
+    }
+  }
+  if (state.git?.worktree) {
+    parts.push(
+      `Worktree: this loop's isolated checkout is ${state.git.worktree} — every file you read, edit, or ` +
+        `test lives THERE, not in the repo root. Use absolute paths under it for edit/read; prefix every ` +
+        `shell command with \`cd ${state.git.worktree} && \` (or use \`git -C ${state.git.worktree} …\`). ` +
+        `Never modify anything outside it.`,
+    )
+  }
+  return parts.join("\n\n")
+}
+
+const withArtifact = (state: LoopState, stage: string, output: string): LoopState => ({
+  ...state,
+  artifacts: { ...state.artifacts, [stage]: output },
+})
+
+const withoutArtifact = (state: LoopState, stage: string): LoopState => {
+  const { [stage]: _dropped, ...rest } = state.artifacts
+  return { ...state, artifacts: rest }
+}
+
+const oracleFire = (state: LoopState, stage: string): { state: LoopState; action: Action } => ({
+  state: { ...state, stage },
+  action: { kind: "fire", stage, arguments: oracleComposeArgs({ ...state, stage }, stage) },
+})
+
+const oracleAdvance = (
+  state: LoopState,
+  cfg: Config,
+  output: string,
+  verdict: Verdict | null = null,
+): { state: LoopState; action: Action } => {
+  const s = withArtifact(state, state.stage, output)
+  switch (s.stage) {
+    case "plan":
+      return {
+        state: s,
+        action: {
+          kind: "park",
+          message: "Plan written — parked in plan-review/ for human review. Approve with /agent-loop-task approve-plan.",
+        },
+      }
+    case "build":
+      return oracleFire(s, "verify")
+    case "verify": {
+      if (verdict === "PASS") return oracleFire(s, "review")
+      if (verdict === "ERROR") {
+        return {
+          state: s,
+          action: {
+            kind: "stop",
+            message:
+              "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
+          },
+        }
+      }
+      if (s.iteration + 1 < cfg.maxIterations) {
+        const next = { ...withoutArtifact(s, "review"), iteration: s.iteration + 1 }
+        return oracleFire(next, "build")
+      }
+      return {
+        state: s,
+        action: {
+          kind: "stop",
+          message: `✗ Loop stopped — verify failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>.`,
+        },
+      }
+    }
+    case "review": {
+      if (verdict === "PASS") {
+        return { state: s, action: { kind: "done", message: "✓ Loop done — review passed. Ship it yourself." } }
+      }
+      if (verdict === "ERROR") {
+        return {
+          state: s,
+          action: {
+            kind: "stop",
+            message:
+              "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
+          },
+        }
+      }
+      if (s.iteration + 1 < cfg.maxIterations) {
+        const next = { ...withoutArtifact(s, "verify"), iteration: s.iteration + 1 }
+        return oracleFire(next, "build")
+      }
+      return {
+        state: s,
+        action: {
+          kind: "stop",
+          message: `✗ Loop stopped — review failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>.`,
+        },
+      }
+    }
+    default:
+      throw new Error(`oracle has no stage ${s.stage}`)
+  }
+}
+
+// --- fixtures ---
+
 const mk = (goal: string, task?: TaskRef): LoopState => ({
   goal,
   stage: "build",
@@ -35,7 +178,7 @@ const mk = (goal: string, task?: TaskRef): LoopState => ({
 
 const task: TaskRef = { id: "add-foo", path: "/r/docs/tasks/in-progress/add-foo.md", acceptance: [] }
 
-// --- golden parity: composePrompt ≡ composeArgs, byte for byte ---
+// --- golden parity: composePrompt ≡ oracle composeArgs, byte for byte ---
 
 const PROMPT_STATES: Record<string, LoopState> = {
   "build entry with plan": resumeAtBuild("add foo", task, "PLAN BODY"),
@@ -49,15 +192,15 @@ const PROMPT_STATES: Record<string, LoopState> = {
   "no task no git": mk("bare goal"),
 }
 
-test("composePrompt reproduces composeArgs byte-identically for every stage × state", () => {
+test("composePrompt reproduces the frozen composeArgs byte-identically for every stage × state", () => {
   for (const [label, state] of Object.entries(PROMPT_STATES)) {
     for (const stage of ["plan", "build", "verify", "review"]) {
-      assert.equal(composePrompt(eng, state, stage), composeArgs(state, stage), `${label} → ${stage}`)
+      assert.equal(composePrompt(eng, state, stage), oracleComposeArgs(state, stage), `${label} → ${stage}`)
     }
   }
 })
 
-// --- golden parity: advance ≡ advanceOnIdle across the whole transition table ---
+// --- golden parity: advance ≡ the frozen advanceOnIdle across the transition table ---
 
 const strip = <T extends object>(o: T): Record<string, unknown> => {
   const { toStatus: _dropped, ...rest } = o as Record<string, unknown>
@@ -82,9 +225,9 @@ const CASES: { label: string; state: LoopState; output: string; verdict?: Verdic
   { label: "review ERROR stops", state: { ...mk("g"), stage: "review", iteration: 1 }, output: "could not read the diff", verdict: "ERROR" },
 ]
 
-test("advance reproduces advanceOnIdle exactly (states and actions) across the transition table", () => {
+test("advance reproduces the frozen advanceOnIdle exactly (states and actions) across the transition table", () => {
   for (const c of CASES) {
-    const legacy = advanceOnIdle(c.state, config, c.output, c.verdict ?? null)
+    const legacy = oracleAdvance(c.state, config, c.output, c.verdict ?? null)
     const engine = advance(eng, c.state, config, c.output, c.verdict ?? null)
     assert.deepEqual(engine.state, legacy.state, `${c.label}: state`)
     assert.deepEqual(strip(engine.action), strip(legacy.action), `${c.label}: action`)
@@ -109,7 +252,7 @@ test("firstStep fires the state's own stage with its composed prompt", () => {
   assert.equal(action.kind, "fire")
   if (action.kind === "fire") {
     assert.equal(action.stage, "build")
-    assert.equal(action.arguments, composeArgs(s, "build"))
+    assert.equal(action.arguments, oracleComposeArgs(s, "build"))
   }
 })
 

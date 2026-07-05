@@ -34,12 +34,13 @@ const TaskRefSchema = z.object({
   acceptance: z.array(z.string()),
 })
 
-/** The stages a snapshot may resume at — every stage except `plan` (see module doc). */
-const SNAPSHOT_STAGES = STAGES.filter((s) => s !== "plan")
+/** The engineering stages a snapshot may resume at — every stage except `plan` (see module doc). */
+export const SNAPSHOT_STAGES: readonly string[] = STAGES.filter((s) => s !== "plan")
 
 const LoopStateSchema = z.object({
+  kind: z.string().min(1).optional(),
   goal: z.string(),
-  stage: z.enum(SNAPSHOT_STAGES as unknown as [string, ...string[]]),
+  stage: z.string().min(1),
   iteration: z.number().int().min(0),
   // Partial map of stage → captured output. String keys (not an enum) because
   // this zod version treats an enum-keyed record as exhaustive; the state
@@ -67,12 +68,18 @@ export const saveState = async (
   await $`printf '%s' ${JSON.stringify(state, null, 2)} > ${file}`.quiet().nothrow()
 }
 
-/** Load and validate a snapshot; null on absent, unreadable, invalid JSON, or schema failure. */
+/**
+ * Load and validate a snapshot; null on absent, unreadable, invalid JSON, or
+ * schema failure. `resumableStages` is the loop kind's set of stages a
+ * snapshot may resume at (its isolated stages); a snapshot at any other stage
+ * fails closed — see the module doc.
+ */
 export const loadState = async (
   client: Client,
   directory: string,
   tasksDir: string,
   id: string,
+  resumableStages: readonly string[] = SNAPSHOT_STAGES,
 ): Promise<LoopState | null> => {
   const rel = `${tasksDir}/runs/${id}.state.json`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
@@ -85,7 +92,8 @@ export const loadState = async (
     return null
   }
   const result = LoopStateSchema.safeParse(raw)
-  return result.success ? (result.data as LoopState) : null
+  if (!result.success || !resumableStages.includes(result.data.stage)) return null
+  return result.data as LoopState
 }
 
 /** Remove a task's snapshot. Best-effort; idempotent on an absent file. */

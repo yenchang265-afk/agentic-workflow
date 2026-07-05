@@ -1,5 +1,10 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { type Task } from "@agentic-loop/core/task/schema"
+import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
+import { loadManifest } from "@agentic-loop/core/manifest/load"
+import { stageDef } from "@agentic-loop/core/manifest/schema"
 import {
   ensureIsolation as coreEnsureIsolation,
   loopId,
@@ -57,10 +62,8 @@ import {
 import type { Config } from "../config.ts"
 import type { Action, LoopState, Stage, TaskRef } from "@agentic-loop/core/loop/state"
 import {
-  advanceOnIdle,
   clearLoop,
   findSessionDriving,
-  firstStep,
   getLoop,
   resumeAtBuild,
   setLoop,
@@ -115,6 +118,11 @@ import {
  * sends it back to `queued/` with `/agent-loop-task replan <id>` and the PLAN
  * stage runs again with the failure context threaded in.
  */
+
+/** The loop-kind manifests shipped with this repo (loops/<kind>/). */
+const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "loops")
+/** The engineering loop kind — the only kind this driver runs until the multi-kind scheduler lands. */
+const eng = loadManifest(LOOPS_DIR, "engineering")
 
 type Client = PluginInput["client"]
 type Shell = PluginInput["$"]
@@ -243,13 +251,8 @@ const commitBacklog = async (deps: Deps, config: Config, state: LoopState, messa
   await commitPaths(deps.$, deps.directory, [config.tasksDir], message)
 }
 
-/**
- * The slash command a stage fires. `build`/`verify`/`review` match their
- * command names; `plan` maps to `plan-task` — the loop's plan-writing stage
- * command (`loop-plan-author` in task mode) — because the bare `/plan`
- * command is the ad-hoc, nothing-persisted planner. Pure.
- */
-const stageCommand = (stage: Stage): string => (stage === "plan" ? "plan-task" : stage)
+/** The slash command a stage fires — named by the manifest (e.g. plan → `plan-task`). Pure. */
+const stageCommand = (stage: Stage): string => stageDef(eng.manifest, stage).command
 
 /**
  * Fire a stage command and return the assistant text it produced. Throws when
@@ -327,7 +330,7 @@ const runStageWithLenses = async (
   baseArgs: string,
   iteration: number,
 ): Promise<{ output: string; verdict: Verdict | null; record: VerdictRecord | null }> => {
-  const isCheck = stage === "verify" || stage === "review"
+  const isCheck = stageDef(eng.manifest, stage).kind === "check"
   const lenses = stage === "review" ? config.reviewLenses : []
   const passes: (string | null)[] = lenses.length ? [...lenses] : [null]
   const outputs: string[] = []
@@ -425,11 +428,12 @@ const drive = async (
     // main tree, on the human's branch) and parks, so it needs no branch, no
     // worktree, and no crash snapshot — a died PLAN is recovered by the stale
     // claim-marker sweep, not by /agent-loop recover.
-    if (stage !== "plan") {
+    const isolated = stageDef(eng.manifest, stage).isolation !== "none"
+    if (isolated) {
       step = { ...step, state: await ensureIsolation(deps, config, step.state) }
     }
     setLoop(sessionID, step.state)
-    if (stage !== "plan") await snapshot(deps, config, step.state)
+    if (isolated) await snapshot(deps, config, step.state)
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
@@ -457,7 +461,7 @@ const drive = async (
     if (stage === "build") {
       await checkpoint(deps, step.state, `loop(${loopId(step.state)}): build iteration ${iteration + 1}`)
     }
-    if ((stage === "verify" || stage === "review") && task) {
+    if (stageDef(eng.manifest, stage).kind === "check" && task) {
       const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0
       const detail = record?.reason ? ` — ${record.reason}` : ""
       const criteriaNote = failed ? ` (${failed} criteria unmet)` : ""
@@ -476,7 +480,7 @@ const drive = async (
     // the next PLAN/BUILD iteration leads with what actually failed.
     const block = failedCriteriaBlock(record)
     const threaded = block ? `${block}\n\n${output}` : output
-    step = advanceOnIdle(step.state, config, threaded, verdict)
+    step = advance(eng, step.state, config, threaded, verdict)
   }
 
   const { state, action } = step
@@ -503,7 +507,7 @@ const drive = async (
         return
       }
       await appendNote(deps.$, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), deps.log)
-      await moveTask(deps.$, fresh, "plan-review") // also releases the queued/ claim marker
+      await moveTask(deps.$, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
       await commitPaths(deps.$, deps.directory, [config.tasksDir], `loop(${state.task.id}): plan written — parked for review`)
       await renderMetrics(deps, sessionID, config, state, "done", "plan parked for review")
       clearLoop(sessionID)
@@ -521,7 +525,7 @@ const drive = async (
       if (state.task) {
         try {
           await appendNote(deps.$, state.task, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor))
-          await moveTask(deps.$, state.task, "in-review")
+          await moveTask(deps.$, state.task, (action.toStatus ?? "in-review") as TaskStatus)
           await commitBacklog(deps, config, state, `loop(${state.task.id}): done — parked in in-review`)
         } catch (err) {
           await deps.log("warn", `loop done but task move failed: ${(err as Error).message}`)
@@ -635,7 +639,7 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
     const state = resumeAtBuild(taskGoal(claimed), ref, extractPlan(claimed) ?? "")
     await toast(deps.client, `Watch: claimed "${claimed.title}" — building…`, "info")
     try {
-      await drive(deps, sessionID, config, firstStep(state))
+      await drive(deps, sessionID, config, firstStep(eng, state))
     } catch (err) {
       // Died before the first "> BUILD started" note (e.g. ensureIsolation threw,
       // before setLoop ran — onIdle's catch can't see the task): the claim is ours
@@ -674,7 +678,7 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
   const state = startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task))
   await toast(deps.client, `Watch: claimed "${task.title}" — planning…`, "info")
   try {
-    await drive(deps, sessionID, config, firstStep(state))
+    await drive(deps, sessionID, config, firstStep(eng, state))
   } catch (err) {
     // A PLAN that died leaves the task in queued/ with our marker — release it.
     const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "queued", task.id)
@@ -742,16 +746,16 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       // persisted plan.
       const ref = taskRef(work.task, work.task.path)
       const state = resumeAtBuild(taskGoal(work.task), ref, extractPlan(work.task) ?? "")
-      await drive(deps, sessionID, config, firstStep(state))
+      await drive(deps, sessionID, config, firstStep(eng, state))
     } else if (work?.kind === "start-plan") {
       // A `/agent-loop task <id>` claim on a queued (planless) task: run the PLAN
       // stage, which writes the plan and parks the task in plan-review/.
       const state = startAtPlan(work.goal, taskRef(work.task, work.task.path), extractPlan(work.task))
-      await drive(deps, sessionID, config, firstStep(state))
+      await drive(deps, sessionID, config, firstStep(eng, state))
     } else if (work?.kind === "recover-state") {
       // A snapshot-based resume: re-enter at the exact stage the crash caught,
       // with artifacts intact, re-firing that stage from its own inputs.
-      await drive(deps, sessionID, config, firstStep(work.state))
+      await drive(deps, sessionID, config, firstStep(eng, work.state))
     } else {
       // No pending work — a watch session with nothing to resume; look for
       // one claimable task in the backlog.

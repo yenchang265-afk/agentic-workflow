@@ -78,10 +78,16 @@ const main = async () => {
     }
   }
 
-  // (1) bash allowlist for check stages
-  if (tool === "Bash" && (marker.stage === "verify" || marker.stage === "review")) {
+  // (1) bash allowlist for check stages. The marker carries the loop kind's
+  // manifest allowlist (loops/<kind>/loop.json); the built-in engineering
+  // lists remain as a fallback for markers written by older servers.
+  const markerList =
+    Array.isArray(marker.bashAllowlist) && marker.bashAllowlist.every((g) => typeof g === "string") && marker.bashAllowlist.length
+      ? marker.bashAllowlist
+      : null
+  if (tool === "Bash" && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const cmd = String(ti.command ?? "")
-    const list = marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW
+    const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW)
     if (!matchesAny(cmd, list)) {
       return block(
         `agentic-loop: the ${marker.stage.toUpperCase()} stage is read-only — the command "${cmd}" is not on its allowlist. ` +
