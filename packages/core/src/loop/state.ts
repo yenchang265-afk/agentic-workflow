@@ -82,8 +82,9 @@ export type Action =
   | { readonly kind: "stop"; readonly message: string }
   | { readonly kind: "noop" }
 
-/** Which code-management platform PR-shaped work sources talk to. */
-export type CodePlatform = "github" | "ado"
+/** The code-management platforms PR-shaped work sources can talk to — the single source of truth. */
+export const CODE_PLATFORMS = ["github", "ado"] as const
+export type CodePlatform = (typeof CODE_PLATFORMS)[number]
 
 /** Azure DevOps coordinates, required when any effective platform is `ado`. */
 export interface AdoConfig {

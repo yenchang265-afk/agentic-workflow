@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Client } from "./host.js"
-import type { Config } from "./loop/state.js"
+import { CODE_PLATFORMS, type Config } from "./loop/state.js"
 
 /**
  * Loop configuration, read from `.agentic-loop.json` at the repo root via the
@@ -14,7 +14,7 @@ import type { Config } from "./loop/state.js"
  */
 
 /** Which code-management platform PR-shaped work sources talk to. */
-export const CodePlatformSchema = z.enum(["github", "ado"])
+export const CodePlatformSchema = z.enum(CODE_PLATFORMS)
 export type CodePlatform = z.infer<typeof CodePlatformSchema>
 
 const BaseConfigSchema = z.object({

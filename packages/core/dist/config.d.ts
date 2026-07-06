@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Client } from "./host.js";
-import type { Config } from "./loop/state.js";
+import { type Config } from "./loop/state.js";
 /**
  * Loop configuration, read from `.agentic-loop.json` at the repo root via the
  * host client (no Node fs dependency). The file is optional; every field has

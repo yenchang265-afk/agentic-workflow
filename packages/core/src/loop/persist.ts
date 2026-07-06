@@ -1,7 +1,7 @@
 import path from "node:path"
 import type { Client, Shell } from "../host.js"
 import { z } from "zod"
-import { STAGES, type LoopState } from "./state.js"
+import { CODE_PLATFORMS, STAGES, type LoopState } from "./state.js"
 
 /**
  * Durable snapshots of a task-driven loop's `LoopState`, so a crash or opencode
@@ -49,7 +49,7 @@ const LoopStateSchema = z.object({
   task: TaskRefSchema.optional(),
   git: GitRefSchema.optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */
-  platform: z.enum(["github", "ado"]).optional(),
+  platform: z.enum(CODE_PLATFORMS).optional(),
 })
 
 /** Absolute path of a task's state snapshot. Pure. */

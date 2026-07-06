@@ -152,8 +152,12 @@ const writeStageMarker = (stage: string | null) => {
           taskId: active?.task?.id ?? null,
           worktree: active?.git?.worktree ?? null,
           deadline: stageDeadline,
+          // The platform stamped into the state at claim time wins over the
+          // live config: prompt guidance renders from the same stamp, and a
+          // config flip mid-loop must not strand a claimed PR with an
+          // allowlist that contradicts its prompt.
           ...(def.kind === "check"
-            ? { bashAllowlist: effectiveAllowlist(def, platformFor(config, m.manifest.kind)) }
+            ? { bashAllowlist: effectiveAllowlist(def, active?.platform ?? platformFor(config, m.manifest.kind)) }
             : {}),
         }),
       )

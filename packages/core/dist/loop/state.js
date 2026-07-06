@@ -26,6 +26,8 @@
  */
 /** The engineering loop's stages in order. `plan` terminates with a park, not an advance. */
 export const STAGES = ["plan", "build", "verify", "review"];
+/** The code-management platforms PR-shaped work sources can talk to — the single source of truth. */
+export const CODE_PLATFORMS = ["github", "ado"];
 /** Construct a LoopState entering execution at build, for a claimed
  *  in-progress task whose plan was approved via `/agent-loop-task approve-plan`. */
 export const resumeAtBuild = (goal, task, plan) => ({

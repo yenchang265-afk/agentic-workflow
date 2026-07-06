@@ -70,7 +70,9 @@ const pr = (over: Record<string, unknown> = {}) => ({
   targetRefName: "refs/heads/main",
   isDraft: false,
   mergeStatus: "succeeded",
-  createdBy: { uniqueName: "sitter@acme.com" },
+  // Deliberately case-different from the configured selfLogin: ADO preserves
+  // directory casing while identity lookups often lowercase — must still match.
+  createdBy: { uniqueName: "Sitter@Acme.com" },
   lastMergeSourceCommit: { commitId: "sha-1" },
   reviewers: [] as unknown[],
   repository: { id: "repo-guid", name: "widgets" },
@@ -103,6 +105,7 @@ const failingPolicy = {
     stdout: JSON.stringify([
       { status: "rejected", configuration: { isBlocking: true, type: { displayName: "Build" } } },
       { status: "approved", configuration: { isBlocking: true, type: { displayName: "Reviewers" } } },
+      { status: "rejected", configuration: { isBlocking: false, type: { displayName: "Optional Build" } } },
     ]),
   },
 }
@@ -116,6 +119,7 @@ test("claims a PR with a failing policy: refs stripped, goal names the failure, 
   assert.equal(item?.state.platform, "ado")
   assert.deepEqual(item?.state.git, { base: "main", branch: "feat/rate-limit" })
   assert.match(item?.state.goal ?? "", /failing checks: Build/)
+  assert.doesNotMatch(item?.state.goal ?? "", /Optional Build/) // non-blocking policies don't gate the merge
   assert.match(item?.state.goal ?? "", /Never merge/)
   assert.ok(log.some((c) => c.startsWith("git -C /r fetch origin +refs/heads/feat/rate-limit")))
   assert.ok(log.some((c) => c.includes(".claims/pr-7")))
@@ -136,14 +140,20 @@ test("skips drafts, fork PRs, other authors' PRs, and system/own comments", asyn
     pr({ pullRequestId: 4 }),
   ]
   const ownAndSystem = threads([
-    { commentType: "text", publishedDate: "2026-07-04T00:00:00Z", author: { uniqueName: "sitter@acme.com" } },
+    { commentType: "text", publishedDate: "2026-07-04T00:00:00Z", author: { uniqueName: "SITTER@acme.com" } },
     { commentType: "system", publishedDate: "2026-07-04T00:00:00Z", author: { uniqueName: "bob@acme.com" } },
+    {
+      commentType: "text",
+      publishedDate: "2026-07-04T00:00:00Z",
+      isDeleted: true,
+      author: { uniqueName: "carol@acme.com" },
+    },
   ])
   const { item, skip } = await source(prs, {
     script: [{ cmd: "az devops invoke", result: { stdout: ownAndSystem } }],
   }).claimNext()
   assert.equal(item, null)
-  assert.match(skip?.message ?? "", /no PRs need attention \(4 matched/)
+  assert.match(skip?.message ?? "", /no PRs need attention \(4 active/)
   assert.equal(skip?.actionable, false)
 })
 
@@ -265,4 +275,49 @@ test("selfLogin config short-circuits identity lookup; without it az identity is
   })
   await src.claimNext()
   assert.ok(noSelf.some((c) => c.startsWith("az ad signed-in-user")))
+})
+
+test("unresolvable identity (PAT-only auth, no selfLogin) skips actionably instead of sitting on everyone's PRs", async () => {
+  const src = makeAdoPrSource({
+    // Unmatched identity commands succeed with empty stdout — same signature
+    // as PAT-only auth where az has no signed-in account to report.
+    $: scriptedShell([{ cmd: "az repos pr list", result: { stdout: JSON.stringify([pr({ mergeStatus: "conflicts" })]) } }]),
+    client: ledgerClient({}),
+    directory: "/r",
+    tasksDir: "docs/tasks",
+    log: () => {},
+    loaded: sitter,
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+    now: () => "2026-07-05T00:00:00Z",
+  })
+  const { item, skip } = await src.claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /could not resolve the sitter's own ADO identity/)
+  assert.match(skip?.message ?? "", /ado\.selfLogin/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("a PR without a head SHA (merge evaluation queued) is skipped, not claimed with a poisoned ledger key", async () => {
+  const { item } = await source([pr({ mergeStatus: "conflicts", lastMergeSourceCommit: null })]).claimNext()
+  assert.equal(item, null)
+})
+
+test("variable-precision ADO timestamps compare numerically against the watermark", async () => {
+  const ledgers = {
+    "docs/tasks/runs/pr-sitter/pr-7.json": JSON.stringify({
+      pr: 7,
+      lastCommentAtHandled: "2026-07-04T00:00:00.123Z",
+      failedAttempts: [],
+      updatedAt: "2026-07-04T00:00:00Z",
+    }),
+  }
+  // Lexicographically "...00.12Z" > "...00.123Z" ('Z' > '3'), but 0.12s < 0.123s.
+  const older = threads([
+    { commentType: "text", publishedDate: "2026-07-04T00:00:00.12Z", author: { uniqueName: "alice@acme.com" } },
+  ])
+  const { item } = await source([pr()], {
+    ledgers,
+    script: [{ cmd: "az devops invoke", result: { stdout: older } }],
+  }).claimNext()
+  assert.equal(item, null)
 })

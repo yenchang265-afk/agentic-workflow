@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CODE_PLATFORMS } from "./loop/state.js";
 /**
  * Loop configuration, read from `.agentic-loop.json` at the repo root via the
  * host client (no Node fs dependency). The file is optional; every field has
@@ -10,7 +11,7 @@ import { z } from "zod";
  * `loadConfigWith` loaders below.
  */
 /** Which code-management platform PR-shaped work sources talk to. */
-export const CodePlatformSchema = z.enum(["github", "ado"]);
+export const CodePlatformSchema = z.enum(CODE_PLATFORMS);
 const BaseConfigSchema = z.object({
     /** Max loop iterations before stopping on repeated verify/review failures. */
     maxIterations: z.number().int().positive().default(3),

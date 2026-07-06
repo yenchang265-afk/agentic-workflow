@@ -46,6 +46,7 @@ const AdoThreadsSchema = z.object({
             .array(z.object({
             commentType: z.string().nullish(),
             publishedDate: z.string().nullish(),
+            isDeleted: z.boolean().default(false),
             author: z.object({ uniqueName: z.string().default("") }).nullish(),
         }))
             .nullish(),
@@ -54,6 +55,20 @@ const AdoThreadsSchema = z.object({
 });
 const POLICY_FAILING = new Set(["rejected", "broken", "failed"]);
 const stripRef = (ref) => ref.replace(/^refs\/heads\//, "");
+/** ADO logins are emails — case-insensitive identifiers. */
+const sameLogin = (a, b) => a.toLowerCase() === b.toLowerCase();
+/**
+ * `a` strictly newer than `b`. ADO timestamps carry variable-precision
+ * fractional seconds ("…20.9Z" vs "…20.873Z"), which string comparison
+ * misorders — compare parsed times, falling back to strings when unparsable.
+ */
+const newerThan = (a, b) => {
+    if (!b)
+        return Boolean(a);
+    const ta = Date.parse(a);
+    const tb = Date.parse(b);
+    return Number.isNaN(ta) || Number.isNaN(tb) ? a > b : ta > tb;
+};
 export const makeAdoPrSource = (deps) => {
     const { $, client, directory, tasksDir, log, loaded, ado } = deps;
     const binding = loaded.manifest.workSource;
@@ -88,6 +103,7 @@ export const makeAdoPrSource = (deps) => {
             return [];
         try {
             return AdoPolicySchema.parse(JSON.parse(out.stdout.toString() || "[]"))
+                .filter((p) => p.configuration?.isBlocking !== false) // optional policies don't gate the merge
                 .filter((p) => POLICY_FAILING.has((p.status ?? "").toLowerCase()))
                 .map((p) => p.configuration?.type?.displayName ?? "")
                 .filter(Boolean);
@@ -109,7 +125,7 @@ export const makeAdoPrSource = (deps) => {
             return (threads.value ?? [])
                 .filter((t) => !t.isDeleted)
                 .flatMap((t) => t.comments ?? [])
-                .filter((c) => (c.commentType ?? "text") !== "system" && c.publishedDate)
+                .filter((c) => !c.isDeleted && (c.commentType ?? "text") !== "system" && c.publishedDate)
                 .map((c) => ({ author: c.author?.uniqueName ?? "", at: c.publishedDate ?? "" }));
         }
         catch {
@@ -151,28 +167,49 @@ export const makeAdoPrSource = (deps) => {
                 };
             }
             const login = await viewer();
+            if (!login) {
+                // Unlike gh's server-side `author:@me`, the author filter here is
+                // client-side — with no identity it would sit on EVERY active PR in
+                // the project. Fail actionably instead of degrading.
+                return {
+                    item: null,
+                    skip: {
+                        message: "pr-sitter: could not resolve the sitter's own ADO identity (PAT-only auth can't) — " +
+                            "set ado.selfLogin in .agentic-loop.json so the sitter only claims its own PRs.",
+                        actionable: true,
+                    },
+                };
+            }
             const heldIds = [];
             for (const pr of prs.sort((a, b) => a.pullRequestId - b.pullRequestId)) {
                 if (pr.isDraft)
                     continue;
                 if (pr.forkSource != null)
                     continue; // fork PRs: can't push the head branch — a human's PR to sit on later
-                if (login && (pr.createdBy?.uniqueName ?? "") !== login)
+                if (!sameLogin(pr.createdBy?.uniqueName ?? "", login))
                     continue; // parity with gh's author:@me
                 const number = pr.pullRequestId;
+                const headRefOid = pr.lastMergeSourceCommit?.commitId ?? "";
+                // No head SHA yet (merge evaluation queued / never run): the snapshot
+                // isn't ready — a "" head would poison the ledger's dedup. Next poll.
+                if (!headRefOid)
+                    continue;
                 const ledger = await loadLedger(client, directory, tasksDir, number, now());
                 const watermark = ledger.lastCommentAtHandled ?? "";
-                const comments = await threadComments(pr.repository?.id || pr.repository?.name || "", number);
+                const enabled = binding.triggers;
+                const comments = enabled.includes("new-comments")
+                    ? await threadComments(pr.repository?.id || pr.repository?.name || "", number)
+                    : [];
                 const snapshot = {
                     number,
                     title: pr.title,
                     headRefName: stripRef(pr.sourceRefName),
                     baseRefName: stripRef(pr.targetRefName),
-                    headRefOid: pr.lastMergeSourceCommit?.commitId ?? "",
+                    headRefOid,
                     mergeable: (pr.mergeStatus ?? "").toLowerCase() === "conflicts" ? "CONFLICTING" : "MERGEABLE",
                     reviewDecision: (pr.reviewers ?? []).some((r) => r.vote < 0) ? "CHANGES_REQUESTED" : "",
-                    failingChecks: await failingPolicies(number),
-                    newComments: comments.filter((c) => c.author !== login && c.at > watermark),
+                    failingChecks: enabled.includes("failing-checks") ? await failingPolicies(number) : [],
+                    newComments: comments.filter((c) => !sameLogin(c.author, login) && newerThan(c.at, watermark)),
                 };
                 const triggers = attentionTriggers(snapshot, ledger, binding.triggers);
                 if (triggers.length === 0)
@@ -196,7 +233,7 @@ export const makeAdoPrSource = (deps) => {
             }
             return {
                 item: null,
-                skip: { message: `pr-sitter: no PRs need attention (${prs.length} matched the query)`, actionable: false },
+                skip: { message: `pr-sitter: no PRs need attention (${prs.length} active in the project)`, actionable: false },
             };
         },
         async release(work) {
@@ -227,7 +264,7 @@ export const makeAdoPrSource = (deps) => {
             let lastCommentAt = ledger.lastCommentAtHandled ?? "";
             if (repositoryId) {
                 for (const c of await threadComments(repositoryId, snapshot.number)) {
-                    if (c.at > lastCommentAt)
+                    if (newerThan(c.at, lastCommentAt))
                         lastCommentAt = c.at;
                 }
             }
