@@ -87,7 +87,7 @@ Correct behavior: always check for and use skills first.
 - `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
 - `loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
 - `.opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
-- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-task`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, `/explore`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
+- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-task`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

@@ -47,3 +47,12 @@ The flow: `new` (interview → draft) → human reviews the draft → `approve
 <id>` queues it → `/agent-loop task <id>` (or `claim`) plans it and parks the
 plan in `plan-review/` → human reviews the plan → `approve-plan <id>` (or
 `replan <id> <why>`) → `/agent-loop` builds it.
+
+These verbs are the **deferred** path — approving a task that parked earlier.
+When a loop you are driving hits a gate live (a plan just parked, or a build
+just finished), the `loop-orchestration` skill has you offer the same choices
+inline via AskUserQuestion instead of making the user type a command.
+
+Never move, create, or delete files under `docs/tasks/` yourself — no Bash
+`mv`/`mkdir`/`rm`, no direct writes into status folders (a PreToolUse hook
+blocks them). The MCP tools own every backlog move.

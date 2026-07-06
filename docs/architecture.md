@@ -99,7 +99,6 @@ flowchart TB
     subgraph authoring["AUTHORING + GATES — /agent-loop-task · interactive, human in the loop"]
         direction TB
         new["<b>/agent-loop-task new &lt;idea&gt;</b><br/>agent: loop-plan-author<br/>skills: interview-me,<br/>task-backlog-management<br/><i>interviews you into a planless draft</i>"]
-        explore["<b>/explore</b><br/>agent: loop-explore<br/>skill: task-backlog-management<br/><i>scans repo, drafts ≤5 tasks</i>"]
         approve{{"<b>/agent-loop-task approve &lt;id&gt;</b><br/>plugin queues the reviewed draft<br/>★ HUMAN GATE 1 — the task"}}
         approveplan{{"<b>/agent-loop-task approve-plan &lt;id&gt;</b><br/>plugin validates the parked plan<br/>★ HUMAN GATE 2 — the plan<br/>(reject: replan &lt;id&gt; &lt;why&gt; → back to queued/)"}}
     end
@@ -127,7 +126,6 @@ flowchart TB
 
     You -->|"idea"| new
     new -->|"writes draft"| draft
-    explore -->|"writes drafts"| draft
     draft -->|"you review the draft"| approve
     approve -->|"queues (audited, committed)"| queued
     queued -->|"claimed"| claim
@@ -170,7 +168,6 @@ pushes or opens a PR — REVIEW PASS parks the task in `in-review/` for you.
 | VERIFY (also `/verify`) | driver → agent | `loop-verify` | edit ❌ bash: test-runner allowlist | `debugging-and-error-recovery` (on FAIL) | trusted `loop_verdict` PASS/FAIL/ERROR |
 | REVIEW (also `/review`) | driver → agent | `loop-review` | edit ❌ bash: read-only git/fs | `code-review-and-quality` (+ `security-and-hardening`, `performance-optimization`) | trusted `loop_verdict` per lens, worst wins |
 | `/plan` (ad hoc) | agent | `loop-plan` | none (read-only) | `spec-driven-development`, `planning-and-task-breakdown` | a plan in chat — writes no file |
-| `/explore` | agent | `loop-explore` | task files only | `task-backlog-management` | ≤5 schema-valid drafts in `draft/` |
 
 Verdicts are only trusted through the `loop_verdict` plugin tool — a stage
 agent claiming "PASS" in prose is ignored. `loop_verdict` accepts any check
@@ -242,10 +239,46 @@ build-ready tasks beat queued ones, engineering beats opted-in kinds); and
 stage guardrails are enforced by a `PreToolUse` hook
 (`claude-plugin/hooks/check-stage-guard.mjs`) rather than by agent
 permissions. The MCP server writes a stage marker to
-`<tasksDir>/runs/.stage.json` carrying `{kind, stage, worktree, deadline,
-bashAllowlist}`; the hook enforces the **manifest's** allowlist for the active
-check stage (falling back to its built-in engineering lists for older
-markers) and pins edit/write tools inside the active worktree. On OpenCode
-the same guardrails ride the agent frontmatter permissions (including the
-`loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish` agents). Install and command
-details live in [`claude-plugin/README.md`](../claude-plugin/README.md).
+`<tasksDir>/runs/.stage.json` carrying `{kind, stage, taskId, worktree,
+deadline, bashAllowlist}`; the hook enforces the **manifest's** allowlist for
+the active check stage (falling back to its built-in engineering lists for
+older markers) and pins edit/write tools inside the active worktree. On
+OpenCode the same guardrails ride the agent frontmatter permissions
+(including the `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish` agents).
+Human gates are **interactive** on this substrate: a park (`plan gate`) or a
+done (`ship gate`) returns a `gate` field, and the driving agent asks the
+user inline via AskUserQuestion — Approve (continue into BUILD / ship now),
+Replan with a reason, or Park for later (the `/agent-loop-task` verbs remain
+the deferred path). Install and command details live in
+[`claude-plugin/README.md`](../claude-plugin/README.md).
+
+## Backlog integrity rails
+
+Three layers keep a confused agent from corrupting the folder-is-status
+backlog (threat model T3/T3b):
+
+- **Backlog-mutation guard** (`task/guard.ts`, always on): agent tool calls
+  that would mutate `<tasksDir>/` are default-denied on both substrates —
+  Claude Code via the PreToolUse hook (inline copy, kept in sync), OpenCode
+  via `tool.execute.before`. Read-only commands pass; direct writes are
+  limited to authoring `draft/*.md` and the live PLAN stage's own `queued/`
+  task (the stage marker's `taskId` / the driving loop's state names it). The
+  deterministic movers stay authoritative: `moveTask` + `canTransition`
+  enforce one-stage-at-a-time, and `statusOf` rejects unknown folders.
+- **Reconciliation sweep** (`task/audit.ts`): detects stray folders (a
+  `run/` an agent invented), task files outside every status folder, and one
+  id duplicated across status folders. Surfaced at session start (both
+  substrates), in `loop_status`, and as warnings on claims.
+- **Doctor** (`loop_doctor` / `/agent-loop doctor [fix]`): reports the sweep's
+  findings plus held claim markers; with `fix` it applies only the
+  unambiguous repairs — rescue strays back to `draft/` (audited + committed),
+  remove emptied stray folders, release stale orphaned claim markers.
+  Duplicates are always a human call.
+
+**Watch lease** (`scheduler/lease.ts`): at most one watch-mode process per
+clone. `/agent-loop watch` atomically creates
+`<tasksDir>/runs/.watch-lease/` (gitignored) with a heartbeat JSON refreshed
+every tick; a second process is refused with the live owner's identity, and
+a dead watcher's lease is taken over once the heartbeat exceeds
+`max(3×interval, 2min)`. One-shot claims (`loop_claim`/`loop_start`) warn —
+not block — when a foreign live lease exists.

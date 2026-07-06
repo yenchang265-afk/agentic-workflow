@@ -30,6 +30,11 @@ you**.
   no events. A tick that claims nothing always logs why (empty queue, tasks
   already started, claim marker held); actionable reasons are toasted once. A
   claim marker orphaned by a crashed run auto-releases after 15 minutes.
+  **One watcher process per clone:** watch takes an on-disk lease
+  (`<tasksDir>/runs/.watch-lease/`, heartbeat every tick); a second opencode
+  process watching the same clone is refused — run it in its own
+  clone/worktree, or unwatch the first. A dead watcher's lease is taken over
+  automatically once its heartbeat goes stale.
 - **`/agent-loop unwatch`** — take this session out of watch mode and stop its
   polling timer (a build already in progress still finishes).
 - **`/agent-loop recover <id>`** — resume an in-progress task whose run died
@@ -38,7 +43,8 @@ you**.
   BUILD from the persisted plan). Check `git status`/`git diff` first.
 - **`/agent-loop ship <id>`** — move a reviewed task from `in-review/` to
   `completed/`, appending an audited "Shipped" note and committing the move.
-  The recommended final-gate action (a raw `mv` still works but isn't audited).
+  The final-gate action (raw `mv` against the backlog is blocked — the
+  command is the only path).
 - **`/agent-loop stop`** (alias: `abort`) — abort the loop and exit watch mode
   (timer included), in this session.
 - **`/agent-loop status`** — print the current loop (stage, iteration, watch state
@@ -46,6 +52,13 @@ you**.
   actionable flags (awaiting approval, claimable, claim-held, interrupted,
   awaiting review). A watching session with nothing claimed shows the reason
   its last tick skipped. Bare `/agent-loop` (no arguments) does the same.
+- **`/agent-loop doctor [fix]`** — audit the backlog for structural damage
+  (stray folders like `run/`, task files outside every status folder,
+  duplicate ids, held claim markers). With `fix`, applies the unambiguous
+  repairs: rescues strays to `draft/`, removes emptied stray folders, and
+  releases stale claim markers. Duplicates are always left for you. Never
+  repair the backlog by hand — the folder a task lives in IS its state, and
+  the plugin blocks raw `mv`/`mkdir`/`rm`/writes against `docs/tasks/`.
 
 There is no free-text goal mode, and the loop never blocks on a human —
 author tasks with `/agent-loop-task new <idea>`, approve them with

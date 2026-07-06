@@ -173,6 +173,17 @@ export declare const statusOf: (task: FileRef) => TaskStatus;
  * skipping a stage.
  */
 export declare const moveTask: ($: Shell, task: FileRef, toStatus: TaskStatus) => Promise<string>;
+/**
+ * Rescue a stray task file (found by `auditBacklog` outside every status
+ * folder — e.g. `docs/tasks/run/x.md`) back into `draft/`, the human-review
+ * inbox. Deliberately bypasses `canTransition`: `statusOf` throws on unknown
+ * folders, and a rescue is a repair, not a lifecycle move — `moveTask` stays
+ * strict. Refuses to clobber an existing draft; returns the new path.
+ */
+export declare const rescueStray: ($: Shell, directory: string, tasksDir: string, relPath: string) => Promise<{
+    id: string;
+    path: string;
+}>;
 /** Append a blockquote note to a task file in place. Secrets redacted. Best-effort. */
 export declare const appendNote: ($: Shell, task: FileRef, note: string, log?: Log) => Promise<void>;
 /**

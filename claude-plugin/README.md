@@ -72,7 +72,6 @@ The loop (`/agent-loop`):
 Ancillary:
 
 - `/plan <goal>` — ad-hoc read-only plan, relayed as chat, nothing persisted.
-- `/explore` — file up to 5 improvement drafts (via the `loop-explore` subagent).
 
 The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/task new` are gone —
 task authoring and both gates always go through `/agent-loop-task`.
@@ -81,7 +80,7 @@ task authoring and both gates always go through `/agent-loop-task`.
 
 - `agents/` — `loop-plan-author` (writes the confirmed draft; runs the
   loop's PLAN stage in task mode), `loop-plan` (standalone read-only
-  planner), `loop-explore`, and the three build-phase stage subagents
+  planner), and the three build-phase stage subagents
   `loop-build` / `loop-verify` / `loop-review`.
 - `skills/` — `loop-orchestration` (Claude-specific driving protocol), plus
   the shared workflow-skill library (symlinked, including

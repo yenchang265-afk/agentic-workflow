@@ -53,8 +53,15 @@ The loop (`/agent-loop`):
   BUILD
 - `/agent-loop watch [interval]` — turn this session into a worker: claims
   work on idle events plus a polling timer (`30s`, `5m`, `2h`, bare number =
-  minutes; default `watchIntervalMinutes`); build work beats plan work
+  minutes; default `watchIntervalMinutes`); build work beats plan work.
+  Takes the clone's **watch lease** (`runs/.watch-lease/`, heartbeat every
+  tick) — a second opencode process watching the same clone is refused; a
+  dead watcher's lease is taken over once its heartbeat goes stale
 - `/agent-loop unwatch` — stop this session from claiming new work (timer included)
+- `/agent-loop doctor [fix]` — audit the backlog for stray folders/files,
+  duplicate ids, and held claim markers; `fix` applies the unambiguous
+  repairs (rescue strays to `draft/`, drop emptied folders, release stale
+  markers)
 - `/agent-loop recover <id>` — resume an in-progress task whose run died mid-build
   (crash, restart), from its state snapshot (or its persisted plan)
 - `/agent-loop ship <id>` — move a reviewed `in-review/` task to `completed/`, audited
@@ -65,6 +72,12 @@ The loop (`/agent-loop`):
 
 The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/agent-loop go` are gone —
 task authoring and both gates always go through `/agent-loop-task`.
+
+Gates on this substrate are **park-only**: watch mode has no interactive
+channel, so a parked plan or a finished loop always waits for the
+`/agent-loop-task approve-plan` / `/agent-loop ship` verbs. (The Claude Code
+variant additionally offers the same choices inline via AskUserQuestion when
+a human is driving.)
 
 Outside the loop, one-off requests are handled ad hoc: see
 [AGENTS.md](../AGENTS.md) for the intent-to-skill mapping — the plugin

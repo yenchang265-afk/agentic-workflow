@@ -27,14 +27,14 @@ who moves what) is the engineering backlog, unchanged.
 - Use before running `/agent-loop-task approve <id>`, `/agent-loop-task
   approve-plan <id>`, `/agent-loop-task replan <id>`, or `/agent-loop task <id>` —
   all read from this backlog.
-- Use when reviewing what `/explore` or `/agent-loop-task new` filed, or when
+- Use when reviewing what `/agent-loop-task new` filed, or when
   moving a task to `abandoned/`.
 
 ## The folders
 
 ```
 docs/tasks/
-  draft/        # interviewed stubs, no plan (from /agent-loop-task new, /explore, or hand-written)
+  draft/        # interviewed stubs, no plan (from /agent-loop-task new, or hand-written)
   queued/       # task approved, planless — awaits the loop's PLAN stage      ← /agent-loop-task approve moves here
   plan-review/  # plan written by the loop, parked for the human plan gate    ← the loop's PLAN stage moves here
   in-progress/  # plan approved: build-ready queue + build → verify → review  ← /agent-loop-task approve-plan moves here
@@ -82,8 +82,7 @@ approved, buildable.
    sharp, a full interview when it's vague) to pin down the goal and
    testable acceptance criteria, confirms the draft with you, and hands it
    to the `loop-plan-author` subagent to write a **planless draft** to `draft/`.
-   - Stubs also land in `draft/` from `/explore` (up to 5 per run, deduped
-     against what's already there), and you can write one by hand.
+   - You can also write a stub into `draft/` by hand.
 2. **Approve the task** — `/agent-loop-task approve <id>`: deterministic
    plugin code moves the reviewed draft to `queued/` with an audited
    "Task approved" note and commits. No plan exists yet, by design — the
@@ -108,7 +107,7 @@ approved, buildable.
 
 | Transition | Who | When |
 |------------|-----|------|
-| into `draft/` | `/agent-loop-task new`, you, or `/explore` | an interviewed (or filed) planless stub |
+| into `draft/` | `/agent-loop-task new` or you | an interviewed (or hand-written) planless stub |
 | `draft → queued` | **`/agent-loop-task approve <id>`** | the human task gate — scope + acceptance approved, planless by design; audited note + commit |
 | `queued → plan-review` | driver | the loop's PLAN stage wrote the plan and parked it for review; audited note + commit |
 | `plan-review → in-progress` | **`/agent-loop-task approve-plan <id>`** | the human plan gate; audited note + commit |
@@ -178,8 +177,6 @@ What's on the task file tells you what happened:
   folder is the only source of truth.
 - A task sitting in `in-progress/` with an unmatched `> BUILD started` note
   that nobody has checked `git status` against yet.
-- More than ~5 new draft tasks appearing from a single `/explore` run — the
-  subagent is supposed to cap at 5 and name the overflow instead.
 - A task sitting in `in-review/` — that's not a stall, it's the human diff
   gate; review the branch and run `/agent-loop ship <id>` when it ships.
 - A task in `completed/` whose diff was never actually reviewed/PR'd by a
@@ -208,7 +205,7 @@ What's on the task file tells you what happened:
 - [ ] Every task in `in-progress/` carries an `## Implementation Plan`
       heading and a "Plan approved" audit note.
 - [ ] `docs/tasks/{draft,queued,plan-review,in-progress,in-review,completed,abandoned}/`
-      all exist (even if empty, via `.gitkeep`) so `/explore`, `/agent-loop-task`,
+      all exist (even if empty, via `.gitkeep`) so `/agent-loop-task`
       and the driver never fail on a missing folder.
 - [ ] Every locally-drafted task was shown to the user for confirmation
       before being written to disk.
