@@ -116,6 +116,9 @@ skills library via [AGENTS.md](AGENTS.md).
 - [docs/configuration.md](docs/configuration.md) — `.agentic-loop.json`
   reference, per-kind `loops` sections, and optional hardening (worktrees,
   review lenses, redaction)
+- [docs/templates/AGENTS.md](docs/templates/AGENTS.md) — starter
+  `AGENTS.md`/`CLAUDE.md` (Karpathy rules + loop workflow) to copy into
+  projects driven by agent-loop
 - [docs/migration.md](docs/migration.md) — migrating from earlier layouts
   (`/agent-loop-plan`, `in-planning/`, the blocking PLAN gate)
 - [docs/design/](docs/design/) — threat model, hardening design records
