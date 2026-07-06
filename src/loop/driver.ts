@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { type Task } from "@agentic-loop/core/task/schema"
@@ -33,12 +34,16 @@ import {
   listQueued,
   moveTask,
   releaseClaim,
+  releaseOrphanedClaims,
+  rescueStray,
   selectOrder,
   STALE_CLAIM_MINUTES,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-loop/core/task/store"
+import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
+import { acquireLease, heartbeatLease, releaseLease } from "@agentic-loop/core/scheduler/lease"
 import {
   addWorktree,
   checkoutBranch,
@@ -198,6 +203,51 @@ const watching = new Set<string>()
 /** Per-watching-session polling timers and their cadence (for status display). */
 const watchTimers = new Map<string, ReturnType<typeof setInterval>>()
 const watchIntervalsMs = new Map<string, number>()
+/**
+ * The clone's watch lease, refcounted per working directory: watch sessions in
+ * THIS process share one on-disk lease (in-process races are covered by the
+ * claim markers + `executingDirs`); the lease exists to refuse a SECOND
+ * process watching the same clone — the cross-process race (threat-model T3)
+ * the in-memory guards can't see. Last unwatch/stop releases it.
+ */
+const watchLeases = new Map<string, { count: number; deps: Deps; tasksDir: string; intervalMs: number }>()
+
+const leaseOwner = (intervalMs: number) => ({ pid: process.pid, host: os.hostname(), intervalMs })
+
+/** Acquire (or share) the clone's watch lease. On refusal, says who holds it. */
+const acquireWatchLease = async (
+  deps: Deps,
+  config: Config,
+  intervalMs: number,
+): Promise<{ ok: true } | { ok: false; message: string }> => {
+  const existing = watchLeases.get(deps.directory)
+  if (existing) {
+    existing.count += 1
+    return { ok: true }
+  }
+  const res = await acquireLease(deps.$, deps.directory, config.tasksDir, leaseOwner(intervalMs), new Date())
+  if (!res.ok) {
+    const o = res.owner
+    const ago = o && Number.isFinite(Date.parse(o.heartbeatAt)) ? Math.round((Date.now() - Date.parse(o.heartbeatAt)) / 1000) : null
+    const who = o ? ` (pid ${o.pid} on ${o.host}${ago !== null ? `, heartbeat ${ago}s ago` : ""})` : ""
+    return {
+      ok: false,
+      message: `Another watcher${who} holds this clone's watch lease — unwatch it there, or run this watcher in its own clone/worktree.`,
+    }
+  }
+  watchLeases.set(deps.directory, { count: 1, deps, tasksDir: config.tasksDir, intervalMs })
+  return { ok: true }
+}
+
+/** Drop one watch session's share of the lease; the last one releases it on disk. */
+const releaseWatchLease = async (deps: Deps): Promise<void> => {
+  const entry = watchLeases.get(deps.directory)
+  if (!entry) return
+  entry.count -= 1
+  if (entry.count > 0) return
+  watchLeases.delete(deps.directory)
+  await releaseLease(deps.$, deps.directory, entry.tasksDir)
+}
 /**
  * Last no-claim reason toasted per watch session. Every tick logs its reason,
  * but the toast fires only when the reason CHANGES — a held marker or an
@@ -815,11 +865,15 @@ const stopWatchTimer = (sessionID: string): void => {
   watchIntervalsMs.delete(sessionID)
 }
 
-/** Clear every watch timer — called from the plugin's dispose hook. */
+/** Clear every watch timer and drop held leases — called from the plugin's dispose hook. */
 export const disposeWatch = (): void => {
   for (const timer of watchTimers.values()) clearInterval(timer)
   watchTimers.clear()
   watchIntervalsMs.clear()
+  for (const [dir, entry] of watchLeases) {
+    watchLeases.delete(dir)
+    void releaseLease(entry.deps.$, dir, entry.tasksDir)
+  }
 }
 
 /**
@@ -832,7 +886,12 @@ export const disposeWatch = (): void => {
  */
 const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
   try {
-    if (!watching.has(sessionID) || driving.has(sessionID) || getLoop(sessionID)) return
+    if (!watching.has(sessionID)) return
+    // Prove liveness every tick, busy or idle — a watcher driving a long BUILD
+    // must not read as dead to a would-be takeover.
+    const entry = watchLeases.get(deps.directory)
+    if (entry) await heartbeatLease(deps.$, deps.directory, entry.tasksDir, leaseOwner(entry.intervalMs), new Date())
+    if (driving.has(sessionID) || getLoop(sessionID)) return
     const res = await deps.client.session.status().catch(() => null)
     const status = res?.data?.[sessionID]
     if (status && status.type !== "idle") return
@@ -1013,6 +1072,7 @@ export const handleCommand = async (
     const wasWatching = watching.delete(sessionID)
     stopWatchTimer(sessionID)
     lastSkipReason.delete(sessionID)
+    if (wasWatching) await releaseWatchLease(deps)
     pending.delete(sessionID)
     const state = getLoop(sessionID)
     if (state?.task) {
@@ -1036,6 +1096,12 @@ export const handleCommand = async (
     const parsed = parseWatchArgs(arg.slice("watch".length))
     if ("error" in parsed) return void (await toast(client, parsed.error, "warning"))
     const intervalMs = parsed.intervalMs ?? Math.max(config.watchIntervalMinutes * 60_000, MIN_WATCH_INTERVAL_MS)
+    // Only one watcher process per clone: acquire the on-disk lease before
+    // arming (a re-arm by an already-watching session keeps its share).
+    if (!watching.has(sessionID)) {
+      const lease = await acquireWatchLease(deps, config, intervalMs)
+      if (!lease.ok) return void (await toast(client, lease.message, "warning"))
+    }
     watching.add(sessionID)
     stopWatchTimer(sessionID) // replace any prior timer instead of stacking
     watchTimers.set(
@@ -1056,6 +1122,7 @@ export const handleCommand = async (
     const was = watching.delete(sessionID)
     stopWatchTimer(sessionID)
     lastSkipReason.delete(sessionID)
+    if (was) await releaseWatchLease(deps)
     await toast(client, was ? "Stopped watching." : "Not watching.", "info")
     return
   }
@@ -1180,6 +1247,72 @@ export const handleCommand = async (
     return
   }
 
+  if (lower === "doctor" || lower.startsWith("doctor ")) {
+    const fix = /(^|\s)(--)?fix(\s|$)/.test(lower.slice("doctor".length))
+    try {
+      const anomalies = await auditBacklog(client, deps.directory, config.tasksDir)
+      const heldQueued = await listClaimIds(deps.$, deps.directory, config.tasksDir, "queued")
+      const heldInProgress = await listClaimIds(deps.$, deps.directory, config.tasksDir, "in-progress")
+      for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
+      if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
+      if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
+      const findings = formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length
+      if (!fix) {
+        await toast(
+          client,
+          findings
+            ? `Backlog doctor: ${findings} finding(s) — see the log. /agent-loop doctor fix applies the unambiguous repairs.`
+            : "Backlog doctor: clean.",
+          findings ? "warning" : "success",
+        )
+        return
+      }
+      // Unambiguous repairs only: rescue strays to draft/, remove now-empty
+      // stray folders, release stale orphaned claim markers. Duplicates are a
+      // human call — never auto-resolved.
+      const actor = await gitActor(deps.$, deps.directory)
+      const rescued: string[] = []
+      for (const stray of anomalies.strayFiles) {
+        try {
+          const { id, path: newPath } = await rescueStray(deps.$, deps.directory, config.tasksDir, stray)
+          await appendNote(deps.$, { id, path: newPath }, auditNote(`Rescued from ${stray} — was outside every status folder`, new Date(), actor))
+          rescued.push(stray)
+        } catch (err) {
+          await deps.log("warn", `doctor: could not rescue ${stray}: ${(err as Error).message}`)
+        }
+      }
+      const removedDirs: string[] = []
+      for (const dir of anomalies.unknownDirs) {
+        const out = await deps.$`rmdir ${path.join(deps.directory, config.tasksDir, dir)}`.quiet().nothrow()
+        if (out.exitCode === 0) removedDirs.push(dir)
+      }
+      const released: string[] = []
+      for (const [status, ids] of [["queued", heldQueued], ["in-progress", heldInProgress]] as const) {
+        if (!ids.length) continue
+        const tasks = await listByStatus(client, deps.directory, config.tasksDir, status, deps.log)
+        released.push(
+          ...(await releaseOrphanedClaims(deps.$, tasks, ids, path.join(deps.directory, config.tasksDir, status), {
+            isDriving: (id) => findSessionDriving(id) !== undefined,
+            ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
+          })),
+        )
+      }
+      if (rescued.length) {
+        await commitPaths(deps.$, deps.directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
+      }
+      const summary = [
+        rescued.length ? `rescued ${rescued.length} stray file(s) to draft/` : "",
+        removedDirs.length ? `removed ${removedDirs.length} stray folder(s)` : "",
+        released.length ? `released ${released.length} stale claim marker(s)` : "",
+        anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
+      ].filter(Boolean)
+      await toast(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")
+    } catch (err) {
+      await toast(client, `Backlog doctor failed: ${(err as Error).message}`, "error")
+    }
+    return
+  }
+
   if (lower === "status" || lower === "") {
     const isWatching = watching.has(sessionID)
     const state = getLoop(sessionID)
@@ -1215,7 +1348,7 @@ export const handleCommand = async (
   // unrecognized gets usage help instead of silently becoming a goal.
   await toast(
     client,
-    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · watch [interval] · unwatch · recover <id> · ship <id> · stop · status. ` +
+    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · watch [interval] · unwatch · recover <id> · ship <id> · doctor [fix] · stop · status. ` +
       "Author and approve tasks (and plans) with /agent-loop-task.",
     "warning",
   )

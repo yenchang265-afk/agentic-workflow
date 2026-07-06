@@ -64,10 +64,52 @@ const main = async () => {
     /* none */
   }
 
+  // Backlog anomaly sweep — inline re-implementation of core's
+  // task/audit.ts `auditBacklog` (a .mjs hook can't import the TS lib
+  // without depending on dist/) — keep in sync.
+  const STATUSES = ["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]
+  const unknownDirs = []
+  const strayFiles = []
+  const idsSeen = new Map()
+  try {
+    const root = path.join(cwd, tasksDir)
+    for (const name of fs.readdirSync(root)) {
+      const stat = fs.statSync(path.join(root, name))
+      if (stat.isDirectory()) {
+        if (name.startsWith(".") || name === "runs" || STATUSES.includes(name)) continue
+        unknownDirs.push(name)
+        for (const f of fs.readdirSync(path.join(root, name))) {
+          if (f.endsWith(".md")) strayFiles.push(`${tasksDir}/${name}/${f}`)
+        }
+      } else if (name.endsWith(".md")) {
+        strayFiles.push(`${tasksDir}/${name}`)
+      }
+    }
+    for (const status of STATUSES) {
+      let entries = []
+      try {
+        entries = fs.readdirSync(path.join(root, status))
+      } catch {
+        continue
+      }
+      for (const f of entries) {
+        if (!f.endsWith(".md")) continue
+        const id = f.replace(/\.md$/, "")
+        idsSeen.set(id, [...(idsSeen.get(id) ?? []), status])
+      }
+    }
+  } catch {
+    /* no backlog */
+  }
+  const duplicates = [...idsSeen.entries()].filter(([, statuses]) => statuses.length > 1)
+
   const lines = []
   if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agent-loop recover <id>\` to resume.`)
   if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agent-loop recover <id>\` resumes at the exact stage.`)
-  if (planClaims.length) lines.push(`agentic-loop: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`rmdir\` the marker(s) so the task can be claimed again.`)
+  if (planClaims.length) lines.push(`agentic-loop: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`loop_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
+  if (unknownDirs.length) lines.push(`agentic-loop: unknown folder(s) under ${tasksDir}: ${unknownDirs.join(", ")} — not status folders; \`loop_doctor\` reports and repairs.`)
+  if (strayFiles.length) lines.push(`agentic-loop: stray task file(s) outside every status folder: ${strayFiles.join(", ")} — invisible to the loop; \`loop_doctor\` (fix:true) rescues them to draft/.`)
+  if (duplicates.length) lines.push(`agentic-loop: duplicate task id(s) across status folders: ${duplicates.map(([id, s]) => `${id} (${s.join(", ")})`).join("; ")} — resolve manually (keep one, loop_move the rest to abandoned).`)
   if (!lines.length) return process.exit(0)
 
   process.stdout.write(

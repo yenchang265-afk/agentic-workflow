@@ -1,8 +1,13 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for the agentic-loop plugin. Two safety controls the OpenCode
- * plugin enforced in-process, re-homed to a Claude Code hook:
+ * PreToolUse guard for the agentic-loop plugin. Three safety controls:
  *
+ *  0. Backlog-mutation guard — ALWAYS ON, loop or no loop: direct Bash/Write/
+ *     Edit mutations of `<tasksDir>/` are blocked (the folder a task file
+ *     lives in IS its state; only the MCP verbs may move it). Carve-outs:
+ *     authoring drafts (`draft/*.md`) and the live PLAN stage writing its own
+ *     `queued/` task. Inline copy of packages/core/src/task/guard.ts — keep
+ *     in sync.
  *  1. Check-stage bash allowlist — while the loop is in VERIFY or REVIEW, Bash is
  *     restricted to a default-deny read/test allowlist (threat-model T2). The
  *     active stage is read from the marker the MCP server writes
@@ -38,20 +43,86 @@ const REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ]
 const toRe = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")
 const matchesAny = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()))
 
-const readMarker = (cwd) => {
-  // tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
-  let tasksDir = "docs/tasks"
+// tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
+const readTasksDir = (cwd) => {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-loop.json"), "utf8"))
-    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) tasksDir = cfg.tasksDir
+    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir
   } catch {
     /* default */
   }
+  return "docs/tasks"
+}
+
+const readMarker = (cwd, tasksDir) => {
   try {
     return JSON.parse(fs.readFileSync(path.join(cwd, tasksDir, "runs", ".stage.json"), "utf8"))
   } catch {
     return null
   }
+}
+
+// --- (0) backlog-mutation guard — inline copy of packages/core/src/task/guard.ts; keep in sync ---
+
+const HOW_TO_MUTATE =
+  "the folder a backlog file lives in IS its state — mutate it only through the loop tools " +
+  "(loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) " +
+  "or the /agent-loop-task verbs, never by hand."
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+const backlogRelPath = (filePath, tasksDir) => {
+  const normalized = filePath.replace(/\\/g, "/")
+  const m = new RegExp(`(?:^|/)${escapeRe(tasksDir)}/(.+)$`).exec(normalized)
+  return m?.[1] ?? null
+}
+
+const BACKLOG_READ_ONLY = [
+  "ls*", "cat *", "head *", "tail *", "grep *", "rg *", "find *", "wc *", "diff *", "stat *", "tree*",
+  "git status*", "git diff*", "git log*", "git show*", "git blame*",
+  "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*", "git -C * blame*",
+]
+
+const MUTATING_TOKENS = [" -exec", " -execdir", " -delete", " -ok "]
+
+/** {allow:true} | {allow:false, reason}; mirrors guard.ts's classifyMutation. */
+const classifyBacklogMutation = (tool, ti, tasksDir, planTaskId) => {
+  if (["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
+    const fp = ti.file_path ?? ti.path ?? ti.notebook_path
+    if (typeof fp !== "string") return { allow: true }
+    const rel = backlogRelPath(fp, tasksDir)
+    if (rel === null) return { allow: true }
+    const segments = rel.split("/")
+    const isDirectMd = segments.length === 2 && segments[1].toLowerCase().endsWith(".md")
+    if (isDirectMd && segments[0] === "draft") return { allow: true }
+    if (isDirectMd && segments[0] === "queued" && planTaskId && segments[1] === `${planTaskId}.md`) {
+      return { allow: true }
+    }
+    return {
+      allow: false,
+      reason:
+        `agentic-loop: direct edits under ${tasksDir}/ are limited to draft/*.md ` +
+        `(and the live PLAN stage's own queued/ task) — ${HOW_TO_MUTATE}`,
+    }
+  }
+  if (tool === "Bash") {
+    const cmd = String(ti.command ?? "")
+    if (!cmd.includes(tasksDir)) return { allow: true }
+    if (/>/.test(cmd)) {
+      return { allow: false, reason: `agentic-loop: redirecting output while referencing ${tasksDir}/ is blocked — ${HOW_TO_MUTATE}` }
+    }
+    if (MUTATING_TOKENS.some((t) => cmd.includes(t))) {
+      return { allow: false, reason: `agentic-loop: this command can mutate ${tasksDir}/ — ${HOW_TO_MUTATE}` }
+    }
+    if (cmd.split(/&&|\|\||;|\|/).every((s) => matchesAny(s, BACKLOG_READ_ONLY))) return { allow: true }
+    return {
+      allow: false,
+      reason:
+        `agentic-loop: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) ` +
+        `may reference ${tasksDir}/ — ${HOW_TO_MUTATE}`,
+    }
+  }
+  return { allow: true }
 }
 
 const main = async () => {
@@ -62,10 +133,18 @@ const main = async () => {
     return allow()
   }
   const cwd = input.cwd || process.cwd()
-  const marker = readMarker(cwd)
-  if (!marker) return allow() // no active loop stage — nothing to enforce
+  const tasksDir = readTasksDir(cwd)
+  const marker = readMarker(cwd, tasksDir)
   const tool = input.tool_name
   const ti = input.tool_input || {}
+
+  // (0) backlog-mutation guard — always on, marker or not: raw mv/mkdir/rm or
+  // Write/Edit under the backlog bypasses the MCP state machine.
+  const planTaskId = marker && marker.stage === "plan" && typeof marker.taskId === "string" ? marker.taskId : null
+  const backlogVerdict = classifyBacklogMutation(tool, ti, tasksDir, planTaskId)
+  if (!backlogVerdict.allow) return block(backlogVerdict.reason)
+
+  if (!marker) return allow() // no active loop stage — nothing else to enforce
 
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
   // tools so it returns control; loop_advance then stops the loop.

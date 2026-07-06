@@ -1,5 +1,27 @@
 # Migrating between layouts
 
+## To the backlog guard, watch lease, and inline gates
+
+- **Raw backlog edits are now blocked.** Bash `mv`/`mkdir`/`rm`/redirects
+  against `<tasksDir>/` and direct Write/Edit of files in status folders are
+  rejected on both substrates (PreToolUse hook / `tool.execute.before`);
+  only `draft/*.md` authoring and the live PLAN stage's own `queued/` task
+  stay writable. Use the MCP verbs / `/agent-loop-task`; repair damage with
+  `loop_doctor` / `/agent-loop doctor [fix]`.
+- **New gitignored dir `docs/tasks/runs/.watch-lease/`** — the single-watcher
+  lease. A second `/agent-loop watch` process on the same clone is refused;
+  run extra watchers in their own clones/worktrees. Nothing to migrate;
+  delete the dir if a crashed watcher's lease ever wedges (or just wait —
+  stale leases are taken over automatically).
+- **Stage marker gained a `taskId` field** (`runs/.stage.json`). Old markers
+  still parse; hooks from this version paired with an older MCP server just
+  won't apply the PLAN carve-out (PLAN would be blocked from writing the
+  plan — update both sides together).
+- **Claude Code gates are interactive now.** A plan park / loop done returns
+  a `gate` field and the driver asks Approve / Replan / Park inline
+  (AskUserQuestion). The `/agent-loop-task approve-plan` and
+  `/agent-loop ship` verbs are unchanged and remain the deferred path.
+
 ## To the in-loop PLAN stage (`/agent-loop-task`, `queued/`, `plan-review/`)
 
 Planning moved **into** the loop: the plan is now written right before

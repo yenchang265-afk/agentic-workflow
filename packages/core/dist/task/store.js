@@ -285,6 +285,28 @@ export const moveTask = async ($, task, toStatus) => {
     await releaseClaim($, task); // a claim belongs to the status folder it was taken in
     return dest;
 };
+/**
+ * Rescue a stray task file (found by `auditBacklog` outside every status
+ * folder — e.g. `docs/tasks/run/x.md`) back into `draft/`, the human-review
+ * inbox. Deliberately bypasses `canTransition`: `statusOf` throws on unknown
+ * folders, and a rescue is a repair, not a lifecycle move — `moveTask` stays
+ * strict. Refuses to clobber an existing draft; returns the new path.
+ */
+export const rescueStray = async ($, directory, tasksDir, relPath) => {
+    const id = path.basename(relPath).replace(/\.md$/i, "");
+    const src = path.join(directory, relPath);
+    const dest = path.join(directory, tasksDir, "draft", `${id}.md`);
+    const exists = await $ `test -e ${dest}`.quiet().nothrow();
+    if (exists.exitCode === 0) {
+        throw new Error(`cannot rescue ${relPath}: draft/${id}.md already exists — resolve the collision manually`);
+    }
+    await $ `mkdir -p ${path.join(directory, tasksDir, "draft")}`.quiet().nothrow();
+    const out = await $ `mv ${src} ${dest}`.quiet().nothrow();
+    if (out.exitCode !== 0) {
+        throw new Error(`could not rescue ${relPath} → draft/: ${out.stderr.toString().trim()}`);
+    }
+    return { id, path: dest };
+};
 /** Warn about redaction hits without ever echoing the secret (names only). */
 const warnRedaction = (hits, where, log) => {
     if (!hits.length || !log)

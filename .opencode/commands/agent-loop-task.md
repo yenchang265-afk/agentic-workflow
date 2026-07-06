@@ -45,3 +45,8 @@ The flow: `new` (interview → draft) → human reviews the draft → `approve
 <id>` parks it in the queue → `/agent-loop` (task or watch) plans it and parks
 the plan in `plan-review/` → human reviews the plan → `approve-plan <id>`
 (or `replan <id> <why>`) → `/agent-loop` builds it.
+
+Never move, create, or delete files under `docs/tasks/` yourself — no bash
+`mv`/`mkdir`/`rm`, no direct writes into status folders (the plugin blocks
+them). The folder a task lives in IS its state; these verbs and the loop own
+every move. If the backlog looks damaged, run `/agent-loop doctor`.

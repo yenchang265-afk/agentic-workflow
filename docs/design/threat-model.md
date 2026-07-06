@@ -81,11 +81,38 @@ One task's half-finished diff leaks into another task's build or review.
   `worktreesDir` set, each execution runs in its **own git worktree**, so the
   shared checkout is never branch-switched under a concurrent drive and the
   serialization lock is unnecessary — same-instance concurrent watchers are
-  safe.
-- **Residual:** two *separate opencode processes* sharing one clone still
-  race the main tree's `index.lock` when committing backlog mutations
-  (best-effort, degrades gracefully). Run extra watchers in their own clones
-  for hard isolation.
+  safe. Across processes, a **single-watcher lease**
+  (`<tasksDir>/runs/.watch-lease/`: atomic `mkdir` + heartbeat JSON,
+  `scheduler/lease.ts`) refuses a second watch-mode process on the same
+  clone; a dead watcher's lease is taken over once its heartbeat goes stale.
+- **Residual:** one-shot claims (`/agent-loop task`, the MCP server's
+  `loop_claim`/`loop_start`) are **warned, not blocked**, when a live foreign
+  watcher holds the lease — they can still race its `index.lock` and
+  in-place appends (best-effort, degrades gracefully). Run extra
+  watchers/claimers in their own clones for hard isolation.
+
+### T3b. Backlog corruption by a confused agent
+
+A degraded model bypasses the deterministic movers: raw `mv`/`mkdir`/`rm` or
+a direct file write against `<tasksDir>/` creates stray folders (`run/`),
+skips lifecycle stages (draft → completed), or strands task files where no
+pool ever polls them.
+
+- **Control:** an always-on **backlog-mutation guard** (`task/guard.ts`;
+  Claude Code: the PreToolUse hook; OpenCode: `tool.execute.before`)
+  default-denies agent tool calls that would mutate `<tasksDir>/` — only
+  read-only commands may reference it, and direct writes are limited to
+  authoring `draft/*.md` plus the live PLAN stage's own `queued/` task. The
+  deterministic layer (`moveTask` + `canTransition`) remains authoritative:
+  one stage at a time, unknown folders rejected. A **reconciliation sweep**
+  (`task/audit.ts`, surfaced at session start, in `loop_status`, and on
+  claims) detects stray folders/files and duplicate ids; `loop_doctor` /
+  `/agent-loop doctor` repairs the unambiguous cases (rescue strays to
+  `draft/`, drop emptied stray folders, release stale claim markers).
+- **Residual:** the guard string-matches tool calls — it is heuristic
+  defense-in-depth against confused agents, **not a sandbox**; an obfuscated
+  shell command can slip past it (the audit sweep then catches the damage
+  after the fact). Duplicated ids are flagged, never auto-resolved.
 
 ### T4. Unauditable or spoofable approvals
 

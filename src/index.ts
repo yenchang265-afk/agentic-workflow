@@ -7,6 +7,8 @@ import * as driver from "./loop/driver.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
 import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
 import { findSessionDriving, getLoop, hasLoop } from "@agentic-loop/core/loop/state"
+import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
+import { classifyBash, classifyEdit } from "@agentic-loop/core/task/guard"
 import { isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
@@ -116,6 +118,13 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
           await log("warn", `released orphaned plan-claim marker(s): ${released.join(", ")} — a prior run died mid-PLAN; watch will re-claim`)
         }
       }
+      // Structural anomaly sweep: stray folders, task files outside every
+      // status folder, duplicate ids — damage a confused agent can cause.
+      // Report-only here; /agent-loop doctor [fix] repairs.
+      const anomalies = await auditBacklog(client, directory, config.tasksDir)
+      for (const line of formatAnomalies(anomalies, config.tasksDir)) {
+        await log("warn", `backlog anomaly: ${line} — /agent-loop doctor reports and repairs`)
+      }
     } catch (err) {
       await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
     }
@@ -171,11 +180,34 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
       if (hasLoop(input.sessionID)) {
         await log("info", `tool ${input.tool} starting (call ${input.callID})`)
       }
+      // Backlog-mutation guard (always on, loop or no loop): the folder a task
+      // file lives in IS its state — raw bash mv/mkdir/rm or a direct
+      // write/edit under tasksDir bypasses the driver's state machine (a
+      // degraded model's favorite corruption). classifyBash/classifyEdit
+      // default-deny anything but reads, with carve-outs for authoring
+      // draft/*.md and the live PLAN stage writing its own queued/ task.
+      const config = await getConfig()
+      const loop = getLoop(input.sessionID)
+      const planTaskId = loop?.stage === "plan" ? (loop.task?.id ?? null) : null
+      const guardCtx = { tasksDir: config.tasksDir, planTaskId }
+      if (input.tool === "bash") {
+        const cmd: unknown = output.args?.command
+        if (typeof cmd === "string") {
+          const verdict = classifyBash(cmd, guardCtx)
+          if (!verdict.allow) throw new Error(verdict.reason)
+        }
+      } else if (EDIT_TOOLS.has(input.tool)) {
+        const fp: unknown = output.args?.filePath ?? output.args?.path
+        if (typeof fp === "string") {
+          const verdict = classifyEdit(fp, guardCtx)
+          if (!verdict.allow) throw new Error(verdict.reason)
+        }
+      }
       // Worktree pinning enforcement (best-effort): while a worktree-mode loop
       // drives this session, a file-writing tool must not touch an absolute
       // path outside the worktree. Relative paths and non-edit tools pass
       // through (bash pinning stays prompt-enforced — a documented residual).
-      const wt = getLoop(input.sessionID)?.git?.worktree
+      const wt = loop?.git?.worktree
       if (!wt || !EDIT_TOOLS.has(input.tool)) return
       const filePath: unknown = output.args?.filePath ?? output.args?.path
       if (typeof filePath !== "string" || !path.isAbsolute(filePath)) return

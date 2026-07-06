@@ -242,10 +242,46 @@ build-ready tasks beat queued ones, engineering beats opted-in kinds); and
 stage guardrails are enforced by a `PreToolUse` hook
 (`claude-plugin/hooks/check-stage-guard.mjs`) rather than by agent
 permissions. The MCP server writes a stage marker to
-`<tasksDir>/runs/.stage.json` carrying `{kind, stage, worktree, deadline,
-bashAllowlist}`; the hook enforces the **manifest's** allowlist for the active
-check stage (falling back to its built-in engineering lists for older
-markers) and pins edit/write tools inside the active worktree. On OpenCode
-the same guardrails ride the agent frontmatter permissions (including the
-`loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish` agents). Install and command
-details live in [`claude-plugin/README.md`](../claude-plugin/README.md).
+`<tasksDir>/runs/.stage.json` carrying `{kind, stage, taskId, worktree,
+deadline, bashAllowlist}`; the hook enforces the **manifest's** allowlist for
+the active check stage (falling back to its built-in engineering lists for
+older markers) and pins edit/write tools inside the active worktree. On
+OpenCode the same guardrails ride the agent frontmatter permissions
+(including the `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish` agents).
+Human gates are **interactive** on this substrate: a park (`plan gate`) or a
+done (`ship gate`) returns a `gate` field, and the driving agent asks the
+user inline via AskUserQuestion — Approve (continue into BUILD / ship now),
+Replan with a reason, or Park for later (the `/agent-loop-task` verbs remain
+the deferred path). Install and command details live in
+[`claude-plugin/README.md`](../claude-plugin/README.md).
+
+## Backlog integrity rails
+
+Three layers keep a confused agent from corrupting the folder-is-status
+backlog (threat model T3/T3b):
+
+- **Backlog-mutation guard** (`task/guard.ts`, always on): agent tool calls
+  that would mutate `<tasksDir>/` are default-denied on both substrates —
+  Claude Code via the PreToolUse hook (inline copy, kept in sync), OpenCode
+  via `tool.execute.before`. Read-only commands pass; direct writes are
+  limited to authoring `draft/*.md` and the live PLAN stage's own `queued/`
+  task (the stage marker's `taskId` / the driving loop's state names it). The
+  deterministic movers stay authoritative: `moveTask` + `canTransition`
+  enforce one-stage-at-a-time, and `statusOf` rejects unknown folders.
+- **Reconciliation sweep** (`task/audit.ts`): detects stray folders (a
+  `run/` an agent invented), task files outside every status folder, and one
+  id duplicated across status folders. Surfaced at session start (both
+  substrates), in `loop_status`, and as warnings on claims.
+- **Doctor** (`loop_doctor` / `/agent-loop doctor [fix]`): reports the sweep's
+  findings plus held claim markers; with `fix` it applies only the
+  unambiguous repairs — rescue strays back to `draft/` (audited + committed),
+  remove emptied stray folders, release stale orphaned claim markers.
+  Duplicates are always a human call.
+
+**Watch lease** (`scheduler/lease.ts`): at most one watch-mode process per
+clone. `/agent-loop watch` atomically creates
+`<tasksDir>/runs/.watch-lease/` (gitignored) with a heartbeat JSON refreshed
+every tick; a second process is refused with the live owner's identity, and
+a dead watcher's lease is taken over once the heartbeat exceeds
+`max(3×interval, 2min)`. One-shot claims (`loop_claim`/`loop_start`) warn —
+not block — when a foreign live lease exists.

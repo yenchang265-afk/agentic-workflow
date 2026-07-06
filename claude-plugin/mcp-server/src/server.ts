@@ -40,14 +40,20 @@ import {
   findByIdIn,
   hasPlan,
   isClaimable,
+  isOrphanedPlanClaim,
   isRecoverable,
   listByStatus,
+  listClaimIds,
   moveTask,
   releaseClaim,
+  releaseOrphanedClaims,
+  rescueStray,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-loop/core/task/store"
+import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-loop/core/task/audit"
+import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/core/scheduler/lease"
 
 /**
  * MCP server backing the agentic-loop Claude Code plugin. It holds the loop's
@@ -140,6 +146,9 @@ const writeStageMarker = (stage: string | null) => {
         JSON.stringify({
           kind: m.manifest.kind,
           stage,
+          // The backlog guard's PLAN carve-out: only this task's queued/ file
+          // may be written directly while PLAN is live.
+          taskId: active?.task?.id ?? null,
           worktree: active?.git?.worktree ?? null,
           deadline: stageDeadline,
           ...(def.kind === "check" ? { bashAllowlist: def.bashAllowlist } : {}),
@@ -237,6 +246,25 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: LoopStat
   return { state }
 }
 
+/**
+ * Warnings a claim should surface: a live foreign watcher's lease (its git
+ * operations can race this one-shot claim — threat-model T3 residual) and any
+ * backlog anomalies the reconciliation sweep finds. Best-effort; never blocks.
+ */
+const claimWarnings = async (): Promise<string[]> => {
+  const warnings: string[] = []
+  const owner = await readLeaseOwner(sh, directory, config.tasksDir)
+  if (owner && !isLeaseStale(owner, new Date(), staleThresholdMs(owner.intervalMs))) {
+    warnings.push(
+      `a live watcher (pid ${owner.pid} on ${owner.host}) holds this clone's watch lease — ` +
+        `one-shot claims can race its git operations; prefer running them in separate clones/worktrees.`,
+    )
+  }
+  const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
+  if (hasAnomalies(anomalies)) warnings.push(...formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (loop_doctor repairs)`))
+  return warnings
+}
+
 /** The fire payload loop_start/loop_claim return for a fresh claim. */
 const firePayload = (state: LoopState, id: string) => ({
   action: { kind: "fire", stage: state.stage },
@@ -268,7 +296,8 @@ server.registerTool(
       if (queued) {
         const started = await startPlan(queued)
         if ("error" in started) return fail(started.error)
-        return ok(firePayload(started.state, id))
+        const warnings = await claimWarnings()
+        return ok({ ...firePayload(started.state, id), ...(warnings.length ? { warnings } : {}) })
       }
       const elsewhere = await findAnyStatus(id)
       const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
@@ -291,7 +320,8 @@ server.registerTool(
     }
     const started = await startTask(t)
     if ("error" in started) return fail(started.error)
-    return ok(firePayload(started.state, id))
+    const warnings = await claimWarnings()
+    return ok({ ...firePayload(started.state, id), ...(warnings.length ? { warnings } : {}) })
   },
 )
 
@@ -325,7 +355,8 @@ server.registerTool(
     } else {
       active = state
     }
-    return ok(firePayload(state, claim.item.id))
+    const warnings = await claimWarnings()
+    return ok({ ...firePayload(state, claim.item.id), ...(warnings.length ? { warnings } : {}) })
   },
 )
 
@@ -484,16 +515,32 @@ server.registerTool(
       return "error" in result ? fail(result.error) : ok(result)
     }
     // terminal: done / stop
+    const taskId = active.task?.id ?? null // runTerminal nulls `active`
     await snapshot()
     await runTerminal(action)
-    return ok({ action: { kind: action.kind, message: (action as { message: string }).message } })
+    return ok({
+      action: { kind: action.kind, message: (action as { message: string }).message },
+      ...(action.kind === "done" && taskId
+        ? {
+            taskId,
+            gate: { kind: "ship", id: taskId },
+            next:
+              `ship gate: show the user the loop branch's diff summary, then ask with AskUserQuestion — ` +
+              `Ship (loop_ship("${taskId}")), Replan with a reason (loop_replan("${taskId}", reason)), ` +
+              `or Leave in in-review (stop here; /agent-loop ship ${taskId} ships it later).`,
+          }
+        : {}),
+    })
   },
 )
 
 /** Terminal bookkeeping for the PLAN stage's park: validate, move, commit, clear. */
 const runPark = async (
   action: Extract<Action, { kind: "park" }>,
-): Promise<{ error: string } | { action: { kind: "park"; message: string }; path: string; next: string }> => {
+): Promise<
+  | { error: string }
+  | { action: { kind: "park"; message: string }; path: string; gate: { kind: "plan"; id: string }; next: string }
+> => {
   if (!active?.task) {
     activeClaim = null
     active = null
@@ -530,7 +577,12 @@ const runPark = async (
   return {
     action: { kind: "park", message: action.message },
     path: newPath,
-    next: `human reviews the plan, then loop_plan_approve("${id}") or loop_replan("${id}")`,
+    gate: { kind: "plan", id },
+    next:
+      `plan gate: show the user the plan summary, then ask with AskUserQuestion — ` +
+      `Approve (loop_plan_approve("${id}") then loop_start("${id}") continues into BUILD now), ` +
+      `Replan with a reason (loop_replan("${id}", reason)), ` +
+      `or Park for later (stop here; /agent-loop-task approve-plan ${id} resumes it).`,
   }
 }
 
@@ -613,7 +665,69 @@ server.registerTool(
     const byStatus = {} as Record<TaskStatus, Task[]>
     for (const s of STATUSES) byStatus[s] = await listByStatus(fsClient, directory, config.tasksDir, s, log)
     const summary = summarizeBacklog(byStatus)
-    return ok({ active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null, backlog: summary })
+    const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
+    return ok({
+      active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
+      backlog: summary,
+      ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (loop_doctor repairs)`) } : {}),
+    })
+  },
+)
+
+server.registerTool(
+  "loop_doctor",
+  {
+    description:
+      "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers. With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, and release stale orphaned claim markers. Duplicates are always flagged for a human, never auto-resolved.",
+    inputSchema: { fix: z.boolean().optional().describe("Apply the unambiguous repairs instead of only reporting.") },
+  },
+  async ({ fix }) => {
+    await loadCfg()
+    const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
+    const heldClaims: Record<string, string[]> = {}
+    for (const status of ["queued", "in-progress"] as const) {
+      const ids = await listClaimIds(sh, directory, config.tasksDir, status)
+      if (ids.length) heldClaims[status] = ids
+    }
+    const report = {
+      findings: formatAnomalies(anomalies, config.tasksDir),
+      heldClaims,
+      ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, loop_move the rest to abandoned" } : {}),
+    }
+    if (!fix) return ok({ ...report, next: hasAnomalies(anomalies) || Object.keys(heldClaims).length ? "loop_doctor with fix:true applies the unambiguous repairs" : "backlog is clean" })
+
+    const actor = await gitActor(sh, directory)
+    const rescued: string[] = []
+    const failed: string[] = []
+    for (const stray of anomalies.strayFiles) {
+      try {
+        const { id, path: newPath } = await rescueStray(sh, directory, config.tasksDir, stray)
+        await appendNote(sh, { id, path: newPath }, auditNote(`Rescued from ${stray} — was outside every status folder`, new Date(), actor), log)
+        rescued.push(stray)
+      } catch (err) {
+        failed.push(`${stray}: ${(err as Error).message}`)
+      }
+    }
+    const removedDirs: string[] = []
+    for (const dir of anomalies.unknownDirs) {
+      const out = await sh`rmdir ${path.join(directory, config.tasksDir, dir)}`.quiet().nothrow()
+      if (out.exitCode === 0) removedDirs.push(dir)
+    }
+    const releasedClaims: Record<string, string[]> = {}
+    for (const status of ["queued", "in-progress"] as const) {
+      const ids = heldClaims[status] ?? []
+      if (!ids.length) continue
+      const tasks = await listByStatus(fsClient, directory, config.tasksDir, status, log)
+      const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
+        isDriving: (id) => active?.task?.id === id,
+        ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
+      })
+      if (released.length) releasedClaims[status] = released
+    }
+    if (rescued.length) {
+      await commitPaths(sh, directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
+    }
+    return ok({ ...report, repaired: { rescued, removedDirs, releasedClaims }, ...(failed.length ? { failed } : {}) })
   },
 )
 

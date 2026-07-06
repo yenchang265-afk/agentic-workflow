@@ -80,7 +80,10 @@ literal string to park the task at the plan gate.
 
 - Write **exactly one** file: `docs/tasks/draft/<slug>.md` for `new`, or the
   task's existing path for `task`. Never move a file between status
-  folders — the server does that.
+  folders — the server does that. A PreToolUse hook enforces this: writes
+  under `docs/tasks/` outside `draft/*.md` (or your own claimed `queued/`
+  task in `task` mode) are blocked, as are Bash `mv`/`mkdir`/`rm` against the
+  backlog.
 - Mode `new` **never writes an `## Implementation Plan`**.
 - The frontmatter **must** parse: `title` non-empty, `priority` an integer,
   `acceptance` a YAML list of strings. No other keys, never a `status:` key.

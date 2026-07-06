@@ -7,6 +7,7 @@ node_modules/
 # Ephemeral loop-state snapshots + stage marker (durable run logs are the *.md files beside them)
 docs/tasks/runs/*.state.json
 docs/tasks/runs/.stage.json
+docs/tasks/runs/.watch-lease/
 
 # Claude Code plugin MCP server build output (built by claude-plugin/install.sh)
 claude-plugin/mcp-server/dist/

@@ -64,10 +64,18 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
    mode, reads the code, and writes the `## Implementation Plan` onto the
    task file named by the prompt's `Task file:` line. When it returns, call
    `loop_advance({stageOutput: <plan summary>})` — the server validates the
-   plan landed, parks the task in `plan-review/`, and returns `{kind:"park"}`.
-   **The loop is over.** Tell the user to review the plan and run
-   `/agent-loop-task approve-plan <id>` (or `replan <id>`); do not continue
-   into BUILD.
+   plan landed, parks the task in `plan-review/`, and returns `{kind:"park"}`
+   with a `gate` field. **The plan gate is now live.** Show the user a short
+   summary of the plan, then ask with **AskUserQuestion**:
+   - **Approve** → `loop_plan_approve({id})`, then `loop_start({id})` — the
+     task is claimed from `in-progress/` and the loop continues at step 3
+     (BUILD) in this same session.
+   - **Replan** (with the user's reason) → `loop_replan({id, reason})`; the
+     next PLAN pass addresses it.
+   - **Park for later** → stop here; `/agent-loop-task approve-plan <id>`
+     resumes it whenever the user is ready.
+   Never call `loop_plan_approve` without an explicit user answer — the gate
+   exists so no unapproved plan reaches BUILD.
 3. **Build.** Call `mcp__agentic-loop__loop_stage({stage:"build"})` — it arms
    the stage deadline, reconciles isolation, and appends the audited
    `BUILD started` note — then spawn **`loop-build`** (Task tool) with the
@@ -88,10 +96,14 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
      once per lens, each focused on that lens; each pass calls `loop_verdict`.
      The MCP server combines them worst-wins. Then a single `loop_advance`.
 6. **Terminate.** On `{done}` the server has moved the task to `in-review/`,
-   torn down the worktree, and written the `## Run summary`. Tell the user to
-   review the branch diff and run `/agent-loop ship <id>` when it ships. On `{stop}`
-   the task stays in `in-progress/` with an audit note — report why. When the
-   iteration cap tripped, the plan itself is suspect: the fix is
+   torn down the worktree, and written the `## Run summary` — and returned a
+   `gate: {kind:"ship"}` field. **The ship gate is now live.** Show the user a
+   short summary of the loop branch's diff, then ask with **AskUserQuestion**:
+   - **Ship** → `loop_ship({id})` — the task completes.
+   - **Replan** (with the user's reason) → `loop_replan({id, reason})`.
+   - **Leave in in-review** → stop here; `/agent-loop ship <id>` ships it later.
+   On `{stop}` the task stays in `in-progress/` with an audit note — report
+   why. When the iteration cap tripped, the plan itself is suspect: the fix is
    `/agent-loop-task replan <id> <why>` — the next PLAN pass addresses the
    failure and parks a fresh plan for review.
 
@@ -173,10 +185,16 @@ a failed attempt parks the PR until a human pushes a new head.
 - Building a task whose plan never went through `/agent-loop-task
   approve-plan` — impossible via the tools (BUILD entry only reads
   `in-progress/`); never work around it.
-- Continuing into BUILD after a `{kind:"park"}` — the plan gate sits between
-  PLAN and BUILD; the loop ends at the park.
+- Continuing into BUILD after a `{kind:"park"}` without the user's explicit
+  Approve answer — the plan gate sits between PLAN and BUILD. The ONLY path
+  through it is `loop_plan_approve` + `loop_start` after the user approves
+  (inline via AskUserQuestion, or later via `/agent-loop-task approve-plan`).
 - Spawning a stage subagent without first calling `loop_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.
 - Treating a stage's prose "PASS"/"FAIL" as the verdict — only the `loop_verdict`
   tool call counts.
 - Editing `docs/tasks/**` yourself — the MCP tools own the backlog; use them.
+  That includes Bash: never `mv`, `mkdir`, `rm`, `touch`, or redirect into a
+  status folder — the folder a task file lives in IS its state, and the
+  PreToolUse hook blocks these mutations. If the backlog looks damaged (stray
+  folders, missing tasks), run `loop_doctor` instead of fixing it by hand.
