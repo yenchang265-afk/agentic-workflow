@@ -1,0 +1,61 @@
+import assert from "node:assert/strict"
+import { test } from "node:test"
+import { attentionTriggers, emptyLedger, type PrLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
+
+const ALL: readonly PrTrigger[] = ["failing-checks", "changes-requested", "new-comments", "merge-conflict"]
+
+const snap = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
+  number: 7,
+  title: "t",
+  headRefName: "feat/x",
+  baseRefName: "main",
+  headRefOid: "sha-1",
+  mergeable: "MERGEABLE",
+  reviewDecision: "",
+  failingChecks: [],
+  newComments: [],
+  ...over,
+})
+
+const ledger = (over: Partial<PrLedger> = {}): PrLedger => ({ ...emptyLedger(7, "2026-01-01T00:00:00Z"), ...over })
+
+test("a quiet green PR triggers nothing", () => {
+  assert.deepEqual(attentionTriggers(snap(), ledger(), ALL), [])
+})
+
+test("failing checks trigger on an unhandled head only", () => {
+  const s = snap({ failingChecks: ["ci"] })
+  assert.deepEqual(attentionTriggers(s, ledger(), ALL), ["failing-checks"])
+  assert.deepEqual(attentionTriggers(s, ledger({ headShaHandled: "sha-1" }), ALL), [])
+  assert.deepEqual(attentionTriggers(s, ledger({ headShaHandled: "older" }), ALL), ["failing-checks"])
+})
+
+test("the sitter's own push suppresses re-triggering (headShaHandled)", () => {
+  const s = snap({ failingChecks: ["ci"], reviewDecision: "CHANGES_REQUESTED", newComments: [{ author: "alice", at: "2026-01-02T00:00:00Z" }] })
+  assert.deepEqual(attentionTriggers(s, ledger({ headShaHandled: "sha-1" }), ALL), [])
+})
+
+test("a failed attempt parks the PR until the head changes", () => {
+  const s = snap({ failingChecks: ["ci"] })
+  const l = ledger({ failedAttempts: [{ headSha: "sha-1", trigger: "failing-checks", at: "2026-01-01T01:00:00Z" }] })
+  assert.deepEqual(attentionTriggers(s, l, ALL), [])
+  assert.deepEqual(attentionTriggers(snap({ failingChecks: ["ci"], headRefOid: "sha-2" }), l, ALL), ["failing-checks"])
+})
+
+test("new comments come pre-filtered; presence triggers, watermark handled upstream", () => {
+  const s = snap({ newComments: [{ author: "alice", at: "2026-01-02T00:00:00Z" }] })
+  assert.deepEqual(attentionTriggers(s, ledger(), ALL), ["new-comments"])
+})
+
+test("a conflict triggers once per (head, base) pair", () => {
+  const s = snap({ mergeable: "CONFLICTING" })
+  assert.deepEqual(attentionTriggers(s, ledger(), ALL), ["merge-conflict"])
+  const attempted = ledger({ conflictAttempt: { headSha: "sha-1", baseSha: "base-1" } })
+  assert.deepEqual(attentionTriggers(s, attempted, ALL, "base-1"), [])
+  assert.deepEqual(attentionTriggers(s, attempted, ALL, "base-2"), ["merge-conflict"])
+})
+
+test("disabled triggers never fire", () => {
+  const s = snap({ failingChecks: ["ci"], mergeable: "CONFLICTING" })
+  assert.deepEqual(attentionTriggers(s, ledger(), ["new-comments"]), [])
+})

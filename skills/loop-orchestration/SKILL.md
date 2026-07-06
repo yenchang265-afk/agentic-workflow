@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: Explains the automatic agentic engineering loop (plan → build → verify → review) driven by the OpenCode `/agent-loop` plugin command, and the `/agent-loop-task` command that authors tasks and holds the human gates. Use when you need to understand how /agent-loop plans and executes stages, how the park-at-gate plan review works, the LOOP_VERIFY/LOOP_REVIEW verdict contracts, or how the loop terminates.
+description: Explains the automatic agentic loop driven by the OpenCode `/agent-loop` plugin command — declarative loop kinds under `loops/<kind>/`, with the engineering kind (plan → build → verify → review) as the default — and the `/agent-loop-task` command that authors tasks and holds the human gates. Use when you need to understand how /agent-loop plans and executes stages, how the park-at-gate plan review works, the loop_verdict contracts, how loop kinds and the scheduler work (e.g. the pr-sitter kind), or how the loop terminates.
 ---
 
 # The agentic loop
@@ -18,6 +18,17 @@ a human: it writes the `## Implementation Plan` onto the task file, **parks
 the task in `plan-review/`, and exits** — park-at-gate, not block-at-gate.
 The OpenCode plugin (`src/index.ts` → `src/loop/`) advances stages on
 `session.idle`, threading each stage's output into the next as context.
+
+The pipeline shape is **not hardcoded**. It is the **engineering loop
+kind**, declared in `loops/engineering/loop.json` (stages, transitions,
+iteration cap, work source, per-stage bash allowlists) with prompt templates
+under `loops/engineering/stages/`, and interpreted by the pure engine in the
+shared `@agentic-loop/core` package. Other kinds — like `pr-sitter` —
+declare different pipelines over different work sources; see
+"Loop kinds and the scheduler" below. Everything else in this skill —
+PLAN/BUILD/VERIFY/REVIEW, the gates, park-at-gate, the verdict protocol —
+describes the engineering kind, whose behavior is identical to the original
+hardcoded loop.
 
 (Historical note: an earlier design had planning fully outside the loop in a
 `/agent-loop-plan` command, and before that an in-loop PLAN with a blocking
@@ -147,7 +158,10 @@ Plan`), and has **never** had any `> BUILD started` note (not just "the last
 one is unmatched" — that's `wasInterrupted`, a different check used for crash
 recovery). With no build work, it falls back to `docs/tasks/queued/` for a
 task to plan-and-park — build work always beats plan work, so tasks in
-flight finish before new ones spin up. Either way it picks the
+flight finish before new ones spin up. When other loop kinds are enabled in
+`.agentic-loop.json`, the same tick then polls their work sources after the
+engineering backlog comes up empty (e.g. pr-sitter's GitHub PR query) — see
+"Loop kinds and the scheduler". Within the backlog it picks the
 lowest-priority claimable task (ties by id) and claims it **atomically**: a
 non-recursive `mkdir` of `<folder>/.claims/<id>` either succeeds (claim won)
 or fails because another watcher on the same filesystem got there first. The
@@ -164,6 +178,57 @@ drive different tasks concurrently in one instance. **Not covered either way:**
 separate opencode *processes* racing the same backlog clone on `index.lock`
 during backlog commits (best-effort). Run additional watchers in their own
 clones for hard isolation.
+
+## Loop kinds and the scheduler
+
+A loop kind is declared in `loops/<kind>/loop.json`: its stages (each
+`work` — edits things — or `check` — records a verdict), a transition table
+(effects `fire` the next stage, `park` at a human gate, `done` the loop, or
+`stop` for a human), an iteration cap, a **work source** binding (where
+claimable work comes from), and per-stage bash allowlists for check stages.
+Stage prompts live in `loops/<kind>/stages/*.md`. The engine in
+`@agentic-loop/core` interprets the manifest; adding a kind means writing a
+manifest and prompts, not driver code.
+
+A common scheduler step (`pollOnce`) runs on every claim trigger — idle
+events and the watch timer — and walks the **enabled** kinds' work sources
+in claim-priority order: the engineering backlog-folder source first
+(atomic `.claims/` markers, semantics unchanged), then opted-in kinds. The
+first source that yields a claim wins the tick. Kinds are enabled per
+`loops.<kind>` sections in `.agentic-loop.json` — engineering is on by
+default; every other kind is off until you add its section.
+
+### The pr-sitter kind
+
+`loops/pr-sitter/` sits on open pull requests matching a configured `gh`
+query and keeps them green until a human merges:
+
+```
+triage (check) ─▶ fix (work) ─▶ verify (check) ─▶ publish (work) ─▶ done
+                   ▲               │FAIL (re-fires fix, cap 3)
+                   └───────────────┘
+```
+
+- **triage** — read-only `gh` inspection of a PR needing attention (failing
+  checks, changes requested, new comments, merge conflict); emits findings
+  and a `loop_verdict`: PASS = actionable, FAIL = nothing to do → done,
+  ERROR = couldn't inspect → stop.
+- **fix** — commits on the PR's **existing branch** in a worktree; never
+  pushes.
+- **verify** — tests + findings coverage, reusing the existing `loop-verify`
+  agent; FAIL re-fires fix within the cap (3).
+- **publish** — `git push origin <branch>` plus `gh pr comment` replies per
+  addressed finding. It **never merges, closes, or approves** — merging
+  stays a human call.
+
+Dedup is a per-PR ledger under `<tasksDir>/runs/pr-sitter/pr-<n>.json`:
+head-SHA and comment-timestamp watermarks plus an own-login filter, so the
+sitter never reacts to its own pushes or replies; a capped/failed attempt
+parks the PR until a human pushes a new head. Enable it with:
+
+```jsonc
+{ "loops": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
+```
 
 ## The verdict contracts
 
@@ -183,6 +248,12 @@ ERROR    # the check itself could not run (broken environment) → stop for a hu
 
 No tool call at all is treated as FAIL, not as a stall — the loop still
 terminates via the iteration cap rather than hanging indefinitely.
+
+The same contract covers every manifest **check** stage, not just VERIFY and
+REVIEW: `loop_verdict` accepts any check stage of the running loop's kind
+(engineering: `verify`/`review`; pr-sitter: `triage`/`verify`), validated
+against that kind's manifest, and a missing verdict on a check stage is
+still FAIL.
 
 The tool also accepts optional `reason` (a one-line summary) and `criteria`
 (per-acceptance-criterion `{criterion, pass}` results). These steer only the
@@ -234,7 +305,10 @@ Optional `.agentic-loop.json` at the repo root — every field has a default:
   "watchIntervalMinutes": 5,    // default /agent-loop watch polling cadence (override: /agent-loop watch 30s)
   "worktreesDir": ".loop-worktrees", // OPTIONAL: per-task git worktree isolation (unset ⇒ shared-tree branch switching)
   "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out)
-  "reviewLenses": ["correctness", "security", "test-adequacy"] // OPTIONAL: multi-pass review, worst verdict wins
+  "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review, worst verdict wins
+  "loops": {                    // OPTIONAL: per-kind sections; engineering is on by default, other kinds off until listed
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
+  }
 }
 ```
 

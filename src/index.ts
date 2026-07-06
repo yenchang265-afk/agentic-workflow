@@ -2,12 +2,12 @@ import type { Plugin } from "@opencode-ai/plugin"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
-import type { Config } from "./loop/state.ts"
+import type { Config } from "./config.ts"
 import * as driver from "./loop/driver.ts"
-import { listWorktrees, pruneWorktrees } from "./loop/git.ts"
-import { listSnapshotIds } from "./loop/persist.ts"
-import { findSessionDriving, getLoop, hasLoop } from "./loop/state.ts"
-import { isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "./task/store.ts"
+import { listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
+import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
+import { findSessionDriving, getLoop, hasLoop } from "@agentic-loop/core/loop/state"
+import { isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
@@ -191,12 +191,14 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
     tool: {
       loop_verdict: tool({
         description:
-          "Record the VERIFY or REVIEW stage's machine-readable verdict for the running loop. This tool " +
+          "Record a check stage's machine-readable verdict for the running loop (engineering: verify/review; pr-sitter: triage/verify). This tool " +
           "call is the loop's ONLY trusted verdict channel — a PASS/FAIL written in plain text is ignored. " +
           "Call exactly once, at the end of the check stage's turn, after gathering the evidence. Only the " +
           "stage the loop is currently running may record; calls from any other stage or session are ignored.",
         args: {
-          stage: tool.schema.enum(["verify", "review"]).describe("Which check stage this verdict belongs to."),
+          stage: tool.schema
+            .string()
+            .describe("Which check stage this verdict belongs to (must be the loop's currently running check stage)."),
           verdict: tool.schema
             .enum(["PASS", "FAIL", "ERROR"])
             .describe(

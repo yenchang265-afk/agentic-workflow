@@ -13,6 +13,10 @@
   "files": [
     "src"
   ],
+  "workspaces": [
+    "packages/core",
+    "claude-plugin/mcp-server"
+  ],
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -20,10 +24,14 @@
     "agent"
   ],
   "scripts": {
+    "prepare": "npm run build -w @agentic-loop/core",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts"
+    "test": "node --import tsx --test src/**/*.test.ts",
+    "typecheck:all": "npm run typecheck -ws --if-present && npm run typecheck",
+    "test:all": "npm run test -ws --if-present && npm run test"
   },
   "dependencies": {
+    "@agentic-loop/core": "*",
     "yaml": "^2.9.0",
     "zod": "^4.1.8"
   },

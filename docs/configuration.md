@@ -6,17 +6,51 @@ falling back.
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `maxIterations` | `3` | Max loop iterations before stopping on repeated VERIFY/REVIEW failures. When the cap trips, the plan is suspect — send it back with `/agent-loop-task replan <id>`. |
-| `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. |
+| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agent-loop-task replan <id>`. |
+| `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
-| `watchIntervalMinutes` | `5` | Default polling cadence for `/agent-loop watch` (OpenCode only); overridable per session via `/agent-loop watch <interval>`. |
+| `watchIntervalMinutes` | `5` | Default polling cadence for `/agent-loop watch`; overridable per session via `/agent-loop watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds on top of the shared core schema (`src/config.ts`); the Claude Code plugin has no watch timer. |
+| `loops` | `{}` | Per-loop-kind sections — see below. |
 | `worktreesDir` | unset | See hardening below. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
-The Claude Code plugin reads the same file with the same schema **minus**
-`watchIntervalMinutes` (it has no watch mode — see
+Both plugins read the same file: the schema lives in the shared core package
+(`packages/core/src/config.ts`), and each host may extend it with fields only
+it can honor (today: OpenCode's `watchIntervalMinutes` — see
 [`claude-plugin/README.md`](../claude-plugin/README.md)).
+
+## Loop kinds (`loops`)
+
+Each key under `loops` enables and configures one loop kind (a
+`loops/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
+every other kind is opt-in with `"enabled": true`. Kind-specific knobs ride
+along in the same section and are validated by the kind itself. Enabled kinds
+are polled in claim-priority order: engineering first, then opted-in kinds in
+config order.
+
+```json
+{
+  "loops": {
+    "engineering": { "enabled": true },
+    "pr-sitter": {
+      "enabled": true,
+      "query": "is:open author:@me"
+    }
+  }
+}
+```
+
+- **`loops.engineering.enabled`** — default `true`; set `false` to run only
+  other kinds (e.g. a dedicated PR-sitter watcher).
+- **`loops.pr-sitter.enabled`** — default off; requires an authenticated `gh`.
+- **`loops.pr-sitter.query`** — overrides the manifest's
+  `gh pr list --search` query (default `is:open author:@me`) selecting which
+  PRs the sitter watches.
+
+See [`loops/README.md`](../loops/README.md) for authoring new kinds and
+[`docs/design/threat-model.md`](design/threat-model.md) for the PR sitter's
+security posture before enabling it.
 
 ## Optional hardening
 

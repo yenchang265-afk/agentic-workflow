@@ -1,23 +1,16 @@
 import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
+import type { Client, FileNode, Shell, ShellOutput } from "@agentic-loop/core/host"
 
 /**
- * Runtime shims that stand in for the two OpenCode host capabilities the ported
- * lib modules (git.ts, store.ts, persist.ts, config.ts) expect: the Bun shell
- * `$` and the opencode `client`. Backed by node's child_process + fs so the
- * exact same module bodies run inside the MCP server. See
- * docs/design/improvements — the Claude Code port keeps the loop logic and only
- * swaps its IO substrate.
+ * Runtime implementations of the `@agentic-loop/core` host interfaces
+ * (`host.ts`): the shell `$` and the file/log `client`. Backed by node's
+ * child_process + fs so the shared core modules run inside the MCP server —
+ * the server is the substrate adapter, core is the behavior.
  */
 
 // --- Shell ($) shim: a Bun-`$`-compatible tagged template over `bash -c` ---
-
-export interface ShellOutput {
-  readonly exitCode: number
-  readonly stdout: { toString(): string }
-  readonly stderr: { toString(): string }
-}
 
 /** A `{ raw }` interpolation is spliced in unescaped, matching Bun's `$` behavior. */
 type RawExpr = { readonly raw: string }
@@ -77,27 +70,9 @@ class ShellPromise implements PromiseLike<ShellOutput> {
 const strOut = (s: string) => ({ toString: () => s })
 
 /** Bun-`$`-compatible tagged template. Never throws; capture via .exitCode/.stdout/.stderr. */
-export type Shell = (strings: TemplateStringsArray, ...exprs: unknown[]) => ShellPromise
 export const sh: Shell = (strings, ...exprs) => new ShellPromise(render(strings, exprs))
 
-// --- Client shim: opencode file.list/read + app.log over node fs + stderr ---
-
-export interface FileNode {
-  readonly type: "file" | "directory"
-  readonly name: string
-  readonly path: string
-  readonly absolute: string
-}
-
-export interface Client {
-  readonly file: {
-    list(args: { query: { path: string; directory: string } }): Promise<{ data: FileNode[] }>
-    read(args: { query: { path: string; directory: string } }): Promise<{ data: { content: string } | null }>
-  }
-  readonly app: {
-    log(args: { body: { service: string; level: string; message: string } }): Promise<void>
-  }
-}
+// --- Client shim: file.list/read + app.log over node fs + stderr ---
 
 export const fsClient: Client = {
   file: {

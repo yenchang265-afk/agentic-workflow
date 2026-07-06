@@ -1,0 +1,30 @@
+{
+  "name": "@agentic-loop/core",
+  "version": "0.0.1",
+  "description": "Shared core for the agentic-loop plugins: pure loop state machine, task backlog store, git isolation, snapshots, verdicts, metrics",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./*": {
+      "types": "./dist/*.d.ts",
+      "default": "./dist/*.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test src/loop/*.test.ts src/task/*.test.ts src/manifest/*.test.ts src/source/*.test.ts src/scheduler/*.test.ts src/*.test.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.0"
+  }
+}

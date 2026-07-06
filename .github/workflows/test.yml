@@ -7,7 +7,7 @@ on:
 
 jobs:
   test:
-    name: Typecheck and unit tests (opencode plugin)
+    name: Typecheck and unit tests (all workspaces)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -17,14 +17,21 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
+      - name: Install dependencies (builds @agentic-loop/core via prepare)
         run: npm ci
 
-      - name: Typecheck
-        run: npm run typecheck
+      - name: Typecheck (core + mcp-server + opencode plugin)
+        run: npm run typecheck:all
 
-      - name: Test
-        run: npm test
+      - name: Test (core + opencode plugin)
+        run: npm run test:all
+
+      - name: Build and smoke-run the MCP server
+        run: |
+          npm run build -w agentic-loop-mcp
+          out=$(node claude-plugin/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
+          echo "$out"
+          echo "$out" | grep -q "MCP server ready"
 
       - name: Install-script check
         run: |
@@ -32,26 +39,3 @@ jobs:
           d=$(mktemp -d)
           ./install.sh opencode "$d"
           ./install.sh opencode "$d"
-
-  test-mcp-server:
-    name: Typecheck and unit tests (claude-plugin mcp-server)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: claude-plugin/mcp-server
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Test
-        run: npm test

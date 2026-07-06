@@ -1,6 +1,20 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import path from "node:path"
-import { slugify, type Task } from "../task/schema.ts"
+import { fileURLToPath } from "node:url"
+import { type Task } from "@agentic-loop/core/task/schema"
+import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
+import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
+import { loadManifest } from "@agentic-loop/core/manifest/load"
+import { stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
+import { combineSkips, pollOnce } from "@agentic-loop/core/scheduler/scheduler"
+import { makeBacklogSource } from "@agentic-loop/core/source/backlog"
+import { makeGithubPrSource } from "@agentic-loop/core/source/github-pr"
+import type { TerminalOutcome, WorkSource } from "@agentic-loop/core/source/types"
+import {
+  ensureIsolation as coreEnsureIsolation,
+  loopId,
+  teardownIsolation as coreTeardownIsolation,
+} from "@agentic-loop/core/loop/isolate"
 import {
   appendNote,
   appendRunLog,
@@ -24,7 +38,7 @@ import {
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
-} from "../task/store.ts"
+} from "@agentic-loop/core/task/store"
 import {
   addWorktree,
   checkoutBranch,
@@ -38,9 +52,9 @@ import {
   pruneWorktrees,
   removeWorktree,
   worktreeForBranch,
-} from "./git.ts"
-import { clearState, loadState, saveState } from "./persist.ts"
-import { type Outcome, renderRunSummary, type StageSample } from "./metrics.ts"
+} from "@agentic-loop/core/loop/git"
+import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
+import { type Outcome, renderRunSummary, type StageSample } from "@agentic-loop/core/loop/metrics"
 import {
   failedCriteriaBlock,
   LOOP_REVIEW_TAG,
@@ -49,18 +63,18 @@ import {
   type Verdict,
   type VerdictRecord,
   worstOf,
-} from "./verdict.ts"
-import type { Action, Config, LoopState, Stage, TaskRef } from "./state.ts"
+} from "@agentic-loop/core/loop/verdict"
+import { enabledLoopKinds } from "@agentic-loop/core/config"
+import type { Config } from "../config.ts"
+import type { Action, LoopState, Stage, TaskRef } from "@agentic-loop/core/loop/state"
 import {
-  advanceOnIdle,
   clearLoop,
   findSessionDriving,
-  firstStep,
   getLoop,
   resumeAtBuild,
   setLoop,
   startAtPlan,
-} from "./state.ts"
+} from "@agentic-loop/core/loop/state"
 
 /**
  * Impure orchestration for the agentic loop. Thin glue over the pure helpers in
@@ -111,6 +125,53 @@ import {
  * stage runs again with the failure context threaded in.
  */
 
+/** The loop-kind manifests shipped with this repo (loops/<kind>/). */
+const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "loops")
+const eng = loadManifest(LOOPS_DIR, "engineering")
+registerEngineeringHooks()
+
+/** Loaded manifests by kind — engineering eagerly, other enabled kinds on first poll. */
+const manifests = new Map<string, LoadedManifest>([["engineering", eng]])
+const manifestFor = (kind: string): LoadedManifest => {
+  let loaded = manifests.get(kind)
+  if (!loaded) {
+    loaded = loadManifest(LOOPS_DIR, kind)
+    manifests.set(kind, loaded)
+  }
+  return loaded
+}
+
+/** The work sources the scheduler polls, in claim-priority order (config order). */
+const sourcesFor = (deps: Deps, config: Config): WorkSource[] =>
+  enabledLoopKinds(config).flatMap((kind): WorkSource[] => {
+    const loaded = manifestFor(kind)
+    if (loaded.manifest.workSource.type === "github-pr") {
+      const query = config.loops[kind]?.["query"]
+      return [
+        makeGithubPrSource({
+          $: deps.$,
+          client: deps.client,
+          directory: deps.directory,
+          tasksDir: config.tasksDir,
+          log: deps.log,
+          loaded,
+          ...(typeof query === "string" ? { query } : {}),
+        }),
+      ]
+    }
+    return [
+      makeBacklogSource({
+        $: deps.$,
+        client: deps.client,
+        directory: deps.directory,
+        tasksDir: config.tasksDir,
+        log: deps.log,
+        loaded,
+        isDriving: (id) => findSessionDriving(id) !== undefined,
+      }),
+    ]
+  })
+
 type Client = PluginInput["client"]
 type Shell = PluginInput["$"]
 type Log = (level: "info" | "warn" | "error", message: string) => unknown
@@ -153,8 +214,8 @@ const lastSkipReason = new Map<string, string>()
  */
 const executingDirs = new Set<string>()
 
-/** A check stage's stage kind — the only stages that carry a verdict. */
-type CheckStage = "verify" | "review"
+/** A check stage's name — validated against the driven kind's manifest. */
+type CheckStage = string
 
 /**
  * Verdicts recorded by the `loop_verdict` tool, per session, consumed by the
@@ -187,6 +248,10 @@ export const recordVerdict = (sessionID: string, stage: CheckStage, record: Verd
   if (state.stage !== stage) {
     return `The loop is at ${state.stage}, not ${stage} — verdict ignored. Only the running check stage may record its own verdict.`
   }
+  const def = manifestFor(state.kind ?? "engineering").manifest.stages.find((d) => d.name === stage)
+  if (def?.kind !== "check") {
+    return `Stage ${stage} is not a check stage — verdict ignored.`
+  }
   recordedVerdicts.set(sessionID, { stage, record })
   return `Recorded ${stage} verdict: ${record.verdict}.`
 }
@@ -210,99 +275,13 @@ const taskRef = (task: Task, path: string): TaskRef => ({
   acceptance: task.acceptance,
 })
 
-/** A short stable id for branch names and checkpoint messages. Every loop is
- *  task-driven now; the goal-derived slug is a defensive fallback only. */
-const loopId = (state: LoopState): string => state.task?.id ?? (slugify(state.goal.split("\n")[0] ?? "") || "goal")
+/** Git isolation lives in core (`@agentic-loop/core/loop/isolate`); these
+ *  wrappers thread this plugin's `Deps` into its host-agnostic signatures. */
+const ensureIsolation = (deps: Deps, config: Config, state: LoopState): Promise<LoopState> =>
+  coreEnsureIsolation(deps.$, deps.log, deps.directory, config, state)
 
-/** Absolute path to a task's dedicated worktree under the configured root. Pure. */
-export const worktreePathFor = (directory: string, worktreesDir: string, id: string): string =>
-  path.resolve(directory, worktreesDir, id)
-
-/** Run the configured worktree-setup command in a fresh worktree. Warn-and-continue. */
-const runWorktreeSetup = async (deps: Deps, config: Config, wtPath: string): Promise<void> => {
-  if (!config.worktreeSetup) return
-  const out = await deps.$`${{ raw: config.worktreeSetup }}`.cwd(wtPath).quiet().nothrow()
-  if (out.exitCode !== 0) {
-    await deps.log("warn", `loop: worktreeSetup failed in ${wtPath}: ${out.stderr.toString().trim()}`)
-  }
-}
-
-/**
- * Isolate execution for this loop. Two modes:
- *
- * - **Worktree mode** (`config.worktreesDir` set): each loop gets its own
- *   `git worktree` on `loop/<id>`, cut from `base`. The human's checkout is
- *   never touched and concurrent drives are safe. If the worktree can't be
- *   created it **throws** — never falls back to shared-tree branch switching,
- *   which could clobber a concurrent drive's checked-out branch.
- * - **Shared-tree mode** (default): checks out `loop/<id>` in the main tree,
- *   as before. Degrades to no isolation (with a warning) outside a git repo,
- *   on a detached HEAD, or when checkout fails.
- *
- * An existing branch (e.g. a recovered run's) is reused, never reset.
- */
-const ensureIsolation = async (deps: Deps, config: Config, state: LoopState): Promise<LoopState> => {
-  if (state.git) {
-    if (state.git.worktree) {
-      // Worktree mode — never touch the shared tree. Recreate a vanished worktree.
-      if (!(await isGitRepo(deps.$, state.git.worktree))) {
-        await pruneWorktrees(deps.$, deps.directory)
-        if (!(await addWorktree(deps.$, deps.directory, state.git.worktree, state.git.branch, state.git.base))) {
-          throw new Error(`could not recreate worktree ${state.git.worktree} for ${state.git.branch}`)
-        }
-        await runWorktreeSetup(deps, config, state.git.worktree)
-      }
-      return state
-    }
-    // Shared mode — make sure the tree is back on this loop's branch.
-    const cur = await currentBranch(deps.$, deps.directory)
-    if (cur !== state.git.branch && !(await checkoutBranch(deps.$, deps.directory, state.git.branch))) {
-      await deps.log("warn", `loop: could not return to ${state.git.branch} — building on ${cur ?? "detached HEAD"}`)
-    }
-    return state
-  }
-
-  if (!(await isGitRepo(deps.$, deps.directory))) return state
-  const base = await currentBranch(deps.$, deps.directory)
-  if (!base) {
-    await deps.log("warn", "loop: detached HEAD — building without branch isolation")
-    return state
-  }
-  const branch = `loop/${loopId(state)}`
-
-  if (config.worktreesDir) {
-    const wtPath = worktreePathFor(deps.directory, config.worktreesDir, loopId(state))
-    await ensureExcluded(deps.$, deps.directory, config.worktreesDir)
-    if (await isDirty(deps.$, deps.directory)) {
-      await deps.log("info", "loop: main tree has uncommitted changes — they are NOT visible in this loop's worktree")
-    }
-    // Reuse a worktree already registered for this branch (a recovered run).
-    const existing = await worktreeForBranch(deps.$, deps.directory, branch)
-    if (existing) {
-      if (existing !== wtPath) await deps.log("info", `loop: reusing existing worktree ${existing} for ${branch}`)
-      return { ...state, git: { base, branch, worktree: existing } }
-    }
-    // A leftover directory with no registration — prune, then let add try.
-    if (await isGitRepo(deps.$, wtPath)) await pruneWorktrees(deps.$, deps.directory)
-    if (!(await addWorktree(deps.$, deps.directory, wtPath, branch, base))) {
-      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /agent-loop recover`)
-    }
-    await runWorktreeSetup(deps, config, wtPath)
-    return { ...state, git: { base, branch, worktree: wtPath } }
-  }
-
-  if (await isDirty(deps.$, deps.directory)) {
-    await deps.log(
-      "warn",
-      "loop: working tree dirty at build start — pre-existing changes will land in this loop's checkpoints",
-    )
-  }
-  if (!(await checkoutBranch(deps.$, deps.directory, branch))) {
-    await deps.log("warn", `loop: could not check out ${branch} — building without branch isolation`)
-    return state
-  }
-  return { ...state, git: { base, branch } }
-}
+const teardownIsolation = (deps: Deps, state: LoopState): Promise<void> =>
+  coreTeardownIsolation(deps.$, deps.log, deps.directory, state)
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. */
 const workTree = (deps: Deps, state: LoopState): string => state.git?.worktree ?? deps.directory
@@ -311,28 +290,6 @@ const workTree = (deps: Deps, state: LoopState): string => state.git?.worktree ?
 const checkpoint = async (deps: Deps, state: LoopState, message: string): Promise<void> => {
   if (!state.git) return
   await commitAll(deps.$, workTree(deps, state), message)
-}
-
-/**
- * Tear down this loop's isolation. Worktree mode: remove the worktree if it's
- * clean (the branch is kept for human review); a dirty worktree or a failed
- * removal is left in place with a warning. Shared mode: return the main tree to
- * the branch it was on before the loop branched off.
- */
-const teardownIsolation = async (deps: Deps, state: LoopState): Promise<void> => {
-  if (!state.git) return
-  if (state.git.worktree) {
-    if (!(await removeWorktree(deps.$, deps.directory, state.git.worktree))) {
-      await deps.log(
-        "info",
-        `loop: worktree ${state.git.worktree} left in place (dirty or locked) — branch ${state.git.branch} holds the committed work`,
-      )
-    }
-    return
-  }
-  if (!(await checkoutBranch(deps.$, deps.directory, state.git.base))) {
-    await deps.log("warn", `loop: could not return to ${state.git.base} — still on ${state.git.branch}`)
-  }
 }
 
 /**
@@ -346,13 +303,8 @@ const commitBacklog = async (deps: Deps, config: Config, state: LoopState, messa
   await commitPaths(deps.$, deps.directory, [config.tasksDir], message)
 }
 
-/**
- * The slash command a stage fires. `build`/`verify`/`review` match their
- * command names; `plan` maps to `plan-task` — the loop's plan-writing stage
- * command (`loop-plan-author` in task mode) — because the bare `/plan`
- * command is the ad-hoc, nothing-persisted planner. Pure.
- */
-const stageCommand = (stage: Stage): string => (stage === "plan" ? "plan-task" : stage)
+/** The slash command a stage fires — named by the manifest (e.g. plan → `plan-task`). Pure. */
+const stageCommand = (loaded: LoadedManifest, stage: Stage): string => stageDef(loaded.manifest, stage).command
 
 /**
  * Fire a stage command and return the assistant text it produced. Throws when
@@ -425,12 +377,13 @@ const runStageWithLenses = async (
   deps: Deps,
   sessionID: string,
   config: Config,
+  loaded: LoadedManifest,
   state: LoopState,
   stage: Stage,
   baseArgs: string,
   iteration: number,
 ): Promise<{ output: string; verdict: Verdict | null; record: VerdictRecord | null }> => {
-  const isCheck = stage === "verify" || stage === "review"
+  const isCheck = stageDef(loaded.manifest, stage).kind === "check"
   const lenses = stage === "review" ? config.reviewLenses : []
   const passes: (string | null)[] = lenses.length ? [...lenses] : [null]
   const outputs: string[] = []
@@ -445,7 +398,7 @@ const runStageWithLenses = async (
       : baseArgs
     recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
     const t0 = Date.now()
-    const out = await runStage(client, sessionID, stageCommand(stage), args, config.stageTimeoutMinutes)
+    const out = await runStage(client, sessionID, stageCommand(loaded, stage), args, config.stageTimeoutMinutes)
     const ms = Date.now() - t0
     const stamp = new Date().toISOString()
     const header = lens
@@ -507,14 +460,16 @@ const renderMetrics = async (
   await appendRunLog(deps.$, deps.directory, config.tasksDir, loopId(state), `run · ${outcome}`, summary, deps.log)
 }
 
-/** Run the stage chain from `first` until the pure logic yields a gate/done/stop. */
+/** Run the stage chain from `first` until the pure logic yields a gate/done/stop.
+ *  Returns the terminal outcome so callers can report it to the work source. */
 const drive = async (
   deps: Deps,
   sessionID: string,
   config: Config,
   first: { state: LoopState; action: Action },
-): Promise<void> => {
+): Promise<TerminalOutcome | null> => {
   const { client } = deps
+  const loaded = manifestFor(first.state.kind ?? "engineering")
   const actor = await gitActor(deps.$, deps.directory)
   let step = first
   while (step.action.kind === "fire") {
@@ -528,11 +483,12 @@ const drive = async (
     // main tree, on the human's branch) and parks, so it needs no branch, no
     // worktree, and no crash snapshot — a died PLAN is recovered by the stale
     // claim-marker sweep, not by /agent-loop recover.
-    if (stage !== "plan") {
+    const isolated = stageDef(loaded.manifest, stage).isolation !== "none"
+    if (isolated) {
       step = { ...step, state: await ensureIsolation(deps, config, step.state) }
     }
     setLoop(sessionID, step.state)
-    if (stage !== "plan") await snapshot(deps, config, step.state)
+    if (isolated) await snapshot(deps, config, step.state)
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
@@ -540,6 +496,7 @@ const drive = async (
       deps,
       sessionID,
       config,
+      loaded,
       step.state,
       stage,
       args,
@@ -555,12 +512,12 @@ const drive = async (
       // A deliberate /agent-loop stop ends the run — drop the snapshot so a later
       // /agent-loop recover doesn't silently resurrect it from stale state.
       if (step.state.task) await clearState(deps.$, deps.directory, config.tasksDir, step.state.task.id)
-      return
+      return { kind: "stop", message: `stopped during ${stage}` }
     }
     if (stage === "build") {
       await checkpoint(deps, step.state, `loop(${loopId(step.state)}): build iteration ${iteration + 1}`)
     }
-    if ((stage === "verify" || stage === "review") && task) {
+    if (stageDef(loaded.manifest, stage).kind === "check" && task) {
       const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0
       const detail = record?.reason ? ` — ${record.reason}` : ""
       const criteriaNote = failed ? ` (${failed} criteria unmet)` : ""
@@ -579,7 +536,7 @@ const drive = async (
     // the next PLAN/BUILD iteration leads with what actually failed.
     const block = failedCriteriaBlock(record)
     const threaded = block ? `${block}\n\n${output}` : output
-    step = advanceOnIdle(step.state, config, threaded, verdict)
+    step = advance(eng, step.state, config, threaded, verdict)
   }
 
   const { state, action } = step
@@ -590,7 +547,7 @@ const drive = async (
       // front of the human gate.
       if (!state.task) {
         clearLoop(sessionID)
-        return
+        return { kind: "park", message: action.message }
       }
       const fresh = await findByIdIn(client, deps.directory, config.tasksDir, "queued", state.task.id)
       if (!fresh || !hasPlan(fresh)) {
@@ -603,10 +560,10 @@ const drive = async (
         await renderMetrics(deps, sessionID, config, state, "error", why)
         clearLoop(sessionID)
         await toast(client, `PLAN failed for "${state.task.id}" — ${why}. It stays in queued/.`, "error")
-        return
+        return { kind: "error", message: why }
       }
       await appendNote(deps.$, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), deps.log)
-      await moveTask(deps.$, fresh, "plan-review") // also releases the queued/ claim marker
+      await moveTask(deps.$, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
       await commitPaths(deps.$, deps.directory, [config.tasksDir], `loop(${state.task.id}): plan written — parked for review`)
       await renderMetrics(deps, sessionID, config, state, "done", "plan parked for review")
       clearLoop(sessionID)
@@ -615,7 +572,7 @@ const drive = async (
         `${action.message} Review it, then /agent-loop-task approve-plan ${state.task.id} (or replan ${state.task.id}).`,
         "success",
       )
-      return
+      return { kind: "park", message: action.message }
     }
     case "done": {
       // "Done" for the loop is not "completed" for the task: a human still
@@ -624,7 +581,7 @@ const drive = async (
       if (state.task) {
         try {
           await appendNote(deps.$, state.task, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor))
-          await moveTask(deps.$, state.task, "in-review")
+          await moveTask(deps.$, state.task, (action.toStatus ?? "in-review") as TaskStatus)
           await commitBacklog(deps, config, state, `loop(${state.task.id}): done — parked in in-review`)
         } catch (err) {
           await deps.log("warn", `loop done but task move failed: ${(err as Error).message}`)
@@ -642,7 +599,7 @@ const drive = async (
           ? ` Review the diff${where}.`
           : ""
       await toast(client, `${action.message}${next}`, "success")
-      return
+      return { kind: "done", message: action.message }
     }
     case "stop": {
       // Per design: a failed/stopped task stays in-progress, annotated for a human.
@@ -657,57 +614,15 @@ const drive = async (
       clearLoop(sessionID)
       const where = state.git ? ` Partial work is preserved on branch ${state.git.branch}.` : ""
       await toast(client, `${action.message}${where}`, "warning")
-      return
+      return { kind: "stop", message: action.message }
     }
     case "noop":
-      return
+      return null
   }
 }
 
-/** Why a watch tick claimed nothing — the message, and whether a human can act on it. */
-export interface ClaimSkipReason {
-  readonly message: string
-  readonly actionable: boolean
-}
-
-/**
- * Compute why a watch tick claimed nothing, from what the claim walk saw
- * across both pools (`in-progress/` build work, then `queued/` plan work).
- * Held markers win (they block otherwise-ready work); then empty backlog;
- * then started-but-unclaimed (recover); then the no-plan fallback. Pure.
- */
-export const claimSkipReason = (
-  inProgressCount: number,
-  claimableCount: number,
-  queuedCount: number,
-  startedIds: readonly string[],
-  heldIds: readonly string[],
-): ClaimSkipReason => {
-  if (heldIds.length) {
-    return {
-      message:
-        `watch: claim marker held for ${heldIds.join(", ")} — another watcher may be working it; ` +
-        `a stale marker auto-releases after ${STALE_CLAIM_MINUTES}m`,
-      actionable: true,
-    }
-  }
-  if (inProgressCount === 0 && queuedCount === 0) {
-    return { message: "watch: nothing to claim — queued/ and in-progress/ are both empty", actionable: false }
-  }
-  if (claimableCount === 0 && startedIds.length) {
-    return {
-      message:
-        `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
-        `${startedIds.join(", ")} (run /agent-loop recover <id>)`,
-      actionable: true,
-    }
-  }
-  return {
-    message:
-      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agent-loop-task replan <id>)",
-    actionable: true,
-  }
-}
+export { claimSkipReason } from "@agentic-loop/core/source/backlog"
+export type { ClaimSkipReason } from "@agentic-loop/core/source/types"
 
 /**
  * A `/agent-loop watch` session's own idle check, over two pools in order:
@@ -722,49 +637,10 @@ export const claimSkipReason = (
  * reason changes).
  */
 const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
-  const tasks = await listInProgress(deps.client, deps.directory, config.tasksDir, deps.log)
-  const candidates = selectOrder(tasks.filter(isClaimable))
-  // Atomic claim markers: only one watcher on this filesystem wins a task, even
-  // when several saw it as claimable on the same idle tick. A held marker skips
-  // to the next candidate instead of wedging the queue; an orphaned marker
-  // (stale, claimer died before BUILD started) is released and retried inline.
-  const { claimed, heldIds } = await claimFirst(deps.$, candidates, {
-    isDriving: (id) => findSessionDriving(id) !== undefined,
-    log: deps.log,
-  })
-  if (claimed) {
-    lastSkipReason.delete(sessionID)
-    const ref = taskRef(claimed, claimed.path)
-    const state = resumeAtBuild(taskGoal(claimed), ref, extractPlan(claimed) ?? "")
-    await toast(deps.client, `Watch: claimed "${claimed.title}" — building…`, "info")
-    try {
-      await drive(deps, sessionID, config, firstStep(state))
-    } catch (err) {
-      // Died before the first "> BUILD started" note (e.g. ensureIsolation threw,
-      // before setLoop ran — onIdle's catch can't see the task): the claim is ours
-      // and the body is still claimable, so release it or watch stays wedged.
-      const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "in-progress", claimed.id)
-      if (fresh && isClaimable(fresh)) await releaseClaim(deps.$, claimed)
-      throw err
-    }
-    return
-  }
-
-  // No build work — look for a queued task to plan. The planless-orphan
-  // predicate applies: PLAN writes no code, so a stale undriven marker is
-  // always safe to release.
-  const queued = await listQueued(deps.client, deps.directory, config.tasksDir, deps.log)
-  const planWalk = await claimFirst(deps.$, selectOrder(queued), {
-    isDriving: (id) => findSessionDriving(id) !== undefined,
-    isOrphaned: isOrphanedPlanClaim,
-    log: deps.log,
-  })
-  if (!planWalk.claimed) {
-    const started = tasks.filter(isRecoverable).map((t) => t.id)
-    const reason = claimSkipReason(tasks.length, candidates.length, queued.length, started, [
-      ...heldIds,
-      ...planWalk.heldIds,
-    ])
+  const { claim, skips } = await pollOnce(sourcesFor(deps, config))
+  if (!claim) {
+    const reason = combineSkips(skips)
+    if (!reason) return
     await deps.log(reason.actionable ? "warn" : "info", reason.message)
     if (reason.actionable && lastSkipReason.get(sessionID) !== reason.message) {
       lastSkipReason.set(sessionID, reason.message)
@@ -773,15 +649,17 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
     return
   }
   lastSkipReason.delete(sessionID)
-  const task = planWalk.claimed
-  const state = startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task))
-  await toast(deps.client, `Watch: claimed "${task.title}" — planning…`, "info")
+  const { item } = claim
+  await toast(deps.client, item.claimMessage, "info")
   try {
-    await drive(deps, sessionID, config, firstStep(state))
+    const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.loopKind), item.state))
+    if (outcome && claim.source.onTerminal) await claim.source.onTerminal(item, outcome)
   } catch (err) {
-    // A PLAN that died leaves the task in queued/ with our marker — release it.
-    const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "queued", task.id)
-    if (fresh) await releaseClaim(deps.$, task)
+    // Died before real work started (e.g. ensureIsolation threw, before
+    // setLoop ran — onIdle's catch can't see the task): the claim is ours, so
+    // release it or watch stays wedged. The source knows what "real work"
+    // means per pool (a BUILD-started note keeps the marker for recovery).
+    await claim.source.release(item)
     throw err
   }
 }
@@ -845,16 +723,16 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       // persisted plan.
       const ref = taskRef(work.task, work.task.path)
       const state = resumeAtBuild(taskGoal(work.task), ref, extractPlan(work.task) ?? "")
-      await drive(deps, sessionID, config, firstStep(state))
+      await drive(deps, sessionID, config, firstStep(eng, state))
     } else if (work?.kind === "start-plan") {
       // A `/agent-loop task <id>` claim on a queued (planless) task: run the PLAN
       // stage, which writes the plan and parks the task in plan-review/.
       const state = startAtPlan(work.goal, taskRef(work.task, work.task.path), extractPlan(work.task))
-      await drive(deps, sessionID, config, firstStep(state))
+      await drive(deps, sessionID, config, firstStep(eng, state))
     } else if (work?.kind === "recover-state") {
       // A snapshot-based resume: re-enter at the exact stage the crash caught,
       // with artifacts intact, re-firing that stage from its own inputs.
-      await drive(deps, sessionID, config, firstStep(work.state))
+      await drive(deps, sessionID, config, firstStep(eng, work.state))
     } else {
       // No pending work — a watch session with nothing to resume; look for
       // one claimable task in the backlog.

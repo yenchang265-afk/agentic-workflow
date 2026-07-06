@@ -9,10 +9,10 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test src/lib/loop/*.test.ts src/lib/task/*.test.ts"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@agentic-loop/core": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "yaml": "^2.9.0",
     "zod": "^4.1.8"

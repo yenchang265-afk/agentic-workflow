@@ -17,7 +17,9 @@ PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$PLUGIN_DIR/.." && pwd)"
 
 echo "Building the agentic-loop MCP server…"
-( cd "$PLUGIN_DIR/mcp-server" && npm install && npm run build )
+# npm workspaces: install at the repo root (which also builds @agentic-loop/core
+# via the root prepare script), then build the server workspace against it.
+( cd "$REPO_DIR" && npm install && npm run build -w agentic-loop-mcp )
 
 echo "Linking shared skills + references…"
 mkdir -p "$PLUGIN_DIR/skills" "$PLUGIN_DIR/references"

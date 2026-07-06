@@ -103,9 +103,10 @@ install_opencode() {
   printf 'export * from "%s/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
   echo "installed: $PLUGIN_FILE"
 
-  if [ ! -d "$REPO_DIR/node_modules" ]; then
+  if [ ! -d "$REPO_DIR/node_modules" ] || [ ! -d "$REPO_DIR/packages/core/dist" ]; then
     echo
-    echo "warning: $REPO_DIR/node_modules is missing — run 'npm install' in $REPO_DIR" >&2
+    echo "warning: dependencies not built — run 'npm install' in $REPO_DIR" >&2
+    echo "         (it also builds the @agentic-loop/core workspace the plugin imports)" >&2
   fi
 
   echo
