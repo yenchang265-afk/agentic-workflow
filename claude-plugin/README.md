@@ -67,6 +67,9 @@ The loop (`/agent-loop`):
 - `/agent-loop status` — the active loop plus a whole-backlog roll-up.
 - `/agent-loop ship <id>` — move a reviewed task from `in-review/` to `completed/` (audited).
 - `/agent-loop recover <id>` — resume an interrupted loop from its state snapshot.
+- `/agent-loop doctor [fix]` — audit the backlog for structural damage (stray
+  folders, task files outside every status folder, duplicate ids, held claim
+  markers); with `fix` it applies the unambiguous repairs.
 - `/agent-loop stop` — abort the active loop (partial work stays on the loop branch).
 
 Ancillary:
@@ -80,8 +83,9 @@ task authoring and both gates always go through `/agent-loop-task`.
 
 - `agents/` — `loop-plan-author` (writes the confirmed draft; runs the
   loop's PLAN stage in task mode), `loop-plan` (standalone read-only
-  planner), and the three build-phase stage subagents
-  `loop-build` / `loop-verify` / `loop-review`.
+  planner), the three build-phase stage subagents
+  `loop-build` / `loop-verify` / `loop-review`, and the pr-sitter stage
+  subagents `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish` / `loop-pr-poll`.
 - `skills/` — `loop-orchestration` (Claude-specific driving protocol), plus
   the shared workflow-skill library (symlinked, including
   `task-backlog-management`).
@@ -96,7 +100,8 @@ task authoring and both gates always go through `/agent-loop-task`.
 
 Optional `.agentic-loop.json` at the repo root (all fields default):
 `maxIterations`, `tasksDir`, `stageTimeoutMinutes`, `worktreesDir`,
-`worktreeSetup`, `reviewLenses` — field reference in
+`worktreeSetup`, `reviewLenses`, `loops`, `codePlatform`, `ado`,
+`projectManagement` — field reference in
 [`docs/configuration.md`](../docs/configuration.md). Same schema as the
 OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode here — see
 below). The removed `gateBeforeBuild`/`interviewBeforePlan` keys are

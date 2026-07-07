@@ -24,8 +24,8 @@ Guidance for AI coding agents working in this repository.
    declarative kinds under `loops/<kind>/` (manifest + stage prompts) run by
    the shared `@agentic-loop/core` engine. Other kinds are enabled via
    `loops.<kind>` in `.agentic-loop.json`; `pr-sitter` (agents
-   `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`, plus the shared
-   `loop-verify`) sits on open PRs — triages, fixes, verifies, and pushes
+   `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish` / `loop-pr-poll`, plus
+   the shared `loop-verify`) sits on open PRs — triages, fixes, verifies, and pushes
    replies, but never merges. `/agent-loop watch` and claims poll all
    enabled kinds, engineering backlog first.
 2. **Ad-hoc, skill-driven execution** — for a single request that doesn't
@@ -83,11 +83,11 @@ Correct behavior: always check for and use skills first.
 
 ## Plugin Structure
 
-- `src/index.ts`, `src/loop/`, `src/task/`, `src/config.ts` — plugin implementation (state machine, driver, task backlog IO)
+- `src/index.ts`, `src/loop/`, `src/config.ts` — plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
 - `loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
-- `.opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
-- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-task`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
+- `.opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`/`loop-pr-poll`)
+- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-task`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`, `/pr-poll`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

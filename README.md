@@ -123,8 +123,7 @@ skills library via [AGENTS.md](AGENTS.md).
 - [docs/migration.md](docs/migration.md) — migrating from earlier layouts
   (`/agent-loop-plan`, `in-planning/`, the blocking PLAN gate)
 - [docs/design/](docs/design/) — threat model, hardening design records
-  (including [07 — multi-loop scheduler](docs/design/improvements/07-multi-loop-scheduler.md)),
-  enterprise gap analysis
+  (including [07 — multi-loop scheduler](docs/design/improvements/07-multi-loop-scheduler.md))
 
 ## Layout
 
