@@ -28,7 +28,8 @@
         "ado": [
           "az repos pr show*", "az repos pr list*", "az repos pr policy list*",
           "az pipelines runs show*", "az pipelines runs list*", "az devops invoke --area git*"
-        ]
+        ],
+        "ado-mcp": []
       }
     },
     {
@@ -78,7 +79,8 @@
         ],
         "ado": [
           "az repos pr show*", "az devops invoke --area git*"
-        ]
+        ],
+        "ado-mcp": []
       }
     }
   ],

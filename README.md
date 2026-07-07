@@ -14,8 +14,9 @@ Two loop kinds ship today:
 - **engineering** (default-on) — a goal through PLAN → BUILD → VERIFY → REVIEW
   over the `docs/tasks/` backlog, with human task and plan gates.
 - **pr-sitter** (opt-in) — sits on your open PRs (GitHub, or Azure DevOps via
-  config `codePlatform: "ado"`): triages review comments, failing checks, and
-  merge conflicts; fixes; verifies; pushes and replies. Never merges.
+  config `codePlatform: "ado"` for the `az` CLI / `"ado-mcp"` for the ADO MCP
+  server): triages review comments, failing checks, and merge conflicts; fixes;
+  verifies; pushes and replies. Never merges.
 
 Authoring a new kind is a `loop.json` + stage prompts away — see
 [`loops/README.md`](loops/README.md).

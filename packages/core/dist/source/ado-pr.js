@@ -1,74 +1,6 @@
-import { z } from "zod";
 import { attentionTriggers, loadLedger, saveLedger } from "./ledger.js";
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js";
-/**
- * The Azure DevOps PR work source: the `gh`-backed `github-pr.ts` mirrored
- * onto the `az` CLI (`azure-devops` extension). Selected at wiring time when
- * config `codePlatform` resolves to `"ado"` for a `github-pr`-bound loop kind.
- *
- * Raw ADO output is normalized into the same `PrSnapshot` shape the ledger
- * judges (`conflicts` → `CONFLICTING`, a negative reviewer vote →
- * `CHANGES_REQUESTED`), so the dedup decision (`attentionTriggers`) and the
- * claim/fetch/terminal mechanics (`pr-shared.ts`) are shared verbatim.
- * Auth is delegated to the CLI (`az devops login` / `AZURE_DEVOPS_EXT_PAT`);
- * unlike GitHub's `statusCheckRollup`, check state comes from a per-PR
- * `az repos pr policy list` call, and comments from the pullRequestThreads
- * REST resource via `az devops invoke`.
- */
-const AdoPrListSchema = z.array(z.object({
-    pullRequestId: z.number().int().positive(),
-    title: z.string(),
-    sourceRefName: z.string(),
-    targetRefName: z.string(),
-    isDraft: z.boolean().default(false),
-    mergeStatus: z.string().nullish(),
-    createdBy: z.object({ uniqueName: z.string().default("") }).nullish(),
-    lastMergeSourceCommit: z.object({ commitId: z.string().default("") }).nullish(),
-    reviewers: z.array(z.object({ vote: z.number().default(0) })).nullish(),
-    /** Present when the PR comes from a fork — same skip rule as GitHub's `isCrossRepository`. */
-    forkSource: z.unknown().nullish(),
-    repository: z.object({ id: z.string().default(""), name: z.string().default("") }).nullish(),
-}));
-const AdoPolicySchema = z.array(z.object({
-    status: z.string().nullish(),
-    configuration: z
-        .object({
-        isBlocking: z.boolean().default(true),
-        type: z.object({ displayName: z.string().default("") }).nullish(),
-    })
-        .nullish(),
-}));
-const AdoThreadsSchema = z.object({
-    value: z
-        .array(z.object({
-        isDeleted: z.boolean().default(false),
-        comments: z
-            .array(z.object({
-            commentType: z.string().nullish(),
-            publishedDate: z.string().nullish(),
-            isDeleted: z.boolean().default(false),
-            author: z.object({ uniqueName: z.string().default("") }).nullish(),
-        }))
-            .nullish(),
-    }))
-        .nullish(),
-});
-const POLICY_FAILING = new Set(["rejected", "broken", "failed"]);
-const stripRef = (ref) => ref.replace(/^refs\/heads\//, "");
-/** ADO logins are emails — case-insensitive identifiers. */
-const sameLogin = (a, b) => a.toLowerCase() === b.toLowerCase();
-/**
- * `a` strictly newer than `b`. ADO timestamps carry variable-precision
- * fractional seconds ("…20.9Z" vs "…20.873Z"), which string comparison
- * misorders — compare parsed times, falling back to strings when unparsable.
- */
-const newerThan = (a, b) => {
-    if (!b)
-        return Boolean(a);
-    const ta = Date.parse(a);
-    const tb = Date.parse(b);
-    return Number.isNaN(ta) || Number.isNaN(tb) ? a > b : ta > tb;
-};
+import { AdoPolicySchema, AdoPrListSchema, AdoThreadsSchema, failingPolicyNames, flattenThreadComments, newerThan, sameLogin, stripRef, } from "./ado-shared.js";
 export const makeAdoPrSource = (deps) => {
     const { $, client, directory, tasksDir, log, loaded, ado } = deps;
     const binding = loaded.manifest.workSource;
@@ -102,11 +34,7 @@ export const makeAdoPrSource = (deps) => {
         if (out.exitCode !== 0)
             return [];
         try {
-            return AdoPolicySchema.parse(JSON.parse(out.stdout.toString() || "[]"))
-                .filter((p) => p.configuration?.isBlocking !== false) // optional policies don't gate the merge
-                .filter((p) => POLICY_FAILING.has((p.status ?? "").toLowerCase()))
-                .map((p) => p.configuration?.type?.displayName ?? "")
-                .filter(Boolean);
+            return failingPolicyNames(AdoPolicySchema.parse(JSON.parse(out.stdout.toString() || "[]")));
         }
         catch {
             return [];
@@ -122,11 +50,7 @@ export const makeAdoPrSource = (deps) => {
             return [];
         try {
             const threads = AdoThreadsSchema.parse(JSON.parse(out.stdout.toString() || "{}"));
-            return (threads.value ?? [])
-                .filter((t) => !t.isDeleted)
-                .flatMap((t) => t.comments ?? [])
-                .filter((c) => !c.isDeleted && (c.commentType ?? "text") !== "system" && c.publishedDate)
-                .map((c) => ({ author: c.author?.uniqueName ?? "", at: c.publishedDate ?? "" }));
+            return flattenThreadComments(threads.value ?? []);
         }
         catch {
             return [];

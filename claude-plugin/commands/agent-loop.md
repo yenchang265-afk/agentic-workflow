@@ -34,6 +34,10 @@ Dispatch:
   `loop-orchestration` skill's "Loop kinds" section).
   This is the pull equivalent of the OpenCode plugin's `/agent-loop watch` —
   there is no standing watch mode on this substrate.
+  If `loop_claim` returns `{needsAdoData:{request, guidance}}` (a pr-sitter on
+  `codePlatform: "ado-mcp"`), spawn the `loop-pr-poll` subagent with `guidance`,
+  then call `loop_claim` again with its JSON as `adoData` — see the skill's
+  "ado-mcp claim is two-phase" note.
 - **`status`** — call `mcp__agentic-loop__loop_status` and report the active
   loop plus the backlog roll-up.
 - **`ship <id>`** — call `mcp__agentic-loop__loop_ship({id})` to move a

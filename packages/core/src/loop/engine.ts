@@ -41,7 +41,12 @@ export const promptContext = (state: LoopState): TemplateContext => {
     goal: state.goal,
     iteration: String(state.iteration),
     // Code-platform switches for prompt templates ({{#platform.ado}}…); absent platform ⇒ github.
-    platform: { github: state.platform !== "ado", ado: state.platform === "ado" },
+    // Each mode is mutually exclusive: `ado-mcp` must NOT also read as github.
+    platform: {
+      github: state.platform !== "ado" && state.platform !== "ado-mcp",
+      ado: state.platform === "ado",
+      adoMcp: state.platform === "ado-mcp",
+    },
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: { ...state.artifacts },

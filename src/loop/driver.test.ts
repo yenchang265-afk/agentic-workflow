@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-loop/core/task/store"
 import { serializeTask } from "@agentic-loop/core/task/schema"
 import type { Config } from "../config.ts"
-import { claimSkipReason, handleTaskCommand, parseTaskArgs, parseWatchArgs, type Deps } from "./driver.ts"
+import { claimSkipReason, handleTaskCommand, parseTaskArgs, parseWatchArgs, recordAdoData, type Deps } from "./driver.ts"
 
 /**
  * The watch-mode plumbing (timers, idle queries) is exercised manually
@@ -121,6 +121,13 @@ test("new and free text pass through", () => {
   assert.deepEqual(parseTaskArgs("new add rate limiting"), { mode: "passthrough" })
   assert.deepEqual(parseTaskArgs(""), { mode: "passthrough" })
   assert.deepEqual(parseTaskArgs("approver thing"), { mode: "passthrough" })
+})
+
+test("loop_ado_data is ignored when no ado-mcp poll is awaiting input in the session", () => {
+  // The full poll round-trip runs against a live opencode; here we lock the
+  // public contract: a bundle delivered with no poll in flight is a no-op.
+  const msg = recordAdoData("sess-with-no-poll", { viewerLogin: "x", pullRequests: [] })
+  assert.match(msg, /No ADO data poll is awaiting input/)
 })
 
 /**

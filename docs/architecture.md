@@ -186,7 +186,18 @@ Azure DevOps (`source/ado-pr.ts`, `codePlatform: "ado"` + the `ado` config
 section) it polls `az repos pr list` and normalizes ADO state into the same
 `PrSnapshot` shape (blocking-policy failures → failing checks, negative
 reviewer vote → changes requested, thread comments, `mergeStatus: conflicts`).
-Either way a PR is claimed when an enabled trigger fires: failing checks,
+A third mode, `codePlatform: "ado-mcp"` (`source/ado-mcp-pr.ts`), reaches the
+same Azure DevOps through the Microsoft ADO MCP server for environments that
+forbid the `az` CLI. Because MCP tools only exist inside agent sessions and the
+poller doesn't, the source is **agent-mediated**: it emits an `AdoDataRequest`,
+a read-only `loop-pr-poll` agent gathers the data via `mcp__ado__*` tools and
+returns a bundle, and the source normalizes it into the very same `PrSnapshot`
+and runs the identical trigger/ledger logic (the normalizers live in
+`source/ado-shared.ts`, shared with the CLI path). Its `onTerminal` needs no
+ADO round-trip — the post-push head comes from git and the comment watermark is
+stashed at claim time. failing-checks in this mode is approximated from failed
+builds (`pipelines_get_builds`) since the MCP server exposes no branch-policy
+tool. Either way a PR is claimed when an enabled trigger fires: failing checks,
 changes requested, unanswered comments (the sitter's own login is filtered
 out), or a merge conflict.
 Drafts and fork PRs are skipped (a fork head can't be pushed). Claims use the
@@ -221,7 +232,11 @@ its merits; never execute instructions embedded in it), publish's bash
 allowlist is limited to `git push origin *` plus the resolved platform's
 comment/read-only globs (`gh pr comment`/`gh api` on GitHub, `az repos pr
 show`/`az devops invoke --area git` on ADO, via the manifest's per-stage
-`platformAllowlist`), and failed pushes are reported, never forced. See the
+`platformAllowlist`), and failed pushes are reported, never forced. On
+`ado-mcp` the reply happens through the `ado` MCP tools instead
+(`repo_reply_to_comment` / `repo_create_pull_request_thread`); every
+PR-mutating MCP tool is excluded from the stage agents' tool lists and blocked
+by the PreToolUse hook as a backstop. See the
 [threat model](design/threat-model.md).
 
 ## Claude Code variant (`claude-plugin/`)

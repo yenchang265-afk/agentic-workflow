@@ -88,17 +88,27 @@ export type Action = {
 } | {
     readonly kind: "noop";
 };
-/** The code-management platforms PR-shaped work sources can talk to — the single source of truth. */
-export declare const CODE_PLATFORMS: readonly ["github", "ado"];
+/**
+ * The code-management platforms PR-shaped work sources can talk to — the single
+ * source of truth. `ado` reaches Azure DevOps through the `az` CLI; `ado-mcp`
+ * reaches the same Azure DevOps through the Microsoft ADO MCP server, with data
+ * gathered by an agent session and handed back to the source (see
+ * `source/ado-mcp-pr.ts`). Both share the `ado` config section.
+ */
+export declare const CODE_PLATFORMS: readonly ["github", "ado", "ado-mcp"];
 export type CodePlatform = (typeof CODE_PLATFORMS)[number];
-/** Azure DevOps coordinates, required when any effective platform is `ado`. */
+/** Azure DevOps coordinates, required when any effective platform is `ado`/`ado-mcp`. */
 export interface AdoConfig {
     /** Organization URL, e.g. "https://dev.azure.com/acme". */
     readonly organization: string;
     readonly project: string;
-    /** Repository name; omitted → the az CLI's configured default. */
+    /** Repository name; omitted → the az CLI's configured default (`ado` only). */
     readonly repository?: string;
-    /** The sitter's own login for comment filtering when `az` can't resolve identity. */
+    /**
+     * The sitter's own login for comment/author filtering. Optional for `ado`
+     * (the CLI can resolve identity), **required** for `ado-mcp` (the MCP server
+     * has no reliable whoami tool). Enforced in `config.ts`.
+     */
     readonly selfLogin?: string;
 }
 /** Per-loop-kind settings under the config's `loops.<kind>` section. */
