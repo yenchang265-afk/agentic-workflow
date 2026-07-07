@@ -11,6 +11,16 @@ import type { LoopState } from "../loop/state.js";
 export interface ClaimSkipReason {
     readonly message: string;
     readonly actionable: boolean;
+    /**
+     * Set by the `ado-mcp` source when it could not obtain ADO data synchronously
+     * (the data must be gathered by an agent session and handed back). The host
+     * surfaces `request` to a poll agent, then re-polls with the returned bundle.
+     * Absent for every other source. `request` is an `AdoDataRequest`
+     * (`source/ado-mcp-pr.ts`); typed `unknown` to keep this abstraction
+     * platform-neutral.
+     */
+    readonly needsAdoData?: boolean;
+    readonly request?: unknown;
 }
 /** One claimed unit of work, ready to drive. */
 export interface WorkItem {

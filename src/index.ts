@@ -259,6 +259,18 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
             ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
           }),
       }),
+      loop_ado_data: tool({
+        description:
+          "Deliver the Azure DevOps pull-request bundle you gathered, for the PR sitter running in codePlatform 'ado-mcp'. " +
+          "This is the ONLY channel back to the poller — call it once, at the end of your turn, with the JSON object the " +
+          "poll guidance described. Ignored unless the sitter is actively awaiting ADO data in this session.",
+        args: {
+          bundle: tool.schema
+            .any()
+            .describe("The { viewerLogin, pullRequests: [...] } object built from the read-only `ado` MCP tools."),
+        },
+        execute: async (args, ctx) => driver.recordAdoData(ctx.sessionID, args.bundle),
+      }),
     },
   }
 }

@@ -26,8 +26,14 @@
  */
 /** The engineering loop's stages in order. `plan` terminates with a park, not an advance. */
 export const STAGES = ["plan", "build", "verify", "review"];
-/** The code-management platforms PR-shaped work sources can talk to — the single source of truth. */
-export const CODE_PLATFORMS = ["github", "ado"];
+/**
+ * The code-management platforms PR-shaped work sources can talk to — the single
+ * source of truth. `ado` reaches Azure DevOps through the `az` CLI; `ado-mcp`
+ * reaches the same Azure DevOps through the Microsoft ADO MCP server, with data
+ * gathered by an agent session and handed back to the source (see
+ * `source/ado-mcp-pr.ts`). Both share the `ado` config section.
+ */
+export const CODE_PLATFORMS = ["github", "ado", "ado-mcp"];
 /** Construct a LoopState entering execution at build, for a claimed
  *  in-progress task whose plan was approved via `/agent-loop-task approve-plan`. */
 export const resumeAtBuild = (goal, task, plan) => ({

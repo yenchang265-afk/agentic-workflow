@@ -10,6 +10,13 @@ import { stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schem
 import { combineSkips, pollOnce } from "@agentic-loop/core/scheduler/scheduler"
 import { platformFor } from "@agentic-loop/core/config"
 import { makeAdoPrSource } from "@agentic-loop/core/source/ado-pr"
+import {
+  makeAdoMcpPrSource,
+  AdoDataBundleSchema,
+  describeAdoDataRequest,
+  type AdoDataBundle,
+  type AdoDataProvider,
+} from "@agentic-loop/core/source/ado-mcp-pr"
 import { makeBacklogSource } from "@agentic-loop/core/source/backlog"
 import { makeGithubPrSource } from "@agentic-loop/core/source/github-pr"
 import type { TerminalOutcome, WorkSource } from "@agentic-loop/core/source/types"
@@ -148,12 +155,15 @@ const manifestFor = (kind: string): LoadedManifest => {
   return loaded
 }
 
-/** The work sources the scheduler polls, in claim-priority order (config order). */
-const sourcesFor = (deps: Deps, config: Config): WorkSource[] =>
+/** The work sources the scheduler polls, in claim-priority order (config order).
+ *  `sessionID` is needed only for the ado-mcp source, whose poll fires an agent
+ *  command in this session to gather ADO data (see `adoMcpProvider`). */
+const sourcesFor = (deps: Deps, config: Config, sessionID: string): WorkSource[] =>
   enabledLoopKinds(config).flatMap((kind): WorkSource[] => {
     const loaded = manifestFor(kind)
     if (loaded.manifest.workSource.type === "github-pr") {
-      if (platformFor(config, kind) === "ado") {
+      const platform = platformFor(config, kind)
+      if (platform === "ado") {
         return [
           makeAdoPrSource({
             $: deps.$,
@@ -164,6 +174,20 @@ const sourcesFor = (deps: Deps, config: Config): WorkSource[] =>
             loaded,
             // Config parse fails fast when platform "ado" lacks the ado section.
             ado: config.ado!,
+          }),
+        ]
+      }
+      if (platform === "ado-mcp") {
+        return [
+          makeAdoMcpPrSource({
+            $: deps.$,
+            client: deps.client,
+            directory: deps.directory,
+            tasksDir: config.tasksDir,
+            log: deps.log,
+            loaded,
+            ado: config.ado!,
+            provider: adoMcpProvider(deps, config, sessionID),
           }),
         ]
       }
@@ -328,6 +352,63 @@ const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord 
   recordedVerdicts.delete(sessionID)
   return rec && rec.stage === stage ? rec.record : null
 }
+
+/**
+ * Sessions with an ADO-MCP poll in flight → the resolver waiting for the bundle.
+ * The ado-mcp source (codePlatform "ado-mcp") can't call MCP tools itself, so its
+ * provider fires the `pr-poll` agent command in this session and awaits the
+ * bundle that the loop-pr-poll agent delivers through the `loop_ado_data` tool —
+ * the mirror of the loop_verdict channel above.
+ */
+const pendingAdoData = new Map<string, (bundle: AdoDataBundle | null) => void>()
+
+/** Record the ADO data bundle the loop-pr-poll agent gathered, from the `loop_ado_data` tool. */
+export const recordAdoData = (sessionID: string, raw: unknown): string => {
+  const resolve = pendingAdoData.get(sessionID)
+  if (!resolve) return "No ADO data poll is awaiting input in this session — ignored."
+  const parsed = AdoDataBundleSchema.safeParse(raw)
+  if (!parsed.success) {
+    return `adoData did not match the expected bundle shape: ${parsed.error.issues
+      .map((i) => `${i.path.join(".") || "(root)"} ${i.message}`)
+      .join("; ")}`
+  }
+  pendingAdoData.delete(sessionID)
+  resolve(parsed.data)
+  return `Recorded ADO data bundle (${parsed.data.pullRequests.length} PR(s)).`
+}
+
+/**
+ * The ado-mcp source's data provider on OpenCode: fire the read-only `pr-poll`
+ * agent command in this session with the fetch spec, and resolve with the bundle
+ * it hands back via `loop_ado_data`. Returns null (→ a "needs data" skip that the
+ * watcher logs and retries next tick) if a poll is already in flight, the command
+ * ends without delivering a bundle, or it times out. Re-entrancy is safe: tryClaim
+ * runs inside onIdle's `driving` guard, so the poll command's own idle events
+ * cannot start a second claim.
+ */
+const adoMcpProvider = (deps: Deps, config: Config, sessionID: string): AdoDataProvider => ({
+  fetch: (request) =>
+    new Promise<AdoDataBundle | null>((resolve) => {
+      if (pendingAdoData.has(sessionID)) return resolve(null) // one poll at a time per session
+      let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const finish = (bundle: AdoDataBundle | null) => {
+        if (settled) return
+        settled = true
+        pendingAdoData.delete(sessionID)
+        if (timer) clearTimeout(timer)
+        resolve(bundle)
+      }
+      pendingAdoData.set(sessionID, finish)
+      timer = setTimeout(() => finish(null), config.stageTimeoutMinutes * 60_000)
+      // Fire the poll command; its text output is ignored — the bundle arrives via
+      // loop_ado_data (→ recordAdoData → finish). If the command returns without
+      // delivering one, resolve null so the poll retries on the next tick.
+      runStage(deps.client, sessionID, "pr-poll", describeAdoDataRequest(request), config.stageTimeoutMinutes)
+        .then(() => finish(null))
+        .catch(() => finish(null))
+    }),
+})
 
 const toast = (client: Client, message: string, variant: "info" | "success" | "warning" | "error") =>
   client.tui.showToast({ body: { message, variant } }).catch(() => {})
@@ -703,7 +784,7 @@ export type { ClaimSkipReason } from "@agentic-loop/core/source/types"
  * reason changes).
  */
 const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
-  const { claim, skips } = await pollOnce(sourcesFor(deps, config))
+  const { claim, skips } = await pollOnce(sourcesFor(deps, config, sessionID))
   if (!claim) {
     const reason = combineSkips(skips)
     if (!reason) return

@@ -50,13 +50,16 @@ const BaseConfigSchema = z.object({
         .default({}),
     /**
      * Which platform PR-shaped work sources talk to: `github` (the `gh` CLI,
-     * the default) or `ado` (Azure DevOps via the `az` CLI's `azure-devops`
-     * extension). Overridable per kind via `loops.<kind>.codePlatform`. Auth is
-     * delegated to the CLI (`gh auth login` / `az devops login` or
-     * `AZURE_DEVOPS_EXT_PAT`), never handled here.
+     * the default), `ado` (Azure DevOps via the `az` CLI's `azure-devops`
+     * extension), or `ado-mcp` (the same Azure DevOps, reached through the
+     * Microsoft ADO MCP server from inside agent sessions — for environments
+     * that forbid the `az` CLI). Overridable per kind via
+     * `loops.<kind>.codePlatform`. Auth is delegated to the CLI / MCP server
+     * (`gh auth login` / `az devops login` / the ADO MCP server's own auth),
+     * never handled here.
      */
     codePlatform: CodePlatformSchema.default("github"),
-    /** Azure DevOps coordinates; required when any effective platform is `ado`. */
+    /** Azure DevOps coordinates; required when any effective platform is `ado`/`ado-mcp`. */
     ado: z
         .object({
         /** Organization URL, e.g. "https://dev.azure.com/acme". */
@@ -69,13 +72,26 @@ const BaseConfigSchema = z.object({
     })
         .optional(),
 });
+const isAdo = (p) => p === "ado" || p === "ado-mcp";
 export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
-    const wantsAdo = c.codePlatform === "ado" || Object.values(c.loops).some((section) => section.codePlatform === "ado");
+    const platforms = [c.codePlatform, ...Object.values(c.loops).map((section) => section.codePlatform)];
+    const wantsAdo = platforms.some(isAdo);
     if (wantsAdo && !c.ado) {
         ctx.addIssue({
             code: "custom",
             path: ["ado"],
-            message: "codePlatform 'ado' requires an 'ado' section with organization and project",
+            message: "codePlatform 'ado'/'ado-mcp' requires an 'ado' section with organization and project",
+        });
+    }
+    // The MCP server has no reliable whoami tool, so the sitter's own login must
+    // be configured to filter its own PRs/comments — unlike the CLI, which can
+    // resolve identity via `az ad signed-in-user show`.
+    const wantsAdoMcp = platforms.includes("ado-mcp");
+    if (wantsAdoMcp && c.ado && !c.ado.selfLogin) {
+        ctx.addIssue({
+            code: "custom",
+            path: ["ado", "selfLogin"],
+            message: "codePlatform 'ado-mcp' requires ado.selfLogin (the MCP server cannot resolve the sitter's identity)",
         });
     }
 });

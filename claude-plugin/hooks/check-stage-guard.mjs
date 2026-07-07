@@ -14,6 +14,11 @@
  *     (<tasksDir>/runs/.stage.json via loop_stage/loop_advance).
  *  2. Worktree pinning — while a worktree-isolated loop is active, edit/write
  *     tools may not touch absolute paths outside the worktree.
+ *  3. Azure DevOps MCP write backstop — ALWAYS ON: the PR sitter's ado-mcp mode
+ *     may only read PRs and reply to comments; PR-mutating MCP tools (complete/
+ *     abandon/approve/reviewers/run-pipeline/create-PR) are denied outright.
+ *     The agent frontmatter tools list is the primary control; this is
+ *     defense-in-depth in case an agent is mis-authored (threat-model T8).
  *
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
@@ -42,6 +47,17 @@ const REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ]
 
 const toRe = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")
 const matchesAny = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()))
+
+// Azure DevOps MCP tools that can mutate a PR — never available to the sitter
+// (server named `ado` by convention; the stage prompts + agent frontmatter
+// only ever call the read-only tools + repo_reply_to_comment / create-thread).
+const ADO_WRITE_TOOLS = new Set([
+  "mcp__ado__repo_update_pull_request", // complete / abandon / reactivate
+  "mcp__ado__repo_vote_pull_request", // approve / reject
+  "mcp__ado__repo_update_pull_request_reviewers",
+  "mcp__ado__repo_create_pull_request",
+  "mcp__ado__pipelines_run_pipeline",
+])
 
 // tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
 const readTasksDir = (cwd) => {
@@ -137,6 +153,16 @@ const main = async () => {
   const marker = readMarker(cwd, tasksDir)
   const tool = input.tool_name
   const ti = input.tool_input || {}
+
+  // (3) ADO MCP write backstop — always on. The sitter only reads PRs and posts
+  // thread replies; every PR-mutating ADO MCP tool is off-limits (threat-model T8).
+  if (ADO_WRITE_TOOLS.has(tool)) {
+    return block(
+      `agentic-loop: the PR sitter must never mutate a pull request — "${tool}" is blocked. ` +
+        `Only read-only ADO MCP tools and repo_reply_to_comment / repo_create_pull_request_thread are permitted; ` +
+        `merging, completing, abandoning, approving, and reviewer changes stay a human call.`,
+    )
+  }
 
   // (0) backlog-mutation guard — always on, marker or not: raw mv/mkdir/rm or
   // Write/Edit under the backlog bypasses the MCP state machine.

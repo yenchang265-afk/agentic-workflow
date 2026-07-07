@@ -108,3 +108,39 @@ test("ado section fields are validated", () => {
     /Invalid .*ado/,
   )
 })
+
+test("codePlatform ado-mcp requires the ado section and a selfLogin", () => {
+  // needs the ado section like ado
+  assert.throws(() => parseConfig({ codePlatform: "ado-mcp" }), /requires an 'ado' section/)
+  // ...and additionally requires selfLogin (no whoami tool on the MCP server)
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado-mcp", ado: { organization: "https://dev.azure.com/acme", project: "widgets" } }),
+    /requires ado\.selfLogin/,
+  )
+  const c = parseConfig({
+    codePlatform: "ado-mcp",
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+  })
+  assert.equal(platformFor(c, "pr-sitter"), "ado-mcp")
+})
+
+test("per-loop ado-mcp override also requires the ado section and selfLogin", () => {
+  assert.throws(
+    () => parseConfig({ loops: { "pr-sitter": { enabled: true, codePlatform: "ado-mcp" } } }),
+    /requires an 'ado' section/,
+  )
+  assert.throws(
+    () =>
+      parseConfig({
+        loops: { "pr-sitter": { enabled: true, codePlatform: "ado-mcp" } },
+        ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+      }),
+    /requires ado\.selfLogin/,
+  )
+  const c = parseConfig({
+    loops: { "pr-sitter": { enabled: true, codePlatform: "ado-mcp" } },
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+  })
+  assert.equal(platformFor(c, "pr-sitter"), "ado-mcp")
+  assert.equal(platformFor(c, "engineering"), "github")
+})
