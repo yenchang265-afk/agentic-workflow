@@ -50,10 +50,20 @@ One file per task. YAML frontmatter + a free-form markdown body:
 ```md
 ---
 title: Add rate limiting to the API     # required
+type: story                             # optional; issue/work-item type
 priority: 2                             # optional; lower runs first (default 0)
+estimate: 3                             # optional; story points / effort
+assignee: jdoe@example.com              # optional; assignee / assigned-to
+labels:                                 # optional; Jira labels / ADO tags
+  - backend
 acceptance:                             # optional; testable criteria → verify
   - Returns 429 over the limit
   - Limit is configurable per route
+tracker:                                # optional; manually pair to a tracker item
+  system: jira                          #   jira | azure-devops
+  key: PROJ-123                         #   Jira issue key / ADO work item id
+  url: https://acme.atlassian.net/browse/PROJ-123   # optional deep link
+  parent: PROJ-100                      # optional; Jira Epic Link / ADO parent
 ---
 Throttle authenticated callers to 100 req/min. The body is the description /
 context; it becomes the loop's goal, with `acceptance` threaded into the build
@@ -71,6 +81,22 @@ approved, buildable.
 - **acceptance** is optional but strongly recommended — it is what VERIFY checks.
   "What tests are needed" folds in here as concrete bullets rather than a
   separate field.
+- **type / estimate / assignee / labels / tracker** align with the fields Jira
+  issues and Azure DevOps work items share, so you can **manually pair** a task
+  to a tracker item. Fill `tracker.system` (`jira` | `azure-devops`) and
+  `tracker.key` (Jira issue key `PROJ-123` / ADO work item id `1234`) to link
+  them; `url` and `parent` (Epic Link / parent) are optional. Field mapping:
+
+  | task file    | Jira             | Azure DevOps          |
+  | ------------ | ---------------- | --------------------- |
+  | `title`      | Summary          | Title                 |
+  | `type`       | Issue Type       | Work Item Type        |
+  | `priority`   | Priority *(loop scheduling int, not the tracker's named scale — map by hand)* | Priority |
+  | `estimate`   | Story Points     | Story Points / Effort |
+  | `assignee`   | Assignee         | Assigned To           |
+  | `labels`     | Labels           | Tags                  |
+  | `acceptance` | Acceptance Crit. | Acceptance Criteria   |
+  | `tracker`    | Issue Key + link | Work Item ID + link   |
 - **`## Implementation Plan`** — the literal heading the plugin greps for.
   Without it, `/agent-loop-task approve-plan` refuses and the loop can never
   build the task.

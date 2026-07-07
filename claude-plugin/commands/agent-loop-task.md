@@ -26,6 +26,13 @@ Dispatch:
      now — the loop's PLAN stage plans the task right before execution, so
      plans don't rot while the task sits parked. The next step is
      `/agent-loop-task approve <id>`.
+  - **Project-management pairing** — when `.agentic-loop.json` has a
+    `projectManagement` section, pre-fill the draft's `tracker` block so the
+    task is ready to pair with the team's tracker: set `tracker.system` to the
+    configured `system` (jira / azure-devops) and `type` to `defaultType`, and
+    ask the user for the Jira issue key / ADO work item id to put in
+    `tracker.key`. Pairing is optional — if they don't have one, leave
+    `tracker` off; the task queues and runs unpaired.
 - **`approve <id>`** — the task gate. Call
   `mcp__agentic-loop__loop_task_approve({id})` — it moves the reviewed draft
   to `docs/tasks/queued/` (audited note + commit). No plan is required — the

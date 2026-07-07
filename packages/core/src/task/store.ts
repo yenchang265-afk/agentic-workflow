@@ -1,7 +1,7 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
-import { buildTaskFile, parseTask, type Task, type TaskInput } from "./schema.js"
+import { buildTaskFile, isPaired, parseTask, type Task, type TaskInput } from "./schema.js"
 
 /**
  * Filesystem IO for the task backlog. **Impure**: reads via the host client
@@ -117,6 +117,23 @@ export const summarizeBacklog = (
     interrupted: ids(inProgress.filter(wasInterrupted)),
     awaitingReview: ids(byStatus["in-review"] ?? []),
   }
+}
+
+/** The active statuses whose tasks ought to be paired to a tracker item. */
+const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review", "in-progress", "in-review"]
+
+/**
+ * Pairing coverage across the active backlog (everything but completed/abandoned):
+ * how many active tasks carry a `tracker` block vs the ids of those that don't.
+ * Feeds the `loop_status` pairing view when project management is configured. Pure.
+ */
+export const pairingCoverage = (
+  byStatus: Readonly<Record<TaskStatus, readonly Task[]>>,
+): { readonly paired: number; readonly unpaired: readonly string[] } => {
+  const active = ACTIVE_STATUSES.flatMap((s) => byStatus[s] ?? [])
+  const paired = active.filter(isPaired).length
+  const unpaired = active.filter((t) => !isPaired(t)).map((t) => t.id).sort((a, b) => a.localeCompare(b))
+  return { paired, unpaired }
 }
 
 /**

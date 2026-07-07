@@ -25,6 +25,8 @@
  * sends the task back to the PLAN stage via `/agent-loop-task replan <id>`.
  */
 
+import type { TrackerSystem } from "../task/schema.js"
+
 /** A stage name. Loop kinds define their own stage sets in their manifests;
  *  the engineering loop's are `plan | build | verify | review`. */
 export type Stage = string
@@ -107,6 +109,16 @@ export interface AdoConfig {
   readonly selfLogin?: string
 }
 
+/** Project-management setup: the team's tracker and how tasks pair to it. */
+export interface ProjectManagementConfig {
+  /** The team's tracker; the default `tracker.system` for new tasks. */
+  readonly system: TrackerSystem
+  /** URL prefix a task's `tracker.key` is appended to, to build a deep link. */
+  readonly baseUrl?: string
+  /** Default issue/work-item type stamped on newly authored tasks. */
+  readonly defaultType?: string
+}
+
 /** Per-loop-kind settings under the config's `loops.<kind>` section. */
 export interface LoopKindConfig {
   readonly enabled: boolean
@@ -134,6 +146,8 @@ export interface Config {
   readonly ado?: AdoConfig
   /** Per-loop-kind sections; engineering is on unless explicitly disabled, other kinds are opt-in. */
   readonly loops: Readonly<Record<string, LoopKindConfig>>
+  /** Project-management setup; drives task-authoring defaults and the status pairing view. */
+  readonly projectManagement?: ProjectManagementConfig
 }
 
 /** Construct a LoopState entering execution at build, for a claimed

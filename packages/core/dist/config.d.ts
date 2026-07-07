@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Client } from "./host.js";
 import { type Config } from "./loop/state.js";
+import { type TrackerSystem } from "./task/schema.js";
 /**
  * Loop configuration, read from `.agentic-loop.json` at the repo root via the
  * host client (no Node fs dependency). The file is optional; every field has
@@ -18,6 +19,21 @@ export declare const CodePlatformSchema: z.ZodEnum<{
     "ado-mcp": "ado-mcp";
 }>;
 export type CodePlatform = z.infer<typeof CodePlatformSchema>;
+/**
+ * How the repo's project management is set up, so task authoring and the status
+ * roll-up align with the team's tracker (Jira or Azure DevOps). Optional — unset
+ * means the loop is tracker-agnostic (today's behavior; tasks may still carry an
+ * ad-hoc `tracker` block). See docs/configuration.md.
+ */
+export declare const ProjectManagementSchema: z.ZodObject<{
+    system: z.ZodEnum<{
+        jira: "jira";
+        "azure-devops": "azure-devops";
+    }>;
+    baseUrl: z.ZodOptional<z.ZodString>;
+    defaultType: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+export type ProjectManagement = z.infer<typeof ProjectManagementSchema>;
 export declare const ConfigSchema: z.ZodObject<{
     maxIterations: z.ZodDefault<z.ZodNumber>;
     tasksDir: z.ZodDefault<z.ZodString>;
@@ -45,6 +61,14 @@ export declare const ConfigSchema: z.ZodObject<{
         repository: z.ZodOptional<z.ZodString>;
         selfLogin: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>;
+    projectManagement: z.ZodOptional<z.ZodObject<{
+        system: z.ZodEnum<{
+            jira: "jira";
+            "azure-devops": "azure-devops";
+        }>;
+        baseUrl: z.ZodOptional<z.ZodString>;
+        defaultType: z.ZodOptional<z.ZodString>;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 /**
  * The loop kinds this config activates, in claim-priority order: engineering
@@ -53,6 +77,14 @@ export declare const ConfigSchema: z.ZodObject<{
 export declare const enabledLoopKinds: (config: Config) => string[];
 /** The code platform a loop kind's PR source talks to: per-kind override, else the global default. Pure. */
 export declare const platformFor: (config: Config, kind: string) => CodePlatform;
+/**
+ * Build a tracker deep link from a task's `tracker.key` and the configured
+ * `projectManagement.baseUrl` — the base URL with the key appended. Returns
+ * undefined when no base URL is configured (link building is opt-in). Pure.
+ */
+export declare const trackerUrl: (pm: ProjectManagement | undefined, key: string) => string | undefined;
+/** The default `tracker.system` for newly authored tasks, from the PM config. Pure. */
+export declare const defaultTrackerSystem: (config: Config) => TrackerSystem | undefined;
 export declare const DEFAULT_CONFIG: Config;
 /** A zod schema whose parse produces some host's config shape. */
 type ConfigSchemaLike<T> = {

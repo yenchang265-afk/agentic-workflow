@@ -13,6 +13,7 @@ import {
   isRecoverable,
   listClaimIds,
   moveTask,
+  pairingCoverage,
   PLAN_HEADING,
   releaseOrphanedClaims,
   selectNext,
@@ -234,6 +235,29 @@ test("summarizeBacklog flags queued, gated plan-review, and in-progress/in-revie
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])
   assert.deepEqual(s.awaitingReview, ["shipme"])
+})
+
+// --- pairingCoverage (the loop_status pairing view) ---
+
+const paired = (id: string): Task => ({ ...task(id, 0), tracker: { system: "jira", key: `PROJ-${id}` } })
+
+test("pairingCoverage counts paired active tasks and lists the unpaired, sorted", () => {
+  const byStatus = empty()
+  byStatus["draft"] = [task("zed", 0), paired("d1")]
+  byStatus["queued"] = [task("alpha", 0)]
+  byStatus["in-progress"] = [paired("p1")]
+  const cov = pairingCoverage(byStatus)
+  assert.equal(cov.paired, 2)
+  assert.deepEqual(cov.unpaired, ["alpha", "zed"])
+})
+
+test("pairingCoverage ignores completed and abandoned tasks", () => {
+  const byStatus = empty()
+  byStatus["completed"] = [task("done", 0)]
+  byStatus["abandoned"] = [task("dropped", 0)]
+  const cov = pairingCoverage(byStatus)
+  assert.equal(cov.paired, 0)
+  assert.deepEqual(cov.unpaired, [])
 })
 
 // --- canTransition / statusOf / moveTask (stage-order enforcement) ---

@@ -69,6 +69,15 @@ export interface BacklogSummary {
  */
 export declare const summarizeBacklog: (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>, claimedIds?: readonly string[]) => BacklogSummary;
 /**
+ * Pairing coverage across the active backlog (everything but completed/abandoned):
+ * how many active tasks carry a `tracker` block vs the ids of those that don't.
+ * Feeds the `loop_status` pairing view when project management is configured. Pure.
+ */
+export declare const pairingCoverage: (byStatus: Readonly<Record<TaskStatus, readonly Task[]>>) => {
+    readonly paired: number;
+    readonly unpaired: readonly string[];
+};
+/**
  * List and parse every task in a given status folder. Invalid files are
  * skipped (logged) rather than failing the whole pick. Returns `[]` when the
  * folder is absent.

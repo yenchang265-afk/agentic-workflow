@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CODE_PLATFORMS } from "./loop/state.js";
+import { TRACKER_SYSTEMS } from "./task/schema.js";
 /**
  * Loop configuration, read from `.agentic-loop.json` at the repo root via the
  * host client (no Node fs dependency). The file is optional; every field has
@@ -12,6 +13,24 @@ import { CODE_PLATFORMS } from "./loop/state.js";
  */
 /** Which code-management platform PR-shaped work sources talk to. */
 export const CodePlatformSchema = z.enum(CODE_PLATFORMS);
+/**
+ * How the repo's project management is set up, so task authoring and the status
+ * roll-up align with the team's tracker (Jira or Azure DevOps). Optional — unset
+ * means the loop is tracker-agnostic (today's behavior; tasks may still carry an
+ * ad-hoc `tracker` block). See docs/configuration.md.
+ */
+export const ProjectManagementSchema = z.object({
+    /** The team's tracker. Becomes the default `tracker.system` for new tasks. */
+    system: z.enum(TRACKER_SYSTEMS),
+    /**
+     * URL prefix a task's `tracker.key` is appended to, to build a deep link —
+     * e.g. "https://acme.atlassian.net/browse/" (Jira) or
+     * "https://dev.azure.com/acme/proj/_workitems/edit/" (Azure DevOps). Optional.
+     */
+    baseUrl: z.string().url("projectManagement.baseUrl must be a URL").optional(),
+    /** Default issue/work-item type stamped on newly authored tasks. Optional. */
+    defaultType: z.string().min(1).optional(),
+});
 const BaseConfigSchema = z.object({
     /** Max loop iterations before stopping on repeated verify/review failures. */
     maxIterations: z.number().int().positive().default(3),
@@ -71,6 +90,11 @@ const BaseConfigSchema = z.object({
         selfLogin: z.string().min(1).optional(),
     })
         .optional(),
+    /**
+     * Project-management setup — the team's tracker and how tasks pair to it.
+     * Drives task-authoring defaults and the pairing view in `loop_status`.
+     */
+    projectManagement: ProjectManagementSchema.optional(),
 });
 const isAdo = (p) => p === "ado" || p === "ado-mcp";
 export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
@@ -112,6 +136,14 @@ export const enabledLoopKinds = (config) => {
 };
 /** The code platform a loop kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config, kind) => config.loops[kind]?.codePlatform ?? config.codePlatform ?? "github";
+/**
+ * Build a tracker deep link from a task's `tracker.key` and the configured
+ * `projectManagement.baseUrl` — the base URL with the key appended. Returns
+ * undefined when no base URL is configured (link building is opt-in). Pure.
+ */
+export const trackerUrl = (pm, key) => pm?.baseUrl ? `${pm.baseUrl}${key}` : undefined;
+/** The default `tracker.system` for newly authored tasks, from the PM config. Pure. */
+export const defaultTrackerSystem = (config) => config.projectManagement?.system;
 export const DEFAULT_CONFIG = ConfigSchema.parse({});
 const CONFIG_FILE = ".agentic-loop.json";
 /** Validate an already-parsed config object against a host schema; throws a readable error on misconfig. */

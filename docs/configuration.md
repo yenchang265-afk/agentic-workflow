@@ -13,6 +13,7 @@ falling back.
 | `loops` | `{}` | Per-loop-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI), `"ado"` (Azure DevOps via the `az` CLI), or `"ado-mcp"` (Azure DevOps via the Microsoft ADO MCP server, for environments that forbid `az`). Overridable per kind with `loops.<kind>.codePlatform`. See below. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`); **required** when any effective platform is `"ado"` or `"ado-mcp"` — the config fails fast without it. `selfLogin` is additionally **required** for `"ado-mcp"`. |
+| `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agent-loop status`. See below. |
 | `worktreesDir` | unset | See hardening below. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
@@ -154,6 +155,45 @@ where every ADO call is an MCP tool invoked inside an agent session. Set
 See [`loops/README.md`](../loops/README.md) for authoring new kinds and
 [`docs/design/threat-model.md`](design/threat-model.md) for the PR sitter's
 security posture before enabling it.
+
+## Project management (`projectManagement`)
+
+Points the loop at the team's task tracker so **local backlog tasks pair to
+tracker items** (Jira issues / Azure DevOps work items). The task frontmatter
+already carries an optional `tracker` block (see the
+[`task-backlog-management`](../skills/task-backlog-management/SKILL.md) schema);
+this config supplies the authoring defaults and turns pairing into a first-class
+part of the loop. Pairing is **manual** — the loop never calls the tracker's
+API; a human copies the issue key/id into the task.
+
+```json
+{
+  "projectManagement": {
+    "system": "jira",
+    "baseUrl": "https://acme.atlassian.net/browse/",
+    "defaultType": "story"
+  }
+}
+```
+
+- **`system`** (required) — `"jira"` or `"azure-devops"`. Becomes the default
+  `tracker.system` stamped on tasks authored via `/agent-loop-task new`.
+- **`baseUrl`** — optional URL prefix a task's `tracker.key` is appended to,
+  to build a deep link (Jira: `…/browse/`; ADO: `…/_workitems/edit/`). Unset →
+  no link is built.
+- **`defaultType`** — optional issue/work-item type stamped on new drafts
+  (e.g. `story`, `task`, `bug`).
+
+Pairing is always **optional** — a task never has to carry a `tracker` block;
+this section only supplies authoring defaults and the status view.
+
+Impact on the commands:
+
+- **`/agent-loop-task new`** pre-fills `tracker.system` (and `type` from
+  `defaultType`) so the drafted task is ready to pair — you fill in the
+  `tracker.key`.
+- **`/agent-loop status`** adds a `pairing` roll-up: the tracker system, how
+  many active tasks are paired, and the ids of those still unpaired.
 
 ## Optional hardening
 

@@ -39,7 +39,10 @@ Dispatch:
   then call `loop_claim` again with its JSON as `adoData` — see the skill's
   "ado-mcp claim is two-phase" note.
 - **`status`** — call `mcp__agentic-loop__loop_status` and report the active
-  loop plus the backlog roll-up.
+  loop plus the backlog roll-up. When a `projectManagement` tracker is
+  configured, the result also carries a `pairing` block (tracker system,
+  paired count, unpaired task ids) — surface which active tasks still need to
+  be paired to a Jira/ADO item.
 - **`ship <id>`** — call `mcp__agentic-loop__loop_ship({id})` to move a
   reviewed task from `in-review/` to `completed/`. Do this only after the
   human has reviewed the branch diff.

@@ -53,6 +53,7 @@ import {
   listByStatus,
   listClaimIds,
   moveTask,
+  pairingCoverage,
   releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
@@ -743,9 +744,11 @@ server.registerTool(
     for (const s of STATUSES) byStatus[s] = await listByStatus(fsClient, directory, config.tasksDir, s, log)
     const summary = summarizeBacklog(byStatus)
     const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
+    const pm = config.projectManagement
     return ok({
       active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
       backlog: summary,
+      ...(pm ? { pairing: { system: pm.system, ...pairingCoverage(byStatus) } } : {}),
       ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (loop_doctor repairs)`) } : {}),
     })
   },

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { DEFAULT_CONFIG, enabledLoopKinds, parseConfig, platformFor } from "./config.js"
+import {
+  DEFAULT_CONFIG,
+  defaultTrackerSystem,
+  enabledLoopKinds,
+  parseConfig,
+  platformFor,
+  trackerUrl,
+} from "./config.js"
 
 test("defaults leave worktree isolation off and review single-pass", () => {
   assert.equal(DEFAULT_CONFIG.worktreesDir, undefined)
@@ -107,6 +114,48 @@ test("ado section fields are validated", () => {
     () => parseConfig({ codePlatform: "ado", ado: { organization: "", project: "p" } }),
     /Invalid .*ado/,
   )
+})
+
+// --- projectManagement ---
+
+test("projectManagement is off by default", () => {
+  assert.equal(DEFAULT_CONFIG.projectManagement, undefined)
+  assert.equal(defaultTrackerSystem(DEFAULT_CONFIG), undefined)
+})
+
+test("parseConfig accepts a minimal projectManagement section", () => {
+  const cfg = parseConfig({ projectManagement: { system: "jira" } })
+  assert.equal(cfg.projectManagement?.system, "jira")
+  assert.equal(defaultTrackerSystem(cfg), "jira")
+})
+
+test("parseConfig accepts the full projectManagement shape", () => {
+  const cfg = parseConfig({
+    projectManagement: {
+      system: "azure-devops",
+      baseUrl: "https://dev.azure.com/acme/proj/_workitems/edit/",
+      defaultType: "task",
+    },
+  })
+  assert.equal(cfg.projectManagement?.system, "azure-devops")
+  assert.equal(cfg.projectManagement?.defaultType, "task")
+})
+
+test("parseConfig rejects an unknown tracker system and a non-URL baseUrl", () => {
+  assert.throws(() => parseConfig({ projectManagement: { system: "trello" } }), /system/)
+  assert.throws(
+    () => parseConfig({ projectManagement: { system: "jira", baseUrl: "not a url" } }),
+    /baseUrl/,
+  )
+})
+
+test("trackerUrl appends the key to baseUrl, or returns undefined without one", () => {
+  const pm = parseConfig({ projectManagement: { system: "jira", baseUrl: "https://acme.atlassian.net/browse/" } })
+    .projectManagement
+  assert.equal(trackerUrl(pm, "PROJ-123"), "https://acme.atlassian.net/browse/PROJ-123")
+  const noBase = parseConfig({ projectManagement: { system: "jira" } }).projectManagement
+  assert.equal(trackerUrl(noBase, "PROJ-123"), undefined)
+  assert.equal(trackerUrl(undefined, "PROJ-123"), undefined)
 })
 
 test("codePlatform ado-mcp requires the ado section and a selfLogin", () => {

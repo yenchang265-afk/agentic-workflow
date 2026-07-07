@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { buildTaskFile, parseTask, serializeTask, slugify } from "./schema.js"
+import { buildTaskFile, isPaired, parseTask, serializeTask, slugify } from "./schema.js"
 
 const PATH = "/repo/docs/tasks/in-progress/add-foo.md"
 
@@ -94,4 +94,118 @@ test("buildTaskFile avoids id collisions with a numeric suffix", () => {
 
 test("buildTaskFile falls back to 'task' when the title has no slug chars", () => {
   assert.equal(buildTaskFile({ title: "!!!" }).id, "task")
+})
+
+// --- Jira / Azure DevOps alignment fields ---
+
+test("parses the tracker pairing block and aligned fields", () => {
+  const content = [
+    "---",
+    "title: Add rate limiting",
+    "type: story",
+    "priority: 2",
+    "estimate: 3",
+    "assignee: jdoe@example.com",
+    "labels:",
+    "  - backend",
+    "  - security",
+    "acceptance:",
+    "  - Returns 429 over the limit",
+    "tracker:",
+    "  system: jira",
+    "  key: PROJ-123",
+    "  url: https://acme.atlassian.net/browse/PROJ-123",
+    "  parent: PROJ-100",
+    "---",
+    "body",
+  ].join("\n")
+  const task = parseTask("add-foo.md", content, PATH)
+  assert.equal(task.type, "story")
+  assert.equal(task.estimate, 3)
+  assert.equal(task.assignee, "jdoe@example.com")
+  assert.deepEqual(task.labels, ["backend", "security"])
+  assert.deepEqual(task.tracker, {
+    system: "jira",
+    key: "PROJ-123",
+    url: "https://acme.atlassian.net/browse/PROJ-123",
+    parent: "PROJ-100",
+  })
+})
+
+test("pairs against Azure DevOps by work item id", () => {
+  const content = [
+    "---",
+    "title: Fix login redirect",
+    "type: bug",
+    "tracker:",
+    "  system: azure-devops",
+    "  key: '1234'",
+    "---",
+    "",
+  ].join("\n")
+  const task = parseTask("t.md", content, "/p/t.md")
+  assert.deepEqual(task.tracker, { system: "azure-devops", key: "1234" })
+})
+
+test("defaults the aligned fields when absent (labels [], rest undefined)", () => {
+  const task = parseTask("t.md", "---\ntitle: Just a title\n---\nbody", "/p/t.md")
+  assert.deepEqual(task.labels, [])
+  assert.equal(task.type, undefined)
+  assert.equal(task.estimate, undefined)
+  assert.equal(task.assignee, undefined)
+  assert.equal(task.tracker, undefined)
+})
+
+test("rejects an unknown tracker system", () => {
+  assert.throws(
+    () => parseTask("t.md", "---\ntitle: X\ntracker:\n  system: trello\n  key: A-1\n---\nb", "/p"),
+    /tracker\.system/,
+  )
+})
+
+test("rejects a tracker without a key", () => {
+  assert.throws(
+    () => parseTask("t.md", "---\ntitle: X\ntracker:\n  system: jira\n---\nb", "/p"),
+    /tracker\.key/,
+  )
+})
+
+test("serializeTask omits unset optional fields but keeps the pairing", () => {
+  const content = serializeTask({
+    title: "Add rate limiting",
+    type: "story",
+    tracker: { system: "azure-devops", key: "1234", url: "https://dev.azure.com/acme/_workitems/edit/1234" },
+  })
+  assert.match(content, /type: story/)
+  assert.match(content, /system: azure-devops/)
+  assert.match(content, /key: ["']1234["']/)
+  assert.doesNotMatch(content, /assignee/)
+  assert.doesNotMatch(content, /estimate/)
+  assert.doesNotMatch(content, /labels/)
+  assert.doesNotMatch(content, /parent/)
+})
+
+test("isPaired reflects whether a tracker block is present", () => {
+  assert.equal(isPaired({ tracker: undefined }), false)
+  assert.equal(isPaired({ tracker: { system: "jira", key: "PROJ-1" } }), true)
+})
+
+test("serializeTask round-trips the aligned fields through parseTask", () => {
+  const content = serializeTask({
+    title: "Add rate limiting",
+    type: "story",
+    priority: 2,
+    estimate: 5,
+    assignee: "jdoe",
+    labels: ["backend"],
+    acceptance: ["Returns 429 over the limit"],
+    tracker: { system: "jira", key: "PROJ-123", parent: "PROJ-100" },
+    body: "Throttle callers.",
+  })
+  const task = parseTask("add-rate-limiting.md", content, "/p/add-rate-limiting.md")
+  assert.equal(task.type, "story")
+  assert.equal(task.estimate, 5)
+  assert.equal(task.assignee, "jdoe")
+  assert.deepEqual(task.labels, ["backend"])
+  assert.deepEqual(task.tracker, { system: "jira", key: "PROJ-123", parent: "PROJ-100" })
 })
