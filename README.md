@@ -70,6 +70,17 @@ closing, and approving stay human calls. Security posture:
 
 ## Install
 
+The steps below assume the system prerequisites are already present (Node ≥ 20,
+git, `gh`, and — for ADO/browser work — `az` and Chrome). For a fresh machine,
+`./bootstrap.sh` verifies/installs those, registers the external MCP servers
+(`chrome-devtools`, `ado`), and then runs `./install.sh` for you:
+
+```bash
+./bootstrap.sh                 # everything; or --no-ado / --no-browser / --check-only
+```
+
+Manual path (deps already installed):
+
 ```bash
 git clone <this-repo>
 cd agentic-loop
