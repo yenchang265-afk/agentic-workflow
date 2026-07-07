@@ -84,8 +84,9 @@ task authoring and both gates always go through `/agent-loop-task`.
 - `agents/` — `loop-plan-author` (writes the confirmed draft; runs the
   loop's PLAN stage in task mode), `loop-plan` (standalone read-only
   planner), the three build-phase stage subagents
-  `loop-build` / `loop-verify` / `loop-review`, and the pr-sitter stage
-  subagents `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish` / `loop-pr-poll`.
+  `loop-build` / `loop-verify` / `loop-review`, the pr-sitter stage
+  subagents `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`, and
+  `loop-pr-poll` (a read-only ADO-MCP data-bundle helper, not a loop stage).
 - `skills/` — `loop-orchestration` (Claude-specific driving protocol), plus
   the shared workflow-skill library (symlinked, including
   `task-backlog-management`).

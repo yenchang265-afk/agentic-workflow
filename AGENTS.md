@@ -4,7 +4,9 @@ Guidance for AI coding agents working in this repository.
 
 ## Repository Overview
 
-`agentic-loop` is an OpenCode plugin. It provides:
+`agentic-loop` is a multi-kind agentic-loop framework (shared engine in
+`@agentic-loop/core`, shipping both an OpenCode and a Claude Code plugin); this
+guide covers the OpenCode plugin. It provides:
 
 1. **The automatic agentic loop** (`/agent-loop-task` + `/agent-loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that

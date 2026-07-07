@@ -95,8 +95,11 @@ Context available: `goal`, `iteration`, `task.id`/`task.path`,
 `acceptance.bullets` (pre-rendered `- …` list), `artifacts.<stage>` (each
 completed stage's captured output; the approved plan under `artifacts.plan`),
 `git.base`/`git.branch`/`git.worktree`/`git.diffCmd` (precomputed review diff
-command), and `worktree.instructions` (the standard pinning paragraph — every
-kind gets isolation discipline for free by including it).
+command), `worktree.instructions` (the standard pinning paragraph — every
+kind gets isolation discipline for free by including it), and
+`platform.github`/`platform.ado`/`platform.adoMcp` (exactly one is truthy,
+per the resolved code platform — pr-sitter stages branch on these to pick
+`gh` vs `az` vs ADO-MCP guidance).
 
 ## Work sources
 
@@ -122,17 +125,22 @@ kind gets isolation discipline for free by including it).
 
 ## The TS escape hatch
 
-Logic a manifest can't express hangs off named refs resolved through
+Logic a manifest can't express hangs off named refs. Two are resolved through
 `packages/core/src/manifest/registry.ts`:
 
 - `hooks.compose.<stage>` — augment the template context before rendering.
-- `hooks.validateBeforeTransition.<stage>` — veto a park/done whose side
-  conditions don't hold (engineering's "the PLAN actually landed on disk").
 - `pools[].claimPredicate` — claimability predicates for backlog pools.
 
-Register them before the first poll (see
-`packages/core/src/kinds/engineering.ts`; hosts call
-`registerEngineeringHooks()` at startup).
+These are registered before the first poll (see
+`packages/core/src/kinds/engineering.ts`; hosts call `registerEngineeringHooks()`
+at startup — engineering registers only `engineering.isClaimable`).
+
+`hooks.validateBeforeTransition.<stage>` also names a check that vetoes a
+park/done whose side conditions don't hold (engineering's "the PLAN actually
+landed on disk"), but this one is **not** registry-resolved: because it needs
+backlog IO, each host implements it directly in its park handler
+(`claude-plugin/mcp-server/src/server.ts`, `src/loop/driver.ts` — they re-read
+the task file and confirm the `## Implementation Plan` heading landed).
 
 ## Enabling a kind
 

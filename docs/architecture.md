@@ -122,7 +122,7 @@ flowchart TB
         review["<b>REVIEW</b><br/>agent: loop-review · edit ❌ bash: read-only<br/>skills: code-review-and-quality<br/>(+ security-and-hardening, performance-optimization)<br/><i>5-axis diff review, once per reviewLens,<br/>worst verdict wins</i>"]
     end
 
-    ship{{"<b>/agent-loop ship &lt;id&gt;</b><br/>you review the branch diff<br/>★ HUMAN GATE 2"}}
+    ship{{"<b>/agent-loop ship &lt;id&gt;</b><br/>you review the branch diff<br/>★ HUMAN GATE 3"}}
 
     You -->|"idea"| new
     new -->|"writes draft"| draft
