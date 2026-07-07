@@ -11,3 +11,6 @@ docs/tasks/runs/.watch-lease/
 
 # Claude Code plugin MCP server build output (built by claude-plugin/install.sh)
 claude-plugin/mcp-server/dist/
+
+# Codegraph MCP local index (machine-local, not committed)
+.codegraph/
