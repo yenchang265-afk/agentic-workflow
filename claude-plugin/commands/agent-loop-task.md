@@ -11,7 +11,7 @@ here for review.
 
 Dispatch:
 
-- **`new <idea>`** — turn a rough idea into a **planless draft** in
+- **`new <idea>`** — turn a rough idea into one or more **planless drafts** in
   `docs/tasks/draft/`. YOU (the main agent) run the interview — subagents
   cannot converse with the user:
   1. **Always** invoke the `interview-me` skill first (never silently skip):
@@ -19,13 +19,35 @@ Dispatch:
      restate-and-confirm question suffices; when anything is vague, run the
      full one-question-at-a-time interview. Pin down the goal and 2–5
      testable acceptance criteria.
-  2. Show the drafted task (title, priority, acceptance, body) and get an
-     explicit "looks right" from the user.
-  3. Spawn the **`loop-plan-author`** subagent (Task tool) with the
-     confirmed details to write the single draft file. No plan is written
-     now — the loop's PLAN stage plans the task right before execution, so
-     plans don't rot while the task sits parked. The next step is
-     `/agent-loop-task approve <id>`.
+  2. **Judge scope — one draft, or a slice set?** A single task is built,
+     verified, and reviewed by **one agent in one worktree context** (often a
+     cheaper/degraded model), so a heavy idea won't fit in a working context
+     and should be split into sibling drafts, each a **vertical, independently
+     shippable slice**. Split when the idea shows any of: **more than one
+     independent deliverable**, **more than ~5 acceptance criteria**, or it
+     **touches more than one subsystem/layer**. Otherwise keep it as one draft.
+     There is no token metering — "fits the context window" is a scope
+     judgement (one reviewable slice), not a measured limit.
+  3. Show what you'll write and get an explicit "looks right" from the user:
+     - **One draft** — title, priority, acceptance, body.
+     - **A slice set** — the epic (parent) title, and the ordered children,
+       each with its own acceptance subset. Prefer **independent** slices;
+       when slices must stack (a child builds on another's merged code), order
+       them by `priority` (0, 1, 2 …). A worktree branches from `origin/main`
+       and can't see an unmerged sibling's code, so the human approves and
+       ships stacked children one at a time in that order — `priority` orders
+       claims but does **not** block, so this human sequencing is the
+       dependency gate.
+  4. Spawn the **`loop-plan-author`** subagent (Task tool) once with the
+     confirmed set to write the draft file(s) — one draft, or N child drafts
+     plus one epic tracking file. No plan is written now — the loop's PLAN
+     stage plans each task right before execution, so plans don't rot while it
+     sits parked. The next step is `/agent-loop-task approve <id>` per child.
+     - **The epic file is a tracking draft only** (frontmatter `type: epic`,
+       body listing the children in order). **Never approve it** — an
+       un-approved draft is inert, so the loop never claims it. Close it by
+       hand with `mcp__agentic-loop__loop_move` (to `abandoned/` or
+       `completed/`) once every child has shipped.
   - **Project-management pairing** — when `.agentic-loop.json` has a
     `projectManagement` section, pre-fill the draft's `tracker` block so the
     task is ready to pair with the team's tracker: set `tracker.system` to the
