@@ -129,6 +129,28 @@ approved, buildable.
    [interval]` (standing worker; build-ready tasks beat queued ones). See
    `loop-orchestration`.
 
+## Slicing a heavy idea into sibling drafts
+
+Each task is planned, built, verified, and reviewed by **one agent in one
+worktree context** (often a cheaper/degraded model), so a heavy idea won't fit
+in a working context. The backlog *is* the decomposition primitive: at
+`/agent-loop-task new` the calling agent judges scope and, when the idea spans
+slices (more than one independent deliverable, more than ~5 acceptance
+criteria, or more than one subsystem/layer), splits it into **sibling drafts**
+— each a **vertical, independently shippable slice** with its own acceptance
+subset — plus one **epic tracking draft** (`type: epic`) whose body lists the
+children in order. There is no token metering; "fits the context window" is a
+scope judgement, not a measured limit.
+
+- Children are ordered by `priority` (0, 1, 2 …). `priority` orders claims but
+  does **not** block. A worktree branches from `origin/main`, so a child that
+  builds on a sibling's code can't see it until that sibling ships — the human
+  approves and ships stacked children one at a time, which *is* the dependency
+  gate. Genuinely independent slices can run in any order.
+- The **epic file is never approved** — an un-approved draft is inert, so the
+  loop never claims it. It is a human-facing index; close it (move to
+  `abandoned/` or `completed/`) once every child has shipped.
+
 ## Lifecycle — who moves what
 
 | Transition | Who | When |

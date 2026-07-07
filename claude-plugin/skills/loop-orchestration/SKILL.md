@@ -193,7 +193,10 @@ agent gathers the data first):
   BUILD → VERIFY → REVIEW still advance without human turns.
 - **The interview runs in the main agent.** `/agent-loop-task new` interviews
   the user directly (Task subagents can't converse); the `loop-plan-author`
-  subagent only writes the confirmed file.
+  subagent only writes the confirmed file(s). A **heavy idea is split** during
+  that interview into sibling drafts (vertical, independently shippable slices
+  ordered by `priority`) plus one `type: epic` tracking draft that is never
+  approved — see `task-backlog-management` → "Slicing a heavy idea".
 - Verdicts and all deterministic operations go through the `agentic-loop` MCP
   tools, not in-process plugin hooks.
 
