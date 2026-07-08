@@ -77,7 +77,16 @@ export const classifyBash = (command, ctx) => {
     if (MUTATING_TOKENS.some((t) => command.includes(t))) {
         return block(`agentic-loop: this command can mutate ${ctx.tasksDir}/ — ${HOW_TO_MUTATE}`);
     }
-    const segments = command.split(/&&|\|\||;|\|/);
+    // Split on newlines as well as shell operators: a bare `\n` chains two commands
+    // just like `;`, and the read-only globs compile with the dotAll (`s`) flag, so
+    // without this a read-only first line ("ls …") would let its `.*` span the newline
+    // and swallow a following mutation ("rm -rf …"). Each line/segment must match the
+    // allowlist on its own. (Residual: `$(rm …)` command substitution still evades —
+    // this guard is heuristic defense-in-depth, not a sandbox.)
+    const segments = command
+        .split(/&&|\|\||;|\||\n|\r/)
+        .map((s) => s.trim())
+        .filter(Boolean);
     if (segments.every((s) => matchesAny(s, READ_ONLY)))
         return ALLOW;
     return block(`agentic-loop: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) ` +

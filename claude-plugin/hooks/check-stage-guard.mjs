@@ -130,7 +130,14 @@ const classifyBacklogMutation = (tool, ti, tasksDir, planTaskId) => {
     if (MUTATING_TOKENS.some((t) => cmd.includes(t))) {
       return { allow: false, reason: `agentic-loop: this command can mutate ${tasksDir}/ — ${HOW_TO_MUTATE}` }
     }
-    if (cmd.split(/&&|\|\||;|\|/).every((s) => matchesAny(s, BACKLOG_READ_ONLY))) return { allow: true }
+    // Split on newlines too (mirrors guard.ts): a bare `\n` chains commands like `;`,
+    // and the read-only globs are dotAll, so a read-only first line must not swallow a
+    // following mutation across the newline. Each non-empty segment must match on its own.
+    const segments = cmd
+      .split(/&&|\|\||;|\||\n|\r/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (segments.every((s) => matchesAny(s, BACKLOG_READ_ONLY))) return { allow: true }
     return {
       allow: false,
       reason:

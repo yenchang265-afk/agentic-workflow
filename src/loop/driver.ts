@@ -433,14 +433,20 @@ const ensureIsolation = (deps: Deps, config: Config, state: LoopState): Promise<
   coreEnsureIsolation(deps.$, deps.log, deps.directory, config, state)
 
 const teardownIsolation = (deps: Deps, state: LoopState): Promise<void> =>
-  coreTeardownIsolation(deps.$, deps.log, deps.directory, state)
+  // Gate on `isolated`, not `git`: a PR source pre-sets `git` to name the branch to
+  // isolate onto, so a stage that never isolated (pr-sitter `triage` → done) must NOT
+  // reach `coreTeardownIsolation`, which would checkout the base branch on the main tree.
+  state.isolated ? coreTeardownIsolation(deps.$, deps.log, deps.directory, state) : Promise.resolve()
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. */
 const workTree = (deps: Deps, state: LoopState): string => state.git?.worktree ?? deps.directory
 
-/** Commit everything as a checkpoint on the loop branch/worktree. No-op without isolation. */
+/** Commit everything as a checkpoint on the loop branch/worktree. No-op until isolation ran. */
 const checkpoint = async (deps: Deps, state: LoopState, message: string): Promise<void> => {
-  if (!state.git) return
+  // `isolated` (not `git`): don't `git add -A && commit` the human's main tree for a
+  // loop whose pre-set `git` never became real isolation — that would sweep their WIP
+  // into a bogus loop commit (pr-sitter `triage` → done on a dirty tree).
+  if (!state.isolated) return
   await commitAll(deps.$, workTree(deps, state), message)
 }
 
@@ -675,8 +681,11 @@ export const drive = async (
       clearLoop(sessionID) // self-contained — no-op no-harm when /agent-loop stop already cleared it
       return { kind: "stop", message: `${how} during ${stage}` }
     }
-    if (stage === "build") {
-      await checkpoint(deps, step.state, `loop(${loopId(step.state)}): build iteration ${iteration + 1}`)
+    // Checkpoint after any isolated code-writing (`work`) stage, not just the
+    // engineering `build` — pr-sitter's `fix` stage writes code too and otherwise
+    // gets no driver-side commit backstop if its agent forgets to commit.
+    if (stageDef(loaded.manifest, stage).kind === "work" && isolated) {
+      await checkpoint(deps, step.state, `loop(${loopId(step.state)}): ${stage} iteration ${iteration + 1}`)
     }
     if (stageDef(loaded.manifest, stage).kind === "check" && task) {
       const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0

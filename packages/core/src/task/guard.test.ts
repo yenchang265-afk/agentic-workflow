@@ -97,6 +97,17 @@ test("classifyBash blocks redirects and compound-command escapes referencing the
   assert.equal(classifyBash("find docs/tasks -name '*.md' -delete", ctx).allow, false)
 })
 
+test("classifyBash blocks a mutation on a later LINE, even after a read-only first line", () => {
+  // A newline is not a segment separator to the shell's `;`/`&&` matcher, and the
+  // read-only globs compile with the dotAll flag — so a leading `ls`/`cat` line must
+  // not be allowed to "swallow" a following `rm`/`mv` across the newline.
+  assert.equal(classifyBash("ls docs/tasks/queued\nrm -rf docs/tasks/queued", ctx).allow, false)
+  assert.equal(classifyBash("cat docs/tasks/x\nmv docs/tasks/a.md docs/tasks/completed/", ctx).allow, false)
+  assert.equal(classifyBash("ls docs/tasks/queued\r\nrm -rf docs/tasks/queued", ctx).allow, false)
+  // A genuinely all-read-only multi-line command still passes.
+  assert.equal(classifyBash("ls docs/tasks/queued\ncat docs/tasks/queued/a.md", ctx).allow, true)
+})
+
 // --- classifyMutation routing ---
 
 test("classifyMutation routes edit-shaped tools by filePath and Bash by command", () => {

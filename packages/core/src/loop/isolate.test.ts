@@ -97,3 +97,55 @@ test("detached HEAD with no baseBranch → no isolation, no worktree created", a
   assert.equal(next.git, undefined)
   assert.ok(!log.some((c) => c.includes("worktree add")))
 })
+
+test("fresh engineering isolation marks the state isolated", async () => {
+  const $ = makeShell(gitHandler("main"))
+  const next = await ensureIsolation($, noopLog, "/repo", config, state)
+  assert.equal(next.isolated, true)
+})
+
+/**
+ * A PR source (pr-sitter) pre-sets `git:{base,branch}` to name the PR's head to
+ * isolate ONTO — with `isolated` still false. `ensureIsolation` must build a real
+ * worktree for that EXISTING branch (never switch the human's main tree to it) and
+ * mark the state isolated.
+ */
+const PR_WT = "/repo/.wt/pr-1"
+const prState: LoopState = {
+  kind: "pr-sitter",
+  goal: "pr-1",
+  stage: "fix",
+  iteration: 0,
+  artifacts: {},
+  git: { base: "main", branch: "pr-head" },
+}
+const prGitHandler = (cmd: string): FakeResult => {
+  if (cmd.includes("is-inside-work-tree")) return { exitCode: cmd.includes(PR_WT) ? 1 : 0 }
+  if (cmd.includes("worktree list")) return { exitCode: 0, stdout: "" }
+  if (cmd.includes("rev-parse --verify")) return { exitCode: 0 } // the PR head branch EXISTS (fetched)
+  if (cmd.includes("grep -qxF")) return { exitCode: 0 }
+  return { exitCode: 0 }
+}
+
+test("pre-set git (pr-sitter) builds a worktree on the existing head branch and marks isolated", async () => {
+  const log: string[] = []
+  const $ = makeShell(prGitHandler, log)
+  const next = await ensureIsolation($, noopLog, "/repo", config, prState)
+  assert.equal(next.git?.worktree, PR_WT)
+  assert.equal(next.git?.branch, "pr-head")
+  assert.equal(next.isolated, true)
+  // Existing branch → checked out into the worktree with NO `-b` (never recreated).
+  assert.ok(log.some((c) => c.includes(`worktree add ${PR_WT} pr-head`)), log.join(" | "))
+  assert.ok(!log.some((c) => c.includes("worktree add -b")))
+  // The main tree is NEVER switched to the PR branch.
+  assert.ok(!log.some((c) => c.includes("checkout pr-head")))
+})
+
+test("pre-set git already isolated (shared reconcile) does not rebuild a worktree", async () => {
+  const log: string[] = []
+  const $ = makeShell((cmd) => (cmd.includes("abbrev-ref HEAD") ? { exitCode: 0, stdout: "pr-head" } : { exitCode: 0 }), log)
+  const sharedConfig = { ...config, worktreesDir: undefined }
+  const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, { ...prState, isolated: true })
+  assert.equal(next.isolated, true)
+  assert.ok(!log.some((c) => c.includes("worktree add")))
+})

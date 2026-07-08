@@ -63,8 +63,23 @@ export interface LoopState {
     readonly artifacts: Readonly<Record<string, string>>;
     /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
     readonly task?: TaskRef;
-    /** Set by the driver once execution is isolated on its own git branch. */
+    /**
+     * The git base/branch (and worktree) this loop's stages operate on. A PR-shaped
+     * source pre-sets `{base, branch}` to name the PR's head to isolate ONTO; the
+     * engineering loop leaves it unset until `ensureIsolation` creates `loop/<id>`.
+     * Because a source can pre-set it, `git` being present does NOT imply isolation
+     * was established — use `isolated` for that.
+     */
     readonly git?: GitRef;
+    /**
+     * True once `ensureIsolation` has actually established this loop's isolation
+     * (created/entered its worktree or switched the shared tree onto its branch).
+     * The driver gates every main-tree write (checkpoint commit, teardown branch
+     * restore) on this — never on `git` alone — so a check-only stage that never
+     * isolated (e.g. pr-sitter `triage` → "nothing actionable") leaves the human's
+     * tree untouched.
+     */
+    readonly isolated?: boolean;
     /** The code platform the claiming work source talks to; absent ⇒ `github`. */
     readonly platform?: CodePlatform;
 }

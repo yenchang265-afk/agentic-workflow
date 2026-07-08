@@ -436,3 +436,43 @@ test("drive interprets a pr-sitter loop with the pr-sitter manifest, not enginee
   assert.equal(outcome?.kind, "done")
   assert.match(outcome?.message ?? "", /nothing actionable/i)
 })
+
+/**
+ * H2 regression: a real pr-sitter WorkItem pre-sets `state.git = {base, branch}` to
+ * name the PR head to isolate onto. On a `triage`-FAIL → done ("nothing actionable"),
+ * `triage` has isolation "none" so no isolation ever runs — the driver must NOT
+ * `git add -A && commit` (would sweep the human's WIP into a bogus commit) nor
+ * `git checkout <base>` (would switch their main tree to the PR base). Gated on the
+ * new `state.isolated`, not on `git` being present.
+ */
+test("pr-sitter triage-FAIL leaves the human's main tree untouched (no commit / no checkout)", async () => {
+  const sessionID = "sess-pr-git"
+  const log: string[] = []
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async () => {
+        recordVerdict(sessionID, "triage", { verdict: "FAIL", reason: "nothing actionable" })
+        return { data: { parts: [{ type: "text", text: "triaged" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  const state: LoopState = {
+    kind: "pr-sitter",
+    goal: "PR #1 sit",
+    stage: "triage",
+    iteration: 0,
+    artifacts: {},
+    git: { base: "main", branch: "pr-head" }, // pre-set by prWorkItem — NOT yet isolated
+  }
+
+  const outcome = await drive(deps, sessionID, testConfig, firstStep(manifestFor("pr-sitter"), state))
+
+  assert.equal(outcome?.kind, "done")
+  const touchedTree = log.some(
+    (c) => c.startsWith("git ") && (c.includes(" add -A") || c.includes(" commit") || c.includes(" checkout")),
+  )
+  assert.equal(touchedTree, false, `main tree was mutated: ${log.filter((c) => c.startsWith("git ")).join(" | ")}`)
+})
