@@ -141,6 +141,25 @@ test("pre-set git (pr-sitter) builds a worktree on the existing head branch and 
   assert.ok(!log.some((c) => c.includes("checkout pr-head")))
 })
 
+test("pre-set git never adopts the MAIN tree as its worktree, even if it is on the branch", async () => {
+  // `git worktree list` lists the main tree first; if the human left it on the PR
+  // head branch, `worktreeForBranch` returns `/repo`. Adopting it would isolate onto
+  // the human's tree — the reuse guard must skip it and create a real worktree instead.
+  const log: string[] = []
+  const mainOnBranch = (cmd: string): FakeResult => {
+    if (cmd.includes("is-inside-work-tree")) return { exitCode: cmd.includes(PR_WT) ? 1 : 0 }
+    if (cmd.includes("worktree list")) return { exitCode: 0, stdout: "worktree /repo\nHEAD abc\nbranch refs/heads/pr-head\n" }
+    if (cmd.includes("rev-parse --verify")) return { exitCode: 0 }
+    if (cmd.includes("grep -qxF")) return { exitCode: 0 }
+    return { exitCode: 0 }
+  }
+  const $ = makeShell(mainOnBranch, log)
+  const next = await ensureIsolation($, noopLog, "/repo", config, prState)
+  assert.equal(next.git?.worktree, PR_WT) // a separate worktree, NOT /repo
+  assert.notEqual(next.git?.worktree, "/repo")
+  assert.ok(log.some((c) => c.includes(`worktree add ${PR_WT} pr-head`)), log.join(" | "))
+})
+
 test("pre-set git already isolated (shared reconcile) does not rebuild a worktree", async () => {
   const log: string[] = []
   const $ = makeShell((cmd) => (cmd.includes("abbrev-ref HEAD") ? { exitCode: 0, stdout: "pr-head" } : { exitCode: 0 }), log)

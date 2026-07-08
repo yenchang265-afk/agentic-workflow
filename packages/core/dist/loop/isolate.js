@@ -59,8 +59,14 @@ export const ensureIsolation = async ($, log, directory, config, state, baseBran
         if (!state.isolated && config.worktreesDir) {
             await ensureExcluded($, directory, config.worktreesDir);
             const wtPath = worktreePathFor(directory, config.worktreesDir, loopId(state));
+            // `git worktree list` includes the MAIN tree as its first entry; if the human
+            // (or a prior shared-mode run) left it checked out on this branch,
+            // `existing === directory` — adopting it as "the worktree" would isolate ONTO
+            // the human's tree, the exact harm this path avoids. Only reuse a SEPARATE
+            // worktree; otherwise create one (which fails loudly if the branch is checked
+            // out in the main tree, rather than silently committing it).
             const existing = await worktreeForBranch($, directory, state.git.branch);
-            if (existing) {
+            if (existing && path.resolve(existing) !== path.resolve(directory)) {
                 if (existing !== wtPath)
                     await log("info", `loop: reusing existing worktree ${existing} for ${state.git.branch}`);
                 return { ...state, git: { ...state.git, worktree: existing }, isolated: true };
@@ -99,9 +105,11 @@ export const ensureIsolation = async ($, log, directory, config, state, baseBran
         if (await isDirty($, directory)) {
             await log("info", "loop: main tree has uncommitted changes — they are NOT visible in this loop's worktree");
         }
-        // Reuse a worktree already registered for this branch (a recovered run).
+        // Reuse a worktree already registered for this branch (a recovered run) — but
+        // never the main tree itself (`git worktree list` includes it), which would
+        // isolate onto the human's checkout.
         const existing = await worktreeForBranch($, directory, branch);
-        if (existing) {
+        if (existing && path.resolve(existing) !== path.resolve(directory)) {
             if (existing !== wtPath)
                 await log("info", `loop: reusing existing worktree ${existing} for ${branch}`);
             return { ...state, git: { base, branch, worktree: existing }, isolated: true };
