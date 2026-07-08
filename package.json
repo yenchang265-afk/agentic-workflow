@@ -24,7 +24,7 @@
     "agent"
   ],
   "scripts": {
-    "prepare": "npm run build -w @agentic-loop/core",
+    "prepare": "npm run build -w @agentic-loop/core && npm run build -w agentic-loop-mcp",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
     "typecheck:all": "npm run typecheck -ws --if-present && npm run typecheck",

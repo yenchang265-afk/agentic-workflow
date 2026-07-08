@@ -176,8 +176,16 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
         return
       }
       if (input.command === "agent-loop-task") {
-        await reconcileOnce()
+        // The gates (approve / approve-plan / replan) are pure task-file moves
+        // with no dependency on reconciliation — run the move FIRST, then
+        // reconcile. On the first-ever command reconcileOnce() does heavy git/fs
+        // work (claim sweeps, worktree prune, backlog audit); doing it before the
+        // move delayed the move past opencode's command-hook window, so the model
+        // read the task as "still in draft" until a retry (reconcile is guarded
+        // to run once, so later attempts were fast — the "works after a few
+        // tries" symptom). Move first keeps the gate deterministic on attempt 1.
         await driver.handleTaskCommand(deps, input.sessionID, input.arguments, await getConfig())
+        await reconcileOnce()
       }
     },
 
