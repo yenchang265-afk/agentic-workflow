@@ -49,6 +49,10 @@ const runWorktreeSetup = async ($: Shell, log: Log, config: Config, wtPath: stri
  *   detached HEAD, or when checkout fails.
  *
  * An existing branch (e.g. a recovered run's) is reused, never reset.
+ *
+ * `baseBranch` (optional) is the branch a fresh `loop/<id>` is cut from; when a
+ * host resolves one it wins over the branch `directory` has checked out. Unset
+ * ⇒ cut from `currentBranch(directory)` as before.
  */
 export const ensureIsolation = async (
   $: Shell,
@@ -56,6 +60,7 @@ export const ensureIsolation = async (
   directory: string,
   config: Config,
   state: LoopState,
+  baseBranch?: string,
 ): Promise<LoopState> => {
   if (state.git) {
     if (state.git.worktree) {
@@ -78,7 +83,11 @@ export const ensureIsolation = async (
   }
 
   if (!(await isGitRepo($, directory))) return state
-  const base = await currentBranch($, directory)
+  // `baseBranch`, when a host resolves one (e.g. the MCP host reading the
+  // user's real working tree), overrides the branch `directory` sits on —
+  // its checkout is frozen at the main tree, which is usually the default
+  // branch. Unset ⇒ today's behavior: cut from `directory`'s current branch.
+  const base = baseBranch ?? (await currentBranch($, directory))
   if (!base) {
     await log("warn", "loop: detached HEAD — building without branch isolation")
     return state

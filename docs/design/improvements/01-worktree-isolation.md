@@ -114,8 +114,13 @@ Replace `ensureBranch` with `ensureIsolation(deps, config, state)`:
    - Shared mode: current re-checkout logic unchanged.
 2. **Fresh isolation** with `config.worktreesDir` set, `isGitRepo`, and a
    resolvable `currentBranch`:
-   - `base = currentBranch(main)`; `branch = loop/<id>`;
+   - `base = baseBranch ?? currentBranch(directory)`; `branch = loop/<id>`;
      `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`.
+     `baseBranch` is an optional host-resolved override: the Claude Code MCP
+     host's `directory` is frozen at the main checkout (usually the default
+     branch), so it resolves the base from `AGENTIC_LOOP_BASE_DIR` (the user's
+     real working tree) instead. The OpenCode host omits it — its `directory`
+     already reflects the user's branch. Unset ⇒ cut from `directory`'s branch.
    - `ensureExcluded(main, worktreesDir)`.
    - Reuse: `worktreeForBranch(main, branch)` → if registered (recovered
      run), adopt that path (log if ≠ expected). Else if `wtPath` exists on

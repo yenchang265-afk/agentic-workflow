@@ -35,7 +35,7 @@ import { enabledLoopKinds, platformFor } from "@agentic-loop/core/config"
 import { fileURLToPath } from "node:url"
 import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
-import { commitAll, commitPaths, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
+import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
 import { ensureIsolation, loopId, teardownIsolation } from "@agentic-loop/core/loop/isolate"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { type Task } from "@agentic-loop/core/task/schema"
@@ -89,6 +89,17 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/co
  */
 
 const directory = process.env.AGENTIC_LOOP_DIR ?? process.cwd()
+/**
+ * Where to read the base branch for a fresh `loop/<id>` worktree. `directory`
+ * (the canonical root: backlog + worktree parent) is frozen at server launch
+ * on the main checkout — usually the default branch — so worktrees would
+ * always cut from it. Point `AGENTIC_LOOP_BASE_DIR` at the tree you actually
+ * work in and the base is read there live (per claim). Unset ⇒ core falls back
+ * to `directory`'s branch (today's behavior).
+ */
+const baseDir = process.env.AGENTIC_LOOP_BASE_DIR
+const resolveBase = async (): Promise<string | undefined> =>
+  baseDir ? ((await currentBranch(sh, baseDir)) ?? undefined) : undefined
 /** The loop-kind manifests shipped with this repo (loops/<kind>/) — resolved
  *  relative to this module so the server works from any cwd. */
 const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..", "loops")
@@ -275,7 +286,7 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: LoopStat
   pending = null
   let state = resumeAtBuild(taskGoal(t), taskRef(t, t.path), extractPlan(t) ?? "")
   try {
-    state = await ensureIsolation(sh, log, directory, config, state)
+    state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
   } catch (err) {
     return { error: (err as Error).message }
   }
@@ -422,7 +433,7 @@ server.registerTool(
     const loaded = manifestFor(claim.item.loopKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
       try {
-        state = await ensureIsolation(sh, log, directory, config, state)
+        state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
       } catch (err) {
         await claim.source.release(claim.item)
         activeClaim = null
@@ -494,7 +505,7 @@ server.registerTool(
   async () => {
     if (!active) return fail("No active loop.")
     try {
-      active = await ensureIsolation(sh, log, directory, config, active)
+      active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -518,7 +529,7 @@ server.registerTool(
     if (stageDef(activeManifest().manifest, stage).isolation !== "none") {
       // A no-isolation stage (engineering's PLAN) runs in the main tree — no branch, no worktree to reconcile.
       try {
-        active = await ensureIsolation(sh, log, directory, config, active) // reconcile a moved/vanished worktree
+        active = await ensureIsolation(sh, log, directory, config, active, await resolveBase()) // reconcile a moved/vanished worktree
       } catch (err) {
         return fail((err as Error).message)
       }
@@ -954,7 +965,7 @@ server.registerTool(
     if (snap && snap.task?.id === id) {
       active = { ...snap, task: { ...snap.task, path: t.path } }
       try {
-        active = await ensureIsolation(sh, log, directory, config, active)
+        active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
       } catch (err) {
         active = null
         return fail((err as Error).message)
@@ -965,7 +976,7 @@ server.registerTool(
     }
     active = resumeAtBuild(taskGoal(t), taskRef(t, t.path), extractPlan(t) ?? "")
     try {
-      active = await ensureIsolation(sh, log, directory, config, active)
+      active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
     } catch (err) {
       active = null
       return fail((err as Error).message)

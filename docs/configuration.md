@@ -213,5 +213,25 @@ Impact on the commands:
 - On a terminal event the run log gets a **`## Run summary`** table — per-stage
   wall-clock, verdict history, and iterations used.
 
+## Environment (Claude Code MCP host)
+
+The Claude Code MCP server reads two directory pointers from the environment.
+Neither applies to the OpenCode host, which takes its directory from the
+project you opened.
+
+- **`AGENTIC_LOOP_DIR`** — the canonical repo root the server operates on:
+  where the task backlog lives, where per-task worktrees are created under
+  `worktreesDir`, and where run logs are written. Defaults to the server's
+  working directory at launch. Set it when Claude Code roots the server
+  somewhere other than the repo you mean.
+- **`AGENTIC_LOOP_BASE_DIR`** — where the **base branch** for a new
+  `loop/<id>` worktree is read from. Claude Code freezes `AGENTIC_LOOP_DIR`
+  at the main checkout (usually the default branch), so without this every
+  loop cuts from that branch. Point it at the tree you actually work in and
+  the base is read there **live per claim** (`git rev-parse --abbrev-ref
+  HEAD`), so `loop/<id>` branches off the branch you're on. Unset ⇒ the base
+  falls back to whatever branch `AGENTIC_LOOP_DIR` has checked out (the prior
+  behavior). A detached base dir is ignored (same fallback).
+
 See `design/threat-model.md` for the security posture and
 `design/improvements/` for the design record behind these features.

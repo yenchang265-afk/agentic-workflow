@@ -21,8 +21,12 @@ export declare const worktreePathFor: (directory: string, worktreesDir: string, 
  *   detached HEAD, or when checkout fails.
  *
  * An existing branch (e.g. a recovered run's) is reused, never reset.
+ *
+ * `baseBranch` (optional) is the branch a fresh `loop/<id>` is cut from; when a
+ * host resolves one it wins over the branch `directory` has checked out. Unset
+ * ⇒ cut from `currentBranch(directory)` as before.
  */
-export declare const ensureIsolation: ($: Shell, log: Log, directory: string, config: Config, state: LoopState) => Promise<LoopState>;
+export declare const ensureIsolation: ($: Shell, log: Log, directory: string, config: Config, state: LoopState, baseBranch?: string) => Promise<LoopState>;
 /**
  * Tear down this loop's isolation. Worktree mode: remove the worktree if it's
  * clean (the branch is kept for human review); a dirty worktree or a failed
