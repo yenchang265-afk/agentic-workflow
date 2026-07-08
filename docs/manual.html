@@ -1,0 +1,817 @@
+<title>agentic-loop — User Manual</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+/* ============================================================= tokens */
+:root{
+  --ground:#f5f8f8; --surface:#ffffff; --surface-2:#eef3f3;
+  --ink:#101719; --ink-2:#3a494d; --muted:#61717610; --muted-txt:#5c6b6f;
+  --border:#dce4e5; --border-strong:#c3cfd0;
+  --accent:#0b7c8a; --accent-2:#0a6774; --accent-soft:#dbeff1;
+  --pass:#1c8f55; --fail:#b06a0f; --error:#bf3b3b;
+  --pass-soft:#e2f3ea; --fail-soft:#f6ecda; --error-soft:#f6e2e2;
+  --shadow:0 1px 2px rgba(16,23,25,.04),0 4px 16px rgba(16,23,25,.05);
+  --mono:ui-monospace,"SF Mono","SFMono-Regular","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+  --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --r:10px; --maxw:940px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --ground:#0b1012; --surface:#111a1d; --surface-2:#162226;
+    --ink:#e9eff0; --ink-2:#b6c4c7; --muted-txt:#8a9a9e;
+    --border:#202e32; --border-strong:#2c3d41;
+    --accent:#3ccddd; --accent-2:#5bd8e6; --accent-soft:#123138;
+    --pass:#43c987; --fail:#e0a94a; --error:#eb6b6b;
+    --pass-soft:#0f2a1f; --fail-soft:#2c2410; --error-soft:#2e1717;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="light"]{
+  --ground:#f5f8f8; --surface:#ffffff; --surface-2:#eef3f3;
+  --ink:#101719; --ink-2:#3a494d; --muted-txt:#5c6b6f;
+  --border:#dce4e5; --border-strong:#c3cfd0;
+  --accent:#0b7c8a; --accent-2:#0a6774; --accent-soft:#dbeff1;
+  --pass:#1c8f55; --fail:#b06a0f; --error:#bf3b3b;
+  --pass-soft:#e2f3ea; --fail-soft:#f6ecda; --error-soft:#f6e2e2;
+  --shadow:0 1px 2px rgba(16,23,25,.04),0 4px 16px rgba(16,23,25,.05);
+}
+:root[data-theme="dark"]{
+  --ground:#0b1012; --surface:#111a1d; --surface-2:#162226;
+  --ink:#e9eff0; --ink-2:#b6c4c7; --muted-txt:#8a9a9e;
+  --border:#202e32; --border-strong:#2c3d41;
+  --accent:#3ccddd; --accent-2:#5bd8e6; --accent-soft:#123138;
+  --pass:#43c987; --fail:#e0a94a; --error:#eb6b6b;
+  --pass-soft:#0f2a1f; --fail-soft:#2c2410; --error-soft:#2e1717;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 6px 20px rgba(0,0,0,.35);
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto} *{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+body{
+  margin:0;background:var(--ground);color:var(--ink);
+  font-family:var(--sans);font-size:16px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code,kbd{font-family:var(--mono)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* ============================================================= header */
+header.top{
+  position:sticky;top:0;z-index:40;
+  display:flex;align-items:center;gap:14px;
+  padding:12px clamp(16px,4vw,32px);
+  background:color-mix(in srgb,var(--surface) 88%,transparent);
+  backdrop-filter:saturate(1.4) blur(10px);
+  border-bottom:1px solid var(--border);
+}
+.brand{display:flex;align-items:center;gap:11px;font-weight:700;letter-spacing:-.01em}
+.brand .glyph{
+  width:26px;height:26px;flex:0 0 auto;border-radius:7px;
+  background:linear-gradient(150deg,var(--accent),var(--accent-2));
+  position:relative;box-shadow:inset 0 0 0 1px rgba(255,255,255,.15);
+}
+.brand .glyph::after{
+  content:"";position:absolute;inset:7px;border-radius:50%;
+  border:2px solid var(--surface);border-top-color:transparent;transform:rotate(-40deg);
+}
+.brand b{font-family:var(--mono);font-size:14.5px}
+.brand .tag{font-family:var(--mono);font-size:11px;color:var(--muted-txt);font-weight:500;letter-spacing:.02em}
+.top .sp{flex:1}
+.btn{
+  font-family:var(--mono);font-size:12.5px;cursor:pointer;
+  background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border);
+  padding:7px 11px;border-radius:8px;display:inline-flex;align-items:center;gap:7px;
+}
+.btn:hover{border-color:var(--border-strong);color:var(--ink)}
+#navToggle{display:none}
+
+/* ============================================================= layout */
+.wrap{display:grid;grid-template-columns:240px minmax(0,1fr);gap:0;max-width:1220px;margin:0 auto}
+nav.side{
+  position:sticky;top:51px;align-self:start;height:calc(100vh - 51px);overflow-y:auto;
+  padding:26px 14px 40px 22px;border-right:1px solid var(--border);
+}
+nav.side .grp{font-family:var(--mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted-txt);margin:20px 0 7px 8px}
+nav.side .grp:first-child{margin-top:0}
+nav.side a{
+  display:block;padding:6px 10px;border-radius:7px;color:var(--ink-2);
+  font-size:13.5px;line-height:1.35;border-left:2px solid transparent;
+}
+nav.side a:hover{background:var(--surface-2);text-decoration:none;color:var(--ink)}
+nav.side a.active{color:var(--accent);background:var(--accent-soft);border-left-color:var(--accent);font-weight:600}
+
+main{padding:0 clamp(16px,4vw,52px) 80px;min-width:0}
+section{padding-top:56px;max-width:var(--maxw)}
+section>h2{
+  font-size:clamp(23px,3.2vw,30px);letter-spacing:-.02em;margin:0 0 4px;text-wrap:balance;line-height:1.15;
+  scroll-margin-top:70px;
+}
+.eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:600;margin-bottom:10px}
+.lede{font-size:17px;color:var(--ink-2);max-width:66ch;margin:6px 0 4px}
+p{max-width:68ch}
+h3{font-size:16.5px;letter-spacing:-.01em;margin:30px 0 8px}
+h4{font-size:13px;font-family:var(--mono);letter-spacing:.02em;color:var(--muted-txt);text-transform:uppercase;margin:22px 0 8px}
+
+/* ============================================================= hero */
+.hero{padding-top:44px;max-width:var(--maxw)}
+.hero h1{font-size:clamp(30px,5.2vw,46px);line-height:1.05;letter-spacing:-.03em;margin:12px 0 14px;text-wrap:balance}
+.hero h1 .k{color:var(--accent)}
+.hero .lede{font-size:18.5px}
+.pillrow{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 6px}
+.pill{font-family:var(--mono);font-size:12px;padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--surface);color:var(--ink-2)}
+.pill b{color:var(--accent);font-weight:600}
+.guarantees{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:26px}
+.guarantees .g{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 15px;box-shadow:var(--shadow)}
+.guarantees .g .ic{font-family:var(--mono);color:var(--accent);font-size:13px;font-weight:700}
+.guarantees .g b{display:block;margin:7px 0 3px;font-size:14.5px}
+.guarantees .g span{font-size:13px;color:var(--muted-txt);line-height:1.45}
+
+/* ============================================================= cards / callouts */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:20px 22px;box-shadow:var(--shadow);margin:18px 0}
+.note{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 var(--r) var(--r) 0;padding:13px 17px;margin:18px 0;font-size:14px;color:var(--ink-2)}
+.note b{color:var(--ink)}
+.warn{border-left-color:var(--fail);background:var(--fail-soft)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:720px){.two{grid-template-columns:1fr}}
+
+/* ============================================================= code */
+.code{position:relative;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r);margin:14px 0;overflow:hidden}
+.code pre{margin:0;padding:15px 16px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.65;color:var(--ink)}
+.code .cbar{display:flex;align-items:center;justify-content:space-between;padding:7px 10px 7px 14px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 60%,var(--surface-2))}
+.code .cbar span{font-family:var(--mono);font-size:11px;color:var(--muted-txt);letter-spacing:.03em}
+.copy{font-family:var(--mono);font-size:11px;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--ink-2);padding:3px 9px;border-radius:6px}
+.copy:hover{border-color:var(--accent);color:var(--accent)}
+.copy.ok{color:var(--pass);border-color:var(--pass)}
+pre .c{color:var(--muted-txt)}
+pre .p{color:var(--accent);font-weight:600}
+
+/* ============================================================= tabs */
+.tabs{display:flex;gap:6px;margin:16px 0 0;flex-wrap:wrap}
+.tab{font-family:var(--mono);font-size:12.5px;cursor:pointer;background:transparent;border:1px solid var(--border);color:var(--ink-2);padding:8px 14px;border-radius:8px 8px 0 0;border-bottom-color:transparent}
+.tab[aria-selected="true"]{background:var(--surface);color:var(--accent);border-color:var(--border);font-weight:600;position:relative;z-index:2}
+.tabpanel{border:1px solid var(--border);border-radius:0 var(--r) var(--r) var(--r);padding:4px 20px 18px;background:var(--surface);margin-top:-1px}
+.tabpanel[hidden]{display:none}
+
+/* ============================================================= tables */
+.tblwrap{overflow-x:auto;margin:16px 0;border:1px solid var(--border);border-radius:var(--r)}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+th,td{text-align:left;padding:10px 13px;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted-txt);background:var(--surface-2);font-weight:600}
+tr:last-child td{border-bottom:none}
+td code,td .m{font-family:var(--mono);font-size:12.5px;color:var(--accent-2);white-space:nowrap}
+td .def{font-family:var(--mono);font-size:12.5px;color:var(--ink-2)}
+tbody tr:hover{background:var(--surface-2)}
+
+/* ============================================================= stage diagram */
+.machine{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:22px 20px 20px;box-shadow:var(--shadow);margin:20px 0}
+.track{display:flex;align-items:stretch;gap:0;overflow-x:auto;padding-bottom:6px}
+.node{
+  flex:1 1 0;min-width:120px;text-align:center;cursor:pointer;position:relative;
+  border:1px solid var(--border-strong);border-radius:10px;padding:14px 10px 12px;background:var(--surface-2);
+  transition:border-color .15s,transform .15s,background .15s;
+}
+.node:not(:last-child){margin-right:34px}
+.node:not(:last-child)::after{
+  content:"";position:absolute;right:-34px;top:50%;width:34px;height:2px;background:var(--border-strong);
+}
+.node:not(:last-child)::before{
+  content:"";position:absolute;right:-11px;top:50%;transform:translateY(-50%);
+  border-left:8px solid var(--border-strong);border-top:5px solid transparent;border-bottom:5px solid transparent;z-index:2;
+}
+.node .num{font-family:var(--mono);font-size:10.5px;color:var(--muted-txt);letter-spacing:.1em}
+.node .nm{font-family:var(--mono);font-weight:700;font-size:15px;margin:5px 0 4px;letter-spacing:.02em}
+.node .kd{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:20px;display:inline-block}
+.node .kd.work{background:var(--accent-soft);color:var(--accent-2)}
+.node .kd.check{background:var(--fail-soft);color:var(--fail)}
+.node[aria-selected="true"]{border-color:var(--accent);background:var(--surface);transform:translateY(-2px);box-shadow:0 6px 18px color-mix(in srgb,var(--accent) 22%,transparent)}
+.node:hover{border-color:var(--accent)}
+.loopback{font-family:var(--mono);font-size:11.5px;color:var(--muted-txt);text-align:center;margin-top:12px}
+.loopback .fail{color:var(--fail)}
+.stagedetail{margin-top:16px;border-top:1px dashed var(--border-strong);padding-top:16px}
+.sd-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.sd-head h3{margin:0;font-family:var(--mono);font-size:17px}
+.chip{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:20px;border:1px solid var(--border);color:var(--ink-2)}
+.chip.iso{background:var(--surface-2)}
+.sd-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}
+@media (max-width:640px){.sd-grid{grid-template-columns:1fr}}
+.sd-grid .lbl{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.1em;color:var(--muted-txt);margin-bottom:4px}
+.transit{display:flex;flex-direction:column;gap:6px}
+.transit .t{font-family:var(--mono);font-size:12.5px;display:flex;gap:8px;align-items:baseline}
+.verd{font-weight:700;flex:0 0 auto;width:46px}
+.verd.pass{color:var(--pass)} .verd.fail{color:var(--fail)} .verd.err{color:var(--error)} .verd.done{color:var(--accent)}
+.skref{display:inline-block;font-family:var(--mono);font-size:12px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:2px 8px;margin:3px 5px 0 0;color:var(--accent-2);cursor:pointer}
+.skref:hover{border-color:var(--accent)}
+
+/* ============================================================= gates / lifecycle */
+.gates{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}
+@media (max-width:640px){.gates{grid-template-columns:1fr}}
+.gate{background:var(--surface);border:1px solid var(--border);border-top:3px solid var(--accent);border-radius:var(--r);padding:14px 15px;box-shadow:var(--shadow)}
+.gate .n{font-family:var(--mono);font-size:11px;color:var(--muted-txt)}
+.gate b{display:block;margin:4px 0 5px}
+.gate code{font-size:12px;color:var(--accent-2)}
+.gate span{display:block;font-size:12.5px;color:var(--muted-txt);margin-top:6px}
+.flow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-family:var(--mono);font-size:12.5px;margin:14px 0;overflow-x:auto;padding-bottom:4px}
+.flow .f{padding:5px 11px;border-radius:7px;background:var(--surface-2);border:1px solid var(--border);white-space:nowrap}
+.flow .f.term{background:var(--accent-soft);border-color:var(--accent);color:var(--accent-2)}
+.flow .arr{color:var(--muted-txt)}
+
+/* ============================================================= skills */
+.filterbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:18px 0 6px;position:sticky;top:51px;background:var(--ground);padding:12px 0;z-index:20}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.fchip{font-family:var(--mono);font-size:12px;cursor:pointer;background:var(--surface);border:1px solid var(--border);color:var(--ink-2);padding:6px 12px;border-radius:20px}
+.fchip[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:#fff}
+:root[data-theme="dark"] .fchip[aria-pressed="true"]{color:#08171a}
+@media (prefers-color-scheme:dark){.fchip[aria-pressed="true"]{color:#08171a}}
+.fchip .ct{opacity:.6;margin-left:5px}
+#skSearch{
+  flex:1;min-width:180px;font-family:var(--sans);font-size:14px;
+  background:var(--surface);border:1px solid var(--border);color:var(--ink);
+  padding:9px 13px;border-radius:9px;
+}
+#skSearch::placeholder{color:var(--muted-txt)}
+.skgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:13px;margin-top:8px}
+.skc{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:14px 15px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:7px}
+.skc.hide{display:none}
+.skc .sh{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.skc .nm{font-family:var(--mono);font-size:13.5px;font-weight:600;color:var(--ink);letter-spacing:-.01em}
+.skc .tags{display:flex;gap:4px;flex-wrap:wrap;flex:0 0 auto}
+.stag{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:2px 6px;border-radius:5px;font-weight:600}
+.stag.plan{background:var(--accent-soft);color:var(--accent-2)}
+.stag.build{background:#e6eefb;color:#2a5cad}
+.stag.verify{background:var(--fail-soft);color:var(--fail)}
+.stag.review{background:var(--error-soft);color:var(--error)}
+.stag.authoring{background:#efe6fb;color:#6c3fb0}
+.stag.machinery{background:var(--surface-2);color:var(--ink-2);border:1px solid var(--border)}
+.stag.library{background:var(--surface-2);color:var(--muted-txt)}
+:root[data-theme="dark"] .stag.build{background:#16263f;color:#7fa8e8}
+:root[data-theme="dark"] .stag.authoring{background:#241a38;color:#b18ee0}
+@media (prefers-color-scheme:dark){.stag.build{background:#16263f;color:#7fa8e8}.stag.authoring{background:#241a38;color:#b18ee0}}
+.skc p{font-size:12.8px;color:var(--muted-txt);margin:0;line-height:1.5;max-width:none}
+#skEmpty{color:var(--muted-txt);font-family:var(--mono);font-size:13px;padding:20px 4px;display:none}
+
+/* ============================================================= details */
+details.q{border:1px solid var(--border);border-radius:var(--r);background:var(--surface);margin:10px 0;overflow:hidden}
+details.q>summary{cursor:pointer;padding:13px 16px;font-weight:600;font-size:14.5px;list-style:none;display:flex;align-items:center;gap:11px}
+details.q>summary::-webkit-details-marker{display:none}
+details.q>summary::before{content:"+";font-family:var(--mono);color:var(--accent);font-weight:700;font-size:16px;width:14px}
+details.q[open]>summary::before{content:"–"}
+details.q>summary .step{font-family:var(--mono);font-size:11px;color:var(--muted-txt);border:1px solid var(--border);border-radius:5px;padding:1px 7px}
+details.q .body{padding:2px 16px 16px 41px}
+details.q .body p{font-size:14px;margin:8px 0}
+.opt{font-family:var(--mono);font-size:13px;padding:7px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;margin:6px 0;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.opt .writes{color:var(--muted-txt)}
+.kv{font-family:var(--mono);font-size:12.5px;color:var(--muted-txt);margin-top:8px}
+.kv b{color:var(--accent-2);font-weight:600}
+
+/* ============================================================= footer */
+footer{border-top:1px solid var(--border);margin-top:70px;padding:34px clamp(16px,4vw,52px) 60px;max-width:var(--maxw)}
+footer h4{margin-top:0}
+.dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px 22px;font-size:13.5px}
+.dl a{font-family:var(--mono);font-size:12.5px}
+footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family:var(--mono)}
+
+/* ============================================================= responsive */
+@media (max-width:860px){
+  .wrap{grid-template-columns:1fr}
+  nav.side{position:fixed;top:51px;left:0;bottom:0;width:250px;background:var(--surface);z-index:35;transform:translateX(-105%);transition:transform .2s;height:auto;border-right:1px solid var(--border)}
+  nav.side.open{transform:none}
+  #navToggle{display:inline-flex}
+  .filterbar{position:static}
+}
+</style>
+
+<header class="top">
+  <button id="navToggle" class="btn" aria-label="Toggle navigation" aria-expanded="false">☰ Menu</button>
+  <div class="brand">
+    <span class="glyph" aria-hidden="true"></span>
+    <b>agentic-loop</b><span class="tag">user manual</span>
+  </div>
+  <div class="sp"></div>
+  <button id="theme" class="btn" aria-label="Toggle colour theme">◐ Theme</button>
+</header>
+
+<div class="wrap">
+  <nav class="side" id="nav" aria-label="Manual sections">
+    <div class="grp">Start here</div>
+    <a href="#overview">What it is</a>
+    <a href="#quickstart">Quickstart &amp; install</a>
+    <a href="#wizard">The config wizard</a>
+    <div class="grp">Understand</div>
+    <a href="#design">How the loop works</a>
+    <a href="#gates">Gates &amp; backlog</a>
+    <a href="#skills">Skills &amp; stages</a>
+    <div class="grp">Reference</div>
+    <a href="#config">Config reference</a>
+    <a href="#commands">Command cheat-sheet</a>
+  </nav>
+
+  <main>
+    <!-- ===================================================== HERO -->
+    <section id="overview" class="hero" style="padding-top:40px">
+      <div class="eyebrow">Supervised automation for long-lived goals</div>
+      <h1>Run a goal like a <span class="k">state machine</span>, not a chat.</h1>
+      <p class="lede">agentic-loop drives a goal through named stages automatically, pausing only at the human gates you decide matter. It is a multi-kind loop framework: each loop kind is a declarative manifest — stages, transitions, a work source — interpreted by one shared engine and fed by a common scheduler.</p>
+
+      <div class="pillrow">
+        <span class="pill"><b>engineering</b> · default-on · PLAN→BUILD→VERIFY→REVIEW</span>
+        <span class="pill"><b>pr-sitter</b> · opt-in · watches your open PRs</span>
+        <span class="pill">ships as 2 plugins · OpenCode + Claude Code</span>
+      </div>
+
+      <div class="guarantees">
+        <div class="g"><span class="ic">⊘</span><b>Human gates</b><span>The agent parks at review points; you approve before it moves on. It never merges on your behalf.</span></div>
+        <div class="g"><span class="ic">⑃</span><b>Git isolation</b><span>Code-writing stages run on a loop branch or an isolated worktree — your working tree is untouched.</span></div>
+        <div class="g"><span class="ic">✓</span><b>Trusted verdicts</b><span>PASS / FAIL / ERROR count only through a dedicated tool. A stage that just <em>says</em> "passed" is ignored.</span></div>
+        <div class="g"><span class="ic">▤</span><b>Audit trail</b><span>Every run writes a summary — per-stage wall-clock, verdict history, iterations used — committed alongside the work.</span></div>
+      </div>
+
+      <div class="note" style="margin-top:26px"><b>New here?</b> Read top to bottom: install it, meet the config wizard, then see how the loop actually moves and what each skill contributes. Reference tables sit at the end.</div>
+    </section>
+
+    <!-- ===================================================== QUICKSTART -->
+    <section id="quickstart">
+      <div class="eyebrow">Setup</div>
+      <h2>Quickstart &amp; install</h2>
+      <p class="lede">Two install routes. Use <code>bootstrap.sh</code> on a fresh machine (it installs system prerequisites for you); use the manual route if you already have the toolchain.</p>
+
+      <h3>Prerequisites</h3>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Tool</th><th>Needed for</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td><code>Node.js ≥ 20</code></td><td>Core &amp; both plugins</td><td>Hard requirement.</td></tr>
+            <tr><td><code>git</code>, <code>curl</code></td><td>Isolation, fetching</td><td>Always.</td></tr>
+            <tr><td><code>gh</code></td><td>GitHub PR work</td><td>Authenticate with <code>gh auth login</code>.</td></tr>
+            <tr><td><code>az</code> + azure-devops ext</td><td>Azure DevOps PRs</td><td>Optional — skip with <code>--no-ado</code>.</td></tr>
+            <tr><td>Chrome / Chromium</td><td>Browser UI testing</td><td>Optional — skip with <code>--no-browser</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="Install method">
+        <button class="tab" role="tab" id="tab-a" aria-controls="pan-a" aria-selected="true">Path A · fresh machine</button>
+        <button class="tab" role="tab" id="tab-b" aria-controls="pan-b" aria-selected="false">Path B · manual</button>
+      </div>
+      <div class="tabpanel" id="pan-a" role="tabpanel" aria-labelledby="tab-a">
+        <p><code>bootstrap.sh</code> verifies/installs the system CLIs, registers the external MCP servers (Chrome DevTools, ADO), then hands off to <code>install.sh all</code>. It never automates auth — it prints reminders at the end.</p>
+        <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>./bootstrap.sh                 <span class="c"># everything</span>
+./bootstrap.sh --no-ado        <span class="c"># skip Azure CLI + ado MCP</span>
+./bootstrap.sh --no-browser    <span class="c"># skip Chrome + chrome-devtools MCP</span>
+./bootstrap.sh --check-only    <span class="c"># report dependency status, change nothing</span></pre></div>
+      </div>
+      <div class="tabpanel" id="pan-b" role="tabpanel" aria-labelledby="tab-b" hidden>
+        <p>If the toolchain is already present, install the plugins directly. <code>npm install</code> uses npm workspaces and also builds <code>@agentic-loop/core</code>; <code>install.sh</code> then symlinks both plugins and runs the config wizard.</p>
+        <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>git clone &lt;this-repo&gt;
+cd agentic-loop
+npm install                    <span class="c"># workspaces + builds core dist/</span>
+./install.sh                   <span class="c"># both plugins; or: opencode | claude</span></pre></div>
+      </div>
+
+      <div class="note warn"><b>Authenticate yourself — installers never do.</b> After install, sign in to the platforms you use: <code>gh auth login</code> for GitHub, <code>az devops login</code> (or an <code>AZURE_DEVOPS_EXT_PAT</code>) for Azure DevOps. The Chrome DevTools MCP launches its own isolated Chrome profile on first use.</p></div>
+
+      <h3>Load the plugin</h3>
+      <div class="two">
+        <div class="card">
+          <h4 style="margin-top:0">Claude Code</h4>
+          <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>claude --plugin-dir /abs/path/to/claude-plugin</pre></div>
+          <p style="font-size:13.5px;color:var(--muted-txt)">Or add the repo as a marketplace: <code>/plugin marketplace add /abs/path/to/repo</code> then <code>/plugin install agentic-loop</code>.</p>
+        </div>
+        <div class="card">
+          <h4 style="margin-top:0">OpenCode</h4>
+          <p style="font-size:13.5px;color:var(--muted-txt);margin-top:0"><code>./install.sh opencode</code> symlinks the agents, commands, skills and a plugin file into <code>~/.config/opencode</code> (or <code>$OPENCODE_CONFIG_DIR</code>). Re-run after <code>git pull</code> to update — it's idempotent.</p>
+        </div>
+      </div>
+
+      <h3>Your first run</h3>
+      <div class="flow">
+        <span class="f">/agent-loop-task new &lt;idea&gt;</span><span class="arr">→</span>
+        <span class="f">approve</span><span class="arr">→</span>
+        <span class="f">loop plans it</span><span class="arr">→</span>
+        <span class="f">approve-plan</span><span class="arr">→</span>
+        <span class="f">/agent-loop task &lt;id&gt;</span><span class="arr">→</span>
+        <span class="f term">ship</span>
+      </div>
+      <p style="font-size:14px;color:var(--muted-txt)">You author and gate; the loop plans, builds, verifies and reviews in between. On OpenCode, <code>/agent-loop watch</code> polls for approved work; on Claude Code, <code>/agent-loop claim</code> is the one-shot pull.</p>
+    </section>
+
+    <!-- ===================================================== WIZARD -->
+    <section id="wizard">
+      <div class="eyebrow">Setup</div>
+      <h2>The config wizard</h2>
+      <p class="lede"><code>./install.sh</code> ends with a short interactive wizard that seeds <code>.agentic-loop.json</code> into the project the loop will drive. Blank always accepts the <span class="def">[default]</span>. It never overwrites an existing file and is skipped under pipes/CI.</p>
+
+      <div class="pillrow">
+        <span class="pill"><b>--config</b> force the wizard on</span>
+        <span class="pill"><b>--no-config</b> skip it</span>
+        <span class="pill"><b>-y / --yes</b> write all-defaults <code>{}</code>, no prompts</span>
+      </div>
+
+      <p style="margin-top:18px">Every question below is optional — the wizard only writes the keys you set, so a mostly-default config stays tiny.</p>
+
+      <details class="q" open><summary><span class="step">Q0</span> Which project directory should the loop drive?</summary>
+        <div class="body">
+          <p>Prompts <em>"Write config for which project directory"</em>, defaulting to the current dir. The file is written to <code>&lt;dir&gt;/.agentic-loop.json</code> — the same directory the plugin reads config from at runtime. Skips if it isn't a directory or the file already exists.</p>
+          <div class="kv">writes → <b>&lt;dir&gt;/.agentic-loop.json</b></div>
+        </div>
+      </details>
+
+      <details class="q"><summary><span class="step">Q1</span> Which code platform do your PRs live on?</summary>
+        <div class="body">
+          <div class="opt"><span>[1] GitHub <span style="color:var(--muted-txt)">(default)</span></span><span class="writes">codePlatform: "github"</span></div>
+          <div class="opt"><span>[2] Azure DevOps (az CLI)</span><span class="writes">codePlatform: "ado"</span></div>
+          <div class="opt"><span>[3] Azure DevOps (MCP server)</span><span class="writes">codePlatform: "ado-mcp"</span></div>
+          <p>Choosing an ADO option then prompts for the required <code>organization</code> URL and <code>project</code> (re-asked until given), an optional <code>repository</code>, and — for <code>ado-mcp</code> only — a required <code>selfLogin</code> for comment filtering.</p>
+          <div class="kv">writes → <b>codePlatform</b>, and <b>ado</b>: {organization, project, repository?, selfLogin?}</div>
+        </div>
+      </details>
+
+      <details class="q"><summary><span class="step">Q2</span> Enable the PR-sitter loop?</summary>
+        <div class="body">
+          <p>Default <b>No</b>. If yes on GitHub, also asks for a <em>"PR search query"</em> (default <code>is:open author:@me</code>). On ADO the sitter watches its own PRs, so no query is asked.</p>
+          <div class="kv">writes → <b>loops.pr-sitter</b>: { enabled: true, query? }</div>
+        </div>
+      </details>
+
+      <details class="q"><summary><span class="step">Q3</span> Run each task in an isolated git worktree?</summary>
+        <div class="body">
+          <p>Default <b>No</b>. If yes, asks for a <em>"Worktrees directory"</em> (default <code>.worktrees</code>) and an optional setup command run in each fresh worktree (e.g. <code>npm ci</code>, since a new worktree has no installed deps).</p>
+          <div class="kv">writes → <b>worktreesDir</b>, <b>worktreeSetup?</b></div>
+        </div>
+      </details>
+
+      <details class="q"><summary><span class="step">Adv</span> Advanced options (single gate)</summary>
+        <div class="body">
+          <p>Default <b>No</b>. Opting in walks three extras:</p>
+          <p><b>Task tracker</b> — none / Jira / Azure DevOps. If set, also asks a deep-link base URL (must be http/https) and a default issue type. → <code>projectManagement</code>: {system, baseUrl?, defaultType?}</p>
+          <p><b>Review lenses</b> — comma-separated, trimmed, capped at 5. REVIEW then runs once per lens and takes the worst verdict. → <code>reviewLenses</code>: [ … ]</p>
+          <p><b>Max iterations</b> — default <code>3</code>; only written if you give a positive integer other than 3. → <code>maxIterations</code></p>
+        </div>
+      </details>
+
+      <div class="note">The wizard is bash-3.2 compatible and validates the written JSON parses (warns, never fails). Prefer to hand-edit? Everything it writes is documented in the <a href="#config">config reference</a> below.</div>
+    </section>
+
+    <!-- ===================================================== DESIGN -->
+    <section id="design">
+      <div class="eyebrow">Understand</div>
+      <h2>How the loop works</h2>
+      <p class="lede">The engineering kind moves a task through four stages. <b>work</b> stages produce edits; <b>check</b> stages record a machine-readable verdict and never edit. Click a stage to inspect it.</p>
+
+      <div class="machine">
+        <div class="track" id="track" role="tablist" aria-label="Loop stages">
+          <div class="node" data-stage="plan" role="tab" tabindex="0" aria-selected="true"><div class="num">01</div><div class="nm">PLAN</div><span class="kd work">work</span></div>
+          <div class="node" data-stage="build" role="tab" tabindex="0" aria-selected="false"><div class="num">02</div><div class="nm">BUILD</div><span class="kd work">work</span></div>
+          <div class="node" data-stage="verify" role="tab" tabindex="0" aria-selected="false"><div class="num">03</div><div class="nm">VERIFY</div><span class="kd check">check</span></div>
+          <div class="node" data-stage="review" role="tab" tabindex="0" aria-selected="false"><div class="num">04</div><div class="nm">REVIEW</div><span class="kd check">check</span></div>
+        </div>
+        <div class="loopback">↩ a <span class="fail">FAIL</span> at VERIFY or REVIEW re-fires BUILD — verify and review share one iteration counter, capped at <code>maxIterations</code> (default 3). Cap tripped → the plan is suspect → a human sends it back with <code>/agent-loop-task replan</code>.</div>
+        <div class="stagedetail" id="stagedetail" aria-live="polite"></div>
+      </div>
+
+      <h3>The trusted-verdict boundary</h3>
+      <p>A check stage's outcome counts only when recorded through the dedicated <code>loop_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
+
+      <h3>The pr-sitter kind</h3>
+      <div class="card" style="margin-top:10px">
+        <div class="flow" style="margin:2px 0">
+          <span class="f">TRIAGE <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
+          <span class="f">FIX <span style="color:var(--accent-2)">work</span></span><span class="arr">→</span>
+          <span class="f">VERIFY <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
+          <span class="f term">PUBLISH</span>
+        </div>
+        <p style="margin:8px 0 0;font-size:14px">Opt-in. Read-only <code>gh</code>/<code>az</code> triage turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
+      </div>
+      <div class="note warn">Read <code>docs/design/threat-model.md</code> before enabling the PR sitter — it documents the security posture for acting on untrusted PR content.</div>
+    </section>
+
+    <!-- ===================================================== GATES -->
+    <section id="gates">
+      <div class="eyebrow">Understand</div>
+      <h2>Gates &amp; the backlog</h2>
+      <p class="lede">Authoring and gating live in <code>/agent-loop-task</code>; the loop itself only executes. A task's <b>folder is its status</b> — moving files between folders is how state advances.</p>
+
+      <h3>The three human gates</h3>
+      <div class="gates">
+        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agent-loop-task approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued.</span></div>
+        <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve-plan</b><code>/agent-loop-task approve-plan &lt;id&gt;</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan</code>.</span></div>
+        <div class="gate"><span class="n">Gate 3 · ship</span><b>ship</b><code>/agent-loop ship &lt;id&gt;</code><span>You accept the reviewed diff. in-review → completed.</span></div>
+      </div>
+
+      <h3>Folder-as-status lifecycle</h3>
+      <div class="flow">
+        <span class="f">draft/</span><span class="arr">→ approve →</span>
+        <span class="f">queued/</span><span class="arr">→ PLAN parks →</span>
+        <span class="f">plan-review/</span><span class="arr">→ approve-plan →</span>
+        <span class="f">in-progress/</span><span class="arr">→ REVIEW pass →</span>
+        <span class="f">in-review/</span><span class="arr">→ ship →</span>
+        <span class="f term">completed/</span>
+      </div>
+      <p style="font-size:14px;color:var(--muted-txt)">Under <code>docs/tasks/</code> (configurable via <code>tasksDir</code>), plus <code>abandoned/</code> for dropped work and an ephemeral <code>runs/</code> holding machine state. PLAN <em>parks</em> — it writes the plan onto the task file and exits rather than blocking on a human, so the loop is always free to pick up other work.</p>
+
+      <div class="note"><b>OpenCode vs Claude Code.</b> Same kinds and lifecycle. OpenCode runs a background <code>session.idle</code> driver with a <code>watch</code> polling mode; Claude Code has no background driver — the main agent drives via a bundled MCP server, gates are interactive prompts, and <code>/agent-loop claim</code> replaces <code>watch</code>.</p></div>
+    </section>
+
+    <!-- ===================================================== SKILLS -->
+    <section id="skills">
+      <div class="eyebrow">Understand</div>
+      <h2>Skills &amp; stages</h2>
+      <p class="lede">Skills are reusable knowledge modules (<code>SKILL.md</code> files). Each stage's <em>sub-agent</em> invokes specific craft skills to do its job; the rest form a library the loop reaches for opportunistically. Three "machinery" skills document the system itself.</p>
+
+      <h3>Which skills each stage invokes</h3>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Stage</th><th>Sub-agent</th><th>Invokes</th></tr></thead>
+          <tbody>
+            <tr><td><span class="stag plan" style="font-size:11px">PLAN</span></td><td><code>loop-plan-author</code></td><td><code>task-backlog-management</code> · <code>planning-and-task-breakdown</code></td></tr>
+            <tr><td><span class="stag build" style="font-size:11px">BUILD</span></td><td><code>loop-build</code></td><td><code>incremental-implementation</code> · <code>test-driven-development</code></td></tr>
+            <tr><td><span class="stag verify" style="font-size:11px">VERIFY</span></td><td><code>loop-verify</code></td><td><code>debugging-and-error-recovery</code> <span style="color:var(--muted-txt)">(on FAIL, to root-cause)</span></td></tr>
+            <tr><td><span class="stag review" style="font-size:11px">REVIEW</span></td><td><code>loop-review</code></td><td><code>code-review-and-quality</code> · <code>security-and-hardening</code> · <code>performance-optimization</code></td></tr>
+            <tr><td><span class="stag authoring" style="font-size:11px">AUTHOR</span></td><td>main agent</td><td><code>interview-me</code> · <code>idea-refine</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note">The wiring lives in the sub-agent definitions (<code>claude-plugin/agents/loop-*.md</code>), not the stage prompts — so "the stage's agent invokes these skills." Stage names themselves come from each kind's <code>loops/&lt;kind&gt;/loop.json</code>; they are not a fixed global enum.</div>
+
+      <h3>Full skills catalog</h3>
+      <p style="font-size:14px;color:var(--muted-txt)">Filter by role, or search names and purposes.</p>
+      <div class="filterbar">
+        <div class="chips" id="chips" role="group" aria-label="Filter skills by category"></div>
+        <input id="skSearch" type="search" placeholder="Search skills by name…" aria-label="Search skills">
+      </div>
+      <div class="skgrid" id="skgrid"></div>
+      <div id="skEmpty">No skills match that filter.</div>
+    </section>
+
+    <!-- ===================================================== CONFIG -->
+    <section id="config">
+      <div class="eyebrow">Reference</div>
+      <h2>Config reference</h2>
+      <p class="lede"><code>.agentic-loop.json</code> lives at the root of the project the loop drives. Optional — every field has a default. A <em>misconfigured</em> file fails fast with a clear message rather than silently falling back.</p>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Field</th><th>Default</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>maxIterations</code></td><td><span class="def">3</span></td><td>Max iterations before stopping on repeated check-stage failures. Cap tripped → send the task back with <code>replan</code>.</td></tr>
+            <tr><td><code>tasksDir</code></td><td><span class="def">"docs/tasks"</span></td><td>Root of the task backlog; subfolders are statuses. Also hosts the ephemeral <code>runs/</code> machine state.</td></tr>
+            <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
+            <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>/agent-loop watch</code>. <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
+            <tr><td><code>loops</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
+            <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh), <code>"ado"</code> (az CLI), or <code>"ado-mcp"</code> (ADO MCP server). Overridable per kind.</td></tr>
+            <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin?}</code>. Required for any ADO platform; <code>selfLogin</code> additionally required for <code>ado-mcp</code>.</td></tr>
+            <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
+            <tr><td><code>worktreesDir</code></td><td><span class="def">unset</span></td><td>Run each loop in its own <code>git worktree</code> instead of switching branches. Pair with <code>worktreeSetup</code>.</td></tr>
+            <tr><td><code>worktreeSetup</code></td><td><span class="def">unset</span></td><td>Shell command run in a fresh worktree, e.g. <code>"npm ci"</code>.</td></tr>
+            <tr><td><code>reviewLenses</code></td><td><span class="def">[]</span></td><td>Run REVIEW once per lens and take the worst verdict. Max 5. Costs ~N× review time.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="code"><div class="cbar"><span>.agentic-loop.json — example</span><button class="copy">Copy</button></div><pre>{
+  <span class="p">"codePlatform"</span>: "github",
+  <span class="p">"worktreesDir"</span>: ".worktrees",
+  <span class="p">"worktreeSetup"</span>: "npm ci",
+  <span class="p">"reviewLenses"</span>: ["correctness", "security", "test-adequacy"],
+  <span class="p">"loops"</span>: {
+    <span class="p">"engineering"</span>: { "enabled": true },
+    <span class="p">"pr-sitter"</span>: { "enabled": true, "query": "is:open author:@me" }
+  }
+}</pre></div>
+    </section>
+
+    <!-- ===================================================== COMMANDS -->
+    <section id="commands">
+      <div class="eyebrow">Reference</div>
+      <h2>Command cheat-sheet</h2>
+      <div class="two">
+        <div class="card">
+          <h4 style="margin-top:0">/agent-loop-task <span style="text-transform:none;color:var(--ink-2)">— author &amp; gate</span></h4>
+          <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
+            <tr><td><code>new &lt;idea&gt;</code></td><td>Interview you into a draft (splits heavy ideas into sibling drafts).</td></tr>
+            <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a draft in place. Draft-only.</td></tr>
+            <tr><td><code>approve &lt;id&gt;</code></td><td>Task gate → queued.</td></tr>
+            <tr><td><code>approve-plan &lt;id&gt;</code></td><td>Plan gate → in-progress.</td></tr>
+            <tr><td><code>replan &lt;id&gt; [reason]</code></td><td>Reject a parked plan → back to queued.</td></tr>
+          </tbody></table></div>
+        </div>
+        <div class="card">
+          <h4 style="margin-top:0">/agent-loop <span style="text-transform:none;color:var(--ink-2)">— drive</span></h4>
+          <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
+            <tr><td><code>task &lt;id&gt;</code></td><td>Drive one task through its stages.</td></tr>
+            <tr><td><code>claim</code></td><td>Pull &amp; drive the next ready unit of work.</td></tr>
+            <tr><td><code>watch [interval]</code></td><td>Poll for work (OpenCode only).</td></tr>
+            <tr><td><code>status</code></td><td>Backlog + pairing roll-up.</td></tr>
+            <tr><td><code>ship &lt;id&gt;</code></td><td>Ship gate → completed.</td></tr>
+            <tr><td><code>recover &lt;id&gt;</code> · <code>doctor [fix]</code> · <code>stop</code></td><td>Recover an interrupted task, diagnose/repair, halt.</td></tr>
+          </tbody></table></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <h4>Canonical docs</h4>
+  <div class="dl">
+    <a href="../README.md">README.md — overview</a>
+    <a href="architecture.md">docs/architecture.md — internals</a>
+    <a href="configuration.md">docs/configuration.md — full config</a>
+    <a href="../loops/README.md">loops/README.md — author a kind</a>
+    <a href="../claude-plugin/README.md">claude-plugin/README.md — Claude host</a>
+    <a href="design/threat-model.md">design/threat-model.md — security</a>
+  </div>
+  <p class="fine">agentic-loop · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the engineering + pr-sitter kinds that ship today.</p>
+</footer>
+
+<script>
+(function(){
+  "use strict";
+  var root=document.documentElement;
+
+  /* ---- theme ---- */
+  var stored=null; try{stored=localStorage.getItem("al-theme");}catch(e){}
+  if(stored)root.setAttribute("data-theme",stored);
+  document.getElementById("theme").addEventListener("click",function(){
+    var cur=root.getAttribute("data-theme");
+    if(!cur)cur=matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light";
+    var next=cur==="dark"?"light":"dark";
+    root.setAttribute("data-theme",next);
+    try{localStorage.setItem("al-theme",next);}catch(e){}
+  });
+
+  /* ---- mobile nav ---- */
+  var nav=document.getElementById("nav"),navBtn=document.getElementById("navToggle");
+  navBtn.addEventListener("click",function(){
+    var open=nav.classList.toggle("open");
+    navBtn.setAttribute("aria-expanded",open?"true":"false");
+  });
+  nav.addEventListener("click",function(e){if(e.target.tagName==="A")nav.classList.remove("open");});
+
+  /* ---- scroll-spy ---- */
+  var links=[].slice.call(nav.querySelectorAll("a"));
+  var map={};links.forEach(function(a){map[a.getAttribute("href").slice(1)]=a;});
+  var spy=new IntersectionObserver(function(entries){
+    entries.forEach(function(en){
+      if(en.isIntersecting){
+        links.forEach(function(a){a.classList.remove("active");});
+        var a=map[en.target.id];if(a)a.classList.add("active");
+      }
+    });
+  },{rootMargin:"-45% 0px -50% 0px",threshold:0});
+  [].slice.call(document.querySelectorAll("main section")).forEach(function(s){spy.observe(s);});
+
+  /* ---- copy buttons ---- */
+  [].slice.call(document.querySelectorAll(".copy")).forEach(function(btn){
+    btn.addEventListener("click",function(){
+      var pre=btn.closest(".code").querySelector("pre");
+      var txt=pre.innerText;
+      var done=function(){var o=btn.textContent;btn.textContent="Copied";btn.classList.add("ok");setTimeout(function(){btn.textContent=o;btn.classList.remove("ok");},1300);};
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(txt).then(done,done);}
+      else{try{var t=document.createElement("textarea");t.value=txt;document.body.appendChild(t);t.select();document.execCommand("copy");document.body.removeChild(t);done();}catch(e){}}
+    });
+  });
+
+  /* ---- install tabs ---- */
+  var tabs=[].slice.call(document.querySelectorAll('.tab'));
+  tabs.forEach(function(tab){
+    tab.addEventListener("click",function(){
+      tabs.forEach(function(t){
+        var sel=t===tab;t.setAttribute("aria-selected",sel?"true":"false");
+        document.getElementById(t.getAttribute("aria-controls")).hidden=!sel;
+      });
+    });
+  });
+
+  /* ---- stage diagram ---- */
+  var STAGES={
+    plan:{name:"PLAN",kind:"work",agent:"loop-plan-author",iso:"isolation: none",
+      what:"Writes an <b>## Implementation Plan</b> directly onto the claimed queued task file, then <b>parks</b> it in plan-review/ and exits. It never blocks on a human and touches only the task file on the main tree.",
+      skills:["task-backlog-management","planning-and-task-breakdown"],
+      transit:[["done","→","onDone parks the task in plan-review/ for the plan gate"]]},
+    build:{name:"BUILD",kind:"work",agent:"loop-build",iso:"isolation: worktree",
+      what:"Implements the approved plan <b>test-first (TDD)</b> on the loop's <code>loop/&lt;id&gt;</code> branch or worktree, committing a checkpoint each iteration. Edit + bash allowed.",
+      skills:["incremental-implementation","test-driven-development"],
+      transit:[["done","→","onDone fires VERIFY"]]},
+    verify:{name:"VERIFY",kind:"check",agent:"loop-verify",iso:"isolation: worktree",
+      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Records only PASS / FAIL / ERROR through the trusted <code>loop_verdict</code> tool.",
+      skills:["debugging-and-error-recovery"],
+      transit:[["pass","→","fires REVIEW"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]},
+    review:{name:"REVIEW",kind:"check",agent:"loop-review",iso:"isolation: worktree",
+      what:"Five-axis diff review, run once per configured <code>reviewLens</code> with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>loop_verdict</code>.",
+      skills:["code-review-and-quality","security-and-hardening","performance-optimization"],
+      transit:[["pass","→","done — parks the task in in-review/"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]}
+  };
+  var VCLASS={pass:"pass",fail:"fail",error:"err",done:"done"};
+  var detail=document.getElementById("stagedetail");
+  function renderStage(key){
+    var s=STAGES[key];
+    var sk=s.skills.map(function(n){return '<span class="skref" data-goto="'+n+'">'+n+'</span>';}).join("");
+    var tr=s.transit.map(function(t){return '<div class="t"><span class="verd '+VCLASS[t[0]]+'">'+t[0].toUpperCase()+'</span><span>'+t[2]+'</span></div>';}).join("");
+    detail.innerHTML=
+      '<div class="sd-head"><h3>'+s.name+'</h3>'+
+      '<span class="chip">'+(s.kind==="work"?"work stage":"check stage")+'</span>'+
+      '<span class="chip iso">'+s.iso+'</span>'+
+      '<span class="chip">agent: '+s.agent+'</span></div>'+
+      '<p style="margin:6px 0 0;font-size:14.5px">'+s.what+'</p>'+
+      '<div class="sd-grid">'+
+        '<div><div class="lbl">Invokes skills</div>'+sk+'</div>'+
+        '<div><div class="lbl">Transitions</div><div class="transit">'+tr+'</div></div>'+
+      '</div>';
+    [].slice.call(detail.querySelectorAll(".skref")).forEach(function(r){
+      r.addEventListener("click",function(){gotoSkill(r.getAttribute("data-goto"));});
+    });
+  }
+  var nodes=[].slice.call(document.querySelectorAll(".node"));
+  function selectStage(key){
+    nodes.forEach(function(n){n.setAttribute("aria-selected",n.getAttribute("data-stage")===key?"true":"false");});
+    renderStage(key);
+  }
+  nodes.forEach(function(n){
+    n.addEventListener("click",function(){selectStage(n.getAttribute("data-stage"));});
+    n.addEventListener("keydown",function(e){
+      if(e.key==="Enter"||e.key===" "){e.preventDefault();selectStage(n.getAttribute("data-stage"));}
+      if(e.key==="ArrowRight"||e.key==="ArrowLeft"){
+        var i=nodes.indexOf(n)+(e.key==="ArrowRight"?1:-1);
+        if(i>=0&&i<nodes.length){nodes[i].focus();selectStage(nodes[i].getAttribute("data-stage"));}
+      }
+    });
+  });
+  selectStage("plan");
+
+  /* ---- skills catalog ---- */
+  var SKILLS=[
+    ["loop-orchestration",["machinery"],"The authoritative protocol for the automatic loop — stages, park-at-gate review, the loop_verdict contracts, loop kinds and the scheduler, and termination."],
+    ["task-backlog-management",["machinery","plan"],"The docs/tasks/ filesystem backlog: the task-file schema and the folder-as-status lifecycle from draft to completed."],
+    ["using-agent-skills",["machinery"],"The meta-skill: discovers and invokes agent skills; governs how every other skill is found and applied."],
+    ["interview-me",["authoring"],"Extracts what you actually want via a one-question-at-a-time interview until ~95% confident about the underlying intent."],
+    ["idea-refine",["authoring"],"Refines a raw idea into a sharp, actionable concept through structured divergent then convergent thinking."],
+    ["planning-and-task-breakdown",["plan"],"Breaks a spec or clear requirements into ordered, implementable tasks; estimates scope and finds parallelism."],
+    ["spec-driven-development",["plan","library"],"Creates a specification before coding when requirements are unclear or only a vague idea exists."],
+    ["incremental-implementation",["build"],"Delivers multi-file changes in small landed steps instead of one large write."],
+    ["test-driven-development",["build"],"Drives development with tests first — proving code works before and as behaviour changes."],
+    ["debugging-and-error-recovery",["verify"],"A systematic approach to finding and fixing the root cause when tests fail or behaviour surprises — not guessing."],
+    ["code-review-and-quality",["review"],"Multi-axis code review before any change enters the main branch, whoever wrote it."],
+    ["security-and-hardening",["review","library"],"Hardens against vulnerabilities and audits code that handles untrusted input, auth, storage, or third-party services."],
+    ["performance-optimization",["review","library"],"Profiles and fixes bottlenecks; addresses regressions and Core Web Vitals when performance requirements exist."],
+    ["code-simplification",["library"],"Refactors working code for clarity without changing behaviour."],
+    ["api-and-interface-design",["library"],"Designs stable APIs, module boundaries, and type contracts between modules."],
+    ["frontend-ui-engineering",["library"],"Builds production-quality user-facing interfaces — components, layout, and state."],
+    ["browser-testing-with-devtools",["library"],"Tests in real browsers via the Chrome DevTools MCP — DOM, console, network, performance, visuals."],
+    ["ci-cd-and-automation",["library"],"Sets up and modifies build and deployment pipelines, quality gates, and CI test runners."],
+    ["git-workflow-and-versioning",["library"],"Structures committing, branching, and conflict resolution across parallel streams of work."],
+    ["documentation-and-adrs",["library"],"Records architectural decisions and documentation future engineers and agents will need."],
+    ["observability-and-instrumentation",["library"],"Adds logging, metrics, tracing, and alerting so production behaviour is visible and diagnosable."],
+    ["shipping-and-launch",["library"],"Prepares production launches: pre-launch checklist, monitoring, staged rollout, rollback."],
+    ["deprecation-and-migration",["library"],"Manages sunsetting old systems and migrating users from one implementation to another."],
+    ["source-driven-development",["library"],"Grounds implementation decisions in official documentation, citing sources, free of outdated patterns."],
+    ["doubt-driven-development",["library"],"Subjects every non-trivial decision to a fresh-context adversarial review before it stands."],
+    ["context-engineering",["library"],"Optimizes agent context and rules files at session start or when output quality degrades."]
+  ];
+  var CATS=[["all","All"],["machinery","Machinery"],["plan","Plan"],["build","Build"],["verify","Verify"],["review","Review"],["authoring","Authoring"],["library","Library"]];
+  var grid=document.getElementById("skgrid"),chipbox=document.getElementById("chips"),search=document.getElementById("skSearch"),empty=document.getElementById("skEmpty");
+  var active="all";
+
+  function count(cat){return cat==="all"?SKILLS.length:SKILLS.filter(function(s){return s[1].indexOf(cat)>-1;}).length;}
+  CATS.forEach(function(c){
+    var b=document.createElement("button");
+    b.className="fchip";b.type="button";b.setAttribute("data-cat",c[0]);
+    b.setAttribute("aria-pressed",c[0]==="all"?"true":"false");
+    b.innerHTML=c[1]+'<span class="ct">'+count(c[0])+'</span>';
+    b.addEventListener("click",function(){
+      active=c[0];
+      [].slice.call(chipbox.children).forEach(function(x){x.setAttribute("aria-pressed",x===b?"true":"false");});
+      applyFilter();
+    });
+    chipbox.appendChild(b);
+  });
+
+  var cards=SKILLS.map(function(s){
+    var el=document.createElement("div");el.className="skc";
+    el.setAttribute("data-name",s[0]);el.setAttribute("data-cats",s[1].join(" "));
+    el.setAttribute("data-text",(s[0]+" "+s[2]).toLowerCase());
+    var tags=s[1].map(function(t){return '<span class="stag '+t+'">'+t+'</span>';}).join("");
+    el.innerHTML='<div class="sh"><span class="nm">'+s[0]+'</span><span class="tags">'+tags+'</span></div><p>'+s[2]+'</p>';
+    grid.appendChild(el);return el;
+  });
+
+  function applyFilter(){
+    var q=search.value.trim().toLowerCase(),shown=0;
+    cards.forEach(function(el){
+      var okCat=active==="all"||el.getAttribute("data-cats").split(" ").indexOf(active)>-1;
+      var okQ=!q||el.getAttribute("data-text").indexOf(q)>-1;
+      var vis=okCat&&okQ;el.classList.toggle("hide",!vis);if(vis)shown++;
+    });
+    empty.style.display=shown?"none":"block";
+  }
+  search.addEventListener("input",applyFilter);
+
+  function gotoSkill(name){
+    active="all";
+    [].slice.call(chipbox.children).forEach(function(x){x.setAttribute("aria-pressed",x.getAttribute("data-cat")==="all"?"true":"false");});
+    search.value=name;applyFilter();
+    document.getElementById("skills").scrollIntoView({behavior:"smooth",block:"start"});
+    var card=grid.querySelector('[data-name="'+name+'"]');
+    if(card){card.style.transition="box-shadow .2s";card.style.boxShadow="0 0 0 2px var(--accent)";setTimeout(function(){card.style.boxShadow="";},1600);}
+  }
+})();
+</script>
