@@ -109,6 +109,13 @@ output shape, adapted to one loop run inside an existing codebase:
 6. **On a replan** (the prompt carries a prior plan) — read the run log /
    audit notes for why it failed or was rejected and address that directly.
 
+Pull in a domain skill when the task calls for it: `api-and-interface-design`
+when the task introduces or changes a public interface, API, or module
+boundary; `deprecation-and-migration` when it removes or migrates an existing
+system; `documentation-and-adrs` when the plan makes a notable architectural
+decision worth recording as an ADR. Skip any that don't apply — most tasks
+need none.
+
 The plan section contains: **Problem**, **Non-goals**, **Assumptions**, an
 **ordered step list** (files + change per step), **Acceptance criteria**
 (mirroring/refining the frontmatter bullets), **Reuse** (`file:line`), and

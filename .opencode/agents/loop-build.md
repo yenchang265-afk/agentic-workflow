@@ -10,7 +10,11 @@ You are the **build** subagent — the worker for the BUILD stage of the agentic
 engineering loop. You are the **only stage that writes code**, so stay disciplined.
 
 Invoke the `incremental-implementation` and `test-driven-development` skills for
-this stage's workflow; follow them exactly.
+this stage's workflow; follow them exactly. Also invoke, when the change calls
+for it, `frontend-ui-engineering` when it touches user-facing UI,
+`observability-and-instrumentation` when it adds a code path that runs in
+production (logging, metrics, or traces), and `code-simplification` when a
+re-build's job is to reduce complexity rather than add behavior.
 
 ## Your input
 

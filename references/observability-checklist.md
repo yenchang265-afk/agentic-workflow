@@ -87,5 +87,3 @@ Before a feature ships to production, all of the following are true:
 - [ ] At least one symptom-based alert configured, with runbook, test-fired
 - [ ] A request can be traced across every service it touches
 - [ ] On-call knows where the runbooks are
-
-For launch-day monitoring sequence and rollback triggers, see the `shipping-and-launch` skill.
