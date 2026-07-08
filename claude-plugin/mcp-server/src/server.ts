@@ -822,6 +822,105 @@ server.registerTool(
   },
 )
 
+/**
+ * The three gate moves — approve, approve-plan, replan — extracted so the MCP
+ * tools AND the deterministic `gate` CLI (invoked by the UserPromptSubmit hook)
+ * run the exact same logic. Each assumes `loadCfg()` has already run and returns
+ * a structured result: `data` feeds the MCP `ok(...)` envelope, `message` is the
+ * human line the CLI prints / the hook surfaces to the user.
+ */
+type GateResult =
+  | { ok: true; message: string; path: string; data: Record<string, unknown> }
+  | { ok: false; message: string }
+
+/** approve: a reviewed draft/ task → queued/ (audited note + commit). */
+const approveTask = async (id: string): Promise<GateResult> => {
+  const draft = await findByIdIn(fsClient, directory, config.tasksDir, "draft", id)
+  if (!draft) {
+    const elsewhere = await findAnyStatus(id)
+    return {
+      ok: false,
+      message: elsewhere
+        ? `Can't approve "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only draft tasks can be approved.`
+        : `Can't approve "${id}": no task found.`,
+    }
+  }
+  const actor = await gitActor(sh, directory)
+  await appendNote(sh, draft, auditNote("Task approved — queued for planning", new Date(), actor), log)
+  const newPath = await moveTask(sh, draft, "queued")
+  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): task approved — queued for planning`)
+  return {
+    ok: true,
+    message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
+    path: newPath,
+    data: { approved: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` },
+  }
+}
+
+/** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
+const approvePlan = async (id: string): Promise<GateResult> => {
+  const task = await findByIdIn(fsClient, directory, config.tasksDir, "plan-review", id)
+  if (!task) {
+    const elsewhere = await findAnyStatus(id)
+    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+    return {
+      ok: false,
+      message:
+        where === "queued"
+          ? `Can't approve the plan for "${id}": it's still queued — the loop hasn't planned it yet (loop_start runs its PLAN stage).`
+          : where === "draft"
+            ? `Can't approve the plan for "${id}": it's a draft — approve the task first with loop_task_approve.`
+            : where
+              ? `Can't approve the plan for "${id}": it's in ${where} — only plan-review tasks can be plan-approved.`
+              : `Can't approve the plan for "${id}": no task found.`,
+    }
+  }
+  if (!hasPlan(task)) return { ok: false, message: `Task "${id}" has no Implementation Plan — send it back with loop_replan.` }
+  const actor = await gitActor(sh, directory)
+  await appendNote(sh, task, auditNote("Plan approved — parked for execution", new Date(), actor), log)
+  const newPath = await moveTask(sh, task, "in-progress")
+  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan approved — parked for execution`)
+  return {
+    ok: true,
+    message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.`,
+    path: newPath,
+    data: { approved: true, path: newPath, next: `loop_start with id "${id}", or loop_claim` },
+  }
+}
+
+/**
+ * replan: a rejected plan-review/ or cap-tripped in-progress/ task → queued/.
+ * `liveTaskId` is the id of the task a live loop is currently driving (the
+ * in-memory `active` for the MCP tool; the on-disk stage marker for the CLI) —
+ * refused so we never re-queue a task mid-build.
+ */
+const replanTask = async (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> => {
+  if (liveTaskId === id) return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agent-loop stop).` }
+  const task =
+    (await findByIdIn(fsClient, directory, config.tasksDir, "plan-review", id)) ??
+    (await findByIdIn(fsClient, directory, config.tasksDir, "in-progress", id))
+  if (!task) {
+    const elsewhere = await findAnyStatus(id)
+    return {
+      ok: false,
+      message: elsewhere
+        ? `Can't replan "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only plan-review or in-progress tasks can be sent back to planning.`
+        : `Can't replan "${id}": no task found.`,
+    }
+  }
+  const actor = await gitActor(sh, directory)
+  const why = reason ? ` — ${reason}` : ""
+  await appendNote(sh, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor), log)
+  const newPath = await moveTask(sh, task, "queued")
+  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan rejected — re-queued for planning`)
+  return {
+    ok: true,
+    message: `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
+    path: newPath,
+    data: { requeued: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) re-plans it` },
+  }
+}
+
 server.registerTool(
   "loop_task_approve",
   {
@@ -831,20 +930,8 @@ server.registerTool(
   },
   async ({ id }) => {
     await loadCfg()
-    const draft = await findByIdIn(fsClient, directory, config.tasksDir, "draft", id)
-    if (!draft) {
-      const elsewhere = await findAnyStatus(id)
-      return fail(
-        elsewhere
-          ? `Can't approve "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only draft tasks can be approved.`
-          : `Can't approve "${id}": no task found.`,
-      )
-    }
-    const actor = await gitActor(sh, directory)
-    await appendNote(sh, draft, auditNote("Task approved — queued for planning", new Date(), actor), log)
-    const newPath = await moveTask(sh, draft, "queued")
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): task approved — queued for planning`)
-    return ok({ approved: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` })
+    const r = await approveTask(id)
+    return r.ok ? ok(r.data) : fail(r.message)
   },
 )
 
@@ -857,26 +944,8 @@ server.registerTool(
   },
   async ({ id }) => {
     await loadCfg()
-    const task = await findByIdIn(fsClient, directory, config.tasksDir, "plan-review", id)
-    if (!task) {
-      const elsewhere = await findAnyStatus(id)
-      const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-      return fail(
-        where === "queued"
-          ? `Can't approve the plan for "${id}": it's still queued — the loop hasn't planned it yet (loop_start runs its PLAN stage).`
-          : where === "draft"
-            ? `Can't approve the plan for "${id}": it's a draft — approve the task first with loop_task_approve.`
-            : where
-              ? `Can't approve the plan for "${id}": it's in ${where} — only plan-review tasks can be plan-approved.`
-              : `Can't approve the plan for "${id}": no task found.`,
-      )
-    }
-    if (!hasPlan(task)) return fail(`Task "${id}" has no Implementation Plan — send it back with loop_replan.`)
-    const actor = await gitActor(sh, directory)
-    await appendNote(sh, task, auditNote("Plan approved — parked for execution", new Date(), actor), log)
-    const newPath = await moveTask(sh, task, "in-progress")
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan approved — parked for execution`)
-    return ok({ approved: true, path: newPath, next: `loop_start with id "${id}", or loop_claim` })
+    const r = await approvePlan(id)
+    return r.ok ? ok(r.data) : fail(r.message)
   },
 )
 
@@ -889,24 +958,8 @@ server.registerTool(
   },
   async ({ id, reason }) => {
     await loadCfg()
-    if (active?.task?.id === id) return fail(`Task "${id}" is being driven by the active loop — loop_stop it first.`)
-    const task =
-      (await findByIdIn(fsClient, directory, config.tasksDir, "plan-review", id)) ??
-      (await findByIdIn(fsClient, directory, config.tasksDir, "in-progress", id))
-    if (!task) {
-      const elsewhere = await findAnyStatus(id)
-      return fail(
-        elsewhere
-          ? `Can't replan "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only plan-review or in-progress tasks can be sent back to planning.`
-          : `Can't replan "${id}": no task found.`,
-      )
-    }
-    const actor = await gitActor(sh, directory)
-    const why = reason ? ` — ${reason}` : ""
-    await appendNote(sh, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor), log)
-    const newPath = await moveTask(sh, task, "queued")
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan rejected — re-queued for planning`)
-    return ok({ requeued: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) re-plans it` })
+    const r = await replanTask(id, reason, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
   },
 )
 
@@ -987,6 +1040,44 @@ server.registerTool(
   },
 )
 
+// --- deterministic gate CLI ---
+
+/**
+ * `node server.js gate <approve|approve-plan|replan> <id> [reason]` — runs one
+ * gate move and exits, WITHOUT starting the MCP transport. The UserPromptSubmit
+ * hook (hooks/gate-command.mjs) shells to this so the task moves even when a
+ * degraded model would not call the equivalent MCP tool. Prints the GateResult
+ * as one JSON line to stdout (stdout is otherwise reserved for the MCP protocol;
+ * in gate mode it carries only this result — logs still go to stderr).
+ */
+const readStageTaskId = (): string | null => {
+  try {
+    const raw = fs.readFileSync(path.join(directory, config.tasksDir, "runs", ".stage.json"), "utf8")
+    const marker = JSON.parse(raw) as { taskId?: unknown }
+    return typeof marker.taskId === "string" ? marker.taskId : null
+  } catch {
+    return null
+  }
+}
+
+async function runGate(argv: string[]): Promise<number> {
+  const [verb, id, ...rest] = argv
+  const reason = rest.join(" ").trim() || undefined
+  const emit = (r: GateResult) => process.stdout.write(`${JSON.stringify(r)}\n`)
+  if (!verb || !id) {
+    emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan> <id> [reason]" })
+    return 1
+  }
+  await loadCfg()
+  let result: GateResult
+  if (verb === "approve") result = await approveTask(id)
+  else if (verb === "approve-plan") result = await approvePlan(id)
+  else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
+  else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve, approve-plan, or replan.` }
+  emit(result)
+  return result.ok ? 0 : 1
+}
+
 // --- boot ---
 
 async function main() {
@@ -1002,7 +1093,18 @@ async function main() {
   await server.connect(transport)
 }
 
-main().catch((err) => {
-  process.stderr.write(`agentic-loop MCP fatal: ${(err as Error).message}\n`)
-  process.exit(1)
-})
+if (process.argv[2] === "gate") {
+  runGate(process.argv.slice(3))
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      // Fail the CLI cleanly; the hook fails OPEN on a non-zero/broken run so the
+      // MCP-tool fallback still moves the task.
+      process.stdout.write(`${JSON.stringify({ ok: false, message: `gate failed: ${(err as Error).message}` })}\n`)
+      process.exit(1)
+    })
+} else {
+  main().catch((err) => {
+    process.stderr.write(`agentic-loop MCP fatal: ${(err as Error).message}\n`)
+    process.exit(1)
+  })
+}

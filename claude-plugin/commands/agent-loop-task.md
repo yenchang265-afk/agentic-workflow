@@ -71,22 +71,24 @@ Dispatch:
      forward the `tracker` block if the draft had one) to rewrite
      `docs/tasks/draft/<id>.md` **in place** — the id/filename never changes.
      Still no plan. The next step is unchanged: `/agent-loop-task approve <id>`.
-- **`approve <id>`** — the task gate. Call
-  `mcp__agentic-loop__loop_task_approve({id})` — it moves the reviewed draft
-  to `docs/tasks/queued/` (audited note + commit). No plan is required — the
-  loop plans it on claim. **Spawn nothing and write nothing** — report the
-  tool's outcome and stop.
-- **`approve-plan <id>`** — the plan gate. Call
-  `mcp__agentic-loop__loop_plan_approve({id})` — it validates the
-  `plan-review/` task has an `## Implementation Plan`, moves it to
-  `docs/tasks/in-progress/` (the build-ready queue), appends an audited
-  note, and commits. **Spawn nothing and write nothing** — report the
-  outcome and stop.
+- **`approve <id>`** — the task gate. **Handled deterministically by the
+  plugin's `UserPromptSubmit` hook before this turn starts** — it moves the
+  reviewed draft to `docs/tasks/queued/` (audited note + commit) and blocks the
+  turn, so you normally never see this command. No plan is required — the loop
+  plans it on claim. **Spawn nothing and write nothing** — just report the
+  outcome and stop. (Fallback: if the hook is unavailable, call
+  `mcp__agentic-loop__loop_task_approve({id})`, which performs the same move.)
+- **`approve-plan <id>`** — the plan gate. **Handled deterministically by the
+  hook before this turn** — it validates the `plan-review/` task has an
+  `## Implementation Plan`, moves it to `docs/tasks/in-progress/` (the
+  build-ready queue), appends an audited note, and commits. **Spawn nothing and
+  write nothing** — report the outcome and stop. (Fallback:
+  `mcp__agentic-loop__loop_plan_approve({id})`.)
 - **`replan <id> [reason]`** — reject a parked plan, or send a cap-tripped
-  `in-progress/` task back. Call
-  `mcp__agentic-loop__loop_replan({id, reason})` — the task moves back to
-  `queued/` with an audited rejection note; the next PLAN pass must address
-  it. **Spawn nothing and write nothing** — report the outcome and stop.
+  `in-progress/` task back. **Handled deterministically by the hook before this
+  turn** — the task moves back to `queued/` with an audited rejection note; the
+  next PLAN pass must address it. **Spawn nothing and write nothing** — report
+  the outcome and stop. (Fallback: `mcp__agentic-loop__loop_replan({id, reason})`.)
 
 The flow: `new` (interview → draft) → human reviews the draft (reshape it with
 `retask <id>` if it's off) → `approve <id>` queues it → `/agent-loop task <id>`
@@ -100,4 +102,4 @@ inline via AskUserQuestion instead of making the user type a command.
 
 Never move, create, or delete files under `docs/tasks/` yourself — no Bash
 `mv`/`mkdir`/`rm`, no direct writes into status folders (a PreToolUse hook
-blocks them). The MCP tools own every backlog move.
+blocks them). The gate hook and the MCP tools own every backlog move.
