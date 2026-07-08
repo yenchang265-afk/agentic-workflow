@@ -297,7 +297,7 @@ test("approve moves a draft to queued/ without requiring a plan", async () => {
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
 })
 
-test("approve refuses a task that is not in draft/", async () => {
+test("approve is idempotent when the task is already queued (retry after a prior success)", async () => {
   const queued = serializeTask({ title: "Do the thing", body: "Some context." })
   const { client, toasts } = makeClient()
   const log: string[] = []
@@ -306,7 +306,21 @@ test("approve refuses a task that is not in draft/", async () => {
   await handleTaskCommand(deps, "sess", "approve my-task", testConfig)
 
   assert.equal(toasts.length, 1)
-  assert.match(toasts[0]?.message ?? "", /it's in queued/)
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /already queued/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on an idempotent retry")
+})
+
+test("approve refuses a task that is not in draft/ or queued/", async () => {
+  const inProgress = serializeTask({ title: "Do the thing", body: "Some context." })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/in-progress/my-task.md": inProgress }, log), directory: "/repo", log: () => {} }
+
+  await handleTaskCommand(deps, "sess", "approve my-task", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /it's in in-progress/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on a refusal")
 })
 

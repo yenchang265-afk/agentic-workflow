@@ -1152,6 +1152,14 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
     const draft = await findByIdIn(deps.$, deps.directory, config.tasksDir, "draft", id)
     if (!draft) {
       const elsewhere = await findAnyStatus(deps, config, id)
+      // A retry (model re-calling after a prior success, or a race with a
+      // concurrent gate) lands here with the task already queued — report
+      // success instead of an error so retries stay harmless.
+      if (elsewhere === "queued") {
+        return void (
+          await toast(client, `Task "${id}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`, "info")
+        )
+      }
       const detail = elsewhere ? `it's in ${elsewhere} — only draft tasks can be approved` : `no task "${id}" found`
       return void (await toast(client, `Can't approve "${id}": ${detail}.`, "warning"))
     }
@@ -1175,6 +1183,15 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
     const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
     if (!task) {
       const elsewhere = await findAnyStatus(deps, config, id)
+      if (elsewhere === "in-progress") {
+        return void (
+          await toast(
+            client,
+            `Plan for "${id}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
+            "info",
+          )
+        )
+      }
       const detail =
         elsewhere === "queued"
           ? `it's still queued — the loop hasn't planned it yet (/agent-loop task ${id} plans it now)`
@@ -1212,6 +1229,11 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
     (await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id))
   if (!task) {
     const elsewhere = await findAnyStatus(deps, config, id)
+    if (elsewhere === "queued") {
+      return void (
+        await toast(client, `"${id}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`, "info")
+      )
+    }
     const detail = elsewhere
       ? `it's in ${elsewhere} — only plan-review or in-progress tasks can be sent back to planning`
       : `no task "${id}" found`
@@ -1376,6 +1398,9 @@ export const handleCommand = async (
     if (!task) {
       // Locate it for a precise error instead of a bare "not found".
       const elsewhere = await findAnyStatus(deps, config, id)
+      if (elsewhere === "completed") {
+        return void (await toast(client, `"${id}" is already completed. Nothing to do.`, "info"))
+      }
       const detail = elsewhere ? `it's in ${elsewhere}, not in-review — the loop hasn't finished it` : `no task "${id}" found`
       return void (await toast(client, `Can't ship "${id}": ${detail}.`, "warning"))
     }

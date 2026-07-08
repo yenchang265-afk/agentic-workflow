@@ -845,11 +845,21 @@ const approveTask = async (id: string): Promise<GateResult> => {
   const draft = await findByIdIn(sh, directory, config.tasksDir, "draft", id)
   if (!draft) {
     const elsewhere = await findAnyStatus(id)
+    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+    // A retry (model re-calling after a prior success, or a race with the
+    // harness gate hook) lands here with the task already at the transition's
+    // target — report success instead of an error so retries stay harmless.
+    if (where === "queued") {
+      return {
+        ok: true,
+        message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
+        path: elsewhere!.path,
+        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` },
+      }
+    }
     return {
       ok: false,
-      message: elsewhere
-        ? `Can't approve "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only draft tasks can be approved.`
-        : `Can't approve "${id}": no task found.`,
+      message: where ? `Can't approve "${id}": it's in ${where} — only draft tasks can be approved.` : `Can't approve "${id}": no task found.`,
     }
   }
   const actor = await gitActor(sh, directory)
@@ -870,6 +880,14 @@ const approvePlan = async (id: string): Promise<GateResult> => {
   if (!task) {
     const elsewhere = await findAnyStatus(id)
     const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+    if (where === "in-progress") {
+      return {
+        ok: true,
+        message: `Plan for "${elsewhere!.title}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
+        path: elsewhere!.path,
+        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}", or loop_claim` },
+      }
+    }
     return {
       ok: false,
       message:
@@ -908,10 +926,19 @@ const replanTask = async (id: string, reason: string | undefined, liveTaskId: st
     (await findByIdIn(sh, directory, config.tasksDir, "in-progress", id))
   if (!task) {
     const elsewhere = await findAnyStatus(id)
+    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+    if (where === "queued") {
+      return {
+        ok: true,
+        message: `"${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
+        path: elsewhere!.path,
+        data: { requeued: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}" (or loop_claim) re-plans it` },
+      }
+    }
     return {
       ok: false,
-      message: elsewhere
-        ? `Can't replan "${id}": it's in ${path.basename(path.dirname(elsewhere.path))} — only plan-review or in-progress tasks can be sent back to planning.`
+      message: where
+        ? `Can't replan "${id}": it's in ${where} — only plan-review or in-progress tasks can be sent back to planning.`
         : `Can't replan "${id}": no task found.`,
     }
   }
@@ -990,11 +1017,9 @@ server.registerTool(
     const t = await findByIdIn(sh, directory, config.tasksDir, "in-review", id)
     if (!t) {
       const elsewhere = await findAnyStatus(id)
-      return fail(
-        elsewhere
-          ? `Can't ship "${id}": it's in ${path.basename(path.dirname(elsewhere.path))}, not in-review/.`
-          : `No in-review task "${id}".`,
-      )
+      const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+      if (where === "completed") return ok({ completed: elsewhere!.path, alreadyDone: true })
+      return fail(elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : `No in-review task "${id}".`)
     }
     await appendNote(sh, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor(sh, directory)), log)
     const newPath = await moveTask(sh, { id, path: t.path }, "completed")
