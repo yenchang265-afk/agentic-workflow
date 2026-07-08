@@ -182,8 +182,12 @@ test("non-abort events are ignored", () => {
  * no-op: no toast, and no shell call (so no spurious watch-lease release).
  */
 
+const explodingShell = ((..._args: unknown[]) => {
+  throw new Error("$ should not be called")
+}) as unknown as Deps["$"]
+
 test("onInterrupt is a silent no-op when not driving and not watching", async () => {
-  const { client, toasts } = makeClient({})
+  const { client, toasts } = makeClient()
   const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
 
   await onInterrupt(deps, "sess-never-watched")
@@ -199,32 +203,15 @@ test("loop_ado_data is ignored when no ado-mcp poll is awaiting input in the ses
 })
 
 /**
- * `handleTaskCommand` gates. Fakes `client.file.read`/`client.tui.showToast`;
- * the exploding `$` proves no move is attempted on a refusal.
+ * `handleTaskCommand` gates. `findByIdIn` now resolves through the shell (`cat`
+ * on the real FS), so the task content lives in the shell FS mock, not the
+ * client — `makeClient` only serves toasts. A refusal is proven by the absence
+ * of an `mv` in the recorded command log.
  */
 
-const explodingShell = ((..._args: unknown[]) => {
-  throw new Error("$ should not be called")
-}) as unknown as Deps["$"]
-
-const makeClient = (files: Record<string, string>) => {
+const makeClient = () => {
   const toasts: { message: string; variant: string }[] = []
   const client = {
-    file: {
-      read: async ({ query }: { query: { path: string } }) => {
-        const content = files[query.path]
-        return { data: content !== undefined ? { content } : undefined }
-      },
-      // Emulate the real opencode client, which findByIdIn/listByStatus resolve
-      // through: given a folder path, return one node per direct-child file.
-      list: async ({ query }: { query: { path: string } }) => {
-        const prefix = query.path.endsWith("/") ? query.path : `${query.path}/`
-        const data = Object.keys(files)
-          .filter((p) => p.startsWith(prefix) && !p.slice(prefix.length).includes("/"))
-          .map((p) => ({ type: "file" as const, name: p.slice(prefix.length), path: p, absolute: `/repo/${p}`, ignored: false }))
-        return { data }
-      },
-    },
     tui: {
       showToast: async ({ body }: { body: { message: string; variant: string } }) => {
         toasts.push(body)
@@ -233,6 +220,60 @@ const makeClient = (files: Record<string, string>) => {
     },
   } as unknown as Deps["client"]
   return { client, toasts }
+}
+
+/**
+ * A stateful shell FS keyed by absolute path (relative `files` keys are prefixed
+ * with the `/repo` test directory). Answers `cat`/`test -f`/`mv` against the map
+ * and mutates it on `mv`; every other command (printf notes, mkdir, git, rmdir)
+ * succeeds. Records the normalized command stream in `log`.
+ */
+const makeShellFS = (files: Record<string, string>, log: string[]) => {
+  const fs: Record<string, string> = {}
+  for (const [k, v] of Object.entries(files)) fs[k.startsWith("/") ? k : `/repo/${k}`] = v
+  const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
+    let cmd = ""
+    strings.forEach((s, i) => {
+      cmd += s
+      if (i < exprs.length) {
+        const e = exprs[i]
+        cmd += Array.isArray(e) ? e.join(" ") : String(e)
+      }
+    })
+    const norm = cmd.trim().replace(/\s+/g, " ")
+    log.push(norm)
+    const parts = norm.split(" ")
+    let out = { exitCode: 0, stdout: "", stderr: "" }
+    if (parts[0] === "cat") {
+      out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]!, stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
+    } else if (parts[0] === "test" && parts[1] === "-f") {
+      out = { exitCode: parts[2]! in fs ? 0 : 1, stdout: "", stderr: "" }
+    } else if (parts[0] === "mv") {
+      const src = parts[1]!
+      const dest = parts[2]!
+      if (src in fs) {
+        fs[dest] = fs[src]!
+        delete fs[src]
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      } else {
+        out = { exitCode: 1, stdout: "", stderr: `mv: cannot stat '${src}'` }
+      }
+    }
+    const result = {
+      exitCode: out.exitCode,
+      stdout: { toString: () => out.stdout },
+      stderr: { toString: () => out.stderr },
+    }
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
+    }
+    return chain
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
 const testConfig: Config = {
@@ -244,38 +285,11 @@ const testConfig: Config = {
   loops: {},
 }
 
-/** Mirrors the fake shell in `../task/store.test.ts` / `git.test.ts` — always succeeds, records commands. */
-const makeSucceedingShell = (log: string[]) => {
-  const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
-    let cmd = ""
-    strings.forEach((s, i) => {
-      cmd += s
-      if (i < exprs.length) {
-        const e = exprs[i]
-        cmd += Array.isArray(e) ? e.join(" ") : String(e)
-      }
-    })
-    log.push(cmd.trim().replace(/\s+/g, " "))
-    const chain = {
-      quiet: () => chain,
-      nothrow: () => chain,
-      cwd: () => chain,
-      then: (resolve: (v: unknown) => unknown) =>
-        Promise.resolve({ exitCode: 0, stdout: { toString: () => "" }, stderr: { toString: () => "" } }).then(
-          resolve,
-        ),
-    }
-    return chain
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
-}
-
 test("approve moves a draft to queued/ without requiring a plan", async () => {
   const draft = serializeTask({ title: "Do the thing", body: "Some context." })
-  const { client, toasts } = makeClient({ "docs/tasks/draft/my-task.md": draft })
+  const { client, toasts } = makeClient()
   const log: string[] = []
-  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/draft/my-task.md": draft }, log), directory: "/repo", log: () => {} }
 
   await handleTaskCommand(deps, "sess", "approve my-task", testConfig)
 
@@ -285,42 +299,58 @@ test("approve moves a draft to queued/ without requiring a plan", async () => {
 
 test("approve refuses a task that is not in draft/", async () => {
   const queued = serializeTask({ title: "Do the thing", body: "Some context." })
-  const { client, toasts } = makeClient({ "docs/tasks/queued/my-task.md": queued })
-  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/queued/my-task.md": queued }, log), directory: "/repo", log: () => {} }
 
   await handleTaskCommand(deps, "sess", "approve my-task", testConfig)
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /it's in queued/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on a refusal")
 })
 
 test("approve-plan refuses a queued task that the loop has not planned yet", async () => {
   const queued = serializeTask({ title: "Do the thing", body: "Some context." })
-  const { client, toasts } = makeClient({ "docs/tasks/queued/my-task.md": queued })
-  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/queued/my-task.md": queued }, log), directory: "/repo", log: () => {} }
 
   await handleTaskCommand(deps, "sess", "approve-plan my-task", testConfig)
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /still queued/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on a refusal")
 })
 
 test("approve-plan refuses a plan-review task whose plan heading is missing", async () => {
   const planless = serializeTask({ title: "Do the thing", body: "Some context, no plan." })
-  const { client, toasts } = makeClient({ "docs/tasks/plan-review/my-task.md": planless })
-  const deps: Deps = { client, $: explodingShell, directory: "/repo", log: () => {} }
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planless }, log),
+    directory: "/repo",
+    log: () => {},
+  }
 
   await handleTaskCommand(deps, "sess", "approve-plan my-task", testConfig)
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /no Implementation Plan/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on a refusal")
 })
 
 test("approve-plan moves a planned plan-review task to in-progress/", async () => {
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
-  const { client, toasts } = makeClient({ "docs/tasks/plan-review/my-task.md": planned })
+  const { client, toasts } = makeClient()
   const log: string[] = []
-  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log),
+    directory: "/repo",
+    log: () => {},
+  }
 
   await handleTaskCommand(deps, "sess", "approve-plan my-task", testConfig)
 
@@ -330,9 +360,14 @@ test("approve-plan moves a planned plan-review task to in-progress/", async () =
 
 test("replan sends a plan-review task back to queued/ with the reason noted", async () => {
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
-  const { client, toasts } = makeClient({ "docs/tasks/plan-review/my-task.md": planned })
+  const { client, toasts } = makeClient()
   const log: string[] = []
-  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log),
+    directory: "/repo",
+    log: () => {},
+  }
 
   await handleTaskCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
 
@@ -343,9 +378,14 @@ test("replan sends a plan-review task back to queued/ with the reason noted", as
 
 test("replan also accepts a cap-tripped in-progress task", async () => {
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
-  const { client, toasts } = makeClient({ "docs/tasks/in-progress/my-task.md": planned })
+  const { client, toasts } = makeClient()
   const log: string[] = []
-  const deps: Deps = { client, $: makeSucceedingShell(log), directory: "/repo", log: () => {} }
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/in-progress/my-task.md": planned }, log),
+    directory: "/repo",
+    log: () => {},
+  }
 
   await handleTaskCommand(deps, "sess", "replan my-task", testConfig)
 

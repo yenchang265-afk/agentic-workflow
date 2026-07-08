@@ -110,7 +110,7 @@ export const makeBacklogSource = (deps) => {
         },
         async release(work) {
             const { pool, task } = work.ref;
-            const fresh = await findByIdIn(client, directory, tasksDir, pool.status, task.id);
+            const fresh = await findByIdIn($, directory, tasksDir, pool.status, task.id);
             if (!fresh)
                 return;
             const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null;

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { Task } from "./schema.js"
+import { serializeTask, type Task } from "./schema.js"
 import {
   auditNote,
   canTransition,
   claimFirst,
   claimOlderThan,
   extractPlan,
+  findByIdIn,
   hasPlan,
   isClaimable,
   isOrphanedClaim,
@@ -330,6 +331,41 @@ test("moveTask throws on a stage-skip attempt without touching the shell", async
     /cannot move a from draft to in-progress/,
   )
   assert.deepEqual(log, [])
+})
+
+test("moveTask throws when mv reports success but the file did not land", async () => {
+  // mv exits 0, but the post-move `test -f dest` fails — a false success must throw.
+  const $ = makeShell((cmd) => (cmd.startsWith("test -f") ? { exitCode: 1 } : { exitCode: 0 }))
+  await assert.rejects(
+    () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued"),
+    /did not land at .*queued\/a\.md/,
+  )
+})
+
+// --- findByIdIn: shell-authoritative resolution (reads the real FS via `cat`) ---
+
+test("findByIdIn resolves a task by cat-ing its absolute path", async () => {
+  const content = serializeTask({ title: "Do it", body: "context" })
+  const $ = makeShell((cmd) => (cmd === "cat /r/docs/tasks/queued/a.md" ? { exitCode: 0, stdout: content } : { exitCode: 1 }))
+  const found = await findByIdIn($, "/r", "docs/tasks", "queued", "a")
+  assert.equal(found?.id, "a")
+  assert.equal(found?.path, "/r/docs/tasks/queued/a.md")
+  assert.equal(found?.title, "Do it")
+})
+
+test("findByIdIn returns null when cat exits non-zero (file absent)", async () => {
+  const $ = makeShell(() => ({ exitCode: 1 }))
+  assert.equal(await findByIdIn($, "/r", "docs/tasks", "queued", "missing"), null)
+})
+
+test("findByIdIn returns null and warns on unparseable content", async () => {
+  const warnings: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0, stdout: "not a task file" }))
+  const found = await findByIdIn($, "/r", "docs/tasks", "queued", "a", (level, msg) => {
+    if (level === "warn") warnings.push(msg)
+  })
+  assert.equal(found, null)
+  assert.equal(warnings.length, 1)
 })
 
 // --- selectOrder (the claim walk's candidate ordering) ---

@@ -90,17 +90,21 @@ export declare const listInProgress: (client: Client, directory: string, tasksDi
 /**
  * Resolve a specific task by id within a status folder, or null if missing/invalid.
  *
- * Resolves by LISTING the folder and matching the id — the same `client.file.list`
- * path the scheduler claims through — rather than building `<id>.md` and reading it
- * directly. A host (notably opencode) can resolve a hand-built relative read path
- * differently from a listed one, so the old direct-read made a task that is plainly
- * present (the loop had just moved it here) read back as missing — every
- * `/agent-loop-task approve|approve-plan|replan` then toasted "no task found". The
- * asymmetry only bit the gates: the loop already claims via `listByStatus`. If the
- * loop can reach a task, the gate now can too. Only ever called on human-triggered /
- * one-off paths (gates, release, recover, ship), never per-poll, so the list is free.
+ * Reads the REAL filesystem through the shell (`$ cat <abs path>`), NOT the host
+ * client. On opencode the file client is served by a watcher-backed index that lags
+ * the real FS after a shell `mv` (see `moveTask`), and it resolves a hand-built
+ * relative read path differently from a listed one — so right after the loop moves a
+ * task into a folder, a client-based lookup can read the plainly-present file back as
+ * missing and every gate toasts "no task found". The shell has neither problem: it
+ * operates on the real absolute path, exactly as `moveTask`/`claimTask` already do.
+ * Hand-building `<id>.md` is safe HERE because it goes to the shell, not the client.
+ *
+ * Only ever called on human-triggered / one-off / loop-terminal paths (gates, replan,
+ * ship, recover, start, findAnyStatus), never per-poll — the scheduler enumerates
+ * unknown ids via `listByStatus` and tolerates lag by retrying each tick — so one
+ * `cat` per call is free.
  */
-export declare const findByIdIn: (client: Client, directory: string, tasksDir: string, status: TaskStatus, id: string, log?: Log) => Promise<Task | null>;
+export declare const findByIdIn: ($: Shell, directory: string, tasksDir: string, status: TaskStatus, id: string, log?: Log) => Promise<Task | null>;
 /**
  * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
  * the marker either succeeds — claim won — or fails because another watcher

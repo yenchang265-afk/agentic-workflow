@@ -208,7 +208,7 @@ const fail = (message: string) => ({ isError: true, content: [{ type: "text" as 
 /** Locate which status folder a task id lives in. */
 const findAnyStatus = async (id: string): Promise<Task | null> => {
   for (const s of STATUSES) {
-    const t = await findByIdIn(fsClient, directory, config.tasksDir, s, id)
+    const t = await findByIdIn(sh, directory, config.tasksDir, s, id)
     if (t) return t
   }
   return null
@@ -351,9 +351,9 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    const t = await findByIdIn(fsClient, directory, config.tasksDir, "in-progress", id)
+    const t = await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)
     if (!t) {
-      const queued = await findByIdIn(fsClient, directory, config.tasksDir, "queued", id)
+      const queued = await findByIdIn(sh, directory, config.tasksDir, "queued", id)
       if (queued) {
         const started = await startPlan(queued)
         if ("error" in started) return fail(started.error)
@@ -637,7 +637,7 @@ const runPark = async (
     return { error: "No task-backed loop to park." }
   }
   const id = active.task.id
-  const fresh = await findByIdIn(fsClient, directory, config.tasksDir, "queued", id)
+  const fresh = await findByIdIn(sh, directory, config.tasksDir, "queued", id)
   const actor = await gitActor(sh, directory)
   if (!fresh || !hasPlan(fresh)) {
     const why = fresh ? "the PLAN stage wrote no ## Implementation Plan" : "the task left queued/ mid-plan"
@@ -703,8 +703,15 @@ const runTerminal = async (action: Action) => {
   await appendRunLog(sh, directory, config.tasksDir, loopId(active), `run · ${outcome}`, summary, log)
   if (active.task) {
     if (action.kind === "done") {
-      await appendNote(sh, active.task, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
-      await moveTask(sh, active.task, ((action as { toStatus?: string }).toStatus ?? "in-review") as TaskStatus)
+      // Re-resolve the current path (shell-authoritative) — the claim-time
+      // active.task.path goes stale if the file moved since the claim.
+      const cur = await findByIdIn(sh, directory, config.tasksDir, "in-progress", active.task.id)
+      if (cur) {
+        await appendNote(sh, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
+        await moveTask(sh, cur, ((action as { toStatus?: string }).toStatus ?? "in-review") as TaskStatus)
+      } else {
+        log("warn", `loop done but task ${active.task.id} not in in-progress/ — not moved`)
+      }
     } else {
       await appendNote(sh, active.task, auditNote((action as { message: string }).message, new Date(), actor), log)
       // A loop stopped mid-PLAN leaves the task in queued/ — release its claim
@@ -835,7 +842,7 @@ type GateResult =
 
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */
 const approveTask = async (id: string): Promise<GateResult> => {
-  const draft = await findByIdIn(fsClient, directory, config.tasksDir, "draft", id)
+  const draft = await findByIdIn(sh, directory, config.tasksDir, "draft", id)
   if (!draft) {
     const elsewhere = await findAnyStatus(id)
     return {
@@ -859,7 +866,7 @@ const approveTask = async (id: string): Promise<GateResult> => {
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 const approvePlan = async (id: string): Promise<GateResult> => {
-  const task = await findByIdIn(fsClient, directory, config.tasksDir, "plan-review", id)
+  const task = await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)
   if (!task) {
     const elsewhere = await findAnyStatus(id)
     const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
@@ -897,8 +904,8 @@ const approvePlan = async (id: string): Promise<GateResult> => {
 const replanTask = async (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> => {
   if (liveTaskId === id) return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agent-loop stop).` }
   const task =
-    (await findByIdIn(fsClient, directory, config.tasksDir, "plan-review", id)) ??
-    (await findByIdIn(fsClient, directory, config.tasksDir, "in-progress", id))
+    (await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)) ??
+    (await findByIdIn(sh, directory, config.tasksDir, "in-progress", id))
   if (!task) {
     const elsewhere = await findAnyStatus(id)
     return {
@@ -980,7 +987,7 @@ server.registerTool(
   { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action.", inputSchema: { id: z.string() } },
   async ({ id }) => {
     await loadCfg()
-    const t = await findByIdIn(fsClient, directory, config.tasksDir, "in-review", id)
+    const t = await findByIdIn(sh, directory, config.tasksDir, "in-review", id)
     if (!t) {
       const elsewhere = await findAnyStatus(id)
       return fail(
@@ -1006,7 +1013,7 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    const t = await findByIdIn(fsClient, directory, config.tasksDir, "in-progress", id)
+    const t = await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)
     if (!t) return fail(`No in-progress task "${id}".`)
     if (isClaimable(t)) return fail(`Task "${id}" never started — start it with loop_start or loop_claim.`)
     if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — send it back to planning with loop_replan.`)

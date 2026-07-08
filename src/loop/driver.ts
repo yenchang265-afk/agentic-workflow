@@ -710,7 +710,7 @@ const drive = async (
         clearLoop(sessionID)
         return { kind: "park", message: action.message }
       }
-      const fresh = await findByIdIn(client, deps.directory, config.tasksDir, "queued", state.task.id)
+      const fresh = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", state.task.id)
       if (!fresh || !hasPlan(fresh)) {
         const why = fresh ? "the PLAN stage wrote no ## Implementation Plan" : "the task left queued/ mid-plan"
         await deps.log("warn", `loop(${state.task.id}): not parking — ${why}`)
@@ -739,13 +739,24 @@ const drive = async (
       // "Done" for the loop is not "completed" for the task: a human still
       // has to look at the diff. The task parks in in-review/; moving it to
       // completed/ (e.g. when the PR merges) is the human's call.
+      let moved = false
       if (state.task) {
-        try {
-          await appendNote(deps.$, state.task, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor))
-          await moveTask(deps.$, state.task, (action.toStatus ?? "in-review") as TaskStatus)
-          await commitBacklog(deps, config, state, `loop(${state.task.id}): done — parked in in-review`)
-        } catch (err) {
-          await deps.log("warn", `loop done but task move failed: ${(err as Error).message}`)
+        // Re-resolve the real current path (shell-authoritative) rather than trust
+        // the claim-time state.task.path, which goes stale if the file moved since
+        // the claim — a stale path makes the move fail and (before this) get
+        // swallowed into a false "parked in in-review" success.
+        const cur = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", state.task.id)
+        if (cur) {
+          try {
+            await appendNote(deps.$, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor))
+            await moveTask(deps.$, cur, (action.toStatus ?? "in-review") as TaskStatus)
+            await commitBacklog(deps, config, state, `loop(${state.task.id}): done — parked in in-review`)
+            moved = true
+          } catch (err) {
+            await deps.log("warn", `loop done but task move failed: ${(err as Error).message}`)
+          }
+        } else {
+          await deps.log("warn", `loop done but task ${state.task.id} not in in-progress/ — not moved`)
         }
       }
       await renderMetrics(deps, sessionID, config, state, "done", "review passed")
@@ -759,7 +770,15 @@ const drive = async (
         : where
           ? ` Review the diff${where}.`
           : ""
-      await toast(client, `${action.message}${next}`, "success")
+      if (state.task && !moved) {
+        await toast(
+          client,
+          `Loop finished "${state.task.id}" but couldn't park it in in-review/ — it's still in in-progress/. Check the audit note.`,
+          "warning",
+        )
+      } else {
+        await toast(client, `${action.message}${next}`, "success")
+      }
       return { kind: "done", message: action.message }
     }
     case "stop": {
@@ -828,7 +847,7 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<
 /** Which status folder a task id currently lives in, or null. For error messages. */
 const findAnyStatus = async (deps: Deps, config: Config, id: string): Promise<TaskStatus | null> => {
   for (const status of STATUSES) {
-    if (await findByIdIn(deps.client, deps.directory, config.tasksDir, status, id)) return status
+    if (await findByIdIn(deps.$, deps.directory, config.tasksDir, status, id)) return status
   }
   return null
 }
@@ -979,12 +998,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     // wedged on it forever. (For `recover`, the body already carries BUILD
     // notes, so `isClaimable` is false and this is a no-op.)
     if (work?.kind === "start-task" || work?.kind === "recover") {
-      const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "in-progress", work.task.id)
+      const fresh = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", work.task.id)
       if (fresh && isClaimable(fresh)) await releaseClaim(deps.$, work.task)
     }
     // A PLAN claim that died leaves the task in queued/ with the marker held.
     if (work?.kind === "start-plan") {
-      const fresh = await findByIdIn(deps.client, deps.directory, config.tasksDir, "queued", work.task.id)
+      const fresh = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", work.task.id)
       if (fresh) await releaseClaim(deps.$, work.task)
     }
     // Preserve whatever the failed run left behind and put the tree back.
@@ -1130,7 +1149,7 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
   if (!id) return void (await toast(client, `Usage: /agent-loop-task ${parsed.mode} <id>.`, "warning"))
 
   if (parsed.mode === "approve") {
-    const draft = await findByIdIn(client, deps.directory, config.tasksDir, "draft", id)
+    const draft = await findByIdIn(deps.$, deps.directory, config.tasksDir, "draft", id)
     if (!draft) {
       const elsewhere = await findAnyStatus(deps, config, id)
       const detail = elsewhere ? `it's in ${elsewhere} — only draft tasks can be approved` : `no task "${id}" found`
@@ -1153,7 +1172,7 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
   }
 
   if (parsed.mode === "approve-plan") {
-    const task = await findByIdIn(client, deps.directory, config.tasksDir, "plan-review", id)
+    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
     if (!task) {
       const elsewhere = await findAnyStatus(deps, config, id)
       const detail =
@@ -1189,8 +1208,8 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
 
   // replan — from plan-review/ (rejected plan) or in-progress/ (cap-tripped / bad plan).
   const task =
-    (await findByIdIn(client, deps.directory, config.tasksDir, "plan-review", id)) ??
-    (await findByIdIn(client, deps.directory, config.tasksDir, "in-progress", id))
+    (await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)) ??
+    (await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id))
   if (!task) {
     const elsewhere = await findAnyStatus(deps, config, id)
     const detail = elsewhere
@@ -1302,7 +1321,7 @@ export const handleCommand = async (
   if (lower === "recover" || lower.startsWith("recover ")) {
     const id = arg.slice("recover".length).trim()
     if (!id) return void (await toast(client, "Usage: /agent-loop recover <id>.", "warning"))
-    const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-progress", id)
+    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
     if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
     const driving = findSessionDriving(id)
     if (driving) {
@@ -1353,7 +1372,7 @@ export const handleCommand = async (
   if (lower === "ship" || lower.startsWith("ship ")) {
     const id = arg.slice("ship".length).trim()
     if (!id) return void (await toast(client, "Usage: /agent-loop ship <id>.", "warning"))
-    const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-review", id)
+    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-review", id)
     if (!task) {
       // Locate it for a precise error instead of a bare "not found".
       const elsewhere = await findAnyStatus(deps, config, id)
@@ -1374,10 +1393,10 @@ export const handleCommand = async (
   if (lower === "task" || lower.startsWith(TASK_PREFIX)) {
     const id = arg.slice("task".length).trim()
     if (!id) return void (await toast(client, "Usage: /agent-loop task <id>.", "warning"))
-    const task = await findByIdIn(client, deps.directory, config.tasksDir, "in-progress", id)
+    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
     if (!task) {
       // Not build-ready — a queued task enters at the PLAN stage instead.
-      const queued = await findByIdIn(client, deps.directory, config.tasksDir, "queued", id)
+      const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
       if (queued) {
         if (findSessionDriving(id)) {
           return void (await toast(client, `Task "${id}" is already being driven by a live loop.`, "warning"))

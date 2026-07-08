@@ -161,7 +161,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
 
     async release(work) {
       const { pool, task } = work.ref as { pool: Pool; task: Task }
-      const fresh = await findByIdIn(client, directory, tasksDir, pool.status as TaskStatus, task.id)
+      const fresh = await findByIdIn($, directory, tasksDir, pool.status as TaskStatus, task.id)
       if (!fresh) return
       const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null
       // A predicate pool's claim is only ours to release while the body is
