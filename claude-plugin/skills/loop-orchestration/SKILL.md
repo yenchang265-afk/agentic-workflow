@@ -55,7 +55,7 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
    loop kinds** in claim-priority order: the engineering backlog first
    (build-ready `in-progress/` tasks beat planless `queued/` ones; lowest
    priority number first within each pool), then opted-in kinds (e.g.
-   pr-sitter PRs). An in-progress task is claimed, isolated (the `loop/<id>`
+   pr-sitter PRs). An in-progress task is claimed, isolated (the `feature/<id>`
    branch, or a git worktree when `worktreesDir` is configured), and entered
    at BUILD; a queued task is claimed and entered at PLAN with **no git
    isolation** (it writes only the task file, in the main tree). The composed

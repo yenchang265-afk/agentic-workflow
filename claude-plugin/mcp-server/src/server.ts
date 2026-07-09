@@ -90,7 +90,7 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/co
 
 const directory = process.env.AGENTIC_LOOP_DIR ?? process.cwd()
 /**
- * Where to read the base branch for a fresh `loop/<id>` worktree. `directory`
+ * Where to read the base branch for a fresh `feature/<id>` worktree. `directory`
  * (the canonical root: backlog + worktree parent) is frozen at server launch
  * on the main checkout — usually the default branch — so worktrees would
  * always cut from it. Point `AGENTIC_LOOP_BASE_DIR` at the tree you actually
@@ -505,7 +505,7 @@ server.registerTool(
   "loop_isolate",
   {
     description:
-      "Explicitly ensure the loop/<id> branch (or worktree when worktreesDir is set) exists. Normally loop_start does this; use it standalone only when recovering.",
+      "Explicitly ensure the feature/<id> branch (or worktree when worktreesDir is set) exists. Normally loop_start does this; use it standalone only when recovering.",
     inputSchema: {},
   },
   async () => {
@@ -1247,7 +1247,7 @@ async function main() {
   // Boot reconciliation: prune vanished worktrees, surface survivors (never auto-delete).
   if (config.worktreesDir) {
     await pruneWorktrees(sh, directory)
-    const worktrees = (await listWorktrees(sh, directory)).filter((w) => w.branch?.startsWith("loop/"))
+    const worktrees = (await listWorktrees(sh, directory)).filter((w) => w.branch?.startsWith("feature/"))
     for (const w of worktrees) await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — /agent-loop recover its task or remove it`)
   }
   await log("info", `agentic-loop MCP server ready (directory=${directory})`)

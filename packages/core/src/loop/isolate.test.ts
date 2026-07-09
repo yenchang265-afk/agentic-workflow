@@ -76,7 +76,7 @@ test("baseBranch overrides directory's branch — worktree cut from it", async (
   const $ = makeShell(gitHandler("main"), log)
   const next = await ensureIsolation($, noopLog, "/repo", config, state, "feature-x")
   assert.equal(next.git?.base, "feature-x")
-  assert.ok(log.some((c) => c.includes(`worktree add -b loop/add-foo ${WT} feature-x`)))
+  assert.ok(log.some((c) => c.includes(`worktree add -b feature/add-foo ${WT} feature-x`)))
   // Override wins outright — the directory's current branch is never consulted.
   assert.ok(!log.some((c) => c.includes("abbrev-ref HEAD")))
 })
@@ -86,7 +86,7 @@ test("without baseBranch, base falls back to directory's current branch", async 
   const $ = makeShell(gitHandler("dev"), log)
   const next = await ensureIsolation($, noopLog, "/repo", config, state)
   assert.equal(next.git?.base, "dev")
-  assert.ok(log.some((c) => c.includes(`worktree add -b loop/add-foo ${WT} dev`)))
+  assert.ok(log.some((c) => c.includes(`worktree add -b feature/add-foo ${WT} dev`)))
 })
 
 test("detached HEAD with no baseBranch → no isolation, no worktree created", async () => {

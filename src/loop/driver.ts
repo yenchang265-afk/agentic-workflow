@@ -736,7 +736,7 @@ export const drive = async (
   while (step.action.kind === "fire") {
     const { stage, arguments: args } = step.action
     // Every code-writing stage runs isolated: its own worktree (worktree mode)
-    // or the loop/<id> branch in the shared tree (default). Created on the
+    // or the feature/<id> branch in the shared tree (default). Created on the
     // first build; reconciled before every stage in case the tree/worktree
     // moved — including a snapshot-based `/agent-loop recover` that re-enters
     // directly at verify/review, where isolation must be re-established, not

@@ -14,7 +14,7 @@ polling timer (default 5m, e.g. `/agent-loop watch 30s`) — build-ready
 task runs the PLAN stage: the plan is written onto the task file (main tree,
 no branch) and the task **parks in `plan-review/`** for the human plan gate
 — the loop exits rather than blocking. Execution is
-isolated on a `loop/<id>` git branch with a commit checkpoint per build
+isolated on a `feature/<id>` git branch with a commit checkpoint per build
 iteration; VERIFY/REVIEW record their verdicts through a `loop_verdict`
 plugin tool (free-text verdicts are ignored), and every approval, verdict,
 and build run is appended to the task file as a timestamped, attributed

@@ -73,7 +73,7 @@ would all have been available to VERIFY/REVIEW.
 
 One task's half-finished diff leaks into another task's build or review.
 
-- **Control:** each execution runs on its own `loop/<id>` branch with a
+- **Control:** each execution runs on its own `feature/<id>` branch with a
   commit checkpoint per build iteration; REVIEW is told the exact
   `git diff base...branch` boundary; an atomic claim marker prevents two
   watchers from taking the same task. In shared-tree mode a per-directory

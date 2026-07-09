@@ -89,7 +89,7 @@ author tasks with `/agent-loop-task new <idea>`, approve them with
 A queued task enters at PLAN — it writes the plan onto the task file in the
 main tree (no branch, no worktree) and parks. An approved-plan task enters at
 BUILD with the plan persisted on the task file (`## Implementation Plan`).
-Build execution is isolated on a `loop/<id>` git branch with a commit
+Build execution is isolated on a `feature/<id>` git branch with a commit
 checkpoint per build iteration. On a VERIFY FAIL within the
 iteration cap it **re-builds** with the failure feedback; on a REVIEW FAIL
 within the cap it re-builds with the review's feedback; on a VERIFY/REVIEW

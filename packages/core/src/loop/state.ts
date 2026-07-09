@@ -72,7 +72,7 @@ export interface LoopState {
   /**
    * The git base/branch (and worktree) this loop's stages operate on. A PR-shaped
    * source pre-sets `{base, branch}` to name the PR's head to isolate ONTO; the
-   * engineering loop leaves it unset until `ensureIsolation` creates `loop/<id>`.
+   * engineering loop leaves it unset until `ensureIsolation` creates `feature/<id>`.
    * Because a source can pre-set it, `git` being present does NOT imply isolation
    * was established — use `isolated` for that.
    */
