@@ -14,9 +14,9 @@ Two loop kinds ship today:
 - **engineering** (default-on) — a goal through PLAN → BUILD → VERIFY → REVIEW
   over the `docs/tasks/` backlog, with human task and plan gates.
 - **pr-sitter** (opt-in) — sits on your open PRs (GitHub, or Azure DevOps via
-  config `codePlatform: "ado"` for the `az` CLI / `"ado-mcp"` for the ADO MCP
-  server): triages review comments, failing checks, and merge conflicts; fixes;
-  verifies; pushes and replies. Never merges.
+  config `codePlatform: "ado"` for its REST API, PAT auth): triages review
+  comments, failing checks, and merge conflicts; fixes; verifies; pushes and
+  replies. Never merges.
 
 Authoring a new kind is a `loop.json` + stage prompts away — see
 [`loops/README.md`](loops/README.md).
@@ -74,9 +74,10 @@ closing, and approving stay human calls. Security posture:
 ## Install
 
 The steps below assume the system prerequisites are already present (Node ≥ 20,
-git, `gh`, and — for ADO/browser work — `az` and Chrome). For a fresh machine,
-`./bootstrap.sh` verifies/installs those, registers the external MCP servers
-(`chrome-devtools`, `ado`), and then runs `./install.sh` for you:
+git, `gh`, `curl`, and — for browser work — Chrome). Azure DevOps needs only
+`curl` plus a PAT in `AZURE_DEVOPS_EXT_PAT`. For a fresh machine, `./bootstrap.sh`
+verifies/installs those, registers the `chrome-devtools` MCP server, and then
+runs `./install.sh` for you:
 
 ```bash
 ./bootstrap.sh                 # everything; or --no-ado / --no-browser / --check-only

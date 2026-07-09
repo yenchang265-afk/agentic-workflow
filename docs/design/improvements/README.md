@@ -20,7 +20,7 @@ against source at time of writing), the residual risks in
 | 04 | [Verdict quality](./04-verdict-quality.md) | Structured failure reasons feed re-builds; optional multi-lens review | `packages/core/src/loop/verdict.ts`; `verdict.test.ts` |
 | 05 | [Secret redaction](./05-secret-redaction.md) | Secrets scrubbed from durable artifacts before write | `packages/core/src/task/redact.ts`, wired in `packages/core/src/task/store.ts`; `redact.test.ts` |
 | 06 | [Run metrics](./06-run-metrics.md) | Per-run stage timings + verdict history in the run log | `packages/core/src/loop/metrics.ts`; `metrics.test.ts` |
-| 07 | [Multi-loop scheduler](./07-multi-loop-scheduler.md) | One scheduler drives many loop kinds (engineering + PR sitter); `@agentic-loop/core` extracted so both plugins share one implementation | `packages/core/src/manifest/` (schema, registry, template), `packages/core/src/scheduler/` (scheduler, lease), `packages/core/src/source/` (backlog, github-pr, ado-pr, ado-mcp-pr, ledger); `loops/engineering/`, `loops/pr-sitter/` |
+| 07 | [Multi-loop scheduler](./07-multi-loop-scheduler.md) | One scheduler drives many loop kinds (engineering + PR sitter); `@agentic-loop/core` extracted so both plugins share one implementation | `packages/core/src/manifest/` (schema, registry, template), `packages/core/src/scheduler/` (scheduler, lease), `packages/core/src/source/` (backlog, github-pr, ado-pr, ledger); `loops/engineering/`, `loops/pr-sitter/` |
 
 Residuals each plan explicitly deferred (bash worktree pinning, cross-process
 `index.lock` races, metrics export, redaction knobs) remain open — see

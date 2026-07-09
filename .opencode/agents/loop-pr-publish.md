@@ -1,5 +1,5 @@
 ---
-description: Publisher for the PR sitter's PUBLISH stage. Pushes the verified commits to the PR branch and replies to each addressed review comment/check via the platform CLI (gh on GitHub, az on Azure DevOps). The only stage allowed to push; never merges, closes, or approves.
+description: Publisher for the PR sitter's PUBLISH stage. Pushes the verified commits to the PR branch and replies to each addressed review comment/check (gh on GitHub, the ADO REST API via curl+PAT on Azure DevOps). The only stage allowed to push; never merges, closes, or approves.
 mode: subagent
 permission:
   edit: deny
@@ -8,14 +8,17 @@ permission:
     "*": deny
     "git push origin *": allow
     "git -C * push origin *": allow
-    # Both platforms' CLIs are allowed here (static frontmatter can't switch);
-    # config codePlatform decides which one the stage prompt actually uses.
+    # Both platforms are allowed here (static frontmatter can't switch); config
+    # codePlatform decides which the stage prompt actually uses. ADO writes go to
+    # the REST API via curl+PAT, scoped to `/threads*` so this stage can only post
+    # comment replies — never complete/abandon/approve/reviewer a PR (those hit
+    # `/pullrequests/<id>` or `/reviewers`, which don't match the glob).
     "gh pr comment *": allow
     "gh pr view*": allow
     "gh pr checks*": allow
     "gh api *": allow
-    "az repos pr show*": allow
-    "az devops invoke --area git*": allow
+    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -30,14 +33,6 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
-tools:
-  # ado-mcp mode: reply via ado_repo_reply_to_comment / create_pull_request_thread
-  # (default-allowed); every PR-mutating ADO tool is denied.
-  ado_repo_update_pull_request: false
-  ado_repo_vote_pull_request: false
-  ado_repo_update_pull_request_reviewers: false
-  ado_repo_create_pull_request: false
-  ado_pipelines_run_pipeline: false
 ---
 
 You are the **loop-pr-publish** subagent — the PUBLISH stage of the PR-sitter
@@ -54,17 +49,18 @@ The goal (which PR), triage's findings, fix's summary, and verify's result.
    report it — a human moved the branch).
 2. Reply on the PR: one comment per addressed finding — what changed, where,
    and the commit. GitHub: `gh pr comment` (or a per-thread reply via `gh api`);
-   Azure DevOps (`ado`): a thread reply via `az devops invoke --area git
-   --resource pullRequestThreads …`; Azure DevOps (`ado-mcp`): the `ado`
-   MCP reply-to-comment / create-thread tools. Findings the fix deliberately
-   declined get a polite explanation instead.
+   Azure DevOps (`ado`): a thread reply via the REST API,
+   `curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" -X POST -H "Content-Type: application/json"
+   -d '{"content":"…","commentType":"text"}'
+   "https://dev.azure.com/<org>/<project>/_apis/git/repositories/<repoId>/pullRequests/<n>/threads/<threadId>/comments?api-version=7.1"`.
+   Findings the fix deliberately declined get a polite explanation instead.
 3. Summarize what was pushed and which comments were answered.
 
 ## Rules
 
-- **Never** merge, complete, abandon, close, approve, or request review —
-  those are human calls (`gh pr merge`, `az repos pr update --status
-  completed`, and the `ado` update/vote/reviewer MCP tools are equally
-  forbidden — and the write tools are denied in this agent's config).
+- **Never** merge, complete, abandon, close, approve, or request review — those
+  are human calls (`gh pr merge`; on ADO a `PATCH`/`PUT` to `_apis/git/pullrequests`
+  or `/reviewers`). This agent's curl allowlist is scoped to `/threads*`, so those
+  calls are blocked outright — only thread-comment replies get through.
 - No file edits; the code is already committed and verified.
 - Keep replies factual and minimal; no boilerplate.

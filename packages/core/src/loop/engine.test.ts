@@ -328,7 +328,7 @@ test("pr-sitter: a missing triage verdict reads as FAIL (nothing to do), never a
 
 // --- code-platform prompt switching (additive; the oracle above is untouched) ---
 
-test("pr-sitter prompts render gh guidance by default and az guidance when the state is stamped ado", () => {
+test("pr-sitter prompts render gh guidance by default and ADO REST guidance when the state is stamped ado", () => {
   const sitter = loadManifest(LOOPS_DIR, "pr-sitter")
   const state: LoopState = {
     kind: "pr-sitter",
@@ -340,35 +340,15 @@ test("pr-sitter prompts render gh guidance by default and az guidance when the s
   }
   const gh = composePrompt(sitter, state, "triage")
   assert.match(gh, /gh pr view/)
-  assert.doesNotMatch(gh, /az repos/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
   const ado = composePrompt(sitter, { ...state, platform: "ado" }, "triage")
-  assert.match(ado, /az repos pr show/)
+  assert.match(ado, /_apis\/git\/pullrequests/)
+  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
   assert.doesNotMatch(ado, /gh pr view/)
+  assert.doesNotMatch(ado, /az repos/) // the az CLI is fully gone from the ado path
   const publish = composePrompt(sitter, { ...state, platform: "ado", stage: "publish" }, "publish")
-  assert.match(publish, /az devops invoke/)
+  assert.match(publish, /threads\/<threadId>\/comments/)
   assert.match(publish, /NEVER complete, abandon, or approve/)
-  assert.doesNotMatch(publish, /gh pr comment/)
-})
-
-test("pr-sitter prompts render ado MCP guidance when the state is stamped ado-mcp, and neither gh nor az", () => {
-  const sitter = loadManifest(LOOPS_DIR, "pr-sitter")
-  const state: LoopState = {
-    kind: "pr-sitter",
-    goal: "PR #7",
-    stage: "triage",
-    iteration: 0,
-    artifacts: {},
-    git: { base: "main", branch: "feat/x" },
-    platform: "ado-mcp",
-  }
-  const triage = composePrompt(sitter, state, "triage")
-  assert.match(triage, /mcp__ado__repo_get_pull_request_by_id/)
-  // The toggle-bug regression: ado-mcp must NOT fall through to the github block.
-  assert.doesNotMatch(triage, /gh pr view/)
-  assert.doesNotMatch(triage, /az repos/)
-  const publish = composePrompt(sitter, { ...state, stage: "publish" }, "publish")
-  assert.match(publish, /mcp__ado__repo_reply_to_comment/)
-  assert.match(publish, /NEVER complete, abandon, approve/)
   assert.doesNotMatch(publish, /gh pr comment/)
   assert.doesNotMatch(publish, /az devops invoke/)
 })

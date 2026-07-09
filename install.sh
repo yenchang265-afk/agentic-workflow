@@ -217,17 +217,15 @@ configure() {
   echo
   echo "Which code platform do your PRs live on?"
   echo "  [1] GitHub (default)"
-  echo "  [2] Azure DevOps (az CLI)"
-  echo "  [3] Azure DevOps (MCP server)"
+  echo "  [2] Azure DevOps (REST API + PAT)"
   choice="$(ask "Choice" "1")"
   case "$choice" in
     2) platform="ado" ;;
-    3) platform="ado-mcp" ;;
     *) platform="github" ;;
   esac
   add_member "\"codePlatform\":\"$platform\""
 
-  if [ "$platform" = "ado" ] || [ "$platform" = "ado-mcp" ]; then
+  if [ "$platform" = "ado" ]; then
     local org project repo login
     org="$(ask_required "Azure DevOps organization URL (e.g. https://dev.azure.com/acme)")"
     project="$(ask_required "Azure DevOps project name")"
@@ -235,19 +233,19 @@ configure() {
       skip "config wizard — Azure DevOps organization and project are required (aborted, nothing written)"
       return
     fi
-    login=""
-    if [ "$platform" = "ado-mcp" ]; then
-      login="$(ask_required "Your ADO login/email for comment filtering (ado.selfLogin)")"
-      if [ -z "$login" ]; then
-        skip "config wizard — ado.selfLogin is required for ado-mcp (aborted, nothing written)"
-        return
-      fi
+    # A PAT carries no reliable email identity, so selfLogin is required for ado.
+    login="$(ask_required "Your ADO login/email for comment filtering (ado.selfLogin)")"
+    if [ -z "$login" ]; then
+      skip "config wizard — ado.selfLogin is required for ado (a PAT cannot resolve it; aborted, nothing written)"
+      return
     fi
-    repo="$(ask "Repository name (blank = az CLI default)" "")"
+    repo="$(ask "Repository name (blank = all repos in the project)" "")"
     local ado="\"organization\":\"$(json_escape "$org")\",\"project\":\"$(json_escape "$project")\""
     [ -n "$repo" ] && ado="$ado,\"repository\":\"$(json_escape "$repo")\""
-    [ -n "$login" ] && ado="$ado,\"selfLogin\":\"$(json_escape "$login")\""
+    ado="$ado,\"selfLogin\":\"$(json_escape "$login")\""
     add_member "\"ado\":{$ado}"
+    echo
+    echo "  → Azure DevOps auth: export AZURE_DEVOPS_EXT_PAT with a PAT scoped to Code (read) + Pull Request (contribute)."
   fi
 
   # Q2 — PR sitter.

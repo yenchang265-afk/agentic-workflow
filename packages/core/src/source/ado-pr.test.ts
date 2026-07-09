@@ -4,15 +4,16 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { makeAdoPrSource } from "./ado-pr.js"
+import { makeAdoPrSource, type AdoHttp } from "./ado-pr.js"
 
 /**
- * The ado-pr source over the real pr-sitter manifest, against a scripted
- * `az`/git shell — the mirror of github-pr.test.ts. Covers the normalization
- * (ref stripping, conflicts → CONFLICTING, negative vote → CHANGES_REQUESTED,
- * policy failures → failingChecks), the filtering (drafts, forks, other
- * authors, own/system comments), claim/fetch mechanics, and terminal ledger
- * writes.
+ * The ado-pr source over the real pr-sitter manifest, against a scripted ADO
+ * REST transport (`http`) plus a scripted git/claim shell (`$`) — the mirror of
+ * github-pr.test.ts. Covers the normalization (ref stripping, conflicts →
+ * CONFLICTING, negative vote → CHANGES_REQUESTED, policy failures →
+ * failingChecks), the filtering (drafts, forks, other authors, own/system
+ * comments), PAT/identity preconditions, claim/fetch mechanics, and terminal
+ * ledger writes.
  */
 
 const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..", "loops")
@@ -20,7 +21,7 @@ const sitter = loadManifest(LOOPS_DIR, "pr-sitter")
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
 
-/** Scripted shell: first matching prefix wins; unmatched commands succeed empty. */
+/** Scripted git/claim shell: first matching prefix wins; unmatched commands succeed empty. */
 const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
@@ -49,6 +50,17 @@ const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
+type Route = { match: string; status?: number; body?: string }
+
+/** Scripted ADO REST transport: first route whose `match` is a substring of the URL wins. */
+const scriptedHttp = (routes: Route[], log: string[] = []): AdoHttp => async (url) => {
+  log.push(url)
+  const hit = routes.find((r) => url.includes(r.match))
+  const status = hit?.status ?? 200
+  const body = hit?.body ?? ""
+  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
+}
+
 /** Client whose reads serve ledger files from an in-memory map. */
 const ledgerClient = (ledgers: Record<string, string>): Client => ({
   file: {
@@ -75,20 +87,29 @@ const pr = (over: Record<string, unknown> = {}) => ({
   createdBy: { uniqueName: "Sitter@Acme.com" },
   lastMergeSourceCommit: { commitId: "sha-1" },
   reviewers: [] as unknown[],
-  repository: { id: "repo-guid", name: "widgets" },
+  repository: { id: "repo-guid", name: "widgets", project: { id: "proj-guid" } },
   ...over,
 })
 
+/** The ADO PR-list REST response wraps the array in `{ value: [...] }`. */
+const listBody = (prs: unknown[]) => JSON.stringify({ value: prs })
 const threads = (comments: unknown[]) => JSON.stringify({ value: [{ isDeleted: false, comments }] })
 
-const source = (prs: unknown[], opts: { ledgers?: Record<string, string>; script?: Cmd[]; log?: string[] } = {}) =>
+type Opts = {
+  ledgers?: Record<string, string>
+  routes?: Route[]
+  shellScript?: Cmd[]
+  shellLog?: string[]
+  httpLog?: string[]
+  pat?: string
+}
+
+const source = (prs: unknown[], opts: Opts = {}) =>
   makeAdoPrSource({
-    $: scriptedShell(
-      [
-        { cmd: "az repos pr list", result: { stdout: JSON.stringify(prs) } },
-        ...(opts.script ?? []),
-      ],
-      opts.log,
+    $: scriptedShell(opts.shellScript ?? [], opts.shellLog),
+    http: scriptedHttp(
+      [{ match: "/pullrequests?searchCriteria", body: listBody(prs) }, ...(opts.routes ?? [])],
+      opts.httpLog,
     ),
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",
@@ -96,23 +117,24 @@ const source = (prs: unknown[], opts: { ledgers?: Record<string, string>; script
     log: () => {},
     loaded: sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+    pat: opts.pat ?? "test-pat",
     now: () => "2026-07-05T00:00:00Z",
   })
 
-const failingPolicy = {
-  cmd: "az repos pr policy list --id 7",
-  result: {
-    stdout: JSON.stringify([
+const failingPolicy: Route = {
+  match: "/policy/evaluations",
+  body: JSON.stringify({
+    value: [
       { status: "rejected", configuration: { isBlocking: true, type: { displayName: "Build" } } },
       { status: "approved", configuration: { isBlocking: true, type: { displayName: "Reviewers" } } },
       { status: "rejected", configuration: { isBlocking: false, type: { displayName: "Optional Build" } } },
-    ]),
-  },
+    ],
+  }),
 }
 
 test("claims a PR with a failing policy: refs stripped, goal names the failure, state stamped ado", async () => {
   const log: string[] = []
-  const { item, skip } = await source([pr()], { script: [failingPolicy], log }).claimNext()
+  const { item, skip } = await source([pr()], { routes: [failingPolicy], shellLog: log }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, "pr-7")
   assert.equal(item?.entryStage, "triage")
@@ -150,7 +172,7 @@ test("skips drafts, fork PRs, other authors' PRs, and system/own comments", asyn
     },
   ])
   const { item, skip } = await source(prs, {
-    script: [{ cmd: "az devops invoke", result: { stdout: ownAndSystem } }],
+    routes: [{ match: "/threads", body: ownAndSystem }],
   }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /no PRs need attention \(4 active/)
@@ -170,65 +192,72 @@ test("a human comment newer than the ledger watermark triggers a claim; an older
     threads([{ commentType: "text", publishedDate: at, author: { uniqueName: "alice@acme.com" } }])
   const old = await source([pr()], {
     ledgers,
-    script: [{ cmd: "az devops invoke", result: { stdout: comment("2026-07-03T00:00:00Z") } }],
+    routes: [{ match: "/threads", body: comment("2026-07-03T00:00:00Z") }],
   }).claimNext()
   assert.equal(old.item, null)
   const fresh = await source([pr()], {
     ledgers,
-    script: [{ cmd: "az devops invoke", result: { stdout: comment("2026-07-05T00:00:00Z") } }],
+    routes: [{ match: "/threads", body: comment("2026-07-05T00:00:00Z") }],
   }).claimNext()
   assert.match(fresh.item?.state.goal ?? "", /1 unanswered comment/)
 })
 
 test("a held claim marker reports actionably and claims nothing", async () => {
   const { item, skip } = await source([pr({ mergeStatus: "conflicts" })], {
-    script: [{ cmd: "mkdir /r/docs/tasks/runs/pr-sitter/.claims/pr-7", result: { exitCode: 1 } }],
+    shellScript: [{ cmd: "mkdir /r/docs/tasks/runs/pr-sitter/.claims/pr-7", result: { exitCode: 1 } }],
   }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /claim marker held for pr-7/)
   assert.equal(skip?.actionable, true)
 })
 
-test("az failure surfaces as an actionable skip naming the extension and auth", async () => {
+test("a REST list failure surfaces as an actionable skip naming the PAT and scope", async () => {
   const src = makeAdoPrSource({
-    $: scriptedShell([{ cmd: "az repos pr list", result: { exitCode: 1, stderr: "az: 'repos' is not in the 'az' command group" } }]),
+    $: scriptedShell([]),
+    http: scriptedHttp([{ match: "/pullrequests?searchCriteria", status: 401 }]),
     client: ledgerClient({}),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
     loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+    pat: "test-pat",
     now: () => "2026-07-05T00:00:00Z",
   })
   const { skip } = await src.claimNext()
-  assert.match(skip?.message ?? "", /az repos pr list failed — az: 'repos' is not in the 'az' command group/)
-  assert.match(skip?.message ?? "", /azure-devops az extension/)
+  assert.match(skip?.message ?? "", /pull-request list failed — HTTP 401/)
+  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
+  assert.match(skip?.message ?? "", /Code \(read\) scope/)
   assert.equal(skip?.actionable, true)
 })
 
-test("onTerminal(done) records the post-push head + comment watermark from az", async () => {
+test("a missing PAT skips actionably, naming the env var to set", async () => {
+  const { item, skip } = await source([pr({ mergeStatus: "conflicts" })], { pat: "" }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /Azure DevOps PAT not set/)
+  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("onTerminal(done) records the post-push head + comment watermark from the REST API", async () => {
   const log: string[] = []
   const src = source([pr({ mergeStatus: "conflicts" })], {
-    script: [
+    routes: [
       {
-        cmd: "az repos pr show --id 7",
-        result: {
-          stdout: JSON.stringify({
-            lastMergeSourceCommit: { commitId: "sha-own-push" },
-            repository: { id: "repo-guid" },
-          }),
-        },
+        match: "/pullrequests/7?",
+        body: JSON.stringify({
+          lastMergeSourceCommit: { commitId: "sha-own-push" },
+          repository: { id: "repo-guid" },
+        }),
       },
       {
-        cmd: "az devops invoke",
-        result: {
-          stdout: threads([
-            { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
-          ]),
-        },
+        match: "/threads",
+        body: threads([
+          { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
+        ]),
       },
     ],
-    log,
+    shellLog: log,
   })
   const { item } = await src.claimNext()
   assert.ok(item)
@@ -242,7 +271,7 @@ test("onTerminal(done) records the post-push head + comment watermark from az", 
 
 test("onTerminal(stop) records a failed attempt pinned to the claimed head", async () => {
   const log: string[] = []
-  const src = source([pr({ mergeStatus: "conflicts" })], { log })
+  const src = source([pr({ mergeStatus: "conflicts" })], { shellLog: log })
   const { item } = await src.claimNext()
   assert.ok(item)
   await src.onTerminal?.(item, { kind: "stop", message: "capped" })
@@ -252,42 +281,17 @@ test("onTerminal(stop) records a failed attempt pinned to the claimed head", asy
   assert.match(write ?? "", /merge-conflict/)
 })
 
-test("selfLogin config short-circuits identity lookup; without it az identity is asked", async () => {
-  const log: string[] = []
-  await source([pr()], { log }).claimNext()
-  assert.ok(!log.some((c) => c.startsWith("az ad signed-in-user")))
-  const noSelf: string[] = []
+test("unresolvable identity (no selfLogin) skips actionably instead of sitting on everyone's PRs", async () => {
   const src = makeAdoPrSource({
-    $: scriptedShell(
-      [
-        { cmd: "az repos pr list", result: { stdout: JSON.stringify([pr()]) } },
-        { cmd: "az ad signed-in-user show", result: { stdout: "sitter@acme.com\n" } },
-      ],
-      noSelf,
-    ),
+    $: scriptedShell([]),
+    http: scriptedHttp([{ match: "/pullrequests?searchCriteria", body: listBody([pr({ mergeStatus: "conflicts" })]) }]),
     client: ledgerClient({}),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
     loaded: sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  await src.claimNext()
-  assert.ok(noSelf.some((c) => c.startsWith("az ad signed-in-user")))
-})
-
-test("unresolvable identity (PAT-only auth, no selfLogin) skips actionably instead of sitting on everyone's PRs", async () => {
-  const src = makeAdoPrSource({
-    // Unmatched identity commands succeed with empty stdout — same signature
-    // as PAT-only auth where az has no signed-in account to report.
-    $: scriptedShell([{ cmd: "az repos pr list", result: { stdout: JSON.stringify([pr({ mergeStatus: "conflicts" })]) } }]),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+    pat: "test-pat",
     now: () => "2026-07-05T00:00:00Z",
   })
   const { item, skip } = await src.claimNext()
@@ -317,7 +321,7 @@ test("variable-precision ADO timestamps compare numerically against the watermar
   ])
   const { item } = await source([pr()], {
     ledgers,
-    script: [{ cmd: "az devops invoke", result: { stdout: older } }],
+    routes: [{ match: "/threads", body: older }],
   }).claimNext()
   assert.equal(item, null)
 })

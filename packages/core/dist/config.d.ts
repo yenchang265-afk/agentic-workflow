@@ -16,7 +16,6 @@ import { type TrackerSystem } from "./task/schema.js";
 export declare const CodePlatformSchema: z.ZodEnum<{
     github: "github";
     ado: "ado";
-    "ado-mcp": "ado-mcp";
 }>;
 export type CodePlatform = z.infer<typeof CodePlatformSchema>;
 /**
@@ -47,13 +46,11 @@ export declare const ConfigSchema: z.ZodObject<{
         codePlatform: z.ZodOptional<z.ZodEnum<{
             github: "github";
             ado: "ado";
-            "ado-mcp": "ado-mcp";
         }>>;
     }, z.core.$loose>>>;
     codePlatform: z.ZodDefault<z.ZodEnum<{
         github: "github";
         ado: "ado";
-        "ado-mcp": "ado-mcp";
     }>>;
     ado: z.ZodOptional<z.ZodObject<{
         organization: z.ZodString;

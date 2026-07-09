@@ -66,7 +66,7 @@ export interface LoopState {
     /**
      * The git base/branch (and worktree) this loop's stages operate on. A PR-shaped
      * source pre-sets `{base, branch}` to name the PR's head to isolate ONTO; the
-     * engineering loop leaves it unset until `ensureIsolation` creates `loop/<id>`.
+     * engineering loop leaves it unset until `ensureIsolation` creates `feature/<id>`.
      * Because a source can pre-set it, `git` being present does NOT imply isolation
      * was established — use `isolated` for that.
      */
@@ -106,24 +106,22 @@ export type Action = {
 };
 /**
  * The code-management platforms PR-shaped work sources can talk to — the single
- * source of truth. `ado` reaches Azure DevOps through the `az` CLI; `ado-mcp`
- * reaches the same Azure DevOps through the Microsoft ADO MCP server, with data
- * gathered by an agent session and handed back to the source (see
- * `source/ado-mcp-pr.ts`). Both share the `ado` config section.
+ * source of truth. `ado` reaches Azure DevOps through its REST API with a PAT
+ * (see `source/ado-pr.ts`), using the `ado` config section.
  */
-export declare const CODE_PLATFORMS: readonly ["github", "ado", "ado-mcp"];
+export declare const CODE_PLATFORMS: readonly ["github", "ado"];
 export type CodePlatform = (typeof CODE_PLATFORMS)[number];
-/** Azure DevOps coordinates, required when any effective platform is `ado`/`ado-mcp`. */
+/** Azure DevOps coordinates, required when any effective platform is `ado`. */
 export interface AdoConfig {
     /** Organization URL, e.g. "https://dev.azure.com/acme". */
     readonly organization: string;
     readonly project: string;
-    /** Repository name; omitted → the az CLI's configured default (`ado` only). */
+    /** Repository name; omitted → all repositories in the project. */
     readonly repository?: string;
     /**
-     * The sitter's own login for comment/author filtering. Optional for `ado`
-     * (the CLI can resolve identity), **required** for `ado-mcp` (the MCP server
-     * has no reliable whoami tool). Enforced in `config.ts`.
+     * The sitter's own login for comment/author filtering. **Required** for `ado`:
+     * a PAT carries no reliable email identity, so it can't be resolved otherwise.
+     * Enforced in `config.ts`.
      */
     readonly selfLogin?: string;
 }

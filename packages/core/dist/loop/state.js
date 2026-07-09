@@ -28,12 +28,10 @@
 export const STAGES = ["plan", "build", "verify", "review"];
 /**
  * The code-management platforms PR-shaped work sources can talk to — the single
- * source of truth. `ado` reaches Azure DevOps through the `az` CLI; `ado-mcp`
- * reaches the same Azure DevOps through the Microsoft ADO MCP server, with data
- * gathered by an agent session and handed back to the source (see
- * `source/ado-mcp-pr.ts`). Both share the `ado` config section.
+ * source of truth. `ado` reaches Azure DevOps through its REST API with a PAT
+ * (see `source/ado-pr.ts`), using the `ado` config section.
  */
-export const CODE_PLATFORMS = ["github", "ado", "ado-mcp"];
+export const CODE_PLATFORMS = ["github", "ado"];
 /** Construct a LoopState entering execution at build, for a claimed
  *  in-progress task whose plan was approved via `/agent-loop-task approve-plan`. */
 export const resumeAtBuild = (goal, task, plan) => ({

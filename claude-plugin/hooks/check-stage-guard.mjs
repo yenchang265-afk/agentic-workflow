@@ -14,11 +14,12 @@
  *     (<tasksDir>/runs/.stage.json via loop_stage/loop_advance).
  *  2. Worktree pinning — while a worktree-isolated loop is active, edit/write
  *     tools may not touch absolute paths outside the worktree.
- *  3. Azure DevOps MCP write backstop — ALWAYS ON: the PR sitter's ado-mcp mode
- *     may only read PRs and reply to comments; PR-mutating MCP tools (complete/
- *     abandon/approve/reviewers/run-pipeline/create-PR) are denied outright.
- *     The agent frontmatter tools list is the primary control; this is
- *     defense-in-depth in case an agent is mis-authored (threat-model T8).
+ *  3. Azure DevOps write backstop — ALWAYS ON: the PR sitter reaches ADO over
+ *     its REST API (curl + PAT) and may only GET (read) or POST a thread-comment
+ *     reply. Any other write — PATCH/PUT/DELETE, or a POST outside a `/threads`
+ *     resource (complete/abandon/approve/reviewers/run-pipeline/create-PR) — is
+ *     denied outright. The stage prompts + host-pinned allowlist are the primary
+ *     control; this is defense-in-depth (threat-model T8).
  *
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
@@ -48,16 +49,26 @@ const REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ]
 const toRe = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")
 const matchesAny = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()))
 
-// Azure DevOps MCP tools that can mutate a PR — never available to the sitter
-// (server named `ado` by convention; the stage prompts + agent frontmatter
-// only ever call the read-only tools + repo_reply_to_comment / create-thread).
-const ADO_WRITE_TOOLS = new Set([
-  "mcp__ado__repo_update_pull_request", // complete / abandon / reactivate
-  "mcp__ado__repo_vote_pull_request", // approve / reject
-  "mcp__ado__repo_update_pull_request_reviewers",
-  "mcp__ado__repo_create_pull_request",
-  "mcp__ado__pipelines_run_pipeline",
-])
+// A Bash command that calls the Azure DevOps REST API (curl against an ADO host).
+const isAdoCurl = (cmd) =>
+  /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd)
+
+// The effective HTTP method of a curl: an explicit -X/--request wins, else a body
+// flag (-d/--data*/-F/--form) implies POST, else GET.
+const curlMethod = (cmd) => {
+  const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd)
+  if (explicit) return explicit[1].toUpperCase()
+  return /(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b/.test(cmd) ? "POST" : "GET"
+}
+
+// The sitter may only read (GET) or append a thread-comment reply (POST to a
+// `/threads` resource). Anything else against ADO mutates the PR — deny it.
+const isAdoWriteBackstopViolation = (cmd) => {
+  if (!isAdoCurl(cmd)) return false
+  const method = curlMethod(cmd)
+  const targetsThread = /\/threads(?:\/|\?|\b)/i.test(cmd)
+  return !(method === "GET" || (method === "POST" && targetsThread))
+}
 
 // tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
 const readTasksDir = (cwd) => {
@@ -161,13 +172,14 @@ const main = async () => {
   const tool = input.tool_name
   const ti = input.tool_input || {}
 
-  // (3) ADO MCP write backstop — always on. The sitter only reads PRs and posts
-  // thread replies; every PR-mutating ADO MCP tool is off-limits (threat-model T8).
-  if (ADO_WRITE_TOOLS.has(tool)) {
+  // (3) ADO REST write backstop — always on. The sitter reaches ADO via curl+PAT
+  // and may only GET or POST a thread-comment reply; every PR-mutating call is
+  // off-limits (threat-model T8).
+  if (tool === "Bash" && isAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block(
-      `agentic-loop: the PR sitter must never mutate a pull request — "${tool}" is blocked. ` +
-        `Only read-only ADO MCP tools and repo_reply_to_comment / repo_create_pull_request_thread are permitted; ` +
-        `merging, completing, abandoning, approving, and reviewer changes stay a human call.`,
+      `agentic-loop: the PR sitter must never mutate a pull request — this Azure DevOps REST call is blocked. ` +
+        `Only GET reads and thread-comment replies (POST to a /threads resource) are permitted; ` +
+        `merging, completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`,
     )
   }
 

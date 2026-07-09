@@ -168,22 +168,10 @@ it **never merges, closes, or approves**). A per-PR dedup ledger at
 watermarks, own-login filter) keeps it from reacting to its own pushes, and
 a failed attempt parks the PR until a human pushes a new head.
 
-The PR sitter reaches its platform per `codePlatform`: `github` (`gh`), `ado`
-(the `az` CLI), or `ado-mcp` (the Microsoft ADO MCP server named `ado`, for
-environments that forbid `az`). In every mode the stages behave identically;
-only the inspect/reply tools differ, and the stage prompt says which to use.
-
-**ado-mcp claim is two-phase** (the polling process can't call MCP tools, so an
-agent gathers the data first):
-
-1. Call `loop_claim` as usual. If it returns `{claimed:null, needsAdoData:{request,
-   guidance}}`, the sitter needs Azure DevOps data it can't fetch itself.
-2. Spawn the **`loop-pr-poll`** subagent (Task tool) with `guidance` as its prompt;
-   it calls the read-only `ado` MCP tools and returns one JSON bundle.
-3. Call `loop_claim` again passing that JSON as `adoData`. It now claims the PR (or
-   returns null if nothing needs attention) and you drive triage → … → publish as
-   normal. `github` and `ado` modes never take this detour — `loop_claim` claims
-   directly.
+The PR sitter reaches its platform per `codePlatform`: `github` (`gh`) or
+`ado` (Azure DevOps via its REST API, PAT in `AZURE_DEVOPS_EXT_PAT`). In both
+modes the stages behave identically; only the inspect/reply tools differ, and
+the stage prompt says which to use.
 
 ## What is different from the OpenCode version
 

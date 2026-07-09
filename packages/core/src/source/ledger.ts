@@ -59,7 +59,7 @@ export const saveLedger = async ($: Shell, directory: string, tasksDir: string, 
   await $`printf '%s' ${JSON.stringify(ledger, null, 2)} > ${file}`.quiet().nothrow()
 }
 
-/** What a polled PR currently looks like, normalized from the platform CLI (`gh pr list --json` / `az repos pr list`). */
+/** What a polled PR currently looks like, normalized from the platform API (`gh pr list --json` / the ADO pull-requests REST API). */
 export interface PrSnapshot {
   readonly number: number
   readonly title: string

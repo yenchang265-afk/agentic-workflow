@@ -14,7 +14,6 @@ import {
   onInterrupt,
   parseTaskArgs,
   parseWatchArgs,
-  recordAdoData,
   recordVerdict,
   type Deps,
 } from "./driver.ts"
@@ -198,13 +197,6 @@ test("onInterrupt is a silent no-op when not driving and not watching", async ()
   await onInterrupt(deps, "sess-never-watched")
 
   assert.equal(toasts.length, 0)
-})
-
-test("loop_ado_data is ignored when no ado-mcp poll is awaiting input in the session", () => {
-  // The full poll round-trip runs against a live opencode; here we lock the
-  // public contract: a bundle delivered with no poll in flight is a no-op.
-  const msg = recordAdoData("sess-with-no-poll", { viewerLogin: "x", pullRequests: [] })
-  assert.match(msg, /No ADO data poll is awaiting input/)
 })
 
 /**

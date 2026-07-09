@@ -356,9 +356,9 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
         <button class="tab" role="tab" id="tab-b" aria-controls="pan-b" aria-selected="false">Path B · manual</button>
       </div>
       <div class="tabpanel" id="pan-a" role="tabpanel" aria-labelledby="tab-a">
-        <p><code>bootstrap.sh</code> verifies/installs the system CLIs, registers the external MCP servers (Chrome DevTools, ADO), then hands off to <code>install.sh all</code>. It never automates auth — it prints reminders at the end.</p>
+        <p><code>bootstrap.sh</code> verifies/installs the system CLIs, registers the Chrome DevTools MCP server, then hands off to <code>install.sh all</code>. It never automates auth — it prints reminders at the end. Azure DevOps needs only <code>curl</code> + a PAT (<code>AZURE_DEVOPS_EXT_PAT</code>).</p>
         <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>./bootstrap.sh                 <span class="c"># everything</span>
-./bootstrap.sh --no-ado        <span class="c"># skip Azure CLI + ado MCP</span>
+./bootstrap.sh --no-ado        <span class="c"># skip the Azure DevOps prereq check</span>
 ./bootstrap.sh --no-browser    <span class="c"># skip Chrome + chrome-devtools MCP</span>
 ./bootstrap.sh --check-only    <span class="c"># report dependency status, change nothing</span></pre></div>
       </div>
@@ -370,7 +370,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
 ./install.sh                   <span class="c"># both plugins; or: opencode | claude</span></pre></div>
       </div>
 
-      <div class="note warn"><b>Authenticate yourself — installers never do.</b> After install, sign in to the platforms you use: <code>gh auth login</code> for GitHub, <code>az devops login</code> (or an <code>AZURE_DEVOPS_EXT_PAT</code>) for Azure DevOps. The Chrome DevTools MCP launches its own isolated Chrome profile on first use.</p></div>
+      <div class="note warn"><b>Authenticate yourself — installers never do.</b> After install, sign in to the platforms you use: <code>gh auth login</code> for GitHub, export <code>AZURE_DEVOPS_EXT_PAT</code> (a PAT with Code read + Pull Request contribute scopes) for Azure DevOps. The Chrome DevTools MCP launches its own isolated Chrome profile on first use.</p></div>
 
       <h3>Load the plugin</h3>
       <div class="two">
@@ -421,9 +421,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <details class="q"><summary><span class="step">Q1</span> Which code platform do your PRs live on?</summary>
         <div class="body">
           <div class="opt"><span>[1] GitHub <span style="color:var(--muted-txt)">(default)</span></span><span class="writes">codePlatform: "github"</span></div>
-          <div class="opt"><span>[2] Azure DevOps (az CLI)</span><span class="writes">codePlatform: "ado"</span></div>
-          <div class="opt"><span>[3] Azure DevOps (MCP server)</span><span class="writes">codePlatform: "ado-mcp"</span></div>
-          <p>Choosing an ADO option then prompts for the required <code>organization</code> URL and <code>project</code> (re-asked until given), an optional <code>repository</code>, and — for <code>ado-mcp</code> only — a required <code>selfLogin</code> for comment filtering.</p>
+          <div class="opt"><span>[2] Azure DevOps (REST API + PAT)</span><span class="writes">codePlatform: "ado"</span></div>
+          <p>Choosing Azure DevOps then prompts for the required <code>organization</code> URL and <code>project</code> (re-asked until given), a required <code>selfLogin</code> (a PAT can't resolve identity), and an optional <code>repository</code>. Set <code>AZURE_DEVOPS_EXT_PAT</code> to a PAT with Code (read) + Pull Request (contribute) scopes.</p>
           <div class="kv">writes → <b>codePlatform</b>, and <b>ado</b>: {organization, project, repository?, selfLogin?}</div>
         </div>
       </details>
@@ -561,8 +560,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
             <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>/agent-loop watch</code>. <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
             <tr><td><code>loops</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
-            <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh), <code>"ado"</code> (az CLI), or <code>"ado-mcp"</code> (ADO MCP server). Overridable per kind.</td></tr>
-            <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin?}</code>. Required for any ADO platform; <code>selfLogin</code> additionally required for <code>ado-mcp</code>.</td></tr>
+            <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (Azure DevOps REST API, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
+            <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
             <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
             <tr><td><code>worktreesDir</code></td><td><span class="def">unset</span></td><td>Run each loop in its own <code>git worktree</code> instead of switching branches. Pair with <code>worktreeSetup</code>.</td></tr>
             <tr><td><code>worktreeSetup</code></td><td><span class="def">unset</span></td><td>Shell command run in a fresh worktree, e.g. <code>"npm ci"</code>.</td></tr>

@@ -79,17 +79,14 @@ test("platformAllowlist defaults empty and effectiveAllowlist merges the platfor
       {
         ...base.stages[0],
         bashAllowlist: ["ls*"],
-        platformAllowlist: { github: ["gh pr view*"], ado: ["az repos pr show*"], "ado-mcp": [] },
+        platformAllowlist: { github: ["gh pr view*"], ado: ["curl*"] },
       },
       base.stages[1],
     ],
   })
   const def = withPlatform.stages[0]!
   assert.deepEqual(effectiveAllowlist(def, "github"), ["ls*", "gh pr view*"])
-  assert.deepEqual(effectiveAllowlist(def, "ado"), ["ls*", "az repos pr show*"])
-  // ado-mcp reaches ADO via MCP tools, not bash — the platform bash set is empty,
-  // so only the base bash allowlist applies.
-  assert.deepEqual(effectiveAllowlist(def, "ado-mcp"), ["ls*"])
+  assert.deepEqual(effectiveAllowlist(def, "ado"), ["ls*", "curl*"])
   assert.deepEqual(effectiveAllowlist(def, "other"), ["ls*"])
 })
 

@@ -20,17 +20,10 @@ import { loadManifest } from "@agentic-loop/core/manifest/load"
 import { effectiveAllowlist, stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
 import { pollOnce } from "@agentic-loop/core/scheduler/scheduler"
 import { makeAdoPrSource } from "@agentic-loop/core/source/ado-pr"
-import {
-  makeAdoMcpPrSource,
-  AdoDataBundleSchema,
-  describeAdoDataRequest,
-  type AdoDataBundle,
-  type AdoDataRequest,
-} from "@agentic-loop/core/source/ado-mcp-pr"
 import { makeBacklogSource } from "@agentic-loop/core/source/backlog"
 import { makeGithubPrSource } from "@agentic-loop/core/source/github-pr"
 import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
-import type { ClaimSkipReason, WorkSource } from "@agentic-loop/core/source/types"
+import type { WorkSource } from "@agentic-loop/core/source/types"
 import { enabledLoopKinds, platformFor } from "@agentic-loop/core/config"
 import { fileURLToPath } from "node:url"
 import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
@@ -128,9 +121,6 @@ let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
 let config: Config = DEFAULT_CONFIG
-// ADO data an agent gathered for the current loop_claim, set by the caller and
-// consumed by the ado-mcp source's provider within one poll (see loop_claim).
-let pendingAdoBundle: AdoDataBundle | null = null
 
 const loadCfg = async () => {
   try {
@@ -231,23 +221,6 @@ const sourcesFor = (): WorkSource[] =>
             loaded,
             // Config parse fails fast when platform "ado" lacks the ado section.
             ado: config.ado!,
-          }),
-        ]
-      }
-      if (platform === "ado-mcp") {
-        return [
-          makeAdoMcpPrSource({
-            $: sh,
-            client: fsClient,
-            directory,
-            tasksDir: config.tasksDir,
-            log,
-            loaded,
-            ado: config.ado!,
-            // The main agent pre-fetches ADO data and hands it to loop_claim; the
-            // provider serves that bundle within the same poll, else signals
-            // "needs data" so loop_claim can ask the agent to gather it.
-            provider: { fetch: async () => pendingAdoBundle },
           }),
         ]
       }
@@ -390,40 +363,14 @@ server.registerTool(
   "loop_claim",
   {
     description:
-      "Claim the next task and start it — the pull equivalent of the OpenCode plugin's /agent-loop watch. Build-ready in-progress/ tasks win over planless queued/ ones (finish work in flight before planning new work); within each pool, lowest priority number first. Returns null when both pools are empty. Azure DevOps MCP mode (codePlatform 'ado-mcp'): a first call may return {claimed:null, needsAdoData:{request, guidance}} — spawn the loop-pr-poll agent with `guidance`, then call loop_claim again passing its JSON as `adoData`.",
-    inputSchema: {
-      adoData: z
-        .unknown()
-        .optional()
-        .describe("For codePlatform 'ado-mcp': the JSON bundle the loop-pr-poll agent returned, from a prior needsAdoData response."),
-    },
+      "Claim the next task and start it — the pull equivalent of the OpenCode plugin's /agent-loop watch. Build-ready in-progress/ tasks win over planless queued/ ones (finish work in flight before planning new work); within each pool, lowest priority number first. Returns null when both pools are empty.",
+    inputSchema: {},
   },
-  async ({ adoData }) => {
+  async () => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    if (adoData !== undefined) {
-      const parsed = AdoDataBundleSchema.safeParse(adoData)
-      if (!parsed.success) return fail(`adoData did not match the expected bundle shape: ${parsed.error.issues.map((i) => `${i.path.join(".") || "(root)"} ${i.message}`).join("; ")}`)
-      pendingAdoBundle = parsed.data
-    }
-    let claim: PolledClaim | null
-    let skips: readonly ClaimSkipReason[]
-    try {
-      ;({ claim, skips } = await pollOnce(sourcesFor()))
-    } finally {
-      pendingAdoBundle = null // a bundle is valid for exactly one poll
-    }
+    const { claim, skips } = await pollOnce(sourcesFor())
     if (!claim) {
-      // In ado-mcp mode a source may need ADO data gathered by an agent first.
-      const needs = skips.find((s) => s.needsAdoData && s.request)
-      if (needs) {
-        const request = needs.request as AdoDataRequest
-        return ok({
-          claimed: null,
-          needsAdoData: { request, guidance: describeAdoDataRequest(request) },
-          note: "Spawn the loop-pr-poll agent with `guidance`, then call loop_claim again passing its JSON as `adoData`.",
-        })
-      }
       return ok(skips.length ? { claimed: null, skips } : null)
     }
     activeClaim = claim

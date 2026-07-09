@@ -26,10 +26,9 @@
           "gh pr view*", "gh pr checks*", "gh pr diff*", "gh api *", "gh run view*", "gh run list*"
         ],
         "ado": [
-          "az repos pr show*", "az repos pr list*", "az repos pr policy list*",
-          "az pipelines runs show*", "az pipelines runs list*", "az devops invoke --area git*"
-        ],
-        "ado-mcp": []
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
+        ]
       }
     },
     {
@@ -78,9 +77,9 @@
           "gh pr comment *", "gh pr view*", "gh pr checks*", "gh api *"
         ],
         "ado": [
-          "az repos pr show*", "az devops invoke --area git*"
-        ],
-        "ado-mcp": []
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
+        ]
       }
     }
   ],

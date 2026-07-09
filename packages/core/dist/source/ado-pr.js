@@ -1,6 +1,10 @@
 import { attentionTriggers, loadLedger, saveLedger } from "./ledger.js";
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js";
 import { AdoPolicySchema, AdoPrListSchema, AdoThreadsSchema, failingPolicyNames, flattenThreadComments, newerThan, sameLogin, stripRef, } from "./ado-shared.js";
+const defaultHttp = (url, init) => fetch(url, init);
+/** The env var holding the Azure DevOps PAT — the same name the `az` extension used, for continuity. */
+const PAT_ENV = "AZURE_DEVOPS_EXT_PAT";
+const API_VERSION = "api-version=7.1";
 export const makeAdoPrSource = (deps) => {
     const { $, client, directory, tasksDir, log, loaded, ado } = deps;
     const binding = loaded.manifest.workSource;
@@ -8,48 +12,51 @@ export const makeAdoPrSource = (deps) => {
         throw new Error(`loop kind "${loaded.manifest.kind}" does not use a hosted-PR work source`);
     }
     const now = deps.now ?? (() => new Date().toISOString());
-    const org = ado.organization;
-    const project = ado.project;
-    let viewerLogin = null;
-    /** The sitter's own login: config override, else the az identity, else "" (degrades like the gh path). */
-    const viewer = async () => {
-        if (viewerLogin !== null)
-            return viewerLogin;
-        if (ado.selfLogin)
-            return (viewerLogin = ado.selfLogin);
-        const aad = await $ `az ad signed-in-user show --query userPrincipalName -o tsv`.cwd(directory).quiet().nothrow();
-        if (aad.exitCode === 0 && aad.stdout.toString().trim())
-            return (viewerLogin = aad.stdout.toString().trim());
-        const acct = await $ `az account show --query user.name -o tsv`.cwd(directory).quiet().nothrow();
-        viewerLogin = acct.exitCode === 0 ? acct.stdout.toString().trim() : "";
-        return viewerLogin;
-    };
+    const http = deps.http ?? defaultHttp;
+    const pat = deps.pat ?? process.env[PAT_ENV] ?? "";
+    const org = ado.organization.replace(/\/+$/, "");
+    const project = encodeURIComponent(ado.project);
+    const login = ado.selfLogin ?? "";
     const markers = makeClaimMarkers($, directory, tasksDir);
+    const authHeader = `Basic ${Buffer.from(`:${pat}`).toString("base64")}`;
+    /** One authenticated GET. Never throws — a network error reads as a non-ok response, like the CLI's `nothrow()`. */
+    const get = async (url) => {
+        try {
+            const res = await http(url, { headers: { Authorization: authHeader, Accept: "application/json" } });
+            const body = await res.text().catch(() => "");
+            return { ok: res.ok, status: res.status, statusText: res.statusText, body };
+        }
+        catch (err) {
+            return { ok: false, status: 0, statusText: err.message, body: "" };
+        }
+    };
     /** Names of blocking policies currently failing on the PR (ADO's nearest equivalent of failing checks). */
-    const failingPolicies = async (pr) => {
-        const out = await $ `az repos pr policy list --id ${String(pr)} --organization ${org} --project ${project} -o json`
-            .cwd(directory)
-            .quiet()
-            .nothrow();
-        if (out.exitCode !== 0)
+    const failingPolicies = async (projectId, pr) => {
+        if (!projectId)
+            return [];
+        const artifactId = `vstfs:///CodeReview/CodeReviewId/${projectId}/${pr}`;
+        const url = `${org}/${project}/_apis/policy/evaluations?artifactId=${encodeURIComponent(artifactId)}&${API_VERSION}`;
+        const out = await get(url);
+        if (!out.ok)
             return [];
         try {
-            return failingPolicyNames(AdoPolicySchema.parse(JSON.parse(out.stdout.toString() || "[]")));
+            const json = JSON.parse(out.body || "{}");
+            return failingPolicyNames(AdoPolicySchema.parse(json.value ?? []));
         }
         catch {
             return [];
         }
     };
-    /** Non-system PR thread comments, flattened to `{ author, at }`, newest state from the REST resource. */
+    /** Non-system PR thread comments, flattened to `{ author, at }`, from the `pullRequestThreads` resource. */
     const threadComments = async (repositoryId, pr) => {
-        const out = await $ `az devops invoke --area git --resource pullRequestThreads --route-parameters ${`project=${project}`} ${`repositoryId=${repositoryId}`} ${`pullRequestId=${String(pr)}`} --organization ${org} --api-version 7.1 -o json`
-            .cwd(directory)
-            .quiet()
-            .nothrow();
-        if (out.exitCode !== 0)
+        if (!repositoryId)
+            return [];
+        const url = `${org}/${project}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/pullRequests/${pr}/threads?${API_VERSION}`;
+        const out = await get(url);
+        if (!out.ok)
             return [];
         try {
-            const threads = AdoThreadsSchema.parse(JSON.parse(out.stdout.toString() || "{}"));
+            const threads = AdoThreadsSchema.parse(JSON.parse(out.body || "{}"));
             return flattenThreadComments(threads.value ?? []);
         }
         catch {
@@ -59,49 +66,51 @@ export const makeAdoPrSource = (deps) => {
     return {
         loopKind: loaded.manifest.kind,
         async claimNext() {
-            // Two branches instead of a conditional fragment: the Shell quotes every
-            // interpolation as a single argument, so "--repository x" can't be spliced.
-            const out = ado.repository
-                ? await $ `az repos pr list --status active --top 100 --organization ${org} --project ${project} --repository ${ado.repository} -o json`
-                    .cwd(directory)
-                    .quiet()
-                    .nothrow()
-                : await $ `az repos pr list --status active --top 100 --organization ${org} --project ${project} -o json`
-                    .cwd(directory)
-                    .quiet()
-                    .nothrow();
-            if (out.exitCode !== 0) {
+            if (!pat) {
                 return {
                     item: null,
                     skip: {
-                        message: `pr-sitter: az repos pr list failed — ${out.stderr.toString().trim() || "unknown error"}. ` +
-                            `Is the azure-devops az extension installed and authenticated (az devops login / AZURE_DEVOPS_EXT_PAT)?`,
+                        message: `pr-sitter: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Code (read) scope so the ` +
+                            `sitter can call the ADO REST API.`,
+                        actionable: true,
+                    },
+                };
+            }
+            if (!login) {
+                // A PAT can't resolve the sitter's own identity; config.ts enforces this,
+                // and this is the defensive guard for direct construction.
+                return {
+                    item: null,
+                    skip: {
+                        message: "pr-sitter: could not resolve the sitter's own ADO identity (a PAT cannot) — " +
+                            "set ado.selfLogin in .agentic-loop.json so the sitter only claims its own PRs.",
+                        actionable: true,
+                    },
+                };
+            }
+            const listUrl = ado.repository
+                ? `${org}/${project}/_apis/git/repositories/${encodeURIComponent(ado.repository)}/pullrequests?searchCriteria.status=active&$top=100&${API_VERSION}`
+                : `${org}/${project}/_apis/git/pullrequests?searchCriteria.status=active&$top=100&${API_VERSION}`;
+            const out = await get(listUrl);
+            if (!out.ok) {
+                return {
+                    item: null,
+                    skip: {
+                        message: `pr-sitter: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
+                            `Is ${PAT_ENV} a valid token with Code (read) scope, and are ado.organization/project correct?`,
                         actionable: true,
                     },
                 };
             }
             let prs;
             try {
-                prs = AdoPrListSchema.parse(JSON.parse(out.stdout.toString() || "[]"));
+                const json = JSON.parse(out.body || "{}");
+                prs = AdoPrListSchema.parse(json.value ?? []);
             }
             catch (err) {
                 return {
                     item: null,
-                    skip: { message: `pr-sitter: could not parse az output — ${err.message}`, actionable: true },
-                };
-            }
-            const login = await viewer();
-            if (!login) {
-                // Unlike gh's server-side `author:@me`, the author filter here is
-                // client-side — with no identity it would sit on EVERY active PR in
-                // the project. Fail actionably instead of degrading.
-                return {
-                    item: null,
-                    skip: {
-                        message: "pr-sitter: could not resolve the sitter's own ADO identity (PAT-only auth can't) — " +
-                            "set ado.selfLogin in .agentic-loop.json so the sitter only claims its own PRs.",
-                        actionable: true,
-                    },
+                    skip: { message: `pr-sitter: could not parse the ADO response — ${err.message}`, actionable: true },
                 };
             }
             const heldIds = [];
@@ -121,9 +130,8 @@ export const makeAdoPrSource = (deps) => {
                 const ledger = await loadLedger(client, directory, tasksDir, number, now());
                 const watermark = ledger.lastCommentAtHandled ?? "";
                 const enabled = binding.triggers;
-                const comments = enabled.includes("new-comments")
-                    ? await threadComments(pr.repository?.id || pr.repository?.name || "", number)
-                    : [];
+                const repositoryId = pr.repository?.id || pr.repository?.name || "";
+                const comments = enabled.includes("new-comments") ? await threadComments(repositoryId, number) : [];
                 const snapshot = {
                     number,
                     title: pr.title,
@@ -132,7 +140,9 @@ export const makeAdoPrSource = (deps) => {
                     headRefOid,
                     mergeable: (pr.mergeStatus ?? "").toLowerCase() === "conflicts" ? "CONFLICTING" : "MERGEABLE",
                     reviewDecision: (pr.reviewers ?? []).some((r) => r.vote < 0) ? "CHANGES_REQUESTED" : "",
-                    failingChecks: enabled.includes("failing-checks") ? await failingPolicies(number) : [],
+                    failingChecks: enabled.includes("failing-checks")
+                        ? await failingPolicies(pr.repository?.project?.id ?? "", number)
+                        : [],
                     newComments: comments.filter((c) => !sameLogin(c.author, login) && newerThan(c.at, watermark)),
                 };
                 const triggers = attentionTriggers(snapshot, ledger, binding.triggers);
@@ -169,15 +179,12 @@ export const makeAdoPrSource = (deps) => {
             const ledger = await loadLedger(client, directory, tasksDir, snapshot.number, now());
             // Re-read the PR head: after a publish it is the sitter's own push, and
             // recording it as handled is exactly what prevents self-triggering.
-            const fresh = await $ `az repos pr show --id ${String(snapshot.number)} --organization ${org} -o json`
-                .cwd(directory)
-                .quiet()
-                .nothrow();
+            const fresh = await get(`${org}/${project}/_apis/git/pullrequests/${snapshot.number}?${API_VERSION}`);
             let head = snapshot.headRefOid;
             let repositoryId = "";
-            if (fresh.exitCode === 0) {
+            if (fresh.ok) {
                 try {
-                    const data = JSON.parse(fresh.stdout.toString());
+                    const data = JSON.parse(fresh.body);
                     head = data.lastMergeSourceCommit?.commitId ?? head;
                     repositoryId = data.repository?.id ?? data.repository?.name ?? "";
                 }

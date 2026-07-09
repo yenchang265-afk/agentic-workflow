@@ -1,12 +1,10 @@
 import { z } from "zod"
 
 /**
- * The pure Azure DevOps normalizers shared by the two ADO work sources:
- * `ado-pr.ts` (the `az` CLI) and `ado-mcp-pr.ts` (the Microsoft ADO MCP server,
- * fed by an agent session). Both consume the raw ADO REST `GitPullRequest`
- * shape — the CLI prints it, the MCP server returns it — so the field schemas,
- * identifier semantics, and thread-comment flattening live here once and the
- * two sources differ only in HOW they obtain the raw data.
+ * The pure Azure DevOps normalizers for the `ado-pr.ts` work source, which
+ * reaches Azure DevOps over its REST API (PAT auth). The raw ADO REST
+ * `GitPullRequest` shape, identifier semantics, and thread-comment flattening
+ * live here so the source stays a thin transport over these pure functions.
  */
 
 /** `refs/heads/x` → `x`. */
@@ -43,7 +41,14 @@ export const AdoPrFieldsSchema = z.object({
   reviewers: z.array(z.object({ vote: z.number().default(0) })).nullish(),
   /** Present when the PR comes from a fork — same skip rule as GitHub's `isCrossRepository`. */
   forkSource: z.unknown().nullish(),
-  repository: z.object({ id: z.string().default(""), name: z.string().default("") }).nullish(),
+  repository: z
+    .object({
+      id: z.string().default(""),
+      name: z.string().default(""),
+      /** Project GUID — needed to build the CodeReview artifact ID for policy evaluations. */
+      project: z.object({ id: z.string().default("") }).nullish(),
+    })
+    .nullish(),
 })
 
 export const AdoPrListSchema = z.array(AdoPrFieldsSchema)

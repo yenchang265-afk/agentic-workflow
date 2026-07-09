@@ -79,31 +79,44 @@ test("codePlatform defaults to github and rejects unknown platforms", () => {
   assert.throws(() => parseConfig({ codePlatform: "gitlab" }), /Invalid .*codePlatform/)
 })
 
-test("global codePlatform ado requires the ado section", () => {
+test("global codePlatform ado requires the ado section and a selfLogin", () => {
   assert.throws(() => parseConfig({ codePlatform: "ado" }), /requires an 'ado' section/)
+  // A PAT can't resolve identity, so selfLogin is required.
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { organization: "https://dev.azure.com/acme", project: "widgets" } }),
+    /requires ado\.selfLogin/,
+  )
   const c = parseConfig({
     codePlatform: "ado",
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
   })
   assert.equal(c.codePlatform, "ado")
   assert.equal(c.ado?.project, "widgets")
   assert.equal(platformFor(c, "pr-sitter"), "ado")
 })
 
-test("per-loop codePlatform overrides the global default and also requires the ado section", () => {
+test("per-loop codePlatform overrides the global default and also requires the ado section and selfLogin", () => {
   assert.throws(
     () => parseConfig({ loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } } }),
     /requires an 'ado' section/,
   )
+  assert.throws(
+    () =>
+      parseConfig({
+        loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } },
+        ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+      }),
+    /requires ado\.selfLogin/,
+  )
   const c = parseConfig({
     loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } },
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
   })
   assert.equal(platformFor(c, "pr-sitter"), "ado")
   assert.equal(platformFor(c, "engineering"), "github")
   const back = parseConfig({
     codePlatform: "ado",
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
     loops: { "pr-sitter": { enabled: true, codePlatform: "github" } },
   })
   assert.equal(platformFor(back, "pr-sitter"), "github")
@@ -111,7 +124,8 @@ test("per-loop codePlatform overrides the global default and also requires the a
 
 test("ado section fields are validated", () => {
   assert.throws(
-    () => parseConfig({ codePlatform: "ado", ado: { organization: "", project: "p" } }),
+    () =>
+      parseConfig({ codePlatform: "ado", ado: { organization: "", project: "p", selfLogin: "sitter@acme.com" } }),
     /Invalid .*ado/,
   )
 })
@@ -158,38 +172,3 @@ test("trackerUrl appends the key to baseUrl, or returns undefined without one", 
   assert.equal(trackerUrl(undefined, "PROJ-123"), undefined)
 })
 
-test("codePlatform ado-mcp requires the ado section and a selfLogin", () => {
-  // needs the ado section like ado
-  assert.throws(() => parseConfig({ codePlatform: "ado-mcp" }), /requires an 'ado' section/)
-  // ...and additionally requires selfLogin (no whoami tool on the MCP server)
-  assert.throws(
-    () => parseConfig({ codePlatform: "ado-mcp", ado: { organization: "https://dev.azure.com/acme", project: "widgets" } }),
-    /requires ado\.selfLogin/,
-  )
-  const c = parseConfig({
-    codePlatform: "ado-mcp",
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-  })
-  assert.equal(platformFor(c, "pr-sitter"), "ado-mcp")
-})
-
-test("per-loop ado-mcp override also requires the ado section and selfLogin", () => {
-  assert.throws(
-    () => parseConfig({ loops: { "pr-sitter": { enabled: true, codePlatform: "ado-mcp" } } }),
-    /requires an 'ado' section/,
-  )
-  assert.throws(
-    () =>
-      parseConfig({
-        loops: { "pr-sitter": { enabled: true, codePlatform: "ado-mcp" } },
-        ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
-      }),
-    /requires ado\.selfLogin/,
-  )
-  const c = parseConfig({
-    loops: { "pr-sitter": { enabled: true, codePlatform: "ado-mcp" } },
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-  })
-  assert.equal(platformFor(c, "pr-sitter"), "ado-mcp")
-  assert.equal(platformFor(c, "engineering"), "github")
-})

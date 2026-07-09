@@ -200,33 +200,19 @@ push to any branch, comment anywhere, sometimes merge.
   with a fine-grained PAT scoped to contents:write + pull-requests:write on
   the repos it sits on, and protect release branches on the forge. The same
   holds on Azure DevOps (`codePlatform: "ado"`): the sitter uses only push +
-  thread replies (`az devops invoke --area git`), completing/abandoning a PR
-  is excluded everywhere, and a scoped `AZURE_DEVOPS_EXT_PAT` (Code
-  read/write) is the hard-containment equivalent. Two allowlist-breadth
-  notes: the manifest's stage allowlists are platform-scoped
+  thread replies (`curl` POST to
+  `_apis/git/repositories/<repo>/pullRequests/<n>/threads/<id>/comments`),
+  completing/abandoning a PR is excluded everywhere, and a scoped
+  `AZURE_DEVOPS_EXT_PAT` (Code read + Pull Request contribute) is the
+  hard-containment equivalent. The ADO allowlist is host-pinned `curl`
+  (`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`) plus a PreToolUse backstop hook
+  (`check-stage-guard.mjs`) that permits **only** GET reads and POSTs to a
+  `/threads` resource — blocking complete/abandon, approve/reject reviewer
+  votes, reviewer edits, create-PR, and run-pipeline. One allowlist-breadth
+  note: the manifest's stage allowlists are platform-scoped
   (`platformAllowlist.github`/`.ado` merged at stage-marker time, so only the
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
-  static YAML and deliberately carries **both** platforms' globs; and the
-  `az devops invoke --area git*` glob is prefix matching — wider than one
-  REST resource, though still confined to the git area.
-- **Azure DevOps over MCP (`codePlatform: "ado-mcp"`):** the same posture holds
-  when ADO is reached through the Microsoft ADO MCP server instead of `az`. The
-  sitter still uses only push + thread replies — here `mcp__ado__repo_reply_to_comment`
-  / `repo_create_pull_request_thread`. Every PR-mutating MCP tool is excluded on
-  two independent layers: the stage agents' `tools:` allowlists omit them (a
-  Claude subagent physically cannot call a tool absent from its list — the
-  primary control), and the PreToolUse hook additionally blocks
-  `mcp__ado__repo_update_pull_request` (complete/abandon/reactivate),
-  `repo_vote_pull_request` (approve/reject), `repo_update_pull_request_reviewers`,
-  `repo_create_pull_request`, and `pipelines_run_pipeline` outright as a backstop
-  against a mis-authored agent. The claim-time data path is **agent-mediated**: a
-  read-only `loop-pr-poll` agent gathers PR/thread/build data via the `ado` MCP
-  tools and returns a JSON bundle; the source Zod-validates its **structure** but
-  treats every string (PR titles, comments, build logs) as **untrusted data**
-  that flows into goal text and the ledger exactly as `az`/`gh` output does today
-  — never as instructions (see T1). The `ado` MCP server's own auth (Entra / a
-  scoped PAT) is the hard-containment equivalent of the `AZURE_DEVOPS_EXT_PAT`
-  scoping above.
+  static YAML and deliberately carries **both** platforms' globs.
 
 ### T9. Ledger tampering replays or suppresses work
 

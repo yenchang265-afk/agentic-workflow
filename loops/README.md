@@ -99,9 +99,9 @@ completed stage's captured output; the approved plan under `artifacts.plan`),
 `git.base`/`git.branch`/`git.worktree`/`git.diffCmd` (precomputed review diff
 command), `worktree.instructions` (the standard pinning paragraph — every
 kind gets isolation discipline for free by including it), and
-`platform.github`/`platform.ado`/`platform.adoMcp` (exactly one is truthy,
-per the resolved code platform — pr-sitter stages branch on these to pick
-`gh` vs `az` vs ADO-MCP guidance).
+`platform.github`/`platform.ado` (exactly one is truthy, per the resolved
+code platform — pr-sitter stages branch on these to pick `gh` vs ADO REST
+(`curl`) guidance).
 
 ## Work sources
 
@@ -115,15 +115,12 @@ per the resolved code platform — pr-sitter stages branch on these to pick
   fork PRs are skipped; the PR's head is fetched into a local branch at claim
   so isolation reuses it. The concrete platform is resolved from config
   `codePlatform` at wiring time: `github` polls `gh pr list --search <query>`;
-  `ado` polls `az repos pr list` (the sitter's own active PRs) with failing
-  checks read from blocking branch policies — a repo without a build policy
-  never fires `failing-checks`; `ado-mcp` reaches the same Azure DevOps through
-  the Microsoft ADO MCP server (for environments that forbid `az`) via a
-  read-only poll agent that hands the source a data bundle (`source/ado-mcp-pr.ts`;
-  normalizers shared with `ado` in `source/ado-shared.ts`). Stage
+  `ado` polls the REST API
+  (`_apis/git/pullrequests?searchCriteria.status=active`, the sitter's own
+  active PRs) with failing checks read from blocking branch policy evaluations
+  — a repo without a build policy never fires `failing-checks`. Stage
   `platformAllowlist` entries merge into `bashAllowlist` for the resolved
-  platform — `ado-mcp` adds no bash (ADO happens via MCP tools, gated by the
-  stage agents' tool lists and a PreToolUse backstop hook).
+  platform.
 
 ## The TS escape hatch
 

@@ -4,12 +4,13 @@
 #
 # install.sh installs the *plugins* (npm workspaces + symlinks + the bundled
 # MCP server) but assumes the system prerequisites already exist. This script
-# fills that gap: it verifies/installs the system CLIs (Node 20+, git, gh, az,
-# Chrome), registers the external MCP servers (chrome-devtools, ado) that the
-# loop's skills expect, and finally delegates to ./install.sh both.
+# fills that gap: it verifies/installs the system CLIs (Node 20+, git, curl, gh,
+# Chrome), registers the chrome-devtools MCP server the loop's skills expect,
+# and finally delegates to ./install.sh both.
 #
 # Auth is never automated — the script only reminds you to run `gh auth login`
-# / `az devops login` at the end. Re-run any time; every step is idempotent.
+# and (for Azure DevOps) export AZURE_DEVOPS_EXT_PAT at the end. Re-run any
+# time; every step is idempotent.
 
 set -euo pipefail
 
@@ -24,14 +25,15 @@ usage() {
   cat <<'EOF'
 Usage:
   ./bootstrap.sh                  # install everything, then ./install.sh both
-  ./bootstrap.sh --no-ado         # skip Azure CLI + the ado MCP server
+  ./bootstrap.sh --no-ado         # skip the Azure DevOps prerequisite check
   ./bootstrap.sh --no-browser     # skip Chrome + the chrome-devtools MCP server
   ./bootstrap.sh --check-only     # report status of every dependency, change nothing
   ./bootstrap.sh -h | --help
 
-Covers: Node.js >=20, git, curl, gh (GitHub CLI), az (Azure CLI + azure-devops
-extension), Google Chrome, the chrome-devtools & ado MCP servers, and the
-in-repo JS deps (via ./install.sh). Auth steps are printed, never run for you.
+Covers: Node.js >=20, git, curl, gh (GitHub CLI), Google Chrome, the
+chrome-devtools MCP server, and the in-repo JS deps (via ./install.sh). Azure
+DevOps needs only curl + a PAT (AZURE_DEVOPS_EXT_PAT). Auth steps are printed,
+never run for you.
 EOF
 }
 
@@ -190,40 +192,19 @@ ensure_gh() {
 }
 
 # ---------------------------------------------------------------------------
-# az (Azure CLI) + azure-devops extension  (ADO modes only)
+# Azure DevOps prerequisites (ADO mode only)
 # ---------------------------------------------------------------------------
-ensure_az() {
+# codePlatform "ado" talks to the Azure DevOps REST API over curl (ensured
+# above) with a Personal Access Token — there is nothing extra to install.
+ensure_ado() {
   if [ "$WANT_ADO" -eq 0 ]; then
-    skip "az / Azure DevOps (--no-ado)"
+    skip "Azure DevOps (--no-ado)"
     return 0
   fi
-  if command -v az >/dev/null 2>&1; then
-    ok "az $(az version --query '\"azure-cli\"' -o tsv 2>/dev/null || echo present)"
+  if command -v curl >/dev/null 2>&1; then
+    ok "Azure DevOps: REST API over curl (auth via AZURE_DEVOPS_EXT_PAT)"
   else
-    todo "az (Azure CLI) not found"
-    if cannot_install; then
-      case "$PKG" in
-        apt) note_manual "az: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash" ;;
-        brew) note_manual "az: brew install azure-cli" ;;
-        *) note_manual "az: https://learn.microsoft.com/cli/azure/install-azure-cli" ;;
-      esac
-      note_manual "az extension: az extension add --name azure-devops"
-      return 0
-    fi
-    case "$PKG" in
-      apt) curl -sL https://aka.ms/InstallAzureCLIDeb | $SUDO bash ;;
-      brew) brew install azure-cli ;;
-    esac
-  fi
-  # azure-devops extension (idempotent)
-  if command -v az >/dev/null 2>&1; then
-    if az extension show --name azure-devops >/dev/null 2>&1; then
-      ok "az extension: azure-devops"
-    elif [ "$CHECK_ONLY" -eq 1 ]; then
-      todo "az extension: azure-devops (missing)"
-    else
-      az extension add --name azure-devops --only-show-errors && ok "az extension: azure-devops"
-    fi
+    todo "Azure DevOps needs curl (see the curl step above)"
   fi
 }
 
@@ -275,30 +256,14 @@ ensure_chrome() {
 }
 
 # ---------------------------------------------------------------------------
-# External MCP servers: chrome-devtools + ado (idempotent, user-global config)
+# External MCP server: chrome-devtools (idempotent, user-global config)
 # ---------------------------------------------------------------------------
-
-# Pull ado.organization out of a repo-root .agentic-loop.json if present.
-# Uses jq when available; falls back to a permissive grep.
-ado_org() {
-  local cfg="$REPO_DIR/.agentic-loop.json"
-  [ -f "$cfg" ] || return 1
-  if command -v jq >/dev/null 2>&1; then
-    jq -r '.ado.organization // empty' "$cfg" 2>/dev/null
-  else
-    grep -oE '"organization"[[:space:]]*:[[:space:]]*"[^"]+"' "$cfg" 2>/dev/null \
-      | head -1 | sed -E 's/.*"([^"]+)"$/\1/'
-  fi
-}
 
 register_mcp_claude() {
   if ! command -v claude >/dev/null 2>&1; then
     echo "claude CLI not found — add these to .mcp.json / Claude settings manually:"
     if [ "$WANT_BROWSER" -eq 1 ]; then
       echo '    "chrome-devtools": { "command": "npx", "args": ["-y", "chrome-devtools-mcp@latest", "--isolated"] }'
-    fi
-    if [ "$WANT_ADO" -eq 1 ]; then
-      echo '    "ado": { "command": "npx", "args": ["-y", "@azure-devops/mcp", "<your-org>"] }'
     fi
     return 0
   fi
@@ -316,41 +281,20 @@ register_mcp_claude() {
         && ok "mcp(claude): chrome-devtools registered"
     fi
   fi
-
-  if [ "$WANT_ADO" -eq 1 ]; then
-    if printf '%s' "$existing" | grep -q '^ado'; then
-      ok "mcp(claude): ado"
-    else
-      local org; org="$(ado_org || true)"
-      if [ -z "$org" ]; then
-        note_manual "ado MCP (claude): set ado.organization in .agentic-loop.json, then: claude mcp add ado -- npx -y @azure-devops/mcp <org>"
-      elif [ "$CHECK_ONLY" -eq 1 ]; then
-        todo "mcp(claude): ado (would register for org '$org')"
-      else
-        claude mcp add ado -- npx -y @azure-devops/mcp "$org" \
-          && ok "mcp(claude): ado registered (org '$org')"
-      fi
-    fi
-  fi
 }
 
 register_mcp_opencode() {
   local cfg_dir="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
   local cfg="$cfg_dir/opencode.json"
 
-  # Build the desired mcp entries.
-  local org=""; [ "$WANT_ADO" -eq 1 ] && org="$(ado_org || true)"
-
   if ! command -v jq >/dev/null 2>&1; then
     echo "jq not found — add an \"mcp\" block to $cfg manually:"
     [ "$WANT_BROWSER" -eq 1 ] && echo '    "chrome-devtools": { "type": "local", "command": ["npx", "-y", "chrome-devtools-mcp@latest", "--isolated"], "enabled": true }'
-    [ "$WANT_ADO" -eq 1 ] && [ -n "$org" ] && echo "    \"ado\": { \"type\": \"local\", \"command\": [\"npx\", \"-y\", \"@azure-devops/mcp\", \"$org\"], \"enabled\": true }"
-    [ "$WANT_ADO" -eq 1 ] && [ -z "$org" ] && note_manual "ado MCP (opencode): set ado.organization in .agentic-loop.json before registering"
     return 0
   fi
 
   if [ "$CHECK_ONLY" -eq 1 ]; then
-    todo "mcp(opencode): would merge chrome-devtools$([ "$WANT_ADO" -eq 1 ] && [ -n "$org" ] && echo " + ado") into $cfg"
+    todo "mcp(opencode): would merge chrome-devtools into $cfg"
     return 0
   fi
 
@@ -363,18 +307,12 @@ register_mcp_opencode() {
   if [ "$WANT_BROWSER" -eq 1 ]; then
     filter="$filter"' | .mcp["chrome-devtools"] = {"type":"local","command":["npx","-y","chrome-devtools-mcp@latest","--isolated"],"enabled":true}'
   fi
-  if [ "$WANT_ADO" -eq 1 ] && [ -n "$org" ]; then
-    filter="$filter"' | .mcp["ado"] = {"type":"local","command":["npx","-y","@azure-devops/mcp","'"$org"'"],"enabled":true}'
-  fi
   if jq "$filter" "$cfg" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$cfg"
     ok "mcp(opencode): merged into $cfg"
   else
     rm -f "$tmp"
     note_manual "opencode MCP: failed to merge into $cfg — edit it by hand"
-  fi
-  if [ "$WANT_ADO" -eq 1 ] && [ -z "$org" ]; then
-    note_manual "ado MCP (opencode): set ado.organization in .agentic-loop.json, then re-run"
   fi
 }
 
@@ -390,7 +328,7 @@ ensure_node
 ensure_simple git git git
 ensure_simple curl curl curl
 ensure_gh
-ensure_az
+ensure_ado
 ensure_chrome
 echo
 
@@ -423,7 +361,7 @@ fi
 echo "== next: authenticate (not automated) =="
 echo "  - GitHub:       gh auth login"
 if [ "$WANT_ADO" -eq 1 ]; then
-  echo "  - Azure DevOps: az devops login   (or export AZURE_DEVOPS_EXT_PAT=<pat>)"
+  echo "  - Azure DevOps: export AZURE_DEVOPS_EXT_PAT=<pat>   (Code read + Pull Request contribute scopes)"
 fi
 if [ "$WANT_BROWSER" -eq 1 ]; then
   echo "  - chrome-devtools MCP launches its own isolated Chrome profile on first use."

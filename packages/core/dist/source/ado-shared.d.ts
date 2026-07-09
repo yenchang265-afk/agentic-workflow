@@ -1,11 +1,9 @@
 import { z } from "zod";
 /**
- * The pure Azure DevOps normalizers shared by the two ADO work sources:
- * `ado-pr.ts` (the `az` CLI) and `ado-mcp-pr.ts` (the Microsoft ADO MCP server,
- * fed by an agent session). Both consume the raw ADO REST `GitPullRequest`
- * shape — the CLI prints it, the MCP server returns it — so the field schemas,
- * identifier semantics, and thread-comment flattening live here once and the
- * two sources differ only in HOW they obtain the raw data.
+ * The pure Azure DevOps normalizers for the `ado-pr.ts` work source, which
+ * reaches Azure DevOps over its REST API (PAT auth). The raw ADO REST
+ * `GitPullRequest` shape, identifier semantics, and thread-comment flattening
+ * live here so the source stays a thin transport over these pure functions.
  */
 /** `refs/heads/x` → `x`. */
 export declare const stripRef: (ref: string) => string;
@@ -40,6 +38,9 @@ export declare const AdoPrFieldsSchema: z.ZodObject<{
     repository: z.ZodOptional<z.ZodNullable<z.ZodObject<{
         id: z.ZodDefault<z.ZodString>;
         name: z.ZodDefault<z.ZodString>;
+        project: z.ZodOptional<z.ZodNullable<z.ZodObject<{
+            id: z.ZodDefault<z.ZodString>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>>;
 }, z.core.$strip>;
 export declare const AdoPrListSchema: z.ZodArray<z.ZodObject<{
@@ -62,6 +63,9 @@ export declare const AdoPrListSchema: z.ZodArray<z.ZodObject<{
     repository: z.ZodOptional<z.ZodNullable<z.ZodObject<{
         id: z.ZodDefault<z.ZodString>;
         name: z.ZodDefault<z.ZodString>;
+        project: z.ZodOptional<z.ZodNullable<z.ZodObject<{
+            id: z.ZodDefault<z.ZodString>;
+        }, z.core.$strip>>>;
     }, z.core.$strip>>>;
 }, z.core.$strip>>;
 /** One PR comment thread. */
