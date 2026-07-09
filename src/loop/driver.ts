@@ -1674,7 +1674,20 @@ export const handleCommand = async (
 
   if (lower === "ship" || lower.startsWith("ship ")) {
     const id = arg.slice("ship".length).trim()
-    if (!id) return void (await toast(client, "Usage: /agent-loop ship <id>.", "warning"))
+    // No id → ship the single in-review/ task (id only needed to disambiguate).
+    if (!id) {
+      const pick = await resolveGateTask(deps, config, "", ["in-review"])
+      if (!pick.ok) {
+        if (pick.kind === "none") return void (await toast(client, "Nothing awaiting ship.", "info"))
+        return void (await toast(client, pick.message, pick.variant))
+      }
+      try {
+        await doShip(deps, config, pick.task)
+      } catch (err) {
+        await toast(client, `Ship failed for "${pick.task.id}": ${(err as Error).message}`, "error")
+      }
+      return
+    }
     const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-review", id)
     if (!task) {
       // Locate it for a precise error instead of a bare "not found".
@@ -1842,7 +1855,7 @@ export const handleCommand = async (
   // unrecognized gets usage help instead of silently becoming a goal.
   await toast(
     client,
-    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · approve [id] · reject [id] [reason] · watch [interval] · unwatch · recover <id> · ship <id> · doctor [fix] · stop · status. ` +
+    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · approve [id] · reject [id] [reason] · watch [interval] · unwatch · recover <id> · ship [id] · doctor [fix] · stop · status. ` +
       "Author tasks with /agent-loop-task.",
     "warning",
   )

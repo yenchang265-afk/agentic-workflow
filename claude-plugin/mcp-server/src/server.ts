@@ -1016,6 +1016,14 @@ const approveAny = async (id: string): Promise<GateResult> => {
   return shipTask(pick.id) // in-review
 }
 
+/** ship shortcut: id optional — ships the single in-review/ task when omitted. */
+const shipAny = async (id: string): Promise<GateResult> => {
+  if (id) return shipTask(id)
+  const pick = await resolveGateTask("", ["in-review"])
+  if (!pick.ok) return { ok: false, message: pick.kind === "none" ? "Nothing awaiting ship." : pick.message }
+  return shipTask(pick.id)
+}
+
 /**
  * reject shortcut: send a parked plan back to queued/ for re-planning. Auto-targets
  * the single plan-review/ task; an explicit leading id may also name a cap-tripped
@@ -1122,10 +1130,10 @@ server.registerTool(
 
 server.registerTool(
   "loop_ship",
-  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. /agent-loop approve (loop_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string() } },
+  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agent-loop approve (loop_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
   async ({ id }) => {
     await loadCfg()
-    const r = await shipTask(id)
+    const r = await shipAny((id ?? "").trim())
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )

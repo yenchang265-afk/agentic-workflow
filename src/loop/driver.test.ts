@@ -620,6 +620,46 @@ test("/agent-loop reject <why> routes the rejection, reason noted", async () => 
   assert.ok(log.some((cmd) => cmd.includes("the migration order is unsafe")))
 })
 
+test("/agent-loop ship with no id ships the single in-review task", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "ship", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
+})
+
+test("/agent-loop ship with no in-review task is a harmless info toast", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "ship", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /Nothing awaiting ship/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when nothing awaits")
+})
+
+test("/agent-loop ship refuses to guess between two in-review tasks", async () => {
+  const files = {
+    "docs/tasks/in-review/task-a.md": serializeTask({ title: "A", body: "x" }),
+    "docs/tasks/in-review/task-b.md": serializeTask({ title: "B", body: "y" }),
+  }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "ship", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Multiple tasks awaiting/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when ambiguous")
+})
+
 /**
  * `drive` must interpret transitions against the CLAIMED kind's manifest, not a
  * hardcoded engineering one. Regression guard for the pr-sitter drive path: its

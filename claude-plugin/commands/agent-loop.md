@@ -1,6 +1,6 @@
 ---
 description: Drive backlog tasks through the agentic loop (plan → build → verify → review)
-argument-hint: task <id> | approve [id] | reject [id] [reason] | claim | status | ship <id> | recover <id> | doctor [fix] | stop
+argument-hint: task <id> | approve [id] | reject [id] [reason] | claim | status | ship [id] | recover <id> | doctor [fix] | stop
 ---
 
 You are about to drive the **agentic loop** over the task queues. Task
@@ -54,9 +54,10 @@ Dispatch:
   re-planning (the shortcut for `/agent-loop-task replan`). **Handled by the same
   hook**; the reason is recorded in the audit note. (Fallback:
   `mcp__agentic-loop__loop_reject({id, reason})`, id optional.)
-- **`ship <id>`** — call `mcp__agentic-loop__loop_ship({id})` to move a
+- **`ship [id]`** — call `mcp__agentic-loop__loop_ship({id})` to move a
   reviewed task from `in-review/` to `completed/`. Do this only after the
-  human has reviewed the branch diff. (The user can also type **`/agent-loop
+  human has reviewed the branch diff. The `id` is optional — omit it to ship
+  the single `in-review/` task. (The user can also type **`/agent-loop
   approve`**, which ships when the only task awaiting a gate is in `in-review/`.)
 - **`recover <id>`** — call `mcp__agentic-loop__loop_recover({id})` and
   resume driving from the action it returns.

@@ -55,10 +55,11 @@ needed to disambiguate.
   pause — it halts after the in-flight stage settles and keeps the snapshot;
   `/agent-loop stop` ends the run and drops it. Check `git status`/`git diff`
   first.
-- **`/agent-loop ship <id>`** — move a reviewed task from `in-review/` to
+- **`/agent-loop ship [id]`** — move a reviewed task from `in-review/` to
   `completed/`, appending an audited "Shipped" note and committing the move.
-  The final-gate action (raw `mv` against the backlog is blocked — the
-  command is the only path).
+  The `[id]` is optional — omit it to ship the single `in-review/` task (same
+  as `/agent-loop approve` when that's the only task at a gate). The final-gate
+  action (raw `mv` against the backlog is blocked — the command is the only path).
 - **`/agent-loop stop`** (alias: `abort`) — abort the loop and exit watch mode
   (timer included), in this session. Drops the run's snapshot — a deliberate
   end, nothing to recover (unlike an ESC pause).
