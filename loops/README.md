@@ -40,7 +40,8 @@ fails loud at host startup). A minimal two-stage kind:
       "command": "build",               // OpenCode slash command it fires
       "agent": "loop-build",            // subagent persona backing it
       "prompt": "stages/work.md",       // template, relative to this folder
-      "isolation": "worktree"           // "worktree" | "none" (main tree, no snapshot)
+      "isolation": "worktree",          // "worktree" | "none" (main tree, no snapshot)
+      "timeoutMinutes": 90              // optional wall-clock cap override; defaults to config.stageTimeoutMinutes
     },
     {
       "name": "check",
@@ -127,22 +128,25 @@ per the resolved code platform — pr-sitter stages branch on these to pick
 
 ## The TS escape hatch
 
-Logic a manifest can't express hangs off named refs. Two are resolved through
-`packages/core/src/manifest/registry.ts`:
+Logic a manifest can't express hangs off named refs. Three kinds are resolved
+through `packages/core/src/manifest/registry.ts`:
 
 - `hooks.compose.<stage>` — augment the template context before rendering.
 - `pools[].claimPredicate` — claimability predicates for backlog pools.
+- `hooks.validateBeforeTransition.<stage>` — a check that vetoes a park/done
+  whose side conditions don't hold, resolved via `resolveValidateHook`.
 
 These are registered before the first poll (see
 `packages/core/src/kinds/engineering.ts`; hosts call `registerEngineeringHooks()`
 at startup — engineering registers only `engineering.isClaimable`).
 
-`hooks.validateBeforeTransition.<stage>` also names a check that vetoes a
-park/done whose side conditions don't hold (engineering's "the PLAN actually
-landed on disk"), but this one is **not** registry-resolved: because it needs
-backlog IO, each host implements it directly in its park handler
-(`claude-plugin/mcp-server/src/server.ts`, `src/loop/driver.ts` — they re-read
-the task file and confirm the `## Implementation Plan` heading landed).
+Engineering names `validateBeforeTransition.plan =
+"engineering.planLandedOnDisk"` ("the PLAN actually landed on disk") but
+deliberately leaves that ref **unregistered** — the check needs backlog IO, so
+the ref resolves to `null` and each host runs the check directly in its park
+handler instead (`claude-plugin/mcp-server/src/server.ts`, `src/loop/driver.ts`
+— they re-read the task file and confirm the `## Implementation Plan` heading
+landed). The registry path is there for kinds whose validation is pure.
 
 ## Enabling a kind
 

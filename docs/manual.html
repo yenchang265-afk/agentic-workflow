@@ -499,6 +499,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve-plan</b><code>/agent-loop-task approve-plan &lt;id&gt;</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan</code>.</span></div>
         <div class="gate"><span class="n">Gate 3 · ship</span><b>ship</b><code>/agent-loop ship &lt;id&gt;</code><span>You accept the reviewed diff. in-review → completed.</span></div>
       </div>
+      <p style="margin:8px 0 0;font-size:14px;color:var(--muted-txt)">Shortcut: once a task is in the loop's hands, <code>/agent-loop approve</code> advances the single task it's waiting on you for (parked plan → build, or reviewed diff → ship) and <code>/agent-loop reject</code> bounces a parked plan back — no <code>&lt;id&gt;</code> needed unless two+ tasks wait. Draft approval stays the explicit <code>/agent-loop-task approve &lt;id&gt;</code>.</p>
 
       <h3>Folder-as-status lifecycle</h3>
       <div class="flow">
@@ -602,6 +603,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>task &lt;id&gt;</code></td><td>Drive one task through its stages.</td></tr>
             <tr><td><code>claim</code></td><td>Pull &amp; drive the next ready unit of work.</td></tr>
+            <tr><td><code>approve [id]</code> · <code>reject [id] [reason]</code></td><td>Gate shortcut — advance the one task the loop waits on (parked plan → build, or reviewed diff → ship); <code>reject</code> bounces a parked plan back. Pass <code>id</code> only to disambiguate. (Draft approval stays <code>/agent-loop-task approve</code>.)</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Poll for work / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><code>status</code></td><td>Backlog + pairing roll-up.</td></tr>
             <tr><td><code>ship &lt;id&gt;</code></td><td>Ship gate → completed.</td></tr>
