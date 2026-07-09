@@ -65,9 +65,10 @@ Authoring + gates (`/agent-loop-task`):
 - `/agent-loop-task replan <id> [reason]` — reject a parked plan or send a
   cap-tripped task back to `queued/`, with the reason audited.
 - **`/agent-loop approve [id]`** · **`/agent-loop reject [id] [reason]`** — the ergonomic gate
-  shortcut: `/agent-loop approve` advances the one task awaiting a human gate
-  (draft → queued, plan → in-progress, or in-review → completed); `/agent-loop reject`
-  sends a parked plan back to `queued/`. Id optional — only to disambiguate
+  shortcut: `/agent-loop approve` advances the one task the loop is waiting on
+  (plan → in-progress, or in-review → completed — not drafts, which use
+  `/agent-loop-task approve <id>`); `/agent-loop reject` sends a parked plan back to
+  `queued/`. Id optional — only to disambiguate
   when two or more tasks wait; the explicit verbs above stay the
   always-unambiguous path. (Also exposed as the `loop_approve` / `loop_reject`
   MCP tools.)

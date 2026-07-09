@@ -1004,14 +1004,16 @@ const resolveGateTask = async (id: string, folders: readonly TaskStatus[]): Prom
 }
 
 /**
- * approve shortcut: advance the one task at a human gate. The folder decides the
- * move — draft/ → queued (task gate), plan-review/ → in-progress (plan gate),
- * in-review/ → completed (ship). `id` optional; only needed to disambiguate.
+ * approve shortcut: advance the one task at a loop wait-gate — plan-review/ →
+ * in-progress (plan gate) or in-review/ → completed (ship). Does NOT touch draft/
+ * (draft approval is the task gate, loop_task_approve). `id` optional; only needed
+ * to disambiguate.
  */
 const approveAny = async (id: string): Promise<GateResult> => {
-  const pick = await resolveGateTask(id, ["draft", "plan-review", "in-review"])
-  if (!pick.ok) return { ok: false, message: pick.kind === "none" ? "Nothing awaiting approval." : pick.message }
-  if (pick.from === "draft") return approveTask(pick.id)
+  const pick = await resolveGateTask(id, ["plan-review", "in-review"])
+  if (!pick.ok) {
+    return { ok: false, message: pick.kind === "none" ? "Nothing awaiting approval. (Approve a draft with loop_task_approve / /agent-loop-task approve <id>.)" : pick.message }
+  }
   if (pick.from === "plan-review") return approvePlan(pick.id)
   return shipTask(pick.id) // in-review
 }
@@ -1090,7 +1092,7 @@ server.registerTool(
   "loop_approve",
   {
     description:
-      "/agent-loop approve [id] — the folder-driven approval shortcut. Advances the one task awaiting a human gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single awaiting task; pass it only to disambiguate when more than one awaits. Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
+      "/agent-loop approve [id] — advance the one task at a loop wait-gate: plan-review/ → in-progress (plan gate, requires an ## Implementation Plan) or in-review/ → completed (ship). Does NOT approve drafts — draft → queued is the task gate, loop_task_approve. The id is OPTIONAL — omit it to advance the single awaiting task; pass it only to disambiguate when more than one awaits. Prefer this over the specific loop_plan_approve / loop_ship tools. The agent writes nothing.",
     inputSchema: { id: z.string().optional() },
   },
   async ({ id }) => {

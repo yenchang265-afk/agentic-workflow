@@ -476,7 +476,7 @@ test("/approve with no id ships the single in-review task to completed/", async 
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
 })
 
-test("/approve with no id queues the single draft task (no plan required)", async () => {
+test("/agent-loop approve ignores drafts — a lone draft is not queued (that's /agent-loop-task approve)", async () => {
   const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "no plan yet" }) }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
@@ -484,14 +484,32 @@ test("/approve with no id queues the single draft task (no plan required)", asyn
 
   await handleApprove(deps, "sess", "", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
-  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /Nothing awaiting approval/)
+  assert.match(toasts[0]?.message ?? "", /agent-loop-task approve/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "a draft is not approved by /agent-loop approve")
 })
 
-test("/approve toasts and refuses to guess when two tasks await a gate", async () => {
+test("/agent-loop approve ignores a draft and advances the single parked plan (not ambiguous)", async () => {
   const files = {
     "docs/tasks/draft/task-a.md": serializeTask({ title: "A", body: "x" }),
     "docs/tasks/plan-review/task-b.md": serializeTask({ title: "B", body: `${PLAN_HEADING}\n\n1. Step.` }),
+  }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")), "the plan-review task advances")
+  assert.ok(!log.some((cmd) => cmd.includes("task-a") && cmd.includes("mv")), "the draft is untouched")
+})
+
+test("/agent-loop approve refuses to guess between two wait-gate tasks", async () => {
+  const files = {
+    "docs/tasks/plan-review/task-a.md": serializeTask({ title: "A", body: `${PLAN_HEADING}\n\n1. Step.` }),
+    "docs/tasks/in-review/task-b.md": serializeTask({ title: "B", body: "reviewed" }),
   }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
@@ -506,7 +524,7 @@ test("/approve toasts and refuses to guess when two tasks await a gate", async (
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when ambiguous")
 })
 
-test("/approve with no candidates says nothing is awaiting approval", async () => {
+test("/agent-loop approve with no candidates says nothing is awaiting approval", async () => {
   const { client, toasts } = makeClientFS({})
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
@@ -531,8 +549,8 @@ test("/approve refuses a planless plan-review task and points at /reject", async
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move for a planless task")
 })
 
-test("/approve <id> advances that task by its folder's gate", async () => {
-  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+test("/agent-loop approve <id> advances that task by its folder's gate", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
@@ -540,7 +558,20 @@ test("/approve <id> advances that task by its folder's gate", async () => {
   await handleApprove(deps, "sess", "my-task", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
-  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")))
+})
+
+test("/agent-loop approve <draft-id> refuses — draft approval is /agent-loop-task approve", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /in draft/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "a draft is not moved by /agent-loop approve")
 })
 
 test("/approve <id> on an already-advanced task reports info, not error", async () => {

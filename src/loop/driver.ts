@@ -1467,18 +1467,25 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
 }
 
 /**
- * Handle `/agent-loop approve [id]` — the folder-driven approval shortcut. Advances the one
- * task awaiting a human gate: `draft/` → queued, `plan-review/` → in-progress
- * (plan required), `in-review/` → completed (ship). The id is optional and only
- * needed to disambiguate when more than one task awaits. All three explicit
- * verbs still exist under `/agent-loop-task` and `/agent-loop ship`.
+ * Handle `/agent-loop approve [id]` — advance the one task at a loop wait-gate:
+ * `plan-review/` → in-progress (plan gate, plan required), or `in-review/` →
+ * completed (ship gate). Does NOT touch `draft/` — draft approval is
+ * `/agent-loop-task approve <id>`. The id is optional, only needed to
+ * disambiguate when more than one task awaits.
  */
 export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
   const id = args.trim()
-  const pick = await resolveGateTask(deps, config, id, ["draft", "plan-review", "in-review"])
+  // Only the loop's own wait-gates — a parked plan (plan-review/) and a finished
+  // loop (in-review/, i.e. ship). Draft approval is deliberate task authoring and
+  // stays under /agent-loop-task approve <id> (drafts accumulate — including the
+  // never-approve epic tracking draft — so scanning them here caused false
+  // "multiple awaiting" and risked queuing the wrong draft).
+  const pick = await resolveGateTask(deps, config, id, ["plan-review", "in-review"])
   if (!pick.ok) {
-    if (pick.kind === "none") return void (await toast(client, "Nothing awaiting approval.", "info"))
+    if (pick.kind === "none") {
+      return void (await toast(client, "Nothing awaiting approval. (Approve a draft with /agent-loop-task approve <id>.)", "info"))
+    }
     return void (await toast(client, pick.message, pick.variant))
   }
   const { task, from } = pick
@@ -1486,8 +1493,7 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
     return void (await toast(client, `Task "${task.id}" has no Implementation Plan — send it back with /agent-loop reject ${task.id}.`, "warning"))
   }
   try {
-    if (from === "draft") await doApprove(deps, config, task)
-    else if (from === "plan-review") await doApprovePlan(deps, config, task)
+    if (from === "plan-review") await doApprovePlan(deps, config, task)
     else await doShip(deps, config, task) // in-review
   } catch (err) {
     await toast(client, `Approve failed for "${task.id}": ${(err as Error).message}`, "error")

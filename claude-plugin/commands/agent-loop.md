@@ -45,11 +45,12 @@ Dispatch:
   be paired to a Jira/ADO item.
 - **`approve [id]`** — the folder-driven gate shortcut. **Handled
   deterministically by the plugin's `UserPromptSubmit` hook before this turn** —
-  it advances the one task awaiting a human gate (`draft/` → `queued/`,
-  `plan-review/` → `in-progress/`, `in-review/` → `completed/`) and blocks the
-  turn, so you normally never see it. The `[id]` is optional, only to
-  disambiguate when two or more tasks await. **Spawn nothing** — report the
-  outcome. (Fallback: `mcp__agentic-loop__loop_approve({id})`, id optional.)
+  it advances the one task the loop is waiting on (`plan-review/` → `in-progress/`,
+  or `in-review/` → `completed/`) and blocks the turn, so you normally never see
+  it. Does **not** approve drafts — the task gate is `/agent-loop-task approve
+  <id>`. The `[id]` is optional, only to disambiguate when two or more tasks
+  await. **Spawn nothing** — report the outcome. (Fallback:
+  `mcp__agentic-loop__loop_approve({id})`, id optional.)
 - **`reject [id] [reason]`** — send a parked plan back to `queued/` for
   re-planning (the shortcut for `/agent-loop-task replan`). **Handled by the same
   hook**; the reason is recorded in the audit note. (Fallback:
