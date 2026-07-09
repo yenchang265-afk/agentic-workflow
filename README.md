@@ -29,7 +29,11 @@ acceptance criteria come from you, not a guess; a **heavy idea is split into
 sibling drafts**, one vertical slice each plus a `type: epic` tracker, so no
 one task overruns a single build context), `retask <id>` reshapes a draft
 you're not happy with, `approve <id>` queues the reviewed draft, and
-`approve-plan <id>` / `replan <id>` are the plan gate.
+`approve-plan <id>` / `replan <id>` are the plan gate. At any gate you can
+instead just type **`/agent-loop approve`** — it advances the one task waiting on you
+(queue the draft, release the plan, or ship the finished review) — with
+**`/agent-loop reject`** to bounce a parked plan back; the explicit `<id>` verbs stay the
+unambiguous path when two or more tasks wait.
 **`/agent-loop`** plans a queued task **right before execution** — so plans
 don't rot while tasks sit parked — and builds plan-approved ones:
 
@@ -107,6 +111,10 @@ Idempotent — re-run after `git pull` for updates.
 
 ## Commands
 
+- `/agent-loop approve [id]` · `/agent-loop reject [id] [reason]` — the ergonomic gate shortcut:
+  `/agent-loop approve` advances the single task awaiting a human gate (task → plan →
+  ship), `/agent-loop reject` sends a parked plan back to re-planning; pass `[id]` only to
+  disambiguate when two or more tasks wait
 - `/agent-loop-task new <idea>` · `retask <id> [note]` · `approve <id>` ·
   `approve-plan <id>` · `replan <id> [why]` — interview → draft (reshape with
   `retask`) → task gate → (the loop plans) → plan gate

@@ -9,6 +9,9 @@ import {
   abortedSessionID,
   claimSkipReason,
   drive,
+  handleApprove,
+  handleCommand,
+  handleReject,
   handleTaskCommand,
   manifestFor,
   onInterrupt,
@@ -410,6 +413,211 @@ test("replan also accepts a cap-tripped in-progress task", async () => {
 
   assert.equal(toasts[0]?.variant, "success")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+})
+
+/**
+ * `/approve` and `/reject` — the folder-driven gate shortcuts. The no-id path
+ * enumerates candidates through the CLIENT (`file.list`/`file.read`), then the
+ * move runs through the shell — so these need a client backed by the same file
+ * map as the shell. `makeClientFS` serves both from one `files` input; node
+ * `absolute` paths line up with the shell keys so a listed task's `mv` matches.
+ */
+const makeClientFS = (files: Record<string, string>) => {
+  const toasts: { message: string; variant: string }[] = []
+  const rel = (p: string) => (p.startsWith("/repo/") ? p.slice("/repo/".length) : p)
+  const client = {
+    tui: {
+      showToast: async ({ body }: { body: { message: string; variant: string } }) => {
+        toasts.push(body)
+        return { data: undefined }
+      },
+    },
+    file: {
+      list: async ({ query }: { query: { path: string; directory: string } }) => {
+        const dir = query.path.replace(/\/$/, "")
+        const data = Object.keys(files)
+          .filter((k) => k.slice(0, k.lastIndexOf("/")) === dir)
+          .map((k) => {
+            const name = k.slice(k.lastIndexOf("/") + 1)
+            return { type: "file" as const, name, path: k, absolute: `/repo/${k}` }
+          })
+        return { data }
+      },
+      read: async ({ query }: { query: { path: string; directory: string } }) => {
+        const key = rel(query.path)
+        return { data: key in files ? { content: files[key] } : undefined }
+      },
+    },
+  } as unknown as Deps["client"]
+  return { client, toasts }
+}
+
+test("/approve with no id advances the single plan-review task to in-progress/", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")))
+})
+
+test("/approve with no id ships the single in-review task to completed/", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed diff" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
+})
+
+test("/approve with no id queues the single draft task (no plan required)", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "no plan yet" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+})
+
+test("/approve toasts and refuses to guess when two tasks await a gate", async () => {
+  const files = {
+    "docs/tasks/draft/task-a.md": serializeTask({ title: "A", body: "x" }),
+    "docs/tasks/plan-review/task-b.md": serializeTask({ title: "B", body: `${PLAN_HEADING}\n\n1. Step.` }),
+  }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Multiple tasks awaiting/)
+  assert.match(toasts[0]?.message ?? "", /task-a.*task-b/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when ambiguous")
+})
+
+test("/approve with no candidates says nothing is awaiting approval", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /Nothing awaiting approval/)
+})
+
+test("/approve refuses a planless plan-review task and points at /reject", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: "no plan heading" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /no Implementation Plan/)
+  assert.match(toasts[0]?.message ?? "", /\/agent-loop reject/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move for a planless task")
+})
+
+test("/approve <id> advances that task by its folder's gate", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+})
+
+test("/approve <id> on an already-advanced task reports info, not error", async () => {
+  const files = { "docs/tasks/completed/my-task.md": serializeTask({ title: "Done", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /completed/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on an already-advanced task")
+})
+
+test("/reject with no id sends the single plan-review task back, whole arg as reason", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleReject(deps, "sess", "the migration order is unsafe", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.ok(log.some((cmd) => cmd.includes("the migration order is unsafe")))
+})
+
+test("/reject <id> [reason] captures the id and the trailing reason", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleReject(deps, "sess", "my-task misses the cache layer", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.ok(log.some((cmd) => cmd.includes("misses the cache layer")))
+})
+
+test("/reject with no plan awaiting is a harmless info toast", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleReject(deps, "sess", "some reason", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /No plan awaiting rejection/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when nothing awaits")
+})
+
+test("/agent-loop approve routes the gate move (subcommand, not top-level)", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "approve", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")))
+})
+
+test("/agent-loop reject <why> routes the rejection, reason noted", async () => {
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "reject the migration order is unsafe", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.ok(log.some((cmd) => cmd.includes("the migration order is unsafe")))
 })
 
 /**

@@ -95,6 +95,12 @@ The flow: `new` (interview → draft) → human reviews the draft (reshape it wi
 (or `claim`) plans it and parks the plan in `plan-review/` → human reviews the
 plan → `approve-plan <id>` (or `replan <id> <why>`) → `/agent-loop` builds it.
 
+**Shortcuts:** at any gate the user can type **`/agent-loop approve`** (no id) to advance the
+one task awaiting a human decision — a draft, a parked plan, or a finished review —
+and **`/agent-loop reject <why>`** to send the single parked plan back. Both are handled by
+the same hook and take an optional `<id>`, needed only to disambiguate when more
+than one task awaits. The verbs above are the explicit, always-unambiguous form.
+
 These verbs are the **deferred** path — approving a task that parked earlier.
 When a loop you are driving hits a gate live (a plan just parked, or a build
 just finished), the `loop-orchestration` skill has you offer the same choices

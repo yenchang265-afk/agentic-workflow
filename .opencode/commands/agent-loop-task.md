@@ -86,6 +86,11 @@ The flow: `new` (interview → draft) → human reviews the draft (reshape it wi
 human reviews the plan → `approve-plan <id>` (or `replan <id> <why>`) →
 `/agent-loop` builds it.
 
+**Shortcuts:** at any gate you can type **`/agent-loop approve`** (no id) to advance the one
+task awaiting a human decision — a draft, a parked plan, or a finished review —
+and **`/agent-loop reject <why>`** to send the single parked plan back for re-planning. The
+`<id>` is only needed to disambiguate when more than one task awaits.
+
 Never move, create, or delete files under `docs/tasks/` yourself — no bash
 `mv`/`mkdir`/`rm`, no direct writes into status folders (the plugin blocks
 them). The folder a task lives in IS its state; these verbs and the loop own

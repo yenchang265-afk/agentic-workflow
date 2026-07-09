@@ -20,7 +20,8 @@
 - **Claude Code gates are interactive now.** A plan park / loop done returns
   a `gate` field and the driver asks Approve / Replan / Park inline
   (AskUserQuestion). The `/agent-loop-task approve-plan` and
-  `/agent-loop ship` verbs are unchanged and remain the deferred path.
+  `/agent-loop ship` verbs are unchanged and remain the deferred path (now also
+  reachable via the shorter `/agent-loop approve` / `/agent-loop reject` shortcuts).
 
 ## To the in-loop PLAN stage (`/agent-loop-task`, `queued/`, `plan-review/`)
 

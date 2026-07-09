@@ -272,8 +272,8 @@ OpenCode the same guardrails ride the agent frontmatter permissions
 Human gates are **interactive** on this substrate: a park (`plan gate`) or a
 done (`ship gate`) returns a `gate` field, and the driving agent asks the
 user inline via AskUserQuestion — Approve (continue into BUILD / ship now),
-Replan with a reason, or Park for later (the `/agent-loop-task` verbs remain
-the deferred path). Install and command details live in
+Replan with a reason, or Park for later (the `/agent-loop-task` verbs — or the
+shorter `/agent-loop approve` / `/agent-loop reject` shortcuts — remain the deferred path). Install and command details live in
 [`claude-plugin/README.md`](../claude-plugin/README.md).
 
 ## Backlog integrity rails

@@ -97,6 +97,10 @@ unattended (a feature, a refactor with tests, anything worth a task file):
    approval the loop runs BUILD→VERIFY→REVIEW unattended on a `loop/<id>`
    branch; you review the result and `/agent-loop ship <id>`
 
+At any of these gates, **`/agent-loop approve`** advances the one task waiting on you and
+**`/agent-loop reject`** bounces a parked plan back — the explicit `<id>` verbs above stay
+the unambiguous form when more than one task waits.
+
 **Stay ad-hoc** for a single bounded request (rename, small fix, question):
 invoke the matching skill directly and follow it exactly.
 

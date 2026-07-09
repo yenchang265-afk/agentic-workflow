@@ -166,6 +166,12 @@ scope judgement, not a measured limit.
 | stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
 | `→ abandoned` | **you** | you decide not to do it, from any status |
 
+The human gate moves above each have a one-word shortcut: **`/agent-loop approve [id]`**
+performs whichever of `approve` / `approve-plan` / `ship` the single waiting
+task needs, and **`/agent-loop reject [id] [reason]`** is the `replan` shortcut. Pass an
+`[id]` only to disambiguate — the explicit `<id>` verbs stay the unambiguous
+form when two or more tasks wait.
+
 A failed or stopped task is **left in `in-progress/`** with a note appended, so
 it is visibly stuck for a human rather than silently re-queued. `/agent-loop recover
 <id>` resumes it; if the plan itself was the problem, send it back with

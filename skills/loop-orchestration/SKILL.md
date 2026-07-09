@@ -142,6 +142,9 @@ the loop (the /agent-loop command, unattended — never blocks on a human):
   has approved both — deterministic plugin code validates the
   `## Implementation Plan` heading at the plan gate. There is no way to
   build an ungated task: BUILD only ever claims from `in-progress/`.
+  `/agent-loop approve` is the one-word shortcut for whichever of these the single
+  waiting task needs; `/agent-loop reject` is the shortcut for `replan`. The explicit
+  `<id>` verbs stay the unambiguous path when two or more tasks wait.
 - **Park, don't block.** The PLAN stage ends its loop by parking the task in
   `plan-review/`. A watcher can plan an entire queue overnight and exit each
   time; you batch-review the plans whenever suits and approve or replan each

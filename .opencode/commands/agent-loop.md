@@ -10,12 +10,22 @@ parked plan into `docs/tasks/in-progress/`, the build-ready queue). The loop
 plans right before execution: a claimed `queued/` task runs the PLAN stage,
 which writes the `## Implementation Plan` onto the task file and **parks it
 in `plan-review/` for your gate — the loop exits rather than blocking on
-you**.
+you**. At any gate, **`/agent-loop approve`** advances the one task awaiting a
+human decision (draft → queued, plan → build, finished review → shipped) and
+**`/agent-loop reject <why>`** sends a parked plan back — id optional, only
+needed to disambiguate.
 
 - **`/agent-loop task <id>`** — run one task now (the `<id>` is the task
   filename without `.md`). A `queued/` task enters at PLAN (plans, parks in
   `plan-review/`, exits); an `in-progress/` task enters at BUILD with its
   approved plan.
+- **`/agent-loop approve [id]`** — advance the one task at a human gate: a
+  reviewed `draft/` → `queued/`, a parked `plan-review/` plan → `in-progress/`,
+  or a finished `in-review/` task → `completed/` (same as `ship`). The `[id]`
+  is only needed to disambiguate when two or more tasks await.
+- **`/agent-loop reject [id] [reason]`** — send a parked plan back to `queued/`
+  for re-planning (the shortcut for `/agent-loop-task replan`); the reason is
+  recorded in the audit note.
 - **`/agent-loop watch [interval]`** — put **this** session into worker mode.
   Each tick polls **all enabled loop kinds** in claim-priority order: the
   engineering backlog first — one build-ready `in-progress/` task to drive
