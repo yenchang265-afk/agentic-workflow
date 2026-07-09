@@ -53,6 +53,12 @@ Authoring + gates (`/agent-loop-task`):
   queue), audited + committed
 - `/agent-loop-task replan <id> [reason]` — reject a parked plan (or send a
   cap-tripped task back): moves it to `queued/` with the reason audited
+- `/agent-loop approve [id]` · `/agent-loop reject [id] [reason]` — the gate shortcuts: `/agent-loop approve`
+  advances the one task the loop is waiting on (plan-review → in-progress, or
+  in-review → completed); `/agent-loop reject` is the `replan` shortcut, sending a
+  parked plan back to `queued/`. Does not approve drafts (that's
+  `/agent-loop-task approve <id>`). Id only disambiguates when two or more tasks
+  wait — the explicit verbs above stay unambiguous
 
 The loop (`/agent-loop`):
 
@@ -88,7 +94,8 @@ task authoring and both gates always go through `/agent-loop-task`.
 
 Gates on this substrate are **park-only**: watch mode has no interactive
 channel, so a parked plan or a finished loop always waits for the
-`/agent-loop-task approve-plan` / `/agent-loop ship` verbs. (The Claude Code
+`/agent-loop-task approve-plan` / `/agent-loop ship` verbs (or their `/agent-loop approve`
+shortcut). (The Claude Code
 variant additionally offers the same choices inline via AskUserQuestion when
 a human is driving.)
 

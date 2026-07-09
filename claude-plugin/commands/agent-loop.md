@@ -1,6 +1,6 @@
 ---
 description: Drive backlog tasks through the agentic loop (plan → build → verify → review)
-argument-hint: task <id> | claim | status | ship <id> | recover <id> | doctor [fix] | stop
+argument-hint: task <id> | approve [id] | reject [id] [reason] | claim | status | ship [id] | recover <id> | doctor [fix] | stop
 ---
 
 You are about to drive the **agentic loop** over the task queues. Task
@@ -43,9 +43,23 @@ Dispatch:
   configured, the result also carries a `pairing` block (tracker system,
   paired count, unpaired task ids) — surface which active tasks still need to
   be paired to a Jira/ADO item.
-- **`ship <id>`** — call `mcp__agentic-loop__loop_ship({id})` to move a
+- **`approve [id]`** — the folder-driven gate shortcut. **Handled
+  deterministically by the plugin's `UserPromptSubmit` hook before this turn** —
+  it advances the one task the loop is waiting on (`plan-review/` → `in-progress/`,
+  or `in-review/` → `completed/`) and blocks the turn, so you normally never see
+  it. Does **not** approve drafts — the task gate is `/agent-loop-task approve
+  <id>`. The `[id]` is optional, only to disambiguate when two or more tasks
+  await. **Spawn nothing** — report the outcome. (Fallback:
+  `mcp__agentic-loop__loop_approve({id})`, id optional.)
+- **`reject [id] [reason]`** — send a parked plan back to `queued/` for
+  re-planning (the shortcut for `/agent-loop-task replan`). **Handled by the same
+  hook**; the reason is recorded in the audit note. (Fallback:
+  `mcp__agentic-loop__loop_reject({id, reason})`, id optional.)
+- **`ship [id]`** — call `mcp__agentic-loop__loop_ship({id})` to move a
   reviewed task from `in-review/` to `completed/`. Do this only after the
-  human has reviewed the branch diff.
+  human has reviewed the branch diff. The `id` is optional — omit it to ship
+  the single `in-review/` task. (The user can also type **`/agent-loop
+  approve`**, which ships when the only task awaiting a gate is in `in-review/`.)
 - **`recover <id>`** — call `mcp__agentic-loop__loop_recover({id})` and
   resume driving from the action it returns.
 - **`doctor [fix]`** — call `mcp__agentic-loop__loop_doctor({fix})` to audit
@@ -60,8 +74,8 @@ Dispatch:
 
 On a VERIFY or REVIEW FAIL the loop re-**builds** with the feedback threaded
 in, within the iteration cap; when the cap trips, the plan itself is suspect
-— a human sends it back with `/agent-loop-task replan <id> <why>` and the
-next PLAN pass addresses the failure.
+— a human sends it back with `/agent-loop reject <why>` (or `/agent-loop-task
+replan <id> <why>`) and the next PLAN pass addresses the failure.
 
 Do not invent your own control flow — the `loop-orchestration` skill defines
 the exact sequence of tool calls and Task spawns. The MCP tools own the state

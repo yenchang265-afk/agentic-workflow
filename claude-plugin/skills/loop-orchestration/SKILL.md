@@ -74,7 +74,7 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
    - **Replan** (with the user's reason) → `loop_replan({id, reason})`; the
      next PLAN pass addresses it.
    - **Park for later** → stop here; `/agent-loop-task approve-plan <id>`
-     resumes it whenever the user is ready.
+     (or just `/agent-loop approve`) resumes it whenever the user is ready.
    Never call `loop_plan_approve` without an explicit user answer — the gate
    exists so no unapproved plan reaches BUILD.
 3. **Build.** Call `mcp__agentic-loop__loop_stage({stage:"build"})` — it arms
@@ -102,11 +102,12 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
    short summary of the loop branch's diff, then ask with **AskUserQuestion**:
    - **Ship** → `loop_ship({id})` — the task completes.
    - **Replan** (with the user's reason) → `loop_replan({id, reason})`.
-   - **Leave in in-review** → stop here; `/agent-loop ship <id>` ships it later.
+   - **Leave in in-review** → stop here; `/agent-loop ship <id>` (or `/agent-loop approve`)
+     ships it later.
    On `{stop}` the task stays in `in-progress/` with an audit note — report
    why. When the iteration cap tripped, the plan itself is suspect: the fix is
-   `/agent-loop-task replan <id> <why>` — the next PLAN pass addresses the
-   failure and parks a fresh plan for review.
+   `/agent-loop-task replan <id> <why>` (or `/agent-loop reject <id> <why>`) — the next
+   PLAN pass addresses the failure and parks a fresh plan for review.
 
 ## The verdict contract
 

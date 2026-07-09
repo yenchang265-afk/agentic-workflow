@@ -52,7 +52,7 @@ guide covers the OpenCode plugin. It provides:
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/agent-loop-task new <idea>` then `/agent-loop-task approve <id>` then `/agent-loop task <id>` (plans + parks) then `/agent-loop-task approve-plan <id>` then `/agent-loop task <id>` (builds) — see `loop-orchestration`, not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agent-loop-task new <idea>` then `/agent-loop-task approve <id>` then `/agent-loop task <id>` (plans + parks) then `/agent-loop-task approve-plan <id>` then `/agent-loop task <id>` (builds) — at the plan/ship gates `/agent-loop approve` (or `/agent-loop reject` to bounce a plan) is the one-word shortcut (draft approval stays `/agent-loop-task approve <id>`); see `loop-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
 

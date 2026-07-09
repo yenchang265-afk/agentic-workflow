@@ -864,7 +864,7 @@ export const drive = async (
       clearLoop(sessionID)
       await toast(
         client,
-        `${action.message} Review it, then /agent-loop-task approve-plan ${state.task.id} (or replan ${state.task.id}).`,
+        `${action.message} Review it, then /agent-loop approve (or /agent-loop reject <why>).`,
         "success",
       )
       return { kind: "park", message: action.message }
@@ -900,7 +900,7 @@ export const drive = async (
       clearLoop(sessionID)
       const where = state.git ? ` on branch ${state.git.branch}` : ""
       const next = state.task
-        ? ` Review the diff${where}, then run /agent-loop ship ${state.task.id} when it ships.`
+        ? ` Review the diff${where}, then /agent-loop approve when it ships.`
         : where
           ? ` Review the diff${where}.`
           : ""
@@ -1261,6 +1261,103 @@ export const parseTaskArgs = (args: string): TaskCmdArgs => {
   return { mode: "passthrough" }
 }
 
+// --- Shared human-gate transitions -----------------------------------------
+// The happy-path move for each gate, factored out so the explicit verbs
+// (`/agent-loop-task approve|approve-plan|replan`, `/agent-loop ship`) and the
+// folder-driven shortcuts (`/agent-loop approve`, `/agent-loop reject`) share one implementation.
+// Each assumes the task has already been located in its source folder; callers
+// own the not-found / wrong-folder messaging and the try/catch error toast.
+
+/** approve: draft/ → queued/ (audited note + commit). */
+const doApprove = async (deps: Deps, config: Config, task: Task): Promise<void> => {
+  const actor = await gitActor(deps.$, deps.directory)
+  await appendNote(deps.$, task, auditNote("Task approved — queued for planning", new Date(), actor))
+  await moveTask(deps.$, task, "queued")
+  await commitTasks(deps, config, `loop(${task.id}): task approved — queued for planning`)
+  await toast(
+    deps.client,
+    `Task approved — "${task.title}" queued in ${config.tasksDir}/queued/. /agent-loop watch (or /agent-loop task ${task.id}) will plan it.`,
+    "success",
+  )
+}
+
+/** approve-plan: plan-review/ → in-progress/. Caller must have checked `hasPlan`. */
+const doApprovePlan = async (deps: Deps, config: Config, task: Task): Promise<void> => {
+  const actor = await gitActor(deps.$, deps.directory)
+  await appendNote(deps.$, task, auditNote("Plan approved — parked for execution", new Date(), actor))
+  await moveTask(deps.$, task, "in-progress")
+  await commitTasks(deps, config, `loop(${task.id}): plan approved — parked for execution`)
+  await toast(
+    deps.client,
+    `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/. /agent-loop watch (or /agent-loop task ${task.id}) will build it.`,
+    "success",
+  )
+}
+
+/** ship: in-review/ → completed/. */
+const doShip = async (deps: Deps, config: Config, task: Task): Promise<void> => {
+  await appendNote(deps.$, task, auditNote("Shipped — moved to completed", new Date(), await gitActor(deps.$, deps.directory)))
+  await moveTask(deps.$, task, "completed")
+  await commitTasks(deps, config, `loop(${task.id}): shipped — completed`)
+  await toast(deps.client, `"${task.title}" completed.`, "success")
+}
+
+/** replan: plan-review/ or in-progress/ → queued/, with an optional reason. */
+const doReplan = async (deps: Deps, config: Config, task: Task, reason?: string): Promise<void> => {
+  const actor = await gitActor(deps.$, deps.directory)
+  const why = reason ? ` — ${reason}` : ""
+  await appendNote(deps.$, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor))
+  await moveTask(deps.$, task, "queued")
+  await commitTasks(deps, config, `loop(${task.id}): plan rejected — re-queued for planning`)
+  await toast(
+    deps.client,
+    `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
+    "success",
+  )
+}
+
+/** Outcome of resolving which task a folder-driven gate shortcut should act on. */
+type GatePick =
+  | { readonly ok: true; readonly task: Task; readonly from: TaskStatus }
+  | { readonly ok: false; readonly kind: "none" }
+  | { readonly ok: false; readonly kind: "message"; readonly message: string; readonly variant: "info" | "warning" }
+
+/**
+ * Resolve the single task a shortcut (`/agent-loop approve`, `/agent-loop reject`) should act on,
+ * searching `folders` in priority order.
+ *
+ * - With `id`: the task must be in one of `folders`; otherwise a precise message
+ *   ("already in X" for a forward status, "no task found" otherwise).
+ * - Without `id`: exactly one candidate across all `folders` advances; zero →
+ *   `none` (caller supplies the wording); two+ → an ambiguity message asking for
+ *   an explicit id. Fail-safe — never guesses when ambiguous.
+ */
+const resolveGateTask = async (deps: Deps, config: Config, id: string, folders: readonly TaskStatus[]): Promise<GatePick> => {
+  if (id) {
+    for (const from of folders) {
+      const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, from, id)
+      if (task) return { ok: true, task, from }
+    }
+    const elsewhere = await findAnyStatus(deps, config, id)
+    // A forward status means the move already happened — report it as harmless, not an error.
+    const alreadyForward = elsewhere === "queued" || elsewhere === "in-progress" || elsewhere === "completed"
+    return {
+      ok: false,
+      kind: "message",
+      message: elsewhere ? `"${id}" is in ${elsewhere} — nothing to do.` : `No task "${id}" found.`,
+      variant: alreadyForward ? "info" : "warning",
+    }
+  }
+  const found: { task: Task; from: TaskStatus }[] = []
+  for (const from of folders) {
+    for (const task of await listByStatus(deps.client, deps.directory, config.tasksDir, from, deps.log)) found.push({ task, from })
+  }
+  if (found.length === 0) return { ok: false, kind: "none" }
+  if (found.length === 1) return { ok: true, ...found[0]! }
+  const list = found.map((f) => `${f.task.id} (${f.from})`).join(", ")
+  return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id, e.g. /agent-loop approve ${found[0]!.task.id}.`, variant: "warning" }
+}
+
 /**
  * Handle a `/agent-loop-task ...` command. Three subcommands are deterministic
  * plugin work (the agent writes nothing); `new <idea>` and `retask <id>` pass
@@ -1300,15 +1397,7 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
       return void (await toast(client, `Can't approve "${id}": ${detail}.`, "warning"))
     }
     try {
-      const actor = await gitActor(deps.$, deps.directory)
-      await appendNote(deps.$, draft, auditNote("Task approved — queued for planning", new Date(), actor))
-      await moveTask(deps.$, draft, "queued")
-      await commitTasks(deps, config, `loop(${id}): task approved — queued for planning`)
-      await toast(
-        client,
-        `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/. /agent-loop watch (or /agent-loop task ${id}) will plan it.`,
-        "success",
-      )
+      await doApprove(deps, config, draft)
     } catch (err) {
       await toast(client, `Approve failed for "${id}": ${(err as Error).message}`, "error")
     }
@@ -1344,15 +1433,7 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
       )
     }
     try {
-      const actor = await gitActor(deps.$, deps.directory)
-      await appendNote(deps.$, task, auditNote("Plan approved — parked for execution", new Date(), actor))
-      await moveTask(deps.$, task, "in-progress")
-      await commitTasks(deps, config, `loop(${id}): plan approved — parked for execution`)
-      await toast(
-        client,
-        `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/. /agent-loop watch (or /agent-loop task ${id}) will build it.`,
-        "success",
-      )
+      await doApprovePlan(deps, config, task)
     } catch (err) {
       await toast(client, `Approve-plan failed for "${id}": ${(err as Error).message}`, "error")
     }
@@ -1379,18 +1460,87 @@ export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: st
     return void (await toast(client, `Task "${id}" is being driven by a live loop — /agent-loop stop it first.`, "warning"))
   }
   try {
-    const actor = await gitActor(deps.$, deps.directory)
-    const why = parsed.reason ? ` — ${parsed.reason}` : ""
-    await appendNote(deps.$, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor))
-    await moveTask(deps.$, task, "queued")
-    await commitTasks(deps, config, `loop(${id}): plan rejected — re-queued for planning`)
-    await toast(
-      client,
-      `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
-      "success",
-    )
+    await doReplan(deps, config, task, parsed.reason)
   } catch (err) {
     await toast(client, `Replan failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `/agent-loop approve [id]` — advance the one task at a loop wait-gate:
+ * `plan-review/` → in-progress (plan gate, plan required), or `in-review/` →
+ * completed (ship gate). Does NOT touch `draft/` — draft approval is
+ * `/agent-loop-task approve <id>`. The id is optional, only needed to
+ * disambiguate when more than one task awaits.
+ */
+export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const id = args.trim()
+  // Only the loop's own wait-gates — a parked plan (plan-review/) and a finished
+  // loop (in-review/, i.e. ship). Draft approval is deliberate task authoring and
+  // stays under /agent-loop-task approve <id> (drafts accumulate — including the
+  // never-approve epic tracking draft — so scanning them here caused false
+  // "multiple awaiting" and risked queuing the wrong draft).
+  const pick = await resolveGateTask(deps, config, id, ["plan-review", "in-review"])
+  if (!pick.ok) {
+    if (pick.kind === "none") {
+      return void (await toast(client, "Nothing awaiting approval. (Approve a draft with /agent-loop-task approve <id>.)", "info"))
+    }
+    return void (await toast(client, pick.message, pick.variant))
+  }
+  const { task, from } = pick
+  if (from === "plan-review" && !hasPlan(task)) {
+    return void (await toast(client, `Task "${task.id}" has no Implementation Plan — send it back with /agent-loop reject ${task.id}.`, "warning"))
+  }
+  try {
+    if (from === "plan-review") await doApprovePlan(deps, config, task)
+    else await doShip(deps, config, task) // in-review
+  } catch (err) {
+    await toast(client, `Approve failed for "${task.id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `/agent-loop reject [id] [reason]` — the folder-driven rejection shortcut. Sends a
+ * parked plan back to `queued/` for re-planning (today's `replan`). Auto-targets
+ * the single `plan-review/` task; an explicit id may also name an `in-progress/`
+ * (cap-tripped) task. When no leading token names a rejectable task, the whole
+ * argument is treated as the reason and the single plan-review task is chosen.
+ */
+export const handleReject = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const arg = args.trim()
+  const [first = "", ...restParts] = arg.split(/\s+/)
+  const folders = ["plan-review", "in-progress"] as const
+
+  // Treat the leading token as an explicit id only if it names a rejectable task.
+  let picked: { task: Task; reason: string } | null = null
+  if (first) {
+    for (const from of folders) {
+      const t = await findByIdIn(deps.$, deps.directory, config.tasksDir, from, first)
+      if (t) {
+        picked = { task: t, reason: restParts.join(" ") }
+        break
+      }
+    }
+  }
+  if (!picked) {
+    // No explicit id — auto-resolve the single plan-review task; the whole arg is the reason.
+    const pick = await resolveGateTask(deps, config, "", ["plan-review"])
+    if (!pick.ok) {
+      if (pick.kind === "none") return void (await toast(client, "No plan awaiting rejection.", "info"))
+      return void (await toast(client, pick.message, pick.variant))
+    }
+    picked = { task: pick.task, reason: arg }
+  }
+
+  if (findSessionDriving(picked.task.id)) {
+    return void (await toast(client, `Task "${picked.task.id}" is being driven by a live loop — /agent-loop stop it first.`, "warning"))
+  }
+  try {
+    await doReplan(deps, config, picked.task, picked.reason || undefined)
+  } catch (err) {
+    await toast(client, `Replan failed for "${picked.task.id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -1405,13 +1555,14 @@ export const handleCommand = async (
   const arg = args.trim()
   const lower = arg.toLowerCase()
 
+  // Folder-driven gate shortcuts, namespaced under /agent-loop (not top-level, so
+  // `approve`/`reject` never claim a reserved command word). `go` is a legacy alias
+  // for `approve`. handleApprove/handleReject parse the post-verb remainder.
   if (lower === "go" || lower === "approve" || lower.startsWith("approve ")) {
-    await toast(
-      client,
-      "The gates live in /agent-loop-task: approve <id> queues a draft for planning, approve-plan <id> releases a parked plan for execution.",
-      "warning",
-    )
-    return
+    return handleApprove(deps, sessionID, lower === "go" ? "" : arg.slice("approve".length).trim(), config)
+  }
+  if (lower === "reject" || lower.startsWith("reject ")) {
+    return handleReject(deps, sessionID, arg.slice("reject".length).trim(), config)
   }
 
   if (lower === "next") {
@@ -1529,7 +1680,20 @@ export const handleCommand = async (
 
   if (lower === "ship" || lower.startsWith("ship ")) {
     const id = arg.slice("ship".length).trim()
-    if (!id) return void (await toast(client, "Usage: /agent-loop ship <id>.", "warning"))
+    // No id → ship the single in-review/ task (id only needed to disambiguate).
+    if (!id) {
+      const pick = await resolveGateTask(deps, config, "", ["in-review"])
+      if (!pick.ok) {
+        if (pick.kind === "none") return void (await toast(client, "Nothing awaiting ship.", "info"))
+        return void (await toast(client, pick.message, pick.variant))
+      }
+      try {
+        await doShip(deps, config, pick.task)
+      } catch (err) {
+        await toast(client, `Ship failed for "${pick.task.id}": ${(err as Error).message}`, "error")
+      }
+      return
+    }
     const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-review", id)
     if (!task) {
       // Locate it for a precise error instead of a bare "not found".
@@ -1541,10 +1705,7 @@ export const handleCommand = async (
       return void (await toast(client, `Can't ship "${id}": ${detail}.`, "warning"))
     }
     try {
-      await appendNote(deps.$, task, auditNote("Shipped — moved to completed", new Date(), await gitActor(deps.$, deps.directory)))
-      await moveTask(deps.$, task, "completed")
-      await commitTasks(deps, config, `loop(${id}): shipped — completed`)
-      await toast(client, `"${task.title}" completed.`, "success")
+      await doShip(deps, config, task)
     } catch (err) {
       await toast(client, `Ship failed for "${id}": ${(err as Error).message}`, "error")
     }
@@ -1573,9 +1734,9 @@ export const handleCommand = async (
       const elsewhere = await findAnyStatus(deps, config, id)
       const detail =
         elsewhere === "plan-review"
-          ? `its plan is parked for review — /agent-loop-task approve-plan ${id} (or replan ${id})`
+          ? `its plan is parked for review — /agent-loop approve ${id} (or /agent-loop reject ${id} <why>)`
           : elsewhere === "draft"
-            ? `it's a draft — approve it first with /agent-loop-task approve ${id}`
+            ? `it's a draft — approve it first with /agent-loop approve ${id}`
             : elsewhere
               ? `it's in ${elsewhere}`
               : `no task "${id}" found`
@@ -1700,8 +1861,8 @@ export const handleCommand = async (
   // unrecognized gets usage help instead of silently becoming a goal.
   await toast(
     client,
-    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · watch [interval] · unwatch · recover <id> · ship <id> · doctor [fix] · stop · status. ` +
-      "Author and approve tasks (and plans) with /agent-loop-task.",
+    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · approve [id] · reject [id] [reason] · watch [interval] · unwatch · recover <id> · ship [id] · doctor [fix] · stop · status. ` +
+      "Author tasks with /agent-loop-task.",
     "warning",
   )
 }

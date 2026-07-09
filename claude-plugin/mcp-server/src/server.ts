@@ -955,6 +955,97 @@ const replanTask = async (id: string, reason: string | undefined, liveTaskId: st
   }
 }
 
+/** ship: an in-review/ task → completed/ (the final human gate). */
+const shipTask = async (id: string): Promise<GateResult> => {
+  const t = await findByIdIn(sh, directory, config.tasksDir, "in-review", id)
+  if (!t) {
+    const elsewhere = await findAnyStatus(id)
+    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+    if (where === "completed") {
+      return { ok: true, message: `"${elsewhere!.title}" is already completed. Nothing to do.`, path: elsewhere!.path, data: { completed: elsewhere!.path, alreadyDone: true } }
+    }
+    return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : `No in-review task "${id}".` }
+  }
+  await appendNote(sh, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor(sh, directory)), log)
+  const newPath = await moveTask(sh, { id, path: t.path }, "completed")
+  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): shipped — completed`)
+  return { ok: true, message: `"${t.title}" completed.`, path: newPath, data: { completed: newPath } }
+}
+
+/** Which task a folder-driven gate shortcut (loop_approve / loop_reject) should act on. */
+type GatePick =
+  | { readonly ok: true; readonly id: string; readonly from: TaskStatus }
+  | { readonly ok: false; readonly kind: "none" }
+  | { readonly ok: false; readonly kind: "message"; readonly message: string }
+
+/**
+ * Resolve the single task a shortcut should act on, searching `folders` in order.
+ * With `id`: the task must be in one of `folders`. Without `id`: exactly one
+ * candidate advances; zero → `none`; two+ → an ambiguity message (never guesses).
+ */
+const resolveGateTask = async (id: string, folders: readonly TaskStatus[]): Promise<GatePick> => {
+  if (id) {
+    for (const from of folders) {
+      const t = await findByIdIn(sh, directory, config.tasksDir, from, id)
+      if (t) return { ok: true, id, from }
+    }
+    const elsewhere = await findAnyStatus(id)
+    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
+    return { ok: false, kind: "message", message: where ? `"${id}" is in ${where} — nothing to do.` : `No task "${id}" found.` }
+  }
+  const found: { id: string; from: TaskStatus }[] = []
+  for (const from of folders) {
+    for (const t of await listByStatus(fsClient, directory, config.tasksDir, from, log)) found.push({ id: t.id, from })
+  }
+  if (found.length === 0) return { ok: false, kind: "none" }
+  if (found.length === 1) return { ok: true, ...found[0]! }
+  const list = found.map((f) => `${f.id} (${f.from})`).join(", ")
+  return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id.` }
+}
+
+/**
+ * approve shortcut: advance the one task at a loop wait-gate — plan-review/ →
+ * in-progress (plan gate) or in-review/ → completed (ship). Does NOT touch draft/
+ * (draft approval is the task gate, loop_task_approve). `id` optional; only needed
+ * to disambiguate.
+ */
+const approveAny = async (id: string): Promise<GateResult> => {
+  const pick = await resolveGateTask(id, ["plan-review", "in-review"])
+  if (!pick.ok) {
+    return { ok: false, message: pick.kind === "none" ? "Nothing awaiting approval. (Approve a draft with loop_task_approve / /agent-loop-task approve <id>.)" : pick.message }
+  }
+  if (pick.from === "plan-review") return approvePlan(pick.id)
+  return shipTask(pick.id) // in-review
+}
+
+/** ship shortcut: id optional — ships the single in-review/ task when omitted. */
+const shipAny = async (id: string): Promise<GateResult> => {
+  if (id) return shipTask(id)
+  const pick = await resolveGateTask("", ["in-review"])
+  if (!pick.ok) return { ok: false, message: pick.kind === "none" ? "Nothing awaiting ship." : pick.message }
+  return shipTask(pick.id)
+}
+
+/**
+ * reject shortcut: send a parked plan back to queued/ for re-planning. Auto-targets
+ * the single plan-review/ task; an explicit leading id may also name a cap-tripped
+ * in-progress/ task, with the rest of `arg` as the reason. When no leading token
+ * names a rejectable task, the whole `arg` is the reason.
+ */
+const rejectAny = async (arg: string, liveTaskId: string | null): Promise<GateResult> => {
+  const [first = "", ...restParts] = arg.trim().split(/\s+/).filter(Boolean)
+  if (first) {
+    for (const from of ["plan-review", "in-progress"] as const) {
+      if (await findByIdIn(sh, directory, config.tasksDir, from, first)) {
+        return replanTask(first, restParts.join(" ").trim() || undefined, liveTaskId)
+      }
+    }
+  }
+  const pick = await resolveGateTask("", ["plan-review"])
+  if (!pick.ok) return { ok: false, message: pick.kind === "none" ? "No plan awaiting rejection." : pick.message }
+  return replanTask(pick.id, arg.trim() || undefined, liveTaskId)
+}
+
 server.registerTool(
   "loop_task_approve",
   {
@@ -998,6 +1089,36 @@ server.registerTool(
 )
 
 server.registerTool(
+  "loop_approve",
+  {
+    description:
+      "/agent-loop approve [id] — advance the one task at a loop wait-gate: plan-review/ → in-progress (plan gate, requires an ## Implementation Plan) or in-review/ → completed (ship). Does NOT approve drafts — draft → queued is the task gate, loop_task_approve. The id is OPTIONAL — omit it to advance the single awaiting task; pass it only to disambiguate when more than one awaits. Prefer this over the specific loop_plan_approve / loop_ship tools. The agent writes nothing.",
+    inputSchema: { id: z.string().optional() },
+  },
+  async ({ id }) => {
+    await loadCfg()
+    const r = await approveAny((id ?? "").trim())
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
+  "loop_reject",
+  {
+    description:
+      "/agent-loop reject [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ for re-planning (the counterpart of loop_approve at the plan gate). Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
+    inputSchema: { id: z.string().optional(), reason: z.string().max(500).optional() },
+  },
+  async ({ id, reason }) => {
+    await loadCfg()
+    // Rejoin id + reason into one arg so rejectAny can decide whether the leading token is an id or reason.
+    const arg = [id ?? "", reason ?? ""].join(" ").trim()
+    const r = await rejectAny(arg, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
   "loop_move",
   { description: "Move a task file to another status folder.", inputSchema: { id: z.string(), status: z.enum(["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]) } },
   async ({ id, status }) => {
@@ -1011,20 +1132,11 @@ server.registerTool(
 
 server.registerTool(
   "loop_ship",
-  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action.", inputSchema: { id: z.string() } },
+  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agent-loop approve (loop_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
   async ({ id }) => {
     await loadCfg()
-    const t = await findByIdIn(sh, directory, config.tasksDir, "in-review", id)
-    if (!t) {
-      const elsewhere = await findAnyStatus(id)
-      const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-      if (where === "completed") return ok({ completed: elsewhere!.path, alreadyDone: true })
-      return fail(elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : `No in-review task "${id}".`)
-    }
-    await appendNote(sh, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor(sh, directory)), log)
-    const newPath = await moveTask(sh, { id, path: t.path }, "completed")
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): shipped — completed`)
-    return ok({ completed: newPath })
+    const r = await shipAny((id ?? "").trim())
+    return r.ok ? ok(r.data) : fail(r.message)
   },
 )
 
@@ -1093,19 +1205,31 @@ const readStageTaskId = (): string | null => {
 }
 
 async function runGate(argv: string[]): Promise<number> {
-  const [verb, id, ...rest] = argv
-  const reason = rest.join(" ").trim() || undefined
+  const [verb, ...rest] = argv
+  const remainder = rest.join(" ").trim()
   const emit = (r: GateResult) => process.stdout.write(`${JSON.stringify(r)}\n`)
-  if (!verb || !id) {
-    emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan> <id> [reason]" })
+  if (!verb) {
+    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan> [id] [reason]" })
     return 1
   }
   await loadCfg()
   let result: GateResult
-  if (verb === "approve") result = await approveTask(id)
-  else if (verb === "approve-plan") result = await approvePlan(id)
-  else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
-  else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve, approve-plan, or replan.` }
+  // Folder-driven shortcuts — id optional (empty remainder → auto-resolve the single awaiting task).
+  if (verb === "approve-any") result = await approveAny(remainder)
+  else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
+  else {
+    // Legacy verbs require an explicit id.
+    const [id, ...reasonParts] = rest
+    const reason = reasonParts.join(" ").trim() || undefined
+    if (!id) {
+      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan> <id> [reason]" })
+      return 1
+    }
+    if (verb === "approve") result = await approveTask(id)
+    else if (verb === "approve-plan") result = await approvePlan(id)
+    else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
+    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, or replan.` }
+  }
   emit(result)
   return result.ok ? 0 : 1
 }

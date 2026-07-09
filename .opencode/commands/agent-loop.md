@@ -10,12 +10,23 @@ parked plan into `docs/tasks/in-progress/`, the build-ready queue). The loop
 plans right before execution: a claimed `queued/` task runs the PLAN stage,
 which writes the `## Implementation Plan` onto the task file and **parks it
 in `plan-review/` for your gate — the loop exits rather than blocking on
-you**.
+you**. At the plan and ship gates, **`/agent-loop approve`** advances the one task
+the loop is waiting on (parked plan → build, or finished review → shipped) and
+**`/agent-loop reject <why>`** sends a parked plan back — id optional, only
+needed to disambiguate. (Draft approval is `/agent-loop-task approve <id>`.)
 
 - **`/agent-loop task <id>`** — run one task now (the `<id>` is the task
   filename without `.md`). A `queued/` task enters at PLAN (plans, parks in
   `plan-review/`, exits); an `in-progress/` task enters at BUILD with its
   approved plan.
+- **`/agent-loop approve [id]`** — advance the one task the loop is waiting on: a
+  parked `plan-review/` plan → `in-progress/`, or a finished `in-review/` task →
+  `completed/` (same as `ship`). Does **not** approve `draft/` tasks — that's
+  `/agent-loop-task approve <id>`. The `[id]` is only needed to disambiguate when
+  two or more tasks await.
+- **`/agent-loop reject [id] [reason]`** — send a parked plan back to `queued/`
+  for re-planning (the shortcut for `/agent-loop-task replan`); the reason is
+  recorded in the audit note.
 - **`/agent-loop watch [interval]`** — put **this** session into worker mode.
   Each tick polls **all enabled loop kinds** in claim-priority order: the
   engineering backlog first — one build-ready `in-progress/` task to drive
@@ -45,10 +56,11 @@ you**.
   pause — it halts after the in-flight stage settles and keeps the snapshot;
   `/agent-loop stop` ends the run and drops it. Check `git status`/`git diff`
   first.
-- **`/agent-loop ship <id>`** — move a reviewed task from `in-review/` to
+- **`/agent-loop ship [id]`** — move a reviewed task from `in-review/` to
   `completed/`, appending an audited "Shipped" note and committing the move.
-  The final-gate action (raw `mv` against the backlog is blocked — the
-  command is the only path).
+  The `[id]` is optional — omit it to ship the single `in-review/` task (same
+  as `/agent-loop approve` when that's the only task at a gate). The final-gate
+  action (raw `mv` against the backlog is blocked — the command is the only path).
 - **`/agent-loop stop`** (alias: `abort`) — abort the loop and exit watch mode
   (timer included), in this session. Drops the run's snapshot — a deliberate
   end, nothing to recover (unlike an ESC pause).
