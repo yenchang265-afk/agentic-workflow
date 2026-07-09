@@ -2,7 +2,7 @@
 
 ## Context
 
-Today `ensureBranch` (`src/loop/driver.ts:189`) checks out `loop/<id>` **in
+Today `ensureBranch` (`src/loop/driver.ts:189`) checks out `feature/<id>` **in
 the shared working tree**: a human working in the same checkout has branches
 switched under them mid-drive, and `executingDirs` (`driver.ts:130`) must
 serialize all drives in one opencode instance to one at a time. Separate
@@ -114,7 +114,7 @@ Replace `ensureBranch` with `ensureIsolation(deps, config, state)`:
    - Shared mode: current re-checkout logic unchanged.
 2. **Fresh isolation** with `config.worktreesDir` set, `isGitRepo`, and a
    resolvable `currentBranch`:
-   - `base = baseBranch ?? currentBranch(directory)`; `branch = loop/<id>`;
+   - `base = baseBranch ?? currentBranch(directory)`; `branch = feature/<id>`;
      `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`.
      `baseBranch` is an optional host-resolved override: the Claude Code MCP
      host's `directory` is frozen at the main checkout (usually the default
@@ -192,7 +192,7 @@ cwd changes needed, only awareness:
 - Per-sessionID structures verified safe as-is: `pending`, `driving`,
   `watching`, `recordedVerdicts`, and the `state.ts` store are all keyed by
   sessionID; cross-task races are closed by `claimTask`'s atomic `mkdir` and
-  unique `loop/<id>` branches/worktree paths.
+  unique `feature/<id>` branches/worktree paths.
 - `executingDirs` (`driver.ts:130`): change the `onIdle` gate (line 498) to
   **skip the lock entirely when `config.worktreesDir` is set** — each drive
   owns its own tree; nothing switches branches under anyone. Keep it
@@ -269,7 +269,7 @@ structurally. Bash remains prompt-enforced — documented residual.
 
 | Case | Behavior |
 |---|---|
-| Branch `loop/<id>` exists, no worktree (old shared-mode run, recover) | `addWorktree` without `-b` reuses it; never reset |
+| Branch `feature/<id>` exists, no worktree (old shared-mode run, recover) | `addWorktree` without `-b` reuses it; never reset |
 | Worktree already registered (recovered run) | `worktreeForBranch` → adopt existing path |
 | Path exists on disk but unregistered (crash + pruned registration) | `pruneWorktrees` then retry; still failing → loop error, human cleans up |
 | `worktree add` fails (locks, perms) | Loop error (note + toast); **never** falls back to shared-tree branch switching |

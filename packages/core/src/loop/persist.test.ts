@@ -57,7 +57,7 @@ const sampleState: LoopState = {
   iteration: 1,
   artifacts: { plan: "the plan", build: "built it" },
   task: { id: "add-rl", path: "/repo/docs/tasks/in-progress/add-rl.md", acceptance: ["429 over limit"] },
-  git: { base: "main", branch: "loop/add-rl", worktree: "/repo/.wt/add-rl" },
+  git: { base: "main", branch: "feature/add-rl", worktree: "/repo/.wt/add-rl" },
 }
 
 test("statePath is under runs/ with a .state.json suffix", () => {

@@ -40,17 +40,17 @@ const runWorktreeSetup = async ($: Shell, log: Log, config: Config, wtPath: stri
  * Isolate execution for this loop. Two modes:
  *
  * - **Worktree mode** (`config.worktreesDir` set): each loop gets its own
- *   `git worktree` on `loop/<id>`, cut from `base`. The human's checkout is
+ *   `git worktree` on `feature/<id>`, cut from `base`. The human's checkout is
  *   never touched and concurrent drives are safe. If the worktree can't be
  *   created it **throws** — never falls back to shared-tree branch switching,
  *   which could clobber a concurrent drive's checked-out branch.
- * - **Shared-tree mode** (default): checks out `loop/<id>` in the main tree.
+ * - **Shared-tree mode** (default): checks out `feature/<id>` in the main tree.
  *   Degrades to no isolation (with a warning) outside a git repo, on a
  *   detached HEAD, or when checkout fails.
  *
  * An existing branch (e.g. a recovered run's) is reused, never reset.
  *
- * `baseBranch` (optional) is the branch a fresh `loop/<id>` is cut from; when a
+ * `baseBranch` (optional) is the branch a fresh `feature/<id>` is cut from; when a
  * host resolves one it wins over the branch `directory` has checked out. Unset
  * ⇒ cut from `currentBranch(directory)` as before.
  */
@@ -121,7 +121,7 @@ export const ensureIsolation = async (
     await log("warn", "loop: detached HEAD — building without branch isolation")
     return state
   }
-  const branch = `loop/${loopId(state)}`
+  const branch = `feature/${loopId(state)}`
 
   if (config.worktreesDir) {
     const wtPath = worktreePathFor(directory, config.worktreesDir, loopId(state))

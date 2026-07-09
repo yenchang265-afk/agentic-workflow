@@ -74,7 +74,7 @@ the loop (the /agent-loop command, unattended — never blocks on a human):
 | Stage | Writes code? | Role |
 |-------|--------------|------|
 | plan | no (task file only) | reads the task + relevant code and writes the `## Implementation Plan` onto the task file in place, in the main tree; terminates with a park — the task moves to `plan-review/` for the human gate |
-| build | **yes** | implements the approved plan test-first on the loop's own `loop/<id>` branch, or applies a VERIFY/REVIEW stage's feedback on a re-build; each iteration is committed as a checkpoint |
+| build | **yes** | implements the approved plan test-first on the loop's own `feature/<id>` branch, or applies a VERIFY/REVIEW stage's feedback on a re-build; each iteration is committed as a checkpoint |
 | verify | no | runs tests (bash allowlist), checks acceptance criteria, records `PASS`/`FAIL`/`ERROR` via the `loop_verdict` tool |
 | review | no | five-axis code review of exactly `git diff base...branch` (read-only bash allowlist), records `PASS`/`FAIL`/`ERROR` via the `loop_verdict` tool |
 
@@ -115,7 +115,7 @@ the loop (the /agent-loop command, unattended — never blocks on a human):
    - The cap tripping means the plan itself is suspect — the loop stops and
      a human sends it back via `/agent-loop-task replan <id> <why>`.
 6. On a REVIEW PASS, the loop is done and the task moves to `in-review/` —
-   the human diff gate. Review `git diff <base>...loop/<id>` yourself, push
+   the human diff gate. Review `git diff <base>...feature/<id>` yourself, push
    and open the PR, then run `/agent-loop ship <id>` to move the task to
    `completed/` (an audited move) — the loop never does those steps for you.
 7. `/agent-loop stop` aborts and exits watch mode (timer included); `/agent-loop unwatch`
@@ -273,7 +273,7 @@ trusted tool call as the verdict, so they carry no extra trust.
 ## Termination
 
 - **REVIEW PASS** → loop done; the task moves to `in-review/`. Review
-  `git diff <base>...loop/<id>`, push/open the PR, then run `/agent-loop ship <id>`
+  `git diff <base>...feature/<id>`, push/open the PR, then run `/agent-loop ship <id>`
   to move the task to `completed/`.
 - **FAIL** (verify or review) and `iteration + 1 < maxIterations` → re-build
   with the failure feedback threaded in (a verify-FAIL re-build drops stale
@@ -326,7 +326,7 @@ Optional `.agentic-loop.json` at the repo root — every field has a default:
 are ignored.)
 
 **Worktree isolation** (`worktreesDir`): each loop's BUILD/VERIFY/REVIEW runs
-in its own `git worktree` on the `loop/<id>` branch instead of switching the
+in its own `git worktree` on the `feature/<id>` branch instead of switching the
 shared checkout's branch. The human's tree is never touched, and multiple
 `/agent-loop watch` sessions can drive tasks concurrently in one instance (the
 per-directory serialization lock is dropped in this mode). Stage prompts carry
@@ -376,7 +376,7 @@ T1). Costs ~N× review time. Off by default (single review).
 - [ ] Every VERIFY and REVIEW turn calls `loop_verdict` exactly once, and its
       text line matches the recorded verdict.
 - [ ] No file was edited by a task that never got `/agent-loop-task
-      approve-plan`d, and every build edit landed on the `loop/<id>` branch,
+      approve-plan`d, and every build edit landed on the `feature/<id>` branch,
       never the base branch (the PLAN stage edits only the task file).
 - [ ] A stopped/failed loop leaves its task (if any) in `in-progress/` with a
       timestamped note — never silently disappears or is left in `completed/`.

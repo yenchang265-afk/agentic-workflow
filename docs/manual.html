@@ -695,7 +695,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       cond:["api-and-interface-design","deprecation-and-migration","documentation-and-adrs"],
       transit:[["done","→","onDone parks the task in plan-review/ for the plan gate"]]},
     build:{name:"BUILD",kind:"work",agent:"loop-build",iso:"isolation: worktree",
-      what:"Implements the approved plan <b>test-first (TDD)</b> on the loop's <code>loop/&lt;id&gt;</code> branch or worktree, committing a checkpoint each iteration. Edit + bash allowed.",
+      what:"Implements the approved plan <b>test-first (TDD)</b> on the loop's <code>feature/&lt;id&gt;</code> branch or worktree, committing a checkpoint each iteration. Edit + bash allowed.",
       skills:["incremental-implementation","test-driven-development"],
       cond:["frontend-ui-engineering","observability-and-instrumentation","code-simplification"],
       transit:[["done","→","onDone fires VERIFY"]]},

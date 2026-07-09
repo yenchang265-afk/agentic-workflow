@@ -21,7 +21,7 @@ Dispatch:
   plan gate goes live: ask the user inline (AskUserQuestion — Approve /
   Replan / Park for later, per the `loop-orchestration` skill) instead of
   only telling them which command to run. An `in-progress/` task starts at
-  BUILD on `loop/<id>`;
+  BUILD on `feature/<id>`;
   follow the `loop-orchestration` protocol: `loop_stage` before spawning
   each stage subagent (`loop-build` / `loop-verify` / `loop-review` via the
   Task tool) and `loop_advance` after each returns, until a terminal action.

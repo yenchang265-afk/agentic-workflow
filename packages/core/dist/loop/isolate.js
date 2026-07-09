@@ -98,7 +98,7 @@ export const ensureIsolation = async ($, log, directory, config, state, baseBran
         await log("warn", "loop: detached HEAD — building without branch isolation");
         return state;
     }
-    const branch = `loop/${loopId(state)}`;
+    const branch = `feature/${loopId(state)}`;
     if (config.worktreesDir) {
         const wtPath = worktreePathFor(directory, config.worktreesDir, loopId(state));
         await ensureExcluded($, directory, config.worktreesDir);

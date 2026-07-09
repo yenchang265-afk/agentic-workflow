@@ -49,7 +49,7 @@ const PORCELAIN = [
   "",
   "worktree /repo/.loop-worktrees/add-foo",
   "HEAD def456",
-  "branch refs/heads/loop/add-foo",
+  "branch refs/heads/feature/add-foo",
   "",
   "worktree /repo/detached",
   "HEAD 999aaa",
@@ -60,8 +60,8 @@ const PORCELAIN = [
 test("branchExists maps a zero exit code to true", async () => {
   const yes = makeShell(() => ({ exitCode: 0 }))
   const no = makeShell(() => ({ exitCode: 1 }))
-  assert.equal(await branchExists(yes, "/repo", "loop/x"), true)
-  assert.equal(await branchExists(no, "/repo", "loop/x"), false)
+  assert.equal(await branchExists(yes, "/repo", "feature/x"), true)
+  assert.equal(await branchExists(no, "/repo", "feature/x"), false)
 })
 
 test("listWorktrees parses porcelain stanzas, including a detached entry", async () => {
@@ -69,7 +69,7 @@ test("listWorktrees parses porcelain stanzas, including a detached entry", async
   const entries = await listWorktrees($, "/repo")
   assert.deepEqual(entries, [
     { path: "/repo", branch: "main" },
-    { path: "/repo/.loop-worktrees/add-foo", branch: "loop/add-foo" },
+    { path: "/repo/.loop-worktrees/add-foo", branch: "feature/add-foo" },
     { path: "/repo/detached", branch: null },
   ])
 })
@@ -81,23 +81,23 @@ test("listWorktrees returns [] when the command fails", async () => {
 
 test("worktreeForBranch finds the matching worktree path", async () => {
   const $ = makeShell(() => ({ exitCode: 0, stdout: PORCELAIN }))
-  assert.equal(await worktreeForBranch($, "/repo", "loop/add-foo"), "/repo/.loop-worktrees/add-foo")
-  assert.equal(await worktreeForBranch($, "/repo", "loop/missing"), null)
+  assert.equal(await worktreeForBranch($, "/repo", "feature/add-foo"), "/repo/.loop-worktrees/add-foo")
+  assert.equal(await worktreeForBranch($, "/repo", "feature/missing"), null)
 })
 
 test("addWorktree creates a new branch with -b when the branch is absent", async () => {
   const log: string[] = []
   const $ = makeShell((cmd) => (cmd.includes("rev-parse --verify") ? { exitCode: 1 } : { exitCode: 0 }), log)
-  const ok = await addWorktree($, "/repo", "/wt/add-foo", "loop/add-foo", "main")
+  const ok = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
   assert.equal(ok, true)
-  assert.ok(log.some((c) => c.includes("worktree add -b loop/add-foo /wt/add-foo main")))
+  assert.ok(log.some((c) => c.includes("worktree add -b feature/add-foo /wt/add-foo main")))
 })
 
 test("addWorktree reuses an existing branch without -b (never resets it)", async () => {
   const log: string[] = []
   const $ = makeShell((cmd) => (cmd.includes("rev-parse --verify") ? { exitCode: 0 } : { exitCode: 0 }), log)
-  const ok = await addWorktree($, "/repo", "/wt/add-foo", "loop/add-foo", "main")
+  const ok = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
   assert.equal(ok, true)
-  assert.ok(log.some((c) => c.includes("worktree add /wt/add-foo loop/add-foo")))
+  assert.ok(log.some((c) => c.includes("worktree add /wt/add-foo feature/add-foo")))
   assert.ok(!log.some((c) => c.includes("worktree add -b")))
 })

@@ -201,7 +201,7 @@ What's on the task file tells you what happened:
 
 - The backlog path defaults to `docs/tasks` and is configurable via `tasksDir`
   in `.agentic-loop.json`.
-- Execution is isolated on a `loop/<id>` branch (or per-task worktree, when
+- Execution is isolated on a `feature/<id>` branch (or per-task worktree, when
   configured); after the loop finishes, review the diff, then open the PR
   yourself.
 - `→ abandoned` is a manual file move — there is no abandon command.

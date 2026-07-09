@@ -188,8 +188,8 @@ const PROMPT_STATES: Record<string, LoopState> = {
   "all artifacts": { ...mk("goalX"), artifacts: { plan: "P", build: "B", review: "R" } },
   "verify feedback": { ...mk("g"), artifacts: { plan: "P", verify: "V FAIL: missing test" } },
   "acceptance criteria": mk("g", { id: "t", path: "/p", acceptance: ["Returns 429 over limit", "Configurable per route"] }),
-  "git shared-tree": { ...mk("g"), git: { base: "main", branch: "loop/add-foo" } },
-  "git worktree": { ...mk("g"), git: { base: "main", branch: "loop/add-foo", worktree: "/wt/add-foo" }, artifacts: { plan: "P", build: "B" } },
+  "git shared-tree": { ...mk("g"), git: { base: "main", branch: "feature/add-foo" } },
+  "git worktree": { ...mk("g"), git: { base: "main", branch: "feature/add-foo", worktree: "/wt/add-foo" }, artifacts: { plan: "P", build: "B" } },
   "no task no git": mk("bare goal"),
 }
 

@@ -94,7 +94,7 @@ unattended (a feature, a refactor with tests, anything worth a task file):
    writes the `## Implementation Plan` right before execution, and parks it
    at the plan gate
 4. `/agent-loop-task approve-plan <id>` (or `replan <id> [why]`) — after
-   approval the loop runs BUILD→VERIFY→REVIEW unattended on a `loop/<id>`
+   approval the loop runs BUILD→VERIFY→REVIEW unattended on a `feature/<id>`
    branch; you review the result and `/agent-loop ship <id>`
 
 **Stay ad-hoc** for a single bounded request (rename, small fix, question):
