@@ -9,7 +9,7 @@ Guidance for AI coding agents working in this repository.
 guide covers the OpenCode plugin. It provides:
 
 1. **The automatic agentic loop** (`/agent-loop`) — a real plugin
-   (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
+   (`plugins/opencode/src/`, agents/commands under `plugins/opencode/`) that
    drives the whole lifecycle from one command: `/agent-loop new` interviews you
    into a planless draft task (`new <idea>` — always), `retask <id>` reshapes
    a draft in place, `approve <id>` queues it, and `approve [id]` /
@@ -86,11 +86,11 @@ Correct behavior: always check for and use skills first.
 
 ## Plugin Structure
 
-- `src/index.ts`, `src/loop/`, `src/config.ts` — plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
+- `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
 - `packages/core/loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
-- `.opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
-- `.opencode/commands/` — the slash commands (`/agent-loop`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
+- `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
+- `plugins/opencode/commands/` — the slash commands (`/agent-loop`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

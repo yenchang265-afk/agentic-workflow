@@ -1,49 +1,19 @@
 {
-  "name": "agentic-loop",
+  "name": "agentic-loop-monorepo",
   "version": "0.0.1",
-  "description": "opencode plugin for transforming engineer workflow into an agentic loop",
+  "description": "The agentic-loop plugins (OpenCode + Claude Code) and their shared core",
   "license": "MIT",
   "type": "module",
-  "main": "src/index.ts",
-  "module": "src/index.ts",
-  "types": "src/index.ts",
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "files": [
-    "src"
-  ],
+  "private": true,
   "workspaces": [
     "packages/core",
+    "plugins/opencode",
     "claude-plugin/mcp-server"
-  ],
-  "keywords": [
-    "opencode",
-    "opencode-plugin",
-    "agentic",
-    "agent"
   ],
   "scripts": {
     "prepare": "npm run build -w @agentic-loop/core && npm run build -w agentic-loop-mcp",
-    "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/**/*.test.ts",
     "test:hooks": "node --test claude-plugin/hooks/*.test.mjs",
-    "typecheck:all": "npm run typecheck -ws --if-present && npm run typecheck",
-    "test:all": "npm run test -ws --if-present && npm run test && npm run test:hooks"
-  },
-  "dependencies": {
-    "@agentic-loop/core": "*",
-    "yaml": "^2.9.0",
-    "zod": "^4.1.8"
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
-  },
-  "devDependencies": {
-    "@opencode-ai/plugin": "latest",
-    "@opencode-ai/sdk": "latest",
-    "@types/node": "^26.0.1",
-    "tsx": "^4.22.4",
-    "typescript": "^5.6.0"
+    "typecheck:all": "npm run typecheck -ws --if-present",
+    "test:all": "npm run test -ws --if-present && npm run test:hooks"
   }
 }

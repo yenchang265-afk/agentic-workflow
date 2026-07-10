@@ -166,9 +166,9 @@ link to it; don't copy.
   verdicts, metrics, config — everything both plugins share
 - `packages/core/loops/` — the declarative loop kinds (`engineering/`, `pr-sitter/`): a
   `loop.json` manifest + `stages/*.md` prompt templates per kind
-- `src/index.ts`, `src/loop/`, `src/config.ts` — the OpenCode plugin: host
+- `plugins/opencode/src/` — the OpenCode plugin: host
   wiring, the driver that runs the engine on `session.idle`, config extensions
-- `.opencode/agents/`, `.opencode/commands/` — the agent + command definitions
+- `plugins/opencode/agents/`, `plugins/opencode/commands/` — the agent + command definitions (symlinked from `.opencode/` for repo dogfooding)
   behind each stage and slash command; `.opencode/skills` symlinks to `skills/`
 - `claude-plugin/` — the Claude Code plugin: commands, agents, hooks, and the
   bundled MCP server that drives the loop (its host shims live in
