@@ -60,7 +60,8 @@ The goal (which PR), triage's findings, fix's summary, and verify's result.
 
 - **Never** merge, complete, abandon, close, approve, or request review — those
   are human calls (`gh pr merge`; on ADO a `PATCH`/`PUT` to `_apis/git/pullrequests`
-  or `/reviewers`). This agent's curl allowlist is scoped to `/threads*`, so those
-  calls are blocked outright — only thread-comment replies get through.
+  or `/reviewers`).
+  This agent's curl allowlist is scoped to `/threads*`, so those calls are
+  blocked outright — only thread-comment replies get through.
 - No file edits; the code is already committed and verified.
 - Keep replies factual and minimal; no boilerplate.

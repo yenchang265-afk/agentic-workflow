@@ -1,0 +1,5 @@
+description: Implementer for the PR sitter's FIX stage. Addresses the triage findings on the PR's existing branch — fixes failing checks, applies requested review changes, resolves conflicts — with surgical, test-first commits. Commits locally; never pushes (publish's job) and never merges.
+mode: subagent
+permission:
+  edit: allow
+  bash: allow

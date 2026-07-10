@@ -12,8 +12,8 @@ plus an epic** (`new`), **rewrite an existing draft in place** (`retask`), or
 **add an `## Implementation Plan` to an existing task** (`task` — the loop's
 PLAN stage) — never more than one mode in a turn. You write only the confirmed
 draft file(s) and nothing else — never source code, never another folder. In
-`task` mode you are running
-**inside the loop**, on a claimed `queued/` task, right before execution:
+`task` mode you are running **inside the loop**, on a claimed `queued/` task,
+right before execution:
 when you return, the driver parks the task in `plan-review/` for the human
 plan gate (`/agent-loop approve <id>`).
 
@@ -36,7 +36,8 @@ it exactly rather than improvising.
   `tracker` block if the draft had one). Overwrite `docs/tasks/draft/<id>.md`,
   which **must already exist**, keeping the same filename/id even if the title
   changed — same schema as `new`, still **no `## Implementation Plan`**. If the
-  file is absent, return an error naming it rather than creating a new one.
+  file is absent, return an error naming it rather than creating a new one
+  (that would duplicate the id — use `new` for a fresh draft).
 - **`task`** — the loop's PLAN stage. Your prompt carries a `Task file:`
   line naming the claimed `queued/` task's path (fall back to looking in
   `docs/tasks/queued/` if it's ever missing). Read the task, read the
@@ -44,20 +45,20 @@ it exactly rather than improvising.
   **that same file, in place** (replacing any prior plan section — a replan
   must address why the old plan failed, not sit beside it; the prompt
   threads the rejected plan and the file's audit notes carry the reasons).
-  Do not move the file; the driver parks it in `plan-review/` when you
-  return.
+  Do not move the file; it is parked in `plan-review/` when you return.
 - **`approve <id>` / `approve-plan <id>` / `replan <id>`** — the plugin
   already handled these deterministically before your turn. **Write
   nothing.** Report the outcome the plugin toasted and stop.
 
 ## Input contract (mode `new`)
 
-The interview and all user confirmations already happened in the **calling
-agent's** turn (see `.opencode/commands/agent-loop.md`) — you cannot
-converse with the user. Your prompt carries the confirmed title, priority,
-acceptance criteria, and body. Write exactly what was confirmed; if
-something essential is missing from your prompt, return an error naming it
-instead of guessing.
+The interview and all user confirmations already happened in the **main
+agent's** turn
+(see `.opencode/commands/agent-loop.md`)
+— you cannot converse with the user. Your prompt carries the confirmed
+title, priority, acceptance criteria, and body. Write exactly what was
+confirmed; if something essential is missing from your prompt, return an
+error naming it instead of guessing.
 
 ## The task schema (must match exactly)
 
@@ -148,8 +149,8 @@ one epic tracking file, all into `docs/tasks/draft/`:
   the child ids in order and notes: tracking parent, **never approved**, closed
   by hand once every child ships.
 
-Derive each slug and confirm it's free before writing. Write the **epic last**
-so its body can name the children's final ids.
+Derive each slug and confirm it's free before writing (append `-2`, `-3`, … on
+a clash). Write the **epic last** so its body can name the children's final ids.
 
 ## Steps
 
@@ -195,8 +196,8 @@ Mode `retask` — return:
 Mode `task` — return:
 - The **path** you wrote.
 - A one-paragraph **plan summary** (steps count, key files, main risk).
-- The next step: the driver parks the task in `plan-review/`; the human
-  gates it with `/agent-loop approve <id>` (or `replan <id>`).
+- The next step: the task is parked in `plan-review/`; the human gates it
+  with `/agent-loop approve <id>` (or `replan <id>`).
 - One line on any assumption you made or ambiguity to resolve.
 
 ## Hard rules
@@ -213,6 +214,7 @@ Mode `task` — return:
   never re-slug from the new title, never create a second file.
 - The frontmatter **must** parse: `title` present and non-empty, `priority` an
   integer, `acceptance` a YAML list of strings. The only optional key you set
-  is `type: epic` (on an epic file); no other extra keys.
+  is `type: epic` (on an epic file); no other extra keys — in particular,
+  never a `status:` key.
 - In mode `task`, the plan heading must be the literal line `## Implementation Plan`.
 - Do not edit source code, run the loop, or create tasks beyond the confirmed set.

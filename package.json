@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "prepare": "npm run build -w @agentic-loop/core && npm run build -w agentic-loop-mcp",
+    "gen:prompts": "node scripts/gen-prompts.mjs",
     "test:hooks": "node --test plugins/claude/hooks/*.test.mjs",
     "typecheck:all": "npm run typecheck -ws --if-present",
     "test:all": "npm run test -ws --if-present && npm run test:hooks"

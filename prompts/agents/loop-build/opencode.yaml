@@ -1,0 +1,5 @@
+description: Implementer for the BUILD stage. Executes an approved plan test-first with surgical diffs, or applies a VERIFY/REVIEW stage's fix requests on a re-build. The only stage that writes code; in the automatic loop it runs only on a task whose plan was approved via /agent-loop approve.
+mode: subagent
+permission:
+  edit: allow
+  bash: allow
