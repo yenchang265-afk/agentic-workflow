@@ -1,7 +1,7 @@
+import { defaultLoopsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import type { Client, Shell } from "../host.js"
 import { registerEngineeringHooks } from "../kinds/engineering.js"
 import { loadManifest } from "../manifest/load.js"
@@ -18,7 +18,7 @@ import { claimSkipReason, makeBacklogSource, taskGoal } from "./backlog.js"
 
 registerEngineeringHooks()
 
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..", "loops")
+const LOOPS_DIR = defaultLoopsDir()
 const eng = loadManifest(LOOPS_DIR, "engineering")
 
 type FakeFile = { readonly name: string; readonly content: string }

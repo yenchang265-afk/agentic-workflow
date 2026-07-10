@@ -88,7 +88,7 @@ Correct behavior: always check for and use skills first.
 
 - `src/index.ts`, `src/loop/`, `src/config.ts` — plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
-- `loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
+- `packages/core/loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
 - `.opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
 - `.opencode/commands/` — the slash commands (`/agent-loop`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
@@ -107,6 +107,6 @@ Rules earn their place — every line costs context on every session.
 - **What to write:** the constraint **and why** it exists (so a future agent
   doesn't "fix" it back), not a narration of the bug.
 - **Where:** a durable, cross-task fact → here. A task-specific instruction →
-  the task file or the stage prompt (`loops/<kind>/stages/*.md`), not here.
+  the task file or the stage prompt (`packages/core/loops/<kind>/stages/*.md`), not here.
 - **Prune:** delete a rule when the code it guards moves or the reason dies. A
   stale rule is worse than none.

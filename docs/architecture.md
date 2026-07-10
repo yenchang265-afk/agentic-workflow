@@ -82,7 +82,7 @@ flowchart TB
   (`<tasksDir>/runs/pr-sitter/pr-<n>.json`) records what has already been
   handled. Other kinds pick whichever source fits.
 
-## The engineering kind (`loops/engineering/`)
+## The engineering kind (`packages/core/loops/engineering/`)
 
 The full picture: three human gates thread an unattended PLAN / BUILD →
 VERIFY → REVIEW loop, and the `docs/tasks/` backlog folders *are* the state —
@@ -90,7 +90,7 @@ a task's folder is its status. The loop plans a task right before execution
 (so plans don't rot while tasks sit parked) and **parks** the plan for human
 review instead of blocking on it. The pipeline shape below — stage order,
 retry budget, park/done statuses, stop messages — comes from
-`loops/engineering/loop.json`; the engine just interprets it.
+`packages/core/loops/engineering/loop.json`; the engine just interprets it.
 
 ```mermaid
 flowchart TB
@@ -177,7 +177,7 @@ pr-sitter: `triage`/`verify`) and validates the recording against it. Stage
 agents can't approve tasks, move backlog folders, or ship; the plugin and the
 human own every transition between statuses.
 
-## The PR sitter kind (`loops/pr-sitter/`)
+## The PR sitter kind (`packages/core/loops/pr-sitter/`)
 
 Opt-in (`loops.pr-sitter.enabled` in `.agentic-loop.json`). Its work source
 is chosen from config `codePlatform` at wiring time: on GitHub

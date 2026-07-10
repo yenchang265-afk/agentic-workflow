@@ -2,7 +2,7 @@
 
 Runs long-lived goals as supervised state machines instead of a chat
 back-and-forth. The repo is a **multi-kind loop framework**: each loop kind is
-a declarative manifest in [`loops/<kind>/`](loops/README.md) — stages,
+a declarative manifest in [`loops/<kind>/`](packages/core/loops/README.md) — stages,
 transitions, and a work source — interpreted by a shared engine and fed by a
 common scheduler. Ships as two parallel plugins — one for **OpenCode**, one
 for **Claude Code** ([`claude-plugin/`](claude-plugin/README.md)) — both built
@@ -19,7 +19,7 @@ Two loop kinds ship today:
   replies. Never merges.
 
 Authoring a new kind is a `loop.json` + stage prompts away — see
-[`loops/README.md`](loops/README.md).
+[`loops/README.md`](packages/core/loops/README.md).
 
 ## The engineering loop
 
@@ -136,7 +136,7 @@ skills library via [AGENTS.md](AGENTS.md).
 - [docs/architecture.md](docs/architecture.md) — the framework (core package,
   manifest engine, scheduler, work sources), the two shipped loop kinds, and
   how the Claude Code variant differs
-- [loops/README.md](loops/README.md) — how to author a new loop kind
+- [packages/core/loops/README.md](packages/core/loops/README.md) — how to author a new loop kind
   (manifest schema, prompt templates, hooks, work sources)
 - [docs/opencode.md](docs/opencode.md) — OpenCode execution model, commands,
   install detail
@@ -164,7 +164,7 @@ link to it; don't copy.
 - `packages/core/` — `@agentic-loop/core`: the pure loop engine, manifest
   layer, work sources + scheduler, task store, git isolation, snapshots,
   verdicts, metrics, config — everything both plugins share
-- `loops/` — the declarative loop kinds (`engineering/`, `pr-sitter/`): a
+- `packages/core/loops/` — the declarative loop kinds (`engineering/`, `pr-sitter/`): a
   `loop.json` manifest + `stages/*.md` prompt templates per kind
 - `src/index.ts`, `src/loop/`, `src/config.ts` — the OpenCode plugin: host
   wiring, the driver that runs the engine on `session.idle`, config extensions

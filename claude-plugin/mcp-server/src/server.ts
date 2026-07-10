@@ -16,6 +16,7 @@ import {
 } from "@agentic-loop/core/loop/state"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
 import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
+import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
 import { loadManifest } from "@agentic-loop/core/manifest/load"
 import { effectiveAllowlist, stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
 import { pollOnce } from "@agentic-loop/core/scheduler/scheduler"
@@ -25,7 +26,6 @@ import { makeGithubPrSource } from "@agentic-loop/core/source/github-pr"
 import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-loop/core/source/types"
 import { enabledLoopKinds, platformFor } from "@agentic-loop/core/config"
-import { fileURLToPath } from "node:url"
 import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
@@ -93,9 +93,10 @@ const directory = process.env.AGENTIC_LOOP_DIR ?? process.cwd()
 const baseDir = process.env.AGENTIC_LOOP_BASE_DIR
 const resolveBase = async (): Promise<string | undefined> =>
   baseDir ? ((await currentBranch(sh, baseDir)) ?? undefined) : undefined
-/** The loop-kind manifests shipped with this repo (loops/<kind>/) — resolved
- *  relative to this module so the server works from any cwd. */
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..", "loops")
+/** The loop-kind manifests shipped with core (packages/core/loops/<kind>/) —
+ *  resolved from core's own install location so the server works from any cwd
+ *  and survives plugin relocations. */
+const LOOPS_DIR = defaultLoopsDir()
 const eng = loadManifest(LOOPS_DIR, "engineering")
 registerEngineeringHooks()
 

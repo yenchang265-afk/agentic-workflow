@@ -2,10 +2,10 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import { type Task } from "@agentic-loop/core/task/schema"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
 import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
+import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
 import { loadManifest } from "@agentic-loop/core/manifest/load"
 import { resolveValidateHook } from "@agentic-loop/core/manifest/registry"
 import { stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
@@ -135,8 +135,8 @@ import {
  * failure context threaded in.
  */
 
-/** The loop-kind manifests shipped with this repo (loops/<kind>/). */
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..", "loops")
+/** The loop-kind manifests shipped with core (packages/core/loops/<kind>/). */
+const LOOPS_DIR = defaultLoopsDir()
 const eng = loadManifest(LOOPS_DIR, "engineering")
 registerEngineeringHooks()
 

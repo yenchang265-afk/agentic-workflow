@@ -1,7 +1,7 @@
+import { defaultLoopsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import { loadManifest } from "../manifest/load.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
 import type { Action, Config, LoopState, TaskRef } from "./state.js"
@@ -17,7 +17,7 @@ import type { Verdict } from "./verdict.js"
  * fixture.
  */
 
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..", "loops")
+const LOOPS_DIR = defaultLoopsDir()
 const eng = loadManifest(LOOPS_DIR, "engineering")
 
 const config: Config = {

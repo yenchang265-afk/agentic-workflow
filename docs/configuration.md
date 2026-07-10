@@ -114,7 +114,7 @@ is resolved from config at wiring time — the manifest is never forked.
   (static YAML) carries both platforms' CLI allowlists as a deliberate
   breadth tradeoff — the loop.json/stage-marker path stays platform-narrow.
 
-See [`loops/README.md`](../loops/README.md) for authoring new kinds and
+See [`loops/README.md`](../packages/core/loops/README.md) for authoring new kinds and
 [`docs/design/threat-model.md`](design/threat-model.md) for the PR sitter's
 security posture before enabling it.
 

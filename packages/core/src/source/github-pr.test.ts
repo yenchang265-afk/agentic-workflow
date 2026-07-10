@@ -1,7 +1,7 @@
+import { defaultLoopsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
 import { makeGithubPrSource } from "./github-pr.js"
@@ -13,7 +13,7 @@ import { makeGithubPrSource } from "./github-pr.js"
  * own comments), claim/fetch mechanics, and terminal ledger writes.
  */
 
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..", "loops")
+const LOOPS_DIR = defaultLoopsDir()
 const sitter = loadManifest(LOOPS_DIR, "pr-sitter")
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
