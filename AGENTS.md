@@ -94,3 +94,19 @@ Correct behavior: always check for and use skills first.
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
+
+## Maintaining these rules
+
+Rules earn their place — every line costs context on every session.
+
+- **When to add:** the *second time* an agent makes the same mistake. First
+  time = correct it inline (could be a one-off); a repeat means it's systemic
+  — write it down. Also add after a plan/ship **gate rejection** whose reason
+  was a missing rule, or when VERIFY/REVIEW keeps flagging the same *class* of
+  defect.
+- **What to write:** the constraint **and why** it exists (so a future agent
+  doesn't "fix" it back), not a narration of the bug.
+- **Where:** a durable, cross-task fact → here. A task-specific instruction →
+  the task file or the stage prompt (`loops/<kind>/stages/*.md`), not here.
+- **Prune:** delete a rule when the code it guards moves or the reason dies. A
+  stale rule is worse than none.

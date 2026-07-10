@@ -82,6 +82,16 @@ recommendation. On FAIL, make the Critical/Important findings concrete enough
 for the next BUILD iteration to act on directly without re-reading the whole
 diff from scratch.
 
+## Candidate rules
+
+When a Critical or Important finding is a **recurring class** — a mistake this
+loop has produced before, or a general pitfall likely to recur across future
+tasks — add a **Candidate rule** line to your review body: a one-line
+`AGENTS.md` rule stating the constraint **and why** it exists. This is a
+suggestion for the human at the ship gate; it does **not** change your
+PASS/FAIL verdict, and you still never edit files yourself. Reserve it for
+patterns worth a permanent rule — one-off bugs get no candidate rule.
+
 ## Hard rules
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.

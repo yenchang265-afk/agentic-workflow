@@ -37,6 +37,14 @@ could not run (e.g. the diff is unreadable). Above the call, give the findings
 grouped by axis; on FAIL make Critical/Important findings concrete enough for the
 next BUILD iteration to act on directly.
 
+## Candidate rules
+
+When a Critical/Important finding is a **recurring class** (seen before, or a
+general pitfall likely to recur across tasks), add a **Candidate rule** line to
+the review body — a one-line `AGENTS.md` rule (constraint + why) for the human
+at the ship gate. It does **not** change PASS/FAIL and you still never edit
+files; reserve it for patterns worth a permanent rule, not one-off bugs.
+
 ## Hard rules
 
 - **Never** edit, create, or delete files. Report, don't repair.

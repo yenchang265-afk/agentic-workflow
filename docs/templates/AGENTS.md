@@ -150,3 +150,19 @@ Correct behavior: check for and use skills first; write the failing test first.
   that trace to the task.
 - <project-specific rules, e.g. "never edit generated files under gen/",
   "migrations require a rollback script">
+
+## Maintaining these rules
+
+Rules earn their place — every line costs context on every session.
+
+- **When to add:** the *second time* an agent makes the same mistake. First
+  time = correct it inline (could be a one-off); a repeat means it's systemic
+  — write it down. Also add after a plan/ship **gate rejection** whose reason
+  was a missing rule, or when VERIFY/REVIEW keeps flagging the same *class* of
+  defect.
+- **What to write:** the constraint **and why** it exists (so a future agent
+  doesn't "fix" it back), not a narration of the bug.
+- **Where:** a durable, cross-task fact → here. A task-specific instruction →
+  the task file or the stage prompt (`loops/<kind>/stages/*.md`), not here.
+- **Prune:** delete a rule when the code it guards moves or the reason dies. A
+  stale rule is worse than none.
