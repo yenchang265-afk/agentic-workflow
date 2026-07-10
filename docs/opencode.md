@@ -20,7 +20,7 @@ plugin tool (free-text verdicts are ignored), and every approval, verdict,
 and build run is appended to the task file as a timestamped, attributed
 audit note. Re-build loops are capped by `maxIterations` — if the cap trips,
 the plan itself is suspect and a human sends it back with
-`/agent-loop-task replan <id> <why>`.
+`/agent-loop reject <id> <why>`.
 A stage that outlives `stageTimeoutMinutes` fails the loop instead of
 hanging it. On a REVIEW PASS the task parks in `in-review/` — the loop never
 pushes or opens a PR itself; you review the branch diff, then run
@@ -38,26 +38,26 @@ see [configuration.md](configuration.md).
 
 ## Commands
 
-Authoring + gates (`/agent-loop-task`):
+Authoring + gates (`/agent-loop`):
 
-- `/agent-loop-task new <idea>` — interview you (always — at minimum a
+- `/agent-loop new <idea>` — interview you (always — at minimum a
   restate-and-confirm) into a **planless draft** in `docs/tasks/draft/`
-- `/agent-loop-task retask <id> [note]` — reshape a `draft/` task before you
+- `/agent-loop retask <id> [note]` — reshape a `draft/` task before you
   approve it: re-interview you (seeded by the optional note) and rewrite the
   same draft in place — same id, no plan. Drafts only (a parked plan uses
   `replan`)
-- `/agent-loop-task approve <id>` — the task gate: park the reviewed draft in
+- `/agent-loop approve <id>` — the task gate: park the reviewed draft in
   `docs/tasks/queued/` (audited + committed); the loop plans it on claim
-- `/agent-loop-task approve-plan <id>` — the plan gate: validate the parked
+- `/agent-loop approve <id>` — the plan gate: validate the parked
   plan and move the task to `docs/tasks/in-progress/` (the build-ready
   queue), audited + committed
-- `/agent-loop-task replan <id> [reason]` — reject a parked plan (or send a
+- `/agent-loop reject <id> [reason]` — reject a parked plan (or send a
   cap-tripped task back): moves it to `queued/` with the reason audited
 - `/agent-loop approve [id]` · `/agent-loop reject [id] [reason]` — the gate shortcuts: `/agent-loop approve`
   advances the one task the loop is waiting on (plan-review → in-progress, or
   in-review → completed); `/agent-loop reject` is the `replan` shortcut, sending a
   parked plan back to `queued/`. Does not approve drafts (that's
-  `/agent-loop-task approve <id>`). Id only disambiguates when two or more tasks
+  `/agent-loop approve <id>`). Id only disambiguates when two or more tasks
   wait — the explicit verbs above stay unambiguous
 
 The loop (`/agent-loop`):
@@ -90,11 +90,11 @@ The loop (`/agent-loop`):
   interrupted/in-review)
 
 The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/agent-loop go` are gone —
-task authoring and both gates always go through `/agent-loop-task`.
+task authoring and both gates live on `/agent-loop` (`new`, `retask`, `approve`, `reject`).
 
 Gates on this substrate are **park-only**: watch mode has no interactive
 channel, so a parked plan or a finished loop always waits for the
-`/agent-loop-task approve-plan` / `/agent-loop ship` verbs (or their `/agent-loop approve`
+`/agent-loop approve` / `/agent-loop ship` verbs (or their `/agent-loop approve`
 shortcut). (The Claude Code
 variant additionally offers the same choices inline via AskUserQuestion when
 a human is driving.)

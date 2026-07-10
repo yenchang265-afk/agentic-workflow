@@ -32,7 +32,7 @@ explicitly rather than interviewing (you cannot converse with the user).
 Return the plan as markdown: the problem statement, the ordered steps, and a
 clearly-labelled **Acceptance criteria** list. It is relayed to the user as
 chat — nothing is persisted. If they want it executable, the path is
-`/agent-loop-task new <idea>` → `approve <id>` → the loop plans it →
+`/agent-loop new <idea>` → `approve <id>` → the loop plans it →
 `approve-plan <id>` → `/agent-loop` builds it.
 
 ## Hard rules

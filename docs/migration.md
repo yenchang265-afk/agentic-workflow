@@ -6,7 +6,7 @@
   against `<tasksDir>/` and direct Write/Edit of files in status folders are
   rejected on both substrates (PreToolUse hook / `tool.execute.before`);
   only `draft/*.md` authoring and the live PLAN stage's own `queued/` task
-  stay writable. Use the MCP verbs / `/agent-loop-task`; repair damage with
+  stay writable. Use the MCP verbs / the `/agent-loop` gate verbs; repair damage with
   `loop_doctor` / `/agent-loop doctor [fix]`.
 - **New gitignored dir `docs/tasks/runs/.watch-lease/`** — the single-watcher
   lease. A second `/agent-loop watch` process on the same clone is refused;
@@ -19,19 +19,19 @@
   plan — update both sides together).
 - **Claude Code gates are interactive now.** A plan park / loop done returns
   a `gate` field and the driver asks Approve / Replan / Park inline
-  (AskUserQuestion). The `/agent-loop-task approve-plan` and
+  (AskUserQuestion). The `/agent-loop approve` and
   `/agent-loop ship` verbs are unchanged and remain the deferred path (now also
   reachable via the shorter `/agent-loop approve` / `/agent-loop reject` shortcuts).
 
-## To the in-loop PLAN stage (`/agent-loop-task`, `queued/`, `plan-review/`)
+## To the in-loop PLAN stage (`queued/`, `plan-review/`)
 
 Planning moved **into** the loop: the plan is now written right before
 execution (PLAN stage) and parked in `plan-review/` for a human gate,
 instead of being authored up front by a planning command.
 
 - **Command rename** — `/agent-loop-plan` is gone; task authoring and both
-  human gates live in `/agent-loop-task` (`new <idea>` · `retask <id> [note]` ·
-  `approve <id>` · `approve-plan <id>` · `replan <id> [reason]`). Re-run
+  human gates live in `/agent-loop` (`new <idea>` · `retask <id> [note]` ·
+  `approve [id]` · `reject [id] [reason]`; since the single-command merge, `/agent-loop-task` itself is gone). Re-run
   `./install.sh` after
   updating; a previously installed `commands/agent-loop-plan.md` symlink now
   dangles — delete it if it lingers.
@@ -52,7 +52,7 @@ instead of being authored up front by a planning command.
   Tasks already in `in-progress/` keep working unchanged — they have
   approved plans and the loop still enters them at BUILD.
 - **Re-planning** — `/agent-loop-plan task <id>` is gone; to re-plan anything
-  (a rejected plan, a cap-tripped task) run `/agent-loop-task replan <id>
+  (a rejected plan, a cap-tripped task) run `/agent-loop reject <id>
   <why>` — it re-queues the task and the next PLAN pass addresses the
   audited reason. This also fixes the old dead end where a cap-tripped
   `in-progress/` task could not be re-planned at all.
@@ -62,11 +62,11 @@ instead of being authored up front by a planning command.
 
 ## From the pre-`/agent-loop-plan` versions
 
-- The `/task` command was renamed (via `/agent-loop-plan`, now
-  `/agent-loop-task`) and its agent to `loop-plan-author`; delete dangling
+- The `/task` command was renamed (via `/agent-loop-plan` and `/agent-loop-task`, now
+  merged into `/agent-loop`) and its agent to `loop-plan-author`; delete dangling
   `commands/task.md` symlinks.
 - `gateBeforeBuild` and `interviewBeforePlan` in `.agentic-loop.json` are
-  ignored (the gates are `/agent-loop-task approve` and `approve-plan`;
-  interviewing lives in `/agent-loop-task new`).
+  ignored (the gates are `/agent-loop approve` and `approve-plan`;
+  interviewing lives in `/agent-loop new`).
 - `new` never writes a plan — it interviews you into a planless draft in
   `draft/`.

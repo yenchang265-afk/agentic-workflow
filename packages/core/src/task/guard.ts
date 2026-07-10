@@ -33,7 +33,7 @@ const block = (reason: string): GuardVerdict => ({ allow: false, reason })
 const HOW_TO_MUTATE =
   "the folder a backlog file lives in IS its state — mutate it only through the loop tools " +
   "(loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) " +
-  "or the /agent-loop-task verbs, never by hand. To create a task, write a draft/<id>.md file " +
+  "or the /agent-loop gate verbs, never by hand. To create a task, write a draft/<id>.md file " +
   "(or run /agent-loop new) — the status folders are created for you."
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")

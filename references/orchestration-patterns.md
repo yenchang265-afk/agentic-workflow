@@ -87,8 +87,8 @@ If any answer is "no," fall back to direct invocation or a single-persona comman
 The user runs slash commands in a defined order, carrying context (or commit history) between them. There is no orchestrator agent — the user IS the orchestrator.
 
 ```
-user runs:  /agent-loop-task new  →  /agent-loop-task approve  →
-            /plan-task  →  /agent-loop-task approve-plan  →
+user runs:  /agent-loop new  →  /agent-loop approve  →
+            /plan-task  →  /agent-loop approve  →
             /build  →  /verify  →  /review  →  /agent-loop ship
 ```
 

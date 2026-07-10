@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -96,16 +97,16 @@ import {
  * marker selects what to run and a driving lock prevents re-entrancy from the
  * idle events the driver's own commands generate.
  *
- * Task authoring happens **before** the loop, in the `/agent-loop-task` command:
- * `new <idea>` interviews the user into a planless draft, and the deterministic
- * `approve <id>` subcommand (in `handleTaskCommand`) parks it planless in
+ * Task authoring happens **before** the loop, via `/agent-loop new <idea>`:
+ * it interviews the user into a planless draft, and the deterministic
+ * `approve <id>` verb (in `handleApprove`, folder-driven) parks it planless in
  * `queued/`. Planning happens **inside** the loop, right before execution, so
  * plans don't rot while a task sits parked: a claimed `queued/` task enters at
  * the PLAN stage (`startAtPlan`), which writes the `## Implementation Plan`
  * onto the task file and terminates with a `park` action — the driver moves
  * the task to `plan-review/` and the loop exits without blocking on a human.
- * `/agent-loop-task approve-plan <id>` is the human plan gate: it moves the task to
- * `in-progress/` — the build-ready queue — and the next claim enters at
+ * `/agent-loop approve <id>` at that point is the human plan gate: it moves the
+ * task to `in-progress/` — the build-ready queue — and the next claim enters at
  * `build` via `resumeAtBuild` with the approved plan threaded in as an artifact.
  *
  * PLAN, or BUILD → VERIFY → REVIEW, runs either on demand (`/agent-loop task <id>`
@@ -122,15 +123,16 @@ import {
  * as claimable before either claims it; the atomic `claimTask` marker
  * resolves the race (in `queued/` and `in-progress/` alike).
  *
- * Task lifecycle: `/agent-loop-task new` authors into `draft/`; `approve <id>`
+ * Task lifecycle: `/agent-loop new` authors into `draft/`; `approve <id>`
  * moves it to `queued/`; the loop's PLAN stage parks it in `plan-review/`;
- * `approve-plan <id>` moves it to `in-progress/`; a stop/failure while
- * building appends a note and leaves it in `in-progress/`; the loop finishing
- * (review PASS) moves it to `in-review/`, the human diff gate — a human runs
- * `/agent-loop ship <id>` to move it to `completed/`. If the plan itself turns out
- * wrong (rejected at the gate, or the iteration cap stops the loop), a human
- * sends it back to `queued/` with `/agent-loop-task replan <id>` and the PLAN
- * stage runs again with the failure context threaded in.
+ * `approve [id]` again (folder-driven) moves it to `in-progress/`; a
+ * stop/failure while building appends a note and leaves it in `in-progress/`;
+ * the loop finishing (review PASS) moves it to `in-review/`, the human diff
+ * gate — a human runs `/agent-loop ship [id]` (or `approve`) to move it to
+ * `completed/`. If the plan itself turns out wrong (rejected at the gate, or
+ * the iteration cap stops the loop), a human sends it back to `queued/` with
+ * `/agent-loop reject <id> <why>` and the PLAN stage runs again with the
+ * failure context threaded in.
  */
 
 /** The loop-kind manifests shipped with this repo (loops/<kind>/). */
@@ -149,9 +151,12 @@ export const manifestFor = (kind: string): LoadedManifest => {
   return loaded
 }
 
-/** The work sources the scheduler polls, in claim-priority order (config order). */
-const sourcesFor = (deps: Deps, config: Config): WorkSource[] =>
-  enabledLoopKinds(config).flatMap((kind): WorkSource[] => {
+/** The work sources the scheduler polls, in claim-priority order (config order).
+ *  An `only` kind restricts the poll to that one kind (claim/watch kind filter). */
+const sourcesFor = (deps: Deps, config: Config, only?: string): WorkSource[] =>
+  enabledLoopKinds(config)
+    .filter((kind) => !only || kind === only)
+    .flatMap((kind): WorkSource[] => {
     // A typo'd or unavailable `loops.<kind>` (the config schema is an open record)
     // must not throw here — that would abort the whole flatMap and take every OTHER
     // enabled source (engineering included) down with it, so no work ever gets
@@ -268,6 +273,15 @@ const interrupted = new Set<string>()
 /** Per-watching-session polling timers and their cadence (for status display). */
 const watchTimers = new Map<string, ReturnType<typeof setInterval>>()
 const watchIntervalsMs = new Map<string, number>()
+/** Per-watching-session loop-kind filter (`/agent-loop watch [interval] [kind]`). */
+const watchKindFilter = new Map<string, string>()
+/**
+ * One-shot claim requests (`/agent-loop claim [kind]`), consumed by the next
+ * `onIdle` — the command's own turn must settle before a drive may start, the
+ * same deferral `task <id>` gets via `pending`. The value is the kind filter
+ * (undefined = all enabled kinds).
+ */
+const claimRequested = new Map<string, string | undefined>()
 /**
  * The clone's watch lease, refcounted per working directory: watch sessions in
  * THIS process share one on-disk lease (in-process races are covered by the
@@ -870,8 +884,9 @@ export type { ClaimSkipReason } from "@agentic-loop/core/source/types"
  * reason is always logged, and toasted when actionable (deduped until the
  * reason changes).
  */
-const tryClaim = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
-  const { claim, skips } = await pollOnce(sourcesFor(deps, config))
+const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: string): Promise<void> => {
+  const kindFilter = only ?? watchKindFilter.get(sessionID)
+  const { claim, skips } = await pollOnce(sourcesFor(deps, config, kindFilter))
   if (!claim) {
     const reason = combineSkips(skips)
     if (!reason) return
@@ -939,6 +954,7 @@ const stopWatching = async (deps: Deps, sessionID: string): Promise<boolean> => 
   const was = watching.delete(sessionID)
   stopWatchTimer(sessionID)
   lastSkipReason.delete(sessionID)
+  watchKindFilter.delete(sessionID)
   if (was) await releaseWatchLease(deps)
   return was
 }
@@ -957,6 +973,7 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   const hadLoop = state !== undefined
   const priorPending = pending.get(sessionID)
   pending.delete(sessionID) // synchronous — beat the racing idle; marker released below
+  claimRequested.delete(sessionID) // a dropped one-shot claim must not fire on the trailing idle
   // Only flag when a loop is actually driving — otherwise the flag would linger
   // (no drive to consume it in onIdle's finally) and wrongly halt this session's
   // NEXT loop. A running stage always has getLoop set (drive's setLoop), so the
@@ -1002,9 +1019,10 @@ export const abortedSessionID = (event: any): string | undefined => {
 export const onIdle = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
   if (driving.has(sessionID)) return
   const work = pending.get(sessionID)
-  // Nothing to do unless there's real pending work, or this is an idle
-  // watch session with no loop of its own currently running.
-  const shouldWatch = watching.has(sessionID) && !getLoop(sessionID)
+  // Nothing to do unless there's real pending work, a one-shot claim request,
+  // or this is an idle watch session with no loop of its own currently running.
+  const oneShotClaim = claimRequested.has(sessionID)
+  const shouldWatch = (watching.has(sessionID) || oneShotClaim) && !getLoop(sessionID)
   if (!work && !shouldWatch) return
   // Serialize drives per working tree ONLY in shared-tree mode — there, two
   // loops would switch branches out from under each other. In worktree mode
@@ -1035,9 +1053,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       // with artifacts intact, re-firing that stage from its own inputs.
       await drive(deps, sessionID, config, firstStep(eng, work.state))
     } else {
-      // No pending work — a watch session with nothing to resume; look for
-      // one claimable task in the backlog.
-      await tryClaim(deps, sessionID, config)
+      // No pending work — a watch session (or one-shot `/agent-loop claim`)
+      // with nothing to resume; look for one claimable item across the
+      // enabled loop kinds.
+      const only = claimRequested.get(sessionID)
+      claimRequested.delete(sessionID)
+      await tryClaim(deps, sessionID, config, only)
     }
   } catch (err) {
     const message = (err as Error).message
@@ -1082,8 +1103,6 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
 
 // --- /agent-loop command handling (parses the mode; deferred work runs on next idle) ---
 
-const TASK_PREFIX = "task "
-
 /** Human-readable rendering of a polling cadence in ms. Pure. */
 const formatInterval = (ms: number): string =>
   ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`
@@ -1091,22 +1110,50 @@ const formatInterval = (ms: number): string =>
 /** Minimum watch polling cadence — anything tighter just burns idle queries. */
 const MIN_WATCH_INTERVAL_MS = 10_000
 
-/**
- * Parse the interval spec of `/agent-loop watch [interval]`. Accepts `""` (use the
- * config default), `30s`, `5m`, `2h`, a bare number (minutes), and an
- * optional `--interval ` prefix. Clamped to at least 10 seconds. Pure.
- */
-export const parseWatchArgs = (spec: string): { intervalMs?: number } | { error: string } => {
-  const s = spec.trim().replace(/^--interval\s+/i, "")
-  if (!s) return {}
+/** Parse one interval token (`30s`, `5m`, `2h`, bare minutes, `10 M`), or null. Pure. */
+const parseIntervalSpec = (s: string): { intervalMs: number } | null => {
   const m = /^(\d+(?:\.\d+)?)\s*([smh]?)$/i.exec(s)
-  if (!m || Number(m[1]) <= 0) {
-    return { error: `Unrecognized watch interval "${spec.trim()}" — use e.g. 30s, 5m, 2h, or a bare number of minutes.` }
-  }
+  if (!m || Number(m[1]) <= 0) return null
   const value = Number(m[1])
   const unit = (m[2] ?? "").toLowerCase() || "m"
   const ms = value * (unit === "s" ? 1_000 : unit === "h" ? 3_600_000 : 60_000)
   return { intervalMs: Math.max(ms, MIN_WATCH_INTERVAL_MS) }
+}
+
+/**
+ * Parse the arguments of `/agent-loop watch [interval] [kind]`, order-agnostic.
+ * Accepts `""` (config default), an interval (`30s`, `5m`, `2h`, a bare number
+ * of minutes, optional `--interval ` prefix), and/or one of `kinds` (a
+ * loop-kind filter). Interval clamped to at least 10 seconds. Pure.
+ */
+export const parseWatchArgs = (
+  spec: string,
+  kinds: readonly string[] = [],
+): { intervalMs?: number; kind?: string } | { error: string } => {
+  const s = spec.trim().replace(/^--interval\s+/i, "")
+  if (!s) return {}
+  // Whole-string interval first — keeps `10 M` (space before the unit) working.
+  const whole = parseIntervalSpec(s)
+  if (whole) return whole
+  const out: { intervalMs?: number; kind?: string } = {}
+  for (const token of s.split(/\s+/)) {
+    const interval = parseIntervalSpec(token)
+    if (interval && out.intervalMs === undefined) {
+      out.intervalMs = interval.intervalMs
+      continue
+    }
+    const kind = kinds.find((k) => k.toLowerCase() === token.toLowerCase())
+    if (kind && out.kind === undefined) {
+      out.kind = kind
+      continue
+    }
+    return {
+      error:
+        `Unrecognized watch argument "${token}" — use an interval (30s, 5m, 2h, or bare minutes)` +
+        (kinds.length ? ` and/or a loop kind (${kinds.join(", ")}).` : "."),
+    }
+  }
+  return out
 }
 
 /** Clear one session's watch polling timer, if any. */
@@ -1131,7 +1178,7 @@ export const disposeWatch = (): void => {
 /**
  * One watch-timer tick: claim work only when this session is genuinely quiet.
  * The `session.idle` event path stays the fast trigger; the timer exists for
- * the case that path misses — a task approved (by `/agent-loop-task` in
+ * the case that path misses — a task approved (by `/agent-loop approve` in
  * another session) while this session sat idle generating no new events.
  * Idleness is queried, not tracked: absent from the status map counts as idle.
  * Never throws — an unhandled rejection inside a timer would crash the host.
@@ -1153,38 +1200,10 @@ const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise
   }
 }
 
-/** Parsed `/agent-loop-task` arguments: which subcommand needs plugin work, if any. */
-export type TaskCmdArgs = { mode: "approve" | "approve-plan" | "replan"; id: string; reason?: string } | { mode: "passthrough" }
-
-/**
- * Classify `/agent-loop-task` arguments. `approve <id>`, `approve-plan <id>`,
- * and `replan <id> [reason]` are fully deterministic plugin work; everything
- * else (including `new <idea>` and `retask <id> [note]`) passes through
- * untouched — those two are agent-authored (interview + draft write), not
- * plugin moves. `approve-plan` is matched before `approve` (prefix collision).
- * An empty id is preserved so the caller can toast a usage hint.
- */
-export const parseTaskArgs = (args: string): TaskCmdArgs => {
-  const arg = args.trim()
-  const lower = arg.toLowerCase()
-  for (const mode of ["approve-plan", "approve", "replan"] as const) {
-    if (lower === mode || lower.startsWith(`${mode} `)) {
-      const rest = arg.slice(mode.length).trim()
-      if (mode === "replan") {
-        const [id = "", ...reasonParts] = rest.split(/\s+/)
-        const reason = reasonParts.join(" ")
-        return { mode, id, ...(reason ? { reason } : {}) }
-      }
-      return { mode, id: rest }
-    }
-  }
-  return { mode: "passthrough" }
-}
-
 // --- Shared human-gate transitions -----------------------------------------
 // The happy-path move for each gate, factored out so the explicit verbs
-// (`/agent-loop-task approve|approve-plan|replan`, `/agent-loop ship`) and the
-// folder-driven shortcuts (`/agent-loop approve`, `/agent-loop reject`) share one implementation.
+// (`/agent-loop approve-plan`, `/agent-loop ship`) and the folder-driven
+// shortcuts (`/agent-loop approve`, `/agent-loop reject`) share one implementation.
 // Each assumes the task has already been located in its source folder; callers
 // own the not-found / wrong-folder messaging and the try/catch error toast.
 
@@ -1279,132 +1298,68 @@ const resolveGateTask = async (deps: Deps, config: Config, id: string, folders: 
 }
 
 /**
- * Handle a `/agent-loop-task ...` command. Three subcommands are deterministic
- * plugin work (the agent writes nothing); `new <idea>` and `retask <id>` pass
- * through untouched — their authoring (interview, draft write / rewrite) is the
- * agent's job, see `.opencode/commands/agent-loop-task.md`:
- *
- * - `approve <id>` — the task gate: park a reviewed `draft/` task in
- *   `queued/`. No plan is required (or expected) — planning happens inside
- *   the loop's PLAN stage, right before execution.
- * - `approve-plan <id>` — the plan gate: validate the `plan-review/` task has
- *   an `## Implementation Plan` and park it in `in-progress/`, the
- *   build-ready queue.
- * - `replan <id> [reason]` — reject a parked plan, or send a cap-tripped
- *   `in-progress/` task back: moves it to `queued/` with an audited note so
- *   the next PLAN pass addresses why the old plan failed.
+ * Handle `/agent-loop approve-plan <id>` — the explicit plan gate: validate the
+ * `plan-review/` task has an `## Implementation Plan` and park it in
+ * `in-progress/`, the build-ready queue. `approve <id>` (folder-driven) covers
+ * the same move; this verb survives as the explicit, unambiguous form.
  */
-export const handleTaskCommand = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleApprovePlan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const parsed = parseTaskArgs(args)
-  if (parsed.mode === "passthrough") return
-  const { id } = parsed
-  if (!id) return void (await toast(client, `Usage: /agent-loop-task ${parsed.mode} <id>.`, "warning"))
-
-  if (parsed.mode === "approve") {
-    const draft = await findByIdIn(deps.$, deps.directory, config.tasksDir, "draft", id)
-    if (!draft) {
-      const elsewhere = await findAnyStatus(deps, config, id)
-      // A retry (model re-calling after a prior success, or a race with a
-      // concurrent gate) lands here with the task already queued — report
-      // success instead of an error so retries stay harmless.
-      if (elsewhere === "queued") {
-        return void (
-          await toast(client, `Task "${id}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`, "info")
-        )
-      }
-      const detail = elsewhere ? `it's in ${elsewhere} — only draft tasks can be approved` : `no task "${id}" found`
-      return void (await toast(client, `Can't approve "${id}": ${detail}.`, "warning"))
-    }
-    try {
-      await doApprove(deps, config, draft)
-    } catch (err) {
-      await toast(client, `Approve failed for "${id}": ${(err as Error).message}`, "error")
-    }
-    return
-  }
-
-  if (parsed.mode === "approve-plan") {
-    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
-    if (!task) {
-      const elsewhere = await findAnyStatus(deps, config, id)
-      if (elsewhere === "in-progress") {
-        return void (
-          await toast(
-            client,
-            `Plan for "${id}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
-            "info",
-          )
-        )
-      }
-      const detail =
-        elsewhere === "queued"
-          ? `it's still queued — the loop hasn't planned it yet (/agent-loop task ${id} plans it now)`
-          : elsewhere === "draft"
-            ? `it's still a draft — approve the task first with /agent-loop-task approve ${id}`
-            : elsewhere
-              ? `it's in ${elsewhere} — only plan-review tasks can be plan-approved`
-              : `no task "${id}" found`
-      return void (await toast(client, `Can't approve the plan for "${id}": ${detail}.`, "warning"))
-    }
-    if (!hasPlan(task)) {
-      return void (
-        await toast(client, `Task "${id}" has no Implementation Plan — send it back with /agent-loop-task replan ${id}.`, "warning")
-      )
-    }
-    try {
-      await doApprovePlan(deps, config, task)
-    } catch (err) {
-      await toast(client, `Approve-plan failed for "${id}": ${(err as Error).message}`, "error")
-    }
-    return
-  }
-
-  // replan — from plan-review/ (rejected plan) or in-progress/ (cap-tripped / bad plan).
-  const task =
-    (await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)) ??
-    (await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id))
+  const id = args.trim()
+  if (!id) return void (await toast(client, "Usage: /agent-loop approve-plan <id>.", "warning"))
+  const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "plan-review", id)
   if (!task) {
     const elsewhere = await findAnyStatus(deps, config, id)
-    if (elsewhere === "queued") {
+    if (elsewhere === "in-progress") {
       return void (
-        await toast(client, `"${id}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`, "info")
+        await toast(
+          client,
+          `Plan for "${id}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
+          "info",
+        )
       )
     }
-    const detail = elsewhere
-      ? `it's in ${elsewhere} — only plan-review or in-progress tasks can be sent back to planning`
-      : `no task "${id}" found`
-    return void (await toast(client, `Can't replan "${id}": ${detail}.`, "warning"))
+    const detail =
+      elsewhere === "queued"
+        ? `it's still queued — the loop hasn't planned it yet (/agent-loop task ${id} plans it now)`
+        : elsewhere === "draft"
+          ? `it's still a draft — approve the task first with /agent-loop approve ${id}`
+          : elsewhere
+            ? `it's in ${elsewhere} — only plan-review tasks can be plan-approved`
+            : `no task "${id}" found`
+    return void (await toast(client, `Can't approve the plan for "${id}": ${detail}.`, "warning"))
   }
-  if (findSessionDriving(id)) {
-    return void (await toast(client, `Task "${id}" is being driven by a live loop — /agent-loop stop it first.`, "warning"))
+  if (!hasPlan(task)) {
+    return void (
+      await toast(client, `Task "${id}" has no Implementation Plan — send it back with /agent-loop reject ${id}.`, "warning")
+    )
   }
   try {
-    await doReplan(deps, config, task, parsed.reason)
+    await doApprovePlan(deps, config, task)
   } catch (err) {
-    await toast(client, `Replan failed for "${id}": ${(err as Error).message}`, "error")
+    await toast(client, `Approve-plan failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
 /**
- * Handle `/agent-loop approve [id]` — advance the one task at a loop wait-gate:
- * `plan-review/` → in-progress (plan gate, plan required), or `in-review/` →
- * completed (ship gate). Does NOT touch `draft/` — draft approval is
- * `/agent-loop-task approve <id>`. The id is optional, only needed to
- * disambiguate when more than one task awaits.
+ * Handle `/agent-loop approve [id]` (aliases `ok`, `go`) — the unified,
+ * folder-driven gate. With an explicit id it advances that task by the gate its
+ * folder implies: `draft/` → queued (task gate), `plan-review/` → in-progress
+ * (plan gate, plan required), or `in-review/` → completed (ship). Without an
+ * id it advances the single task at a loop wait-gate (`plan-review/` or
+ * `in-review/`) — `draft/` is deliberately excluded from auto-resolution:
+ * drafts accumulate (including the never-approve epic tracking draft), so
+ * scanning them id-less caused false "multiple awaiting" and risked queuing
+ * the wrong draft. Approving a draft always takes an explicit id.
  */
 export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const id = args.trim()
-  // Only the loop's own wait-gates — a parked plan (plan-review/) and a finished
-  // loop (in-review/, i.e. ship). Draft approval is deliberate task authoring and
-  // stays under /agent-loop-task approve <id> (drafts accumulate — including the
-  // never-approve epic tracking draft — so scanning them here caused false
-  // "multiple awaiting" and risked queuing the wrong draft).
-  const pick = await resolveGateTask(deps, config, id, ["plan-review", "in-review"])
+  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  const folders: readonly TaskStatus[] = id ? ["plan-review", "in-review", "draft"] : ["plan-review", "in-review"]
+  const pick = await resolveGateTask(deps, config, id, folders)
   if (!pick.ok) {
     if (pick.kind === "none") {
-      return void (await toast(client, "Nothing awaiting approval. (Approve a draft with /agent-loop-task approve <id>.)", "info"))
+      return void (await toast(client, "Nothing awaiting approval at a loop gate. (Approve a draft with /agent-loop approve <id>.)", "info"))
     }
     return void (await toast(client, pick.message, pick.variant))
   }
@@ -1413,7 +1368,8 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
     return void (await toast(client, `Task "${task.id}" has no Implementation Plan — send it back with /agent-loop reject ${task.id}.`, "warning"))
   }
   try {
-    if (from === "plan-review") await doApprovePlan(deps, config, task)
+    if (from === "draft") await doApprove(deps, config, task)
+    else if (from === "plan-review") await doApprovePlan(deps, config, task)
     else await doShip(deps, config, task) // in-review
   } catch (err) {
     await toast(client, `Approve failed for "${task.id}": ${(err as Error).message}`, "error")
@@ -1464,6 +1420,71 @@ export const handleReject = async (deps: Deps, _sessionID: string, args: string,
   }
 }
 
+/**
+ * Run one task now (`/agent-loop task <id>`, alias `run`, or the bare-id
+ * shorthand `/agent-loop <id>`): an `in-progress/` task enters at BUILD with
+ * its approved plan; a `queued/` task enters at PLAN (plans, parks in
+ * `plan-review/`, exits). The drive itself is deferred to the next idle via
+ * `setPending`, after atomically claiming the task.
+ */
+const startTaskById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+  if (!task) {
+    // Not build-ready — a queued task enters at the PLAN stage instead.
+    const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
+    if (queued) {
+      if (findSessionDriving(id)) {
+        return void (await toast(client, `Task "${id}" is already being driven by a live loop.`, "warning"))
+      }
+      if (!(await claimTask(deps.$, queued))) {
+        return void (await toast(client, `Task "${id}" was just claimed by another watcher.`, "warning"))
+      }
+      clearLoop(sessionID)
+      await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
+      await toast(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
+      return
+    }
+    const elsewhere = await findAnyStatus(deps, config, id)
+    const detail =
+      elsewhere === "plan-review"
+        ? `its plan is parked for review — /agent-loop approve ${id} (or /agent-loop reject ${id} <why>)`
+        : elsewhere === "draft"
+          ? `it's a draft — approve it first with /agent-loop approve ${id}`
+          : elsewhere
+            ? `it's in ${elsewhere}`
+            : `no task "${id}" found`
+    return void (await toast(client, `Can't start "${id}": ${detail}.`, "warning"))
+  }
+  if (findSessionDriving(id)) {
+    return void (await toast(client, `Task "${id}" is already being driven by a live loop.`, "warning"))
+  }
+  if (!isClaimable(task)) {
+    const detail = isRecoverable(task)
+      ? `was already started — resume it with /agent-loop recover ${id}`
+      : `has no persisted plan — send it back to planning with /agent-loop reject ${id}`
+    return void (await toast(client, `Task "${id}" ${detail}.`, "warning"))
+  }
+  if (!(await claimTask(deps.$, task))) {
+    return void (await toast(client, `Task "${id}" was just claimed by another watcher.`, "warning"))
+  }
+  clearLoop(sessionID)
+  await setPending(deps, sessionID, { kind: "start-task", task, goal: taskGoal(task) })
+  await toast(client, `Loop started on "${task.title}" — building…`, "info")
+}
+
+/** The merged command's verbs, for the usage toast and the bare-id shorthand. */
+const USAGE =
+  "Usage: /agent-loop new <idea> · retask <id> [note] · approve [id] (ok, go) · reject [id] [reason] (redo, replan) · " +
+  "task <id> (run, or just /agent-loop <id>) · claim [kind] · watch [interval] [kind] · unwatch · recover <id> · " +
+  "ship [id] · kinds · doctor [fix] · stop · status"
+
+/** Split a command argument into its verb (lowercased) and the remainder. Pure. */
+const splitVerb = (arg: string): { verb: string; rest: string } => {
+  const m = /^(\S+)\s*([\s\S]*)$/.exec(arg)
+  return m ? { verb: m[1]!.toLowerCase(), rest: m[2]!.trim() } : { verb: "", rest: "" }
+}
+
 /** Parse and handle a `/agent-loop ...` command. */
 export const handleCommand = async (
   deps: Deps,
@@ -1474,28 +1495,78 @@ export const handleCommand = async (
   const { client } = deps
   const arg = args.trim()
   const lower = arg.toLowerCase()
+  const { verb, rest } = splitVerb(arg)
 
-  // Folder-driven gate shortcuts, namespaced under /agent-loop (not top-level, so
-  // `approve`/`reject` never claim a reserved command word). `go` is a legacy alias
-  // for `approve`. handleApprove/handleReject parse the post-verb remainder.
-  if (lower === "go" || lower === "approve" || lower.startsWith("approve ")) {
-    return handleApprove(deps, sessionID, lower === "go" ? "" : arg.slice("approve".length).trim(), config)
+  // Authoring verbs are agent work (interview + draft write/rewrite), not
+  // plugin moves — pass through untouched so the command template's turn runs.
+  if (verb === "new" || verb === "retask") return
+
+  // Folder-driven gate verbs, namespaced under /agent-loop (not top-level, so
+  // `approve`/`reject` never claim a reserved command word). `ok` and `go` are
+  // aliases for `approve`; `redo`/`replan` for `reject`. handleApprove/
+  // handleReject parse the post-verb remainder.
+  if (verb === "approve" || verb === "ok" || verb === "go") {
+    return handleApprove(deps, sessionID, rest, config)
   }
-  if (lower === "reject" || lower.startsWith("reject ")) {
-    return handleReject(deps, sessionID, arg.slice("reject".length).trim(), config)
+  if (verb === "approve-plan") {
+    return handleApprovePlan(deps, sessionID, rest, config)
+  }
+  if (verb === "reject" || verb === "redo" || verb === "replan") {
+    return handleReject(deps, sessionID, rest, config)
   }
 
   if (lower === "next") {
     await toast(
       client,
-      "/agent-loop next was removed — author and approve a task with /agent-loop-task, then /agent-loop task <id> or /agent-loop watch.",
+      "/agent-loop next was removed — author a task with /agent-loop new <idea>, approve it, then /agent-loop task <id> or /agent-loop watch.",
       "warning",
+    )
+    return
+  }
+
+  // One-shot pull: claim the next item across the enabled loop kinds (or one
+  // kind, when named) and drive it once this command's own turn settles — the
+  // same idle deferral `task <id>` gets. The pull equivalent of `watch`.
+  if (verb === "claim") {
+    if (driving.has(sessionID) || getLoop(sessionID)) {
+      return void (await toast(client, "A loop is already driving in this session — /agent-loop stop it first.", "warning"))
+    }
+    const kind = rest.split(/\s+/).filter(Boolean)[0]?.toLowerCase()
+    if (kind && !enabledLoopKinds(config).includes(kind)) {
+      return void (
+        await toast(client, `Unknown loop kind "${kind}" — enabled: ${enabledLoopKinds(config).join(", ")}.`, "warning")
+      )
+    }
+    claimRequested.set(sessionID, kind)
+    await toast(client, `Claiming the next ${kind ?? "available"} item — it starts when this turn settles.`, "info")
+    return
+  }
+
+  // List the loop kinds this clone knows about and which are enabled.
+  if (lower === "kinds") {
+    const enabled = enabledLoopKinds(config)
+    let known: string[]
+    try {
+      known = fs
+        .readdirSync(LOOPS_DIR, { withFileTypes: true })
+        .filter((d) => d.isDirectory())
+        .map((d) => d.name)
+        .sort()
+    } catch {
+      known = enabled
+    }
+    const parts = known.map((k) => (enabled.includes(k) ? `${k} (enabled)` : `${k} (disabled)`))
+    await toast(
+      client,
+      `Loop kinds: ${parts.join(" · ")}. Toggle via loops.<kind>.enabled in .agentic-loop.json; filter with /agent-loop claim <kind> or watch <kind>.`,
+      "info",
     )
     return
   }
 
   if (lower === "stop" || lower === "abort") {
     const wasWatching = await stopWatching(deps, sessionID)
+    claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
     const state = getLoop(sessionID)
     if (state?.task) {
@@ -1516,7 +1587,7 @@ export const handleCommand = async (
   }
 
   if (lower === "watch" || lower.startsWith("watch ")) {
-    const parsed = parseWatchArgs(arg.slice("watch".length))
+    const parsed = parseWatchArgs(arg.slice("watch".length), enabledLoopKinds(config))
     if ("error" in parsed) return void (await toast(client, parsed.error, "warning"))
     const intervalMs = parsed.intervalMs ?? Math.max(config.watchIntervalMinutes * 60_000, MIN_WATCH_INTERVAL_MS)
     // Only one watcher process per clone: acquire the on-disk lease before
@@ -1526,6 +1597,8 @@ export const handleCommand = async (
       if (!lease.ok) return void (await toast(client, lease.message, "warning"))
     }
     watching.add(sessionID)
+    if (parsed.kind) watchKindFilter.set(sessionID, parsed.kind)
+    else watchKindFilter.delete(sessionID) // a re-arm without a kind clears any prior filter
     stopWatchTimer(sessionID) // replace any prior timer instead of stacking
     watchTimers.set(
       sessionID,
@@ -1533,7 +1606,8 @@ export const handleCommand = async (
     )
     watchIntervalsMs.set(sessionID, intervalMs)
     lastSkipReason.delete(sessionID) // a fresh arm re-toasts whatever reason comes next
-    await toast(client, `Watching for approved tasks to build (polling every ${formatInterval(intervalMs)}).`, "info")
+    const scope = parsed.kind ? `${parsed.kind} work` : "approved tasks to build"
+    await toast(client, `Watching for ${scope} (polling every ${formatInterval(intervalMs)}).`, "info")
     // Immediate first pull — don't make the user wait for the next idle event
     // or timer tick. watchTick self-guards: it claims only when the session is
     // actually idle, and never throws.
@@ -1560,7 +1634,7 @@ export const handleCommand = async (
       return void (await toast(client, `Task "${id}" was never started — /agent-loop watch will claim it.`, "info"))
     }
     if (!isRecoverable(task)) {
-      return void (await toast(client, `Task "${id}" has no persisted plan — send it back with /agent-loop-task replan ${id}.`, "warning"))
+      return void (await toast(client, `Task "${id}" has no persisted plan — send it back with /agent-loop reject ${id}.`, "warning"))
     }
     await claimTask(deps.$, task) // re-mark; the marker may already exist from the dead run
     // Prefer an exact-stage resume from the state snapshot; fall back to
@@ -1632,52 +1706,10 @@ export const handleCommand = async (
     return
   }
 
-  if (lower === "task" || lower.startsWith(TASK_PREFIX)) {
-    const id = arg.slice("task".length).trim()
+  if (verb === "task" || verb === "run") {
+    const id = rest
     if (!id) return void (await toast(client, "Usage: /agent-loop task <id>.", "warning"))
-    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
-    if (!task) {
-      // Not build-ready — a queued task enters at the PLAN stage instead.
-      const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
-      if (queued) {
-        if (findSessionDriving(id)) {
-          return void (await toast(client, `Task "${id}" is already being driven by a live loop.`, "warning"))
-        }
-        if (!(await claimTask(deps.$, queued))) {
-          return void (await toast(client, `Task "${id}" was just claimed by another watcher.`, "warning"))
-        }
-        clearLoop(sessionID)
-        await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
-        await toast(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
-        return
-      }
-      const elsewhere = await findAnyStatus(deps, config, id)
-      const detail =
-        elsewhere === "plan-review"
-          ? `its plan is parked for review — /agent-loop approve ${id} (or /agent-loop reject ${id} <why>)`
-          : elsewhere === "draft"
-            ? `it's a draft — approve it first with /agent-loop approve ${id}`
-            : elsewhere
-              ? `it's in ${elsewhere}`
-              : `no task "${id}" found`
-      return void (await toast(client, `Can't start "${id}": ${detail}.`, "warning"))
-    }
-    if (findSessionDriving(id)) {
-      return void (await toast(client, `Task "${id}" is already being driven by a live loop.`, "warning"))
-    }
-    if (!isClaimable(task)) {
-      const detail = isRecoverable(task)
-        ? `was already started — resume it with /agent-loop recover ${id}`
-        : `has no persisted plan — send it back to planning with /agent-loop-task replan ${id}`
-      return void (await toast(client, `Task "${id}" ${detail}.`, "warning"))
-    }
-    if (!(await claimTask(deps.$, task))) {
-      return void (await toast(client, `Task "${id}" was just claimed by another watcher.`, "warning"))
-    }
-    clearLoop(sessionID)
-    await setPending(deps, sessionID, { kind: "start-task", task, goal: taskGoal(task) })
-    await toast(client, `Loop started on "${task.title}" — building…`, "info")
-    return
+    return startTaskById(deps, sessionID, id, config)
   }
 
   if (lower === "doctor" || lower.startsWith("doctor ")) {
@@ -1761,28 +1793,37 @@ export const handleCommand = async (
       }
     }
     const backlogLine = summary ? ` · ${formatBacklog(summary)}` : ""
+    const enabled = enabledLoopKinds(config)
+    const kindsLine = enabled.length > 1 ? ` · kinds: ${enabled.join(", ")}` : ""
     const cadence = watchIntervalsMs.get(sessionID)
-    const watchLabel = cadence ? `Watching (every ${formatInterval(cadence)})` : "Watching"
+    const kindScope = watchKindFilter.get(sessionID)
+    const watchLabel = cadence
+      ? `Watching${kindScope ? ` ${kindScope}` : ""} (every ${formatInterval(cadence)})`
+      : "Watching"
     if (!state) {
       // Prefer the remembered skip reason over a bare "no claimable task" —
       // it says WHY the watcher isn't picking anything up.
       const why = lastSkipReason.get(sessionID)
       const head = isWatching ? `${watchLabel} — ${why ?? "no claimable task right now."}` : "No active loop."
-      await toast(client, `${head}${backlogLine}`, "info")
+      await toast(client, `${head}${backlogLine}${kindsLine}`, "info")
       return
     }
     const what = state.task ? `task ${state.task.id}` : state.goal
     const prefix = isWatching ? `${watchLabel}. ` : ""
-    await toast(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}`, "info")
+    await toast(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${kindsLine}`, "info")
     return
+  }
+
+  // Bare-id shorthand: a single unrecognized token that names a startable task
+  // (`queued/` or `in-progress/`) runs it, as if `task <id>` had been typed. A
+  // token naming a task at some other stage gets pointed at the right verb by
+  // startTaskById's own messaging. Never guesses on multi-word input.
+  if (verb && !rest && /^[A-Za-z0-9][\w.-]*$/.test(arg)) {
+    const status = await findAnyStatus(deps, config, arg)
+    if (status) return startTaskById(deps, sessionID, arg, config)
   }
 
   // The loop is a pure executor — there is no free-text mode. Anything
   // unrecognized gets usage help instead of silently becoming a goal.
-  await toast(
-    client,
-    `Unknown /agent-loop mode "${arg}". Usage: /agent-loop task <id> · approve [id] · reject [id] [reason] · watch [interval] · unwatch · recover <id> · ship [id] · doctor [fix] · stop · status. ` +
-      "Author tasks with /agent-loop-task.",
-    "warning",
-  )
+  await toast(client, `Unknown /agent-loop mode "${arg}". ${USAGE}.`, "warning")
 }

@@ -80,7 +80,7 @@ export const claimSkipReason = (
   }
   return {
     message:
-      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agent-loop-task replan <id>)",
+      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agent-loop reject <id>)",
     actionable: true,
   }
 }

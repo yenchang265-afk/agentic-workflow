@@ -27,8 +27,9 @@
     "prepare": "npm run build -w @agentic-loop/core && npm run build -w agentic-loop-mcp",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test src/**/*.test.ts",
+    "test:hooks": "node --test claude-plugin/hooks/*.test.mjs",
     "typecheck:all": "npm run typecheck -ws --if-present && npm run typecheck",
-    "test:all": "npm run test -ws --if-present && npm run test"
+    "test:all": "npm run test -ws --if-present && npm run test && npm run test:hooks"
   },
   "dependencies": {
     "@agentic-loop/core": "*",

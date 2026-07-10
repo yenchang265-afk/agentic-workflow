@@ -8,11 +8,11 @@ Guidance for AI coding agents working in this repository.
 `@agentic-loop/core`, shipping both an OpenCode and a Claude Code plugin); this
 guide covers the OpenCode plugin. It provides:
 
-1. **The automatic agentic loop** (`/agent-loop-task` + `/agent-loop`) — a real plugin
+1. **The automatic agentic loop** (`/agent-loop`) — a real plugin
    (`src/index.ts` → `src/loop/`, agents/commands under `.opencode/`) that
-   splits the lifecycle into two commands: `/agent-loop-task` interviews you
+   drives the whole lifecycle from one command: `/agent-loop new` interviews you
    into a planless draft task (`new <idea>` — always), `retask <id>` reshapes
-   a draft in place, `approve <id>` queues it, and `approve-plan <id>` /
+   a draft in place, `approve <id>` queues it, and `approve [id]` /
    `replan <id>` are the plan gate;
    `/agent-loop` claims work (`task <id>`, or a `watch [interval]` worker
    session polling on idle events plus a timer), plans a queued task right
@@ -52,7 +52,7 @@ guide covers the OpenCode plugin. It provides:
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/agent-loop-task new <idea>` then `/agent-loop-task approve <id>` then `/agent-loop task <id>` (plans + parks) then `/agent-loop-task approve-plan <id>` then `/agent-loop task <id>` (builds) — at the plan/ship gates `/agent-loop approve` (or `/agent-loop reject` to bounce a plan) is the one-word shortcut (draft approval stays `/agent-loop-task approve <id>`); see `loop-orchestration`, not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agent-loop new <idea>` then `/agent-loop approve <id>` then `/agent-loop task <id>` (plans + parks) then `/agent-loop approve <id>` then `/agent-loop task <id>` (builds) — at the plan/ship gates `/agent-loop approve` (or `/agent-loop reject` to bounce a plan) is the one-word shortcut (draft approval stays `/agent-loop approve <id>`); see `loop-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
 
@@ -90,7 +90,7 @@ Correct behavior: always check for and use skills first.
 - `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
 - `loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
 - `.opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
-- `.opencode/commands/` — the slash commands (`/agent-loop`, `/agent-loop-task`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
+- `.opencode/commands/` — the slash commands (`/agent-loop`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed

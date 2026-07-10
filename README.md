@@ -23,7 +23,7 @@ Authoring a new kind is a `loop.json` + stage prompts away — see
 
 ## The engineering loop
 
-Authoring and execution are two commands. **`/agent-loop-task`** interviews
+Authoring, gates, and execution are one command. **`/agent-loop`** interviews
 you into a draft task (`new <idea>` — always, so the goal and testable
 acceptance criteria come from you, not a guess; a **heavy idea is split into
 sibling drafts**, one vertical slice each plus a `type: epic` tracker, so no
@@ -34,7 +34,7 @@ loop's own hands you can instead just type **`/agent-loop approve`** — it adva
 the one task the loop is waiting on you for (release the parked plan, or ship the
 finished review) — with **`/agent-loop reject`** to bounce a parked plan back; the
 explicit `<id>` verbs stay the unambiguous path when two or more tasks wait.
-(Draft approval stays deliberate: `/agent-loop-task approve <id>`.)
+(Draft approval stays deliberate: `/agent-loop approve <id>`.)
 **`/agent-loop`** plans a queued task **right before execution** — so plans
 don't rot while tasks sit parked — and builds plan-approved ones:
 
@@ -117,8 +117,8 @@ Idempotent — re-run after `git pull` for updates.
   `/agent-loop approve` advances the single task the loop is waiting on (parked plan →
   build, or finished review → ship), `/agent-loop reject` sends a parked plan back to
   re-planning; pass `[id]` only to disambiguate when two or more tasks wait. (Draft
-  approval is `/agent-loop-task approve <id>`.)
-- `/agent-loop-task new <idea>` · `retask <id> [note]` · `approve <id>` ·
+  approval is `/agent-loop approve <id>`.)
+- `/agent-loop new <idea>` · `retask <id> [note]` · `approve <id>` ·
   `approve-plan <id>` · `replan <id> [why]` — interview → draft (reshape with
   `retask`) → task gate → (the loop plans) → plan gate
 - `/agent-loop task <id>` · `watch` · `unwatch` · `ship <id>` · `recover <id>` ·
@@ -175,7 +175,7 @@ link to it; don't copy.
   `mcp-server/src/shim.ts`)
 - `skills/`, `references/` — the workflow library the stage agents and ad-hoc
   requests pull from (shared by both plugins)
-- `docs/tasks/` — the filesystem task backlog `/agent-loop-task` and `/agent-loop task`
+- `docs/tasks/` — the filesystem task backlog the `/agent-loop` verbs
   read from
 - `install.sh` — installs either or both plugins
 

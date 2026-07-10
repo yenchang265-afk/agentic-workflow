@@ -3,7 +3,7 @@
 Drives backlog tasks through **PLAN / BUILD → VERIFY → REVIEW** as a
 supervised, main-agent-driven loop, with git isolation, a trusted verdict
 channel, a filesystem task backlog, and an audit trail. Tasks are authored
-and gated in `/agent-loop-task`: a mandatory interview turns your idea into a
+and gated in `/agent-loop`: a mandatory interview (`new <idea>`) turns your idea into a
 draft and `approve` queues it; the loop plans it **right before execution**
 (so plans don't rot while tasks sit parked) and parks the plan in
 `plan-review/` for the explicit `approve-plan` gate — it never blocks on
@@ -49,25 +49,25 @@ does not include the wizard.
 
 ## Commands
 
-Authoring + gates (`/agent-loop-task`):
+Authoring + gates (`/agent-loop`):
 
-- `/agent-loop-task new <idea>` — the main agent **always interviews you** (at
+- `/agent-loop new <idea>` — the main agent **always interviews you** (at
   minimum a restate-and-confirm) to pin down the goal and testable acceptance
   criteria, then writes a **planless draft** into `docs/tasks/draft/`.
-- `/agent-loop-task retask <id> [note]` — reshape a `draft/` task before you
+- `/agent-loop retask <id> [note]` — reshape a `draft/` task before you
   approve it: the main agent re-interviews you (seeded by the optional note)
   and rewrites the same draft in place — same id, no plan. Drafts only.
-- `/agent-loop-task approve <id>` — the task gate: queue the reviewed draft
+- `/agent-loop approve <id>` — the task gate: queue the reviewed draft
   in `docs/tasks/queued/` (audited + committed). No plan yet, by design.
-- `/agent-loop-task approve-plan <id>` — the plan gate: validate the parked
+- `/agent-loop approve <id>` — the plan gate: validate the parked
   plan and move the task to `docs/tasks/in-progress/` (the build-ready
   queue), audited + committed.
-- `/agent-loop-task replan <id> [reason]` — reject a parked plan or send a
+- `/agent-loop reject <id> [reason]` — reject a parked plan or send a
   cap-tripped task back to `queued/`, with the reason audited.
 - **`/agent-loop approve [id]`** · **`/agent-loop reject [id] [reason]`** — the ergonomic gate
   shortcut: `/agent-loop approve` advances the one task the loop is waiting on
   (plan → in-progress, or in-review → completed — not drafts, which use
-  `/agent-loop-task approve <id>`); `/agent-loop reject` sends a parked plan back to
+  `/agent-loop approve <id>`); `/agent-loop reject` sends a parked plan back to
   `queued/`. Id optional — only to disambiguate
   when two or more tasks wait; the explicit verbs above stay the
   always-unambiguous path. (Also exposed as the `loop_approve` / `loop_reject`
@@ -94,7 +94,7 @@ Ancillary:
 - `/plan <goal>` — ad-hoc read-only plan, relayed as chat, nothing persisted.
 
 The old `/agent-loop <goal>` free-text mode, `/agent-loop next`, and `/task new` are gone —
-task authoring and both gates always go through `/agent-loop-task`.
+task authoring and both gates live on `/agent-loop` (`new`, `retask`, `approve`, `reject`).
 
 ## What's inside
 
@@ -130,7 +130,7 @@ silently ignored.
   one human trigger claims and drives the next approved task. Within a turn,
   BUILD → VERIFY → REVIEW still advance without human input.
 - **The interview runs in the main agent** — Task subagents cannot converse
-  with you, so `/agent-loop-task new`'s mandatory interview happens in the main
+  with you, so `/agent-loop new`'s mandatory interview happens in the main
   conversation before the author subagent writes the file.
 - Skill/reference symlinks resolve on Unix/WSL; on Windows without symlink
   support, copy them instead.

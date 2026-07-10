@@ -21,14 +21,15 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  *
  *   build → verify → review
  *
- * Task authoring lives in the `/agent-loop-task` command: `new` interviews the
- * user into a draft, and the deterministic `approve <id>` parks it planless in
+ * Everything is one command: `/agent-loop new <idea>` interviews the user
+ * into a draft, and the deterministic `approve <id>` parks it planless in
  * `queued/`. The loop plans right before execution: a claimed queued task runs
  * the PLAN stage, writes its `## Implementation Plan`, and parks in
- * `plan-review/`; `/agent-loop-task approve-plan <id>` releases it to
- * `in-progress/`, the build-ready queue. `/agent-loop task <id>` claims one
- * task (planning or building it as its folder dictates); `/agent-loop watch
- * [interval]` polls for work — on every `session.idle` event plus a
+ * `plan-review/`; `/agent-loop approve <id>` releases it to `in-progress/`,
+ * the build-ready queue. `/agent-loop task <id>` (or the bare-id shorthand)
+ * claims one task (planning or building it as its folder dictates);
+ * `/agent-loop claim [kind]` pulls the next item once; `/agent-loop watch
+ * [interval] [kind]` polls for work — on every `session.idle` event plus a
  * per-session interval timer. A verify or review FAIL re-builds within the
  * iteration cap. The control surface lives in `loop/driver.ts`; the pure
  * state machine in `loop/state.ts`.
@@ -177,23 +178,22 @@ export const AgenticLoop: Plugin = async ({ client, directory, $ }) => {
     },
 
     "command.execute.before": async (input) => {
-      if (input.command === "agent-loop") {
-        await reconcileOnce()
-        await driver.handleCommand(deps, input.sessionID, input.arguments, await getConfig())
-        return
-      }
-      if (input.command === "agent-loop-task") {
-        // The gates (approve / approve-plan / replan) are pure task-file moves
-        // with no dependency on reconciliation — run the move FIRST, then
-        // reconcile. On the first-ever command reconcileOnce() does heavy git/fs
-        // work (claim sweeps, worktree prune, backlog audit); doing it before the
-        // move delayed the move past opencode's command-hook window, so the model
-        // read the task as "still in draft" until a retry (reconcile is guarded
-        // to run once, so later attempts were fast — the "works after a few
-        // tries" symptom). Move first keeps the gate deterministic on attempt 1.
-        await driver.handleTaskCommand(deps, input.sessionID, input.arguments, await getConfig())
-        await reconcileOnce()
-      }
+      if (input.command !== "agent-loop") return
+      const config = await getConfig()
+      // The gate verbs (approve / ok / go / approve-plan / reject / redo /
+      // replan) are pure task-file moves with no dependency on reconciliation —
+      // run the move FIRST, then reconcile. On the first-ever command
+      // reconcileOnce() does heavy git/fs work (claim sweeps, worktree prune,
+      // backlog audit); doing it before the move delayed the move past
+      // opencode's command-hook window, so the model read the task as "still in
+      // draft" until a retry (reconcile is guarded to run once, so later
+      // attempts were fast — the "works after a few tries" symptom). Move first
+      // keeps the gate deterministic on attempt 1.
+      const verb = input.arguments.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
+      const gateFirst = ["approve", "ok", "go", "approve-plan", "reject", "redo", "replan"].includes(verb)
+      if (!gateFirst) await reconcileOnce()
+      await driver.handleCommand(deps, input.sessionID, input.arguments, config)
+      if (gateFirst) await reconcileOnce()
     },
 
     "tool.execute.before": async (input, output) => {

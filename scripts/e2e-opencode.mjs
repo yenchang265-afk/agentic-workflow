@@ -230,15 +230,15 @@ const main = async () => {
     log(`session created: ${session.id}`)
 
     // Step 1: new — real LLM turn (interview-me + loop-plan-author).
-    log("step 1/6: agent-loop-task new ...")
-    await runCommand(client, session.id, scratchRepo, "agent-loop-task", `new ${idea.newPromptSpec}`)
+    log("step 1/6: agent-loop new ...")
+    await runCommand(client, session.id, scratchRepo, "agent-loop", `new ${idea.newPromptSpec}`)
     await pollUntil("step 1 (new)", () => (findSoleDraftId(scratchRepo) ? "pass" : "pending"), { timeoutMs: 5 * 60_000 })
     id = findSoleDraftId(scratchRepo)
     log(`task id: ${id}`)
 
     // Step 2: approve — deterministic.
-    log("step 2/6: agent-loop-task approve")
-    await runCommand(client, session.id, scratchRepo, "agent-loop-task", `approve ${id}`)
+    log("step 2/6: agent-loop approve")
+    await runCommand(client, session.id, scratchRepo, "agent-loop", `approve ${id}`)
     await pollUntil("step 2 (approve)", () => (existsSync(taskPath(scratchRepo, "queued", id)) ? "pass" : "pending"), {
       timeoutMs: 30_000,
     })
@@ -260,8 +260,8 @@ const main = async () => {
     log("PLAN parked in plan-review/")
 
     // Step 4: approve-plan — deterministic.
-    log("step 4/6: agent-loop-task approve-plan")
-    await runCommand(client, session.id, scratchRepo, "agent-loop-task", `approve-plan ${id}`)
+    log("step 4/6: agent-loop approve-plan")
+    await runCommand(client, session.id, scratchRepo, "agent-loop", `approve-plan ${id}`)
     await pollUntil(
       "step 4 (approve-plan)",
       () => (existsSync(taskPath(scratchRepo, "in-progress", id)) ? "pass" : "pending"),

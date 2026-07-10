@@ -82,7 +82,7 @@ export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
   /** queued tasks awaiting the loop's PLAN stage (a watcher will claim them once no build work remains). */
   readonly awaitingPlan: readonly string[]
-  /** plan-review tasks whose plan is parked for human review (/agent-loop-task approve-plan). */
+  /** plan-review tasks whose plan is parked for human review (/agent-loop approve). */
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
@@ -530,7 +530,7 @@ export interface WriteLocation {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating a task today, use `/agent-loop-task new <idea>` — the
+ * command. For creating a task today, use `/agent-loop new <idea>` — the
  * `loop-plan-author` subagent, which runs inside OpenCode; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and

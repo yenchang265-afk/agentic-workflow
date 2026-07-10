@@ -51,17 +51,17 @@ test("non-loop commands pass through without loading config", async () => {
   assert.deepEqual(calls, [], "a non-loop command must not trigger a config read")
 })
 
-test("the agent-loop-task command is dispatched (it triggers a config read)", async () => {
+test("an agent-loop gate verb is dispatched (it triggers a config read)", async () => {
   const calls: string[] = []
   const hooks = await AgenticLoop(makeInput(calls))
   const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50))
   // The hanging fake client never resolves file.read, so the handler blocks
   // after recording the call — racing a timeout is enough to observe dispatch.
   await Promise.race([
-    hooks["command.execute.before"]?.({ command: "agent-loop-task", sessionID: "ses_x", arguments: "approve x" } as never, {} as never),
+    hooks["command.execute.before"]?.({ command: "agent-loop", sessionID: "ses_x", arguments: "approve x" } as never, {} as never),
     timeout,
   ])
-  assert.ok(calls.includes("file.read"), "a /agent-loop-task command must reach the plugin handler")
+  assert.ok(calls.includes("file.read"), "an /agent-loop gate verb must reach the plugin handler")
 })
 
 test("the plugin exposes dispose (watch-timer cleanup) and no loop_begin tool", async () => {

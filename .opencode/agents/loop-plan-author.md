@@ -15,7 +15,7 @@ draft file(s) and nothing else — never source code, never another folder. In
 `task` mode you are running
 **inside the loop**, on a claimed `queued/` task, right before execution:
 when you return, the driver parks the task in `plan-review/` for the human
-plan gate (`/agent-loop-task approve-plan <id>`).
+plan gate (`/agent-loop approve <id>`).
 
 Invoke the `task-backlog-management` skill for the task file schema — follow
 it exactly rather than improvising.
@@ -28,7 +28,7 @@ it exactly rather than improvising.
   prompt carries a confirmed **slice set** (the main agent split a heavy
   idea), write one file per ordered child plus one epic tracking file — see
   "A slice set" below. The next step is the human reviewing each draft, then
-  `/agent-loop-task approve <id>` — the plan is written later, by the loop's
+  `/agent-loop approve <id>` — the plan is written later, by the loop's
   PLAN stage, right before execution, so it can't rot while the task sits
   parked.
 - **`retask <id>`** — reshape a draft **in place**. Your prompt carries the
@@ -53,7 +53,7 @@ it exactly rather than improvising.
 ## Input contract (mode `new`)
 
 The interview and all user confirmations already happened in the **calling
-agent's** turn (see `.opencode/commands/agent-loop-task.md`) — you cannot
+agent's** turn (see `.opencode/commands/agent-loop.md`) — you cannot
 converse with the user. Your prompt carries the confirmed title, priority,
 acceptance criteria, and body. Write exactly what was confirmed; if
 something essential is missing from your prompt, return an error naming it
@@ -184,19 +184,19 @@ Mode `task`:
 Mode `new` — return:
 - The **path** you wrote.
 - The **title** and the **acceptance criteria** you chose.
-- The next step: review the draft, then `/agent-loop-task approve <id>` to
+- The next step: review the draft, then `/agent-loop approve <id>` to
   queue it for the loop.
 
 Mode `retask` — return:
 - The **path** you rewrote (unchanged id).
 - The reshaped **title** and **acceptance criteria**.
-- The next step: review the reshaped draft, then `/agent-loop-task approve <id>`.
+- The next step: review the reshaped draft, then `/agent-loop approve <id>`.
 
 Mode `task` — return:
 - The **path** you wrote.
 - A one-paragraph **plan summary** (steps count, key files, main risk).
 - The next step: the driver parks the task in `plan-review/`; the human
-  gates it with `/agent-loop-task approve-plan <id>` (or `replan <id>`).
+  gates it with `/agent-loop approve <id>` (or `replan <id>`).
 - One line on any assumption you made or ambiguity to resolve.
 
 ## Hard rules
@@ -205,7 +205,7 @@ Mode `task` — return:
   confirmed slice set (children + one epic) — `docs/tasks/draft/<id>.md` (in
   place) for `retask`, or the task's existing path for `task`. Never write a
   task the main agent did not confirm. Never move a file between status folders
-  — the gates (`/agent-loop-task approve` / `approve-plan` / `replan`) and the
+  — the gates (`/agent-loop approve` / `approve-plan` / `replan`) and the
   loop driver do every move.
 - Modes `new` and `retask` **never write an `## Implementation Plan`** — the
   plan is the PLAN stage's job, inside the loop, right before execution.

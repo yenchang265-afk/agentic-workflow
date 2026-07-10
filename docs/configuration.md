@@ -16,7 +16,7 @@ afterward.
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agent-loop-task replan <id>`. |
+| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agent-loop reject <id>`. |
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agent-loop watch`; overridable per session via `/agent-loop watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
@@ -139,7 +139,7 @@ API; a human copies the issue key/id into the task.
 ```
 
 - **`system`** (required) — `"jira"` or `"azure-devops"`. Becomes the default
-  `tracker.system` stamped on tasks authored via `/agent-loop-task new`.
+  `tracker.system` stamped on tasks authored via `/agent-loop new`.
 - **`baseUrl`** — optional URL prefix a task's `tracker.key` is appended to,
   to build a deep link (Jira: `…/browse/`; ADO: `…/_workitems/edit/`). Unset →
   no link is built.
@@ -151,7 +151,7 @@ this section only supplies authoring defaults and the status view.
 
 Impact on the commands:
 
-- **`/agent-loop-task new`** pre-fills `tracker.system` (and `type` from
+- **`/agent-loop new`** pre-fills `tracker.system` (and `type` from
   `defaultType`) so the drafted task is ready to pair — you fill in the
   `tracker.key`.
 - **`/agent-loop status`** adds a `pairing` roll-up: the tracker system, how

@@ -66,7 +66,7 @@
       "onDone": {
         "kind": "park",
         "toStatus": "plan-review",
-        "message": "Plan written — parked in plan-review/ for human review. Approve with /agent-loop-task approve-plan."
+        "message": "Plan written — parked in plan-review/ for human review. Approve with /agent-loop approve."
       }
     },
     "build": {
@@ -79,7 +79,7 @@
         "stage": "build",
         "countIteration": true,
         "dropArtifacts": ["review"],
-        "capMessage": "✗ Loop stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>."
+        "capMessage": "✗ Loop stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop reject <id>."
       },
       "onError": {
         "kind": "stop",
@@ -97,7 +97,7 @@
         "stage": "build",
         "countIteration": true,
         "dropArtifacts": ["verify"],
-        "capMessage": "✗ Loop stopped — review failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>."
+        "capMessage": "✗ Loop stopped — review failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop reject <id>."
       },
       "onError": {
         "kind": "stop",

@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: The protocol for driving the agentic loop inside Claude Code — declarative loop kinds under loops/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agent-loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the loop_verdict contract, loop kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates live in /agent-loop-task.
+description: The protocol for driving the agentic loop inside Claude Code — declarative loop kinds under loops/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agent-loop — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the loop_verdict contract, loop kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agent-loop verbs (new, retask, approve, reject).
 ---
 
 # Driving the agentic loop (Claude Code)
@@ -22,12 +22,12 @@ sections in `.agentic-loop.json` — see "Loop kinds" at the end.
 ## The pipeline
 
 ```
-authoring + gates (the /agent-loop-task command, interactive, BEFORE the loop):
-  /agent-loop-task new <idea>       ──▶ interview (main agent) ──▶ planless draft in draft/
-  /agent-loop-task retask <id> [note] ▶ re-interview (main agent) ──▶ draft rewritten in place (same id)
-  /agent-loop-task approve <id>     ──▶ loop_task_approve parks in queued/        ← the task gate
-  /agent-loop-task approve-plan <id> ─▶ loop_plan_approve: plan-review/ ▶ in-progress/  ← the plan gate
-  /agent-loop-task replan <id> [why] ─▶ loop_replan: back to queued/ (audited rejection)
+authoring + gates (interactive /agent-loop verbs, BEFORE the loop):
+  /agent-loop new <idea>       ──▶ interview (main agent) ──▶ planless draft in draft/
+  /agent-loop retask <id> [note] ▶ re-interview (main agent) ──▶ draft rewritten in place (same id)
+  /agent-loop approve <id>     ──▶ loop_task_approve parks in queued/        ← the task gate
+  /agent-loop approve <id> ─▶ loop_plan_approve: plan-review/ ▶ in-progress/  ← the plan gate
+  /agent-loop reject <id> [why] ─▶ loop_replan: back to queued/ (audited rejection)
 
 the loop (/agent-loop task <id> or /agent-loop claim — this skill):
   queued task (planless):
@@ -73,7 +73,7 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
      (BUILD) in this same session.
    - **Replan** (with the user's reason) → `loop_replan({id, reason})`; the
      next PLAN pass addresses it.
-   - **Park for later** → stop here; `/agent-loop-task approve-plan <id>`
+   - **Park for later** → stop here; `/agent-loop approve <id>`
      (or just `/agent-loop approve`) resumes it whenever the user is ready.
    Never call `loop_plan_approve` without an explicit user answer — the gate
    exists so no unapproved plan reaches BUILD.
@@ -106,7 +106,7 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
      ships it later.
    On `{stop}` the task stays in `in-progress/` with an audit note — report
    why. When the iteration cap tripped, the plan itself is suspect: the fix is
-   `/agent-loop-task replan <id> <why>` (or `/agent-loop reject <id> <why>`) — the next
+   `/agent-loop reject <id> <why>` (or `/agent-loop reject <id> <why>`) — the next
    PLAN pass addresses the failure and parks a fresh plan for review.
 
 ## The verdict contract
@@ -181,7 +181,7 @@ the stage prompt says which to use.
   cannot spawn subagents. `/agent-loop claim` is the pull equivalent — one human
   trigger claims and drives the next approved task. Within your turn,
   BUILD → VERIFY → REVIEW still advance without human turns.
-- **The interview runs in the main agent.** `/agent-loop-task new` interviews
+- **The interview runs in the main agent.** `/agent-loop new` interviews
   the user directly (Task subagents can't converse); the `loop-plan-author`
   subagent only writes the confirmed file(s). A **heavy idea is split** during
   that interview into sibling drafts (vertical, independently shippable slices
@@ -192,13 +192,13 @@ the stage prompt says which to use.
 
 ## Red flags
 
-- Building a task whose plan never went through `/agent-loop-task
+- Building a task whose plan never went through `/agent-loop
   approve-plan` — impossible via the tools (BUILD entry only reads
   `in-progress/`); never work around it.
 - Continuing into BUILD after a `{kind:"park"}` without the user's explicit
   Approve answer — the plan gate sits between PLAN and BUILD. The ONLY path
   through it is `loop_plan_approve` + `loop_start` after the user approves
-  (inline via AskUserQuestion, or later via `/agent-loop-task approve-plan`).
+  (inline via AskUserQuestion, or later via `/agent-loop approve`).
 - Spawning a stage subagent without first calling `loop_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.
 - Treating a stage's prose "PASS"/"FAIL" as the verdict — only the `loop_verdict`

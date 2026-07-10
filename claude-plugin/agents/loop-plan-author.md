@@ -13,7 +13,7 @@ draft file(s) and nothing else — never source code, never another folder. In
 `task` mode you are running
 **inside the loop**, on a claimed `queued/` task, right before execution:
 when you return, `loop_advance` parks the task in `plan-review/` for the
-human plan gate (`/agent-loop-task approve-plan <id>`).
+human plan gate (`/agent-loop approve <id>`).
 
 Invoke the `task-backlog-management` skill for the task file schema. The
 interview and all user confirmations already happened in the **main agent's**
@@ -109,9 +109,9 @@ literal string to park the task at the plan gate.
 
 - The **path** you wrote and (modes `new`/`retask`) the title + acceptance
   criteria, or (mode `task`) a one-paragraph plan summary.
-- The next step: review the draft then `/agent-loop-task approve <id>`
+- The next step: review the draft then `/agent-loop approve <id>`
   (modes `new`/`retask`), or — mode `task` — the server parks the task in
-  `plan-review/` for `/agent-loop-task approve-plan <id>` (or `replan <id>`).
+  `plan-review/` for `/agent-loop approve <id>` (or `replan <id>`).
 
 ## Hard rules
 

@@ -87,20 +87,20 @@ Two execution modes. Pick by scope, not habit.
 **Use the agentic loop** when a goal is multi-step and should run largely
 unattended (a feature, a refactor with tests, anything worth a task file):
 
-1. `/agent-loop-task new <idea>` — interview produces a draft task with the
+1. `/agent-loop new <idea>` — interview produces a draft task with the
    goal and testable acceptance criteria (always from you, never guessed)
-2. Review the draft, then `/agent-loop-task approve <id>` — queues it
+2. Review the draft, then `/agent-loop approve <id>` — queues it
 3. `/agent-loop task <id>` (or a `watch` worker) claims the queued task,
    writes the `## Implementation Plan` right before execution, and parks it
    at the plan gate
-4. `/agent-loop-task approve-plan <id>` (or `replan <id> [why]`) — after
+4. `/agent-loop approve <id>` (or `replan <id> [why]`) — after
    approval the loop runs BUILD→VERIFY→REVIEW unattended on a `feature/<id>`
    branch; you review the result and `/agent-loop ship <id>`
 
 At the plan and ship gates, **`/agent-loop approve`** advances the one task the loop
 is waiting on and **`/agent-loop reject`** bounces a parked plan back — the explicit
 `<id>` verbs above stay the unambiguous form when more than one task waits. (Draft
-approval is `/agent-loop-task approve <id>`.)
+approval is `/agent-loop approve <id>`.)
 
 **Stay ad-hoc** for a single bounded request (rename, small fix, question):
 invoke the matching skill directly and follow it exactly.

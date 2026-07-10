@@ -96,11 +96,11 @@ retry budget, park/done statuses, stop messages — comes from
 flowchart TB
     You([You])
 
-    subgraph authoring["AUTHORING + GATES — /agent-loop-task · interactive, human in the loop"]
+    subgraph authoring["AUTHORING + GATES — /agent-loop new/retask/approve · interactive, human in the loop"]
         direction TB
-        new["<b>/agent-loop-task new &lt;idea&gt;</b><br/>main agent interviews you (interview-me),<br/>then loop-plan-author writes it<br/>(task-backlog-management)<br/><i>planless draft in draft/</i>"]
-        approve{{"<b>/agent-loop-task approve &lt;id&gt;</b><br/>plugin queues the reviewed draft<br/>★ HUMAN GATE 1 — the task"}}
-        approveplan{{"<b>/agent-loop-task approve-plan &lt;id&gt;</b><br/>plugin validates the parked plan<br/>★ HUMAN GATE 2 — the plan<br/>(reject: replan &lt;id&gt; &lt;why&gt; → back to queued/)"}}
+        new["<b>/agent-loop new &lt;idea&gt;</b><br/>main agent interviews you (interview-me),<br/>then loop-plan-author writes it<br/>(task-backlog-management)<br/><i>planless draft in draft/</i>"]
+        approve{{"<b>/agent-loop approve &lt;id&gt;</b><br/>plugin queues the reviewed draft<br/>★ HUMAN GATE 1 — the task"}}
+        approveplan{{"<b>/agent-loop approve &lt;id&gt;</b><br/>plugin validates the parked plan<br/>★ HUMAN GATE 2 — the plan<br/>(reject: replan &lt;id&gt; &lt;why&gt; → back to queued/)"}}
     end
 
     subgraph backlog["BACKLOG — docs/tasks/ · folder = status"]
@@ -143,7 +143,7 @@ flowchart TB
     review -->|"PASS"| inreview
     inreview --> ship
     ship --> completed
-    build -.->|"iteration cap (maxIterations) trips:<br/>plan is suspect → human sends it back<br/>via /agent-loop-task replan &lt;id&gt;"| queued
+    build -.->|"iteration cap (maxIterations) trips:<br/>plan is suspect → human sends it back<br/>via /agent-loop reject &lt;id&gt;"| queued
     verify -.->|"ERROR → stop for human"| You
 ```
 
@@ -158,11 +158,11 @@ pushes or opens a PR — REVIEW PASS parks the task in `in-review/` for you.
 
 | Command | Handled by | Subagent | Write access | Skills loaded | Produces |
 |---------|-----------|----------|--------------|---------------|----------|
-| `/agent-loop-task new <idea>` | plugin → agent | `loop-plan-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
-| `/agent-loop-task retask <id> [note]` | plugin → agent | `loop-plan-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | draft rewritten **in place** in `draft/` (same id, no folder move) |
-| `/agent-loop-task approve <id>` | plugin only (agent writes nothing) | — | — | — | task queued in `queued/` |
-| `/agent-loop-task approve-plan <id>` | plugin only (agent writes nothing) | — | — | — | task parked in `in-progress/` |
-| `/agent-loop-task replan <id> [why]` | plugin only (agent writes nothing) | — | — | — | task re-queued in `queued/`, rejection audited |
+| `/agent-loop new <idea>` | plugin → agent | `loop-plan-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
+| `/agent-loop retask <id> [note]` | plugin → agent | `loop-plan-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | draft rewritten **in place** in `draft/` (same id, no folder move) |
+| `/agent-loop approve <id>` | plugin only (agent writes nothing) | — | — | — | task queued in `queued/` |
+| `/agent-loop approve <id>` | plugin only (agent writes nothing) | — | — | — | task parked in `in-progress/` |
+| `/agent-loop reject <id> [why]` | plugin only (agent writes nothing) | — | — | — | task re-queued in `queued/`, rejection audited |
 | PLAN (in the loop, on a `queued/` task) | driver → agent | `loop-plan-author` (task mode) | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
 | `/agent-loop task\|watch\|ship\|recover\|stop\|status` | plugin driver (`src/loop/driver.ts`) | spawns the three stage agents below | — | `loop-orchestration` protocol | stage sequencing, claims, snapshots, run log |
 | BUILD (also `/build`) | driver → agent | `loop-build` | edit ✅ bash ✅ | `incremental-implementation`, `test-driven-development` (+ `frontend-ui-engineering`, `observability-and-instrumentation`, `code-simplification` when relevant) | code + one commit checkpoint per iteration |
@@ -259,7 +259,7 @@ OpenCode the same guardrails ride the agent frontmatter permissions
 Human gates are **interactive** on this substrate: a park (`plan gate`) or a
 done (`ship gate`) returns a `gate` field, and the driving agent asks the
 user inline via AskUserQuestion — Approve (continue into BUILD / ship now),
-Replan with a reason, or Park for later (the `/agent-loop-task` verbs — or the
+Replan with a reason, or Park for later (the `/agent-loop` gate verbs — including the
 shorter `/agent-loop approve` / `/agent-loop reject` shortcuts — remain the deferred path). Install and command details live in
 [`claude-plugin/README.md`](../claude-plugin/README.md).
 

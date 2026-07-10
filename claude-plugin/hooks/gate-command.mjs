@@ -1,19 +1,23 @@
 #!/usr/bin/env node
 /**
- * UserPromptSubmit hook for the agentic-loop plugin. Makes the gate commands
- * `/agent-loop-task approve|approve-plan|replan <id> [reason]` move the task file
- * DETERMINISTICALLY — in the harness, before the model runs — so the move happens
- * even when a degraded model would not call the equivalent MCP tool.
+ * UserPromptSubmit hook for the agentic-loop plugin. Makes the gate verbs
+ * `/agent-loop approve|approve-plan|reject [id] [reason]` (aliases ok/go and
+ * redo/replan) move the task file DETERMINISTICALLY — in the harness, before
+ * the model runs — so the move happens even when a degraded model would not
+ * call the equivalent MCP tool.
  *
  * On a gate command it shells to `node mcp-server/dist/server.js gate <verb> <id>`
  * (the same core move logic the MCP tools call), then BLOCKS the turn so the model
  * never runs (no double-move). Anything else — including `new`/`retask`, which need
  * the model's interview — passes straight through untouched. If the CLI can't run
  * (dist missing, node error) it FAILS OPEN so the model + MCP-tool path still works.
+ *
+ * Prompt→argv parsing lives in gate-parse.mjs (pure, unit-tested).
  */
 import { spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { gateArgsFor } from "./gate-parse.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -21,52 +25,7 @@ const read = () =>
     process.stdin.on("data", (c) => (s += c)).on("end", () => resolve(s))
   })
 
-// Match either the raw command (`/agent-loop-task approve foo`) or the sentinel a
-// command template may emit once expanded (`GATE-DISPATCH: approve foo`) — covers
-// both possible UserPromptSubmit interception points (pre- or post-expansion).
-// Longest alternative first — ordered alternation, so `approve-plan` is tried
-// before `approve` (otherwise `approve` matches and `-plan` leaks into the id).
-const VERB = "(approve-plan|replan|approve)"
-const RAW = new RegExp(`(?:^|\\s|/)agent-loop-task\\s+${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im")
-const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im")
-
-// The folder-driven shortcuts `/agent-loop approve [id]` and `/agent-loop reject
-// [id] [reason]` — subcommands of /agent-loop, NOT top-level words (so they never
-// collide with a reserved `/approve`). Unlike the verbs above they need NO id — a
-// bare `/agent-loop approve` auto-resolves the single awaiting task. `agent-loop\s+`
-// cannot match `agent-loop-task approve` (a hyphen, not whitespace, follows), and
-// the legacy `agent-loop-task` RAW is tried first anyway.
-const APPROVE = /(?:^|\s|\/)agent-loop\s+approve\b[ \t]*(.*)$/im
-const REJECT = /(?:^|\s|\/)agent-loop\s+reject\b[ \t]*(.*)$/im
-
 const passThrough = () => process.exit(0)
-
-/**
- * Build the `gate` CLI argv from the prompt, or null when it is not a gate
- * command. Legacy `agent-loop-task` verbs require an id (a bare one is malformed
- * — passed through so the model reports usage); the shortcuts do not.
- */
-const gateArgsFor = (prompt) => {
-  const legacy = prompt.match(SENTINEL) || prompt.match(RAW)
-  if (legacy) {
-    const id = (legacy[2] || "").trim()
-    if (!id) return { passThrough: true } // malformed legacy gate — let the model report it
-    const reason = (legacy[3] || "").trim()
-    return { argv: ["gate", legacy[1], id, ...(reason ? [reason] : [])] }
-  }
-  const approve = prompt.match(APPROVE)
-  if (approve) {
-    // approve takes an optional id (first token); extra words are ignored.
-    const id = (approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
-    return { argv: ["gate", "approve-any", ...(id ? [id] : [])] }
-  }
-  const reject = prompt.match(REJECT)
-  if (reject) {
-    const words = (reject[1] || "").trim().split(/\s+/).filter(Boolean)
-    return { argv: ["gate", "reject-any", ...words] }
-  }
-  return null
-}
 
 const main = async () => {
   let input = {}

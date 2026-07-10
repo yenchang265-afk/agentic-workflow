@@ -14,5 +14,5 @@ task and the relevant code and writes the `## Implementation Plan` onto the
 task file **in place** (the prompt above carries the task file's path). It
 never touches source code. This stage is fired by the loop driver on a
 claimed `queued/` task — when it returns, the driver parks the task in
-`plan-review/` for the human plan gate (`/agent-loop-task approve-plan`).
+`plan-review/` for the human plan gate (`/agent-loop approve`).
 Relay the plan summary and stop.

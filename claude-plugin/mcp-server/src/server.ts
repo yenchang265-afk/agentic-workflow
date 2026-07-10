@@ -65,9 +65,9 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/co
  * driver is gone (no Claude Code equivalent) — the agent is the driver; this
  * server is the trusted state + git/backlog substrate.
  *
- * Task authoring happens before the loop, in `/agent-loop-task`: `new` interviews
- * the user into a draft (main-agent turn) and `loop_task_approve` parks it
- * planless in `queued/`. Planning happens inside the loop, right before
+ * Task authoring happens before the loop, via `/agent-loop new`: it interviews
+ * the user into a draft (main-agent turn) and `loop_approve` (unified gate)
+ * parks it planless in `queued/`. Planning happens inside the loop, right before
  * execution: `loop_start`/`loop_claim` on a queued task enter at PLAN (no git
  * isolation — it writes only the task file), and `loop_advance` after PLAN
  * parks the task in `plan-review/` and ends the loop (`park`). The human plan
@@ -204,9 +204,12 @@ const findAnyStatus = async (id: string): Promise<Task | null> => {
   return null
 }
 
-/** The work sources loop_claim polls, in claim-priority order (config order). */
-const sourcesFor = (): WorkSource[] =>
-  enabledLoopKinds(config).flatMap((kind): WorkSource[] => {
+/** The work sources loop_claim polls, in claim-priority order (config order).
+ *  An `only` kind restricts the poll to that one kind. */
+const sourcesFor = (only?: string): WorkSource[] =>
+  enabledLoopKinds(config)
+    .filter((kind) => !only || kind === only)
+    .flatMap((kind): WorkSource[] => {
     const loaded = manifestFor(kind)
     if (loaded.manifest.workSource.type === "github-pr") {
       const platform = platformFor(config, kind)
@@ -369,13 +372,16 @@ server.registerTool(
   "loop_claim",
   {
     description:
-      "Claim the next task and start it — the pull equivalent of the OpenCode plugin's /agent-loop watch. Build-ready in-progress/ tasks win over planless queued/ ones (finish work in flight before planning new work); within each pool, lowest priority number first. Returns null when both pools are empty.",
-    inputSchema: {},
+      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agent-loop watch. Polls all enabled loop kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agent-loop claim pr-sitter). Build-ready in-progress/ tasks win over planless queued/ ones (finish work in flight before planning new work); within each pool, lowest priority number first. Returns null when nothing is claimable.",
+    inputSchema: { kind: z.string().optional().describe("Restrict the pull to one enabled loop kind (e.g. pr-sitter).") },
   },
-  async () => {
+  async ({ kind }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    const { claim, skips } = await pollOnce(sourcesFor())
+    if (kind && !enabledLoopKinds(config).includes(kind)) {
+      return fail(`Unknown loop kind "${kind}" — enabled: ${enabledLoopKinds(config).join(", ")}.`)
+    }
+    const { claim, skips } = await pollOnce(sourcesFor(kind))
     if (!claim) {
       return ok(skips.length ? { claimed: null, skips } : null)
     }
@@ -624,7 +630,7 @@ const runPark = async (
       `plan gate: show the user the plan summary, then ask with AskUserQuestion — ` +
       `Approve (loop_plan_approve("${id}") then loop_start("${id}") continues into BUILD now), ` +
       `Replan with a reason (loop_replan("${id}", reason)), ` +
-      `or Park for later (stop here; /agent-loop-task approve-plan ${id} resumes it).`,
+      `or Park for later (stop here; /agent-loop approve ${id} resumes it).`,
   }
 }
 
@@ -706,9 +712,29 @@ server.registerTool(
   },
 )
 
+/** The loop kinds this repo ships (loops/<kind>/ dirs) with their enabled state. */
+const kindsReport = (): { kind: string; enabled: boolean }[] => {
+  const enabled = enabledLoopKinds(config)
+  let known: string[]
+  try {
+    known = fs
+      .readdirSync(LOOPS_DIR, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+  } catch {
+    known = enabled
+  }
+  return known.map((kind) => ({ kind, enabled: enabled.includes(kind) }))
+}
+
 server.registerTool(
   "loop_status",
-  { description: "Report the active loop (stage/iteration) plus a whole-backlog roll-up: counts per folder and the actionable flags.", inputSchema: {} },
+  {
+    description:
+      "Report the active loop (stage/iteration) plus a whole-backlog roll-up: counts per folder, the actionable flags, and the loop kinds (enabled/disabled).",
+    inputSchema: {},
+  },
   async () => {
     await loadCfg()
     const byStatus = {} as Record<TaskStatus, Task[]>
@@ -719,6 +745,7 @@ server.registerTool(
     return ok({
       active: active ? { stage: active.stage, iteration: active.iteration + 1, task: active.task?.id ?? active.goal } : null,
       backlog: summary,
+      kinds: kindsReport(),
       ...(pm ? { pairing: { system: pm.system, ...pairingCoverage(byStatus) } } : {}),
       ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (loop_doctor repairs)`) } : {}),
     })
@@ -957,16 +984,21 @@ const resolveGateTask = async (id: string, folders: readonly TaskStatus[]): Prom
 }
 
 /**
- * approve shortcut: advance the one task at a loop wait-gate — plan-review/ →
- * in-progress (plan gate) or in-review/ → completed (ship). Does NOT touch draft/
- * (draft approval is the task gate, loop_task_approve). `id` optional; only needed
- * to disambiguate.
+ * approve shortcut — the unified, folder-driven gate. With an explicit `id` it
+ * advances that task by the gate its folder implies: draft/ → queued (task
+ * gate), plan-review/ → in-progress (plan gate), or in-review/ → completed
+ * (ship). Without an id it advances the single task at a loop wait-gate
+ * (plan-review/ or in-review/) — draft/ is deliberately excluded from
+ * auto-resolution: drafts accumulate (including the never-approve epic
+ * tracking draft), so approving one always takes an explicit id.
  */
 const approveAny = async (id: string): Promise<GateResult> => {
-  const pick = await resolveGateTask(id, ["plan-review", "in-review"])
+  const folders: readonly TaskStatus[] = id ? ["plan-review", "in-review", "draft"] : ["plan-review", "in-review"]
+  const pick = await resolveGateTask(id, folders)
   if (!pick.ok) {
-    return { ok: false, message: pick.kind === "none" ? "Nothing awaiting approval. (Approve a draft with loop_task_approve / /agent-loop-task approve <id>.)" : pick.message }
+    return { ok: false, message: pick.kind === "none" ? "Nothing awaiting approval at a loop gate. (Approve a draft with /agent-loop approve <id>.)" : pick.message }
   }
+  if (pick.from === "draft") return approveTask(pick.id)
   if (pick.from === "plan-review") return approvePlan(pick.id)
   return shipTask(pick.id) // in-review
 }
@@ -1003,7 +1035,7 @@ server.registerTool(
   "loop_task_approve",
   {
     description:
-      "Deterministic /agent-loop-task approve <id> — the task gate: move a reviewed draft/ task to queued/ (audited note + commit). No plan is required or expected; the loop's PLAN stage writes it right before execution. The agent writes nothing.",
+      "Deterministic /agent-loop approve <id> on a draft — the task gate: move a reviewed draft/ task to queued/ (audited note + commit). No plan is required or expected; the loop's PLAN stage writes it right before execution. The agent writes nothing. Prefer loop_approve (the unified gate) unless you specifically need the draft-only form.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1017,7 +1049,7 @@ server.registerTool(
   "loop_plan_approve",
   {
     description:
-      "Deterministic /agent-loop-task approve-plan <id> — the plan gate: validate the plan-review/ task has an ## Implementation Plan, move it to in-progress/ (the build-ready queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing.",
+      "Deterministic /agent-loop approve-plan <id> — the plan gate: validate the plan-review/ task has an ## Implementation Plan, move it to in-progress/ (the build-ready queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing. Prefer loop_approve (the unified gate).",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1031,7 +1063,7 @@ server.registerTool(
   "loop_replan",
   {
     description:
-      "Deterministic /agent-loop-task replan <id> [reason]: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
+      "Deterministic /agent-loop reject <id> [reason] (aliases redo, replan): reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
     inputSchema: { id: z.string().min(1), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {
@@ -1045,7 +1077,7 @@ server.registerTool(
   "loop_approve",
   {
     description:
-      "/agent-loop approve [id] — advance the one task at a loop wait-gate: plan-review/ → in-progress (plan gate, requires an ## Implementation Plan) or in-review/ → completed (ship). Does NOT approve drafts — draft → queued is the task gate, loop_task_approve. The id is OPTIONAL — omit it to advance the single awaiting task; pass it only to disambiguate when more than one awaits. Prefer this over the specific loop_plan_approve / loop_ship tools. The agent writes nothing.",
+      "/agent-loop approve [id] (aliases ok, go) — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/; drafts always need the explicit id). Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
     inputSchema: { id: z.string().optional() },
   },
   async ({ id }) => {
