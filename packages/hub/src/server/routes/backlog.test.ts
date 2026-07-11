@@ -51,6 +51,8 @@ const depsFor = (directory: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
   loopsDir: path.join(directory, "loops-unused"),
+  projectsDir: "/nonexistent-projects",
+  opencodeDbPath: "/nonexistent.db",
   client: fsClient,
   sh,
   log: () => {},

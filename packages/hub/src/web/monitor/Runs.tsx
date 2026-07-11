@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { RunDetailResponse, RunsResponse } from "../../shared/api.js"
 import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
+import { TokenPanel } from "./TokenPanel.js"
 
 /** Run history: list of run logs; expanding one shows stage sections + summary tables. */
 
@@ -88,6 +89,7 @@ const RunDetail = ({ id }: { id: string }) => {
       {detail.log.sections.length === 0 && detail.log.summaries.length === 0 && (
         <div className="placeholder">Run log is empty.</div>
       )}
+      <TokenPanel runId={id} />
     </div>
   )
 }

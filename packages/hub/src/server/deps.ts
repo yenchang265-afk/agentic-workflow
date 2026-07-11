@@ -10,6 +10,10 @@ export interface HubDeps {
   readonly directory: string
   readonly tasksDir: string
   readonly loopsDir: string
+  /** Claude Code transcript root (~/.claude/projects) for token joins. */
+  readonly projectsDir: string
+  /** opencode SQLite store for legacy token backfill. */
+  readonly opencodeDbPath: string
   readonly client: Client
   readonly sh: Shell
   readonly log: Log

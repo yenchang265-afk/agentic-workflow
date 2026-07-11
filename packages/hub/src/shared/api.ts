@@ -2,8 +2,10 @@ import type { BacklogSummary, TaskStatus } from "@agentic-loop/core/task/store"
 import type { BacklogAnomalies } from "@agentic-loop/core/task/audit"
 import type { LoopManifest } from "@agentic-loop/core/manifest/schema"
 import type { ParsedRunLog } from "@agentic-loop/core/loop/runlog"
+import type { StageTokens } from "@agentic-loop/core/loop/metrics"
 
 export type { ParsedRunLog, RunLogStageSection, RunLogSummary, RunSummaryRow } from "@agentic-loop/core/loop/runlog"
+export type { StageTokens } from "@agentic-loop/core/loop/metrics"
 
 /**
  * The hub's wire types, shared verbatim by the node server and the browser
@@ -127,6 +129,43 @@ export interface ActiveResponse {
 
 export interface ApiError {
   readonly error: string
+}
+
+/** Where a token row's numbers came from. */
+export type TokenSource = "sidecar" | "transcripts" | "opencode-db"
+
+export interface TokenRow {
+  readonly stage: string
+  readonly lens?: string
+  /** 1-based for display. */
+  readonly iteration: number
+  readonly tokens: StageTokens
+  readonly cost?: number
+  readonly model?: string
+  readonly source: TokenSource
+  /** True when attribution is by time-window overlap, not exact observation. */
+  readonly estimated: boolean
+}
+
+export interface RunTokensResponse {
+  readonly runId: string
+  readonly rows: readonly TokenRow[]
+  readonly totals: StageTokens
+  readonly cost?: number
+  /** Human-readable caveats: missing sidecar, unavailable opencode-db, estimation. */
+  readonly notes: readonly string[]
+}
+
+export interface TokensSummaryEntry {
+  readonly id: string
+  readonly input: number
+  readonly output: number
+  readonly cost?: number
+  readonly estimated: boolean
+}
+
+export interface TokensSummaryResponse {
+  readonly runs: readonly TokensSummaryEntry[]
 }
 
 /** One live-update event on the `/api/events` SSE stream. */

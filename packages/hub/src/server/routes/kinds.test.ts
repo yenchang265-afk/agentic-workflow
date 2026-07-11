@@ -14,6 +14,8 @@ const deps: HubDeps = {
   directory: "/unused",
   tasksDir: "docs/tasks",
   loopsDir: LOOPS_DIR,
+  projectsDir: "/nonexistent-projects",
+  opencodeDbPath: "/nonexistent.db",
   client: fsClient,
   sh,
   log: () => {},

@@ -13,6 +13,9 @@ import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
 import { getKind, getKinds } from "./routes/kinds.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
+import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
+import { defaultOpencodeDbPath } from "./tokens/opencodedb.js"
+import { defaultProjectsDir } from "./tokens/transcripts.js"
 
 /**
  * Hub server entry. Binds 127.0.0.1 only — this is a local admin tool, never
@@ -34,6 +37,8 @@ const deps: HubDeps = {
   directory,
   tasksDir: config.tasksDir,
   loopsDir: defaultLoopsDir(),
+  projectsDir: defaultProjectsDir(),
+  opencodeDbPath: defaultOpencodeDbPath(),
   client: fsClient,
   sh,
   log: (level, message) => process.stderr.write(`[hub] ${level}: ${message}\n`),
@@ -47,6 +52,8 @@ const routes: Route[] = [
   { method: "GET", pattern: "/api/runs", handler: () => getRuns(deps) },
   { method: "GET", pattern: "/api/runs/:id", handler: (req) => getRunDetail(deps, req) },
   { method: "GET", pattern: "/api/active", handler: () => getActive(deps) },
+  { method: "GET", pattern: "/api/tokens", handler: () => getTokensSummary(deps) },
+  { method: "GET", pattern: "/api/tokens/:id", handler: (req) => getRunTokens(deps, req) },
 ]
 
 const events = makeEventHub()
