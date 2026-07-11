@@ -8,9 +8,42 @@ A local admin hub for the agentic-loop framework: **loop monitor**, **visual
 loop creator**, and the **user manual**, served as one small web app.
 
 ```bash
-npm run hub            # from the repo root — builds core + hub, serves http://127.0.0.1:4317
-node dist/server/main.js --dir /path/to/repo --port 4317   # watch another repo
+npm run hub -- --dir /path/to/repo    # from the repo root — builds core + hub, serves http://127.0.0.1:4317
+node dist/server/main.js --dir /path/to/repo --port 4317        # direct, after building
+node dist/server/main.js --dir /path/a --dir /path/b            # watch several repos
+node dist/server/main.js --dir "/mnt/c/Users/me/projects/*"     # every loop repo under a parent
 ```
+
+The hub only watches repos you name: with no `--dir` and no `hub.config.json`
+it exits with a usage message rather than assuming the cwd.
+
+## Monitoring multiple repos
+
+`--dir` is repeatable, and values may contain `*` wildcards (`*` matches
+within one path segment, never `/` or a leading dot — shell-glob style, quote
+it so your shell doesn't expand it first). Explicit paths are watched
+verbatim; wildcard matches are kept only when they look like loop repos
+(`.agentic-loop.json` or `docs/tasks` present), so a parent directory full of
+unrelated checkouts stays quiet. Skipped matches are listed on stderr at
+startup.
+
+Instead of flags you can drop a `hub.config.json` next to where you launch
+the hub (used only when no `--dir` is given; `--port` still wins):
+
+```json
+{
+  "repos": ["/path/to/repo", "/mnt/c/Users/me/projects/*"],
+  "port": 4317
+}
+```
+
+Each repo gets a stable id (its basename, slugified, `-2`-suffixed on
+collision). Repo-scoped API routes take `?repo=<id>` and default to the first
+repo; `GET /api/repos` lists them. When more than one repo is monitored the
+SPA header shows a repo picker (selection persists in localStorage), and SSE
+events + gate notifications are tagged with the repo id. Loop kinds are not
+repo-scoped — they live in the core package shared by every repo, so the
+creator tab is unaffected.
 
 ## Tabs
 

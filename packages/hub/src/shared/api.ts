@@ -196,9 +196,22 @@ export interface ManualFreshnessResponse {
   readonly warnings: readonly string[]
 }
 
-/** One live-update event on the `/api/events` SSE stream. */
-export type HubEvent =
+/** One monitored repo (from `--dir` / hub.config.json resolution). */
+export interface RepoInfo {
+  readonly id: string
+  readonly directory: string
+}
+
+export interface ReposResponse {
+  readonly repos: readonly RepoInfo[]
+}
+
+/** A watcher diff, before the server tags it with its repo. */
+export type HubEventBase =
   | { readonly type: "backlog" }
   | { readonly type: "run"; readonly id: string }
   | { readonly type: "active" }
   | { readonly type: "gate"; readonly taskId: string; readonly toStatus: string }
+
+/** One live-update event on the `/api/events` SSE stream. */
+export type HubEvent = HubEventBase & { readonly repo: string }

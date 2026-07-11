@@ -53,8 +53,8 @@ export const EventsProvider = ({ children }: { children: ReactNode }) => {
       setVersions((v) => ({ ...v, [event.type]: v[event.type] + 1 }))
       if (event.type === "gate" && notifRef.current === "granted") {
         new Notification("agentic-loop: task parked for your review", {
-          body: `${event.taskId} → ${event.toStatus} — approve or replan when ready`,
-          tag: `gate-${event.taskId}`,
+          body: `[${event.repo}] ${event.taskId} → ${event.toStatus} — approve or replan when ready`,
+          tag: `gate-${event.repo}-${event.taskId}`,
         })
       }
     }

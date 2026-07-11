@@ -159,9 +159,11 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 - [docs/design/](docs/design/) — threat model, hardening design records
   (including [07 — multi-loop scheduler](docs/design/improvements/07-multi-loop-scheduler.md))
 - [packages/hub/README.md](packages/hub/README.md) — the **admin hub (beta)**
-  (`npm run hub` → http://127.0.0.1:4317): loop monitor (backlog board, live
-  gate notifications, run history, per-stage token usage), visual loop
-  creator, and the user manual with a freshness check
+  (`npm run hub -- --dir /path/to/repo` → http://127.0.0.1:4317): loop
+  monitor (backlog board, live gate notifications, run history, per-stage
+  token usage), visual loop creator, and the user manual with a freshness
+  check; monitors one or many repos (`--dir` is repeatable and takes `*`
+  wildcards, or use `hub.config.json` — no repos configured, no watching)
 
 Each topic is canonical in one file — config/wizard in
 [docs/configuration.md](docs/configuration.md), OpenCode/Claude install +

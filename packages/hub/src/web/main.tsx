@@ -6,6 +6,7 @@ import { Manual } from "./Manual.js"
 import { ActivePanel } from "./monitor/ActivePanel.js"
 import { Board } from "./monitor/Board.js"
 import { Runs } from "./monitor/Runs.js"
+import { RepoPicker, RepoProvider } from "./repo.js"
 import "./theme.css"
 
 type Tab = "monitor" | "creator" | "manual"
@@ -49,6 +50,7 @@ const App = () => {
             </button>
           ))}
         </nav>
+        <RepoPicker />
         <HeaderStatus />
       </header>
       <main className="hub-main">
@@ -72,7 +74,9 @@ if (root)
   createRoot(root).render(
     <StrictMode>
       <EventsProvider>
-        <App />
+        <RepoProvider>
+          <App />
+        </RepoProvider>
       </EventsProvider>
     </StrictMode>,
   )

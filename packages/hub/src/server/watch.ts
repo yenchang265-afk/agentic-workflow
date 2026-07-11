@@ -21,8 +21,8 @@ export interface WatchSnapshot {
   readonly lease: string | null
 }
 
-export type { HubEvent } from "../shared/api.js"
-import type { HubEvent } from "../shared/api.js"
+export type { HubEventBase } from "../shared/api.js"
+import type { HubEventBase } from "../shared/api.js"
 
 const GATE_STATUSES = ["plan-review", "in-review"] as const
 
@@ -76,8 +76,8 @@ export const scanSnapshot = (directory: string, tasksDir: string, statuses: read
 }
 
 /** Derive events from two snapshots. Pure; equal snapshots → []. */
-export const diffSnapshots = (prev: WatchSnapshot, next: WatchSnapshot): HubEvent[] => {
-  const events: HubEvent[] = []
+export const diffSnapshots = (prev: WatchSnapshot, next: WatchSnapshot): HubEventBase[] => {
+  const events: HubEventBase[] = []
 
   let backlogChanged = false
   const statuses = new Set([...Object.keys(prev.tasks), ...Object.keys(next.tasks)])
@@ -118,7 +118,7 @@ export interface WatcherOptions {
 }
 
 /** Start watching; `onEvents` fires with each non-empty diff. Returns a stop function. */
-export const startWatcher = (opts: WatcherOptions, onEvents: (events: HubEvent[]) => void): (() => void) => {
+export const startWatcher = (opts: WatcherOptions, onEvents: (events: HubEventBase[]) => void): (() => void) => {
   let snapshot = scanSnapshot(opts.directory, opts.tasksDir, opts.statuses)
   let debounce: NodeJS.Timeout | null = null
 

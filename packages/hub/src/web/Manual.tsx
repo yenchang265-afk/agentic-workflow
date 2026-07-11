@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import type { ManualFreshnessResponse } from "../shared/api.js"
 import { fetchJson } from "./api.js"
+import { repoPath, useRepo } from "./repo.js"
 
 /**
  * The user-manual tab: docs/manual.html served verbatim in an iframe (it's a
@@ -11,12 +12,13 @@ import { fetchJson } from "./api.js"
 export const Manual = () => {
   const [freshness, setFreshness] = useState<ManualFreshnessResponse | null>(null)
   const [showAll, setShowAll] = useState(false)
+  const { repoId } = useRepo()
 
   useEffect(() => {
-    fetchJson<ManualFreshnessResponse>("/api/manual/freshness")
+    fetchJson<ManualFreshnessResponse>(repoPath("/api/manual/freshness", repoId))
       .then(setFreshness)
       .catch(() => setFreshness(null))
-  }, [])
+  }, [repoId])
 
   if (freshness && !freshness.available) {
     return <div className="placeholder">This repo has no docs/manual.html.</div>
@@ -44,7 +46,7 @@ export const Manual = () => {
           )}
         </div>
       )}
-      <iframe className="manual-frame" src="/manual" title="agentic-loop user manual" />
+      <iframe key={repoId} className="manual-frame" src={repoPath("/manual", repoId)} title="agentic-loop user manual" />
     </div>
   )
 }

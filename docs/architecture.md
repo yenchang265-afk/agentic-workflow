@@ -272,7 +272,10 @@ Replan with a reason, or Park for later (the `/agentic-loop:engineering approve`
 A third, host-independent surface: a localhost web app (`npm run hub`) that
 **observes** the same filesystem substrate the hosts write — status folders,
 run logs, snapshots, the stage marker, the watch lease — and never drives the
-loop. Its only write path is the loop creator saving
+loop. It can monitor several repos at once (repeatable `--dir` flags with `*`
+wildcards, or a `hub.config.json`): each repo gets its own deps + watcher,
+routes scope by `?repo=<id>`, and SSE events are repo-tagged. Its only write
+path is the loop creator saving
 `packages/core/loops/<kind>/` manifests + prompt stubs. Token usage comes from
 the `runs/<id>.metrics.json` sidecar both hosts append on terminal events
 (exact for opencode, which observes usage; joined from Claude transcripts by

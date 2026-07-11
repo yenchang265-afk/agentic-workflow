@@ -13,7 +13,7 @@
   ],
   "scripts": {
     "prepare": "npm run build -w @agentic-loop/core && npm run build -w agentic-loop-mcp",
-    "hub": "npm run build -w @agentic-loop/core && npm run build -w @agentic-loop/hub && npm run start -w @agentic-loop/hub",
+    "hub": "npm run build -w @agentic-loop/core && npm run build -w @agentic-loop/hub && npm run start -w @agentic-loop/hub --",
     "gen:prompts": "node scripts/gen-prompts.mjs",
     "build:hooks": "node scripts/build-hooks.mjs",
     "test:hooks": "node --test plugins/claude/hooks/*.test.mjs",

@@ -1,6 +1,6 @@
 {
   "name": "@agentic-loop/hub",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "description": "Local admin hub for agentic-loop (beta) — user manual, visual loop creator, loop monitor",
   "license": "MIT",
   "type": "module",
