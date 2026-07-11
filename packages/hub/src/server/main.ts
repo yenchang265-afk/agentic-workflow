@@ -1,4 +1,3 @@
-import fs from "node:fs"
 import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,7 +9,8 @@ import type { HubDeps } from "./deps.js"
 import { makeEventHub } from "./events.js"
 import { fsClient, sh } from "./fsclient.js"
 import { badRequest, makeListener, ok, type JsonResponse, type ParsedRequest, type RawRoute, type Route } from "./http.js"
-import { HUB_CONFIG_NAME, parseHubConfig, resolveRepos } from "./repos.js"
+import { loadHubSettings } from "./config.js"
+import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
@@ -24,10 +24,11 @@ import { defaultProjectsDir } from "./tokens/transcripts.js"
  * Hub server entry. Binds 127.0.0.1 only — this is a local admin tool, never
  * an exposed service. Repos to monitor come from repeatable `--dir <path>`
  * flags (values may contain `*` wildcards — see repos.ts), or, when no --dir
- * is given, from a hub.config.json `{ "repos": [...], "port"?: n }` in the
- * cwd. With neither the hub exits — it never watches a repo you didn't name.
- * `--port <n>` overrides the port. Repo-scoped routes take `?repo=<id>`
- * (default: the first repo).
+ * is given, from the `hub` section of the user-scope `~/.agentic-loop.json`
+ * (`{ "hub": { "repos": [...], "port"?: n } }` — see config.ts; a repo-level
+ * `hub` key is ignored). With neither the hub exits — it never watches a repo
+ * you didn't name. `--port <n>` overrides the port. Repo-scoped routes take
+ * `?repo=<id>` (default: the first repo).
  */
 
 const argValues = (flag: string): string[] => {
@@ -41,34 +42,30 @@ const argValues = (flag: string): string[] => {
 const cwd = process.cwd()
 const dirArgs = argValues("--dir")
 
-let patterns = dirArgs
-let configPort: number | undefined
+let settings: ReturnType<typeof loadHubSettings> = null
+try {
+  settings = loadHubSettings()
+} catch (err) {
+  console.error((err as Error).message)
+  process.exit(1)
+}
+
+const patterns = dirArgs.length > 0 ? dirArgs : [...(settings?.repos ?? [])]
 if (patterns.length === 0) {
-  try {
-    const raw = fs.readFileSync(path.join(cwd, HUB_CONFIG_NAME), "utf8")
-    const config = parseHubConfig(raw)
-    patterns = [...config.repos]
-    configPort = config.port
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.error((err as Error).message)
-    } else {
-      console.error(
-        `hub: no repos configured — pass --dir <path> (repeatable, * wildcards ok) or create ${HUB_CONFIG_NAME} with { "repos": [...] }`,
-      )
-    }
-    process.exit(1)
-  }
+  console.error(
+    'hub: no repos configured — pass --dir <path> (repeatable, * wildcards ok) or set { "hub": { "repos": [...] } } in ~/.agentic-loop.json',
+  )
+  process.exit(1)
 }
 
 const { repos: resolved, notes } = resolveRepos(patterns, cwd)
 for (const note of notes) process.stderr.write(`[hub] warn: ${note}\n`)
 if (resolved.length === 0) {
-  console.error("hub: no repos to monitor — check --dir values / hub.config.json")
+  console.error("hub: no repos to monitor — check --dir values / the hub.repos entries in ~/.agentic-loop.json")
   process.exit(1)
 }
 
-const port = Number(argValues("--port")[0] ?? configPort ?? 4317)
+const port = Number(argValues("--port")[0] ?? settings?.port ?? 4317)
 
 const log: HubDeps["log"] = (level, message) => process.stderr.write(`[hub] ${level}: ${message}\n`)
 

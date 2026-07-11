@@ -14,8 +14,9 @@ node dist/server/main.js --dir /path/a --dir /path/b            # watch several 
 node dist/server/main.js --dir "/mnt/c/Users/me/projects/*"     # every loop repo under a parent
 ```
 
-The hub only watches repos you name: with no `--dir` and no `hub.config.json`
-it exits with a usage message rather than assuming the cwd.
+The hub only watches repos you name: with no `--dir` and no `hub` section in
+the user-scope config it exits with a usage message rather than assuming the
+cwd.
 
 ## Monitoring multiple repos
 
@@ -27,13 +28,18 @@ verbatim; wildcard matches are kept only when they look like loop repos
 unrelated checkouts stays quiet. Skipped matches are listed on stderr at
 startup.
 
-Instead of flags you can drop a `hub.config.json` next to where you launch
-the hub (used only when no `--dir` is given; `--port` still wins):
+Instead of flags you can add a `hub` section to the **user-scope**
+`~/.agentic-loop.json` (or the file `$AGENTIC_LOOP_USER_CONFIG` points at).
+It is used only when no `--dir` is given; `--port` still wins. The hub spans
+repos, so a `hub` key inside any single repo's `.agentic-loop.json` is
+ignored:
 
 ```json
 {
-  "repos": ["/path/to/repo", "/mnt/c/Users/me/projects/*"],
-  "port": 4317
+  "hub": {
+    "repos": ["/path/to/repo", "/mnt/c/Users/me/projects/*"],
+    "port": 4317
+  }
 }
 ```
 

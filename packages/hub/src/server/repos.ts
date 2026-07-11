@@ -1,12 +1,12 @@
 import fs from "node:fs"
 import path from "node:path"
-import { z } from "zod"
 
 /**
- * Multi-repo configuration: turn `--dir` values (or hub.config.json entries)
- * into the list of repos the hub monitors. Values may contain `*` wildcards —
- * `*` matches within one path segment (never `/`, never a leading dot), so
- * `--dir "~/work/*"` monitors every loop repo directly under ~/work.
+ * Multi-repo resolution: turn `--dir` values (or the user-scope config's
+ * `hub.repos` entries — see config.ts) into the list of repos the hub
+ * monitors. Values may contain `*` wildcards — `*` matches within one path
+ * segment (never `/`, never a leading dot), so `--dir "~/work/*"` monitors
+ * every loop repo directly under ~/work.
  *
  * Explicit paths are trusted verbatim (the user named them); wildcard matches
  * are filtered to directories that look like loop repos (.agentic-loop.json or
@@ -23,33 +23,6 @@ export interface RepoResolution {
   readonly repos: readonly ResolvedRepo[]
   /** Human-readable skips/warnings for the startup log. */
   readonly notes: readonly string[]
-}
-
-export const HUB_CONFIG_NAME = "hub.config.json"
-
-const HubConfigSchema = z
-  .object({
-    repos: z.array(z.string().min(1)).min(1),
-    port: z.number().int().positive().optional(),
-  })
-  .strict()
-
-export type HubConfig = z.infer<typeof HubConfigSchema>
-
-/** Parse hub.config.json content, throwing a message that names the file. */
-export const parseHubConfig = (raw: string): HubConfig => {
-  let data: unknown
-  try {
-    data = JSON.parse(raw)
-  } catch {
-    throw new Error(`${HUB_CONFIG_NAME}: not valid JSON`)
-  }
-  const parsed = HubConfigSchema.safeParse(data)
-  if (!parsed.success) {
-    const issue = parsed.error.issues[0]
-    throw new Error(`${HUB_CONFIG_NAME}: ${issue?.path.join(".") || "config"} — ${issue?.message}`)
-  }
-  return parsed.data
 }
 
 const isDir = (p: string): boolean => {

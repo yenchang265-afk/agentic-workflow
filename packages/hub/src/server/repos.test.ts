@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { parseHubConfig, resolveRepos } from "./repos.js"
+import { resolveRepos } from "./repos.js"
 
 /** Build a directory tree under a fresh tmp root; entries ending in "/" are dirs, else files. */
 const fixture = (entries: readonly string[]): string => {
@@ -81,12 +81,4 @@ test("resolveRepos sanitizes ids to url-safe slugs", () => {
   const root = fixture(["Claude Code/docs/tasks/"])
   const { repos } = resolveRepos([path.join(root, "Claude Code")], root)
   assert.equal(repos[0]?.id, "claude-code")
-})
-
-test("parseHubConfig accepts repos + optional port and rejects junk", () => {
-  const config = parseHubConfig(JSON.stringify({ repos: ["/a", "/b/*"], port: 5000 }))
-  assert.deepEqual(config, { repos: ["/a", "/b/*"], port: 5000 })
-  assert.throws(() => parseHubConfig("not json"), /hub\.config\.json/)
-  assert.throws(() => parseHubConfig(JSON.stringify({ repos: [] })), /repos/)
-  assert.throws(() => parseHubConfig(JSON.stringify({ repos: ["/a"], extra: true })), /extra/)
 })

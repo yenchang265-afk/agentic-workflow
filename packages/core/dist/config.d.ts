@@ -143,6 +143,16 @@ export interface LoadConfigOptions {
     readonly userConfigPath?: string | null;
 }
 /**
+ * Read and JSON-parse the user-scope layer with Node fs (it lives outside the
+ * project directory, beyond the host client's reach). Absent or unreadable →
+ * undefined (layer not present); malformed JSON or a non-object top level →
+ * throw naming the offending file, never a silent skip — this layer may carry
+ * `ado.pat`/`selfLogin`, and dropping it would surface later as a baffling
+ * validation error. Exported for consumers of user-scope-only sections (the
+ * hub reads its `hub` section exclusively from this layer).
+ */
+export declare const readUserLayer: (userPath: string) => unknown;
+/**
  * Load a host config by layering the user-scope file (if any) under the repo's
  * `.agentic-loop.json` (repo wins field by field), falling back to the
  * schema's defaults when both are absent.

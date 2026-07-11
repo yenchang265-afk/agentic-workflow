@@ -4,7 +4,7 @@ import { fetchJson } from "./api.js"
 
 /**
  * Which monitored repo the UI is looking at. The hub can watch several repos
- * (`--dir` globs / hub.config.json); every repo-scoped fetch appends
+ * (`--dir` globs / user-scope `hub.repos`); every repo-scoped fetch appends
  * `?repo=<id>` via repoPath. Selection persists in localStorage.
  */
 

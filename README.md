@@ -162,8 +162,8 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   (`npm run hub -- --dir /path/to/repo` → http://127.0.0.1:4317): loop
   monitor (backlog board, live gate notifications, run history, per-stage
   token usage) and visual loop creator; monitors one or many repos (`--dir`
-  is repeatable and takes `*` wildcards, or use `hub.config.json` — no repos
-  configured, no watching)
+  is repeatable and takes `*` wildcards, or set `hub.repos` in the user-scope
+  `~/.agentic-loop.json` — no repos configured, no watching)
 
 Each topic is canonical in one file — config/wizard in
 [docs/configuration.md](docs/configuration.md), OpenCode/Claude install +

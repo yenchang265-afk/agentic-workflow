@@ -273,7 +273,8 @@ A third, host-independent surface: a localhost web app (`npm run hub`) that
 **observes** the same filesystem substrate the hosts write — status folders,
 run logs, snapshots, the stage marker, the watch lease — and never drives the
 loop. It can monitor several repos at once (repeatable `--dir` flags with `*`
-wildcards, or a `hub.config.json`): each repo gets its own deps + watcher,
+wildcards, or `hub.repos` in the user-scope `~/.agentic-loop.json` — a
+repo-level `hub` key is ignored): each repo gets its own deps + watcher,
 routes scope by `?repo=<id>`, and SSE events are repo-tagged. Its only write
 path is the loop creator saving
 `packages/core/loops/<kind>/` manifests + prompt stubs. Token usage comes from

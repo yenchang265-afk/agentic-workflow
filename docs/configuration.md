@@ -96,6 +96,30 @@ config order.
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
 
+## Admin hub (`hub` — user scope only)
+
+The hub reads its settings from the `hub` section of the **user-scope**
+config only (`~/.agentic-loop.json` / `AGENTIC_LOOP_USER_CONFIG`). The hub
+monitors many repos at once, so a `hub` key in a repo's `.agentic-loop.json`
+is ignored rather than merged:
+
+```json
+{
+  "hub": {
+    "repos": ["/path/to/repo", "/mnt/c/Users/me/projects/*"],
+    "port": 4317
+  }
+}
+```
+
+- **`hub.repos`** — directories to monitor; entries may contain `*` wildcards
+  (single path segment). Used only when the hub is launched without `--dir`
+  flags.
+- **`hub.port`** — listen port (default `4317`); `--port` still wins.
+
+Unknown keys under `hub` are rejected (typo safety). See
+[packages/hub/README.md](../packages/hub/README.md).
+
 ## Code platform (`codePlatform` / `ado`)
 
 The PR sitter binds to a hosted-PR work source (`workSource.type:

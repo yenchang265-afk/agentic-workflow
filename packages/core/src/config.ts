@@ -256,9 +256,10 @@ export interface LoadConfigOptions {
  * undefined (layer not present); malformed JSON or a non-object top level →
  * throw naming the offending file, never a silent skip — this layer may carry
  * `ado.pat`/`selfLogin`, and dropping it would surface later as a baffling
- * validation error.
+ * validation error. Exported for consumers of user-scope-only sections (the
+ * hub reads its `hub` section exclusively from this layer).
  */
-const readUserLayer = (userPath: string): unknown => {
+export const readUserLayer = (userPath: string): unknown => {
   let content: string
   try {
     content = fs.readFileSync(userPath, "utf8")

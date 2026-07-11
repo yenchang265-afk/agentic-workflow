@@ -190,7 +190,7 @@ export interface TokensSummaryResponse {
   readonly runs: readonly TokensSummaryEntry[]
 }
 
-/** One monitored repo (from `--dir` / hub.config.json resolution). */
+/** One monitored repo (from `--dir` / user-scope `hub.repos` resolution). */
 export interface RepoInfo {
   readonly id: string
   readonly directory: string
