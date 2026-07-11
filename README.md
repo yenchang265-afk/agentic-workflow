@@ -158,6 +158,10 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   blocking PLAN gate)
 - [docs/design/](docs/design/) — threat model, hardening design records
   (including [07 — multi-loop scheduler](docs/design/improvements/07-multi-loop-scheduler.md))
+- [packages/hub/README.md](packages/hub/README.md) — the **admin hub**
+  (`npm run hub` → http://127.0.0.1:4317): loop monitor (backlog board, live
+  gate notifications, run history, per-stage token usage), visual loop
+  creator, and the user manual with a freshness check
 
 Each topic is canonical in one file — config/wizard in
 [docs/configuration.md](docs/configuration.md), OpenCode/Claude install +

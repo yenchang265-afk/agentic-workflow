@@ -344,6 +344,36 @@ body {
   fill: var(--ok);
 }
 
+/* --- manual --- */
+
+.manual {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 0.6rem;
+}
+
+.freshness-banner {
+  background: var(--gate-bg);
+  border: 1px solid var(--gate);
+  color: var(--gate);
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font-size: 0.83rem;
+}
+
+.freshness-banner ul {
+  margin: 0.4rem 0;
+  padding-left: 1.2rem;
+}
+
+.manual-frame {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
 /* --- creator --- */
 
 .creator {

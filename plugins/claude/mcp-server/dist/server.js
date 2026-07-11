@@ -395,15 +395,17 @@ server.registerTool("loop_advance", {
             kind: "stop",
             message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agentic-loop:engineering recover the task.`,
         };
-        samples.push({ stage, iteration: active.iteration, ms: Date.now() - lastFireAt });
+        samples.push({ stage, iteration: active.iteration, ms: Date.now() - lastFireAt, startedAt: new Date(lastFireAt).toISOString() });
         await runTerminal(action);
         return ok({ action });
     }
-    // record a metrics sample for the stage that just finished
+    // record a metrics sample for the stage that just finished — startedAt
+    // anchors the time window transcript-based token joins attribute against
     samples.push({
         stage,
         iteration: active.iteration,
         ms: Date.now() - lastFireAt,
+        startedAt: new Date(lastFireAt).toISOString(),
         ...(stageDef(activeManifest().manifest, stage).kind === "check" ? { verdict: (pending?.verdict ?? "none") } : {}),
     });
     // thread failed criteria ahead of the prose for the next iteration
