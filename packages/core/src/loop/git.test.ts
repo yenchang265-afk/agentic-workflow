@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { addWorktree, branchExists, listWorktrees, worktreeForBranch } from "./git.js"
+import { addWorktree, branchExists, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
 
 /**
  * git.ts shells out via Bun's `$` (redirections, quoting) which the node+tsx
@@ -100,4 +100,17 @@ test("addWorktree reuses an existing branch without -b (never resets it)", async
   assert.equal(ok, true)
   assert.ok(log.some((c) => c.includes("worktree add /wt/add-foo feature/add-foo")))
   assert.ok(!log.some((c) => c.includes("worktree add -b")))
+})
+
+test("pushBranch pushes to origin with -u", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  const ok = await pushBranch($, "/repo", "feature/add-foo")
+  assert.equal(ok, true)
+  assert.ok(log.some((c) => c.includes("push -u origin feature/add-foo")))
+})
+
+test("pushBranch returns false when the push fails", async () => {
+  const $ = makeShell(() => ({ exitCode: 1, stderr: "rejected" }))
+  assert.equal(await pushBranch($, "/repo", "feature/add-foo"), false)
 })

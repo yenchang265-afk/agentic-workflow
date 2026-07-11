@@ -65,6 +65,7 @@ import {
   worktreeForBranch,
 } from "@agentic-loop/core/loop/git"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
+import { shipPr } from "@agentic-loop/core/loop/ship-pr"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens } from "@agentic-loop/core/loop/metrics"
 import { appendRunMetrics, metricsPath } from "@agentic-loop/core/loop/metrics-file"
 import {
@@ -1218,9 +1219,18 @@ const doApprovePlan = async (deps: Deps, config: Config, task: Task): Promise<vo
 /** ship: in-review/ → completed/. */
 const doShip = async (deps: Deps, config: Config, task: Task): Promise<void> => {
   await appendNote(deps.$, task, auditNote("Shipped — moved to completed", new Date(), await gitActor(deps.$, deps.directory)))
-  await moveTask(deps.$, task, "completed")
+  const newPath = await moveTask(deps.$, task, "completed")
   await commitTasks(deps, config, `loop(${task.id}): shipped — completed`)
-  await toast(deps.client, `"${task.title}" completed.`, "success")
+
+  const pr = await shipPr(deps.$, deps.log, deps.directory, config, "engineering", task.id, task.title)
+  if (pr.url) {
+    await appendNote(deps.$, { id: task.id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()))
+    await commitTasks(deps, config, `loop(${task.id}): PR ${pr.created ? "opened" : "linked"}`)
+  } else if (pr.attempted) {
+    await appendNote(deps.$, { id: task.id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()))
+    await commitTasks(deps, config, `loop(${task.id}): PR not opened`)
+  }
+  await toast(deps.client, `"${task.title}" completed.${pr.url ? ` PR: ${pr.url}` : ""}`, "success")
 }
 
 /** replan: plan-review/ or in-progress/ → queued/, with an optional reason. */

@@ -224,7 +224,10 @@ const makeClient = () => {
  * and mutates it on `mv`; every other command (printf notes, mkdir, git, rmdir)
  * succeeds. Records the normalized command stream in `log`.
  */
-const makeShellFS = (files: Record<string, string>, log: string[]) => {
+/** Canned result for a command whose normalized form starts with `cmd`. */
+type ShellOverride = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
+
+const makeShellFS = (files: Record<string, string>, log: string[], overrides: ShellOverride[] = []) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[k.startsWith("/") ? k : `/repo/${k}`] = v
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
@@ -238,6 +241,18 @@ const makeShellFS = (files: Record<string, string>, log: string[]) => {
     })
     const norm = cmd.trim().replace(/\s+/g, " ")
     log.push(norm)
+    const override = overrides.find((o) => norm.startsWith(o.cmd))
+    if (override) {
+      const r = override.result
+      const result = { exitCode: r.exitCode ?? 0, stdout: { toString: () => r.stdout ?? "" }, stderr: { toString: () => r.stderr ?? "" } }
+      const chain = {
+        quiet: () => chain,
+        nothrow: () => chain,
+        cwd: () => chain,
+        then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
+      }
+      return chain
+    }
     const parts = norm.split(" ")
     let out = { exitCode: 0, stdout: "", stderr: "" }
     if (parts[0] === "cat") {
@@ -463,6 +478,47 @@ test("/approve with no id ships the single in-review task to completed/", async 
 
   assert.equal(toasts[0]?.variant, "success")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
+  // The fake shell's default (unmatched → exitCode 0, empty stdout) makes the
+  // branch "exist" and the push "succeed", but every `gh` call reads as empty
+  // output — i.e. attempted-but-failed, not "no branch".
+  assert.ok(log.some((cmd) => cmd.includes("PR not opened")))
+  assert.ok(!(toasts[0]?.message ?? "").includes("PR:"))
+})
+
+test("ship is a silent no-op on PR creation when there's no feature/<id> branch", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed diff" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const overrides: ShellOverride[] = [{ cmd: "git -C /repo rev-parse --verify --quiet refs/heads/feature/my-task", result: { exitCode: 1 } }]
+  const deps: Deps = { client, $: makeShellFS(files, log, overrides), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
+  assert.ok(!log.some((cmd) => cmd.includes("push")))
+  assert.ok(!log.some((cmd) => cmd.includes("PR not opened") || cmd.includes("PR opened")))
+  assert.equal(toasts[0]?.message, `"Ship it" completed.`)
+})
+
+test("ship pushes the branch and opens a draft PR when gh succeeds", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed diff" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const overrides: ShellOverride[] = [
+    { cmd: "git -C /repo rev-parse --verify --quiet refs/heads/feature/my-task", result: { exitCode: 0 } },
+    { cmd: "git -C /repo push -u origin feature/my-task", result: { exitCode: 0 } },
+    { cmd: "gh pr view feature/my-task", result: { exitCode: 1 } },
+    { cmd: "gh repo view", result: { exitCode: 0, stdout: "main\n" } },
+    { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/11\n" } },
+  ]
+  const deps: Deps = { client, $: makeShellFS(files, log, overrides), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.equal(toasts[0]?.message, `"Ship it" completed. PR: https://github.com/acme/widgets/pull/11`)
+  assert.ok(log.some((cmd) => cmd.includes("PR opened") && cmd.includes("https://github.com/acme/widgets/pull/11")))
 })
 
 test("id-less approve ignores drafts — a lone draft is not queued (drafts need an explicit id)", async () => {

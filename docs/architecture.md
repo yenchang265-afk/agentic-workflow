@@ -156,7 +156,12 @@ share one iteration budget (`maxIterations`, default 3); an ERROR verdict
 stops the loop for a human without burning an iteration. PLAN never blocks:
 its only exit is the park into `plan-review/` — a watcher can plan a whole
 queue overnight and you batch-review the plans. The engineering loop never
-pushes or opens a PR — REVIEW PASS parks the task in `in-review/` for you.
+pushes or opens a PR on its own — REVIEW PASS just parks the task in
+`in-review/` for you. Ship (`in-review/` → `completed/`) is still a
+human-invoked gate, but it now pushes the task's `feature/<id>` branch and
+opens (or reuses) a **draft** PR — GitHub or Azure DevOps per `codePlatform`
+— so the merge decision stays yours while the "now go push and open a PR"
+step doesn't.
 
 ## Who does what (engineering)
 

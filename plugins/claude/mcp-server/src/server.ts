@@ -27,6 +27,7 @@ import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/
 import { appendRunMetrics, metricsPath } from "@agentic-loop/core/loop/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
 import { ensureIsolation, loopId, teardownIsolation } from "@agentic-loop/core/loop/isolate"
+import { shipPr } from "@agentic-loop/core/loop/ship-pr"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { type Task } from "@agentic-loop/core/task/schema"
 import {
@@ -915,7 +916,18 @@ const shipTask = async (id: string): Promise<GateResult> => {
   await appendNote(sh, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor(sh, directory)), log)
   const newPath = await moveTask(sh, { id, path: t.path }, "completed")
   await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): shipped — completed`)
-  return { ok: true, message: `"${t.title}" completed.`, path: newPath, data: { completed: newPath } }
+
+  const pr = await shipPr(sh, log, directory, config, "engineering", id, t.title)
+  const data: Record<string, unknown> = { completed: newPath }
+  if (pr.url) {
+    data.pr = { url: pr.url }
+    await appendNote(sh, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
+    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
+  } else if (pr.attempted) {
+    await appendNote(sh, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
+    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): PR not opened`)
+  }
+  return { ok: true, message: `"${t.title}" completed.${pr.url ? ` PR: ${pr.url}` : ""}`, path: newPath, data }
 }
 
 /** Which task a folder-driven gate shortcut (loop_approve / loop_reject) should act on. */

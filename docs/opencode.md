@@ -25,8 +25,10 @@ the plan itself is suspect and a human sends it back with
 `/agentic-loop:engineering replan <id> <why>`.
 A stage that outlives `stageTimeoutMinutes` fails the loop instead of
 hanging it. On a REVIEW PASS the task parks in `in-review/` — the loop never
-pushes or opens a PR itself; you review the branch diff, then run
-`/agentic-loop:engineering approve <id>` to move it to `completed/`. A run that stops early —
+pushes or opens a PR on its own; you review the branch diff, then run
+`/agentic-loop:engineering approve <id>` to move it to `completed/`, which
+also pushes the `feature/<id>` branch and opens (or reuses) a draft PR —
+GitHub or Azure DevOps, per `codePlatform`. A run that stops early —
 a crash, or a user **interrupt (ESC)** mid-drive — is resumed with
 `/agentic-loop:engineering recover <id>`: loop state is snapshotted after every stage, so
 recovery resumes at the exact stage it reached. ESC is a **pause** — it halts

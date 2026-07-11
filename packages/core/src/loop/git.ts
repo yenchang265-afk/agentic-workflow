@@ -4,7 +4,9 @@ import type { Shell } from "../host.js"
  * Git helpers for the loop's execution isolation. **Impure**: everything here
  * shells out via the host shell. All helpers are best-effort and degrade
  * gracefully — outside a git repo the loop simply runs without isolation, same
- * as before it existed. Nothing here ever pushes.
+ * as before it existed. The one exception to "never pushes" is `pushBranch`,
+ * used only by the ship gate (`loop/ship-pr.ts`) to publish a task's branch
+ * before opening its PR.
  */
 
 const run = async ($: Shell, cwd: string, args: string[]): Promise<{ ok: boolean; stdout: string }> => {
@@ -57,6 +59,15 @@ export const commitPaths = async ($: Shell, cwd: string, paths: readonly string[
   if (!(await run($, cwd, ["add", "--", ...paths])).ok) return false
   return (await run($, cwd, ["commit", "-m", message, "--", ...paths])).ok
 }
+
+/**
+ * Push `branch` to `origin`, setting the upstream (`-u`) so a later plain
+ * `git push` from a human continues it. Used only by the ship gate. Returns
+ * false on failure (no remote, no auth, rejected, etc.) — callers treat this
+ * as "PR not opened", never as a reason to undo the ship.
+ */
+export const pushBranch = async ($: Shell, cwd: string, branch: string): Promise<boolean> =>
+  (await run($, cwd, ["push", "-u", "origin", branch])).ok
 
 /** The committer identity configured for this tree, as `Name <email>`, or null. */
 export const gitActor = async ($: Shell, cwd: string): Promise<string | null> => {

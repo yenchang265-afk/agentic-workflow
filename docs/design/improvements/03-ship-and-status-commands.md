@@ -1,5 +1,12 @@
 # 03 — `/agent-loop ship` and a real `/agent-loop status` dashboard
 
+> **Addendum:** ship now also pushes the task's `feature/<id>` branch and
+> opens (or reuses) a draft PR — GitHub or Azure DevOps per `codePlatform`.
+> The audited-completion semantics below (human-invoked, note + commit,
+> raw `mv` still works) are unchanged; PR creation is best-effort on top of
+> them — a push/PR failure never blocks or rolls back the move. See
+> `packages/core/src/loop/ship-pr.ts`.
+
 ## Context
 
 Two ergonomic gaps in the daily workflow:

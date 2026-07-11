@@ -47,9 +47,11 @@ plans one now and parks it) — and `claim`/`watch` build plan-approved ones:
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
 
 Execution is isolated on a `feature/<id>` git branch, verdicts are only trusted
-through a plugin tool, every transition is audited, and the engineering loop
-never pushes or opens a PR itself — you review and `/agentic-loop:engineering approve`. Full
-execution model (watch mode, iteration caps, recovery):
+through a plugin tool, every transition is audited, and the loop itself never
+pushes or opens a PR — you review the diff and run
+`/agentic-loop:engineering approve`, which pushes the branch and opens (or
+reuses) a **draft** PR (GitHub or Azure DevOps, per `codePlatform`) as part of
+shipping. Full execution model (watch mode, iteration caps, recovery):
 [docs/opencode.md](docs/opencode.md).
 
 ## The PR sitter

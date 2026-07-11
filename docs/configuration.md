@@ -169,7 +169,10 @@ is resolved from config at wiring time — the manifest is never forked.
 ```
 
 - **`ado.organization` / `ado.project`** — required ADO coordinates.
-- **`ado.repository`** — optional; omitted → all active PRs across the project.
+- **`ado.repository`** — optional for the `pr-sitter` kind (omitted → all
+  active PRs across the project); **required** for the engineering loop's
+  ship gate to open a draft PR (creating a PR needs one specific repo — unset
+  it, and ship still completes the task, it just skips PR creation).
 - **`ado.selfLogin`** — **required**; the sitter's own login for filtering its
   own PR comments. A PAT can't resolve the sitter's identity — without it every
   comment (including the sitter's own replies) re-triggers attention.
