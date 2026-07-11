@@ -139,8 +139,9 @@ Optional `.agentic-loop.json` at the repo root, layered over a user-scope
 `~/.agentic-loop.json` (repo wins field by field; all fields default) — full
 field reference in [`docs/configuration.md`](../../docs/configuration.md). Same
 schema as the OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode
-here — see below); the removed `gateBeforeBuild`/`interviewBeforePlan` keys are
-silently ignored.
+here — see below); `loops.<kind>.trigger` parses but is a no-op on this
+pull-only host (`loop_claim` stays the manual trigger); the removed
+`gateBeforeBuild`/`interviewBeforePlan` keys are silently ignored.
 
 ## Known limitations
 

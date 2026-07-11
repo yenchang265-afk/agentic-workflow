@@ -176,6 +176,22 @@ export const stageDef = (manifest: LoopManifest, name: string): StageDef => {
   return def
 }
 
+/**
+ * The statuses a kind parks or lands work into for a human — every `park`/
+ * `done` effect's `toStatus` across the transition table. These are the
+ * dashboard's gate columns ("the loop wants you"): for the engineering kind
+ * this derives exactly ["plan-review", "in-review"]. Pure.
+ */
+export const gateStatuses = (manifest: LoopManifest): string[] => {
+  const out = new Set<string>()
+  for (const t of Object.values(manifest.transitions)) {
+    for (const effect of [t.onDone, t.onPass, t.onFail, t.onError]) {
+      if ((effect?.kind === "park" || effect?.kind === "done") && effect.toStatus) out.add(effect.toStatus)
+    }
+  }
+  return [...out]
+}
+
 /** Validate a raw manifest object; throws a readable error on schema failure. */
 export const parseManifest = (raw: unknown): LoopManifest => {
   const result = LoopManifestSchema.safeParse(raw)

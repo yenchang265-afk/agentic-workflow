@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import type { BacklogResponse, TaskDetailResponse } from "../../shared/api.js"
+import type { BacklogResponse, KindBoardInfo, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
 import { getBacklog, getTaskDetail } from "./backlog.js"
@@ -47,9 +47,19 @@ const makeFixture = (): string => {
   return dir
 }
 
-const depsFor = (directory: string): HubDeps => ({
+const ENGINEERING_BOARD: KindBoardInfo = {
+  kind: "engineering",
+  description: "engineering",
+  sourceType: "backlog",
+  statuses: ["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"],
+  gateStatuses: ["plan-review", "in-review"],
+  pools: ["in-progress", "queued"],
+}
+
+const depsFor = (directory: string, boards: readonly KindBoardInfo[] = [ENGINEERING_BOARD]): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
+  boards,
   loopsDir: path.join(directory, "loops-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",
@@ -60,7 +70,7 @@ const depsFor = (directory: string): HubDeps => ({
 
 test("getBacklog rolls up tasks per status with cards and summary", async () => {
   const dir = makeFixture()
-  const res = await getBacklog(depsFor(dir))
+  const res = await getBacklog(depsFor(dir), { params: {}, query: new URLSearchParams() })
   assert.equal(res.status, 200)
   const body = res.body as BacklogResponse
   assert.equal(body.tasks["queued"]?.length, 1)
@@ -71,9 +81,9 @@ test("getBacklog rolls up tasks per status with cards and summary", async () => 
   assert.deepEqual(card?.labels, ["backend"])
   assert.equal(card?.hasPlan, false)
   assert.equal(body.tasks["plan-review"]?.[0]?.hasPlan, true)
-  assert.deepEqual(body.summary.awaitingPlan, ["add-foo"])
-  assert.deepEqual(body.summary.gated, ["fix-bar"])
-  assert.equal(body.summary.counts["completed"], 0)
+  assert.deepEqual(body.summary?.awaitingPlan, ["add-foo"])
+  assert.deepEqual(body.summary?.gated, ["fix-bar"])
+  assert.equal(body.summary?.counts["completed"], 0)
   assert.equal(body.anomalies, null)
   fs.rmSync(dir, { recursive: true, force: true })
 })
@@ -81,7 +91,7 @@ test("getBacklog rolls up tasks per status with cards and summary", async () => 
 test("getBacklog surfaces backlog anomalies", async () => {
   const dir = makeFixture()
   fs.writeFileSync(path.join(dir, "docs", "tasks", "stray.md"), "---\ntitle: stray\n---\n")
-  const res = await getBacklog(depsFor(dir))
+  const res = await getBacklog(depsFor(dir), { params: {}, query: new URLSearchParams() })
   const body = res.body as BacklogResponse
   assert.notEqual(body.anomalies, null)
   fs.rmSync(dir, { recursive: true, force: true })
@@ -119,5 +129,76 @@ test("getTaskDetail 404s on a missing task and 400s on a bogus status", async ()
     query: new URLSearchParams(),
   })
   assert.equal(bogus.status, 400)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("getBacklog serves a non-engineering backlog kind from its manifest shape, without the lifecycle summary", async () => {
+  const dir = makeFixture()
+  const tasks = path.join(dir, "docs", "tasks")
+  fs.mkdirSync(path.join(tasks, "inbox"), { recursive: true })
+  fs.mkdirSync(path.join(tasks, "waiting-human"), { recursive: true })
+  fs.writeFileSync(path.join(tasks, "inbox", "triage-me.md"), "---\ntitle: Triage me\n---\n")
+  const board: KindBoardInfo = {
+    kind: "triage",
+    description: "triage kind",
+    sourceType: "backlog",
+    statuses: ["inbox", "waiting-human"],
+    gateStatuses: ["waiting-human"],
+    pools: ["inbox"],
+  }
+  const res = await getBacklog(depsFor(dir, [ENGINEERING_BOARD, board]), {
+    params: {},
+    query: new URLSearchParams("kind=triage"),
+  })
+  assert.equal(res.status, 200)
+  const body = res.body as BacklogResponse
+  assert.equal(body.kind, "triage")
+  assert.deepEqual(body.statuses, ["inbox", "waiting-human"])
+  assert.deepEqual(body.gateStatuses, ["waiting-human"])
+  assert.equal(body.tasks["inbox"]?.[0]?.id, "triage-me")
+  assert.equal(body.summary, null)
+  assert.equal(body.anomalies, null)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("getBacklog 404s on an unknown kind and 400s on a boardless (github-pr) kind", async () => {
+  const dir = makeFixture()
+  const pr: KindBoardInfo = {
+    kind: "pr-sitter",
+    description: "pr sitter",
+    sourceType: "github-pr",
+    statuses: [],
+    gateStatuses: [],
+    pools: [],
+  }
+  const unknown = await getBacklog(depsFor(dir), { params: {}, query: new URLSearchParams("kind=nope") })
+  assert.equal(unknown.status, 404)
+  const boardless = await getBacklog(depsFor(dir, [ENGINEERING_BOARD, pr]), {
+    params: {},
+    query: new URLSearchParams("kind=pr-sitter"),
+  })
+  assert.equal(boardless.status, 400)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("getTaskDetail accepts any status folder an enabled kind declares", async () => {
+  const dir = makeFixture()
+  const tasks = path.join(dir, "docs", "tasks")
+  fs.mkdirSync(path.join(tasks, "inbox"), { recursive: true })
+  fs.writeFileSync(path.join(tasks, "inbox", "triage-me.md"), "---\ntitle: Triage me\n---\nBody.")
+  const board: KindBoardInfo = {
+    kind: "triage",
+    description: "triage kind",
+    sourceType: "backlog",
+    statuses: ["inbox"],
+    gateStatuses: [],
+    pools: ["inbox"],
+  }
+  const res = await getTaskDetail(depsFor(dir, [board]), {
+    params: { status: "inbox", id: "triage-me" },
+    query: new URLSearchParams(),
+  })
+  assert.equal(res.status, 200)
+  assert.equal((res.body as TaskDetailResponse).card.id, "triage-me")
   fs.rmSync(dir, { recursive: true, force: true })
 })

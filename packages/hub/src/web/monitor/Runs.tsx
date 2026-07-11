@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { RunDetailResponse, RunsResponse } from "../../shared/api.js"
 import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
+import { repoPath, useRepo } from "../repo.js"
 import { TokenPanel } from "./TokenPanel.js"
 
 /** Run history: list of run logs; expanding one shows stage sections + summary tables. */
@@ -12,13 +13,14 @@ const outcomeClass = (outcome?: string): string =>
 const RunDetail = ({ id }: { id: string }) => {
   const [detail, setDetail] = useState<RunDetailResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { repoId } = useRepo()
 
   useEffect(() => {
     setDetail(null)
-    fetchJson<RunDetailResponse>(`/api/runs/${encodeURIComponent(id)}`)
+    fetchJson<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId))
       .then(setDetail)
       .catch((e: Error) => setError(e.message))
-  }, [id])
+  }, [id, repoId])
 
   if (error) return <div className="error-banner">{error}</div>
   if (!detail) return <div className="placeholder">Loading run…</div>
@@ -98,12 +100,14 @@ export const Runs = () => {
   const [data, setData] = useState<RunsResponse | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const { versions } = useEvents()
+  const { repoId } = useRepo()
 
   useEffect(() => {
-    fetchJson<RunsResponse>("/api/runs")
+    setSelected(null)
+    fetchJson<RunsResponse>(repoPath("/api/runs", repoId))
       .then(setData)
       .catch(() => setData({ runs: [] }))
-  }, [versions.run])
+  }, [versions.run, repoId])
 
   if (!data) return null
   if (data.runs.length === 0) return <div className="placeholder">No run logs yet.</div>

@@ -1,7 +1,7 @@
 ---
 name: agentic-loop:pr-sitter
 description: The PR sitter loop — watch or claim open pull requests and drive them through triage → fix → verify → publish
-argument-hint: claim | watch [interval] | unwatch | stop | status
+argument-hint: claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
 ---
 
 The PR sitter agentic loop — sits on your open pull requests (GitHub via
@@ -19,11 +19,14 @@ Dispatch:
   actionable pull request and drive it once this turn settles
   (TRIAGE → FIX → VERIFY → PUBLISH per the pr-sitter manifest,
   `packages/core/loops/pr-sitter/`). A PR with nothing actionable is skipped.
-- **`watch [interval]`** — put **this** session into PR-sitter worker mode:
-  poll for actionable PRs on every idle tick plus a timer at `interval` —
-  `30s`, `5m`, `2h`, or a bare number of minutes (default: the
-  `watchIntervalMinutes` config, 5m; floor: 10s). One watcher process per
-  clone (on-disk lease, stale leases taken over automatically).
+- **`watch [trigger]`** — put **this** session into PR-sitter worker mode.
+  Bare `watch` uses the kind's configured trigger (`loops.pr-sitter.trigger`,
+  default poll); an argument overrides it for this session only:
+  `poll [interval]` / a bare interval (`30s`, `5m`, `2h`, or a bare number of
+  minutes; default `watchIntervalMinutes`, 5m; floor: 10s) claims on idle
+  ticks plus the timer, `cron <schedule>` claims only on schedule fires,
+  `idle` chains claims on every idle. One watcher process per clone (on-disk
+  lease, stale leases taken over automatically).
 - **`unwatch`** — leave watch mode; a drive already in flight still finishes.
 - **`stop`** (alias: `abort`) — abort the active loop and exit watch mode in
   this session.

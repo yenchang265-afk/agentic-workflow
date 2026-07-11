@@ -13,6 +13,7 @@ import {
   parseConfig,
   platformFor,
   trackerUrl,
+  triggerFor,
 } from "./config.js"
 import type { Client } from "./host.js"
 
@@ -78,6 +79,39 @@ test("other loop kinds are opt-in; engineering can be disabled", () => {
 test("kind-specific knobs ride along in the loops section", () => {
   const c = parseConfig({ loops: { "pr-sitter": { enabled: true, query: "is:open author:@me" } } })
   assert.equal(c.loops["pr-sitter"]?.["query"], "is:open author:@me")
+})
+
+test("triggerFor defaults to poll for unconfigured kinds", () => {
+  assert.deepEqual(triggerFor(DEFAULT_CONFIG, "engineering"), { type: "poll" })
+  const c = parseConfig({ loops: { engineering: {} } })
+  assert.deepEqual(triggerFor(c, "engineering"), { type: "poll" })
+})
+
+test("loops.<kind>.trigger accepts all three types and knobs still ride along", () => {
+  const c = parseConfig({
+    loops: {
+      engineering: { trigger: { type: "idle" } },
+      "pr-sitter": { enabled: true, query: "author:@me", trigger: { type: "cron", schedule: "0 9 * * 1-5" } },
+      nightly: { enabled: true, trigger: { type: "poll", intervalMinutes: 30 } },
+    },
+  })
+  assert.deepEqual(triggerFor(c, "engineering"), { type: "idle" })
+  assert.deepEqual(triggerFor(c, "pr-sitter"), { type: "cron", schedule: "0 9 * * 1-5" })
+  assert.deepEqual(triggerFor(c, "nightly"), { type: "poll", intervalMinutes: 30 })
+  assert.equal(c.loops["pr-sitter"]?.["query"], "author:@me")
+})
+
+test("loops.<kind>.trigger rejects unknown types and malformed shapes", () => {
+  assert.throws(() => parseConfig({ loops: { engineering: { trigger: { type: "webhook" } } } }), /trigger/)
+  assert.throws(() => parseConfig({ loops: { engineering: { trigger: { type: "cron" } } } }), /schedule/)
+  assert.throws(
+    () => parseConfig({ loops: { engineering: { trigger: { type: "poll", intervalMinutes: 0 } } } }),
+    /intervalMinutes/,
+  )
+  assert.throws(
+    () => parseConfig({ loops: { engineering: { trigger: { type: "poll", intervalMinutes: 2000 } } } }),
+    /intervalMinutes/,
+  )
 })
 
 test("codePlatform defaults to github and rejects unknown platforms", () => {

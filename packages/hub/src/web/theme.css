@@ -103,6 +103,21 @@ body {
   gap: 0.5rem;
 }
 
+.repo-picker {
+  margin-left: auto;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.repo-picker + .header-status {
+  margin-left: 0;
+}
+
 .live-dot {
   width: 9px;
   height: 9px;
@@ -357,34 +372,39 @@ body {
   fill: var(--ok);
 }
 
-/* --- manual --- */
+/* --- monitor kind sub-tabs --- */
 
-.manual {
+.kind-tabs {
   display: flex;
-  flex-direction: column;
-  height: 100%;
-  gap: 0.6rem;
+  gap: 0.25rem;
+  margin: 0.4rem 0 0.8rem;
+  border-bottom: 1px solid var(--border);
 }
 
-.freshness-banner {
-  background: var(--gate-bg);
-  border: 1px solid var(--gate);
-  color: var(--gate);
-  border-radius: 8px;
-  padding: 0.6rem 1rem;
-  font-size: 0.83rem;
+.kind-tab {
+  border: none;
+  background: none;
+  color: var(--muted);
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px 6px 0 0;
+  font-size: 0.88rem;
+  cursor: pointer;
 }
 
-.freshness-banner ul {
-  margin: 0.4rem 0;
-  padding-left: 1.2rem;
+.kind-tab:hover {
+  color: var(--text);
 }
 
-.manual-frame {
-  flex: 1;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: #fff;
+.kind-tab.active {
+  color: var(--accent);
+  font-weight: 600;
+  border-bottom: 2px solid var(--accent);
+}
+
+.pr-kind-desc {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: 0.3rem 0 0.8rem;
 }
 
 /* --- creator --- */

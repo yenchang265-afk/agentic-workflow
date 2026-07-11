@@ -15,7 +15,7 @@ guide covers the OpenCode plugin. It provides:
    a draft in place, `approve [id]` is the one folder-driven gate (draft →
    queued, parked plan → in-progress, finished review → completed), and
    `replan [id]` sends a parked plan back;
-   the loop claims work (`claim`, or a `watch [interval]` worker
+   the loop claims work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
    engineering kind), plans a queued task right
    before execution (PLAN parks the plan in `plan-review/` for your gate and

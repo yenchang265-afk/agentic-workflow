@@ -7,6 +7,7 @@ import {
 } from "@agentic-loop/core/config"
 import type { Client } from "@agentic-loop/core/host"
 import type { Config as CoreConfig } from "@agentic-loop/core/loop/state"
+import { cronError } from "./loop/trigger.js"
 
 /**
  * The OpenCode plugin's config: the shared core schema plus the fields only an
@@ -23,6 +24,21 @@ export const ConfigSchema = CoreConfigSchema.safeExtend({
    * Overridable per-session via `/agentic-loop:engineering watch <interval>` (e.g. `30s`, `2h`).
    */
   watchIntervalMinutes: z.number().positive().max(1440).default(5),
+}).superRefine((c, ctx) => {
+  // Core validates trigger shape only; this host actually schedules cron
+  // triggers, so misconfig must fail at load, not at `watch` time.
+  for (const [kind, section] of Object.entries(c.loops)) {
+    const trigger = section.trigger
+    if (trigger?.type !== "cron") continue
+    const error = cronError(trigger.schedule)
+    if (error) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["loops", kind, "trigger", "schedule"],
+        message: `not a valid cron expression: ${error}`,
+      })
+    }
+  }
 })
 
 export interface Config extends CoreConfig {

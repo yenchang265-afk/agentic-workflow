@@ -76,8 +76,9 @@ import {
   type VerdictRecord,
   worstOf,
 } from "@agentic-loop/core/loop/verdict"
-import { enabledLoopKinds } from "@agentic-loop/core/config"
+import { enabledLoopKinds, triggerFor } from "@agentic-loop/core/config"
 import type { Config } from "../config.ts"
+import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
 import type { Action, LoopState, Stage, TaskRef } from "@agentic-loop/core/loop/state"
 import { clearLoop, findSessionDriving, getLoop, setLoop } from "@agentic-loop/core/loop/state"
 
@@ -199,9 +200,9 @@ const watching = new Set<string>()
  *  `getLoop` (which `onIdle`'s catch still needs on a reject-on-abort). Cleared
  *  when the drive unwinds. */
 const interrupted = new Set<string>()
-/** Per-watching-session polling timers and their cadence (for status display). */
-const watchTimers = new Map<string, ReturnType<typeof setInterval>>()
-const watchIntervalsMs = new Map<string, number>()
+/** Per-watching-session trigger timers (poll/cron/idle strategies) and modes. */
+const watchTimers = new Map<string, WatchTimerHandle>()
+const watchTriggerMode = new Map<string, TriggerMode>()
 /** Per-watching-session loop-kind filter (each kind command's `watch [interval]`). */
 const watchKindFilter = new Map<string, string>()
 /**
@@ -218,7 +219,7 @@ const claimRequested = new Map<string, string | undefined>()
  * process watching the same clone — the cross-process race (threat-model T3)
  * the in-memory guards can't see. Last unwatch/stop releases it.
  */
-const watchLeases = new Map<string, { count: number; deps: Deps; tasksDir: string; intervalMs: number }>()
+const watchLeases = new Map<string, { count: number; deps: Deps; tasksDir: string; heartbeat: ReturnType<typeof setInterval> }>()
 /**
  * The in-flight on-disk acquisition per directory. A second watch session arming the
  * same clone while the first is still awaiting `acquireLease` would otherwise read an
@@ -229,13 +230,21 @@ const watchLeases = new Map<string, { count: number; deps: Deps; tasksDir: strin
  */
 const watchLeaseAcquiring = new Map<string, Promise<{ ok: true } | { ok: false; message: string }>>()
 
-const leaseOwner = (intervalMs: number) => ({ pid: process.pid, host: os.hostname(), intervalMs })
+/**
+ * Fixed lease-heartbeat cadence, decoupled from the trigger: a cron kind may
+ * be quiet for hours and an idle kind has no timer at all, so liveness gets
+ * its own timer. Written as the owner's `intervalMs`, it keeps the on-disk
+ * staleness threshold (max(3×interval, 120s)) at a uniform 120s for every
+ * trigger mode.
+ */
+const LEASE_HEARTBEAT_MS = 30_000
+
+const leaseOwner = () => ({ pid: process.pid, host: os.hostname(), intervalMs: LEASE_HEARTBEAT_MS })
 
 /** Acquire (or share) the clone's watch lease. On refusal, says who holds it. */
 const acquireWatchLease = async (
   deps: Deps,
   config: Config,
-  intervalMs: number,
 ): Promise<{ ok: true } | { ok: false; message: string }> => {
   const dir = deps.directory
   const existing = watchLeases.get(dir)
@@ -254,7 +263,7 @@ const acquireWatchLease = async (
     return { ok: true }
   }
   const attempt = (async (): Promise<{ ok: true } | { ok: false; message: string }> => {
-    const res = await acquireLease(deps.$, dir, config.tasksDir, leaseOwner(intervalMs), new Date())
+    const res = await acquireLease(deps.$, dir, config.tasksDir, leaseOwner(), new Date())
     if (!res.ok) {
       const o = res.owner
       const ago = o && Number.isFinite(Date.parse(o.heartbeatAt)) ? Math.round((Date.now() - Date.parse(o.heartbeatAt)) / 1000) : null
@@ -264,7 +273,13 @@ const acquireWatchLease = async (
         message: `Another watcher${who} holds this clone's watch lease — unwatch it there, or run this watcher in its own clone/worktree.`,
       }
     }
-    watchLeases.set(dir, { count: 1, deps, tasksDir: config.tasksDir, intervalMs })
+    // Prove liveness on a fixed cadence, busy or idle, whatever the trigger
+    // mode — a watcher driving a long BUILD (or waiting on a distant cron
+    // fire) must not read as dead to a would-be takeover.
+    const heartbeat = setInterval(() => {
+      void heartbeatLease(deps.$, dir, config.tasksDir, leaseOwner(), new Date()).catch(() => {})
+    }, LEASE_HEARTBEAT_MS)
+    watchLeases.set(dir, { count: 1, deps, tasksDir: config.tasksDir, heartbeat })
     return { ok: true }
   })()
   watchLeaseAcquiring.set(dir, attempt)
@@ -282,6 +297,7 @@ const releaseWatchLease = async (deps: Deps): Promise<void> => {
   entry.count -= 1
   if (entry.count > 0) return
   watchLeases.delete(deps.directory)
+  clearInterval(entry.heartbeat)
   await releaseLease(deps.$, deps.directory, entry.tasksDir)
 }
 /**
@@ -987,7 +1003,10 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   // Nothing to do unless there's real pending work, a one-shot claim request,
   // or this is an idle watch session with no loop of its own currently running.
   const oneShotClaim = claimRequested.has(sessionID)
-  const shouldWatch = (watching.has(sessionID) || oneShotClaim) && !getLoop(sessionID)
+  // A plain idle event claims for poll/idle watchers only — cron kinds claim
+  // exclusively when the schedule fires (which arrives as a one-shot claim).
+  const idleMayClaim = claimsOnIdle(watchTriggerMode.get(sessionID) ?? "poll")
+  const shouldWatch = ((watching.has(sessionID) && idleMayClaim) || oneShotClaim) && !getLoop(sessionID)
   if (!work && !shouldWatch) return
   // Serialize drives per working tree ONLY in shared-tree mode — there, two
   // loops would switch branches out from under each other. In worktree mode
@@ -1065,10 +1084,6 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
 
 // --- /agentic-loop:<kind> command handling (parses the verb; deferred work runs on next idle) ---
 
-/** Human-readable rendering of a polling cadence in ms. Pure. */
-const formatInterval = (ms: number): string =>
-  ms % 3_600_000 === 0 ? `${ms / 3_600_000}h` : ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 1000)}s`
-
 /** Minimum watch polling cadence — anything tighter just burns idle queries. */
 const MIN_WATCH_INTERVAL_MS = 10_000
 
@@ -1082,37 +1097,64 @@ const parseIntervalSpec = (s: string): { intervalMs: number } | null => {
   return { intervalMs: Math.max(ms, MIN_WATCH_INTERVAL_MS) }
 }
 
+/** A per-session trigger override parsed from `watch` arguments. */
+export type WatchOverride =
+  | { readonly type: "poll"; readonly intervalMs?: number }
+  | { readonly type: "cron"; readonly schedule: string }
+  | { readonly type: "idle" }
+
 /**
- * Parse the interval spec of `watch [interval]`. Accepts `""` (use the config
- * default), `30s`, `5m`, `2h`, a bare number (minutes), and an optional
- * `--interval ` prefix. Clamped to at least 10 seconds. The kind is no longer
- * an argument — each per-kind command scopes its own watch. Pure.
+ * Parse the arguments of `watch [poll [interval] | cron <schedule> | idle |
+ * <interval>]`. `""` → {} (the kind's configured trigger decides); everything
+ * else is a per-session trigger override: `idle`, `cron <5-field schedule>`
+ * (validated here), `poll [interval]`, or a bare interval (`30s`, `5m`, `2h`,
+ * bare minutes — the long-standing poll shorthand, optional `--interval `
+ * prefix). Intervals clamp to at least 10 seconds. The kind is no longer an
+ * argument — each per-kind command scopes its own watch. Pure.
  */
-export const parseWatchArgs = (spec: string): { intervalMs?: number } | { error: string } => {
+export const parseWatchArgs = (spec: string): { trigger?: WatchOverride } | { error: string } => {
   const s = spec.trim().replace(/^--interval\s+/i, "")
   if (!s) return {}
+  if (/^idle$/i.test(s)) return { trigger: { type: "idle" } }
+  const cron = /^cron\s+(.+)$/i.exec(s)
+  if (cron) {
+    const schedule = (cron[1] as string).trim().replace(/^"(.*)"$/, "$1")
+    const error = cronError(schedule)
+    if (error) return { error: `Not a valid cron schedule "${schedule}" — ${error}` }
+    return { trigger: { type: "cron", schedule } }
+  }
+  const poll = /^poll(?:\s+(.+))?$/i.exec(s)
+  if (poll) {
+    const rest = (poll[1] ?? "").trim()
+    if (!rest) return { trigger: { type: "poll" } }
+    const parsed = parseIntervalSpec(rest)
+    if (!parsed) return { error: `Unrecognized poll interval "${rest}" — use e.g. 30s, 5m, 2h, or a bare number of minutes.` }
+    return { trigger: { type: "poll", intervalMs: parsed.intervalMs } }
+  }
   const parsed = parseIntervalSpec(s)
   if (!parsed) {
-    return { error: `Unrecognized watch interval "${spec.trim()}" — use e.g. 30s, 5m, 2h, or a bare number of minutes.` }
+    return {
+      error: `Unrecognized watch argument "${spec.trim()}" — use an interval (30s, 5m, 2h), poll [interval], cron <schedule>, or idle.`,
+    }
   }
-  return parsed
+  return { trigger: { type: "poll", intervalMs: parsed.intervalMs } }
 }
 
-/** Clear one session's watch polling timer, if any. */
+/** Clear one session's watch trigger timer, if any. */
 const stopWatchTimer = (sessionID: string): void => {
-  const timer = watchTimers.get(sessionID)
-  if (timer) clearInterval(timer)
+  watchTimers.get(sessionID)?.stop()
   watchTimers.delete(sessionID)
-  watchIntervalsMs.delete(sessionID)
+  watchTriggerMode.delete(sessionID)
 }
 
 /** Clear every watch timer and drop held leases — called from the plugin's dispose hook. */
 export const disposeWatch = (): void => {
-  for (const timer of watchTimers.values()) clearInterval(timer)
+  for (const handle of watchTimers.values()) handle.stop()
   watchTimers.clear()
-  watchIntervalsMs.clear()
+  watchTriggerMode.clear()
   for (const [dir, entry] of watchLeases) {
     watchLeases.delete(dir)
+    clearInterval(entry.heartbeat)
     void releaseLease(entry.deps.$, dir, entry.tasksDir)
   }
 }
@@ -1128,10 +1170,6 @@ export const disposeWatch = (): void => {
 const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
   try {
     if (!watching.has(sessionID)) return
-    // Prove liveness every tick, busy or idle — a watcher driving a long BUILD
-    // must not read as dead to a would-be takeover.
-    const entry = watchLeases.get(deps.directory)
-    if (entry) await heartbeatLease(deps.$, deps.directory, entry.tasksDir, leaseOwner(entry.intervalMs), new Date())
     if (driving.has(sessionID) || getLoop(sessionID)) return
     const res = await deps.client.session.status().catch(() => null)
     const status = res?.data?.[sessionID]
@@ -1466,28 +1504,54 @@ export const handleCommand = async (
   if (lower === "watch" || lower.startsWith("watch ")) {
     const parsed = parseWatchArgs(arg.slice("watch".length))
     if ("error" in parsed) return void (await toast(client, parsed.error, "warning"))
-    const intervalMs = parsed.intervalMs ?? Math.max(config.watchIntervalMinutes * 60_000, MIN_WATCH_INTERVAL_MS)
+    // The kind's configured trigger (loops.<kind>.trigger) is the default; any
+    // `watch` argument — poll [interval], cron <schedule>, idle, or a bare
+    // interval — overrides it for this session only.
+    const configured = triggerFor(config, kind)
+    const trigger = parsed.trigger ?? configured
+    const mode: TriggerMode = trigger.type
     // Only one watcher process per clone: acquire the on-disk lease before
     // arming (a re-arm by an already-watching session keeps its share).
     if (!watching.has(sessionID)) {
-      const lease = await acquireWatchLease(deps, config, intervalMs)
+      const lease = await acquireWatchLease(deps, config)
       if (!lease.ok) return void (await toast(client, lease.message, "warning"))
     }
     watching.add(sessionID)
     watchKindFilter.set(sessionID, kind) // the command IS the kind — every tick scopes to it
     stopWatchTimer(sessionID) // replace any prior timer instead of stacking
-    watchTimers.set(
-      sessionID,
-      setInterval(() => void watchTick(deps, sessionID, config), intervalMs),
-    )
-    watchIntervalsMs.set(sessionID, intervalMs)
+    let handle: WatchTimerHandle
+    if (trigger.type === "cron") {
+      // A schedule fire is a one-shot claim: watchTick claims only when the
+      // session is actually idle, so a fire landing mid-drive is skipped and
+      // the next fire retries. The finally-cleanup keeps a skipped fire's
+      // request from leaking into a later plain idle event.
+      handle = armCron(trigger.schedule, () => {
+        claimRequested.set(sessionID, kind)
+        void watchTick(deps, sessionID, config).finally(() => claimRequested.delete(sessionID))
+      })
+    } else if (trigger.type === "idle") {
+      handle = armIdle() // the session.idle event stream alone drives claims
+    } else {
+      // Interval resolution: the override's own interval, else the configured
+      // poll trigger's, else the host default.
+      const overrideMs = "intervalMs" in trigger ? trigger.intervalMs : undefined
+      const configuredMin = configured.type === "poll" ? configured.intervalMinutes : undefined
+      const intervalMs = Math.max(overrideMs ?? (configuredMin ?? config.watchIntervalMinutes) * 60_000, MIN_WATCH_INTERVAL_MS)
+      handle = armPoll(intervalMs, () => void watchTick(deps, sessionID, config))
+    }
+    watchTimers.set(sessionID, handle)
+    watchTriggerMode.set(sessionID, mode)
     lastSkipReason.delete(sessionID) // a fresh arm re-toasts whatever reason comes next
     const scope = engineering ? "approved tasks to plan and build" : `${kind} work`
-    await toast(client, `Watching for ${scope} (polling every ${formatInterval(intervalMs)}).`, "info")
+    const overrideNote =
+      parsed.trigger !== undefined && parsed.trigger.type !== configured.type
+        ? ` (this session only — config default is ${configured.type})`
+        : ""
+    await toast(client, `Watching for ${scope} (${handle.describe})${overrideNote}.`, "info")
     // Immediate first pull — don't make the user wait for the next idle event
     // or timer tick. watchTick self-guards: it claims only when the session is
-    // actually idle, and never throws.
-    void watchTick(deps, sessionID, config)
+    // actually idle, and never throws. Cron kinds wait for their schedule.
+    if (mode !== "cron") void watchTick(deps, sessionID, config)
     return
   }
 
@@ -1632,11 +1696,9 @@ export const handleCommand = async (
     const backlogLine = summary ? ` · ${formatBacklog(summary)}` : ""
     const enabled = enabledLoopKinds(config)
     const kindsLine = engineering && enabled.length > 1 ? ` · kinds: ${enabled.join(", ")}` : ""
-    const cadence = watchIntervalsMs.get(sessionID)
+    const cadence = watchTimers.get(sessionID)?.describe
     const kindScope = watchKindFilter.get(sessionID)
-    const watchLabel = cadence
-      ? `Watching${kindScope ? ` ${kindScope}` : ""} (every ${formatInterval(cadence)})`
-      : "Watching"
+    const watchLabel = cadence ? `Watching${kindScope ? ` ${kindScope}` : ""} (${cadence})` : "Watching"
     if (!state) {
       // Prefer the remembered skip reason over a bare "no claimable task" —
       // it says WHY the watcher isn't picking anything up.

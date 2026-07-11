@@ -95,6 +95,59 @@ config order.
 - **`loops.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
+- **`loops.<kind>.trigger`** — how a watching host schedules claims for this
+  kind (OpenCode `watch` mode only; the pull-only Claude host ignores it):
+
+  ```json
+  {
+    "loops": {
+      "engineering": { "trigger": { "type": "idle" } },
+      "pr-sitter": {
+        "enabled": true,
+        "trigger": { "type": "cron", "schedule": "0 9 * * 1-5" }
+      }
+    }
+  }
+  ```
+
+  - `{ "type": "poll", "intervalMinutes"?: n }` — the default: a standing
+    timer (falls back to `watchIntervalMinutes`), plus claims on idle events.
+  - `{ "type": "cron", "schedule": "<5-field cron>" }` — claims fire **only**
+    when the schedule fires; plain idle events never claim. A fire landing
+    while the session is busy is skipped — the next fire retries. Syntax is
+    validated at config load.
+  - `{ "type": "idle" }` — no timer; a new loop starts as soon as the watching
+    session goes idle, chaining loops back to back ("webhook-style" immediacy —
+    no HTTP endpoint is involved).
+
+  The config value is the **default**; `/agentic-loop:<kind> watch` with an
+  argument overrides it for that session only:
+  `watch poll [interval]` (or a bare interval), `watch cron "<schedule>"`,
+  or `watch idle`.
+
+## Admin hub (`hub` — user scope only)
+
+The hub reads its settings from the `hub` section of the **user-scope**
+config only (`~/.agentic-loop.json` / `AGENTIC_LOOP_USER_CONFIG`). The hub
+monitors many repos at once, so a `hub` key in a repo's `.agentic-loop.json`
+is ignored rather than merged:
+
+```json
+{
+  "hub": {
+    "repos": ["/path/to/repo", "/mnt/c/Users/me/projects/*"],
+    "port": 4317
+  }
+}
+```
+
+- **`hub.repos`** — directories to monitor; entries may contain `*` wildcards
+  (single path segment). Used only when the hub is launched without `--dir`
+  flags.
+- **`hub.port`** — listen port (default `4317`); `--port` still wins.
+
+Unknown keys under `hub` are rejected (typo safety). See
+[packages/hub/README.md](../packages/hub/README.md).
 
 ## Code platform (`codePlatform` / `ado`)
 

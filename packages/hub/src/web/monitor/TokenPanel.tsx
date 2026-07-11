@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import type { RunTokensResponse, StageTokens } from "../../shared/api.js"
 import { fetchJson } from "../api.js"
+import { repoPath, useRepo } from "../repo.js"
 
 /** Per-stage token usage for one run: hand-rolled stacked SVG bars, no chart dep. */
 
@@ -27,14 +28,15 @@ const Bar = ({ tokens, max }: { tokens: StageTokens; max: number }) => {
 export const TokenPanel = ({ runId }: { runId: string }) => {
   const [data, setData] = useState<RunTokensResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const { repoId } = useRepo()
 
   useEffect(() => {
     setData(null)
     setError(null)
-    fetchJson<RunTokensResponse>(`/api/tokens/${encodeURIComponent(runId)}`)
+    fetchJson<RunTokensResponse>(repoPath(`/api/tokens/${encodeURIComponent(runId)}`, repoId))
       .then(setData)
       .catch((e: Error) => setError(e.message))
-  }, [runId])
+  }, [runId, repoId])
 
   if (error) return null
   if (!data) return <div className="placeholder">Loading token usage…</div>

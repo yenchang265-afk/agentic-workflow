@@ -20,6 +20,7 @@ const makeRepo = (): string => {
 const depsFor = (directory: string, projectsDir: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
+  boards: [],
   loopsDir: "/loops-unused",
   projectsDir,
   opencodeDbPath: "/nonexistent.db",

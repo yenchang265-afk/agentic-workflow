@@ -72,13 +72,16 @@ The loop (`/agentic-loop:engineering`):
 - `/agentic-loop:engineering claim` — one-shot pull of the next engineering item:
   build-ready `in-progress/` tasks beat planless `queued/` ones; lowest
   priority number first within each pool
-- `/agentic-loop:engineering watch [interval]` — turn this session into a standing worker
-  **scoped to the engineering kind**: claims
-  work on idle events plus a polling timer (`30s`, `5m`, `2h`, bare number =
-  minutes; default `watchIntervalMinutes`); build work beats plan work.
-  Takes the clone's **watch lease** (`runs/.watch-lease/`, heartbeat every
-  tick) — a second opencode process watching the same clone is refused; a
-  dead watcher's lease is taken over once its heartbeat goes stale
+- `/agentic-loop:engineering watch [trigger]` — turn this session into a standing worker
+  **scoped to the engineering kind**; build work beats plan work. Bare
+  `watch` uses `loops.engineering.trigger` (default poll); the argument is a
+  per-session override: `poll [interval]` / a bare interval (`30s`, `5m`,
+  `2h`, bare number = minutes; default `watchIntervalMinutes`) claims on idle
+  events plus the timer, `cron <schedule>` claims only on schedule fires,
+  `idle` chains a new claim on every idle. Takes the clone's **watch lease**
+  (`runs/.watch-lease/`, heartbeat on a fixed 30s timer) — a second opencode
+  process watching the same clone is refused; a dead watcher's lease is
+  taken over once its heartbeat goes stale
 - `/agentic-loop:engineering unwatch` — stop this session from claiming new work (timer
   included). Pressing **ESC** mid-drive does this too *and* interrupts the
   running loop (see `recover`); `unwatch` only clears the watch flag and leaves
@@ -106,9 +109,9 @@ The PR sitter (`/agentic-loop:pr-sitter`, opt-in via `loops.pr-sitter` in
 - `/agentic-loop:pr-sitter claim` — one-shot pull: poll the configured PR source for
   the next actionable open PR (failing checks, unanswered review threads, a
   merge conflict) and drive it through triage → fix → verify → publish
-- `/agentic-loop:pr-sitter watch [interval]` · `unwatch` — the same standing-worker
-  semantics as the engineering `watch` (interval syntax, one-watcher-per-clone
-  lease), scoped to the pr-sitter kind
+- `/agentic-loop:pr-sitter watch [trigger]` · `unwatch` — the same standing-worker
+  semantics as the engineering `watch` (trigger/interval syntax,
+  one-watcher-per-clone lease), scoped to the pr-sitter kind
 - `/agentic-loop:pr-sitter stop` (alias `abort`) · `status` — abort the active loop /
   print it (bare `/agentic-loop:pr-sitter` = status)
 

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
-import type { HubEvent } from "./watch.js"
+import type { HubEvent } from "../shared/api.js"
 
 /**
  * SSE fan-out: `/api/events` clients get every watcher diff as one

@@ -31,6 +31,7 @@ const MANIFEST = {
 const depsFor = (directory: string, loopsDir: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
+  boards: [],
   loopsDir,
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",

@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
-import { CODE_PLATFORMS, type Config } from "./loop/state.js"
+import { CODE_PLATFORMS, type Config, type LoopTrigger } from "./loop/state.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
 /**
@@ -46,6 +46,18 @@ export const ProjectManagementSchema = z.object({
 })
 export type ProjectManagement = z.infer<typeof ProjectManagementSchema>
 
+/**
+ * How a watching host schedules claims for a loop kind — see the `LoopTrigger`
+ * type in loop/state.ts for semantics. Core validates shape only; cron
+ * `schedule` syntax is validated by the host that honors it (the OpenCode
+ * plugin), and the pull-only Claude host ignores the field entirely.
+ */
+export const LoopTriggerSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("poll"), intervalMinutes: z.number().positive().max(1440).optional() }),
+  z.object({ type: z.literal("cron"), schedule: z.string().min(1) }),
+  z.object({ type: z.literal("idle") }),
+]) satisfies z.ZodType<LoopTrigger>
+
 const BaseConfigSchema = z.object({
   /** Max loop iterations before stopping on repeated verify/review failures. */
   maxIterations: z.number().int().positive().default(3),
@@ -82,6 +94,8 @@ const BaseConfigSchema = z.object({
         enabled: z.boolean().default(true),
         /** Per-kind override of the global `codePlatform`. */
         codePlatform: CodePlatformSchema.optional(),
+        /** How a watching host schedules claims for this kind (default: poll). */
+        trigger: LoopTriggerSchema.optional(),
       }),
     )
     .default({}),
@@ -158,6 +172,10 @@ export const enabledLoopKinds = (config: Config): string[] => {
 /** The code platform a loop kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config: Config, kind: string): CodePlatform =>
   config.loops[kind]?.codePlatform ?? config.codePlatform ?? "github"
+
+/** How a watching host schedules claims for a loop kind: configured trigger, else poll. Pure. */
+export const triggerFor = (config: Config, kind: string): LoopTrigger =>
+  config.loops[kind]?.trigger ?? { type: "poll" }
 
 /**
  * Build a tracker deep link from a task's `tracker.key` and the configured
@@ -256,9 +274,10 @@ export interface LoadConfigOptions {
  * undefined (layer not present); malformed JSON or a non-object top level →
  * throw naming the offending file, never a silent skip — this layer may carry
  * `ado.pat`/`selfLogin`, and dropping it would surface later as a baffling
- * validation error.
+ * validation error. Exported for consumers of user-scope-only sections (the
+ * hub reads its `hub` section exclusively from this layer).
  */
-const readUserLayer = (userPath: string): unknown => {
+export const readUserLayer = (userPath: string): unknown => {
   let content: string
   try {
     content = fs.readFileSync(userPath, "utf8")

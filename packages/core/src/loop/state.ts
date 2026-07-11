@@ -139,11 +139,29 @@ export interface ProjectManagementConfig {
   readonly defaultType?: string
 }
 
+/**
+ * How a watching host schedules claims for a loop kind:
+ * - `poll` — a standing timer every `intervalMinutes` (the default; unset
+ *   interval falls back to the host's watch interval).
+ * - `cron` — claims fire only when the 5-field cron `schedule` fires.
+ * - `idle` — no timer; a new loop starts as soon as the watching session goes
+ *   idle (continuous chaining). Sometimes described as "webhook-style"
+ *   immediacy — no HTTP endpoint is involved.
+ * Only hosts with a standing watch mode honor this (the OpenCode plugin); the
+ * pull-only Claude host ignores it.
+ */
+export type LoopTrigger =
+  | { readonly type: "poll"; readonly intervalMinutes?: number }
+  | { readonly type: "cron"; readonly schedule: string }
+  | { readonly type: "idle" }
+
 /** Per-loop-kind settings under the config's `loops.<kind>` section. */
 export interface LoopKindConfig {
   readonly enabled: boolean
   /** Per-kind override of the global `codePlatform`. */
   readonly codePlatform?: CodePlatform
+  /** How a watching host schedules claims for this kind (default: poll). */
+  readonly trigger?: LoopTrigger
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

@@ -1,4 +1,4 @@
-import type { BacklogSummary, TaskStatus } from "@agentic-loop/core/task/store"
+import type { BacklogSummary } from "@agentic-loop/core/task/store"
 import type { BacklogAnomalies } from "@agentic-loop/core/task/audit"
 import type { LoopManifest } from "@agentic-loop/core/manifest/schema"
 import type { ParsedRunLog } from "@agentic-loop/core/loop/runlog"
@@ -25,12 +25,32 @@ export interface TaskCard {
   readonly hasPlan: boolean
 }
 
+/** Per-kind dashboard metadata derived from a loop-kind manifest at startup. */
+export interface KindBoardInfo {
+  readonly kind: string
+  readonly description: string
+  readonly sourceType: "backlog" | "github-pr"
+  /** Board columns (the manifest's status-folder set); [] for github-pr kinds. */
+  readonly statuses: readonly string[]
+  /** Statuses the kind parks/lands work into for a human — highlighted columns. */
+  readonly gateStatuses: readonly string[]
+  /** Claim-pool statuses, in priority order — the summary-chip counts. */
+  readonly pools: readonly string[]
+}
+
+export interface MonitorKindsResponse {
+  readonly kinds: readonly KindBoardInfo[]
+}
+
 export interface BacklogResponse {
-  readonly statuses: readonly TaskStatus[]
-  readonly tasks: Readonly<Record<TaskStatus, readonly TaskCard[]>>
-  readonly summary: BacklogSummary
+  readonly kind: string
+  readonly statuses: readonly string[]
+  readonly gateStatuses: readonly string[]
+  readonly tasks: Readonly<Record<string, readonly TaskCard[]>>
+  /** Engineering-lifecycle roll-up; null for other kinds (their folders aren't its shape). */
+  readonly summary: BacklogSummary | null
   readonly claimedIds: readonly string[]
-  /** Structural anomalies from the backlog audit; null when the sweep found none. */
+  /** Structural anomalies from the backlog audit; null when none (engineering only). */
   readonly anomalies: BacklogAnomalies | null
 }
 
@@ -43,7 +63,7 @@ export interface AuditNote {
 
 export interface TaskDetailResponse {
   readonly card: TaskCard
-  readonly status: TaskStatus
+  readonly status: string
   readonly body: string
   readonly plan?: string
   readonly notes: readonly AuditNote[]
@@ -190,15 +210,22 @@ export interface TokensSummaryResponse {
   readonly runs: readonly TokensSummaryEntry[]
 }
 
-export interface ManualFreshnessResponse {
-  /** False when docs/manual.html doesn't exist in the watched repo. */
-  readonly available: boolean
-  readonly warnings: readonly string[]
+/** One monitored repo (from `--dir` / user-scope `hub.repos` resolution). */
+export interface RepoInfo {
+  readonly id: string
+  readonly directory: string
 }
 
-/** One live-update event on the `/api/events` SSE stream. */
-export type HubEvent =
+export interface ReposResponse {
+  readonly repos: readonly RepoInfo[]
+}
+
+/** A watcher diff, before the server tags it with its repo. */
+export type HubEventBase =
   | { readonly type: "backlog" }
   | { readonly type: "run"; readonly id: string }
   | { readonly type: "active" }
   | { readonly type: "gate"; readonly taskId: string; readonly toStatus: string }
+
+/** One live-update event on the `/api/events` SSE stream. */
+export type HubEvent = HubEventBase & { readonly repo: string }

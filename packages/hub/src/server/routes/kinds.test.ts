@@ -13,6 +13,7 @@ const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const deps: HubDeps = {
   directory: "/unused",
   tasksDir: "docs/tasks",
+  boards: [],
   loopsDir: LOOPS_DIR,
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",

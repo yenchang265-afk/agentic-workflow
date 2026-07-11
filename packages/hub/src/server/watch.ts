@@ -21,10 +21,8 @@ export interface WatchSnapshot {
   readonly lease: string | null
 }
 
-export type { HubEvent } from "../shared/api.js"
-import type { HubEvent } from "../shared/api.js"
-
-const GATE_STATUSES = ["plan-review", "in-review"] as const
+export type { HubEventBase } from "../shared/api.js"
+import type { HubEventBase } from "../shared/api.js"
 
 const statKey = (file: string): string | null => {
   try {
@@ -75,9 +73,17 @@ export const scanSnapshot = (directory: string, tasksDir: string, statuses: read
   }
 }
 
-/** Derive events from two snapshots. Pure; equal snapshots → []. */
-export const diffSnapshots = (prev: WatchSnapshot, next: WatchSnapshot): HubEvent[] => {
-  const events: HubEvent[] = []
+/**
+ * Derive events from two snapshots; `gateStatuses` are the folders (from the
+ * enabled kinds' manifests) whose new arrivals are "the loop wants you"
+ * moments. Pure; equal snapshots → [].
+ */
+export const diffSnapshots = (
+  prev: WatchSnapshot,
+  next: WatchSnapshot,
+  gateStatuses: readonly string[],
+): HubEventBase[] => {
+  const events: HubEventBase[] = []
 
   let backlogChanged = false
   const statuses = new Set([...Object.keys(prev.tasks), ...Object.keys(next.tasks)])
@@ -88,7 +94,7 @@ export const diffSnapshots = (prev: WatchSnapshot, next: WatchSnapshot): HubEven
     for (const name of names) {
       if (before[name] !== after[name]) backlogChanged = true
       // a task newly appearing in a gate folder is the "loop wants you" moment
-      if ((GATE_STATUSES as readonly string[]).includes(status) && before[name] === undefined && after[name] !== undefined) {
+      if (gateStatuses.includes(status) && before[name] === undefined && after[name] !== undefined) {
         events.push({ type: "gate", taskId: name.replace(/\.md$/, ""), toStatus: status })
       }
     }
@@ -111,6 +117,8 @@ export interface WatcherOptions {
   readonly directory: string
   readonly tasksDir: string
   readonly statuses: readonly string[]
+  /** Folders whose new arrivals emit `gate` events (from the kinds' manifests). */
+  readonly gateStatuses: readonly string[]
   /** Poll interval — the delivery guarantee on DrvFs. */
   readonly pollMs?: number
   /** fs.watch debounce. */
@@ -118,13 +126,13 @@ export interface WatcherOptions {
 }
 
 /** Start watching; `onEvents` fires with each non-empty diff. Returns a stop function. */
-export const startWatcher = (opts: WatcherOptions, onEvents: (events: HubEvent[]) => void): (() => void) => {
+export const startWatcher = (opts: WatcherOptions, onEvents: (events: HubEventBase[]) => void): (() => void) => {
   let snapshot = scanSnapshot(opts.directory, opts.tasksDir, opts.statuses)
   let debounce: NodeJS.Timeout | null = null
 
   const rescan = (): void => {
     const next = scanSnapshot(opts.directory, opts.tasksDir, opts.statuses)
-    const events = diffSnapshots(snapshot, next)
+    const events = diffSnapshots(snapshot, next, opts.gateStatuses)
     snapshot = next
     if (events.length > 0) onEvents(events)
   }

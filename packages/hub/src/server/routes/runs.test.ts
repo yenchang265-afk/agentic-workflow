@@ -47,6 +47,7 @@ const makeFixture = (): string => {
 const depsFor = (directory: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
+  boards: [],
   loopsDir: path.join(directory, "loops-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",

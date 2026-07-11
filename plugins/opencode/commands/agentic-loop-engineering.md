@@ -1,7 +1,7 @@
 ---
 name: agentic-loop:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [interval] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -102,13 +102,16 @@ Dispatch:
   `in-progress/` tasks win over planless `queued/` ones — work in flight
   finishes before new work spins up; within each pool, lowest priority number
   first) and drive it once this turn settles.
-- **`watch [interval]`** — put **this** session into engineering worker mode.
+- **`watch [trigger]`** — put **this** session into engineering worker mode.
   Each tick polls the backlog: one build-ready `in-progress/` task to drive
   BUILD → VERIFY → REVIEW, falling back to a `queued/` task to plan-and-park
-  when no build work exists. It tries an immediate first pull, then keeps two
-  triggers: every idle tick, plus a polling timer at `interval` — `30s`,
-  `5m`, `2h`, or a bare number of minutes (default: the
-  `watchIntervalMinutes` config, 5m; floor: 10s). The timer only claims work
+  when no build work exists. Bare `watch` uses the kind's configured trigger
+  (`loops.engineering.trigger`, default poll); an argument overrides it for
+  this session only: `poll [interval]` / a bare interval (`30s`, `5m`, `2h`,
+  or a bare number of minutes; default `watchIntervalMinutes`, 5m; floor:
+  10s) claims on idle events plus the timer, `cron <schedule>` claims only
+  when the 5-field schedule fires, `idle` chains a new loop the moment the
+  session goes idle. The poll timer only claims work
   while the session is actually idle, so a task approved elsewhere gets
   picked up even if this session generates no events. A tick that claims
   nothing always logs why (empty queue, tasks already started, claim marker

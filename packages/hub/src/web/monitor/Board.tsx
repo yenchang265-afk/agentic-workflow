@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react"
-import type { BacklogResponse, TaskCard } from "../../shared/api.js"
+import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.js"
 import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
+import { repoPath, useRepo } from "../repo.js"
 
 /**
- * The backlog board: one column per status folder, task cards from
- * frontmatter, gate folders (plan-review / in-review) highlighted — those are
- * where the loop is waiting on a human.
+ * The backlog board for one loop kind: one column per manifest status, task
+ * cards from frontmatter, gate columns (park/done targets from the manifest's
+ * transitions) highlighted — those are where the loop is waiting on a human.
+ * Engineering-only lifecycle chips render when the server sends its summary.
  */
-
-const GATE_STATUSES: readonly string[] = ["plan-review", "in-review"]
 
 const Card = ({ task, gated, claimed }: { task: TaskCard; gated: boolean; claimed: boolean }) => (
   <div className={`card${gated ? " gated" : ""}`} title={task.acceptance.join("\n")}>
@@ -29,22 +29,23 @@ const Card = ({ task, gated, claimed }: { task: TaskCard; gated: boolean; claime
   </div>
 )
 
-export const Board = () => {
+export const Board = ({ info }: { info: KindBoardInfo }) => {
   const [data, setData] = useState<BacklogResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const { versions } = useEvents()
+  const { repoId } = useRepo()
 
   useEffect(() => {
-    fetchJson<BacklogResponse>("/api/backlog")
+    fetchJson<BacklogResponse>(repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId))
       .then((d) => setData(d))
       .catch((e: Error) => setError(e.message))
-  }, [versions.backlog, versions.gate])
+  }, [versions.backlog, versions.gate, repoId, info.kind])
 
   if (error) return <div className="error-banner">Could not load backlog: {error}</div>
   if (!data) return <div className="placeholder">Loading backlog…</div>
 
   const { summary } = data
-  const gateCount = summary.gated.length + summary.awaitingReview.length
+  const gateCount = data.gateStatuses.reduce((n, status) => n + (data.tasks[status]?.length ?? 0), 0)
   const claimed = new Set(data.claimedIds)
 
   return (
@@ -55,13 +56,12 @@ export const Board = () => {
             <strong>{gateCount}</strong> awaiting your review
           </span>
         )}
-        <span className="chip">
-          queued <strong>{summary.counts["queued"]}</strong>
-        </span>
-        <span className="chip">
-          in progress <strong>{summary.counts["in-progress"]}</strong>
-        </span>
-        {summary.interrupted.length > 0 && (
+        {info.pools.map((status) => (
+          <span key={status} className="chip">
+            {status} <strong>{data.tasks[status]?.length ?? 0}</strong>
+          </span>
+        ))}
+        {summary && summary.interrupted.length > 0 && (
           <span className="chip gate">
             interrupted <strong>{summary.interrupted.length}</strong>
           </span>
@@ -71,7 +71,7 @@ export const Board = () => {
       <div className="board">
         {data.statuses.map((status) => {
           const tasks = data.tasks[status] ?? []
-          const gate = GATE_STATUSES.includes(status)
+          const gate = data.gateStatuses.includes(status)
           return (
             <div key={status} className={`column${gate ? " gate-column" : ""}`}>
               <div className="column-title">

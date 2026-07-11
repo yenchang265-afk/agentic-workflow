@@ -1,4 +1,5 @@
 import type { Client, Log, Shell } from "@agentic-loop/core/host"
+import type { KindBoardInfo } from "../shared/api.js"
 
 /**
  * Everything a route handler needs, injected — handlers stay pure functions
@@ -9,6 +10,8 @@ export interface HubDeps {
   /** Absolute repo root the hub serves (where .agentic-loop.json / docs/tasks live). */
   readonly directory: string
   readonly tasksDir: string
+  /** Per-kind dashboard metadata for this repo's enabled kinds (see kindboard.ts). */
+  readonly boards: readonly KindBoardInfo[]
   readonly loopsDir: string
   /** Claude Code transcript root (~/.claude/projects) for token joins. */
   readonly projectsDir: string

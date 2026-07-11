@@ -4,22 +4,63 @@
 > expect rough edges in the creator canvas UX, and the HTTP/JSON surface may
 > still change without a migration path. See [Beta status](#beta-status).
 
-A local admin hub for the agentic-loop framework: **loop monitor**, **visual
-loop creator**, and the **user manual**, served as one small web app.
+A local admin hub for the agentic-loop framework: **loop monitor** and
+**visual loop creator**, served as one small web app.
 
 ```bash
-npm run hub            # from the repo root — builds core + hub, serves http://127.0.0.1:4317
-node dist/server/main.js --dir /path/to/repo --port 4317   # watch another repo
+npm run hub -- --dir /path/to/repo    # from the repo root — builds core + hub, serves http://127.0.0.1:4317
+node dist/server/main.js --dir /path/to/repo --port 4317        # direct, after building
+node dist/server/main.js --dir /path/a --dir /path/b            # watch several repos
+node dist/server/main.js --dir "/mnt/c/Users/me/projects/*"     # every loop repo under a parent
 ```
+
+The hub only watches repos you name: with no `--dir` and no `hub` section in
+the user-scope config it exits with a usage message rather than assuming the
+cwd.
+
+## Monitoring multiple repos
+
+`--dir` is repeatable, and values may contain `*` wildcards (`*` matches
+within one path segment, never `/` or a leading dot — shell-glob style, quote
+it so your shell doesn't expand it first). Explicit paths are watched
+verbatim; wildcard matches are kept only when they look like loop repos
+(`.agentic-loop.json` or `docs/tasks` present), so a parent directory full of
+unrelated checkouts stays quiet. Skipped matches are listed on stderr at
+startup.
+
+Instead of flags you can add a `hub` section to the **user-scope**
+`~/.agentic-loop.json` (or the file `$AGENTIC_LOOP_USER_CONFIG` points at).
+It is used only when no `--dir` is given; `--port` still wins. The hub spans
+repos, so a `hub` key inside any single repo's `.agentic-loop.json` is
+ignored:
+
+```json
+{
+  "hub": {
+    "repos": ["/path/to/repo", "/mnt/c/Users/me/projects/*"],
+    "port": 4317
+  }
+}
+```
+
+Each repo gets a stable id (its basename, slugified, `-2`-suffixed on
+collision). Repo-scoped API routes take `?repo=<id>` and default to the first
+repo; `GET /api/repos` lists them. When more than one repo is monitored the
+SPA header shows a repo picker (selection persists in localStorage), and SSE
+events + gate notifications are tagged with the repo id. Loop kinds are not
+repo-scoped — they live in the core package shared by every repo, so the
+creator tab is unaffected.
 
 ## Tabs
 
-- **Loop monitor** (read-only): backlog board over `docs/tasks/<status>/`
-  with gate highlights, live-activity strip (`.stage.json` marker, watch-lease
-  liveness, resumable snapshots, pr-sitter ledgers), run history parsed from
-  `runs/<id>.md`, and per-stage token usage. Live updates via
-  `fs.watch` + a polling reconciler (DrvFs-safe) → SSE; arm the 🔔 to get a
-  browser notification when a task parks at a gate.
+- **Loop monitor** (read-only): one sub-tab per enabled loop kind, each view
+  derived from the kind's manifest — backlog kinds get a board over their own
+  `docs/tasks/<status>/` folders with gate columns taken from the manifest's
+  park/done targets (not hardcoded), PR-shaped kinds get a ledger panel — plus
+  the live-activity strip (`.stage.json` marker, watch-lease liveness,
+  resumable snapshots), run history parsed from `runs/<id>.md`, and per-stage
+  token usage. Live updates via `fs.watch` + a polling reconciler (DrvFs-safe)
+  → SSE; arm the 🔔 to get a browser notification when a task parks at a gate.
 - **Loop creator**: the manifest state machine on a React Flow canvas —
   work/check stages as nodes, fire/park/done/stop transitions as edges,
   side-panel forms for stage fields, effects, work source, and stage prompts.
@@ -28,9 +69,6 @@ node dist/server/main.js --dir /path/to/repo --port 4317   # watch another repo
   `packages/core/loops/<kind>/loop.json` + prompt stubs **only** and returns
   the checklist of steps it deliberately doesn't generate (agent personas,
   `gen:prompts`, command wrappers, hook registration, enablement).
-- **User manual**: `docs/manual.html` in an iframe, with a drift banner
-  diffing its command mentions against the hosts' real `argument-hint`
-  surfaces.
 
 ## Token usage sources
 
@@ -56,8 +94,7 @@ slug-validated and prefix-checked.
 Solid (unit-tested + live-verified against this repo):
 
 - every `/api/*` endpoint, the SSE watcher (fs.watch + polling reconciler),
-  the run-log/metrics parsers, the graph↔manifest round-trip, save guards,
-  and the manual freshness diff
+  the run-log/metrics parsers, the graph↔manifest round-trip, and save guards
 
 Known beta caveats:
 
@@ -84,4 +121,4 @@ npm run test -w @agentic-loop/hub       # node --test via tsx
 The web bundle (`dist/web/`) is built locally, never checked in. Manual QA
 that automated tests don't cover: creator drag/connect UX, SSE reconnect
 after killing the server, and the Notification permission flow — open the hub
-in a real browser and click through all three tabs.
+in a real browser and click through both tabs.

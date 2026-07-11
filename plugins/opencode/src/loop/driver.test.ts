@@ -32,26 +32,26 @@ test("an empty spec means 'use the config default'", () => {
 })
 
 test("unit suffixes: seconds, minutes, hours", () => {
-  assert.deepEqual(parseWatchArgs("30s"), { intervalMs: 30_000 })
-  assert.deepEqual(parseWatchArgs("5m"), { intervalMs: 300_000 })
-  assert.deepEqual(parseWatchArgs("2h"), { intervalMs: 7_200_000 })
+  assert.deepEqual(parseWatchArgs("30s"), { trigger: { type: "poll", intervalMs: 30_000 } })
+  assert.deepEqual(parseWatchArgs("5m"), { trigger: { type: "poll", intervalMs: 300_000 } })
+  assert.deepEqual(parseWatchArgs("2h"), { trigger: { type: "poll", intervalMs: 7_200_000 } })
 })
 
 test("a bare number is minutes", () => {
-  assert.deepEqual(parseWatchArgs("5"), { intervalMs: 300_000 })
+  assert.deepEqual(parseWatchArgs("5"), { trigger: { type: "poll", intervalMs: 300_000 } })
 })
 
 test("an --interval prefix is accepted", () => {
-  assert.deepEqual(parseWatchArgs("--interval 5m"), { intervalMs: 300_000 })
+  assert.deepEqual(parseWatchArgs("--interval 5m"), { trigger: { type: "poll", intervalMs: 300_000 } })
 })
 
 test("case and internal whitespace are tolerated", () => {
-  assert.deepEqual(parseWatchArgs("10 M"), { intervalMs: 600_000 })
+  assert.deepEqual(parseWatchArgs("10 M"), { trigger: { type: "poll", intervalMs: 600_000 } })
 })
 
 test("sub-10s intervals clamp to the 10s floor", () => {
-  assert.deepEqual(parseWatchArgs("1s"), { intervalMs: 10_000 })
-  assert.deepEqual(parseWatchArgs("0.05"), { intervalMs: 10_000 })
+  assert.deepEqual(parseWatchArgs("1s"), { trigger: { type: "poll", intervalMs: 10_000 } })
+  assert.deepEqual(parseWatchArgs("0.05"), { trigger: { type: "poll", intervalMs: 10_000 } })
 })
 
 test("garbage yields an error, not a silent default", () => {
@@ -59,6 +59,24 @@ test("garbage yields an error, not a silent default", () => {
     const parsed = parseWatchArgs(bad)
     assert.ok("error" in parsed, `expected an error for ${JSON.stringify(bad)}`)
   }
+})
+
+test("watch accepts an in-session trigger override: idle, cron, poll", () => {
+  assert.deepEqual(parseWatchArgs("idle"), { trigger: { type: "idle" } })
+  assert.deepEqual(parseWatchArgs("IDLE"), { trigger: { type: "idle" } })
+  assert.deepEqual(parseWatchArgs("cron */15 * * * *"), { trigger: { type: "cron", schedule: "*/15 * * * *" } })
+  assert.deepEqual(parseWatchArgs('cron "0 9 * * 1-5"'), { trigger: { type: "cron", schedule: "0 9 * * 1-5" } })
+  assert.deepEqual(parseWatchArgs("poll"), { trigger: { type: "poll" } })
+  assert.deepEqual(parseWatchArgs("poll 30s"), { trigger: { type: "poll", intervalMs: 30_000 } })
+})
+
+test("watch rejects bad override arguments with usable errors", () => {
+  const badCron = parseWatchArgs("cron not a schedule")
+  assert.ok("error" in badCron && /cron/i.test(badCron.error))
+  const badPoll = parseWatchArgs("poll soon")
+  assert.ok("error" in badPoll && /poll interval/i.test(badPoll.error))
+  const bare = parseWatchArgs("weekly")
+  assert.ok("error" in bare && /poll \[interval\], cron <schedule>, or idle/.test(bare.error))
 })
 
 
