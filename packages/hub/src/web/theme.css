@@ -58,6 +58,19 @@ body {
   letter-spacing: 0.02em;
 }
 
+.beta-badge {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gate);
+  border: 1px solid var(--gate);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  vertical-align: middle;
+  margin-left: 0.3rem;
+}
+
 .hub-tabs {
   display: flex;
   gap: 0.25rem;

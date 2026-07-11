@@ -267,6 +267,19 @@ Replan with a reason, or Park for later (the `/agentic-loop:engineering approve`
 `replan` gate verbs remain the deferred path). Install and command details live in
 [`plugins/claude/README.md`](../plugins/claude/README.md).
 
+## Admin hub — beta (`packages/hub/`)
+
+A third, host-independent surface: a localhost web app (`npm run hub`) that
+**observes** the same filesystem substrate the hosts write — status folders,
+run logs, snapshots, the stage marker, the watch lease — and never drives the
+loop. Its only write path is the loop creator saving
+`packages/core/loops/<kind>/` manifests + prompt stubs. Token usage comes from
+the `runs/<id>.metrics.json` sidecar both hosts append on terminal events
+(exact for opencode, which observes usage; joined from Claude transcripts by
+stage time-window, flagged estimated, for the Claude host). Beta: the API
+shape may still change, and the creator canvas hasn't had interactive QA —
+see [`packages/hub/README.md`](../packages/hub/README.md).
+
 ## Backlog integrity rails
 
 Three layers keep a confused agent from corrupting the folder-is-status

@@ -1,5 +1,9 @@
 # @agentic-loop/hub
 
+> **Beta.** The hub is functional and tested at the API level, but young:
+> expect rough edges in the creator canvas UX, and the HTTP/JSON surface may
+> still change without a migration path. See [Beta status](#beta-status).
+
 A local admin hub for the agentic-loop framework: **loop monitor**, **visual
 loop creator**, and the **user manual**, served as one small web app.
 
@@ -46,6 +50,28 @@ Localhost tool, no auth by design: binds `127.0.0.1` only, rejects non-local
 the `X-Hub-Client: 1` header (cross-origin pages can't send it without a
 failing preflight). The only writable path is `packages/core/loops/<kind>/`,
 slug-validated and prefix-checked.
+
+## Beta status
+
+Solid (unit-tested + live-verified against this repo):
+
+- every `/api/*` endpoint, the SSE watcher (fs.watch + polling reconciler),
+  the run-log/metrics parsers, the graph↔manifest round-trip, save guards,
+  and the manual freshness diff
+
+Known beta caveats:
+
+- **Creator canvas UX** has not had interactive browser QA — drag/connect and
+  form flows work by construction but need real-mouse mileage; report
+  anything janky
+- **opencode.db token backfill** needs Node ≥ 22.5 (`node:sqlite`); on older
+  runtimes the panel says so and shows sidecar/transcript data only
+- **Claude-host token numbers are estimates** (time-window attribution from
+  transcripts) — always flagged `~` in the UI, never exact
+- **API shape may change** between beta releases; the hub is a local tool,
+  nothing external should depend on its JSON yet
+- The monitor is deliberately **read-only** — gate actions (approve/replan
+  buttons) are a candidate for a later release
 
 ## Development
 

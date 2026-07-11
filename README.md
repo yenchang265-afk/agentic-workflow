@@ -158,7 +158,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   blocking PLAN gate)
 - [docs/design/](docs/design/) — threat model, hardening design records
   (including [07 — multi-loop scheduler](docs/design/improvements/07-multi-loop-scheduler.md))
-- [packages/hub/README.md](packages/hub/README.md) — the **admin hub**
+- [packages/hub/README.md](packages/hub/README.md) — the **admin hub (beta)**
   (`npm run hub` → http://127.0.0.1:4317): loop monitor (backlog board, live
   gate notifications, run history, per-stage token usage), visual loop
   creator, and the user manual with a freshness check
@@ -176,6 +176,9 @@ link to it; don't copy.
   verdicts, metrics, config — everything both plugins share
 - `packages/core/loops/` — the declarative loop kinds (`engineering/`, `pr-sitter/`): a
   `loop.json` manifest + `stages/*.md` prompt templates per kind
+- `packages/hub/` — the **admin hub (beta)**: a localhost web app with the loop
+  monitor, visual loop creator, and user manual
+  ([packages/hub/README.md](packages/hub/README.md))
 - `plugins/opencode/src/` — the OpenCode plugin: host
   wiring, the driver that runs the engine on `session.idle`, config extensions
 - `plugins/opencode/agents/`, `plugins/opencode/commands/` — the agent + command definitions (symlinked from `.opencode/` for repo dogfooding)
@@ -196,10 +199,10 @@ npm install && npm run typecheck:all && npm run test:all
 ```
 
 `typecheck:all` / `test:all` cover every workspace: the core package
-(`packages/core` — engine, manifest, scheduler, sources, store), the OpenCode
-plugin (`src/**/*.test.ts`), and the Claude Code MCP server
-(`plugins/claude/mcp-server`). Plain `npm run typecheck` / `npm test` run just
-the OpenCode plugin's suite.
+(`packages/core` — engine, manifest, scheduler, sources, store), the admin hub
+(`packages/hub`), the OpenCode plugin (`src/**/*.test.ts`), and the Claude
+Code MCP server (`plugins/claude/mcp-server`). Plain `npm run typecheck` /
+`npm test` run just the OpenCode plugin's suite.
 
 ## License
 

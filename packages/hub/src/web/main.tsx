@@ -35,7 +35,9 @@ const App = () => {
   return (
     <div className="hub">
       <header className="hub-header">
-        <h1>agentic-loop hub</h1>
+        <h1>
+          agentic-loop hub <span className="beta-badge">beta</span>
+        </h1>
         <nav className="hub-tabs">
           {TABS.map((t) => (
             <button
