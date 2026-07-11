@@ -12,8 +12,9 @@ docs/tasks/runs/*.state.json
 docs/tasks/runs/.stage.json
 docs/tasks/runs/.watch-lease/
 
-# Claude Code plugin MCP server build output (built by claude-plugin/install.sh)
-claude-plugin/mcp-server/dist/
+# Build output (built by npm workspace `build` scripts / plugins/claude/install.sh)
+packages/core/dist/
+plugins/claude/mcp-server/dist/
 
 # Codegraph MCP local index (machine-local, not committed)
 .codegraph/
