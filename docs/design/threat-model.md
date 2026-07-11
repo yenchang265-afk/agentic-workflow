@@ -212,7 +212,11 @@ push to any branch, comment anywhere, sometimes merge.
   note: the manifest's stage allowlists are platform-scoped
   (`platformAllowlist.github`/`.ado` merged at stage-marker time, so only the
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
-  static YAML and deliberately carries **both** platforms' globs.
+  static YAML and deliberately carries **both** platforms' globs. PAT at-rest
+  note: besides the env var, the PAT may sit as `ado.pat` in the (gitignored)
+  repo `.agentic-loop.json` or the user-scope `~/.agentic-loop.json` — the
+  user file lives outside every repo so it can never be committed, but it is
+  plaintext on disk; keep it `chmod 600`. The env var wins over both files.
 
 ### T9. Ledger tampering replays or suppresses work
 

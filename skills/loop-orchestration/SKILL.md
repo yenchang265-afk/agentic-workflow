@@ -316,7 +316,10 @@ worktree mode. See `docs/design/threat-model.md`.
 
 ## Config
 
-Optional `.agentic-loop.json` at the repo root — every field has a default:
+Optional `.agentic-loop.json` at the repo root, layered over an optional
+user-scope `~/.agentic-loop.json` (repo wins field by field; nested objects
+merge per key, arrays/scalars replace — see `docs/configuration.md`). Every
+field has a default:
 
 ```jsonc
 {

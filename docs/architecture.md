@@ -46,7 +46,10 @@ flowchart TB
 - **Core package** — `@agentic-loop/core` (npm workspace) holds everything
   both plugins share: the pure engine and state, the manifest layer, work
   sources + scheduler, the task store, git helpers + worktree isolation,
-  snapshots, verdict handling, metrics, and config. Core never imports a host
+  snapshots, verdict handling, metrics, and config (resolved by layering an
+  optional user-scope `~/.agentic-loop.json` under the repo's
+  `.agentic-loop.json` — see
+  [configuration.md](configuration.md#layers--precedence)). Core never imports a host
   SDK; the entire host surface is the interfaces in
   `packages/core/src/host.ts` (Shell, Client, Log, …). The OpenCode plugin
   satisfies them with Bun's `$` and the opencode SDK client; the Claude Code

@@ -35,7 +35,8 @@ snapshot (recover picks up there); a deliberate `/agentic-loop:engineering stop`
 run and drops the snapshot, so there is nothing to recover.
 
 Both knobs above (and the optional hardening: worktrees, review lenses,
-secret redaction, run summaries) are configured in `.agentic-loop.json` —
+secret redaction, run summaries) are configured in `.agentic-loop.json`,
+layered over an optional user-scope `~/.agentic-loop.json` (repo wins) —
 see [configuration.md](configuration.md).
 
 ## Commands

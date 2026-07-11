@@ -1,11 +1,19 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { z } from "zod";
 import { CODE_PLATFORMS } from "./loop/state.js";
 import { TRACKER_SYSTEMS } from "./task/schema.js";
 /**
- * Loop configuration, read from `.agentic-loop.json` at the repo root via the
- * host client (no Node fs dependency). The file is optional; every field has
- * a sane default. Misconfiguration fails fast with a clear message rather than
- * silently falling back to defaults.
+ * Loop configuration, layered from two optional files: a user-scope
+ * `~/.agentic-loop.json` (settings shared across every repo — e.g.
+ * `ado.organization`, `ado.selfLogin`, `ado.pat`) under a repo-scope
+ * `.agentic-loop.json` at the repo root, which overrides it field by field.
+ * The repo layer is read via the host client; the user layer sits outside the
+ * project directory, so it is read with Node fs directly (precedent:
+ * manifest/load.ts). Both files are optional; every field has a sane default.
+ * Misconfiguration fails fast with a clear message rather than silently
+ * falling back to defaults.
  *
  * Host-only fields (e.g. the OpenCode plugin's `watchIntervalMinutes`) live in
  * each host's extension of `ConfigSchema` — see the generic `parseConfigWith`/
@@ -161,31 +169,105 @@ export const applyAdoPatEnv = (config) => {
 };
 export const DEFAULT_CONFIG = ConfigSchema.parse({});
 const CONFIG_FILE = ".agentic-loop.json";
+/** Env override for the user-scope config path; set to "" to disable the layer (e.g. in CI). */
+export const USER_CONFIG_ENV = "AGENTIC_LOOP_USER_CONFIG";
+/**
+ * Where the user-scope config lives: $AGENTIC_LOOP_USER_CONFIG when set ("" →
+ * layer disabled), else `~/.agentic-loop.json`. Returns null when the layer is
+ * disabled or no home directory can be resolved.
+ */
+export const resolveUserConfigPath = () => {
+    const env = process.env[USER_CONFIG_ENV];
+    if (env !== undefined)
+        return env === "" ? null : env;
+    const home = os.homedir();
+    return home ? path.join(home, CONFIG_FILE) : null;
+};
+const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+/**
+ * Field-level deep merge of raw config layers (override wins): plain objects
+ * merge per key recursively; arrays, scalars, and null replace wholesale —
+ * null is not a delete operator, it simply fails schema validation downstream.
+ * Layers merge BEFORE the zod parse so schema defaults apply only to the
+ * combined view (a repo file omitting `maxIterations` cannot clobber a
+ * user-scope `maxIterations`). Pure.
+ */
+export const mergeConfigLayers = (base, override) => {
+    if (override === undefined)
+        return base;
+    if (!isPlainObject(base) || !isPlainObject(override))
+        return override;
+    const out = { ...base };
+    for (const [key, value] of Object.entries(override)) {
+        if (value === undefined)
+            continue;
+        out[key] = isPlainObject(value) && isPlainObject(base[key]) ? mergeConfigLayers(base[key], value) : value;
+    }
+    return out;
+};
 /** Validate an already-parsed config object against a host schema; throws a readable error on misconfig. */
-export const parseConfigWith = (schema, raw) => {
+export const parseConfigWith = (schema, raw, label = CONFIG_FILE) => {
     const result = schema.safeParse(raw);
     if (!result.success) {
         const detail = result.error.issues.map((i) => `${i.path.join(".") || "(root)"} ${i.message}`).join("; ");
-        throw new Error(`Invalid ${CONFIG_FILE}: ${detail}`);
+        throw new Error(`Invalid ${label}: ${detail}`);
     }
     return result.data;
 };
 /** Validate an already-parsed config object; throws a readable error on misconfig. */
 export const parseConfig = (raw) => parseConfigWith(ConfigSchema, raw);
-/** Load a host config from the repo root, falling back to the schema's defaults when the file is absent. */
-export const loadConfigWith = async (schema, client, directory) => {
-    const res = await client.file.read({ query: { path: CONFIG_FILE, directory } });
-    const content = res.data?.content;
-    if (!content)
-        return schema.parse({}); // absent/empty → defaults
+/**
+ * Read and JSON-parse the user-scope layer with Node fs (it lives outside the
+ * project directory, beyond the host client's reach). Absent or unreadable →
+ * undefined (layer not present); malformed JSON or a non-object top level →
+ * throw naming the offending file, never a silent skip — this layer may carry
+ * `ado.pat`/`selfLogin`, and dropping it would surface later as a baffling
+ * validation error.
+ */
+const readUserLayer = (userPath) => {
+    let content;
+    try {
+        content = fs.readFileSync(userPath, "utf8");
+    }
+    catch {
+        return undefined;
+    }
+    if (!content.trim())
+        return undefined;
     let json;
     try {
         json = JSON.parse(content);
     }
     catch (err) {
-        throw new Error(`Invalid ${CONFIG_FILE}: not valid JSON (${err.message})`);
+        throw new Error(`Invalid ${userPath}: not valid JSON (${err.message})`);
     }
-    return parseConfigWith(schema, json);
+    if (!isPlainObject(json))
+        throw new Error(`Invalid ${userPath}: top level must be a JSON object`);
+    return json;
 };
-/** Load config from the repo root, falling back to defaults when the file is absent. */
-export const loadConfig = (client, directory) => loadConfigWith(ConfigSchema, client, directory);
+/**
+ * Load a host config by layering the user-scope file (if any) under the repo's
+ * `.agentic-loop.json` (repo wins field by field), falling back to the
+ * schema's defaults when both are absent.
+ */
+export const loadConfigWith = async (schema, client, directory, opts) => {
+    const userPath = opts?.userConfigPath === undefined ? resolveUserConfigPath() : opts.userConfigPath;
+    const userRaw = userPath ? readUserLayer(userPath) : undefined;
+    const res = await client.file.read({ query: { path: CONFIG_FILE, directory } });
+    const content = res.data?.content;
+    let repoRaw;
+    if (content) {
+        try {
+            repoRaw = JSON.parse(content);
+        }
+        catch (err) {
+            throw new Error(`Invalid ${CONFIG_FILE}: not valid JSON (${err.message})`);
+        }
+    }
+    if (userRaw === undefined && repoRaw === undefined)
+        return schema.parse({}); // both absent/empty → defaults
+    const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`;
+    return parseConfigWith(schema, mergeConfigLayers(userRaw ?? {}, repoRaw ?? {}), label);
+};
+/** Load config (user layer under repo layer), falling back to defaults when both files are absent. */
+export const loadConfig = (client, directory, opts) => loadConfigWith(ConfigSchema, client, directory, opts);

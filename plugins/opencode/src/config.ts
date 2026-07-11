@@ -1,5 +1,10 @@
 import { z } from "zod"
-import { ConfigSchema as CoreConfigSchema, loadConfigWith, parseConfigWith } from "@agentic-loop/core/config"
+import {
+  ConfigSchema as CoreConfigSchema,
+  loadConfigWith,
+  parseConfigWith,
+  type LoadConfigOptions,
+} from "@agentic-loop/core/config"
 import type { Client } from "@agentic-loop/core/host"
 import type { Config as CoreConfig } from "@agentic-loop/core/loop/state"
 
@@ -29,8 +34,8 @@ export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})
 /** Validate an already-parsed config object; throws a readable error on misconfig. */
 export const parseConfig = (raw: unknown): Config => parseConfigWith(ConfigSchema, raw)
 
-/** Load config from the repo root, falling back to defaults when the file is absent. */
-export const loadConfig = (client: Client, directory: string): Promise<Config> =>
-  loadConfigWith(ConfigSchema, client, directory)
+/** Load config (user layer under repo layer), falling back to defaults when both files are absent. */
+export const loadConfig = (client: Client, directory: string, opts?: LoadConfigOptions): Promise<Config> =>
+  loadConfigWith(ConfigSchema, client, directory, opts)
 
 export { applyAdoPatEnv } from "@agentic-loop/core/config"

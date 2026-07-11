@@ -4,6 +4,36 @@ Optional JSON file at the repo root. Every field has a sane default; a
 misconfigured file fails fast with a clear message instead of silently
 falling back.
 
+## Layers & precedence
+
+Config is resolved from two optional layers:
+
+1. **User scope** — `~/.agentic-loop.json`, applied to every repo you run the
+   loop in. Override the path with `AGENTIC_LOOP_USER_CONFIG`; set it to `""`
+   to disable the layer entirely (e.g. in CI).
+2. **Repo scope** — `.agentic-loop.json` at the repo root, which **overrides
+   the user layer field by field**.
+
+The merge is a field-level deep merge: nested objects (`ado`, `loops`, each
+`loops.<kind>` section) merge per key recursively; arrays (`reviewLenses`) and
+scalars replace wholesale. Layers merge *before* validation, so defaults never
+clobber an explicit value from either file, and cross-field requirements (like
+`codePlatform: "ado"` needing `ado.selfLogin`) are checked against the
+combined view — the intended split being:
+
+- **User scope**: identity and credentials shared across repos —
+  `ado.organization`, `ado.selfLogin`, `ado.pat` — plus personal defaults such
+  as `maxIterations`.
+- **Repo scope**: everything tied to the project — `codePlatform`,
+  `ado.project`, `ado.repository`, `tasksDir`, `loops`, worktree settings.
+
+Keep `codePlatform` and `loops` in the repo file by convention: a user-scope
+value silently applies to *every* repo. If the user file holds a PAT, protect
+it (`chmod 600 ~/.agentic-loop.json`); the `AZURE_DEVOPS_EXT_PAT` env var
+still wins over both layers. On a mixed Windows/WSL setup note the two worlds
+have different home directories — hosts running inside WSL resolve the WSL
+home; point `AGENTIC_LOOP_USER_CONFIG` at one file if you straddle both.
+
 `./install.sh` seeds this file for you: on an interactive terminal it runs a
 short wizard (code platform, PR sitter, worktrees, plus an advanced gate for the
 tracker, review lenses, and iteration cap) and writes a valid `.agentic-loop.json`
@@ -92,8 +122,10 @@ is resolved from config at wiring time — the manifest is never forked.
   comment (including the sitter's own replies) re-triggers attention.
 - **`ado.pat`** — optional; the PAT in plaintext, as a fallback for when the
   `AZURE_DEVOPS_EXT_PAT` env var is unset. **The env var wins** when both are
-  set. Prefer the env var; if you use `ado.pat`, keep `.agentic-loop.json`
-  gitignored (it is by default) so the secret is never committed. It reaches
+  set. Prefer the env var; if you use `ado.pat`, the user-scope
+  `~/.agentic-loop.json` is the natural home (never committed, shared across
+  repos) — in the repo file, keep `.agentic-loop.json` gitignored (it is by
+  default) so the secret is never committed. It reaches
   every consumer: the work source reads it directly, and the triage/publish
   stage agents (which authenticate via `$AZURE_DEVOPS_EXT_PAT`) get it exported
   for them — on OpenCode at plugin init (`applyAdoPatEnv`), on Claude Code via a
@@ -175,9 +207,15 @@ Impact on the commands:
 - On a terminal event the run log gets a **`## Run summary`** table — per-stage
   wall-clock, verdict history, and iterations used.
 
-## Environment (Claude Code MCP host)
+## Environment
 
-The Claude Code MCP server reads two directory pointers from the environment.
+One variable applies to **every host**:
+
+- **`AGENTIC_LOOP_USER_CONFIG`** — path of the user-scope config file
+  (default `~/.agentic-loop.json`); set to `""` to disable the layer. See
+  [Layers & precedence](#layers--precedence).
+
+The Claude Code MCP server additionally reads two directory pointers.
 Neither applies to the OpenCode host, which takes its directory from the
 project you opened.
 

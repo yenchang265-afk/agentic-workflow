@@ -135,7 +135,8 @@ The whole engineering lifecycle lives on `/agentic-loop:engineering` (`new`,
 
 ## Configuration
 
-Optional `.agentic-loop.json` at the repo root (all fields default) — full
+Optional `.agentic-loop.json` at the repo root, layered over a user-scope
+`~/.agentic-loop.json` (repo wins field by field; all fields default) — full
 field reference in [`docs/configuration.md`](../../docs/configuration.md). Same
 schema as the OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode
 here — see below); the removed `gateBeforeBuild`/`interviewBeforePlan` keys are

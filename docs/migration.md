@@ -1,5 +1,19 @@
 # Migrating between layouts
 
+## To layered configuration (user scope + repo scope)
+
+- Config is now resolved from **two layers**: an optional user-scope
+  `~/.agentic-loop.json` (all repos) merged under the repo's
+  `.agentic-loop.json`, repo winning field by field — see
+  [configuration.md](configuration.md#layers--precedence). Nothing to migrate:
+  a repo-only setup behaves exactly as before.
+- **Heads-up**: a stray `~/.agentic-loop.json` left over from experimentation
+  is now picked up and layered in. Delete it, or set
+  `AGENTIC_LOOP_USER_CONFIG=""` to disable the layer.
+- Recommended split for multi-repo ADO users: move `ado.organization`,
+  `ado.selfLogin`, and `ado.pat` to the user file; keep `codePlatform`,
+  `ado.project`/`repository`, and `loops` in each repo.
+
 ## To the per-kind commands (`/agentic-loop:engineering`, `/agentic-loop:pr-sitter`)
 
 - **The umbrella `/agent-loop` command is gone** — each loop kind now has its
