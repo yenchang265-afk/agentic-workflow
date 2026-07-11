@@ -1,14 +1,20 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { test } from "node:test"
 import {
   applyAdoPatEnv,
   DEFAULT_CONFIG,
   defaultTrackerSystem,
   enabledLoopKinds,
+  loadConfig,
+  mergeConfigLayers,
   parseConfig,
   platformFor,
   trackerUrl,
 } from "./config.js"
+import type { Client } from "./host.js"
 
 test("defaults leave worktree isolation off and review single-pass", () => {
   assert.equal(DEFAULT_CONFIG.worktreesDir, undefined)
@@ -189,6 +195,139 @@ test("parseConfig rejects an unknown tracker system and a non-URL baseUrl", () =
   assert.throws(
     () => parseConfig({ projectManagement: { system: "jira", baseUrl: "not a url" } }),
     /baseUrl/,
+  )
+})
+
+// --- mergeConfigLayers ---
+
+test("mergeConfigLayers: scalars and arrays in the override replace wholesale", () => {
+  assert.deepEqual(mergeConfigLayers({ maxIterations: 5 }, { maxIterations: 7 }), { maxIterations: 7 })
+  assert.deepEqual(
+    mergeConfigLayers({ reviewLenses: ["security", "perf"] }, { reviewLenses: ["correctness"] }),
+    { reviewLenses: ["correctness"] },
+  )
+})
+
+test("mergeConfigLayers: nested objects merge per field (the ado split use case)", () => {
+  const user = { ado: { organization: "https://dev.azure.com/acme", selfLogin: "me@acme.com", pat: "tok" } }
+  const repo = { ado: { project: "widgets", repository: "widgets-api" } }
+  assert.deepEqual(mergeConfigLayers(user, repo), {
+    ado: {
+      organization: "https://dev.azure.com/acme",
+      selfLogin: "me@acme.com",
+      pat: "tok",
+      project: "widgets",
+      repository: "widgets-api",
+    },
+  })
+})
+
+test("mergeConfigLayers: loops merge per kind and per knob; other kinds survive", () => {
+  const user = { loops: { "pr-sitter": { enabled: true } } }
+  const repo = { loops: { "pr-sitter": { query: "author:@me" }, engineering: { enabled: false } } }
+  assert.deepEqual(mergeConfigLayers(user, repo), {
+    loops: { "pr-sitter": { enabled: true, query: "author:@me" }, engineering: { enabled: false } },
+  })
+})
+
+test("mergeConfigLayers: null replaces like a scalar; type mismatch → override wins", () => {
+  assert.deepEqual(mergeConfigLayers({ ado: { pat: "tok" } }, { ado: null }), { ado: null })
+  assert.deepEqual(mergeConfigLayers({ ado: { pat: "tok" } }, { ado: "oops" }), { ado: "oops" })
+})
+
+test("mergeConfigLayers: empty override returns the base; undefined override keeps base", () => {
+  assert.deepEqual(mergeConfigLayers({ tasksDir: "x" }, {}), { tasksDir: "x" })
+  assert.deepEqual(mergeConfigLayers({ tasksDir: "x" }, undefined), { tasksDir: "x" })
+})
+
+test("defaults apply only after the merge: a repo omission cannot clobber a user value", () => {
+  const merged = mergeConfigLayers({ maxIterations: 5 }, { tasksDir: "work/tasks" })
+  const c = parseConfig(merged)
+  assert.equal(c.maxIterations, 5)
+  assert.equal(c.tasksDir, "work/tasks")
+})
+
+// --- layered loadConfig ---
+
+const stubClient = (repoContent: string | undefined): Client => ({
+  file: {
+    list: async () => ({ data: [] }),
+    read: async () => ({ data: repoContent === undefined ? null : { content: repoContent } }),
+  },
+  app: { log: async () => undefined },
+})
+
+const tempUserFile = (content: string): string => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-loop-config-"))
+  const file = path.join(dir, ".agentic-loop.json")
+  fs.writeFileSync(file, content)
+  return file
+}
+
+test("loadConfig layers user under repo; repo wins field by field", async () => {
+  const userPath = tempUserFile(JSON.stringify({ maxIterations: 5, tasksDir: "user/tasks" }))
+  const c = await loadConfig(stubClient(JSON.stringify({ tasksDir: "repo/tasks" })), "/repo", {
+    userConfigPath: userPath,
+  })
+  assert.equal(c.maxIterations, 5)
+  assert.equal(c.tasksDir, "repo/tasks")
+})
+
+test("loadConfig: superRefine validates the combined view (org/selfLogin from user, project from repo)", async () => {
+  const userPath = tempUserFile(
+    JSON.stringify({ ado: { organization: "https://dev.azure.com/acme", selfLogin: "me@acme.com", pat: "tok" } }),
+  )
+  const repo = JSON.stringify({ codePlatform: "ado", ado: { project: "widgets" } })
+  const c = await loadConfig(stubClient(repo), "/repo", { userConfigPath: userPath })
+  assert.equal(c.ado?.organization, "https://dev.azure.com/acme")
+  assert.equal(c.ado?.project, "widgets")
+  assert.equal(c.ado?.selfLogin, "me@acme.com")
+  // Same repo file without the user layer is incomplete.
+  await assert.rejects(
+    () => loadConfig(stubClient(repo), "/repo", { userConfigPath: null }),
+    /ado\.organization/,
+  )
+})
+
+test("loadConfig: user-only, repo-only, and neither", async () => {
+  const userPath = tempUserFile(JSON.stringify({ maxIterations: 9 }))
+  const userOnly = await loadConfig(stubClient(undefined), "/repo", { userConfigPath: userPath })
+  assert.equal(userOnly.maxIterations, 9)
+  const repoOnly = await loadConfig(stubClient(JSON.stringify({ maxIterations: 2 })), "/repo", {
+    userConfigPath: null,
+  })
+  assert.equal(repoOnly.maxIterations, 2)
+  const neither = await loadConfig(stubClient(undefined), "/repo", { userConfigPath: null })
+  assert.deepEqual(neither, DEFAULT_CONFIG)
+})
+
+test("loadConfig: absent or empty user file → layer skipped", async () => {
+  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agentic-loop-config-")), "nope.json")
+  const c = await loadConfig(stubClient(undefined), "/repo", { userConfigPath: missing })
+  assert.deepEqual(c, DEFAULT_CONFIG)
+  const empty = tempUserFile("")
+  const c2 = await loadConfig(stubClient(undefined), "/repo", { userConfigPath: empty })
+  assert.deepEqual(c2, DEFAULT_CONFIG)
+})
+
+test("loadConfig: malformed user file throws naming its path", async () => {
+  const badJson = tempUserFile("{ nope")
+  await assert.rejects(
+    () => loadConfig(stubClient(undefined), "/repo", { userConfigPath: badJson }),
+    new RegExp(`Invalid .*${path.basename(path.dirname(badJson))}.*not valid JSON`),
+  )
+  const nonObject = tempUserFile(JSON.stringify(["not", "an", "object"]))
+  await assert.rejects(
+    () => loadConfig(stubClient(undefined), "/repo", { userConfigPath: nonObject }),
+    /top level must be a JSON object/,
+  )
+})
+
+test("loadConfig: merged-parse errors name both layers", async () => {
+  const userPath = tempUserFile(JSON.stringify({ maxIterations: 0 }))
+  await assert.rejects(
+    () => loadConfig(stubClient(JSON.stringify({ tasksDir: "x" })), "/repo", { userConfigPath: userPath }),
+    /Invalid \.agentic-loop\.json \(merged with .*\): .*maxIterations/,
   )
 })
 

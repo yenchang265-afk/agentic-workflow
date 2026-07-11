@@ -148,8 +148,8 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 - [`plugins/claude/README.md`](plugins/claude/README.md) — Claude Code install,
   commands, known limitations
 - [docs/configuration.md](docs/configuration.md) — `.agentic-loop.json`
-  reference, per-kind `loops` sections, and optional hardening (worktrees,
-  review lenses, redaction)
+  reference (user-scope + repo-scope layering), per-kind `loops` sections, and
+  optional hardening (worktrees, review lenses, redaction)
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) — starter
   `AGENTS.md`/`CLAUDE.md` (Karpathy rules + loop workflow) to copy into
   projects driven by agentic-loop

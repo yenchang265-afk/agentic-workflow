@@ -248,6 +248,8 @@ configure() {
     echo "  → Azure DevOps auth: a PAT scoped to Code (read) + Pull Request (contribute)."
     echo "    Preferred: export AZURE_DEVOPS_EXT_PAT=<pat>. Or add \"pat\":\"<pat>\" to the"
     echo "    ado section of the (gitignored) .agentic-loop.json — the env var wins if both are set."
+    echo "    Tip: settings shared across repos (organization, selfLogin, pat) can live in a"
+    echo "    user-scope ~/.agentic-loop.json; the repo file overrides it field by field."
   fi
 
   # Q2 — PR sitter.
