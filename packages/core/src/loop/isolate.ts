@@ -98,7 +98,7 @@ export const ensureIsolation = async (
       if (await isGitRepo($, wtPath)) await pruneWorktrees($, directory)
       // `addWorktree` reuses the (already-fetched) head branch as-is — no `-b`.
       if (!(await addWorktree($, directory, wtPath, state.git.branch, state.git.base))) {
-        throw new Error(`could not create worktree ${wtPath} for ${state.git.branch} — resolve it, then /agent-loop recover`)
+        throw new Error(`could not create worktree ${wtPath} for ${state.git.branch} — resolve it, then /agentic-loop:engineering recover`)
       }
       await runWorktreeSetup($, log, config, wtPath)
       return { ...state, git: { ...state.git, worktree: wtPath }, isolated: true }
@@ -140,7 +140,7 @@ export const ensureIsolation = async (
     // A leftover directory with no registration — prune, then let add try.
     if (await isGitRepo($, wtPath)) await pruneWorktrees($, directory)
     if (!(await addWorktree($, directory, wtPath, branch, base))) {
-      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /agent-loop recover`)
+      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /agentic-loop:engineering recover`)
     }
     await runWorktreeSetup($, log, config, wtPath)
     return { ...state, git: { base, branch, worktree: wtPath }, isolated: true }

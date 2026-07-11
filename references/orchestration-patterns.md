@@ -87,9 +87,9 @@ If any answer is "no," fall back to direct invocation or a single-persona comman
 The user runs slash commands in a defined order, carrying context (or commit history) between them. There is no orchestrator agent — the user IS the orchestrator.
 
 ```
-user runs:  /agent-loop-task new  →  /agent-loop-task approve  →
-            /plan-task  →  /agent-loop-task approve-plan  →
-            /build  →  /verify  →  /review  →  /agent-loop ship
+user runs:  /agentic-loop:engineering new  →  /agentic-loop:engineering approve  →
+            /plan-task  →  /agentic-loop:engineering approve  →
+            /build  →  /verify  →  /review  →  /agentic-loop:engineering approve
 ```
 
 **Use when:** the workflow has dependencies (each step needs the previous step's output) and human judgment between steps adds value.
@@ -129,7 +129,7 @@ This catalog is harness-agnostic, but most readers will run it on Claude Code. H
 
 ### Where personas live
 
-Plugin subagents go in `agents/` at the plugin root. The Claude Code plugin here lives in `claude-plugin/` (manifest at `claude-plugin/.claude-plugin/plugin.json`), so `claude-plugin/agents/loop-build.md`, `claude-plugin/agents/loop-review.md`, etc. are auto-discovered when the plugin is enabled. No path configuration needed.
+Plugin subagents go in `agents/` at the plugin root. The Claude Code plugin here lives in `plugins/claude/` (manifest at `plugins/claude/.claude-plugin/plugin.json`), so `plugins/claude/agents/loop-build.md`, `plugins/claude/agents/loop-review.md`, etc. are auto-discovered when the plugin is enabled. No path configuration needed. (Those agent files are generated from `prompts/agents/` via `npm run gen:prompts` — edit the sources, not the outputs.)
 
 ### Subagents vs. Agent Teams
 

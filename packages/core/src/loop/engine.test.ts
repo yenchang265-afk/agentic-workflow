@@ -1,7 +1,7 @@
+import { defaultLoopsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import { loadManifest } from "../manifest/load.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
 import type { Action, Config, LoopState, TaskRef } from "./state.js"
@@ -17,7 +17,7 @@ import type { Verdict } from "./verdict.js"
  * fixture.
  */
 
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..", "loops")
+const LOOPS_DIR = defaultLoopsDir()
 const eng = loadManifest(LOOPS_DIR, "engineering")
 
 const config: Config = {
@@ -107,7 +107,7 @@ const oracleAdvance = (
         state: s,
         action: {
           kind: "park",
-          message: "Plan written — parked in plan-review/ for human review. Approve with /agent-loop-task approve-plan.",
+          message: "Plan written — parked in plan-review/ for human review. Approve with /agentic-loop:engineering approve.",
         },
       }
     case "build":
@@ -120,7 +120,7 @@ const oracleAdvance = (
           action: {
             kind: "stop",
             message:
-              "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
+              "✗ Loop stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agentic-loop:engineering recover the task.",
           },
         }
       }
@@ -132,7 +132,7 @@ const oracleAdvance = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Loop stopped — verify failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>.`,
+          message: `✗ Loop stopped — verify failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-loop:engineering replan <id>.`,
         },
       }
     }
@@ -146,7 +146,7 @@ const oracleAdvance = (
           action: {
             kind: "stop",
             message:
-              "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /agent-loop recover the task.",
+              "✗ Loop stopped — review could not run (environment/infrastructure error). Fix the environment, then /agentic-loop:engineering recover the task.",
           },
         }
       }
@@ -158,7 +158,7 @@ const oracleAdvance = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Loop stopped — review failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agent-loop-task replan <id>.`,
+          message: `✗ Loop stopped — review failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-loop:engineering replan <id>.`,
         },
       }
     }

@@ -6,7 +6,7 @@ import { STATUSES, type TaskStatus } from "./store.js"
  * despite the guard — stray folders (`docs/tasks/run/`…), task files outside
  * any status folder, and one id present in several status folders at once.
  * Report-only: repair lives in `rescueStray` (store.ts) behind the explicit
- * `loop_doctor` / `/agent-loop doctor` verbs.
+ * `loop_doctor` / `/agentic-loop:engineering doctor` verbs.
  */
 
 /** Non-status dirs that legitimately live at the backlog root. */

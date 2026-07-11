@@ -11,7 +11,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "loops"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

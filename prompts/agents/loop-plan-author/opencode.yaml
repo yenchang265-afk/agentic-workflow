@@ -1,0 +1,5 @@
+description: Writes backlog task files into docs/tasks/draft/ — one planless draft or a slice set of N child drafts plus an epic tracking file (mode new), a reshaped draft rewritten in place (mode retask), or an ## Implementation Plan onto an existing task in place (mode task). Never touches source code.
+mode: subagent
+permission:
+  edit: allow
+  bash: deny

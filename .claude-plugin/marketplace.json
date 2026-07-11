@@ -4,7 +4,7 @@
   "plugins": [
     {
       "name": "agentic-loop",
-      "source": "./claude-plugin",
+      "source": "./plugins/claude",
       "description": "Supervised PLAN → BUILD → VERIFY → REVIEW loop for Claude Code: human plan gate, git isolation, trusted verdicts, task backlog, audit trail."
     }
   ]

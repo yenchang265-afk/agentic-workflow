@@ -11,7 +11,8 @@ type FileRef = {
     readonly id: string;
     readonly path: string;
 };
-export type TaskStatus = "draft" | "queued" | "plan-review" | "in-progress" | "in-review" | "completed" | "abandoned";
+export { STATUSES, type TaskStatus } from "./statuses.js";
+import { type TaskStatus } from "./statuses.js";
 /** All tasks in claim order: lowest priority number first, ties broken by id. Pure. */
 export declare const selectOrder: (tasks: readonly Task[]) => Task[];
 /** Pick the next task: lowest priority number, ties broken by id. Pure. */
@@ -21,7 +22,7 @@ export declare const PLAN_HEADING = "## Implementation Plan";
 /** Whether a task already has a plan persisted (appended at a prior approval gate). Pure. */
 export declare const hasPlan: (task: Task) => boolean;
 /**
- * Eligible for `/agent-loop watch` to claim: planned, and never had ANY
+ * Eligible for `/agentic-loop:engineering watch` to claim: planned, and never had ANY
  * "> BUILD started" note — not just "last pair unmatched" (that's
  * `wasInterrupted`, below). Any marker at all means another live LoopState
  * is driving it right now, or it crashed and needs manual recovery — a
@@ -31,8 +32,8 @@ export declare const isClaimable: (task: Task) => boolean;
 /** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
 export declare const extractPlan: (task: Task) => string | undefined;
 /**
- * Planned and started at least once — no longer claimable by `/agent-loop watch`,
- * but a human can force-resume it with `/agent-loop recover <id>` once no live
+ * Planned and started at least once — no longer claimable by `/agentic-loop:engineering watch`,
+ * but a human can force-resume it with `/agentic-loop:engineering recover <id>` once no live
  * loop is driving it (crashed runs, restarted plugins). Pure.
  */
 export declare const isRecoverable: (task: Task) => boolean;
@@ -43,22 +44,20 @@ export declare const isRecoverable: (task: Task) => boolean;
  * code. Pure.
  */
 export declare const wasInterrupted: (task: Task) => boolean;
-/** The status folders, in lifecycle order. */
-export declare const STATUSES: readonly TaskStatus[];
-/** A per-status roll-up of the backlog for `/agent-loop status`. Pure. */
+/** A per-status roll-up of the backlog for `/agentic-loop:engineering status`. Pure. */
 export interface BacklogSummary {
     readonly counts: Readonly<Record<TaskStatus, number>>;
     /** queued tasks awaiting the loop's PLAN stage (a watcher will claim them once no build work remains). */
     readonly awaitingPlan: readonly string[];
-    /** plan-review tasks whose plan is parked for human review (/agent-loop-task approve-plan). */
+    /** plan-review tasks whose plan is parked for human review (/agentic-loop:engineering approve). */
     readonly gated: readonly string[];
     /** in-progress tasks parked and never started (a watcher will claim them). */
     readonly claimable: readonly string[];
     /** in-progress tasks whose body is claimable but whose claim marker is currently held. */
     readonly claimHeld: readonly string[];
-    /** in-progress tasks whose last build looks interrupted (crashed — /agent-loop recover). */
+    /** in-progress tasks whose last build looks interrupted (crashed — /agentic-loop:engineering recover). */
     readonly interrupted: readonly string[];
-    /** in-review tasks awaiting a human diff review (/agent-loop ship). */
+    /** in-review tasks awaiting a human diff review (/agentic-loop:engineering approve). */
     readonly awaitingReview: readonly string[];
 }
 /**
@@ -85,7 +84,7 @@ export declare const pairingCoverage: (byStatus: Readonly<Record<TaskStatus, rea
 export declare const listByStatus: (client: Client, directory: string, tasksDir: string, status: TaskStatus, log?: Log) => Promise<Task[]>;
 /** List and parse every task in `queued/` — approved, awaiting the loop's PLAN stage. */
 export declare const listQueued: (client: Client, directory: string, tasksDir: string, log?: Log) => Promise<Task[]>;
-/** List and parse every task in `in-progress/` — the pool `/agent-loop watch` claims from. */
+/** List and parse every task in `in-progress/` — the pool `/agentic-loop:engineering watch` claims from. */
 export declare const listInProgress: (client: Client, directory: string, tasksDir: string, log?: Log) => Promise<Task[]>;
 /**
  * Resolve a specific task by id within a status folder, or null if missing/invalid.
@@ -236,7 +235,7 @@ export interface WriteLocation {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating a task today, use `/agent-loop-task new <idea>` — the
+ * command. For creating a task today, use `/agentic-loop:engineering new <idea>` — the
  * `loop-plan-author` subagent, which runs inside OpenCode; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
@@ -246,4 +245,3 @@ export declare const writeTask: ($: Shell, client: Client, loc: WriteLocation, i
     id: string;
     path: string;
 }>;
-export {};

@@ -1,4 +1,4 @@
-import { STATUSES } from "./store.js"
+import { STATUSES } from "./statuses.js"
 
 /**
  * Backlog-mutation guard: classifies a tool call an *agent* is about to make
@@ -7,9 +7,10 @@ import { STATUSES } from "./store.js"
  *
  * The folder a task file lives in IS its status — a raw `mv`/`mkdir`/`rm` or
  * an in-place Write can silently corrupt the lifecycle (stray folders, stage
- * skips). Both hosts enforce this: the Claude Code plugin via a PreToolUse
- * hook (claude-plugin/hooks/check-stage-guard.mjs — keep its inlined copy in
- * sync), the OpenCode plugin via `tool.execute.before`.
+ * skips). Both hosts enforce this with THIS code: the OpenCode plugin imports
+ * it in `tool.execute.before`; the Claude Code plugin's PreToolUse hook
+ * (plugins/claude/hooks/check-stage-guard.mjs) is esbuild-bundled from a
+ * source that imports it (hooks/src/, built by scripts/build-hooks.mjs).
  *
  * This is heuristic defense-in-depth against degraded/confused models, not a
  * sandbox: string-matching a shell command cannot catch every spelling. The
@@ -33,8 +34,8 @@ const block = (reason: string): GuardVerdict => ({ allow: false, reason })
 const HOW_TO_MUTATE =
   "the folder a backlog file lives in IS its state — mutate it only through the loop tools " +
   "(loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) " +
-  "or the /agent-loop-task verbs, never by hand. To create a task, write a draft/<id>.md file " +
-  "(or run /agent-loop new) — the status folders are created for you."
+  "or the /agentic-loop:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file " +
+  "(or run /agentic-loop:engineering new) — the status folders are created for you."
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 

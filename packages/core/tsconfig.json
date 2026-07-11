@@ -1,4 +1,5 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "target": "ES2022",
     "module": "NodeNext",
@@ -6,13 +7,8 @@
     "lib": ["ES2022"],
     "outDir": "dist",
     "rootDir": "src",
-    "strict": true,
     "noUncheckedIndexedAccess": true,
     "declaration": true,
-    "sourceMap": false,
-    "skipLibCheck": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
     "allowImportingTsExtensions": false,
     "verbatimModuleSyntax": false
   },

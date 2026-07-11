@@ -2,7 +2,7 @@
 
 Two layers. The **framework** — a shared core package, a manifest-interpreted
 loop engine, and a work-source scheduler — knows nothing about engineering
-tasks or pull requests. The **loop kinds** (`loops/<kind>/`) are declarative
+tasks or pull requests. The **loop kinds** (`packages/core/loops/<kind>/`) are declarative
 manifests plus stage prompts that the framework interprets: `engineering` is
 the reference kind (the original PLAN / BUILD → VERIFY → REVIEW workflow,
 behavior-identical to when it was hardcoded), `pr-sitter` is the second.
@@ -12,8 +12,8 @@ behavior-identical to when it was hardcoded), `pr-sitter` is the second.
 ```mermaid
 flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
-        oc["OpenCode plugin (src/)<br/>session.idle + /agent-loop watch timer"]
-        cc["Claude Code MCP server<br/>(claude-plugin/mcp-server/)<br/>loop_claim / loop_start / loop_advance"]
+        oc["OpenCode plugin (src/)<br/>session.idle + /agentic-loop:engineering watch timer"]
+        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>loop_claim / loop_start / loop_advance"]
     end
 
     subgraph core["@agentic-loop/core (packages/core)"]
@@ -50,9 +50,9 @@ flowchart TB
   SDK; the entire host surface is the interfaces in
   `packages/core/src/host.ts` (Shell, Client, Log, …). The OpenCode plugin
   satisfies them with Bun's `$` and the opencode SDK client; the Claude Code
-  MCP server with Node shims (`claude-plugin/mcp-server/src/shim.ts`) — its
+  MCP server with Node shims (`plugins/claude/mcp-server/src/shim.ts`) — its
   former `src/lib/` fork of the loop logic is gone.
-- **Manifest engine** — a loop kind is `loops/<kind>/loop.json`
+- **Manifest engine** — a loop kind is `packages/core/loops/<kind>/loop.json`
   (zod-validated: stages with `work|check` kind, agent, prompt path,
   isolation, bash allowlist; a transitions table mapping
   onDone/onPass/onFail/onError to fire/park/done/stop effects with iteration
@@ -67,11 +67,12 @@ flowchart TB
   (`packages/core/src/source/types.ts`) knows how to find, atomically claim,
   and release units of work for one kind; a claimed `WorkItem` carries a
   fully-constructed entry `LoopState`, so drivers stay source-agnostic.
-  `pollOnce(sources)` walks the enabled kinds' sources in claim-priority order
+  `pollOnce(sources)` walks the given sources in claim-priority order
   (engineering first unless disabled, then opted-in kinds in config order —
-  `enabledLoopKinds` in core config); the first successful claim wins. Both
-  hosts' triggers delegate to it: OpenCode's `session.idle` + `/agent-loop
-  watch` timer, and the Claude Code MCP server's `loop_claim`. A source may
+  `enabledLoopKinds` in core config); the first successful claim wins, and
+  each kind's command scopes the poll to its own kind's source. Both
+  hosts' triggers delegate to it: OpenCode's `session.idle` + the per-kind
+  `watch` timer, and the Claude Code MCP server's `loop_claim`. A source may
   implement `onTerminal` for end-of-drive bookkeeping (the PR sitter's dedup
   ledger); the backlog source doesn't need it.
 - **Per-kind status semantics** — the `docs/tasks/` status folders are the
@@ -82,7 +83,7 @@ flowchart TB
   (`<tasksDir>/runs/pr-sitter/pr-<n>.json`) records what has already been
   handled. Other kinds pick whichever source fits.
 
-## The engineering kind (`loops/engineering/`)
+## The engineering kind (`packages/core/loops/engineering/`)
 
 The full picture: three human gates thread an unattended PLAN / BUILD →
 VERIFY → REVIEW loop, and the `docs/tasks/` backlog folders *are* the state —
@@ -90,17 +91,17 @@ a task's folder is its status. The loop plans a task right before execution
 (so plans don't rot while tasks sit parked) and **parks** the plan for human
 review instead of blocking on it. The pipeline shape below — stage order,
 retry budget, park/done statuses, stop messages — comes from
-`loops/engineering/loop.json`; the engine just interprets it.
+`packages/core/loops/engineering/loop.json`; the engine just interprets it.
 
 ```mermaid
 flowchart TB
     You([You])
 
-    subgraph authoring["AUTHORING + GATES — /agent-loop-task · interactive, human in the loop"]
+    subgraph authoring["AUTHORING + GATES — /agentic-loop:engineering new/retask/approve · interactive, human in the loop"]
         direction TB
-        new["<b>/agent-loop-task new &lt;idea&gt;</b><br/>main agent interviews you (interview-me),<br/>then loop-plan-author writes it<br/>(task-backlog-management)<br/><i>planless draft in draft/</i>"]
-        approve{{"<b>/agent-loop-task approve &lt;id&gt;</b><br/>plugin queues the reviewed draft<br/>★ HUMAN GATE 1 — the task"}}
-        approveplan{{"<b>/agent-loop-task approve-plan &lt;id&gt;</b><br/>plugin validates the parked plan<br/>★ HUMAN GATE 2 — the plan<br/>(reject: replan &lt;id&gt; &lt;why&gt; → back to queued/)"}}
+        new["<b>/agentic-loop:engineering new &lt;idea&gt;</b><br/>main agent interviews you (interview-me),<br/>then loop-plan-author writes it<br/>(task-backlog-management)<br/><i>planless draft in draft/</i>"]
+        approve{{"<b>/agentic-loop:engineering approve &lt;id&gt;</b><br/>plugin queues the reviewed draft<br/>★ HUMAN GATE 1 — the task"}}
+        approveplan{{"<b>/agentic-loop:engineering approve &lt;id&gt;</b><br/>plugin validates the parked plan<br/>★ HUMAN GATE 2 — the plan<br/>(replan &lt;id&gt; &lt;why&gt; → back to queued/)"}}
     end
 
     subgraph backlog["BACKLOG — docs/tasks/ · folder = status"]
@@ -113,16 +114,16 @@ flowchart TB
         completed[("completed/")]
     end
 
-    subgraph execution["THE LOOP — /agent-loop · unattended, driven on session.idle"]
+    subgraph execution["THE LOOP — /agentic-loop:engineering · unattended, driven on session.idle"]
         direction TB
-        claim["<b>/agent-loop task &lt;id&gt;</b> — run one now<br/><b>/agent-loop watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build work beats plan work)"]
+        claim["<b>/agentic-loop:engineering plan &lt;id&gt;</b> — plan one now<br/><b>/agentic-loop:engineering claim</b> — one-shot pull<br/><b>/agentic-loop:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build work beats plan work)"]
         planstage["<b>PLAN</b><br/>agent: loop-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: loop-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
         verify["<b>VERIFY</b><br/>agent: loop-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via loop_verdict tool only</i>"]
         review["<b>REVIEW</b><br/>agent: loop-review · edit ❌ bash: read-only<br/>skills: code-review-and-quality<br/>(+ security-and-hardening, performance-optimization)<br/><i>5-axis diff review, once per reviewLens,<br/>worst verdict wins</i>"]
     end
 
-    ship{{"<b>/agent-loop ship &lt;id&gt;</b><br/>you review the branch diff<br/>★ HUMAN GATE 3"}}
+    ship{{"<b>/agentic-loop:engineering approve &lt;id&gt;</b><br/>you review the branch diff<br/>★ HUMAN GATE 3"}}
 
     You -->|"idea"| new
     new -->|"writes draft"| draft
@@ -143,7 +144,7 @@ flowchart TB
     review -->|"PASS"| inreview
     inreview --> ship
     ship --> completed
-    build -.->|"iteration cap (maxIterations) trips:<br/>plan is suspect → human sends it back<br/>via /agent-loop-task replan &lt;id&gt;"| queued
+    build -.->|"iteration cap (maxIterations) trips:<br/>plan is suspect → human sends it back<br/>via /agentic-loop:engineering replan &lt;id&gt;"| queued
     verify -.->|"ERROR → stop for human"| You
 ```
 
@@ -158,13 +159,12 @@ pushes or opens a PR — REVIEW PASS parks the task in `in-review/` for you.
 
 | Command | Handled by | Subagent | Write access | Skills loaded | Produces |
 |---------|-----------|----------|--------------|---------------|----------|
-| `/agent-loop-task new <idea>` | plugin → agent | `loop-plan-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
-| `/agent-loop-task retask <id> [note]` | plugin → agent | `loop-plan-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | draft rewritten **in place** in `draft/` (same id, no folder move) |
-| `/agent-loop-task approve <id>` | plugin only (agent writes nothing) | — | — | — | task queued in `queued/` |
-| `/agent-loop-task approve-plan <id>` | plugin only (agent writes nothing) | — | — | — | task parked in `in-progress/` |
-| `/agent-loop-task replan <id> [why]` | plugin only (agent writes nothing) | — | — | — | task re-queued in `queued/`, rejection audited |
+| `/agentic-loop:engineering new <idea>` | plugin → agent | `loop-plan-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
+| `/agentic-loop:engineering retask <id> [note]` | plugin → agent | `loop-plan-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | draft rewritten **in place** in `draft/` (same id, no folder move) |
+| `/agentic-loop:engineering approve [id]` | plugin only (agent writes nothing) | — | — | — | the folder-driven gate: draft → `queued/`, plan-review → `in-progress/`, in-review → `completed/` |
+| `/agentic-loop:engineering replan [id] [why]` | plugin only (agent writes nothing) | — | — | — | task re-queued in `queued/`, rejection audited |
 | PLAN (in the loop, on a `queued/` task) | driver → agent | `loop-plan-author` (task mode) | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
-| `/agent-loop task\|watch\|ship\|recover\|stop\|status` | plugin driver (`src/loop/driver.ts`) | spawns the three stage agents below | — | `loop-orchestration` protocol | stage sequencing, claims, snapshots, run log |
+| `/agentic-loop:engineering plan\|claim\|watch\|recover\|stop\|status` | plugin driver (`plugins/opencode/src/loop/driver.ts`) | spawns the three stage agents below | — | `loop-orchestration` protocol | stage sequencing, claims, snapshots, run log |
 | BUILD (also `/build`) | driver → agent | `loop-build` | edit ✅ bash ✅ | `incremental-implementation`, `test-driven-development` (+ `frontend-ui-engineering`, `observability-and-instrumentation`, `code-simplification` when relevant) | code + one commit checkpoint per iteration |
 | VERIFY (also `/verify`) | driver → agent | `loop-verify` | edit ❌ bash: test-runner allowlist | `debugging-and-error-recovery` (on FAIL) | trusted `loop_verdict` PASS/FAIL/ERROR |
 | REVIEW (also `/review`) | driver → agent | `loop-review` | edit ❌ bash: read-only git/fs | `code-review-and-quality` (+ `security-and-hardening`, `performance-optimization`) | trusted `loop_verdict` per lens, worst wins |
@@ -177,7 +177,7 @@ pr-sitter: `triage`/`verify`) and validates the recording against it. Stage
 agents can't approve tasks, move backlog folders, or ship; the plugin and the
 human own every transition between statuses.
 
-## The PR sitter kind (`loops/pr-sitter/`)
+## The PR sitter kind (`packages/core/loops/pr-sitter/`)
 
 Opt-in (`loops.pr-sitter.enabled` in `.agentic-loop.json`). Its work source
 is chosen from config `codePlatform` at wiring time: on GitHub
@@ -227,7 +227,7 @@ resource on ADO, via the manifest's per-stage `platformAllowlist`), and failed
 pushes are reported, never forced. See the
 [threat model](design/threat-model.md).
 
-## Claude Code variant (`claude-plugin/`)
+## Claude Code variant (`plugins/claude/`)
 
 Same loop kinds and lifecycles, different driver: Claude Code has no
 background `session.idle` driver, so the main agent drives the loop through a
@@ -244,11 +244,12 @@ flowchart LR
     adv -->|"done / stop"| done[("terminal — task moved /<br/>ledger updated, metrics written")]
 ```
 
-Differences worth knowing in a demo: there is no standing `/agent-loop watch`
-— `/agent-loop claim` is the one-shot pull equivalent (one `pollOnce` tick;
-build-ready tasks beat queued ones, engineering beats opted-in kinds); and
+Differences worth knowing in a demo: there is no standing watch on this host
+— `/agentic-loop:engineering claim` is the one-shot pull equivalent (one `pollOnce` tick;
+build-ready tasks beat queued ones) and `/agentic-loop:pr-sitter claim` is
+the sitter's (it passes the pr-sitter kind to `loop_claim`); and
 stage guardrails are enforced by a `PreToolUse` hook
-(`claude-plugin/hooks/check-stage-guard.mjs`) rather than by agent
+(`plugins/claude/hooks/check-stage-guard.mjs`) rather than by agent
 permissions. The MCP server writes a stage marker to
 `<tasksDir>/runs/.stage.json` carrying `{kind, stage, taskId, worktree,
 deadline, bashAllowlist}`; the hook enforces the **manifest's** allowlist for
@@ -259,9 +260,9 @@ OpenCode the same guardrails ride the agent frontmatter permissions
 Human gates are **interactive** on this substrate: a park (`plan gate`) or a
 done (`ship gate`) returns a `gate` field, and the driving agent asks the
 user inline via AskUserQuestion — Approve (continue into BUILD / ship now),
-Replan with a reason, or Park for later (the `/agent-loop-task` verbs — or the
-shorter `/agent-loop approve` / `/agent-loop reject` shortcuts — remain the deferred path). Install and command details live in
-[`claude-plugin/README.md`](../claude-plugin/README.md).
+Replan with a reason, or Park for later (the `/agentic-loop:engineering approve` /
+`replan` gate verbs remain the deferred path). Install and command details live in
+[`plugins/claude/README.md`](../plugins/claude/README.md).
 
 ## Backlog integrity rails
 
@@ -280,14 +281,14 @@ backlog (threat model T3/T3b):
   `run/` an agent invented), task files outside every status folder, and one
   id duplicated across status folders. Surfaced at session start (both
   substrates), in `loop_status`, and as warnings on claims.
-- **Doctor** (`loop_doctor` / `/agent-loop doctor [fix]`): reports the sweep's
+- **Doctor** (`loop_doctor` / `/agentic-loop:engineering doctor [fix]`): reports the sweep's
   findings plus held claim markers; with `fix` it applies only the
   unambiguous repairs — rescue strays back to `draft/` (audited + committed),
   remove emptied stray folders, release stale orphaned claim markers.
   Duplicates are always a human call.
 
 **Watch lease** (`scheduler/lease.ts`): at most one watch-mode process per
-clone. `/agent-loop watch` atomically creates
+clone. `/agentic-loop:engineering watch` atomically creates
 `<tasksDir>/runs/.watch-lease/` (gitignored) with a heartbeat JSON refreshed
 every tick; a second process is refused with the live owner's identity, and
 a dead watcher's lease is taken over once the heartbeat exceeds

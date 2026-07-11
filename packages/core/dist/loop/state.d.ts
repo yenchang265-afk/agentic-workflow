@@ -8,21 +8,21 @@
  * pipeline above is `loops/engineering/loop.json`); the impure orchestration
  * lives in each host's driver.
  *
- * Task authoring happens **before** the loop, in the `/agent-loop-task`
- * command: `new` interviews the user into a draft task and `approve <id>`
+ * Task authoring happens **before** the loop, via the `/agentic-loop:engineering new`
+ * verb: it interviews the user into a draft task and `approve <id>`
  * parks it planless in `queued/`. The loop claims a queued task and enters at
  * `plan` via `startAtPlan` — the PLAN stage writes the task's
  * `## Implementation Plan` right before execution, so plans don't rot while a
  * task sits parked. PLAN never blocks on a human: it terminates with a `park`
  * action (the driver moves the task to `plan-review/` and the loop exits).
- * `/agent-loop-task approve-plan <id>` is the human plan gate; the next claim
+ * `/agentic-loop:engineering approve <id>` is the human plan gate; the next claim
  * enters at `build` via `resumeAtBuild` with the approved plan as an artifact.
  *
  * Two check stages can fail and loop back, and both re-**build**: a VERIFY
  * FAIL re-builds with the failure threaded into the build prompt; a REVIEW
  * FAIL re-builds with the review feedback. Both share one iteration counter
  * and cap. If the plan itself is wrong, the cap stops the loop and a human
- * sends the task back to the PLAN stage via `/agent-loop-task replan <id>`.
+ * sends the task back to the PLAN stage via `/agentic-loop:engineering replan <id>`.
  */
 import type { TrackerSystem } from "../task/schema.js";
 /** A stage name. Loop kinds define their own stage sets in their manifests;
@@ -171,7 +171,7 @@ export interface Config {
     readonly projectManagement?: ProjectManagementConfig;
 }
 /** Construct a LoopState entering execution at build, for a claimed
- *  in-progress task whose plan was approved via `/agent-loop-task approve-plan`. */
+ *  in-progress task whose plan was approved via `/agentic-loop:engineering approve`. */
 export declare const resumeAtBuild: (goal: string, task: TaskRef, plan: string) => LoopState;
 /** Construct a LoopState entering at the PLAN stage, for a claimed `queued/`
  *  task. `priorPlan` carries a rejected/capped plan on a replan so the new

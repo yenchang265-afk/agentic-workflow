@@ -18,7 +18,7 @@ import { CODE_PLATFORMS, STAGES, type LoopState } from "./state.js"
  * the PLAN stage never snapshots (it writes no code — a died PLAN is
  * recovered by the stale claim-marker sweep, and the next pass re-plans from
  * the task file). Any such snapshot is either pre-refactor state or tampering
- * — it fails closed and `/agent-loop recover` falls back to the plan persisted on
+ * — it fails closed and `/agentic-loop:engineering recover` falls back to the plan persisted on
  * the task file.
  */
 

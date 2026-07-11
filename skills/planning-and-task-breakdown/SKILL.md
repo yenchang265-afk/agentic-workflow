@@ -77,7 +77,7 @@ Task 4: User can view task list (query + API + UI for list view)
 Each vertical slice delivers working, testable functionality.
 
 > **In the agentic loop:** these vertical slices become **sibling draft
-> tasks**. `/agent-loop-task new` splits a heavy idea into one draft per slice
+> tasks**. `/agentic-loop:engineering new` splits a heavy idea into one draft per slice
 > (each built in its own worktree context, so each stays reviewable in one
 > sitting) plus a `type: epic` tracking draft. See `task-backlog-management` →
 > "Slicing a heavy idea".

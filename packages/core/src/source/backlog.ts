@@ -74,13 +74,13 @@ export const claimSkipReason = (
     return {
       message:
         `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
-        `${startedIds.join(", ")} (run /agent-loop recover <id>)`,
+        `${startedIds.join(", ")} (run /agentic-loop:engineering recover <id>)`,
       actionable: true,
     }
   }
   return {
     message:
-      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agent-loop-task replan <id>)",
+      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agentic-loop:engineering replan <id>)",
     actionable: true,
   }
 }

@@ -5,7 +5,7 @@
 # config directory (global by default: ~/.config/opencode, or
 # $OPENCODE_CONFIG_DIR if set) so `git pull` in this repo keeps the install up
 # to date, and registers the plugin itself as a local plugin file.
-# Claude Code half: delegates to claude-plugin/install.sh, which builds the
+# Claude Code half: delegates to plugins/claude/install.sh, which builds the
 # bundled MCP server and links the shared skills/references into the plugin.
 # Re-run any time; both halves are idempotent.
 
@@ -94,11 +94,11 @@ install_opencode() {
     done
   done
 
-  for f in "$REPO_DIR"/.opencode/agents/*.md; do
+  for f in "$REPO_DIR"/plugins/opencode/agents/*.md; do
     link_or_copy "$f" "$CONFIG_DIR/agents/$(basename "$f")"
   done
 
-  for f in "$REPO_DIR"/.opencode/commands/*.md; do
+  for f in "$REPO_DIR"/plugins/opencode/commands/*.md; do
     link_or_copy "$f" "$CONFIG_DIR/commands/$(basename "$f")"
   done
 
@@ -115,7 +115,7 @@ install_opencode() {
   # point. OpenCode auto-loads any file dropped in plugins/, no opencode.json
   # edit needed. Requires `npm install` to have been run in $REPO_DIR.
   PLUGIN_FILE="$CONFIG_DIR/plugins/agentic-loop.ts"
-  printf 'export * from "%s/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
+  printf 'export * from "%s/plugins/opencode/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
   echo "installed: $PLUGIN_FILE"
 
   if [ ! -d "$REPO_DIR/node_modules" ] || [ ! -d "$REPO_DIR/packages/core/dist" ]; then
@@ -125,15 +125,15 @@ install_opencode() {
   fi
 
   echo
-  echo "OpenCode: /agent-loop and the bundled skills are available in every OpenCode session."
+  echo "OpenCode: /agentic-loop:engineering and the bundled skills are available in every OpenCode session."
 }
 
 install_claude() {
-  echo "Installing agentic-loop for Claude Code (claude-plugin/)"
+  echo "Installing agentic-loop for Claude Code (plugins/claude/)"
   if [ "$MODE" = copy ]; then
     echo "note: --copy applies to the OpenCode install only"
   fi
-  "$REPO_DIR/claude-plugin/install.sh"
+  "$REPO_DIR/plugins/claude/install.sh"
 }
 
 # ---------------------------------------------------------------------------

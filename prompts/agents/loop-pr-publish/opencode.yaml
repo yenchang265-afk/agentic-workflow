@@ -1,0 +1,34 @@
+description: Publisher for the PR sitter's PUBLISH stage. Pushes the verified commits to the PR branch and replies to each addressed review comment/check (gh on GitHub, the ADO REST API via curl+PAT on Azure DevOps). The only stage allowed to push; never merges, closes, or approves.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    "git push origin *": allow
+    "git -C * push origin *": allow
+    # Both platforms are allowed here (static frontmatter can't switch); config
+    # codePlatform decides which the stage prompt actually uses. ADO writes go to
+    # the REST API via curl+PAT, scoped to `/threads*` so this stage can only post
+    # comment replies — never complete/abandon/approve/reviewer a PR (those hit
+    # `/pullrequests/<id>` or `/reviewers`, which don't match the glob).
+    "gh pr comment *": allow
+    "gh pr view*": allow
+    "gh pr checks*": allow
+    "gh api *": allow
+    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "wc *": allow

@@ -1,1 +1,0 @@
-../../references/performance-checklist.md

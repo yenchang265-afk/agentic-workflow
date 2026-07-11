@@ -1,1 +1,0 @@
-../../references/observability-checklist.md

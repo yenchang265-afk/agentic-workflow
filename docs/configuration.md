@@ -16,14 +16,14 @@ afterward.
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agent-loop-task replan <id>`. |
+| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agentic-loop:engineering replan <id>`. |
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
-| `watchIntervalMinutes` | `5` | Default polling cadence for `/agent-loop watch`; overridable per session via `/agent-loop watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
+| `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-loop:engineering watch`; overridable per session via `/agentic-loop:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `loops` | `{}` | Per-loop-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps via its REST API, PAT auth). Overridable per kind with `loops.<kind>.codePlatform`. See below. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
-| `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agent-loop status`. See below. |
+| `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-loop:engineering status`. See below. |
 | `worktreesDir` | unset | See hardening below. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
@@ -31,12 +31,12 @@ afterward.
 Both plugins read the same file: the schema lives in the shared core package
 (`packages/core/src/config.ts`), and each host may extend it with fields only
 it can honor (today: OpenCode's `watchIntervalMinutes` — see
-[`claude-plugin/README.md`](../claude-plugin/README.md)).
+[`plugins/claude/README.md`](../plugins/claude/README.md)).
 
 ## Loop kinds (`loops`)
 
 Each key under `loops` enables and configures one loop kind (a
-`loops/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
+`packages/core/loops/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
 every other kind is opt-in with `"enabled": true`. Kind-specific knobs ride
 along in the same section and are validated by the kind itself. Enabled kinds
 are polled in claim-priority order: engineering first, then opted-in kinds in
@@ -114,7 +114,7 @@ is resolved from config at wiring time — the manifest is never forked.
   (static YAML) carries both platforms' CLI allowlists as a deliberate
   breadth tradeoff — the loop.json/stage-marker path stays platform-narrow.
 
-See [`loops/README.md`](../loops/README.md) for authoring new kinds and
+See [`loops/README.md`](../packages/core/loops/README.md) for authoring new kinds and
 [`docs/design/threat-model.md`](design/threat-model.md) for the PR sitter's
 security posture before enabling it.
 
@@ -139,7 +139,7 @@ API; a human copies the issue key/id into the task.
 ```
 
 - **`system`** (required) — `"jira"` or `"azure-devops"`. Becomes the default
-  `tracker.system` stamped on tasks authored via `/agent-loop-task new`.
+  `tracker.system` stamped on tasks authored via `/agentic-loop:engineering new`.
 - **`baseUrl`** — optional URL prefix a task's `tracker.key` is appended to,
   to build a deep link (Jira: `…/browse/`; ADO: `…/_workitems/edit/`). Unset →
   no link is built.
@@ -151,17 +151,17 @@ this section only supplies authoring defaults and the status view.
 
 Impact on the commands:
 
-- **`/agent-loop-task new`** pre-fills `tracker.system` (and `type` from
+- **`/agentic-loop:engineering new`** pre-fills `tracker.system` (and `type` from
   `defaultType`) so the drafted task is ready to pair — you fill in the
   `tracker.key`.
-- **`/agent-loop status`** adds a `pairing` roll-up: the tracker system, how
+- **`/agentic-loop:engineering status`** adds a `pairing` roll-up: the tracker system, how
   many active tasks are paired, and the ids of those still unpaired.
 
 ## Optional hardening
 
 - **`worktreesDir`** — run each loop in its own `git worktree` instead of
   switching branches in the shared checkout. The human's tree is never
-  touched and multiple `/agent-loop watch` sessions can build concurrently in one
+  touched and multiple `/agentic-loop:engineering watch` sessions can build concurrently in one
   instance. Off by default (a fresh worktree has no installed deps — pair it
   with `worktreeSetup`, e.g. `"npm ci"`). Audit notes and task moves stay in
   the main tree and are committed there per terminal event.

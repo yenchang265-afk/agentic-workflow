@@ -5,9 +5,10 @@
  *
  * The folder a task file lives in IS its status — a raw `mv`/`mkdir`/`rm` or
  * an in-place Write can silently corrupt the lifecycle (stray folders, stage
- * skips). Both hosts enforce this: the Claude Code plugin via a PreToolUse
- * hook (claude-plugin/hooks/check-stage-guard.mjs — keep its inlined copy in
- * sync), the OpenCode plugin via `tool.execute.before`.
+ * skips). Both hosts enforce this with THIS code: the OpenCode plugin imports
+ * it in `tool.execute.before`; the Claude Code plugin's PreToolUse hook
+ * (plugins/claude/hooks/check-stage-guard.mjs) is esbuild-bundled from a
+ * source that imports it (hooks/src/, built by scripts/build-hooks.mjs).
  *
  * This is heuristic defense-in-depth against degraded/confused models, not a
  * sandbox: string-matching a shell command cannot catch every spelling. The
@@ -51,4 +52,4 @@ export declare const classifyMutation: (tool: string, args: {
     readonly command?: string | null;
 }, ctx: GuardContext) => GuardVerdict;
 /** Re-export for hosts that report which folders are protected. */
-export declare const PROTECTED_STATUSES: readonly import("./store.js").TaskStatus[];
+export declare const PROTECTED_STATUSES: readonly import("./statuses.js").TaskStatus[];

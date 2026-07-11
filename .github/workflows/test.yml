@@ -26,16 +26,26 @@ jobs:
       - name: Test (core + opencode plugin)
         run: npm run test:all
 
+      - name: Generated prompts are in sync with prompts/ sources
+        run: |
+          node scripts/gen-prompts.mjs
+          git diff --exit-code -- plugins/opencode/agents plugins/claude/agents
+
+      - name: Bundled hooks are in sync with hooks/src/ sources
+        run: |
+          node scripts/build-hooks.mjs
+          git diff --exit-code -- plugins/claude/hooks
+
       - name: Build and smoke-run the MCP server
         run: |
           npm run build -w agentic-loop-mcp
-          out=$(node claude-plugin/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
+          out=$(node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
           echo "$out"
           echo "$out" | grep -q "MCP server ready"
 
       - name: Install-script check
         run: |
-          bash -n install.sh claude-plugin/install.sh
+          bash -n install.sh plugins/claude/install.sh
           d=$(mktemp -d)
           ./install.sh opencode "$d"
           ./install.sh opencode "$d"

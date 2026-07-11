@@ -1,6 +1,8 @@
 import path from "node:path";
 import { redact } from "./redact.js";
 import { buildTaskFile, isPaired, parseTask } from "./schema.js";
+export { STATUSES } from "./statuses.js";
+import { STATUSES } from "./statuses.js";
 const isMarkdown = (name) => name.toLowerCase().endsWith(".md");
 /** All tasks in claim order: lowest priority number first, ties broken by id. Pure. */
 export const selectOrder = (tasks) => [...tasks].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
@@ -11,7 +13,7 @@ export const PLAN_HEADING = "## Implementation Plan";
 /** Whether a task already has a plan persisted (appended at a prior approval gate). Pure. */
 export const hasPlan = (task) => task.body.includes(PLAN_HEADING);
 /**
- * Eligible for `/agent-loop watch` to claim: planned, and never had ANY
+ * Eligible for `/agentic-loop:engineering watch` to claim: planned, and never had ANY
  * "> BUILD started" note — not just "last pair unmatched" (that's
  * `wasInterrupted`, below). Any marker at all means another live LoopState
  * is driving it right now, or it crashed and needs manual recovery — a
@@ -26,8 +28,8 @@ export const extractPlan = (task) => {
     return task.body.slice(idx + PLAN_HEADING.length).trim();
 };
 /**
- * Planned and started at least once — no longer claimable by `/agent-loop watch`,
- * but a human can force-resume it with `/agent-loop recover <id>` once no live
+ * Planned and started at least once — no longer claimable by `/agentic-loop:engineering watch`,
+ * but a human can force-resume it with `/agentic-loop:engineering recover <id>` once no live
  * loop is driving it (crashed runs, restarted plugins). Pure.
  */
 export const isRecoverable = (task) => hasPlan(task) && task.body.includes("> BUILD started");
@@ -44,16 +46,6 @@ export const wasInterrupted = (task) => {
     const lastFinish = task.body.lastIndexOf("> BUILD finished");
     return lastFinish < lastStart;
 };
-/** The status folders, in lifecycle order. */
-export const STATUSES = [
-    "draft",
-    "queued",
-    "plan-review",
-    "in-progress",
-    "in-review",
-    "completed",
-    "abandoned",
-];
 /**
  * Roll up tasks-by-status into counts and actionable flag lists. `claimedIds`
  * (ids holding a claim marker, see `listClaimIds`) splits body-claimable tasks
@@ -122,7 +114,7 @@ export const listByStatus = async (client, directory, tasksDir, status, log) => 
 };
 /** List and parse every task in `queued/` — approved, awaiting the loop's PLAN stage. */
 export const listQueued = (client, directory, tasksDir, log) => listByStatus(client, directory, tasksDir, "queued", log);
-/** List and parse every task in `in-progress/` — the pool `/agent-loop watch` claims from. */
+/** List and parse every task in `in-progress/` — the pool `/agentic-loop:engineering watch` claims from. */
 export const listInProgress = (client, directory, tasksDir, log) => listByStatus(client, directory, tasksDir, "in-progress", log);
 /**
  * Resolve a specific task by id within a status folder, or null if missing/invalid.
@@ -397,7 +389,7 @@ const listIds = async (client, directory, rel) => {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating a task today, use `/agent-loop-task new <idea>` — the
+ * command. For creating a task today, use `/agentic-loop:engineering new <idea>` — the
  * `loop-plan-author` subagent, which runs inside OpenCode; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
