@@ -376,7 +376,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <div class="two">
         <div class="card">
           <h4 style="margin-top:0">Claude Code</h4>
-          <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>claude --plugin-dir /abs/path/to/claude-plugin</pre></div>
+          <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>claude --plugin-dir /abs/path/to/plugins/claude</pre></div>
           <p style="font-size:13.5px;color:var(--muted-txt)">Or add the repo as a marketplace: <code>/plugin marketplace add /abs/path/to/repo</code> then <code>/plugin install agentic-loop</code>.</p>
         </div>
         <div class="card">
@@ -387,14 +387,14 @@ npm install                    <span class="c"># workspaces + builds core dist/<
 
       <h3>Your first run</h3>
       <div class="flow">
-        <span class="f">/agent-loop-task new &lt;idea&gt;</span><span class="arr">→</span>
-        <span class="f">approve</span><span class="arr">→</span>
+        <span class="f">/agentic-loop:engineering new &lt;idea&gt;</span><span class="arr">→</span>
+        <span class="f">approve &lt;id&gt;</span><span class="arr">→</span>
         <span class="f">loop plans it</span><span class="arr">→</span>
-        <span class="f">approve-plan</span><span class="arr">→</span>
-        <span class="f">/agent-loop task &lt;id&gt;</span><span class="arr">→</span>
-        <span class="f term">ship</span>
+        <span class="f">approve</span><span class="arr">→</span>
+        <span class="f">claim builds it</span><span class="arr">→</span>
+        <span class="f term">approve</span>
       </div>
-      <p style="font-size:14px;color:var(--muted-txt)">You author and gate; the loop plans, builds, verifies and reviews in between. On OpenCode, <code>/agent-loop watch</code> polls for approved work; on Claude Code, <code>/agent-loop claim</code> is the one-shot pull.</p>
+      <p style="font-size:14px;color:var(--muted-txt)">You author and gate; the loop plans, builds, verifies and reviews in between. <code>approve</code> is the one gate verb — the folder the task sits in decides what it means (queue a draft, release a parked plan, or ship a reviewed diff). On OpenCode, <code>/agentic-loop:engineering watch</code> polls for approved work; on Claude Code, <code>/agentic-loop:engineering claim</code> is the one-shot pull.</p>
     </section>
 
     <!-- ===================================================== WIZARD -->
@@ -466,7 +466,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <div class="node" data-stage="verify" role="tab" tabindex="0" aria-selected="false"><div class="num">03</div><div class="nm">VERIFY</div><span class="kd check">check</span></div>
           <div class="node" data-stage="review" role="tab" tabindex="0" aria-selected="false"><div class="num">04</div><div class="nm">REVIEW</div><span class="kd check">check</span></div>
         </div>
-        <div class="loopback">↩ a <span class="fail">FAIL</span> at VERIFY or REVIEW re-fires BUILD — verify and review share one iteration counter, capped at <code>maxIterations</code> (default 3). Cap tripped → the plan is suspect → a human sends it back with <code>/agent-loop-task replan</code>.</div>
+        <div class="loopback">↩ a <span class="fail">FAIL</span> at VERIFY or REVIEW re-fires BUILD — verify and review share one iteration counter, capped at <code>maxIterations</code> (default 3). Cap tripped → the plan is suspect → a human sends it back with <code>/agentic-loop:engineering replan &lt;id&gt;</code>.</div>
         <div class="stagedetail" id="stagedetail" aria-live="polite"></div>
       </div>
 
@@ -490,30 +490,30 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="gates">
       <div class="eyebrow">Understand</div>
       <h2>Gates &amp; the backlog</h2>
-      <p class="lede">Authoring and gating live in <code>/agent-loop-task</code>; the loop itself only executes. A task's <b>folder is its status</b> — moving files between folders is how state advances.</p>
+      <p class="lede">Authoring, gating, and execution all live in <code>/agentic-loop:engineering</code>. A task's <b>folder is its status</b> — moving files between folders is how state advances, and <code>approve</code> is one verb whose meaning the folder decides.</p>
 
-      <h3>The three human gates</h3>
+      <h3>The three human gates — one verb</h3>
       <div class="gates">
-        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agent-loop-task approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued.</span></div>
-        <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve-plan</b><code>/agent-loop-task approve-plan &lt;id&gt;</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan</code>.</span></div>
-        <div class="gate"><span class="n">Gate 3 · ship</span><b>ship</b><code>/agent-loop ship &lt;id&gt;</code><span>You accept the reviewed diff. in-review → completed.</span></div>
+        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-loop:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts.</span></div>
+        <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve</b><code>/agentic-loop:engineering approve [id]</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan [id] [reason]</code>.</span></div>
+        <div class="gate"><span class="n">Gate 3 · ship</span><b>approve</b><code>/agentic-loop:engineering approve [id]</code><span>You accept the reviewed diff. in-review → completed.</span></div>
       </div>
-      <p style="margin:8px 0 0;font-size:14px;color:var(--muted-txt)">Shortcut: once a task is in the loop's hands, <code>/agent-loop approve</code> advances the single task it's waiting on you for (parked plan → build, or reviewed diff → ship) and <code>/agent-loop reject</code> bounces a parked plan back — no <code>&lt;id&gt;</code> needed unless two+ tasks wait. Draft approval stays the explicit <code>/agent-loop-task approve &lt;id&gt;</code>.</p>
+      <p style="margin:8px 0 0;font-size:14px;color:var(--muted-txt)">Id-less <code>approve</code> advances the single task the loop is waiting on you for (a parked plan → build, or a reviewed diff → completed) — it never touches drafts, which always need the explicit <code>&lt;id&gt;</code>. <code>replan</code> is the sole rejection verb: it sends a parked plan (or a cap-tripped task, by id) back to <code>queued/</code> for a fresh PLAN pass.</p>
 
       <h3>Folder-as-status lifecycle</h3>
       <div class="flow">
         <span class="f">draft/</span><span class="arr">→ approve →</span>
         <span class="f">queued/</span><span class="arr">→ PLAN parks →</span>
-        <span class="f">plan-review/</span><span class="arr">→ approve-plan →</span>
+        <span class="f">plan-review/</span><span class="arr">→ approve →</span>
         <span class="f">in-progress/</span><span class="arr">→ REVIEW pass →</span>
-        <span class="f">in-review/</span><span class="arr">→ ship →</span>
+        <span class="f">in-review/</span><span class="arr">→ approve →</span>
         <span class="f term">completed/</span>
       </div>
       <p style="font-size:14px;color:var(--muted-txt)">Under <code>docs/tasks/</code> (configurable via <code>tasksDir</code>), plus <code>abandoned/</code> for dropped work and an ephemeral <code>runs/</code> holding machine state. PLAN <em>parks</em> — it writes the plan onto the task file and exits rather than blocking on a human, so the loop is always free to pick up other work.</p>
 
-      <div class="note"><b>OpenCode vs Claude Code.</b> Same kinds and lifecycle. OpenCode runs a background <code>session.idle</code> driver with a <code>watch</code> polling mode; Claude Code has no background driver — the main agent drives via a bundled MCP server, gates are interactive prompts, and <code>/agent-loop claim</code> replaces <code>watch</code>.</p></div>
+      <div class="note"><b>OpenCode vs Claude Code.</b> Same kinds and lifecycle. OpenCode runs a background <code>session.idle</code> driver with a <code>watch</code> polling mode; Claude Code has no background driver — the main agent drives via a bundled MCP server, gates are interactive prompts, and <code>/agentic-loop:engineering claim</code> replaces <code>watch</code>.</p></div>
 
-      <div class="note"><b>Pausing a run (Esc).</b> On OpenCode, pressing <kbd>Esc</kbd> mid-drive interrupts the loop: it stops watch mode and halts <em>after</em> the in-flight stage settles, keeping the run snapshot. Resume exactly where it stopped with <code>/agent-loop recover &lt;id&gt;</code>. That is the difference from <code>/agent-loop stop</code>, a deliberate end that drops the snapshot — nothing to recover.</p></div>
+      <div class="note"><b>Pausing a run (Esc).</b> On OpenCode, pressing <kbd>Esc</kbd> mid-drive interrupts the loop: it stops watch mode and halts <em>after</em> the in-flight stage settles, keeping the run snapshot. Resume exactly where it stopped with <code>/agentic-loop:engineering recover &lt;id&gt;</code>. That is the difference from <code>/agentic-loop:engineering stop</code>, a deliberate end that drops the snapshot — nothing to recover.</p></div>
     </section>
 
     <!-- ===================================================== SKILLS -->
@@ -535,7 +535,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           </tbody>
         </table>
       </div>
-      <div class="note">The wiring lives in the sub-agent definitions (<code>claude-plugin/agents/loop-*.md</code>), not the stage prompts — so "the stage's agent invokes these skills." Stage names themselves come from each kind's <code>loops/&lt;kind&gt;/loop.json</code>; they are not a fixed global enum.</div>
+      <div class="note">The wiring lives in the sub-agent definitions (<code>plugins/&lt;host&gt;/agents/loop-*.md</code>, generated from <code>prompts/agents/</code>), not the stage prompts — so "the stage's agent invokes these skills." Stage names themselves come from each kind's <code>packages/core/loops/&lt;kind&gt;/loop.json</code>; they are not a fixed global enum.</div>
 
       <h3>Full skills catalog</h3>
       <p style="font-size:14px;color:var(--muted-txt)">Filter by role, or search names and purposes.</p>
@@ -559,7 +559,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>maxIterations</code></td><td><span class="def">3</span></td><td>Max iterations before stopping on repeated check-stage failures. Cap tripped → send the task back with <code>replan</code>.</td></tr>
             <tr><td><code>tasksDir</code></td><td><span class="def">"docs/tasks"</span></td><td>Root of the task backlog; subfolders are statuses. Also hosts the ephemeral <code>runs/</code> machine state.</td></tr>
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
-            <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>/agent-loop watch</code>. <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
+            <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>watch</code> (either kind's command). <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
             <tr><td><code>loops</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
             <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (Azure DevOps REST API, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
             <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
@@ -588,28 +588,30 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <h2>Command cheat-sheet</h2>
       <div class="two">
         <div class="card">
-          <h4 style="margin-top:0">/agent-loop-task <span style="text-transform:none;color:var(--ink-2)">— author &amp; gate</span></h4>
+          <h4 style="margin-top:0">/agentic-loop:engineering <span style="text-transform:none;color:var(--ink-2)">— the backlog lifecycle</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
-            <tr><td><code>new &lt;idea&gt;</code></td><td>Interview you into a draft (splits heavy ideas into sibling drafts).</td></tr>
+            <tr><td><code>new &lt;idea&gt;</code></td><td>Interview you into a planless draft (splits heavy ideas into sibling drafts).</td></tr>
             <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a draft in place. Draft-only.</td></tr>
-            <tr><td><code>approve &lt;id&gt;</code></td><td>Task gate → queued.</td></tr>
-            <tr><td><code>approve-plan &lt;id&gt;</code></td><td>Plan gate → in-progress.</td></tr>
-            <tr><td><code>replan &lt;id&gt; [reason]</code></td><td>Reject a parked plan → back to queued.</td></tr>
+            <tr><td><code>approve [id]</code></td><td>THE gate verb, folder-driven: draft → queued (id required) · plan-review → in-progress · in-review → completed. Id-less form advances the one task at a loop wait-gate, never a draft.</td></tr>
+            <tr><td><code>replan [id] [reason]</code></td><td>The sole rejection verb: a parked plan (or a cap-tripped task, by id) → back to queued.</td></tr>
+            <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review. Building stays with <code>claim</code>/<code>watch</code>.</td></tr>
+            <tr><td><code>claim</code></td><td>Pull &amp; drive the next engineering item (build-ready beats planless).</td></tr>
+            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
+            <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>
+            <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the loop kinds &amp; enabled state; diagnose/repair backlog damage.</td></tr>
+            <tr><td><code>stop</code> · <code>status</code></td><td>Deliberate end (drops the snapshot — nothing to recover, unlike <kbd>Esc</kbd>); loop + backlog roll-up (bare command = status).</td></tr>
           </tbody></table></div>
         </div>
         <div class="card">
-          <h4 style="margin-top:0">/agent-loop <span style="text-transform:none;color:var(--ink-2)">— drive</span></h4>
+          <h4 style="margin-top:0">/agentic-loop:pr-sitter <span style="text-transform:none;color:var(--ink-2)">— the PR sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
-            <tr><td><code>task &lt;id&gt;</code></td><td>Drive one task through its stages.</td></tr>
-            <tr><td><code>claim</code></td><td>Pull &amp; drive the next ready unit of work.</td></tr>
-            <tr><td><code>approve [id]</code> · <code>reject [id] [reason]</code></td><td>Gate shortcut — advance the one task the loop waits on (parked plan → build, or reviewed diff → ship); <code>reject</code> bounces a parked plan back. Pass <code>id</code> only to disambiguate. (Draft approval stays <code>/agent-loop-task approve</code>.)</td></tr>
-            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Poll for work / clear the watch flag (OpenCode only).</td></tr>
-            <tr><td><code>status</code></td><td>Backlog + pairing roll-up.</td></tr>
-            <tr><td><code>ship &lt;id&gt;</code></td><td>Ship gate → completed.</td></tr>
-            <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
-            <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>
-            <tr><td><code>doctor [fix]</code> · <code>stop</code></td><td>Diagnose/repair; or halt the run and drop the snapshot (deliberate end — nothing to recover, unlike an <kbd>Esc</kbd> pause).</td></tr>
+            <tr><td><code>claim</code></td><td>One-shot pull: the next actionable open PR through triage → fix → verify → publish.</td></tr>
+            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the pr-sitter kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
+            <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
+          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">The command <em>is</em> the kind — <code>claim</code>/<code>watch</code> take no kind argument. Opt in via <code>loops.pr-sitter.enabled</code> in <code>.agentic-loop.json</code>.</p>
         </div>
       </div>
     </section>
@@ -622,8 +624,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <a href="../README.md">README.md — overview</a>
     <a href="architecture.md">docs/architecture.md — internals</a>
     <a href="configuration.md">docs/configuration.md — full config</a>
-    <a href="../loops/README.md">loops/README.md — author a kind</a>
-    <a href="../claude-plugin/README.md">claude-plugin/README.md — Claude host</a>
+    <a href="../packages/core/loops/README.md">packages/core/loops/README.md — author a kind</a>
+    <a href="../plugins/claude/README.md">plugins/claude/README.md — Claude host</a>
     <a href="design/threat-model.md">design/threat-model.md — security</a>
   </div>
   <p class="fine">agentic-loop · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the engineering + pr-sitter kinds that ship today.</p>

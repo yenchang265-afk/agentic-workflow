@@ -1004,7 +1004,7 @@ server.registerTool(
   "loop_replan",
   {
     description:
-      "Deterministic /agentic-loop:engineering replan <id> [reason] (aliases redo, replan): reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
+      "Deterministic /agentic-loop:engineering replan <id> [reason] — the sole rejection verb: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
     inputSchema: { id: z.string().min(1), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {
@@ -1018,7 +1018,7 @@ server.registerTool(
   "loop_approve",
   {
     description:
-      "/agentic-loop:engineering approve [id] (aliases ok, go) — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/; drafts always need the explicit id). Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
+      "/agentic-loop:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/; drafts always need the explicit id). Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
     inputSchema: { id: z.string().optional() },
   },
   async ({ id }) => {

@@ -140,6 +140,14 @@ const setupScratchConfig = () => {
   ensureBuilt()
   const dir = mkdtempSync(path.join(tmpdir(), "agentic-loop-e2e-config-"))
   sh("./install.sh", ["opencode", "--no-config", dir], { stdio: "inherit" })
+  // A scratch config dir has no model preference, so opencode falls back to
+  // its weakest free-tier default — too weak to drive the authoring/stage
+  // protocol. Pin one via AGENTIC_LOOP_E2E_MODEL (provider/model form).
+  const model = process.env.AGENTIC_LOOP_E2E_MODEL
+  if (model) {
+    writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ model }, null, 2) + "\n")
+    log(`scratch config model pinned: ${model}`)
+  }
   return dir
 }
 
@@ -178,13 +186,25 @@ const assertPluginLoaded = async (client) => {
 }
 
 const runCommand = async (client, sessionId, repoDir, command, commandArgs) => {
-  const { data, error } = await client.session.command({
-    path: { id: sessionId },
-    query: { directory: repoDir },
-    body: { command, arguments: commandArgs },
-  })
-  if (error) throw new Error(`session.command ${command} "${commandArgs}" failed: ${JSON.stringify(error)}`)
-  return data
+  try {
+    const { data, error } = await client.session.command({
+      path: { id: sessionId },
+      query: { directory: repoDir },
+      body: { command, arguments: commandArgs },
+    })
+    if (error) throw new Error(`session.command ${command} "${commandArgs}" failed: ${JSON.stringify(error)}`)
+    return data
+  } catch (err) {
+    // A slow LLM turn can outlive fetch's ~300s body-idle timeout and drop
+    // the connection ("fetch failed") while the server keeps driving the
+    // turn. Every step's real outcome is polled from task-file state on
+    // disk, so treat a transport drop as survivable and let pollUntil rule.
+    if (err instanceof TypeError || /fetch failed|terminated|socket/i.test(String(err?.message))) {
+      log(`WARN: session.command ${command} connection dropped (${err.message}) — continuing on disk-state polling`)
+      return null
+    }
+    throw err
+  }
 }
 
 const taskPath = (repoDir, status, id) => path.join(repoDir, TASKS_DIR, status, `${id}.md`)

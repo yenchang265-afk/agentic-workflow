@@ -36,7 +36,7 @@ it can honor (today: OpenCode's `watchIntervalMinutes` — see
 ## Loop kinds (`loops`)
 
 Each key under `loops` enables and configures one loop kind (a
-`loops/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
+`packages/core/loops/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
 every other kind is opt-in with `"enabled": true`. Kind-specific knobs ride
 along in the same section and are validated by the kind itself. Enabled kinds
 are polled in claim-priority order: engineering first, then opted-in kinds in

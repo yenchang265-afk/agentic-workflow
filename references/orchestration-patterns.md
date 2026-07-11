@@ -129,7 +129,7 @@ This catalog is harness-agnostic, but most readers will run it on Claude Code. H
 
 ### Where personas live
 
-Plugin subagents go in `agents/` at the plugin root. The Claude Code plugin here lives in `claude-plugin/` (manifest at `claude-plugin/.claude-plugin/plugin.json`), so `claude-plugin/agents/loop-build.md`, `claude-plugin/agents/loop-review.md`, etc. are auto-discovered when the plugin is enabled. No path configuration needed.
+Plugin subagents go in `agents/` at the plugin root. The Claude Code plugin here lives in `plugins/claude/` (manifest at `plugins/claude/.claude-plugin/plugin.json`), so `plugins/claude/agents/loop-build.md`, `plugins/claude/agents/loop-review.md`, etc. are auto-discovered when the plugin is enabled. No path configuration needed. (Those agent files are generated from `prompts/agents/` via `npm run gen:prompts` — edit the sources, not the outputs.)
 
 ### Subagents vs. Agent Teams
 

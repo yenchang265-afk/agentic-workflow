@@ -16,7 +16,7 @@ interview, the unified folder-driven `approve` verb holds every human gate
 plan-approved ones.
 
 This folder lifecycle is the **engineering loop kind's work source** (bound
-via `loops/engineering/loop.json`). Other loop kinds don't use these folders
+via `packages/core/loops/engineering/loop.json`). Other loop kinds don't use these folders
 — e.g. `pr-sitter` keeps its state on GitHub itself plus a per-PR dedup
 ledger under `<tasksDir>/runs/pr-sitter/`. Everything below (statuses, gates,
 who moves what) is the engineering backlog, unchanged.

@@ -138,7 +138,7 @@ Dispatch:
   cadence) plus a whole-backlog roll-up: counts per folder and the actionable
   flags (awaiting approval, claimable, claim-held, interrupted, awaiting
   review). Bare `/agentic-loop:engineering` (no arguments) does the same.
-- **`kinds`** — list the loop kinds this repo ships (`loops/<kind>/`) and
+- **`kinds`** — list the loop kinds this repo ships (`packages/core/loops/<kind>/`) and
   which are enabled. Toggle them via `loops.<kind>.enabled` in
   `.agentic-loop.json`; each enabled kind has its own
   `/agentic-loop:<kind>` command.

@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: Explains the automatic agentic loop driven by the OpenCode `/agentic-loop:engineering` plugin command — declarative loop kinds under `loops/<kind>/`, with the engineering kind (plan → build → verify → review) as the default — including the authoring verbs (new, retask) and the human gates (the unified folder-driven approve, replan). Use when you need to understand how /agentic-loop:engineering plans and executes stages, how the park-at-gate plan review works, the loop_verdict contracts, how loop kinds and the scheduler work (e.g. the pr-sitter kind), or how the loop terminates.
+description: Explains the automatic agentic loop driven by the OpenCode `/agentic-loop:engineering` plugin command — declarative loop kinds under `packages/core/loops/<kind>/`, with the engineering kind (plan → build → verify → review) as the default — including the authoring verbs (new, retask) and the human gates (the unified folder-driven approve, replan). Use when you need to understand how /agentic-loop:engineering plans and executes stages, how the park-at-gate plan review works, the loop_verdict contracts, how loop kinds and the scheduler work (e.g. the pr-sitter kind), or how the loop terminates.
 ---
 
 # The agentic loop
@@ -23,9 +23,9 @@ The OpenCode plugin (`src/index.ts` → `src/loop/`) advances stages on
 `session.idle`, threading each stage's output into the next as context.
 
 The pipeline shape is **not hardcoded**. It is the **engineering loop
-kind**, declared in `loops/engineering/loop.json` (stages, transitions,
+kind**, declared in `packages/core/loops/engineering/loop.json` (stages, transitions,
 iteration cap, work source, per-stage bash allowlists) with prompt templates
-under `loops/engineering/stages/`, and interpreted by the pure engine in the
+under `packages/core/loops/engineering/stages/`, and interpreted by the pure engine in the
 shared `@agentic-loop/core` package. Other kinds — like `pr-sitter` —
 declare different pipelines over different work sources; see
 "Loop kinds and the scheduler" below. Everything else in this skill —
@@ -200,12 +200,12 @@ clones for hard isolation.
 
 ## Loop kinds and the scheduler
 
-A loop kind is declared in `loops/<kind>/loop.json`: its stages (each
+A loop kind is declared in `packages/core/loops/<kind>/loop.json`: its stages (each
 `work` — edits things — or `check` — records a verdict), a transition table
 (effects `fire` the next stage, `park` at a human gate, `done` the loop, or
 `stop` for a human), an iteration cap, a **work source** binding (where
 claimable work comes from), and per-stage bash allowlists for check stages.
-Stage prompts live in `loops/<kind>/stages/*.md`. The engine in
+Stage prompts live in `packages/core/loops/<kind>/stages/*.md`. The engine in
 `@agentic-loop/core` interprets the manifest; adding a kind means writing a
 manifest and prompts, not driver code.
 
@@ -221,7 +221,7 @@ enabled kind gets its own `/agentic-loop:<kind>` command.
 
 ### The pr-sitter kind
 
-`loops/pr-sitter/` sits on open pull requests matching a configured `gh`
+`packages/core/loops/pr-sitter/` sits on open pull requests matching a configured `gh`
 query and keeps them green until a human merges:
 
 ```

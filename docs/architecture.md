@@ -2,7 +2,7 @@
 
 Two layers. The **framework** — a shared core package, a manifest-interpreted
 loop engine, and a work-source scheduler — knows nothing about engineering
-tasks or pull requests. The **loop kinds** (`loops/<kind>/`) are declarative
+tasks or pull requests. The **loop kinds** (`packages/core/loops/<kind>/`) are declarative
 manifests plus stage prompts that the framework interprets: `engineering` is
 the reference kind (the original PLAN / BUILD → VERIFY → REVIEW workflow,
 behavior-identical to when it was hardcoded), `pr-sitter` is the second.
@@ -52,7 +52,7 @@ flowchart TB
   satisfies them with Bun's `$` and the opencode SDK client; the Claude Code
   MCP server with Node shims (`plugins/claude/mcp-server/src/shim.ts`) — its
   former `src/lib/` fork of the loop logic is gone.
-- **Manifest engine** — a loop kind is `loops/<kind>/loop.json`
+- **Manifest engine** — a loop kind is `packages/core/loops/<kind>/loop.json`
   (zod-validated: stages with `work|check` kind, agent, prompt path,
   isolation, bash allowlist; a transitions table mapping
   onDone/onPass/onFail/onError to fire/park/done/stop effects with iteration

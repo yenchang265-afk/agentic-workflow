@@ -1,6 +1,6 @@
 ---
 name: loop-orchestration
-description: The protocol for driving the agentic loop inside Claude Code — declarative loop kinds under loops/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-loop:engineering — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the loop_verdict contract, loop kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agentic-loop:engineering verbs (new, retask, the unified folder-driven approve, replan).
+description: The protocol for driving the agentic loop inside Claude Code — declarative loop kinds under packages/core/loops/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-loop:engineering — it tells the main agent the exact sequence of agentic-loop MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the loop_verdict contract, loop kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agentic-loop:engineering verbs (new, retask, the unified folder-driven approve, replan).
 ---
 
 # Driving the agentic loop (Claude Code)
@@ -13,7 +13,7 @@ task backlog, snapshots, and metrics. Follow this protocol exactly; do not inven
 your own control flow.
 
 The pipeline shape is not hardcoded: each **loop kind** is declared in
-`loops/<kind>/loop.json` (stages, transitions, iteration cap, work source,
+`packages/core/loops/<kind>/loop.json` (stages, transitions, iteration cap, work source,
 per-stage bash allowlists) and interpreted by the shared `@agentic-loop/core`
 engine. The engineering kind below is the default and behaves exactly as it
 always has; other kinds (e.g. `pr-sitter`) are enabled per `loops.<kind>`
@@ -150,7 +150,7 @@ rejects anything else.
 
 ## Loop kinds
 
-Each kind's manifest (`loops/<kind>/loop.json` + `stages/*.md` prompts)
+Each kind's manifest (`packages/core/loops/<kind>/loop.json` + `stages/*.md` prompts)
 declares its stages (`work` or `check`), transition table
 (fire/park/done/stop), iteration cap, work source, and per-stage bash
 allowlists; the MCP server loads the manifest and drives it with the same

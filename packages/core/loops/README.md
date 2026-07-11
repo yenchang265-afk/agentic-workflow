@@ -167,12 +167,15 @@ polls enabled kinds in claim-priority order — engineering's backlog first.
 1. `loops/<kind>/loop.json` + `stages/*.md` (this page + the zod schema are
    the contract; `npm test -w @agentic-loop/core` exercises manifest
    validation).
-2. Stage **agents** for both plugins: `.opencode/agents/loop-<kind>-*.md`
-   (frontmatter bash permissions mirror the manifest allowlists) and
-   `plugins/claude/agents/` (the PreToolUse guard enforces the manifest
-   allowlist via the stage marker).
+2. Stage **agents** for both plugins: author the source under
+   `prompts/agents/loop-<kind>-*/` (`body.md` + `opencode.yaml` — frontmatter
+   bash permissions mirror the manifest allowlists — + `claude.yaml`) and run
+   `npm run gen:prompts`; it renders into `plugins/opencode/agents/` and
+   `plugins/claude/agents/` (never edit those outputs — CI drift-checks them;
+   the PreToolUse guard enforces the manifest allowlist via the stage marker).
 3. OpenCode **commands** for each stage `command` that doesn't already exist
-   (`.opencode/commands/<command>.md`, thin `agent:`-frontmatter wrappers).
+   (`plugins/opencode/commands/<command>.md`, thin `agent:`-frontmatter
+   wrappers).
 4. A **work source** if neither `backlog` nor `github-pr` fits
    (`packages/core/src/source/`, implement `WorkSource`), wired into both
    hosts' `sourcesFor`.

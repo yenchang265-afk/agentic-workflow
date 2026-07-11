@@ -2,7 +2,7 @@
 
 Runs long-lived goals as supervised state machines instead of a chat
 back-and-forth. The repo is a **multi-kind loop framework**: each loop kind is
-a declarative manifest in [`loops/<kind>/`](packages/core/loops/README.md) — stages,
+a declarative manifest in [`packages/core/loops/<kind>/`](packages/core/loops/README.md) — stages,
 transitions, and a work source — interpreted by a shared engine and fed by a
 common scheduler. Ships as two parallel plugins — one for **OpenCode**, one
 for **Claude Code** ([`plugins/claude/`](plugins/claude/README.md)) — both built
@@ -19,7 +19,7 @@ Two loop kinds ship today:
   replies. Never merges.
 
 Authoring a new kind is a `loop.json` + stage prompts away — see
-[`loops/README.md`](packages/core/loops/README.md).
+[`packages/core/loops/README.md`](packages/core/loops/README.md).
 
 ## The engineering loop
 

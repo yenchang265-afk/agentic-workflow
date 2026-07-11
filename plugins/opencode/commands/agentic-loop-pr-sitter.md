@@ -18,7 +18,7 @@ Dispatch:
 - **`claim`** — one-shot pull: poll the configured PR source for the next
   actionable pull request and drive it once this turn settles
   (TRIAGE → FIX → VERIFY → PUBLISH per the pr-sitter manifest,
-  `loops/pr-sitter/`). A PR with nothing actionable is skipped.
+  `packages/core/loops/pr-sitter/`). A PR with nothing actionable is skipped.
 - **`watch [interval]`** — put **this** session into PR-sitter worker mode:
   poll for actionable PRs on every idle tick plus a timer at `interval` —
   `30s`, `5m`, `2h`, or a bare number of minutes (default: the

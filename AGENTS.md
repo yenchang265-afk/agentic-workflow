@@ -27,7 +27,7 @@ guide covers the OpenCode plugin. It provides:
    and `task-backlog-management` for driving it from
    `docs/tasks/`.
    That pipeline is the **engineering loop kind** — the default of several
-   declarative kinds under `loops/<kind>/` (manifest + stage prompts) run by
+   declarative kinds under `packages/core/loops/<kind>/` (manifest + stage prompts) run by
    the shared `@agentic-loop/core` engine. Other kinds are enabled via
    `loops.<kind>` in `.agentic-loop.json`; `pr-sitter` (agents
    `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`, plus
