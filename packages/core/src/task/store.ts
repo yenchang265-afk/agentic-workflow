@@ -135,7 +135,7 @@ export const listByStatus = async (
   client: Client,
   directory: string,
   tasksDir: string,
-  status: TaskStatus,
+  status: string, // read-side: any status folder a kind's manifest declares
   log?: Log,
 ): Promise<Task[]> => {
   const dir = `${tasksDir}/${status}`
@@ -191,7 +191,7 @@ export const findByIdIn = async (
   $: Shell,
   directory: string,
   tasksDir: string,
-  status: TaskStatus,
+  status: string, // read-side: any status folder a kind's manifest declares
   id: string,
   log?: Log,
 ): Promise<Task | null> => {
@@ -252,7 +252,7 @@ export const listClaimIds = async (
   $: Shell,
   directory: string,
   tasksDir: string,
-  status: TaskStatus = "in-progress",
+  status: string = "in-progress", // read-side: any status folder a kind's manifest declares
 ): Promise<string[]> => {
   const dir = path.join(directory, tasksDir, status, ".claims")
   const out = await $`ls -1 ${dir}`.quiet().nothrow()

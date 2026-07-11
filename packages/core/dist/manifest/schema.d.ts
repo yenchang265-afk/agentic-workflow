@@ -268,6 +268,13 @@ export interface LoadedManifest {
 }
 /** Find a stage definition by name; throws on an unknown stage (a manifest/state mismatch). */
 export declare const stageDef: (manifest: LoopManifest, name: string) => StageDef;
+/**
+ * The statuses a kind parks or lands work into for a human — every `park`/
+ * `done` effect's `toStatus` across the transition table. These are the
+ * dashboard's gate columns ("the loop wants you"): for the engineering kind
+ * this derives exactly ["plan-review", "in-review"]. Pure.
+ */
+export declare const gateStatuses: (manifest: LoopManifest) => string[];
 /** Validate a raw manifest object; throws a readable error on schema failure. */
 export declare const parseManifest: (raw: unknown) => LoopManifest;
 export {};

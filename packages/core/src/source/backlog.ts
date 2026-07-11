@@ -12,7 +12,6 @@ import {
   releaseClaim,
   selectOrder,
   STALE_CLAIM_MINUTES,
-  type TaskStatus,
 } from "../task/store.js"
 import type { ClaimSkipReason, WorkItem, WorkSource } from "./types.js"
 
@@ -130,7 +129,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       let primaryClaimable = 0
       let lastPoolCount = 0
       for (const [i, pool] of pools.entries()) {
-        const tasks = await listByStatus(client, directory, tasksDir, pool.status as TaskStatus, log)
+        const tasks = await listByStatus(client, directory, tasksDir, pool.status, log)
         const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null
         const candidates = selectOrder(predicate ? tasks.filter(predicate) : tasks)
         if (i === 0) {
@@ -161,7 +160,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
 
     async release(work) {
       const { pool, task } = work.ref as { pool: Pool; task: Task }
-      const fresh = await findByIdIn($, directory, tasksDir, pool.status as TaskStatus, task.id)
+      const fresh = await findByIdIn($, directory, tasksDir, pool.status, task.id)
       if (!fresh) return
       const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null
       // A predicate pool's claim is only ours to release while the body is

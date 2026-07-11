@@ -85,7 +85,8 @@ export const pairingCoverage = (byStatus) => {
  * skipped (logged) rather than failing the whole pick. Returns `[]` when the
  * folder is absent.
  */
-export const listByStatus = async (client, directory, tasksDir, status, log) => {
+export const listByStatus = async (client, directory, tasksDir, status, // read-side: any status folder a kind's manifest declares
+log) => {
     const dir = `${tasksDir}/${status}`;
     let nodes;
     try {
@@ -133,7 +134,8 @@ export const listInProgress = (client, directory, tasksDir, log) => listByStatus
  * unknown ids via `listByStatus` and tolerates lag by retrying each tick — so one
  * `cat` per call is free.
  */
-export const findByIdIn = async ($, directory, tasksDir, status, id, log) => {
+export const findByIdIn = async ($, directory, tasksDir, status, // read-side: any status folder a kind's manifest declares
+id, log) => {
     const filename = `${id}.md`;
     const file = path.join(directory, tasksDir, status, filename);
     const out = await $ `cat ${file}`.quiet().nothrow();

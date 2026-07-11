@@ -81,7 +81,8 @@ export declare const pairingCoverage: (byStatus: Readonly<Record<TaskStatus, rea
  * skipped (logged) rather than failing the whole pick. Returns `[]` when the
  * folder is absent.
  */
-export declare const listByStatus: (client: Client, directory: string, tasksDir: string, status: TaskStatus, log?: Log) => Promise<Task[]>;
+export declare const listByStatus: (client: Client, directory: string, tasksDir: string, status: string, // read-side: any status folder a kind's manifest declares
+log?: Log) => Promise<Task[]>;
 /** List and parse every task in `queued/` — approved, awaiting the loop's PLAN stage. */
 export declare const listQueued: (client: Client, directory: string, tasksDir: string, log?: Log) => Promise<Task[]>;
 /** List and parse every task in `in-progress/` — the pool `/agentic-loop:engineering watch` claims from. */
@@ -103,7 +104,8 @@ export declare const listInProgress: (client: Client, directory: string, tasksDi
  * unknown ids via `listByStatus` and tolerates lag by retrying each tick — so one
  * `cat` per call is free.
  */
-export declare const findByIdIn: ($: Shell, directory: string, tasksDir: string, status: TaskStatus, id: string, log?: Log) => Promise<Task | null>;
+export declare const findByIdIn: ($: Shell, directory: string, tasksDir: string, status: string, // read-side: any status folder a kind's manifest declares
+id: string, log?: Log) => Promise<Task | null>;
 /**
  * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
  * the marker either succeeds — claim won — or fails because another watcher
@@ -128,7 +130,7 @@ export declare const STALE_CLAIM_MINUTES = 15;
  */
 export declare const claimOlderThan: ($: Shell, task: FileRef, minutes: number) => Promise<boolean>;
 /** Ids currently holding a claim marker in a status folder's `.claims/`. `[]` when absent. */
-export declare const listClaimIds: ($: Shell, directory: string, tasksDir: string, status?: TaskStatus) => Promise<string[]>;
+export declare const listClaimIds: ($: Shell, directory: string, tasksDir: string, status?: string) => Promise<string[]>;
 /**
  * An orphaned claim: the task body never recorded a BUILD (still claimable),
  * no live loop is driving it, and the marker has aged past the crash window.

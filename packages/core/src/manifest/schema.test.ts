@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
 import { test } from "node:test"
-import { effectiveAllowlist, parseManifest } from "./schema.js"
+import { effectiveAllowlist, gateStatuses, parseManifest } from "./schema.js"
 
 const base = {
   kind: "k",
@@ -99,4 +101,28 @@ test("rejects an empty glob inside platformAllowlist", () => {
       }),
     /platformAllowlist/,
   )
+})
+
+test("gateStatuses collects park/done toStatus targets across transitions", () => {
+  const m = parseManifest({
+    ...base,
+    transitions: {
+      work: { onDone: { kind: "park", toStatus: "waiting-review", message: "parked" } },
+      check: {
+        onPass: { kind: "done", toStatus: "done", message: "done" },
+        onFail: { kind: "fire", stage: "work", countIteration: true, capMessage: "capped at {maxIterations}" },
+        onError: { kind: "stop", message: "stopped" },
+      },
+    },
+  })
+  assert.deepEqual(gateStatuses(m).sort(), ["done", "waiting-review"])
+})
+
+test("gateStatuses is empty when no effect targets a status", () => {
+  assert.deepEqual(gateStatuses(parseManifest(base)), [])
+})
+
+test("gateStatuses derives the engineering kind's gates from its shipped manifest", () => {
+  const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "loops", "engineering", "loop.json"), "utf8"))
+  assert.deepEqual(gateStatuses(parseManifest(raw)).sort(), ["in-review", "plan-review"])
 })
