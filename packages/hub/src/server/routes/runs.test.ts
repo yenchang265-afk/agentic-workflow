@@ -47,7 +47,8 @@ const makeFixture = (): string => {
 const depsFor = (directory: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
-  boards: [],
+  // A github-pr kind so getActive scans its runs/<kind>/ ledger dir.
+  boards: [{ kind: "pr-sitter", description: "pr sitter", sourceType: "github-pr", statuses: [], gateStatuses: [], pools: [] }],
   loopsDir: path.join(directory, "loops-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",

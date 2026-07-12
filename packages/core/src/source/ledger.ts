@@ -3,8 +3,9 @@ import { z } from "zod"
 import type { Client, Shell } from "../host.js"
 
 /**
- * The PR sitter's dedup ledger: one JSON file per PR under
- * `<tasksDir>/runs/pr-sitter/pr-<n>.json`, recording what the sitter has
+ * A PR-shaped kind's dedup ledger: one JSON file per PR under
+ * `<tasksDir>/runs/<kind>/pr-<n>.json` (keyed by kind so a second PR-shaped loop
+ * kind never collides), recording what the sitter has
  * already handled so it never reacts to its own pushes or replies, never
  * retries a failed attempt on the same head, and never re-answers old
  * comments. Like snapshots, ledgers are ephemeral machine state (gitignored
@@ -28,18 +29,23 @@ export type PrLedger = z.infer<typeof LedgerSchema>
 
 export const emptyLedger = (pr: number, now: string): PrLedger => ({ pr, failedAttempts: [], updatedAt: now })
 
-export const ledgerPath = (directory: string, tasksDir: string, pr: number): string =>
-  path.join(directory, tasksDir, "runs", "pr-sitter", `pr-${pr}.json`)
+/** Where a kind's per-PR ledgers live: `<tasksDir>/runs/<kind>/`. Keyed by kind so
+ *  a second PR-shaped loop kind never collides with the pr-sitter's ledgers. */
+export const ledgerDir = (kind: string): string => `runs/${kind}`
+
+export const ledgerPath = (directory: string, tasksDir: string, kind: string, pr: number): string =>
+  path.join(directory, tasksDir, ledgerDir(kind), `pr-${pr}.json`)
 
 /** Load a PR's ledger; a missing/garbled file reads as an empty ledger. */
 export const loadLedger = async (
   client: Client,
   directory: string,
   tasksDir: string,
+  kind: string,
   pr: number,
   now: string,
 ): Promise<PrLedger> => {
-  const rel = `${tasksDir}/runs/pr-sitter/pr-${pr}.json`
+  const rel = `${tasksDir}/${ledgerDir(kind)}/pr-${pr}.json`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
   const content = read?.data?.content
   if (!content) return emptyLedger(pr, now)
@@ -52,10 +58,10 @@ export const loadLedger = async (
 }
 
 /** Write a PR's ledger. Best-effort — dedup failure must never fail a drive. */
-export const saveLedger = async ($: Shell, directory: string, tasksDir: string, ledger: PrLedger): Promise<void> => {
-  const dir = path.join(directory, tasksDir, "runs", "pr-sitter")
+export const saveLedger = async ($: Shell, directory: string, tasksDir: string, kind: string, ledger: PrLedger): Promise<void> => {
+  const dir = path.join(directory, tasksDir, ledgerDir(kind))
   await $`mkdir -p ${dir}`.quiet().nothrow()
-  const file = ledgerPath(directory, tasksDir, ledger.pr)
+  const file = ledgerPath(directory, tasksDir, kind, ledger.pr)
   await $`printf '%s' ${JSON.stringify(ledger, null, 2)} > ${file}`.quiet().nothrow()
 }
 

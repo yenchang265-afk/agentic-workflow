@@ -71,10 +71,11 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
     return viewerLogin
   }
 
-  const markers = makeClaimMarkers($, directory, tasksDir)
+  const kind = loaded.manifest.kind
+  const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
   return {
-    loopKind: loaded.manifest.kind,
+    loopKind: kind,
 
     async claimNext() {
       const fields =
@@ -103,7 +104,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
       for (const pr of prs.sort((a, b) => a.number - b.number)) {
         if (pr.isDraft) continue
         if (pr.isCrossRepository) continue // fork PRs: can't push the head branch — a human's PR to sit on later
-        const ledger = await loadLedger(client, directory, tasksDir, pr.number, now())
+        const ledger = await loadLedger(client, directory, tasksDir, kind, pr.number, now())
         const watermark = ledger.lastCommentAtHandled ?? ""
         const snapshot: PrSnapshot = {
           number: pr.number,
@@ -153,7 +154,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
 
     async onTerminal(work, outcome: TerminalOutcome) {
       const { snapshot, triggers } = work.ref as { snapshot: PrSnapshot; triggers: PrTrigger[] }
-      const ledger = await loadLedger(client, directory, tasksDir, snapshot.number, now())
+      const ledger = await loadLedger(client, directory, tasksDir, kind, snapshot.number, now())
       // Re-read the PR head: after a publish it is the sitter's own push, and
       // recording it as handled is exactly what prevents self-triggering.
       const fresh = await $`gh pr view ${String(snapshot.number)} --json headRefOid,comments`
@@ -177,7 +178,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
         }
       }
       const updated = terminalLedgerUpdate(ledger, outcome, triggers, snapshot.headRefOid, head, lastCommentAt, now())
-      await saveLedger($, directory, tasksDir, updated)
+      await saveLedger($, directory, tasksDir, kind, updated)
       await markers.release(snapshot.number)
     },
   }

@@ -54,27 +54,33 @@ const readLease = async (deps: HubDeps, now: Date): Promise<LeaseView | null> =>
 }
 
 const readPrLedgers = async (deps: HubDeps): Promise<PrLedgerView[]> => {
-  const listed = await deps.client.file
-    .list({ query: { path: `${deps.tasksDir}/runs/pr-sitter`, directory: deps.directory } })
-    .catch(() => null)
-  const files = (listed?.data ?? []).filter((n) => n.type === "file" && n.name.endsWith(".json"))
+  // Each PR-shaped kind keeps its ledgers under `runs/<kind>/` (core's ledgerDir);
+  // scan every enabled github-pr kind, not just the literal pr-sitter, so a second
+  // PR kind's ledgers surface too.
+  const prKinds = deps.boards.filter((b) => b.sourceType === "github-pr").map((b) => b.kind)
   const ledgers: PrLedgerView[] = []
-  for (const file of files) {
-    const read = await deps.client.file.read({ query: { path: file.path, directory: deps.directory } }).catch(() => null)
-    const content = read?.data?.content
-    if (!content) continue
-    try {
-      const parsed = LedgerSchema.safeParse(JSON.parse(content))
-      if (!parsed.success) continue
-      const l = parsed.data
-      ledgers.push({
-        pr: l.pr,
-        ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
-        ...(l.headShaHandled ? { headShaHandled: l.headShaHandled } : {}),
-        failedAttempts: l.failedAttempts.length,
-      })
-    } catch {
-      // unparseable ledger — skip
+  for (const kind of prKinds) {
+    const listed = await deps.client.file
+      .list({ query: { path: `${deps.tasksDir}/runs/${kind}`, directory: deps.directory } })
+      .catch(() => null)
+    const files = (listed?.data ?? []).filter((n) => n.type === "file" && n.name.endsWith(".json"))
+    for (const file of files) {
+      const read = await deps.client.file.read({ query: { path: file.path, directory: deps.directory } }).catch(() => null)
+      const content = read?.data?.content
+      if (!content) continue
+      try {
+        const parsed = LedgerSchema.safeParse(JSON.parse(content))
+        if (!parsed.success) continue
+        const l = parsed.data
+        ledgers.push({
+          pr: l.pr,
+          ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
+          ...(l.headShaHandled ? { headShaHandled: l.headShaHandled } : {}),
+          failedAttempts: l.failedAttempts.length,
+        })
+      } catch {
+        // unparseable ledger — skip
+      }
     }
   }
   ledgers.sort((a, b) => a.pr - b.pr)
