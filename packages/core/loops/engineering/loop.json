@@ -4,10 +4,25 @@
   "description": "The engineering workflow: PLAN (park at the human plan gate) then BUILD → VERIFY → REVIEW over the docs/tasks backlog.",
   "workSource": {
     "type": "backlog",
-    "statuses": ["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"],
+    "statuses": [
+      "draft",
+      "queued",
+      "plan-review",
+      "in-progress",
+      "in-review",
+      "completed",
+      "abandoned"
+    ],
     "pools": [
-      { "status": "in-progress", "entryStage": "build", "claimPredicate": "engineering.isClaimable" },
-      { "status": "queued", "entryStage": "plan" }
+      {
+        "status": "in-progress",
+        "entryStage": "build",
+        "claimPredicate": "engineering.isClaimable"
+      },
+      {
+        "status": "queued",
+        "entryStage": "plan"
+      }
     ]
   },
   "stages": [
@@ -35,16 +50,94 @@
       "prompt": "stages/verify.md",
       "isolation": "worktree",
       "bashAllowlist": [
-        "git status*", "git diff*", "git log*", "git show*",
-        "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*",
-        "ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *",
-        "npm test*", "npm run *", "pnpm test*", "pnpm run *", "yarn test*", "yarn run *",
-        "bun test*", "node --test*", "npx tsc*", "npx vitest*", "npx jest*", "npx eslint*",
-        "pytest*", "go test*", "cargo test*", "make test*", "make check*",
-        "cd * && npm test*", "cd * && npm run *", "cd * && pnpm test*", "cd * && pnpm run *",
-        "cd * && yarn test*", "cd * && yarn run *", "cd * && bun test*", "cd * && node --test*",
-        "cd * && npx tsc*", "cd * && npx vitest*", "cd * && npx jest*", "cd * && npx eslint*",
-        "cd * && pytest*", "cd * && go test*", "cd * && cargo test*", "cd * && make test*", "cd * && make check*"
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "find *",
+        "wc *",
+        "npm test*",
+        "npm run *",
+        "pnpm test*",
+        "pnpm run *",
+        "yarn test*",
+        "yarn run *",
+        "bun test*",
+        "node --test*",
+        "npx tsc*",
+        "npx vitest*",
+        "npx jest*",
+        "npx eslint*",
+        "pytest*",
+        "go test*",
+        "cargo test*",
+        "make test*",
+        "make check*",
+        "npm ci*",
+        "npm install*",
+        "npm audit*",
+        "npm ls*",
+        "npm outdated*",
+        "osv-scanner *",
+        "mvn test*",
+        "mvn verify*",
+        "mvn dependency:tree*",
+        "./mvnw test*",
+        "./mvnw verify*",
+        "./mvnw dependency:tree*",
+        "gradle test*",
+        "gradle check*",
+        "gradle build*",
+        "gradle dependencyInsight*",
+        "./gradlew test*",
+        "./gradlew check*",
+        "./gradlew build*",
+        "./gradlew dependencyInsight*",
+        "cd * && npm test*",
+        "cd * && npm run *",
+        "cd * && pnpm test*",
+        "cd * && pnpm run *",
+        "cd * && yarn test*",
+        "cd * && yarn run *",
+        "cd * && bun test*",
+        "cd * && node --test*",
+        "cd * && npx tsc*",
+        "cd * && npx vitest*",
+        "cd * && npx jest*",
+        "cd * && npx eslint*",
+        "cd * && pytest*",
+        "cd * && go test*",
+        "cd * && cargo test*",
+        "cd * && make test*",
+        "cd * && make check*",
+        "cd * && npm ci*",
+        "cd * && npm install*",
+        "cd * && npm audit*",
+        "cd * && npm ls*",
+        "cd * && osv-scanner *",
+        "cd * && mvn test*",
+        "cd * && mvn verify*",
+        "cd * && mvn dependency:tree*",
+        "cd * && ./mvnw test*",
+        "cd * && ./mvnw verify*",
+        "cd * && ./mvnw dependency:tree*",
+        "cd * && gradle test*",
+        "cd * && gradle check*",
+        "cd * && gradle build*",
+        "cd * && gradle dependencyInsight*",
+        "cd * && ./gradlew test*",
+        "cd * && ./gradlew check*",
+        "cd * && ./gradlew build*",
+        "cd * && ./gradlew dependencyInsight*"
       ]
     },
     {
@@ -55,9 +148,23 @@
       "prompt": "stages/review.md",
       "isolation": "worktree",
       "bashAllowlist": [
-        "git status*", "git diff*", "git log*", "git show*", "git blame*",
-        "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*", "git -C * blame*",
-        "ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *"
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git blame*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "git -C * blame*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "find *",
+        "wc *"
       ]
     }
   ],
@@ -70,15 +177,23 @@
       }
     },
     "build": {
-      "onDone": { "kind": "fire", "stage": "verify" }
+      "onDone": {
+        "kind": "fire",
+        "stage": "verify"
+      }
     },
     "verify": {
-      "onPass": { "kind": "fire", "stage": "review" },
+      "onPass": {
+        "kind": "fire",
+        "stage": "review"
+      },
       "onFail": {
         "kind": "fire",
         "stage": "build",
         "countIteration": true,
-        "dropArtifacts": ["review"],
+        "dropArtifacts": [
+          "review"
+        ],
         "capMessage": "✗ Loop stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-loop:engineering replan <id>."
       },
       "onError": {
@@ -96,7 +211,9 @@
         "kind": "fire",
         "stage": "build",
         "countIteration": true,
-        "dropArtifacts": ["verify"],
+        "dropArtifacts": [
+          "verify"
+        ],
         "capMessage": "✗ Loop stopped — review failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-loop:engineering replan <id>."
       },
       "onError": {
@@ -107,6 +224,8 @@
   },
   "hooks": {
     "compose": {},
-    "validateBeforeTransition": { "plan": "engineering.planLandedOnDisk" }
+    "validateBeforeTransition": {
+      "plan": "engineering.planLandedOnDisk"
+    }
   }
 }

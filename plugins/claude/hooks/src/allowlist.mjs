@@ -125,3 +125,37 @@ export const isGithubPrMutation = (cmd) => {
   }
   return false
 }
+
+// A Bash command that calls the Azure DevOps REST API (curl against an ADO host).
+export const isAdoCurl = (cmd) => /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd)
+
+// The effective HTTP method of a curl: an explicit -X/--request wins, else a body
+// flag (-d/--data*/-F/--form) implies POST, else GET.
+export const curlMethod = (cmd) => {
+  const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd)
+  if (explicit) return explicit[1].toUpperCase()
+  return /(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b/.test(cmd) ? "POST" : "GET"
+}
+
+/**
+ * A curl against Azure DevOps that mutates state beyond what the sitter family is
+ * allowed: a thread-comment reply (POST to a `/threads` resource — pr-sitter,
+ * review-sitter, main-sitter's culprit-PR note) and creating a brand-new pull
+ * request (POST to `.../pullrequests` with no id segment after it — dep-sitter's
+ * and main-sitter's publish stage; ADO drafts a PR the same way it drafts any
+ * other, `isDraft: true` in the body, not a separate verb). Everything else —
+ * PATCH/PUT/DELETE (completing, abandoning, voting, editing), or a POST to any
+ * OTHER pull-request sub-resource (`.../pullrequests/<id>/reviewers`, `.../<id>`
+ * itself) — is a mutation the loop must never make (threat-model T8/T12/T13).
+ * The `(?![a-zA-Z0-9\/])` lookahead is what tells "create" (`/pullrequests?…` or
+ * `/pullrequests"` at the end of the URL) apart from "act on an existing one"
+ * (`/pullrequests/<id>...`) — a sub-path starts with `/`, an id segment with an
+ * alphanumeric; either one disqualifies the "bare collection" reading.
+ */
+export const isAdoWriteBackstopViolation = (cmd) => {
+  if (!isAdoCurl(cmd)) return false
+  const method = curlMethod(cmd)
+  const targetsThread = /\/threads(?:\/|\?|\b)/i.test(cmd)
+  const createsNewPr = /\/pullrequests(?![a-zA-Z0-9/])/i.test(cmd)
+  return !(method === "GET" || (method === "POST" && (targetsThread || createsNewPr)))
+}

@@ -48,7 +48,10 @@ const depsFor = (directory: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
   // A github-pr kind so getActive scans its runs/<kind>/ ledger dir.
-  boards: [{ kind: "pr-sitter", description: "pr sitter", sourceType: "github-pr", statuses: [], gateStatuses: [], pools: [] }],
+  boards: [
+    { kind: "pr-sitter", description: "pr sitter", sourceType: "github-pr", statuses: [], gateStatuses: [], pools: [] },
+    { kind: "review-sitter", description: "review sitter", sourceType: "github-pr", statuses: [], gateStatuses: [], pools: [] },
+  ],
   loopsDir: path.join(directory, "loops-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",
@@ -115,10 +118,20 @@ test("getActive reports stage marker, snapshots and ledgers when present, nulls 
     path.join(runs, "pr-sitter", "pr-7.json"),
     JSON.stringify({ pr: 7, updatedAt: "2026-07-06T00:00:00.000Z", failedAttempts: [{}, {}] }),
   )
+  // Ledgers are namespaced per kind — a second PR-shaped kind's ledgers are
+  // read from its own runs/ subdirectory and stamped with that kind.
+  fs.mkdirSync(path.join(runs, "review-sitter"))
+  fs.writeFileSync(
+    path.join(runs, "review-sitter", "pr-9.json"),
+    JSON.stringify({ pr: 9, headShaHandled: "sha-9", failedAttempts: [] }),
+  )
   const full = (await getActive(deps)).body as ActiveResponse
   assert.equal(full.stage?.stage, "build")
   assert.equal(full.stage?.taskId, "fix-bar")
-  assert.deepEqual(full.prLedgers, [{ pr: 7, updatedAt: "2026-07-06T00:00:00.000Z", failedAttempts: 2 }])
+  assert.deepEqual(full.prLedgers, [
+    { pr: 7, kind: "pr-sitter", updatedAt: "2026-07-06T00:00:00.000Z", failedAttempts: 2 },
+    { pr: 9, kind: "review-sitter", headShaHandled: "sha-9", failedAttempts: 0 },
+  ])
   fs.rmSync(dir, { recursive: true, force: true })
 })
 

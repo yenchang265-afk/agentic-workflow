@@ -2,8 +2,11 @@ import type { Client, Log, Shell } from "../host.js"
 import { enabledLoopKinds, platformFor } from "../config.js"
 import { loadManifest } from "../manifest/load.js"
 import type { LoadedManifest } from "../manifest/schema.js"
+import { makeAdoCiRunsSource } from "../source/ado-ci-runs.js"
 import { makeAdoPrSource } from "../source/ado-pr.js"
 import { makeBacklogSource } from "../source/backlog.js"
+import { makeCiRunsSource } from "../source/ci-runs.js"
+import { makeDependencyScanSource } from "../source/dependency-scan.js"
 import { makeGithubPrSource } from "../source/github-pr.js"
 import type { WorkSource } from "../source/types.js"
 import type { Task } from "../task/schema.js"
@@ -108,6 +111,30 @@ export const buildWorkSources = (
         }
         const query = config.loops[kind]?.["query"]
         return [makeGithubPrSource({ ...base, ...(typeof query === "string" ? { query } : {}) })]
+      }
+      if (loaded.manifest.workSource.type === "dependency-scan") {
+        // Platform-agnostic (npm reports don't care which forge the repo lives
+        // on) — only the publish stage's PR-creation call differs, driven by
+        // the platform stamp on entry state.
+        const knobs: Record<string, unknown> = config.loops[kind] ?? {}
+        return [
+          makeDependencyScanSource({
+            ...base,
+            platform: platformFor(config, kind),
+            ...(typeof knobs["severityFloor"] === "string" ? { severityFloor: knobs["severityFloor"] } : {}),
+            ...(typeof knobs["includeOutdated"] === "boolean" ? { includeOutdated: knobs["includeOutdated"] } : {}),
+            ...(typeof knobs["ecosystem"] === "string" ? { ecosystem: knobs["ecosystem"] } : {}),
+          }),
+        ]
+      }
+      if (loaded.manifest.workSource.type === "ci-runs") {
+        const knobs: Record<string, unknown> = config.loops[kind] ?? {}
+        const branchOverride = typeof knobs["branch"] === "string" ? { branch: knobs["branch"] } : {}
+        if (platformFor(config, kind) === "ado") {
+          // Config parse fails fast when platform "ado" lacks the ado section.
+          return [makeAdoCiRunsSource({ ...base, ado: config.ado!, ...branchOverride })]
+        }
+        return [makeCiRunsSource({ ...base, ...branchOverride })]
       }
       return [makeBacklogSource({ ...base, isDriving: deps.isDriving })]
     })

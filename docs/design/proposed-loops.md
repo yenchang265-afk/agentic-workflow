@@ -46,12 +46,12 @@ Authority levels used below, in increasing order of blast radius:
 |------|----------|-------------|-----------|------|
 | [debt-groomer](#debt-groomer) | Code health | `backlog` (reused) | backlog-write | S |
 | [backlog-groomer](#backlog-groomer) | Collaboration | `backlog` (reused) | backlog-write | S |
-| [review-sitter](#review-sitter) | Collaboration | `github-pr` (+ `review-requested` trigger) | comment | S/M |
+| [review-sitter](#review-sitter) **(shipped)** | Collaboration | `github-pr` (+ `review-requested` trigger) | comment | S/M |
 | [coverage-filler](#coverage-filler) | Code health | `backlog` (reused, own pool) | push | S/M |
 | [issue-triager](#issue-triager) | Collaboration | new `github-issue` | backlog-write, comment | M |
-| [dep-sitter](#dep-sitter) | Code health | new `dependency-scan` | push, external-read | M |
+| [dep-sitter](#dep-sitter) **(shipped)** | Code health | new `dependency-scan` | push, external-read | M |
 | [release-gardener](#release-gardener) | CI/CD & release | new `merge-window` | push | M |
-| [main-sitter](#main-sitter) | CI/CD & release | new `ci-runs` | push, comment | M/L |
+| [main-sitter](#main-sitter) **(shipped)** | CI/CD & release | new `ci-runs` | push, comment | M/L |
 | [digest-reporter](#digest-reporter) | Ops & reporting | new `cron` | backlog-write (+ optional external-write) | S/M |
 | [alert-triager](#alert-triager) | Ops & reporting | new `alert-feed` | backlog-write, external-read (+ optional push) | L |
 
@@ -95,6 +95,18 @@ backlog as reviewable task files. Never edits code.
 - **Cost**: **S**.
 
 ### dep-sitter
+
+> **Status: SHIPPED** — `packages/core/loops/dep-sitter/`. v1 deltas from
+> the sketch below: majors are *skipped and logged* rather than parked (the
+> `dependency-scan` source claims only patch/minor fixes whose target
+> version the report pins — no `validateBeforeTransition` hook needed);
+> `maxIterations` is 2. Supports both GitHub (`gh pr create`) and Azure
+> DevOps (the publish stage opens the draft PR via the REST API) — the
+> dependency scan itself is platform-agnostic. Ecosystems: **npm** (native
+> `npm audit`), **Maven and Gradle** via OSV-Scanner (`ecosystem` binding,
+> default `auto` — detect and merge; Gradle needs a committed lockfile;
+> undeclared/transitive JVM packages are never claimed). See threat model
+> T12.
 
 Sits on outdated and vulnerable dependencies: upgrades them on a branch,
 verifies, and opens a draft PR. Patch/minor CVE fixes flow straight to a
@@ -215,6 +227,14 @@ from "someone filed a bug" to "the engineering loop can claim it."
 
 ### review-sitter
 
+> **Status: SHIPPED** — `packages/core/loops/review-sitter/`. v1 deltas from
+> the sketch below: the middle work stage is named `assess` (not `review` —
+> the OpenCode driver special-cases a stage named `review` for lens fan-out);
+> there is no `maxDiffLines` knob — the fetch stage FAILs (→ done) on
+> unreviewably-large diffs instead; a re-request without a new push does not
+> re-fire (dedup rides the head SHA); fork and draft PRs stay skipped
+> (threat model T10/T11).
+
 The mirror image of pr-sitter: sits on PRs where **your review is
 requested**, reads the diff against the codebase, and posts one structured
 review comment. Never approves, never requests changes, never merges.
@@ -288,6 +308,16 @@ has drifted past.
 ## CI/CD & release
 
 ### main-sitter
+
+> **Status: SHIPPED** — `packages/core/loops/main-sitter/`. v1 deltas from
+> the sketch below: the `ci-runs` source judges only the branch's *newest*
+> head (older red heads are moot once a newer push exists; a green re-run
+> retires the item naturally) and never claims a head with runs still in
+> flight; the remedy branch is `main-sitter/<sha>` and the push allowlist is
+> scoped to it, so the watched branch is structurally unpushable. Supports
+> both GitHub (`gh run list`) and Azure DevOps (the Pipelines Build REST
+> API, `ado-ci-runs.ts`, sharing its ledger/WorkItem mechanics with the
+> GitHub source). See threat model T13.
 
 Sits on the default branch's CI. When main goes red after a merge, it
 bisects to the breaking change, then proposes either a fix or a revert — as
@@ -465,11 +495,12 @@ Cheapest-first, each wave reusing what the previous one built:
 
 1. **No new source, no new authority** — [debt-groomer](#debt-groomer),
    [backlog-groomer](#backlog-groomer),
-   [review-sitter](#review-sitter): manifests, stage prompts, and agents
-   only. These prove the catalog format against the engine as it stands.
+   [review-sitter](#review-sitter) *(shipped)*: manifests, stage prompts, and
+   agents only. These prove the catalog format against the engine as it
+   stands.
 2. **One new source each** — [issue-triager](#issue-triager)
-   (`github-issue`), [dep-sitter](#dep-sitter) (`dependency-scan`),
-   [main-sitter](#main-sitter) (`ci-runs`),
+   (`github-issue`), [dep-sitter](#dep-sitter) (`dependency-scan`,
+   *shipped*), [main-sitter](#main-sitter) (`ci-runs`, *shipped*),
    [release-gardener](#release-gardener) (`merge-window`), plus
    [coverage-filler](#coverage-filler) riding the backlog. Each source
    follows the `WorkSource` contract and the pr-sitter ledger pattern.

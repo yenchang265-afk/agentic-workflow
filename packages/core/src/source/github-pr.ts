@@ -13,7 +13,7 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
  *
  * Everything goes through `gh` on the core `Shell` (mockable in tests).
  * GitHub has no atomic claim, so claims use the same local `mkdir` markers as
- * the backlog (`<tasksDir>/runs/pr-sitter/.claims/pr-<n>`) — atomic across
+ * the backlog (`<tasksDir>/runs/<kind>/.claims/pr-<n>`) — atomic across
  * watchers on this filesystem. The PR's existing branch is fetched into a
  * local ref at claim time so the standard isolation path reuses it (same-repo
  * branches only; fork PRs are skipped). The sitter NEVER merges.
@@ -60,6 +60,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
   if (binding.type !== "github-pr") {
     throw new Error(`loop kind "${loaded.manifest.kind}" does not use a github-pr work source`)
   }
+  const kind = loaded.manifest.kind
   const query = deps.query ?? binding.query
   const now = deps.now ?? (() => new Date().toISOString())
   let viewerLogin: string | null = null
@@ -71,7 +72,6 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
     return viewerLogin
   }
 
-  const kind = loaded.manifest.kind
   const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
   return {
@@ -85,7 +85,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
         return {
           item: null,
           skip: {
-            message: `pr-sitter: gh pr list failed — ${out.stderr.toString().trim() || "is gh authenticated?"}`,
+            message: `${kind}: gh pr list failed — ${out.stderr.toString().trim() || "is gh authenticated?"}`,
             actionable: true,
           } satisfies ClaimSkipReason,
         }
@@ -96,14 +96,17 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
       } catch (err) {
         return {
           item: null,
-          skip: { message: `pr-sitter: could not parse gh output — ${(err as Error).message}`, actionable: true },
+          skip: { message: `${kind}: could not parse gh output — ${(err as Error).message}`, actionable: true },
         }
       }
       const login = await viewer()
       const heldIds: string[] = []
       for (const pr of prs.sort((a, b) => a.number - b.number)) {
         if (pr.isDraft) continue
-        if (pr.isCrossRepository) continue // fork PRs: can't push the head branch — a human's PR to sit on later
+        // Fork PRs are skipped for every role: an author-role kind can't push the
+        // head branch, and a reviewer-role kind would execute untrusted fork code
+        // in its assess worktree (threat model T10).
+        if (pr.isCrossRepository) continue
         const ledger = await loadLedger(client, directory, tasksDir, kind, pr.number, now())
         const watermark = ledger.lastCommentAtHandled ?? ""
         const snapshot: PrSnapshot = {
@@ -129,7 +132,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
           continue
         }
         if (!(await fetchHead($, directory, pr.headRefName))) {
-          await log("warn", `pr-sitter: could not fetch ${pr.headRefName} for PR #${pr.number} — skipping`)
+          await log("warn", `${kind}: could not fetch ${pr.headRefName} for PR #${pr.number} — skipping`)
           await markers.release(pr.number)
           continue
         }
@@ -138,12 +141,12 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
       if (heldIds.length) {
         return {
           item: null,
-          skip: { message: `pr-sitter: claim marker held for ${heldIds.join(", ")}`, actionable: true },
+          skip: { message: `${kind}: claim marker held for ${heldIds.join(", ")}`, actionable: true },
         }
       }
       return {
         item: null,
-        skip: { message: `pr-sitter: no PRs need attention (${prs.length} matched the query)`, actionable: false },
+        skip: { message: `${kind}: no PRs need attention (${prs.length} matched the query)`, actionable: false },
       }
     },
 

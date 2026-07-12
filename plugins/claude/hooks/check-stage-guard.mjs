@@ -175,17 +175,6 @@ var isGithubPrMutation = (cmd) => {
   }
   return false;
 };
-
-// plugins/claude/hooks/src/check-stage-guard.entry.mjs
-var read = () => new Promise((resolve) => {
-  let s = "";
-  process.stdin.on("data", (c) => s += c).on("end", () => resolve(s));
-});
-var allow = () => process.exit(0);
-var block2 = (reason) => {
-  process.stderr.write(reason + "\n");
-  process.exit(2);
-};
 var isAdoCurl = (cmd) => /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd);
 var curlMethod = (cmd) => {
   const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd);
@@ -196,7 +185,19 @@ var isAdoWriteBackstopViolation = (cmd) => {
   if (!isAdoCurl(cmd)) return false;
   const method = curlMethod(cmd);
   const targetsThread = /\/threads(?:\/|\?|\b)/i.test(cmd);
-  return !(method === "GET" || method === "POST" && targetsThread);
+  const createsNewPr = /\/pullrequests(?![a-zA-Z0-9/])/i.test(cmd);
+  return !(method === "GET" || method === "POST" && (targetsThread || createsNewPr));
+};
+
+// plugins/claude/hooks/src/check-stage-guard.entry.mjs
+var read = () => new Promise((resolve) => {
+  let s = "";
+  process.stdin.on("data", (c) => s += c).on("end", () => resolve(s));
+});
+var allow = () => process.exit(0);
+var block2 = (reason) => {
+  process.stderr.write(reason + "\n");
+  process.exit(2);
 };
 var readTasksDir = (cwd) => {
   try {
@@ -227,7 +228,7 @@ var main = async () => {
   const ti = input.tool_input || {};
   if (tool === "Bash" && isAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block2(
-      `agentic-loop: the PR sitter must never mutate a pull request \u2014 this Azure DevOps REST call is blocked. Only GET reads and thread-comment replies (POST to a /threads resource) are permitted; merging, completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`
+      `agentic-loop: the loop must never mutate an existing pull request \u2014 this Azure DevOps REST call is blocked. Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR (POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`
     );
   }
   const planTaskId = marker && marker.stage === "plan" && typeof marker.taskId === "string" ? marker.taskId : null;

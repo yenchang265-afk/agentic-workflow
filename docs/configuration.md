@@ -79,7 +79,10 @@ config order.
     "pr-sitter": {
       "enabled": true,
       "query": "is:open author:@me"
-    }
+    },
+    "review-sitter": { "enabled": true },
+    "dep-sitter": { "enabled": true, "severityFloor": "high" },
+    "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```
@@ -92,6 +95,52 @@ config order.
   `gh pr list --search` query (default `is:open author:@me`) selecting which
   PRs the sitter watches. GitHub only — on ADO the sitter watches active PRs
   authored by its own identity.
+- **`loops.review-sitter.enabled`** — default off; sits on PRs whose review
+  is requested from this identity and posts one structured review comment per
+  requested head (fetch → assess → publish). Comment-only authority: it never
+  approves, votes, pushes, or merges. Re-fires only when a human pushes a new
+  head; fork and draft PRs are skipped.
+- **`loops.review-sitter.query`** — overrides the manifest's query (default
+  `is:open review-requested:@me`). GitHub only — on ADO the sitter claims
+  active PRs where `ado.selfLogin` is a reviewer whose vote is still pending
+  (vote 0), never its own PRs.
+- **`loops.dep-sitter.enabled`** — default off; sits on vulnerable
+  dependencies and turns each auto-fixable direct-dependency upgrade into a
+  verified draft PR (scan → upgrade → verify → publish). Major bumps are never
+  auto-fixed — they are logged and left for a human. Three ecosystems: **npm**
+  via the native `npm audit` / `npm outdated`; **Maven and Gradle (Spring
+  Boot)** via [OSV-Scanner](https://google.github.io/osv-scanner/) —
+  `osv-scanner --format json -L <pom.xml|gradle.lockfile>`, querying the
+  OSV.dev database. The `osv-scanner` binary must be installed on the watcher
+  host for the JVM ecosystems (missing → an actionable skip; npm keeps
+  working without it). Gradle scanning needs dependency locking — osv-scanner
+  cannot parse `build.gradle` itself; without a committed `gradle.lockfile`
+  (or `gradle/verification-metadata.xml`) the kind skips with instructions to
+  enable it. Vulnerable JVM packages not declared in the build files
+  (transitives) are logged, never claimed — pinning a transitive is a human
+  call, mirroring npm's direct-only rule. The publish stage opens the draft
+  PR via `gh pr create` (GitHub) or the Azure DevOps REST API (`ado`).
+- **`loops.dep-sitter.ecosystem`** — `auto` (manifest default: detect every
+  ecosystem the repo declares — `package.json` / `pom.xml` /
+  `build.gradle(.kts)` — and merge their candidates severity-first, so
+  monorepos work) | `npm` | `maven` | `gradle` (scan only that one).
+- **`loops.dep-sitter.severityFloor`** — minimum advisory severity that makes
+  a vulnerable dependency claimable: `low` | `moderate` | `high` (manifest
+  default) | `critical`. Applies uniformly: OSV advisories band their CVSS
+  score into the same vocabulary.
+- **`loops.dep-sitter.includeOutdated`** — default `false`; also claim
+  non-vulnerable but outdated direct dependencies within the patch/minor
+  policy. **npm only** — JVM staleness reporting would need build-plugin
+  setup the sitter must not perform; ignored (with a log line) for
+  maven/gradle.
+- **`loops.main-sitter.enabled`** — default off; sits on the watched branch's
+  CI (`gh run list`, or the Azure DevOps Build API on `ado`): when the newest
+  head goes red it diagnoses (bisecting when needed) and publishes a verified
+  draft fix/revert PR on a `main-sitter/*` branch (diagnose → remedy →
+  verify → publish), commenting once on the culprit PR. The watched branch
+  itself is never pushed.
+- **`loops.main-sitter.branch`** — overrides the watched branch; unset ⇒ the
+  remote default branch (from `origin/HEAD`, falling back to `main`).
 - **`loops.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
@@ -151,9 +200,34 @@ Unknown keys under `hub` are rejected (typo safety). See
 
 ## Code platform (`codePlatform` / `ado`)
 
-The PR sitter binds to a hosted-PR work source (`workSource.type:
-"github-pr"` in its manifest); which platform that source actually talks to
-is resolved from config at wiring time — the manifest is never forked.
+The PR sitter and review sitter bind to a hosted-PR work source
+(`workSource.type: "github-pr"` in their manifests); which platform that
+source actually talks to is resolved from config at wiring time — the
+manifest is never forked. The manifest's `role` picks the ADO identity
+filter: `author` kinds (pr-sitter) claim PRs created by `ado.selfLogin`,
+`reviewer` kinds (review-sitter) claim other people's PRs where that login's
+reviewer vote is still pending.
+
+All four sitter kinds support Azure DevOps. The `dependency-scan`
+(dep-sitter) source is platform-agnostic (npm reports don't care which forge
+the repo lives on); its publish stage opens the draft PR via the ADO REST
+API instead of `gh pr create` when the platform resolves to `ado`. The
+`ci-runs` (main-sitter) source has a genuine ADO sibling
+(`ado-ci-runs.ts`) that polls the Azure Pipelines Build REST API
+(`_apis/build/builds`) instead of `gh run list`, normalizing build results
+into the same judged shape the GitHub source produces — the "only the newest
+head, never mid-run" logic is identical either way. Neither `dependency-scan`
+nor `ci-runs` needs `ado.selfLogin` (unlike the PR-shaped sources, they
+aren't scoped to an identity), but a PAT is still required.
+
+Every sitter kind's publish stage — on ADO — opens PRs and posts thread
+comments through the Claude host's write backstop hook (`check-stage-guard`),
+which permits exactly three ADO write shapes: a GET read, a thread-comment
+POST, and a POST creating a brand-new pull request (`.../pullrequests` with
+no id segment — how ADO drafts a PR, `isDraft: true` in the body, is the same
+call as any other). Every mutation of an *existing* PR — completing,
+abandoning, voting, adding reviewers, or any PATCH/PUT/DELETE — is blocked
+outright, regardless of loop kind or stage.
 
 ```json
 {
@@ -169,10 +243,13 @@ is resolved from config at wiring time — the manifest is never forked.
 ```
 
 - **`ado.organization` / `ado.project`** — required ADO coordinates.
-- **`ado.repository`** — optional for the `pr-sitter` kind (omitted → all
-  active PRs across the project); **required** for the engineering loop's
-  ship gate to open a draft PR (creating a PR needs one specific repo — unset
-  it, and ship still completes the task, it just skips PR creation).
+- **`ado.repository`** — optional for the `pr-sitter`/`review-sitter`/
+  `main-sitter` kinds (omitted → `pr-sitter`/`review-sitter` see all active
+  PRs across the project; `main-sitter` polls builds project-wide); **required**
+  for opening a draft PR — the engineering loop's ship gate, and the
+  `dep-sitter`/`main-sitter` publish stages — since creating a PR needs one
+  specific repo. Unset it and those stages report they have nowhere to open
+  a PR, rather than guessing.
 - **`ado.selfLogin`** — **required**; the sitter's own login for filtering its
   own PR comments. A PAT can't resolve the sitter's identity — without it every
   comment (including the sitter's own replies) re-triggers attention.

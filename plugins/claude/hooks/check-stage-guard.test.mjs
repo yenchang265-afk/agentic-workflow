@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { VERIFY_ALLOW, commandAllowed, isGithubPrMutation, splitSegments } from "./src/allowlist.mjs"
+import { VERIFY_ALLOW, commandAllowed, isAdoWriteBackstopViolation, isGithubPrMutation, splitSegments } from "./src/allowlist.mjs"
 
 /**
  * The check-stage bash allowlist and the GitHub PR-mutation backstop. The
@@ -78,4 +78,40 @@ test("isGithubPrMutation allows reads and comment replies", () => {
   assert.equal(isGithubPrMutation("gh pr view 12"), false)
   assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/12"), false)
   assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/12/comments -f body=done"), false)
+})
+
+// A base ADO PR-collection URL, reused across the backstop cases below.
+const ADO_PRS = 'https://dev.azure.com/acme/widgets/_apis/git/repositories/repo/pullrequests'
+
+test("isAdoWriteBackstopViolation allows GET reads, thread replies, and creating a new PR", () => {
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" "${ADO_PRS}/123?api-version=7.1"`), false)
+  assert.equal(
+    isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X POST -d '{}' "${ADO_PRS}/123/threads?api-version=7.1"`),
+    false,
+  )
+  assert.equal(
+    isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X POST -d '{}' "${ADO_PRS}/123/threads/5/comments?api-version=7.1"`),
+    false,
+  )
+  // dep-sitter/main-sitter's publish: create a brand-new (draft) PR — bare
+  // collection URL, no id segment after "pullrequests".
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X POST -d '{"isDraft":true}' "${ADO_PRS}?api-version=7.1"`), false)
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -d '{"isDraft":true}' "${ADO_PRS}"`), false)
+})
+
+test("isAdoWriteBackstopViolation blocks every mutation of an EXISTING PR", () => {
+  // Complete/abandon/edit: PATCH to the PR itself.
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X PATCH -d '{"status":"completed"}' "${ADO_PRS}/123?api-version=7.1"`), true)
+  // Vote/approve: PUT to a reviewer sub-resource.
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X PUT -d '{"vote":10}' "${ADO_PRS}/123/reviewers/me?api-version=7.1"`), true)
+  // Bulk-add reviewers: POST, but to an existing PR's sub-resource, not the bare collection.
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X POST -d '{}' "${ADO_PRS}/123/reviewers?api-version=7.1"`), true)
+  // DELETE anything.
+  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X DELETE "${ADO_PRS}/123/reviewers/me?api-version=7.1"`), true)
+})
+
+test("isAdoWriteBackstopViolation ignores non-ADO curls and non-curl commands entirely", () => {
+  assert.equal(isAdoWriteBackstopViolation("curl -sS https://example.com/pullrequests -X POST"), false)
+  assert.equal(isAdoWriteBackstopViolation("gh pr create --draft"), false)
+  assert.equal(isAdoWriteBackstopViolation("git status"), false)
 })

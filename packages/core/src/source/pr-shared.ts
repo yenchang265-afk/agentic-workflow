@@ -24,6 +24,8 @@ export const triggerSummary = (triggers: readonly PrTrigger[], snapshot: PrSnaps
           return `${snapshot.newComments.length} unanswered comment(s)`
         case "merge-conflict":
           return "merge conflict with the base branch"
+        case "review-requested":
+          return "your review is requested on this head"
       }
     })
     .join("; ")
@@ -95,10 +97,19 @@ export const prWorkItem = (
   snapshot: PrSnapshot,
   triggers: readonly PrTrigger[],
 ): WorkItem => {
+  const binding = loaded.manifest.workSource
+  const role = binding.type === "github-pr" ? binding.role : "author"
+  // The goal follows the kind's role on the PR: an author-role kind (pr-sitter)
+  // fixes its own PR; a reviewer-role kind (review-sitter) reads someone
+  // else's and only ever comments.
   const goal =
-    `PR #${snapshot.number} "${snapshot.title}" — address what needs attention and get it back to green ` +
-    `(${triggerSummary(triggers, snapshot)}). Base: ${snapshot.baseRefName}, head: ${snapshot.headRefName}. ` +
-    `Never merge the PR; that stays a human call.`
+    role === "reviewer"
+      ? `PR #${snapshot.number} "${snapshot.title}" — review the changes and post one structured review comment ` +
+        `(${triggerSummary(triggers, snapshot)}). Base: ${snapshot.baseRefName}, head: ${snapshot.headRefName}. ` +
+        `Never approve, request changes, or merge; the human reviewer stays the reviewer of record.`
+      : `PR #${snapshot.number} "${snapshot.title}" — address what needs attention and get it back to green ` +
+        `(${triggerSummary(triggers, snapshot)}). Base: ${snapshot.baseRefName}, head: ${snapshot.headRefName}. ` +
+        `Never merge the PR; that stays a human call.`
   const state: LoopState = {
     kind: loaded.manifest.kind,
     goal,

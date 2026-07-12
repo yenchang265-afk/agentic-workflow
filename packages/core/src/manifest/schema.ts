@@ -107,10 +107,63 @@ const GithubPrSourceSchema = z.object({
   /** `gh pr list --search` query selecting the PRs this loop sits on (GitHub only). */
   query: z.string().min(1),
   /** The PR conditions that make an item claimable. */
-  triggers: z.array(z.enum(["failing-checks", "changes-requested", "new-comments", "merge-conflict"])).min(1),
+  triggers: z
+    .array(z.enum(["failing-checks", "changes-requested", "new-comments", "merge-conflict", "review-requested"]))
+    .min(1),
+  /**
+   * The kind's role on the PRs it claims: `author` kinds (pr-sitter) sit on
+   * their own PRs and may push; `reviewer` kinds (review-sitter) sit on PRs
+   * whose review is wanted from them and only ever comment. On ADO — where
+   * there is no server-side search query — the role picks the client-side
+   * identity filter: `createdBy` for `author`, reviewer membership for
+   * `reviewer`.
+   */
+  role: z.enum(["author", "reviewer"]).default("author"),
 })
 
-export const WorkSourceBindingSchema = z.discriminatedUnion("type", [BacklogSourceSchema, GithubPrSourceSchema])
+/**
+ * The dependency-scan work source (dep-sitter): claimable units of work are
+ * vulnerable or outdated dependencies reported by the package manager
+ * (`npm audit` / `npm outdated`), grouped per direct dependency and deduped
+ * by a per-dependency ledger under `<tasksDir>/runs/<kind>/`.
+ */
+const DependencyScanSourceSchema = z.object({
+  type: z.literal("dependency-scan"),
+  /** Semver impact classes the kind upgrades unattended; anything larger is skipped and logged (majors stay a human call). */
+  autoFix: z.array(z.enum(["patch", "minor"])).min(1).default(["patch", "minor"]),
+  /** Minimum advisory severity that makes a vulnerable dependency claimable. */
+  severityFloor: z.enum(["low", "moderate", "high", "critical"]).default("high"),
+  /** Also claim non-vulnerable but outdated dependencies within the autoFix classes (npm only). */
+  includeOutdated: z.boolean().default(false),
+  /**
+   * Which package ecosystem to scan: `npm` (native `npm audit`), `maven` /
+   * `gradle` (OSV-Scanner over pom.xml / the Gradle lockfile), or `auto`
+   * (detect every ecosystem the repo declares and merge their candidates —
+   * monorepos work).
+   */
+  ecosystem: z.enum(["auto", "npm", "maven", "gradle"]).default("auto"),
+})
+
+/**
+ * The CI-runs work source (main-sitter): claimable units of work are red CI
+ * runs on the watched branch (`gh run list`), deduped by a per-head ledger
+ * under `<tasksDir>/runs/<kind>/`; a later green run on the same head retires
+ * the item before it is ever claimed.
+ */
+const CiRunsSourceSchema = z.object({
+  type: z.literal("ci-runs"),
+  /** The branch whose CI this loop sits on; unset ⇒ the remote default branch, resolved at poll time. */
+  branch: z.string().min(1).optional(),
+  /** Workflow file names to watch; empty ⇒ every workflow on the branch. */
+  workflows: z.array(z.string().min(1)).default([]),
+})
+
+export const WorkSourceBindingSchema = z.discriminatedUnion("type", [
+  BacklogSourceSchema,
+  GithubPrSourceSchema,
+  DependencyScanSourceSchema,
+  CiRunsSourceSchema,
+])
 export type WorkSourceBinding = z.infer<typeof WorkSourceBindingSchema>
 
 export const LoopManifestSchema = z

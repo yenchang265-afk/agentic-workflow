@@ -21,19 +21,21 @@
  *     (<tasksDir>/runs/.stage.json via loop_stage/loop_advance).
  *  2. Worktree pinning — while a worktree-isolated loop is active, edit/write
  *     tools may not touch absolute paths outside the worktree.
- *  3. Azure DevOps write backstop — ALWAYS ON: the PR sitter reaches ADO over
- *     its REST API (curl + PAT) and may only GET (read) or POST a thread-comment
- *     reply. Any other write — PATCH/PUT/DELETE, or a POST outside a `/threads`
- *     resource (complete/abandon/approve/reviewers/run-pipeline/create-PR) — is
- *     denied outright. The stage prompts + host-pinned allowlist are the primary
- *     control; this is defense-in-depth (threat-model T8).
+ *  3. Azure DevOps write backstop — ALWAYS ON: every sitter kind reaches ADO over
+ *     its REST API (curl + PAT) and may only GET (read), POST a thread-comment
+ *     reply, or POST a brand-new pull request (dep-sitter/main-sitter's publish —
+ *     ADO drafts a PR the same call as any other, `isDraft: true` in the body).
+ *     Any other write — PATCH/PUT/DELETE, or a POST to an EXISTING PR's resource
+ *     (complete/abandon/approve/reviewers/run-pipeline) — is denied outright. The
+ *     stage prompts + host-pinned allowlist are the primary control; this is
+ *     defense-in-depth (threat-model T8/T12/T13).
  *
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
 import fs from "node:fs"
 import path from "node:path"
 import { classifyMutation } from "@agentic-loop/core/task/guard"
-import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, isGithubPrMutation } from "./allowlist.mjs"
+import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, isAdoWriteBackstopViolation, isGithubPrMutation } from "./allowlist.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -50,27 +52,6 @@ const block = (reason) => {
 // Check-stage allowlist matching (built-in fallback lists + the segment-splitting
 // `commandAllowed`) lives in ./allowlist.mjs so it is unit-testable and the
 // chain-split rule has a single home.
-
-// A Bash command that calls the Azure DevOps REST API (curl against an ADO host).
-const isAdoCurl = (cmd) =>
-  /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd)
-
-// The effective HTTP method of a curl: an explicit -X/--request wins, else a body
-// flag (-d/--data*/-F/--form) implies POST, else GET.
-const curlMethod = (cmd) => {
-  const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd)
-  if (explicit) return explicit[1].toUpperCase()
-  return /(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b/.test(cmd) ? "POST" : "GET"
-}
-
-// The sitter may only read (GET) or append a thread-comment reply (POST to a
-// `/threads` resource). Anything else against ADO mutates the PR — deny it.
-const isAdoWriteBackstopViolation = (cmd) => {
-  if (!isAdoCurl(cmd)) return false
-  const method = curlMethod(cmd)
-  const targetsThread = /\/threads(?:\/|\?|\b)/i.test(cmd)
-  return !(method === "GET" || (method === "POST" && targetsThread))
-}
 
 // tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
 const readTasksDir = (cwd) => {
@@ -104,14 +85,16 @@ const main = async () => {
   const tool = input.tool_name
   const ti = input.tool_input || {}
 
-  // (3) ADO REST write backstop — always on. The sitter reaches ADO via curl+PAT
-  // and may only GET or POST a thread-comment reply; every PR-mutating call is
-  // off-limits (threat-model T8).
+  // (3) ADO REST write backstop — always on. Every sitter kind reaches ADO via
+  // curl+PAT and may only GET, POST a thread-comment reply, or POST a brand-new
+  // pull request; every mutation of an EXISTING PR is off-limits (threat-model
+  // T8/T12/T13).
   if (tool === "Bash" && isAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block(
-      `agentic-loop: the PR sitter must never mutate a pull request — this Azure DevOps REST call is blocked. ` +
-        `Only GET reads and thread-comment replies (POST to a /threads resource) are permitted; ` +
-        `merging, completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`,
+      `agentic-loop: the loop must never mutate an existing pull request — this Azure DevOps REST call is blocked. ` +
+        `Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR ` +
+        `(POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and ` +
+        `pipeline runs stay a human call.`,
     )
   }
 

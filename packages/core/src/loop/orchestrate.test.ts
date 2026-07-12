@@ -85,3 +85,99 @@ test("a kind filter restricts the sources to that kind", () => {
   assert.equal(buildWorkSources(deps, config, manifestFor, "pr-sitter").length, 1)
   assert.equal(buildWorkSources(deps, DEFAULT_CONFIG, manifestFor, "engineering").length, 1)
 })
+
+test("buildWorkSources wires review-sitter as a second github-pr source alongside pr-sitter", () => {
+  const config = parseConfigWith(ConfigSchema, {
+    loops: { "pr-sitter": { enabled: true }, "review-sitter": { enabled: true } },
+  })
+  const manifestFor = makeManifestCache(defaultLoopsDir())
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const sources = buildWorkSources(deps, config, manifestFor)
+  assert.equal(sources.length, 3)
+  assert.deepEqual(
+    sources.map((s) => s.loopKind),
+    ["engineering", "pr-sitter", "review-sitter"],
+  )
+  // The claim/watch kind filter reaches the reviewer kind on its own too.
+  assert.equal(buildWorkSources(deps, config, manifestFor, "review-sitter")[0]?.loopKind, "review-sitter")
+})
+
+test("buildWorkSources wires dep-sitter and main-sitter on both github and ado — no more skip-with-warning", () => {
+  const config = parseConfigWith(ConfigSchema, {
+    loops: { "dep-sitter": { enabled: true }, "main-sitter": { enabled: true } },
+  })
+  const manifestFor = makeManifestCache(defaultLoopsDir())
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  assert.deepEqual(
+    buildWorkSources(deps, config, manifestFor).map((s) => s.loopKind),
+    ["engineering", "dep-sitter", "main-sitter"],
+  )
+  const warnings: string[] = []
+  const ado = parseConfigWith(ConfigSchema, {
+    codePlatform: "ado",
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+    loops: { "dep-sitter": { enabled: true }, "main-sitter": { enabled: true } },
+  })
+  const sources = buildWorkSources(
+    { ...deps, log: (_l: string, m: string) => void warnings.push(m) },
+    ado,
+    manifestFor,
+  )
+  assert.deepEqual(
+    sources.map((s) => s.loopKind),
+    ["engineering", "dep-sitter", "main-sitter"],
+  )
+  assert.deepEqual(warnings, [])
+})
+
+test("the loops.dep-sitter.ecosystem override reaches the source through buildWorkSources", async () => {
+  // A minimal scripted shell: osv-scanner probes succeed, everything else succeeds empty.
+  const ran: string[] = []
+  const shell = ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
+    let cmd = ""
+    strings.forEach((s, i) => {
+      cmd += s
+      if (i < exprs.length) cmd += String(exprs[i])
+    })
+    ran.push(cmd.trim().replace(/\s+/g, " "))
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      then: (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ exitCode: 0, stdout: { toString: () => "{}" }, stderr: { toString: () => "" } }).then(resolve),
+    }
+    return chain
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any
+  const client = {
+    file: {
+      async list() {
+        return { data: [] }
+      },
+      async read({ query }: { query: { path: string } }) {
+        // Both manifests exist — only the ecosystem override keeps npm out.
+        const files: Record<string, string> = { "package.json": "{}", "pom.xml": "<project></project>" }
+        const content = files[query.path]
+        return { data: content ? { content } : null }
+      },
+    },
+    app: { async log() {} },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+  const config = parseConfigWith(ConfigSchema, {
+    loops: { engineering: { enabled: false }, "dep-sitter": { enabled: true, ecosystem: "maven" } },
+  })
+  const sources = buildWorkSources(
+    { $: shell, client, directory: "/repo", log: () => {}, isDriving: () => false },
+    config,
+    makeManifestCache(defaultLoopsDir()),
+  )
+  assert.deepEqual(
+    sources.map((s) => s.loopKind),
+    ["dep-sitter"],
+  )
+  await sources[0]?.claimNext()
+  assert.ok(ran.some((c) => c.startsWith("osv-scanner")))
+  assert.ok(ran.every((c) => !c.startsWith("npm ")))
+})

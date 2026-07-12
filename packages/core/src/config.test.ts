@@ -396,3 +396,10 @@ test("trackerUrl appends the key to baseUrl, or returns undefined without one", 
   assert.equal(trackerUrl(undefined, "PROJ-123"), undefined)
 })
 
+
+test("review-sitter is opt-in like every non-engineering kind; its query knob rides the open record", () => {
+  assert.deepEqual(enabledLoopKinds(parseConfig({})), ["engineering"])
+  const c = parseConfig({ loops: { "review-sitter": { enabled: true, query: "is:open review-requested:@me" } } })
+  assert.deepEqual(enabledLoopKinds(c), ["engineering", "review-sitter"])
+  assert.equal(c.loops["review-sitter"]?.["query"], "is:open review-requested:@me")
+})

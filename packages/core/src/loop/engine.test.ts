@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
+import { effectiveAllowlist } from "../manifest/schema.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
 import type { Action, Config, LoopState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
@@ -351,4 +352,250 @@ test("pr-sitter prompts render gh guidance by default and ADO REST guidance when
   assert.match(publish, /NEVER complete, abandon, or approve/)
   assert.doesNotMatch(publish, /gh pr comment/)
   assert.doesNotMatch(publish, /az devops invoke/)
+})
+
+// --- the review-sitter manifest walks end-to-end through the same engine ---
+
+const reviewer = loadManifest(LOOPS_DIR, "review-sitter")
+const reviewState = (stage: string, artifacts: Record<string, string> = {}): LoopState => ({
+  kind: "review-sitter",
+  goal: 'PR #9 "Add rate limiting" — review the changes and post one structured review comment',
+  stage,
+  iteration: 0,
+  artifacts,
+  git: { base: "main", branch: "feat/rate-limit" },
+})
+
+test("review-sitter: fetch PASS fires assess with the work order threaded; FAIL is done; ERROR stops", () => {
+  const pass = advance(reviewer, reviewState("fetch"), config, "risk concentrates in limiter.ts", "PASS")
+  assert.equal(pass.action.kind, "fire")
+  if (pass.action.kind === "fire") {
+    assert.equal(pass.action.stage, "assess")
+    assert.match(pass.action.arguments, /Review work order/)
+    assert.match(pass.action.arguments, /limiter\.ts/)
+    assert.match(pass.action.arguments, /Make NO edits and push nothing/)
+  }
+  const idle = advance(reviewer, reviewState("fetch"), config, "review request withdrawn", "FAIL")
+  assert.equal(idle.action.kind, "done")
+  if (idle.action.kind === "done") {
+    assert.match(idle.action.message, /nothing to review/)
+    assert.equal(idle.action.toStatus, undefined)
+  }
+  const broken = advance(reviewer, reviewState("fetch"), config, "gh exploded", "ERROR")
+  assert.equal(broken.action.kind, "stop")
+})
+
+test("review-sitter: assess → publish → done; the publish prompt is comment-only", () => {
+  const afterAssess = advance(reviewer, reviewState("assess", { fetch: "W1" }), config, "the draft review")
+  assert.equal(afterAssess.action.kind, "fire")
+  if (afterAssess.action.kind === "fire") {
+    assert.equal(afterAssess.action.stage, "publish")
+    assert.match(afterAssess.action.arguments, /exactly ONE comment/)
+    assert.match(afterAssess.action.arguments, /NEVER approve, request changes, merge, close, or push/)
+    assert.match(afterAssess.action.arguments, /the draft review/)
+    assert.doesNotMatch(afterAssess.action.arguments, /git push/)
+  }
+  const published = advance(reviewer, reviewState("publish", { fetch: "W1", assess: "R" }), config, "posted")
+  assert.equal(published.action.kind, "done")
+  if (published.action.kind === "done") assert.match(published.action.message, /human call/)
+})
+
+test("review-sitter: a missing fetch verdict reads as FAIL (done), never as PASS", () => {
+  const { action } = advance(reviewer, reviewState("fetch"), config, "PASS in prose only", null)
+  assert.equal(action.kind, "done")
+})
+
+test("review-sitter prompts render gh guidance by default and ADO REST guidance when stamped ado", () => {
+  const state = reviewState("fetch")
+  const gh = composePrompt(reviewer, state, "fetch")
+  assert.match(gh, /gh pr view/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
+  const ado = composePrompt(reviewer, { ...state, platform: "ado" }, "fetch")
+  assert.match(ado, /_apis\/git\/pullrequests/)
+  assert.doesNotMatch(ado, /gh pr view/)
+  const publish = composePrompt(reviewer, { ...state, platform: "ado", stage: "publish" }, "publish")
+  assert.match(publish, /pullRequests\/<n>\/threads/)
+  assert.match(publish, /NEVER vote, approve, complete, abandon, or push/)
+  assert.doesNotMatch(publish, /gh pr comment/)
+})
+
+test("review-sitter holds strictly less authority than pr-sitter: comment-only publish, no push, no api, no budget", () => {
+  const publish = reviewer.manifest.stages.find((s) => s.name === "publish")
+  assert.ok(publish)
+  const allow = effectiveAllowlist(publish, "github")
+  assert.ok(allow.includes("gh pr comment *"))
+  // No glob grants pushing, merging, approving, or the raw API (which could
+  // approve/merge): the allowlist IS the "never approve" guarantee.
+  assert.ok(allow.every((g) => !/push|merge|gh pr review|gh api/.test(g)))
+  const assess = reviewer.manifest.stages.find((s) => s.name === "assess")
+  assert.equal(assess?.kind, "work")
+  assert.equal(assess?.isolation, "worktree")
+  assert.ok((assess?.bashAllowlist.length ?? 0) > 0)
+  const fetch = reviewer.manifest.stages.find((s) => s.name === "fetch")
+  assert.equal(fetch?.kind, "check")
+  assert.equal(fetch?.isolation, "none")
+  // One pass per requested head: no retry budget anywhere in the kind.
+  assert.equal(reviewer.manifest.maxIterations, undefined)
+  for (const t of Object.values(reviewer.manifest.transitions)) {
+    for (const e of [t.onDone, t.onPass, t.onFail, t.onError]) {
+      assert.ok(!(e?.kind === "fire" && e.countIteration))
+    }
+  }
+})
+
+// --- the dep-sitter manifest walks end-to-end through the same engine ---
+
+const depSitter = loadManifest(LOOPS_DIR, "dep-sitter")
+const depState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): LoopState => ({
+  kind: "dep-sitter",
+  goal: "Upgrade lodash to 4.17.21\n\nCurrently on 4.17.20 — a patch bump closing a high-severity advisory.",
+  stage,
+  iteration,
+  artifacts,
+  git: { base: "main", branch: "feature/upgrade-lodash-to-4-17-21" },
+})
+
+test("dep-sitter: scan PASS fires upgrade; FAIL is done; verify caps at 2 iterations recommending the park", () => {
+  const pass = advance(depSitter, depState("scan"), config, "lodash 4.17.20 → 4.17.21, CVE-2026-1", "PASS")
+  assert.equal(pass.action.kind, "fire")
+  if (pass.action.kind === "fire") {
+    assert.equal(pass.action.stage, "upgrade")
+    assert.match(pass.action.arguments, /Upgrade work order/)
+    assert.match(pass.action.arguments, /do NOT push/)
+  }
+  const resolved = advance(depSitter, depState("scan"), config, "already fixed", "FAIL")
+  assert.equal(resolved.action.kind, "done")
+  if (resolved.action.kind === "done") assert.match(resolved.action.message, /already resolved/)
+
+  const afterUpgrade = advance(depSitter, depState("upgrade", { scan: "W" }), config, "bumped + lockfile")
+  assert.equal(afterUpgrade.action.kind, "fire")
+  if (afterUpgrade.action.kind === "fire") assert.equal(afterUpgrade.action.stage, "verify")
+
+  // maxIterations: 2 — the second verify FAIL stops the loop.
+  const refix = advance(depSitter, depState("verify", { scan: "W", upgrade: "S" }), config, "audit still red", "FAIL")
+  assert.equal(refix.action.kind, "fire")
+  const capped = advance(depSitter, depState("verify", { scan: "W" }, 1), config, "still red", "FAIL")
+  assert.equal(capped.action.kind, "stop")
+  if (capped.action.kind === "stop") assert.match(capped.action.message, /after 2 iterations.*parks until its target version moves/s)
+
+  const published = advance(depSitter, depState("publish", { scan: "W", verify: "OK" }), config, "draft PR opened")
+  assert.equal(published.action.kind, "done")
+  if (published.action.kind === "done") assert.match(published.action.message, /Merging stays a human call/)
+})
+
+test("dep-sitter publish pushes only feature/ branches and opens draft PRs — no merge, no api, no bare push", () => {
+  const publish = depSitter.manifest.stages.find((s) => s.name === "publish")
+  assert.ok(publish)
+  const allow = effectiveAllowlist(publish, "github")
+  assert.ok(allow.includes("git push origin feature/*"))
+  assert.ok(allow.includes("gh pr create *"))
+  assert.ok(allow.every((g) => !/gh pr merge|gh api|gh pr review/.test(g)))
+  // The push glob is branch-scoped: a bare "git push origin *" must not exist.
+  assert.ok(!allow.includes("git push origin *"))
+  const prompt = composePrompt(depSitter, depState("publish", { scan: "W", verify: "OK" }), "publish")
+  assert.match(prompt, /gh pr create --draft/)
+  assert.match(prompt, /NEVER merge or close/)
+  const adoAllow = effectiveAllowlist(publish, "ado")
+  assert.ok(adoAllow.some((g) => g.includes("dev.azure.com")))
+  assert.ok(adoAllow.every((g) => !/gh /.test(g)))
+})
+
+test("dep-sitter allowlists cover all three ecosystems' read/test verbs; publish stays unchanged", () => {
+  const scan = depSitter.manifest.stages.find((s) => s.name === "scan")
+  assert.ok(scan?.bashAllowlist.includes("osv-scanner *"))
+  assert.ok(scan?.bashAllowlist.some((g) => g.startsWith("mvn dependency:tree")))
+  assert.ok(scan?.bashAllowlist.some((g) => g.startsWith("./gradlew depend")))
+  // Scan stays read-only: no install/test verbs.
+  assert.ok(scan?.bashAllowlist.every((g) => !/npm install|mvn test|gradle test/.test(g)))
+  const verify = depSitter.manifest.stages.find((s) => s.name === "verify")
+  assert.ok(verify?.bashAllowlist.includes("osv-scanner *"))
+  assert.ok(verify?.bashAllowlist.includes("./gradlew test*"))
+  assert.ok(verify?.bashAllowlist.includes("cd * && ./mvnw verify*"))
+  // Publish gains nothing: still push-to-feature/* + platform PR verbs only.
+  const publish = depSitter.manifest.stages.find((s) => s.name === "publish")
+  assert.ok(publish?.bashAllowlist.every((g) => !/osv-scanner|mvn |gradle/.test(g)))
+})
+
+test("dep-sitter publish renders gh guidance by default and ADO PR-creation guidance when stamped ado", () => {
+  const state = depState("publish", { scan: "W", verify: "OK" })
+  const gh = composePrompt(depSitter, state, "publish")
+  assert.match(gh, /gh pr create --draft/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
+  const ado = composePrompt(depSitter, { ...state, platform: "ado" }, "publish")
+  assert.match(ado, /_apis\/git\/repositories\/<repo>\/pullrequests\?api-version=7\.1/)
+  assert.match(ado, /"isDraft":true/)
+  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
+  assert.doesNotMatch(ado, /gh pr create/)
+})
+
+// --- the main-sitter manifest walks end-to-end through the same engine ---
+
+const mainSitter = loadManifest(LOOPS_DIR, "main-sitter")
+const mainState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): LoopState => ({
+  kind: "main-sitter",
+  goal: "Red CI on main at abcdef123456\n\nFailing workflow(s): CI.",
+  stage,
+  iteration,
+  artifacts,
+  git: { base: "main", branch: "main-sitter/abcdef123456" },
+})
+
+test("main-sitter: diagnose PASS fires remedy; FAIL (flake) is done; verify caps at 2 recommending the revert", () => {
+  const pass = advance(mainSitter, mainState("diagnose"), config, "culprit: sha-bad from PR #12", "PASS")
+  assert.equal(pass.action.kind, "fire")
+  if (pass.action.kind === "fire") {
+    assert.equal(pass.action.stage, "remedy")
+    assert.match(pass.action.arguments, /Remedy work order/)
+    assert.match(pass.action.arguments, /NEVER touch main itself/)
+  }
+  const flake = advance(mainSitter, mainState("diagnose"), config, "passes locally, flaky infra", "FAIL")
+  assert.equal(flake.action.kind, "done")
+  if (flake.action.kind === "done") assert.match(flake.action.message, /flake or the branch already recovered/)
+
+  const capped = advance(mainSitter, mainState("verify", { diagnose: "W" }, 1), config, "still red", "FAIL")
+  assert.equal(capped.action.kind, "stop")
+  if (capped.action.kind === "stop") assert.match(capped.action.message, /prefer the revert path/)
+
+  const published = advance(mainSitter, mainState("publish", { diagnose: "W", verify: "OK" }), config, "remedy PR opened")
+  assert.equal(published.action.kind, "done")
+  if (published.action.kind === "done") assert.match(published.action.message, /watched branch was never touched/)
+})
+
+test("main-sitter can never push the watched branch: the push glob is scoped to main-sitter/ remedy branches", () => {
+  const publish = mainSitter.manifest.stages.find((s) => s.name === "publish")
+  assert.ok(publish)
+  const allow = effectiveAllowlist(publish, "github")
+  assert.ok(allow.includes("git push origin main-sitter/*"))
+  assert.ok(!allow.includes("git push origin *"))
+  assert.ok(allow.every((g) => !/gh pr merge|gh api|gh pr review/.test(g)))
+  const diagnose = mainSitter.manifest.stages.find((s) => s.name === "diagnose")
+  assert.equal(diagnose?.kind, "check")
+  assert.ok(diagnose?.bashAllowlist.some((g) => g.startsWith("git bisect")))
+  const prompt = composePrompt(mainSitter, mainState("publish", { diagnose: "D", verify: "OK" }), "publish")
+  assert.match(prompt, /gh pr create --draft --base main/)
+  assert.match(prompt, /NEVER push main/)
+  const adoAllow = effectiveAllowlist(publish, "ado")
+  assert.ok(adoAllow.some((g) => g.includes("dev.azure.com")))
+  assert.ok(adoAllow.every((g) => !/gh /.test(g)))
+})
+
+test("main-sitter renders gh guidance by default and ADO REST guidance when stamped ado", () => {
+  const diagState = mainState("diagnose")
+  const gh = composePrompt(mainSitter, diagState, "diagnose")
+  assert.match(gh, /gh run view --log/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
+  const ado = composePrompt(mainSitter, { ...diagState, platform: "ado" }, "diagnose")
+  assert.match(ado, /_apis\/build\/builds\/<buildId>\/logs/)
+  assert.match(ado, /_apis\/git\/repositories\/<repo>\/commits\/<sha>\/pullrequests/)
+  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
+  assert.doesNotMatch(ado, /gh run view/)
+
+  const pubState = mainState("publish", { diagnose: "D", verify: "OK" })
+  const ghPublish = composePrompt(mainSitter, pubState, "publish")
+  assert.match(ghPublish, /gh pr create --draft --base main/)
+  const adoPublish = composePrompt(mainSitter, { ...pubState, platform: "ado" }, "publish")
+  assert.match(adoPublish, /_apis\/git\/repositories\/<repo>\/pullrequests\?api-version=7\.1/)
+  assert.match(adoPublish, /"isDraft":true/)
+  assert.match(adoPublish, /NEVER push main/)
+  assert.doesNotMatch(adoPublish, /gh pr create/)
 })

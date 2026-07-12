@@ -1,0 +1,3 @@
+name: loop-dep-scan
+description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a verdict via the loop_verdict MCP tool. Never edits, never installs.
+tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict

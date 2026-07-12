@@ -29,8 +29,8 @@ export interface TaskCard {
 export interface KindBoardInfo {
   readonly kind: string
   readonly description: string
-  readonly sourceType: "backlog" | "github-pr"
-  /** Board columns (the manifest's status-folder set); [] for github-pr kinds. */
+  readonly sourceType: "backlog" | "github-pr" | "dependency-scan" | "ci-runs"
+  /** Board columns (the manifest's status-folder set); [] for non-backlog kinds. */
   readonly statuses: readonly string[]
   /** Statuses the kind parks/lands work into for a human — highlighted columns. */
   readonly gateStatuses: readonly string[]
@@ -132,9 +132,11 @@ export interface LeaseView {
   readonly stale: boolean
 }
 
-/** Raw pr-sitter dedup ledger entry (`runs/pr-sitter/pr-<n>.json`), passed through. */
+/** Raw hosted-PR dedup ledger entry (`runs/<kind>/pr-<n>.json`), passed through. */
 export interface PrLedgerView {
   readonly pr: number
+  /** The PR-shaped loop kind that owns this ledger (its `runs/` subdirectory); absent on legacy responses. */
+  readonly kind?: string
   readonly updatedAt?: string
   readonly headShaHandled?: string
   readonly failedAttempts: number

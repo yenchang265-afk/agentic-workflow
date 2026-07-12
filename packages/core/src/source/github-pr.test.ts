@@ -217,3 +217,72 @@ test("onTerminal(stop) records a failed attempt pinned to the claimed head", asy
   assert.match(write ?? "", /sha-1/)
   assert.match(write ?? "", /failing-checks/)
 })
+
+// --- the review-sitter kind over the same source: reviewer role, review-requested trigger ---
+
+const reviewer = loadManifest(LOOPS_DIR, "review-sitter")
+
+const reviewerSource = (prs: unknown[], opts: { ledgers?: Record<string, string>; script?: Cmd[]; log?: string[] } = {}) =>
+  makeGithubPrSource({
+    $: scriptedShell(
+      [
+        { cmd: "gh api user", result: { stdout: "sitter-bot\n" } },
+        { cmd: "gh pr list", result: { stdout: JSON.stringify(prs) } },
+        ...(opts.script ?? []),
+      ],
+      opts.log,
+    ),
+    client: ledgerClient(opts.ledgers ?? {}),
+    directory: "/r",
+    tasksDir: "docs/tasks",
+    log: () => {},
+    loaded: reviewer,
+    now: () => "2026-07-05T00:00:00Z",
+  })
+
+test("review-sitter claims a listed PR outright (the query pre-filters): fetch entry, reviewer goal, own runs/ namespace", async () => {
+  const log: string[] = []
+  const { item, skip } = await reviewerSource([pr()], { log }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "pr-7")
+  assert.equal(item?.entryStage, "fetch")
+  assert.equal(item?.state.kind, "review-sitter")
+  assert.match(item?.state.goal ?? "", /one structured review comment/)
+  assert.match(item?.state.goal ?? "", /Never approve, request changes, or merge/)
+  // The PR head is fetched for the assess worktree, and the claim marker and
+  // ledger live under this kind's own runs/ directory — never pr-sitter's.
+  assert.ok(log.some((c) => c.startsWith("git -C /r fetch origin +refs/heads/feat/rate-limit")))
+  assert.ok(log.some((c) => c.includes("runs/review-sitter/.claims/pr-7")))
+  assert.ok(log.every((c) => !c.includes("runs/pr-sitter")))
+})
+
+test("review-sitter: a handled head suppresses re-review; a human's new push re-claims", async () => {
+  const ledgers = {
+    "docs/tasks/runs/review-sitter/pr-7.json": JSON.stringify({
+      pr: 7,
+      headShaHandled: "sha-1",
+      failedAttempts: [],
+      updatedAt: "2026-07-04T00:00:00Z",
+    }),
+  }
+  const same = await reviewerSource([pr()], { ledgers }).claimNext()
+  assert.equal(same.item, null)
+  assert.match(same.skip?.message ?? "", /^review-sitter: no PRs need attention/)
+  const pushed = await reviewerSource([pr({ headRefOid: "sha-2" })], { ledgers }).claimNext()
+  assert.equal(pushed.item?.id, "pr-7")
+})
+
+test("review-sitter onTerminal(done) records the reviewed head in its own ledger", async () => {
+  const log: string[] = []
+  const src = reviewerSource([pr()], {
+    script: [{ cmd: "gh pr view 7", result: { stdout: JSON.stringify({ headRefOid: "sha-1", comments: [] }) } }],
+    log,
+  })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  await src.onTerminal?.(item, { kind: "done", message: "posted the review" })
+  const write = log.find((c) => c.startsWith("printf") && c.includes("pr-7.json"))
+  assert.ok(write, "ledger written")
+  assert.match(write ?? "", /runs\/review-sitter\/pr-7\.json/)
+  assert.match(write ?? "", /sha-1/)
+})

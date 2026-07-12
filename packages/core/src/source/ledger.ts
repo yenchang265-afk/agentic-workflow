@@ -3,14 +3,15 @@ import { z } from "zod"
 import type { Client, Shell } from "../host.js"
 
 /**
- * A PR-shaped kind's dedup ledger: one JSON file per PR under
- * `<tasksDir>/runs/<kind>/pr-<n>.json` (keyed by kind so a second PR-shaped loop
- * kind never collides), recording what the sitter has
- * already handled so it never reacts to its own pushes or replies, never
- * retries a failed attempt on the same head, and never re-answers old
- * comments. Like snapshots, ledgers are ephemeral machine state (gitignored
- * via `runs/`), validated on load, and fail closed — a garbled ledger reads
- * as "nothing handled yet", which only risks one redundant triage pass.
+ * The hosted-PR kinds' dedup ledger: one JSON file per PR under
+ * `<tasksDir>/runs/<kind>/pr-<n>.json` (namespaced per loop kind, so two
+ * PR-shaped kinds — pr-sitter and review-sitter — never judge each other's
+ * bookkeeping), recording what the kind has already handled so it never
+ * reacts to its own pushes or replies, never retries a failed attempt on the
+ * same head, and never re-answers old comments. Like snapshots, ledgers are
+ * ephemeral machine state (gitignored via `runs/`), validated on load, and
+ * fail closed — a garbled ledger reads as "nothing handled yet", which only
+ * risks one redundant triage pass.
  */
 
 const LedgerSchema = z.object({
@@ -79,7 +80,7 @@ export interface PrSnapshot {
   readonly newComments: readonly { author: string; at: string }[]
 }
 
-export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" | "merge-conflict"
+export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" | "merge-conflict" | "review-requested"
 
 /**
  * Which enabled triggers currently need attention on this PR, given its
@@ -93,7 +94,11 @@ export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" 
  *   `failed`, not `headHandled` — a capped attempt does NOT advance the watermark
  *   (`terminalLedgerUpdate`), so its triggering comment is still in the snapshot;
  *   re-firing there would re-claim → re-fail forever;
- * - a conflict counts once per (head, base) pair.
+ * - a conflict counts once per (head, base) pair;
+ * - a review request (review-sitter) counts once per head: the query already
+ *   scopes the poll to PRs whose review is wanted, so any head this kind
+ *   hasn't handled or failed on needs one review pass — a human's new push
+ *   re-fires it, the kind's own comment (recorded at terminal) does not.
  */
 export const attentionTriggers = (
   snapshot: PrSnapshot,
@@ -109,6 +114,7 @@ export const attentionTriggers = (
     out.push("changes-requested")
   }
   if (enabled.includes("new-comments") && snapshot.newComments.length && !failed) out.push("new-comments")
+  if (enabled.includes("review-requested") && !headHandled) out.push("review-requested")
   if (
     enabled.includes("merge-conflict") &&
     snapshot.mergeable === "CONFLICTING" &&

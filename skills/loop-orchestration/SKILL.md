@@ -242,14 +242,43 @@ triage (check) ─▶ fix (work) ─▶ verify (check) ─▶ publish (work) ─
   addressed finding. It **never merges, closes, or approves** — merging
   stays a human call.
 
-Dedup is a per-PR ledger under `<tasksDir>/runs/pr-sitter/pr-<n>.json`:
-head-SHA and comment-timestamp watermarks plus an own-login filter, so the
-sitter never reacts to its own pushes or replies; a capped/failed attempt
-parks the PR until a human pushes a new head. Enable it with:
+Dedup is a per-PR ledger under `<tasksDir>/runs/pr-sitter/pr-<n>.json`
+(ledgers are namespaced per kind under `runs/<kind>/`): head-SHA and
+comment-timestamp watermarks plus an own-login filter, so the sitter never
+reacts to its own pushes or replies; a capped/failed attempt parks the PR
+until a human pushes a new head. Enable it with:
 
 ```jsonc
 { "loops": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
 ```
+
+### The review-sitter, dep-sitter, and main-sitter kinds
+
+Three further opt-in kinds follow the same shape (see
+`docs/configuration.md` for their knobs and `docs/design/threat-model.md`
+T11–T13 for their authority):
+
+- **review-sitter** — `fetch (check) → assess (work) → publish (work)` over
+  PRs whose review is requested from you (`is:open review-requested:@me`;
+  ADO: pending reviewer vote). Reads the diff in the context of the
+  surrounding code and posts ONE structured review comment per requested
+  head, re-firing only on a human's new push. **Comment-only**: never
+  approves, votes, pushes, or merges.
+- **dep-sitter** — `scan (check) → upgrade (work) → verify (check) →
+  publish (work)` over dependency advisories: `npm audit`/`npm outdated` for
+  npm, OSV-Scanner (`osv-scanner --format json -L <pom.xml|gradle.lockfile>`)
+  for Maven/Gradle — the `ecosystem` binding defaults to `auto` (detect and
+  merge; Gradle needs a committed lockfile; undeclared JVM transitives are
+  never claimed). Auto-fixes patch/minor advisories into verified DRAFT PRs
+  on `feature/*` branches; majors are skipped and logged for a human.
+  Publish opens the PR via `gh` or the ADO REST API depending on
+  `codePlatform`.
+- **main-sitter** — `diagnose (check) → remedy (work) → verify (check) →
+  publish (work)` over the watched branch's CI (`gh run list` on GitHub, the
+  Azure Pipelines Build API on `ado`). When the newest head goes red it
+  reproduces, bisects to the culprit, and publishes a verified DRAFT
+  fix/revert PR on a `main-sitter/*` branch, commenting once on the culprit
+  PR. The watched branch is never pushed.
 
 ## The verdict contracts
 

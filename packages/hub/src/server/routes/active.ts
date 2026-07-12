@@ -56,7 +56,7 @@ const readLease = async (deps: HubDeps, now: Date): Promise<LeaseView | null> =>
 const readPrLedgers = async (deps: HubDeps): Promise<PrLedgerView[]> => {
   // Each PR-shaped kind keeps its ledgers under `runs/<kind>/` (core's ledgerDir);
   // scan every enabled github-pr kind, not just the literal pr-sitter, so a second
-  // PR kind's ledgers surface too.
+  // PR kind's ledgers surface too — each view stamped with its kind.
   const prKinds = deps.boards.filter((b) => b.sourceType === "github-pr").map((b) => b.kind)
   const ledgers: PrLedgerView[] = []
   for (const kind of prKinds) {
@@ -74,6 +74,7 @@ const readPrLedgers = async (deps: HubDeps): Promise<PrLedgerView[]> => {
         const l = parsed.data
         ledgers.push({
           pr: l.pr,
+          kind,
           ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
           ...(l.headShaHandled ? { headShaHandled: l.headShaHandled } : {}),
           failedAttempts: l.failedAttempts.length,
@@ -83,7 +84,7 @@ const readPrLedgers = async (deps: HubDeps): Promise<PrLedgerView[]> => {
       }
     }
   }
-  ledgers.sort((a, b) => a.pr - b.pr)
+  ledgers.sort((a, b) => a.pr - b.pr || (a.kind ?? "").localeCompare(b.kind ?? ""))
   return ledgers
 }
 

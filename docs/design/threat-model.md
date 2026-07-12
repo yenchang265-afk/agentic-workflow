@@ -206,9 +206,15 @@ push to any branch, comment anywhere, sometimes merge.
   `AZURE_DEVOPS_EXT_PAT` (Code read + Pull Request contribute) is the
   hard-containment equivalent. The ADO allowlist is host-pinned `curl`
   (`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`) plus a PreToolUse backstop hook
-  (`check-stage-guard.mjs`) that permits **only** GET reads and POSTs to a
-  `/threads` resource — blocking complete/abandon, approve/reject reviewer
-  votes, reviewer edits, create-PR, and run-pipeline. One allowlist-breadth
+  (`check-stage-guard.mjs`) that permits **only** GET reads, POSTs to a
+  `/threads` resource, and POSTs creating a brand-new pull request (the bare
+  `.../pullrequests` collection, no id segment after it — dep-sitter's and
+  main-sitter's publish stage; see T12/T13) — blocking complete/abandon,
+  approve/reject reviewer votes, reviewer edits, and run-pipeline regardless
+  of loop kind or stage. The distinction between "create" and "mutate an
+  existing PR" is a regex lookahead (`isAdoWriteBackstopViolation`,
+  `plugins/claude/hooks/src/allowlist.mjs`) checking whether anything
+  (a `/`, an id) follows `pullrequests` in the URL. One allowlist-breadth
   note: the manifest's stage allowlists are platform-scoped
   (`platformAllowlist.github`/`.ado` merged at stage-marker time, so only the
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
@@ -220,8 +226,10 @@ push to any branch, comment anywhere, sometimes merge.
 
 ### T9. Ledger tampering replays or suppresses work
 
-The per-PR dedup ledger (`<tasksDir>/runs/pr-sitter/pr-<n>.json`) records
-what was handled; it is plain local JSON.
+The per-PR dedup ledger (`<tasksDir>/runs/<kind>/pr-<n>.json`, one namespace
+per PR-shaped loop kind) records what was handled; it is plain local JSON.
+The dep-sitter's per-dependency and main-sitter's per-head ledgers live under
+the same `runs/<kind>/` convention and carry the same properties.
 
 - **Control:** ledgers are ephemeral machine state under `runs/` (like
   snapshots — not part of the audited backlog), validated on load, and
@@ -245,11 +253,108 @@ attacker-authored end to end.
   until it can be done without fetching and building attacker branches
   unattended.
 
+## Sitter-family surfaces (T11–T13)
+
+Three further opt-in kinds reuse the T7–T10 posture with narrower or
+differently-shaped authority. Each threat applies only when its
+`loops.<kind>.enabled` is set.
+
+### T11. review-sitter — strictly less authority than the PR sitter
+
+The review sitter (`loops/review-sitter/`) reads PRs authored by *other
+people* (`review-requested:@me`), so T7's injection surface applies at full
+strength to the PR description and diff — but its authority is
+**comment-only**: no push, no approval, no merge.
+
+- **Control:** the publish stage's GitHub allowlist is exactly
+  `gh pr comment` + `gh pr view` — deliberately **no `gh api`** (which could
+  approve or merge via REST) and no `gh pr review`; on ADO the curl allowlist
+  is `/threads*`-scoped and the T8 backstop hook blocks votes/completions.
+  The ASSESS stage may *execute* the PR's code only through the read +
+  test-runner allowlist inside the loop's worktree (T2 containment), and the
+  T10 fork skip is retained — review requests on fork PRs are not sat on,
+  since assessing one means running attacker-authored code unattended.
+- **Residual:** a persuasive injection can shape the *text* of the review
+  comment (wrong or misleading findings). The comment opens by framing
+  itself as an automated first pass and the human reviewer stays the reviewer
+  of record — GitHub's review-request state is never cleared by a plain
+  comment, so the human's own review remains pending.
+
+### T12. dep-sitter — registry/advisory text and the upgrade supply chain
+
+The dep sitter (`loops/dep-sitter/`) reads advisory text and changelogs
+(untrusted, same discipline as T7) and *installs packages* — the upgrade
+stage's `npm install <pkg>@<target>` executes the new version's install
+scripts.
+
+- **Control:** targets are never invented by an agent: the work source pins
+  the exact target version from `npm audit`'s `fixAvailable` before any agent
+  runs, majors are structurally never claimed (the source skips and logs
+  them; the `autoFix` enum has no `major` member), and the SCAN stage
+  re-confirms the advisory and target read-only before anything is written.
+  The publish push is scoped to `feature/*` branches, everything lands as a
+  DRAFT PR, and VERIFY gates the push (advisory gone, only ordered files
+  moved, suite green).
+- **Residual:** a malicious *published* package version within the pinned
+  patch/minor range executes at install time in the worktree — the same
+  exposure `npm audit fix` has everywhere. Hard containment is the host's
+  usual npm posture (`ignore-scripts`, a proxying registry) and the human
+  merge gate.
+- **ADO parity:** the `dependency-scan` source is platform-agnostic (npm
+  doesn't care which forge the repo lives on); only the publish stage's
+  PR-creation call differs. On `ado` it opens the draft PR via `POST
+  _apis/git/repositories/<repo>/pullrequests` — the one write shape T8's
+  backstop-hook update explicitly carves out — everything else about the
+  control above (branch-scoped push, VERIFY gate, no merge) is identical.
+- **JVM ecosystems (OSV-Scanner):** for maven/gradle the advisory data comes
+  from the host-installed `osv-scanner` binary querying the OSV.dev database
+  — a new **external-read** egress (the binary is trusted like `gh`: the host
+  operator installs and updates it; the sitter only ever invokes it with
+  `--format json -L <file>` and parses the output defensively). OSV advisory
+  text is untrusted input under the same discipline as npm advisories. Fix
+  targets are pinned by the pure normalizer (`osv.ts`) from the report's
+  `fixed` events before any agent runs — an agent never chooses a version.
+  Vulnerable packages not declared in the build files (transitives) are
+  structurally unclaimable, mirroring npm's `isDirect`. The JVM upgrade/verify
+  stages run `mvn`/`gradle` builds, which execute build-plugin code — the
+  same residual class as npm install scripts, with the same containment:
+  worktree isolation, the VERIFY gate, a draft PR, and the human merge.
+
+### T13. main-sitter — CI logs and executing historical commits
+
+The main sitter (`loops/main-sitter/`) reads CI logs (untrusted — T7
+discipline: data to diagnose, never instructions) and its DIAGNOSE stage
+*bisects*, i.e. checks out and executes arbitrary historical commits of the
+watched branch inside the loop's worktree.
+
+- **Control:** everything bisect executes is repo history already merged by
+  humans — the same trust base as T1, contained by the diagnose stage's
+  read + runner + `git bisect` allowlist inside the worktree. The watched
+  branch is structurally unpushable: the publish allowlist admits only
+  `git push origin main-sitter/*`, the remedy lands as a DRAFT PR, and the
+  one comment on the culprit PR is informational. A head is claimed only
+  when it is the branch's *newest* and its runs are complete, and the claim
+  is released if the tip moves — the sitter never races live CI.
+- **Residual:** a wrong diagnosis can propose a wrong revert; the draft PR +
+  human merge is the gate, and the verify stage requires the failing job's
+  command to pass locally before anything is published.
+- **ADO parity:** `ado-ci-runs.ts` polls the Azure Pipelines Build REST API
+  (`_apis/build/builds`) instead of `gh run list`, normalizing results into
+  the same shape the pure, already-tested `newestHeadVerdict` judges — the
+  "only the newest head, never mid-run, never re-claim a handled head" logic
+  is identical on both platforms, sharing its ledger/claim/WorkItem mechanics
+  with the GitHub source via `ci-runs-shared.ts`. The diagnose stage's log
+  and culprit-PR lookups go through the same read-only REST calls pr-sitter's
+  triage stage already uses; publish's draft-PR creation is the same T8
+  backstop-hook carve-out dep-sitter uses.
+
 ## Non-goals
 
 The engineering loop never pushes, opens PRs, or merges — the human does,
 after REVIEW passes. The PR sitter pushes commits to a PR's existing branch
-and replies to its threads, but never merges, closes, or approves — landing
-code stays a human call in every kind. Anything requiring authenticated
-identity, network egress control, or OS-level sandboxing belongs to the host
+and replies to its threads, but never merges, closes, or approves. The
+review sitter only ever comments; the dep and main sitters push only their
+own `feature/*`/`main-sitter/*` branches and open draft PRs — landing code
+stays a human call in every kind. Anything requiring authenticated identity,
+network egress control, or OS-level sandboxing belongs to the host
 environment, not this plugin.

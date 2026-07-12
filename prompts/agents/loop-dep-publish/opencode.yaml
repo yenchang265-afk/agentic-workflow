@@ -1,0 +1,36 @@
+description: Publisher for the dep sitter's PUBLISH stage. Pushes the verified upgrade branch (feature/* only) and opens a draft PR naming the advisory, impact, and verification result (gh on GitHub, the ADO REST API via curl+PAT on Azure DevOps). Never merges, never marks ready, never pushes the default branch.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # Push is scoped to feature/* so the default branch can never be pushed.
+    "git push origin feature/*": allow
+    "git -C * push origin feature/*": allow
+    "gh pr create *": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr comment *": allow
+    # Both platforms are allowed here (static frontmatter can't switch); config
+    # codePlatform decides which the stage prompt actually uses. ADO writes go to
+    # the REST API via curl+PAT — the Claude-side backstop hook (not expressible
+    # in this static allowlist) additionally restricts writes to reads, thread
+    # replies, and creating a brand-new PR, so complete/abandon/vote can't get
+    # through even via a broader curl call.
+    "curl -sS -u :* https://dev.azure.com/*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "wc *": allow
