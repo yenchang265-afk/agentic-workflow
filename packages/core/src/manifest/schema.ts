@@ -133,8 +133,15 @@ const DependencyScanSourceSchema = z.object({
   autoFix: z.array(z.enum(["patch", "minor"])).min(1).default(["patch", "minor"]),
   /** Minimum advisory severity that makes a vulnerable dependency claimable. */
   severityFloor: z.enum(["low", "moderate", "high", "critical"]).default("high"),
-  /** Also claim non-vulnerable but outdated dependencies within the autoFix classes. */
+  /** Also claim non-vulnerable but outdated dependencies within the autoFix classes (npm only). */
   includeOutdated: z.boolean().default(false),
+  /**
+   * Which package ecosystem to scan: `npm` (native `npm audit`), `maven` /
+   * `gradle` (OSV-Scanner over pom.xml / the Gradle lockfile), or `auto`
+   * (detect every ecosystem the repo declares and merge their candidates —
+   * monorepos work).
+   */
+  ecosystem: z.enum(["auto", "npm", "maven", "gradle"]).default("auto"),
 })
 
 /**

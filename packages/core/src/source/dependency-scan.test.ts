@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { makeDependencyScanSource, semverImpact, upgradeCandidates } from "./dependency-scan.js"
+import { detectEcosystems, makeDependencyScanSource, semverImpact, upgradeCandidates } from "./dependency-scan.js"
 
 /**
  * The dependency-scan source over the real dep-sitter manifest, against a
@@ -137,7 +137,8 @@ const source = (opts: { auditJson?: string; lsJson?: string; ledgers?: Record<st
       ],
       opts.log,
     ),
-    client: ledgerClient(opts.ledgers ?? {}),
+    // package.json makes ecosystem auto-detection resolve to npm, the original fixture shape.
+    client: ledgerClient({ "package.json": "{}", ...(opts.ledgers ?? {}) }),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: (_l, m) => void opts.warnings?.push(m),
@@ -223,7 +224,7 @@ test("the claimed item is stamped with the resolved platform; defaults to github
         { cmd: "npm audit --json", result: { exitCode: 1, stdout: audit({ lodash: vuln({}) }) } },
         { cmd: "npm ls --json", result: { stdout: installed({ lodash: "4.17.20" }) } },
       ]),
-      client: ledgerClient({}),
+      client: ledgerClient({ "package.json": "{}" }),
       directory: "/r",
       tasksDir: "docs/tasks",
       log: () => {},
@@ -234,4 +235,207 @@ test("the claimed item is stamped with the resolved platform; defaults to github
     const ado = await adoSrc.claimNext()
     assert.equal(ado.item?.state.platform, "ado")
   })()
+})
+
+// --- the JVM ecosystems: detection, OSV-driven maven/gradle flows, merge semantics ---
+
+const POM = `<project><dependencies><dependency><groupId>com.fasterxml.jackson.core</groupId><artifactId>jackson-databind</artifactId><version>2.9.10</version></dependency></dependencies></project>`
+
+/** One-vuln-per-package OSV report, matching the osv-scanner --format json shape. */
+const osvReport = (pkgs: { name: string; version: string; severity: string; fixed: string }[]) =>
+  JSON.stringify({
+    results: [
+      {
+        packages: pkgs.map((p) => ({
+          package: { name: p.name, version: p.version, ecosystem: "Maven" },
+          vulnerabilities: [
+            {
+              id: `V-${p.name}`,
+              database_specific: { severity: p.severity },
+              affected: [
+                {
+                  package: { name: p.name, ecosystem: "Maven" },
+                  ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: p.fixed }] }],
+                },
+              ],
+            },
+          ],
+          groups: [{ ids: [`V-${p.name}`] }],
+        })),
+      },
+    ],
+  })
+
+const JACKSON = osvReport([
+  { name: "com.fasterxml.jackson.core:jackson-databind", version: "2.9.10", severity: "HIGH", fixed: "2.9.10.8" },
+])
+
+const OSV_OK: Cmd = { cmd: "osv-scanner --version", result: { stdout: "osv-scanner version: 2.0.0\n" } }
+
+const ecoSource = (opts: {
+  files?: Record<string, string>
+  script?: Cmd[]
+  log?: string[]
+  warnings?: string[]
+  ecosystem?: string
+} = {}) =>
+  makeDependencyScanSource({
+    $: scriptedShell(opts.script ?? [], opts.log),
+    client: ledgerClient(opts.files ?? {}),
+    directory: "/r",
+    tasksDir: "docs/tasks",
+    log: (_l, m) => void opts.warnings?.push(m),
+    loaded: sitter,
+    ...(opts.ecosystem ? { ecosystem: opts.ecosystem } : {}),
+    now: () => "2026-07-05T00:00:00Z",
+  })
+
+test("detectEcosystems probes the manifest files", async () => {
+  const probe = (present: string[]) => (rel: string) => Promise.resolve(present.includes(rel))
+  assert.deepEqual(await detectEcosystems(probe(["package.json"])), ["npm"])
+  assert.deepEqual(await detectEcosystems(probe(["pom.xml"])), ["maven"])
+  assert.deepEqual(await detectEcosystems(probe(["build.gradle.kts"])), ["gradle"])
+  assert.deepEqual(await detectEcosystems(probe(["package.json", "pom.xml", "build.gradle"])), ["npm", "maven", "gradle"])
+  assert.deepEqual(await detectEcosystems(probe([])), [])
+})
+
+test("a maven repo claims an OSV advisory: -L pom.xml scan, maven work order, claims under runs/dep-sitter", async () => {
+  const log: string[] = []
+  const { item, skip } = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [OSV_OK, { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: JACKSON } }],
+    log,
+  }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "dep-com-fasterxml-jackson-core-jackson-databind")
+  assert.equal(item?.entryStage, "scan")
+  assert.match(item?.state.goal ?? "", /^Upgrade com\.fasterxml\.jackson\.core:jackson-databind to 2\.9\.10\.8/)
+  assert.match(item?.state.goal ?? "", /Ecosystem: Maven/)
+  assert.match(item?.state.goal ?? "", /mvn versions:use-dep-version/)
+  assert.match(item?.state.goal ?? "", /Spring Boot BOM/)
+  assert.ok(log.some((c) => c.includes("runs/dep-sitter/.claims/dep-com-fasterxml-jackson-core-jackson-databind")))
+  // No npm manifest in this repo — the npm adapter must never have run.
+  assert.ok(log.every((c) => !c.startsWith("npm ")))
+})
+
+test("a gradle repo with a lockfile claims via -L gradle.lockfile with the version-catalog work order", async () => {
+  const log: string[] = []
+  const report = osvReport([{ name: "ch.qos.logback:logback-classic", version: "1.2.3", severity: "CRITICAL", fixed: "1.2.9" }])
+  const { item, skip } = await ecoSource({
+    files: {
+      "build.gradle.kts": `dependencies { implementation("ch.qos.logback:logback-classic:1.2.3") }`,
+      "gradle.lockfile": "ch.qos.logback:logback-classic:1.2.3=runtimeClasspath",
+    },
+    script: [OSV_OK, { cmd: "osv-scanner --format json -L gradle.lockfile", result: { exitCode: 1, stdout: report } }],
+    log,
+  }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "dep-ch-qos-logback-logback-classic")
+  assert.match(item?.state.goal ?? "", /Ecosystem: Gradle/)
+  assert.match(item?.state.goal ?? "", /--write-locks/)
+})
+
+test("a gradle repo without a lockfile is an actionable enable-locking skip, never a silent nothing", async () => {
+  const { item, skip } = await ecoSource({
+    files: { "build.gradle": "dependencies {}" },
+    script: [OSV_OK],
+  }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /dependency locking/)
+  assert.match(skip?.message ?? "", /--write-locks/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("a missing osv-scanner binary is an actionable skip on a JVM-only repo", async () => {
+  const { item, skip } = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [{ cmd: "osv-scanner --version", result: { exitCode: 127, stderr: "not found" } }],
+  }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /osv-scanner not found — install it/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("npm keeps claiming when osv-scanner is missing in a mixed repo — the maven skip becomes a warning", async () => {
+  const log: string[] = []
+  const warnings: string[] = []
+  const { item, skip } = await ecoSource({
+    files: { "package.json": "{}", "pom.xml": POM },
+    script: [
+      { cmd: "osv-scanner --version", result: { exitCode: 127 } },
+      { cmd: "npm audit --json", result: { exitCode: 1, stdout: audit({ lodash: vuln({}) }) } },
+      { cmd: "npm ls --json", result: { stdout: installed({ lodash: "4.17.20" }) } },
+    ],
+    log,
+    warnings,
+  }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "dep-lodash")
+  assert.ok(warnings.some((w) => w.includes("osv-scanner not found")))
+})
+
+test("vulnerable packages not declared in the pom are transitives — logged, never claimed", async () => {
+  const warnings: string[] = []
+  const transitive = osvReport([
+    { name: "com.fasterxml.jackson.core:jackson-core", version: "2.9.10", severity: "CRITICAL", fixed: "2.9.10.8" },
+  ])
+  const { item, skip } = await ecoSource({
+    files: { "pom.xml": POM }, // declares jackson-databind, NOT jackson-core
+    script: [OSV_OK, { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: transitive } }],
+    warnings,
+  }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /no auto-fixable upgrades/)
+  assert.ok(warnings.some((w) => w.includes("jackson-core") && w.includes("transitive")))
+})
+
+test("a mixed monorepo merges ecosystems severity-first: a critical maven advisory outranks a high npm one", async () => {
+  const critical = osvReport([
+    { name: "org.springframework:spring-web", version: "5.3.30", severity: "CRITICAL", fixed: "5.3.39" },
+  ])
+  const { item } = await ecoSource({
+    files: { "package.json": "{}", "pom.xml": POM.replace("jackson-databind", "spring-web") },
+    script: [
+      { cmd: "npm audit --json", result: { exitCode: 1, stdout: audit({ lodash: vuln({}) }) } }, // high
+      { cmd: "npm ls --json", result: { stdout: installed({ lodash: "4.17.20" }) } },
+      OSV_OK,
+      { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: critical } },
+    ],
+  }).claimNext()
+  assert.equal(item?.id, "dep-org-springframework-spring-web")
+})
+
+test("a maven ledger suppresses a handled target until it moves — the shared dedup, unchanged", async () => {
+  const files = {
+    "pom.xml": POM,
+    "docs/tasks/runs/dep-sitter/dep-com-fasterxml-jackson-core-jackson-databind.json": JSON.stringify({
+      pkg: "com.fasterxml.jackson.core:jackson-databind",
+      versionHandled: "2.9.10.8",
+      failedAttempts: [],
+      updatedAt: "2026-07-04T00:00:00Z",
+    }),
+  }
+  const script = [OSV_OK, { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: JACKSON } }]
+  const suppressed = await ecoSource({ files, script }).claimNext()
+  assert.equal(suppressed.item, null)
+  assert.match(suppressed.skip?.message ?? "", /no auto-fixable upgrades/)
+})
+
+test("an explicit ecosystem override scopes the scan — npm commands never run", async () => {
+  const log: string[] = []
+  const { item } = await ecoSource({
+    files: { "package.json": "{}", "pom.xml": POM },
+    script: [OSV_OK, { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: JACKSON } }],
+    log,
+    ecosystem: "maven",
+  }).claimNext()
+  assert.equal(item?.id, "dep-com-fasterxml-jackson-core-jackson-databind")
+  assert.ok(log.every((c) => !c.startsWith("npm ")))
+})
+
+test("an explicitly configured maven ecosystem with no pom.xml is an actionable skip", async () => {
+  const { item, skip } = await ecoSource({ files: { "package.json": "{}" }, ecosystem: "maven" }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /no pom\.xml was found/)
+  assert.equal(skip?.actionable, true)
 })

@@ -99,10 +99,14 @@ backlog as reviewable task files. Never edits code.
 > **Status: SHIPPED** — `packages/core/loops/dep-sitter/`. v1 deltas from
 > the sketch below: majors are *skipped and logged* rather than parked (the
 > `dependency-scan` source claims only patch/minor fixes whose target
-> version `npm audit` pins — no `validateBeforeTransition` hook needed);
+> version the report pins — no `validateBeforeTransition` hook needed);
 > `maxIterations` is 2. Supports both GitHub (`gh pr create`) and Azure
 > DevOps (the publish stage opens the draft PR via the REST API) — the
-> dependency scan itself is platform-agnostic. See threat model T12.
+> dependency scan itself is platform-agnostic. Ecosystems: **npm** (native
+> `npm audit`), **Maven and Gradle** via OSV-Scanner (`ecosystem` binding,
+> default `auto` — detect and merge; Gradle needs a committed lockfile;
+> undeclared/transitive JVM packages are never claimed). See threat model
+> T12.
 
 Sits on outdated and vulnerable dependencies: upgrades them on a branch,
 verifies, and opens a draft PR. Patch/minor CVE fixes flow straight to a

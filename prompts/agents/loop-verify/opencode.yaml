@@ -25,6 +25,21 @@ permission:
     "npm audit*": allow
     "npm ls*": allow
     "npm outdated*": allow
+    "osv-scanner *": allow
+    "mvn test*": allow
+    "mvn verify*": allow
+    "mvn dependency:tree*": allow
+    "./mvnw test*": allow
+    "./mvnw verify*": allow
+    "./mvnw dependency:tree*": allow
+    "gradle test*": allow
+    "gradle check*": allow
+    "gradle build*": allow
+    "gradle dependencyInsight*": allow
+    "./gradlew test*": allow
+    "./gradlew check*": allow
+    "./gradlew build*": allow
+    "./gradlew dependencyInsight*": allow
     "npm test*": allow
     "npm run *": allow
     "pnpm test*": allow
@@ -46,6 +61,21 @@ permission:
     "cd * && npm install*": allow
     "cd * && npm audit*": allow
     "cd * && npm ls*": allow
+    "cd * && osv-scanner *": allow
+    "cd * && mvn test*": allow
+    "cd * && mvn verify*": allow
+    "cd * && mvn dependency:tree*": allow
+    "cd * && ./mvnw test*": allow
+    "cd * && ./mvnw verify*": allow
+    "cd * && ./mvnw dependency:tree*": allow
+    "cd * && gradle test*": allow
+    "cd * && gradle check*": allow
+    "cd * && gradle build*": allow
+    "cd * && gradle dependencyInsight*": allow
+    "cd * && ./gradlew test*": allow
+    "cd * && ./gradlew check*": allow
+    "cd * && ./gradlew build*": allow
+    "cd * && ./gradlew dependencyInsight*": allow
     "cd * && npm test*": allow
     "cd * && npm run *": allow
     "cd * && pnpm test*": allow

@@ -5,7 +5,8 @@ argument-hint: claim | watch [poll [interval] | cron <schedule> | idle | <interv
 ---
 
 The dep sitter agentic loop — sits on vulnerable and outdated dependencies
-(`npm audit` / `npm outdated`) and turns each auto-fixable one into a
+(npm via `npm audit`/`npm outdated`; Maven/Gradle via OSV-Scanner over
+`pom.xml`/`gradle.lockfile`) and turns each auto-fixable one into a
 verified draft PR. The plugin intercepts this command; `$ARGUMENTS` selects
 the verb. Every verb is deterministic plugin work: **invoke nothing, write
 nothing** — report the toast's outcome and stop.
@@ -36,8 +37,10 @@ The kind must be enabled in `.agentic-loop.json`:
 { "loops": { "dep-sitter": { "enabled": true, "severityFloor": "high" } } }
 ```
 
-`severityFloor` (low|moderate|high|critical) and `includeOutdated` (also
-claim non-vulnerable stale deps) override the manifest policy. GitHub-only
+`severityFloor` (low|moderate|high|critical), `includeOutdated` (npm only:
+also claim non-vulnerable stale deps), and `ecosystem` (auto|npm|maven|gradle;
+auto detects and merges — JVM ecosystems need the `osv-scanner` binary, and
+Gradle a committed lockfile) override the manifest policy. GitHub-only
 for now (`gh pr create`); on an `ado` platform the kind is skipped with a
 warning. Every upgrade lands as a DRAFT pull request on a `feature/*` branch
 — the sitter never merges and never pushes the default branch (enforced by

@@ -183,7 +183,7 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
                 e.target.value === "backlog"
                   ? { type: "backlog", statuses: ["queued", "in-progress", "completed"], pools: [] }
                   : e.target.value === "dependency-scan"
-                    ? { type: "dependency-scan", autoFix: ["patch", "minor"], severityFloor: "high", includeOutdated: false }
+                    ? { type: "dependency-scan", autoFix: ["patch", "minor"], severityFloor: "high", includeOutdated: false, ecosystem: "auto" }
                     : e.target.value === "ci-runs"
                       ? { type: "ci-runs", workflows: [] }
                       : { type: "github-pr", query: "is:open author:@me", triggers: ["failing-checks"], role: "author" },
@@ -192,7 +192,7 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
         >
           <option value="backlog">backlog — docs/tasks folders</option>
           <option value="github-pr">github-pr — open pull requests</option>
-          <option value="dependency-scan">dependency-scan — npm audit/outdated</option>
+          <option value="dependency-scan">dependency-scan — npm audit / OSV-Scanner</option>
           <option value="ci-runs">ci-runs — the watched branch's CI</option>
         </select>
       </Field>
@@ -261,6 +261,26 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
       )}
       {ws.type === "dependency-scan" && (
         <>
+          <Field label="ecosystem (auto = detect npm/maven/gradle and merge)">
+            <select
+              value={ws.ecosystem}
+              onChange={(e) =>
+                onChange({
+                  ...meta,
+                  workSource: {
+                    ...ws,
+                    ecosystem: (["auto", "npm", "maven", "gradle"].includes(e.target.value) ? e.target.value : "auto") as typeof ws.ecosystem,
+                  },
+                })
+              }
+            >
+              {["auto", "npm", "maven", "gradle"].map((eco) => (
+                <option key={eco} value={eco}>
+                  {eco}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="severity floor">
             <select
               value={ws.severityFloor}

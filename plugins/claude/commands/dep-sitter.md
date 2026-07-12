@@ -5,7 +5,8 @@ argument-hint: claim | status | stop
 
 You are about to work the **dep sitter agentic loop** (typed as
 `/agentic-loop:dep-sitter`) — it sits on vulnerable and outdated
-dependencies (`npm audit` / `npm outdated`) and turns each auto-fixable one
+dependencies (npm via `npm audit`/`npm outdated`; Maven/Gradle via
+OSV-Scanner over `pom.xml`/`gradle.lockfile`) and turns each auto-fixable one
 into a verified draft PR. Read the `loop-orchestration` skill now; then act
 on the argument below.
 
@@ -32,8 +33,9 @@ The kind must be enabled in `.agentic-loop.json`:
 { "loops": { "dep-sitter": { "enabled": true, "severityFloor": "high" } } }
 ```
 
-`severityFloor` (low|moderate|high|critical) and `includeOutdated` override
-the manifest policy. GitHub-only for now (`gh pr create`); on an `ado`
+`severityFloor` (low|moderate|high|critical), `includeOutdated` (npm only),
+and `ecosystem` (auto|npm|maven|gradle; JVM ecosystems need the `osv-scanner`
+binary, Gradle a committed lockfile) override the manifest policy. GitHub-only for now (`gh pr create`); on an `ado`
 platform the kind is skipped with a warning. Every upgrade lands as a DRAFT
 pull request on a `feature/*` branch — the sitter never merges and never
 pushes the default branch (enforced by the branch-scoped push allowlist).

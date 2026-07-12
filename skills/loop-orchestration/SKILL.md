@@ -265,11 +265,14 @@ T11–T13 for their authority):
   head, re-firing only on a human's new push. **Comment-only**: never
   approves, votes, pushes, or merges.
 - **dep-sitter** — `scan (check) → upgrade (work) → verify (check) →
-  publish (work)` over `npm audit`/`npm outdated`. Auto-fixes patch/minor
-  advisories into verified DRAFT PRs on `feature/*` branches; majors are
-  skipped and logged for a human. Platform-agnostic scan (npm doesn't care
-  which forge the repo lives on); publish opens the PR via `gh` or the ADO
-  REST API depending on `codePlatform`.
+  publish (work)` over dependency advisories: `npm audit`/`npm outdated` for
+  npm, OSV-Scanner (`osv-scanner --format json -L <pom.xml|gradle.lockfile>`)
+  for Maven/Gradle — the `ecosystem` binding defaults to `auto` (detect and
+  merge; Gradle needs a committed lockfile; undeclared JVM transitives are
+  never claimed). Auto-fixes patch/minor advisories into verified DRAFT PRs
+  on `feature/*` branches; majors are skipped and logged for a human.
+  Publish opens the PR via `gh` or the ADO REST API depending on
+  `codePlatform`.
 - **main-sitter** — `diagnose (check) → remedy (work) → verify (check) →
   publish (work)` over the watched branch's CI (`gh run list` on GitHub, the
   Azure Pipelines Build API on `ado`). When the newest head goes red it

@@ -129,3 +129,55 @@ test("buildWorkSources wires dep-sitter and main-sitter on both github and ado â
   )
   assert.deepEqual(warnings, [])
 })
+
+test("the loops.dep-sitter.ecosystem override reaches the source through buildWorkSources", async () => {
+  // A minimal scripted shell: osv-scanner probes succeed, everything else succeeds empty.
+  const ran: string[] = []
+  const shell = ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
+    let cmd = ""
+    strings.forEach((s, i) => {
+      cmd += s
+      if (i < exprs.length) cmd += String(exprs[i])
+    })
+    ran.push(cmd.trim().replace(/\s+/g, " "))
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      then: (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ exitCode: 0, stdout: { toString: () => "{}" }, stderr: { toString: () => "" } }).then(resolve),
+    }
+    return chain
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any
+  const client = {
+    file: {
+      async list() {
+        return { data: [] }
+      },
+      async read({ query }: { query: { path: string } }) {
+        // Both manifests exist â€” only the ecosystem override keeps npm out.
+        const files: Record<string, string> = { "package.json": "{}", "pom.xml": "<project></project>" }
+        const content = files[query.path]
+        return { data: content ? { content } : null }
+      },
+    },
+    app: { async log() {} },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+  const config = parseConfigWith(ConfigSchema, {
+    loops: { engineering: { enabled: false }, "dep-sitter": { enabled: true, ecosystem: "maven" } },
+  })
+  const sources = buildWorkSources(
+    { $: shell, client, directory: "/repo", log: () => {}, isDriving: () => false },
+    config,
+    makeManifestCache(defaultLoopsDir()),
+  )
+  assert.deepEqual(
+    sources.map((s) => s.loopKind),
+    ["dep-sitter"],
+  )
+  await sources[0]?.claimNext()
+  assert.ok(ran.some((c) => c.startsWith("osv-scanner")))
+  assert.ok(ran.every((c) => !c.startsWith("npm ")))
+})

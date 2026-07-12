@@ -306,6 +306,19 @@ scripts.
   _apis/git/repositories/<repo>/pullrequests` — the one write shape T8's
   backstop-hook update explicitly carves out — everything else about the
   control above (branch-scoped push, VERIFY gate, no merge) is identical.
+- **JVM ecosystems (OSV-Scanner):** for maven/gradle the advisory data comes
+  from the host-installed `osv-scanner` binary querying the OSV.dev database
+  — a new **external-read** egress (the binary is trusted like `gh`: the host
+  operator installs and updates it; the sitter only ever invokes it with
+  `--format json -L <file>` and parses the output defensively). OSV advisory
+  text is untrusted input under the same discipline as npm advisories. Fix
+  targets are pinned by the pure normalizer (`osv.ts`) from the report's
+  `fixed` events before any agent runs — an agent never chooses a version.
+  Vulnerable packages not declared in the build files (transitives) are
+  structurally unclaimable, mirroring npm's `isDirect`. The JVM upgrade/verify
+  stages run `mvn`/`gradle` builds, which execute build-plugin code — the
+  same residual class as npm install scripts, with the same containment:
+  worktree isolation, the VERIFY gate, a draft PR, and the human merge.
 
 ### T13. main-sitter — CI logs and executing historical commits
 

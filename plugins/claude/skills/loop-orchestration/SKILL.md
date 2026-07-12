@@ -184,11 +184,13 @@ Three further opt-in kinds drive the same way (`loop_claim({kind})` →
   (check; `loop-review-fetch`) → **assess** (work; `loop-review-assess`) →
   **publish** (work; `loop-review-publish`, ONE comment, comment-only — never
   approves, votes, pushes, or merges).
-- **dep-sitter** — `npm audit`/`npm outdated` upgrades: **scan** (check;
-  `loop-dep-scan`) → **upgrade** (work; `loop-dep-upgrade`) → **verify**
-  (check; reuses `loop-verify`, cap 2) → **publish** (work;
-  `loop-dep-publish`, DRAFT PR on a `feature/*` branch — `gh pr create` or
-  the ADO REST API depending on `codePlatform`; majors are never claimed).
+- **dep-sitter** — dependency-advisory upgrades (npm via `npm audit`;
+  Maven/Gradle via OSV-Scanner over `pom.xml`/`gradle.lockfile`, `ecosystem`
+  binding default `auto`): **scan** (check; `loop-dep-scan`) → **upgrade**
+  (work; `loop-dep-upgrade`) → **verify** (check; reuses `loop-verify`,
+  cap 2) → **publish** (work; `loop-dep-publish`, DRAFT PR on a `feature/*`
+  branch — `gh pr create` or the ADO REST API depending on `codePlatform`;
+  majors and undeclared JVM transitives are never claimed).
 - **main-sitter** — red CI on the watched branch's newest head (`gh run
   list` or the Azure Pipelines Build API): **diagnose** (check;
   `loop-main-diagnose`, bisects) → **remedy** (work;

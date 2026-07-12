@@ -138,13 +138,20 @@ code platform — pr-sitter stages branch on these to pick `gh` vs ADO REST
   read from blocking branch policy evaluations — a repo without a build
   policy never fires `failing-checks`. Stage `platformAllowlist` entries
   merge into `bashAllowlist` for the resolved platform.
-- **`dependency-scan`** — direct dependencies with a fixable advisory
-  (`npm audit --json`) at or above `severityFloor`, optionally plus plainly
-  outdated ones (`includeOutdated`). One item per dependency, deduped by a
+- **`dependency-scan`** — direct dependencies with a fixable advisory at or
+  above `severityFloor`, optionally plus plainly outdated ones
+  (`includeOutdated`, npm only). Three ecosystems behind one policy, chosen
+  by the `ecosystem` binding (`auto` detects `package.json` / `pom.xml` /
+  `build.gradle(.kts)` and merges candidates severity-first): **npm** via the
+  native `npm audit`/`npm outdated`, **maven/gradle** via OSV-Scanner
+  (`osv-scanner --format json -L <pom.xml|gradle.lockfile>`, normalized by
+  `src/source/osv.ts` into the same candidate shape — Gradle needs dependency
+  locking, and vulnerable packages not declared in the build files are logged
+  as transitives, never claimed). One item per dependency, deduped by a
   per-dependency ledger under `<tasksDir>/runs/<kind>/dep-<pkg>.json`; a
   bump outside the `autoFix` classes (majors always) is logged and never
-  claimed. Platform-agnostic — npm reports don't care which forge the repo
-  lives on; the entry state is stamped with the resolved platform
+  claimed. Platform-agnostic — dependency reports don't care which forge the
+  repo lives on; the entry state is stamped with the resolved platform
   (`platformFor(config, kind)`) and only the publish stage's PR-creation call
   differs.
 - **`ci-runs`** — the watched branch's newest head when its completed CI runs

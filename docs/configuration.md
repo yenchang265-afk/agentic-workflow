@@ -104,18 +104,35 @@ config order.
   `is:open review-requested:@me`). GitHub only — on ADO the sitter claims
   active PRs where `ado.selfLogin` is a reviewer whose vote is still pending
   (vote 0), never its own PRs.
-- **`loops.dep-sitter.enabled`** — default off; sits on `npm audit` /
-  `npm outdated` and turns each auto-fixable direct-dependency upgrade into a
+- **`loops.dep-sitter.enabled`** — default off; sits on vulnerable
+  dependencies and turns each auto-fixable direct-dependency upgrade into a
   verified draft PR (scan → upgrade → verify → publish). Major bumps are never
-  auto-fixed — they are logged and left for a human. The dependency scan
-  itself is platform-agnostic; the publish stage opens the draft PR via
-  `gh pr create` (GitHub) or the Azure DevOps REST API (`ado`).
+  auto-fixed — they are logged and left for a human. Three ecosystems: **npm**
+  via the native `npm audit` / `npm outdated`; **Maven and Gradle (Spring
+  Boot)** via [OSV-Scanner](https://google.github.io/osv-scanner/) —
+  `osv-scanner --format json -L <pom.xml|gradle.lockfile>`, querying the
+  OSV.dev database. The `osv-scanner` binary must be installed on the watcher
+  host for the JVM ecosystems (missing → an actionable skip; npm keeps
+  working without it). Gradle scanning needs dependency locking — osv-scanner
+  cannot parse `build.gradle` itself; without a committed `gradle.lockfile`
+  (or `gradle/verification-metadata.xml`) the kind skips with instructions to
+  enable it. Vulnerable JVM packages not declared in the build files
+  (transitives) are logged, never claimed — pinning a transitive is a human
+  call, mirroring npm's direct-only rule. The publish stage opens the draft
+  PR via `gh pr create` (GitHub) or the Azure DevOps REST API (`ado`).
+- **`loops.dep-sitter.ecosystem`** — `auto` (manifest default: detect every
+  ecosystem the repo declares — `package.json` / `pom.xml` /
+  `build.gradle(.kts)` — and merge their candidates severity-first, so
+  monorepos work) | `npm` | `maven` | `gradle` (scan only that one).
 - **`loops.dep-sitter.severityFloor`** — minimum advisory severity that makes
   a vulnerable dependency claimable: `low` | `moderate` | `high` (manifest
-  default) | `critical`.
+  default) | `critical`. Applies uniformly: OSV advisories band their CVSS
+  score into the same vocabulary.
 - **`loops.dep-sitter.includeOutdated`** — default `false`; also claim
   non-vulnerable but outdated direct dependencies within the patch/minor
-  policy.
+  policy. **npm only** — JVM staleness reporting would need build-plugin
+  setup the sitter must not perform; ignored (with a log line) for
+  maven/gradle.
 - **`loops.main-sitter.enabled`** — default off; sits on the watched branch's
   CI (`gh run list`, or the Azure DevOps Build API on `ado`): when the newest
   head goes red it diagnoses (bisecting when needed) and publishes a verified

@@ -123,6 +123,7 @@ export const buildWorkSources = (
             platform: platformFor(config, kind),
             ...(typeof knobs["severityFloor"] === "string" ? { severityFloor: knobs["severityFloor"] } : {}),
             ...(typeof knobs["includeOutdated"] === "boolean" ? { includeOutdated: knobs["includeOutdated"] } : {}),
+            ...(typeof knobs["ecosystem"] === "string" ? { ecosystem: knobs["ecosystem"] } : {}),
           }),
         ]
       }

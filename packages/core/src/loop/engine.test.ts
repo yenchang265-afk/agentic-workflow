@@ -500,6 +500,22 @@ test("dep-sitter publish pushes only feature/ branches and opens draft PRs — n
   assert.ok(adoAllow.every((g) => !/gh /.test(g)))
 })
 
+test("dep-sitter allowlists cover all three ecosystems' read/test verbs; publish stays unchanged", () => {
+  const scan = depSitter.manifest.stages.find((s) => s.name === "scan")
+  assert.ok(scan?.bashAllowlist.includes("osv-scanner *"))
+  assert.ok(scan?.bashAllowlist.some((g) => g.startsWith("mvn dependency:tree")))
+  assert.ok(scan?.bashAllowlist.some((g) => g.startsWith("./gradlew depend")))
+  // Scan stays read-only: no install/test verbs.
+  assert.ok(scan?.bashAllowlist.every((g) => !/npm install|mvn test|gradle test/.test(g)))
+  const verify = depSitter.manifest.stages.find((s) => s.name === "verify")
+  assert.ok(verify?.bashAllowlist.includes("osv-scanner *"))
+  assert.ok(verify?.bashAllowlist.includes("./gradlew test*"))
+  assert.ok(verify?.bashAllowlist.includes("cd * && ./mvnw verify*"))
+  // Publish gains nothing: still push-to-feature/* + platform PR verbs only.
+  const publish = depSitter.manifest.stages.find((s) => s.name === "publish")
+  assert.ok(publish?.bashAllowlist.every((g) => !/osv-scanner|mvn |gradle/.test(g)))
+})
+
 test("dep-sitter publish renders gh guidance by default and ADO PR-creation guidance when stamped ado", () => {
   const state = depState("publish", { scan: "W", verify: "OK" })
   const gh = composePrompt(depSitter, state, "publish")

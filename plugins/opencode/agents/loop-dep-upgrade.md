@@ -19,8 +19,15 @@ verify's failure feedback.
 
 ## Your job
 
-1. Bump exactly what the work order names — the manifest entry and the
-   lockfile (`npm install <pkg>@<target>`, or the project's package manager).
+1. Bump exactly what the work order names — the declaration and the lockfile.
+   npm: `npm install <pkg>@<target>` (or the project's package manager).
+   Maven: if the version is managed by the Spring Boot BOM (or another
+   imported BOM), override its version property or bump the parent rather
+   than hardcoding a literal; otherwise
+   `mvn versions:use-dep-version -Dincludes=<group:artifact> -DdepVersion=<target> -DforceVersion=true`.
+   Gradle: bump the entry in `gradle/libs.versions.toml` (version catalog) or
+   the dependency string in `build.gradle(.kts)`, then refresh the lockfile
+   with `./gradlew dependencies --write-locks`.
 2. Fix the fallout the bump causes — type errors, renamed APIs, failing tests
    — and nothing else. Never touch versions the work order doesn't name.
 3. Run the tests; commit locally with clear messages. **Do not push** —
