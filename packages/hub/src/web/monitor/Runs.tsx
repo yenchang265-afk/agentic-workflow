@@ -3,12 +3,14 @@ import type { RunDetailResponse, RunsResponse } from "../../shared/api.js"
 import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { Badge } from "../ui/Badge.js"
+import { Chip } from "../ui/Chip.js"
 import { TokenPanel } from "./TokenPanel.js"
 
 /** Run history: list of run logs; expanding one shows stage sections + summary tables. */
 
-const outcomeClass = (outcome?: string): string =>
-  outcome === "done" ? "ok" : outcome === "error" || outcome === "stopped" ? "gate" : ""
+const outcomeTone = (outcome?: string): "neutral" | "ok" | "gate" =>
+  outcome === "done" ? "ok" : outcome === "error" || outcome === "stopped" ? "gate" : "neutral"
 
 const RunDetail = ({ id }: { id: string }) => {
   const [detail, setDetail] = useState<RunDetailResponse | null>(null)
@@ -29,16 +31,16 @@ const RunDetail = ({ id }: { id: string }) => {
     <div className="run-detail">
       {detail.snapshot && (
         <div className="summary-chips">
-          <span className="chip gate">
+          <Chip gate>
             snapshot: parked at <strong>{detail.snapshot.stage}</strong> (iteration {detail.snapshot.iteration + 1})
             {detail.snapshot.branch ? ` on ${detail.snapshot.branch}` : ""}
-          </span>
+          </Chip>
         </div>
       )}
       {detail.log.summaries.map((s, i) => (
         <div key={i} className="run-summary">
           <div className="run-summary-head">
-            <span className={`badge ${outcomeClass(s.outcome)}`}>{s.outcome}</span>
+            <Badge tone={outcomeTone(s.outcome)}>{s.outcome}</Badge>
             {s.detail && <span>{s.detail}</span>}
             <span className="muted">{s.at}</span>
             {s.total && (
@@ -66,7 +68,7 @@ const RunDetail = ({ id }: { id: string }) => {
                     <td>{r.lens ? `${r.stage} (${r.lens})` : r.stage}</td>
                     <td>{r.iteration}</td>
                     <td>
-                      {r.verdict ? <span className={`badge ${r.verdict === "PASS" ? "ok" : "gate"}`}>{r.verdict}</span> : "—"}
+                      {r.verdict ? <Badge tone={r.verdict === "PASS" ? "ok" : "gate"}>{r.verdict}</Badge> : "—"}
                     </td>
                     <td>{r.duration}</td>
                     {Object.values(r.extra).map((v, k) => (
@@ -122,7 +124,7 @@ export const Runs = () => {
             onClick={() => setSelected(selected === r.id ? null : r.id)}
           >
             <span className="run-id">{r.id}</span>
-            {r.outcome && <span className={`badge ${outcomeClass(r.outcome)}`}>{r.outcome}</span>}
+            {r.outcome && <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>}
             {r.detail && <span className="muted">{r.detail}</span>}
             {r.at && <span className="muted">{new Date(r.at).toLocaleString()}</span>}
           </button>

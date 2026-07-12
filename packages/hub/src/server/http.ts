@@ -97,6 +97,8 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".woff": "font/woff",
 }
 
 const sendJson = (res: ServerResponse, out: JsonResponse): void => {

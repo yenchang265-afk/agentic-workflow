@@ -24,11 +24,16 @@ const options = {
   jsx: "automatic",
   sourcemap: true,
   logLevel: "info",
+  // Self-hosted fonts: @font-face url()s in theme.css resolve to src/web/fonts/*.woff2;
+  // the file loader content-hashes each into assets/ and rewrites the url in main.css.
+  loader: { ".woff2": "file" },
   define: { "process.env.NODE_ENV": '"production"' },
 }
 
 fs.mkdirSync(OUT, { recursive: true })
-fs.copyFileSync(path.join(PKG, "public", "index.html"), path.join(OUT, "index.html"))
+for (const asset of ["index.html", "favicon.svg"]) {
+  fs.copyFileSync(path.join(PKG, "public", asset), path.join(OUT, asset))
+}
 
 if (process.argv.includes("--watch")) {
   const ctx = await esbuild.context(options)

@@ -3,6 +3,7 @@ import type { ActiveResponse, KindBoardInfo } from "../../shared/api.js"
 import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { Chip } from "../ui/Chip.js"
 
 /**
  * Monitor view for a PR-shaped kind (workSource "github-pr"): there are no
@@ -30,10 +31,10 @@ export const PrKindPanel = ({ info }: { info: KindBoardInfo }) => {
       ) : (
         <div className="summary-chips">
           {ledgers.map((l) => (
-            <span key={l.pr} className="chip">
+            <Chip key={l.pr}>
               PR #{l.pr}
               {l.failedAttempts > 0 ? ` · ${l.failedAttempts} failed attempts` : ""}
-            </span>
+            </Chip>
           ))}
         </div>
       )}

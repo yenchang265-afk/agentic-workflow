@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   ReactFlow,
   Background,
+  BackgroundVariant,
   Controls,
   applyEdgeChanges,
   applyNodeChanges,
@@ -18,6 +19,8 @@ import { fetchJson, postJson } from "../api.js"
 import { EdgeForm, MetaForm, StageForm, type EdgeFormValue } from "./forms.js"
 import { manifestToGraph, type GraphMeta, type TransitionSlot } from "./graphmodel.js"
 import { layoutGraph } from "./layout.js"
+import { Button } from "../ui/Button.js"
+import { CheckIcon, CircleIcon } from "../ui/icons.js"
 import { nodeTypes, type StageNodeData, type TerminalNodeData } from "./nodes.js"
 
 /**
@@ -296,13 +299,11 @@ export const Creator = () => {
           <h2 className="section-title">Open a loop kind</h2>
           <div className="summary-chips">
             {kinds.map((k) => (
-              <button key={k} className="chip chip-button" onClick={() => openKind(k)}>
+              <Button key={k} onClick={() => openKind(k)}>
                 {k}
-              </button>
+              </Button>
             ))}
-            <button className="chip chip-button" onClick={() => load(NEW_MANIFEST, {}, true)}>
-              + new kind
-            </button>
+            <Button onClick={() => load(NEW_MANIFEST, {}, true)}>+ new kind</Button>
           </div>
           <p className="muted">
             A loop kind is a declarative state machine: stages (work/check nodes) wired by transitions
@@ -319,19 +320,19 @@ export const Creator = () => {
     <div className="creator">
       {error && <div className="error-banner">{error}</div>}
       <div className="creator-toolbar">
-        <button onClick={() => setMeta(null)}>← kinds</button>
-        <button onClick={addStage}>+ stage</button>
-        <button onClick={() => addTerminal("park")}>+ park</button>
-        <button onClick={() => addTerminal("done")}>+ done</button>
-        <button onClick={() => addTerminal("stop")}>+ stop</button>
+        <Button onClick={() => setMeta(null)}>← kinds</Button>
+        <Button onClick={addStage}>+ stage</Button>
+        <Button onClick={() => addTerminal("park")}>+ park</Button>
+        <Button onClick={() => addTerminal("done")}>+ done</Button>
+        <Button onClick={() => addTerminal("stop")}>+ stop</Button>
         <span className="spacer" />
         <span className={`badge ${allIssues.length ? "gate" : "ok"}`}>
           {allIssues.length ? `${allIssues.length} issue${allIssues.length > 1 ? "s" : ""}` : "valid"}
         </span>
-        <button onClick={() => void validateOnServer()}>Validate</button>
-        <button className="primary" disabled={allIssues.length > 0} onClick={() => void save()}>
+        <Button onClick={() => void validateOnServer()}>Validate</Button>
+        <Button variant="primary" disabled={allIssues.length > 0} onClick={() => void save()}>
           Save
-        </button>
+        </Button>
       </div>
       <div className="creator-body">
         <div className="creator-canvas">
@@ -348,7 +349,7 @@ export const Creator = () => {
             fitView
             proOptions={{ hideAttribution: true }}
           >
-            <Background />
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="var(--grid)" />
             <Controls />
           </ReactFlow>
         </div>
@@ -378,9 +379,9 @@ export const Creator = () => {
                   : "No status move."}{" "}
                 Messages live on the incoming edges.
               </p>
-              <button className="danger" onClick={() => deleteNode(selectedNode.id)}>
+              <Button variant="danger" onClick={() => deleteNode(selectedNode.id)}>
                 Delete terminal
-              </button>
+              </Button>
             </div>
           ) : selectedEdge ? (
             <EdgeForm
@@ -412,7 +413,7 @@ export const Creator = () => {
               <div className="muted">wrote: {saved.written.join(", ")}</div>
               {saved.checklist.map((c: ChecklistItem, k: number) => (
                 <div key={k} className={`check-item${c.done ? " done" : ""}`}>
-                  {c.done ? "✓" : "○"} {c.label}
+                  {c.done ? <CheckIcon /> : <CircleIcon />} {c.label}
                 </div>
               ))}
             </div>

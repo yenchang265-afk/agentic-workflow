@@ -1,5 +1,6 @@
 import type { StageDef } from "@agentic-loop/core/manifest/schema"
 import type { GraphMeta } from "./graphmodel.js"
+import { Button } from "../ui/Button.js"
 
 /**
  * Side-panel forms: plain controlled inputs writing immutable updates back to
@@ -87,9 +88,9 @@ export const StageForm = ({
       <Field label="stage prompt (stages/{name}.md)">
         <textarea rows={10} value={prompt} onChange={(e) => onPromptChange(e.target.value)} />
       </Field>
-      <button className="danger" onClick={onDelete}>
+      <Button variant="danger" onClick={onDelete}>
         Delete stage
-      </button>
+      </Button>
     </div>
   )
 }
@@ -145,9 +146,9 @@ export const EdgeForm = ({
         </Field>
       </>
     )}
-    <button className="danger" onClick={onDelete}>
+    <Button variant="danger" onClick={onDelete}>
       Delete transition
-    </button>
+    </Button>
   </div>
 )
 

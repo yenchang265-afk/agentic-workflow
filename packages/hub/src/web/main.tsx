@@ -9,6 +9,9 @@ import { Board } from "./monitor/Board.js"
 import { PrKindPanel } from "./monitor/PrKindPanel.js"
 import { Runs } from "./monitor/Runs.js"
 import { RepoPicker, RepoProvider, repoPath, useRepo } from "./repo.js"
+import { Button } from "./ui/Button.js"
+import { BellIcon } from "./ui/icons.js"
+import { ThemeToggle } from "./ui/ThemeToggle.js"
 import "./theme.css"
 
 type Tab = "monitor" | "creator"
@@ -24,10 +27,17 @@ const HeaderStatus = () => {
     <div className="header-status">
       <span className={`live-dot${connected ? " on" : ""}`} title={connected ? "live updates on" : "reconnecting…"} />
       {notifications !== "unsupported" && notifications !== "granted" && (
-        <button className="hub-tab" title="Notify me when a task parks at a gate" onClick={requestNotifications}>
-          🔔 notify
-        </button>
+        <Button
+          variant="ghost"
+          icon
+          title="Notify me when a task parks at a gate"
+          aria-label="Enable gate notifications"
+          onClick={requestNotifications}
+        >
+          <BellIcon />
+        </Button>
       )}
+      <ThemeToggle />
     </div>
   )
 }

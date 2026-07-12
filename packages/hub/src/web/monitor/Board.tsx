@@ -3,6 +3,9 @@ import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.
 import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { Badge } from "../ui/Badge.js"
+import { Card } from "../ui/Card.js"
+import { Chip } from "../ui/Chip.js"
 
 /**
  * The backlog board for one loop kind: one column per manifest status, task
@@ -11,22 +14,20 @@ import { repoPath, useRepo } from "../repo.js"
  * Engineering-only lifecycle chips render when the server sends its summary.
  */
 
-const Card = ({ task, gated, claimed }: { task: TaskCard; gated: boolean; claimed: boolean }) => (
-  <div className={`card${gated ? " gated" : ""}`} title={task.acceptance.join("\n")}>
+const TaskCardView = ({ task, gated, claimed }: { task: TaskCard; gated: boolean; claimed: boolean }) => (
+  <Card gated={gated} title={task.acceptance.join("\n")}>
     <div className="card-title">{task.title}</div>
     <div className="card-meta">
-      <span className="badge">{task.id}</span>
-      {task.type && <span className="badge">{task.type}</span>}
-      {task.hasPlan && <span className="badge ok">plan</span>}
-      {claimed && <span className="badge gate">claimed</span>}
-      {gated && <span className="badge gate">awaiting you</span>}
+      <Badge>{task.id}</Badge>
+      {task.type && <Badge>{task.type}</Badge>}
+      {task.hasPlan && <Badge tone="ok">plan</Badge>}
+      {claimed && <Badge tone="gate">claimed</Badge>}
+      {gated && <Badge tone="gate">awaiting you</Badge>}
       {task.labels.map((l) => (
-        <span key={l} className="badge">
-          {l}
-        </span>
+        <Badge key={l}>{l}</Badge>
       ))}
     </div>
-  </div>
+  </Card>
 )
 
 export const Board = ({ info }: { info: KindBoardInfo }) => {
@@ -52,21 +53,21 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
     <div>
       <div className="summary-chips">
         {gateCount > 0 && (
-          <span className="chip gate">
+          <Chip gate>
             <strong>{gateCount}</strong> awaiting your review
-          </span>
+          </Chip>
         )}
         {info.pools.map((status) => (
-          <span key={status} className="chip">
+          <Chip key={status}>
             {status} <strong>{data.tasks[status]?.length ?? 0}</strong>
-          </span>
+          </Chip>
         ))}
         {summary && summary.interrupted.length > 0 && (
-          <span className="chip gate">
+          <Chip gate>
             interrupted <strong>{summary.interrupted.length}</strong>
-          </span>
+          </Chip>
         )}
-        {data.anomalies && <span className="chip gate">backlog anomalies — run doctor</span>}
+        {data.anomalies && <Chip gate>backlog anomalies — run doctor</Chip>}
       </div>
       <div className="board">
         {data.statuses.map((status) => {
@@ -79,7 +80,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                 <span>{tasks.length}</span>
               </div>
               {tasks.map((t) => (
-                <Card key={t.id} task={t} gated={gate} claimed={claimed.has(t.id)} />
+                <TaskCardView key={t.id} task={t} gated={gate} claimed={claimed.has(t.id)} />
               ))}
             </div>
           )
