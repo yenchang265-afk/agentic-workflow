@@ -54,3 +54,17 @@ test("buildAdoHeaders merges custom headers over the built-in request headers", 
   // Undefined custom headers leave the base untouched.
   assert.deepEqual(buildAdoHeaders({ Accept: "application/json" }, undefined), { Accept: "application/json" })
 })
+
+test("AdoPrFieldsSchema reads reviewer identity and requirement additively", async () => {
+  const { AdoPrFieldsSchema } = await import("./ado-shared.js")
+  const pr = AdoPrFieldsSchema.parse({
+    pullRequestId: 7,
+    title: "t",
+    sourceRefName: "refs/heads/feat/x",
+    targetRefName: "refs/heads/main",
+    reviewers: [{ uniqueName: "Sitter@Acme.com", vote: 0, isRequired: true }, { vote: -5 }],
+  })
+  assert.deepEqual(pr.reviewers?.[0], { uniqueName: "Sitter@Acme.com", vote: 0, isRequired: true })
+  // Legacy entries without identity still parse (defaults, not rejections).
+  assert.deepEqual(pr.reviewers?.[1], { uniqueName: "", vote: -5, isRequired: false })
+})

@@ -85,7 +85,15 @@ export const AdoPrFieldsSchema = z.object({
   mergeStatus: z.string().nullish(),
   createdBy: z.object({ uniqueName: z.string().default("") }).nullish(),
   lastMergeSourceCommit: z.object({ commitId: z.string().default("") }).nullish(),
-  reviewers: z.array(z.object({ vote: z.number().default(0) })).nullish(),
+  reviewers: z
+    .array(
+      z.object({
+        vote: z.number().default(0),
+        uniqueName: z.string().default(""),
+        isRequired: z.boolean().default(false),
+      }),
+    )
+    .nullish(),
   /** Present when the PR comes from a fork — same skip rule as GitHub's `isCrossRepository`. */
   forkSource: z.unknown().nullish(),
   repository: z

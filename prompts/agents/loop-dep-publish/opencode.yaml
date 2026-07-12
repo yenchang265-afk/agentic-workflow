@@ -1,0 +1,28 @@
+description: Publisher for the dep sitter's PUBLISH stage. Pushes the verified upgrade branch (feature/* only) and opens a draft PR naming the advisory, impact, and verification result. Never merges, never marks ready, never pushes the default branch.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # Push is scoped to feature/* so the default branch can never be pushed.
+    "git push origin feature/*": allow
+    "git -C * push origin feature/*": allow
+    "gh pr create *": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr comment *": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "wc *": allow

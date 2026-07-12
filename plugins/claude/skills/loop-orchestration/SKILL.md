@@ -177,6 +177,25 @@ The PR sitter reaches its platform per `codePlatform`: `github` (`gh`) or
 modes the stages behave identically; only the inspect/reply tools differ, and
 the stage prompt says which to use.
 
+Three further opt-in kinds drive the same way (`loop_claim({kind})` →
+`loop_stage` → spawn the stage agent → `loop_advance`):
+
+- **review-sitter** — PRs whose review is requested from you: **fetch**
+  (check; `loop-review-fetch`) → **assess** (work; `loop-review-assess`) →
+  **publish** (work; `loop-review-publish`, ONE comment, comment-only — never
+  approves, votes, pushes, or merges).
+- **dep-sitter** — `npm audit`/`npm outdated` upgrades: **scan** (check;
+  `loop-dep-scan`) → **upgrade** (work; `loop-dep-upgrade`) → **verify**
+  (check; reuses `loop-verify`, cap 2) → **publish** (work;
+  `loop-dep-publish`, DRAFT PR on a `feature/*` branch; majors are never
+  claimed). GitHub-only for now.
+- **main-sitter** — red CI on the watched branch's newest head: **diagnose**
+  (check; `loop-main-diagnose`, bisects) → **remedy** (work;
+  `loop-main-remedy`) → **verify** (check; reuses `loop-verify`, cap 2) →
+  **publish** (work; `loop-main-publish`, DRAFT fix/revert PR on a
+  `main-sitter/*` branch — the watched branch is never pushed). GitHub-only
+  for now.
+
 ## What is different from the OpenCode version
 
 - **No `/agentic-loop:engineering watch`.** Watch needs an autonomous driver firing stages on idle

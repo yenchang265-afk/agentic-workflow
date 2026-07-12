@@ -1,0 +1,97 @@
+{
+  "kind": "review-sitter",
+  "version": 1,
+  "description": "Sits on pull requests where your review is requested: reads the diff in the context of the surrounding code and posts one structured review comment per requested head. Never approves, requests changes, or merges — the human reviewer stays the reviewer of record.",
+  "workSource": {
+    "type": "github-pr",
+    "query": "is:open review-requested:@me",
+    "triggers": ["review-requested"],
+    "role": "reviewer"
+  },
+  "stages": [
+    {
+      "name": "fetch",
+      "kind": "check",
+      "command": "review-fetch",
+      "agent": "loop-review-fetch",
+      "prompt": "stages/fetch.md",
+      "isolation": "none",
+      "bashAllowlist": [
+        "git status*", "git diff*", "git log*", "git show*", "git fetch*",
+        "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*", "git -C * fetch*",
+        "ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *"
+      ],
+      "platformAllowlist": {
+        "github": [
+          "gh pr view*", "gh pr diff*", "gh pr checks*", "gh api *"
+        ],
+        "ado": [
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
+        ]
+      }
+    },
+    {
+      "name": "assess",
+      "kind": "work",
+      "command": "review-assess",
+      "agent": "loop-review-assess",
+      "prompt": "stages/assess.md",
+      "isolation": "worktree",
+      "bashAllowlist": [
+        "git status*", "git diff*", "git log*", "git show*",
+        "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*",
+        "ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *",
+        "npm test*", "npm run *", "pnpm test*", "pnpm run *", "yarn test*", "yarn run *",
+        "bun test*", "node --test*", "npx tsc*", "npx vitest*", "npx jest*", "npx eslint*",
+        "pytest*", "go test*", "cargo test*", "make test*", "make check*",
+        "cd * && npm test*", "cd * && npm run *", "cd * && pnpm test*", "cd * && pnpm run *",
+        "cd * && yarn test*", "cd * && yarn run *", "cd * && bun test*", "cd * && node --test*",
+        "cd * && npx tsc*", "cd * && npx vitest*", "cd * && npx jest*", "cd * && npx eslint*",
+        "cd * && pytest*", "cd * && go test*", "cd * && cargo test*", "cd * && make test*", "cd * && make check*"
+      ]
+    },
+    {
+      "name": "publish",
+      "kind": "work",
+      "command": "review-publish",
+      "agent": "loop-review-publish",
+      "prompt": "stages/publish.md",
+      "isolation": "none",
+      "bashAllowlist": [
+        "git status*", "git diff*", "git log*", "git show*",
+        "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*",
+        "ls*", "cat *", "head *", "tail *", "grep *", "wc *"
+      ],
+      "platformAllowlist": {
+        "github": [
+          "gh pr comment *", "gh pr view*"
+        ],
+        "ado": [
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
+        ]
+      }
+    }
+  ],
+  "transitions": {
+    "fetch": {
+      "onPass": { "kind": "fire", "stage": "assess" },
+      "onFail": { "kind": "done", "message": "✓ Review sitter done — nothing to review on this PR right now." },
+      "onError": {
+        "kind": "stop",
+        "message": "✗ Review sitter stopped — fetch could not inspect the PR (gh/network error). Fix the environment and let the next poll retry."
+      }
+    },
+    "assess": {
+      "onDone": { "kind": "fire", "stage": "publish" }
+    },
+    "publish": {
+      "onDone": { "kind": "done", "message": "✓ Review sitter done — posted one structured review comment. Approval and merging stay a human call." }
+    }
+  },
+  "hooks": {
+    "compose": {},
+    "validateBeforeTransition": {}
+  }
+}

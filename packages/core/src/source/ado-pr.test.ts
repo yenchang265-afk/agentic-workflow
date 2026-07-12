@@ -103,6 +103,8 @@ type Opts = {
   shellLog?: string[]
   httpLog?: string[]
   pat?: string
+  /** The kind under test; defaults to pr-sitter (author role). */
+  loaded?: ReturnType<typeof loadManifest>
 }
 
 const source = (prs: unknown[], opts: Opts = {}) =>
@@ -116,7 +118,7 @@ const source = (prs: unknown[], opts: Opts = {}) =>
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
-    loaded: sitter,
+    loaded: opts.loaded ?? sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
     pat: opts.pat ?? "test-pat",
     now: () => "2026-07-05T00:00:00Z",
@@ -389,4 +391,41 @@ test("variable-precision ADO timestamps compare numerically against the watermar
     routes: [{ match: "/threads", body: older }],
   }).claimNext()
   assert.equal(item, null)
+})
+
+// --- the review-sitter kind on ADO: reviewer-role filtering, no server-side query ---
+
+const reviewSitter = loadManifest(LOOPS_DIR, "review-sitter")
+
+test("review-sitter on ADO claims another author's PR where selfLogin's vote is still pending (case-insensitive)", async () => {
+  const prs = [
+    pr({
+      createdBy: { uniqueName: "alice@acme.com" },
+      reviewers: [{ uniqueName: "SITTER@Acme.com", vote: 0, isRequired: true }],
+    }),
+  ]
+  const log: string[] = []
+  const { item, skip } = await source(prs, { loaded: reviewSitter, shellLog: log }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "pr-7")
+  assert.equal(item?.entryStage, "fetch")
+  assert.equal(item?.state.kind, "review-sitter")
+  assert.equal(item?.state.platform, "ado")
+  assert.match(item?.state.goal ?? "", /one structured review comment/)
+  // The reviewer kind's bookkeeping lives in its own runs/ namespace.
+  assert.ok(log.some((c) => c.includes("runs/review-sitter/.claims/pr-7")))
+})
+
+test("review-sitter on ADO skips its own PRs, PRs it isn't a reviewer on, and PRs where its vote is already cast", async () => {
+  const prs = [
+    // Own PR (default createdBy is the sitter identity) even though listed as reviewer.
+    pr({ pullRequestId: 1, reviewers: [{ uniqueName: "sitter@acme.com", vote: 0 }] }),
+    // Someone else's PR, but the sitter is not on the reviewer list.
+    pr({ pullRequestId: 2, createdBy: { uniqueName: "alice@acme.com" }, reviewers: [{ uniqueName: "bob@acme.com", vote: 0 }] }),
+    // Review already cast (vote ≠ 0) — ADO's mirror of GitHub dropping the request.
+    pr({ pullRequestId: 3, createdBy: { uniqueName: "alice@acme.com" }, reviewers: [{ uniqueName: "sitter@acme.com", vote: 5 }] }),
+  ]
+  const { item, skip } = await source(prs, { loaded: reviewSitter }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /^review-sitter: no PRs need attention \(3 active/)
 })

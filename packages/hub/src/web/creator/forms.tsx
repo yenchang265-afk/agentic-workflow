@@ -182,15 +182,21 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
               workSource:
                 e.target.value === "backlog"
                   ? { type: "backlog", statuses: ["queued", "in-progress", "completed"], pools: [] }
-                  : { type: "github-pr", query: "is:open author:@me", triggers: ["failing-checks"] },
+                  : e.target.value === "dependency-scan"
+                    ? { type: "dependency-scan", autoFix: ["patch", "minor"], severityFloor: "high", includeOutdated: false }
+                    : e.target.value === "ci-runs"
+                      ? { type: "ci-runs", workflows: [] }
+                      : { type: "github-pr", query: "is:open author:@me", triggers: ["failing-checks"], role: "author" },
             })
           }
         >
           <option value="backlog">backlog — docs/tasks folders</option>
           <option value="github-pr">github-pr — open pull requests</option>
+          <option value="dependency-scan">dependency-scan — npm audit/outdated</option>
+          <option value="ci-runs">ci-runs — the watched branch's CI</option>
         </select>
       </Field>
-      {ws.type === "backlog" ? (
+      {ws.type === "backlog" && (
         <>
           <Field label="statuses (lifecycle order, comma-separated)">
             <input
@@ -216,13 +222,23 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
             />
           </Field>
         </>
-      ) : (
+      )}
+      {ws.type === "github-pr" && (
         <>
           <Field label="query (gh pr list --search)">
             <input value={ws.query} onChange={(e) => onChange({ ...meta, workSource: { ...ws, query: e.target.value } })} />
           </Field>
+          <Field label="role (author = own PRs, may push; reviewer = requested reviews, comment-only)">
+            <select
+              value={ws.role}
+              onChange={(e) => onChange({ ...meta, workSource: { ...ws, role: e.target.value === "reviewer" ? "reviewer" : "author" } })}
+            >
+              <option value="author">author</option>
+              <option value="reviewer">reviewer</option>
+            </select>
+          </Field>
           <Field label="triggers">
-            {(["failing-checks", "changes-requested", "new-comments", "merge-conflict"] as const).map((t) => (
+            {(["failing-checks", "changes-requested", "new-comments", "merge-conflict", "review-requested"] as const).map((t) => (
               <label key={t} className="check-inline">
                 <input
                   type="checkbox"
@@ -240,6 +256,53 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
                 {t}
               </label>
             ))}
+          </Field>
+        </>
+      )}
+      {ws.type === "dependency-scan" && (
+        <>
+          <Field label="severity floor">
+            <select
+              value={ws.severityFloor}
+              onChange={(e) =>
+                onChange({
+                  ...meta,
+                  workSource: { ...ws, severityFloor: (["low", "moderate", "high", "critical"].includes(e.target.value) ? e.target.value : "high") as typeof ws.severityFloor },
+                })
+              }
+            >
+              {["low", "moderate", "high", "critical"].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="also claim non-vulnerable outdated deps">
+            <input
+              type="checkbox"
+              checked={ws.includeOutdated}
+              onChange={(e) => onChange({ ...meta, workSource: { ...ws, includeOutdated: e.target.checked } })}
+            />
+          </Field>
+        </>
+      )}
+      {ws.type === "ci-runs" && (
+        <>
+          <Field label="branch (blank = the remote default branch)">
+            <input
+              value={ws.branch ?? ""}
+              onChange={(e) => {
+                const { branch: _drop, ...rest } = ws
+                onChange({ ...meta, workSource: e.target.value ? { ...rest, branch: e.target.value } : rest })
+              }}
+            />
+          </Field>
+          <Field label="workflows (comma-separated; blank = all)">
+            <input
+              value={csv(ws.workflows)}
+              onChange={(e) => onChange({ ...meta, workSource: { ...ws, workflows: fromCsv(e.target.value) } })}
+            />
           </Field>
         </>
       )}

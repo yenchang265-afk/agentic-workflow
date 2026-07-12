@@ -3,13 +3,15 @@ import { z } from "zod"
 import type { Client, Shell } from "../host.js"
 
 /**
- * The PR sitter's dedup ledger: one JSON file per PR under
- * `<tasksDir>/runs/pr-sitter/pr-<n>.json`, recording what the sitter has
- * already handled so it never reacts to its own pushes or replies, never
- * retries a failed attempt on the same head, and never re-answers old
- * comments. Like snapshots, ledgers are ephemeral machine state (gitignored
- * via `runs/`), validated on load, and fail closed — a garbled ledger reads
- * as "nothing handled yet", which only risks one redundant triage pass.
+ * The hosted-PR kinds' dedup ledger: one JSON file per PR under
+ * `<tasksDir>/runs/<kind>/pr-<n>.json` (namespaced per loop kind, so two
+ * PR-shaped kinds — pr-sitter and review-sitter — never judge each other's
+ * bookkeeping), recording what the kind has already handled so it never
+ * reacts to its own pushes or replies, never retries a failed attempt on the
+ * same head, and never re-answers old comments. Like snapshots, ledgers are
+ * ephemeral machine state (gitignored via `runs/`), validated on load, and
+ * fail closed — a garbled ledger reads as "nothing handled yet", which only
+ * risks one redundant triage pass.
  */
 
 const LedgerSchema = z.object({
@@ -28,18 +30,19 @@ export type PrLedger = z.infer<typeof LedgerSchema>
 
 export const emptyLedger = (pr: number, now: string): PrLedger => ({ pr, failedAttempts: [], updatedAt: now })
 
-export const ledgerPath = (directory: string, tasksDir: string, pr: number): string =>
-  path.join(directory, tasksDir, "runs", "pr-sitter", `pr-${pr}.json`)
+export const ledgerPath = (directory: string, tasksDir: string, kind: string, pr: number): string =>
+  path.join(directory, tasksDir, "runs", kind, `pr-${pr}.json`)
 
 /** Load a PR's ledger; a missing/garbled file reads as an empty ledger. */
 export const loadLedger = async (
   client: Client,
   directory: string,
   tasksDir: string,
+  kind: string,
   pr: number,
   now: string,
 ): Promise<PrLedger> => {
-  const rel = `${tasksDir}/runs/pr-sitter/pr-${pr}.json`
+  const rel = `${tasksDir}/runs/${kind}/pr-${pr}.json`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
   const content = read?.data?.content
   if (!content) return emptyLedger(pr, now)
@@ -52,10 +55,16 @@ export const loadLedger = async (
 }
 
 /** Write a PR's ledger. Best-effort — dedup failure must never fail a drive. */
-export const saveLedger = async ($: Shell, directory: string, tasksDir: string, ledger: PrLedger): Promise<void> => {
-  const dir = path.join(directory, tasksDir, "runs", "pr-sitter")
+export const saveLedger = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  kind: string,
+  ledger: PrLedger,
+): Promise<void> => {
+  const dir = path.join(directory, tasksDir, "runs", kind)
   await $`mkdir -p ${dir}`.quiet().nothrow()
-  const file = ledgerPath(directory, tasksDir, ledger.pr)
+  const file = ledgerPath(directory, tasksDir, kind, ledger.pr)
   await $`printf '%s' ${JSON.stringify(ledger, null, 2)} > ${file}`.quiet().nothrow()
 }
 
@@ -73,7 +82,7 @@ export interface PrSnapshot {
   readonly newComments: readonly { author: string; at: string }[]
 }
 
-export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" | "merge-conflict"
+export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" | "merge-conflict" | "review-requested"
 
 /**
  * Which enabled triggers currently need attention on this PR, given its
@@ -87,7 +96,11 @@ export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" 
  *   `failed`, not `headHandled` — a capped attempt does NOT advance the watermark
  *   (`terminalLedgerUpdate`), so its triggering comment is still in the snapshot;
  *   re-firing there would re-claim → re-fail forever;
- * - a conflict counts once per (head, base) pair.
+ * - a conflict counts once per (head, base) pair;
+ * - a review request (review-sitter) counts once per head: the query already
+ *   scopes the poll to PRs whose review is wanted, so any head this kind
+ *   hasn't handled or failed on needs one review pass — a human's new push
+ *   re-fires it, the kind's own comment (recorded at terminal) does not.
  */
 export const attentionTriggers = (
   snapshot: PrSnapshot,
@@ -103,6 +116,7 @@ export const attentionTriggers = (
     out.push("changes-requested")
   }
   if (enabled.includes("new-comments") && snapshot.newComments.length && !failed) out.push("new-comments")
+  if (enabled.includes("review-requested") && !headHandled) out.push("review-requested")
   if (
     enabled.includes("merge-conflict") &&
     snapshot.mergeable === "CONFLICTING" &&

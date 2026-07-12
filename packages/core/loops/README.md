@@ -10,12 +10,21 @@ loops/
 ├── engineering/          # PLAN → BUILD → VERIFY → REVIEW over docs/tasks/
 │   ├── loop.json
 │   └── stages/{plan,build,verify,review}.md
-└── pr-sitter/            # TRIAGE → FIX → VERIFY → PUBLISH over open PRs
+├── pr-sitter/            # TRIAGE → FIX → VERIFY → PUBLISH over open PRs
+│   ├── loop.json
+│   └── stages/{triage,fix,verify,publish}.md
+├── review-sitter/        # FETCH → ASSESS → PUBLISH over requested reviews (comment-only)
+│   ├── loop.json
+│   └── stages/{fetch,assess,publish}.md
+├── dep-sitter/           # SCAN → UPGRADE → VERIFY → PUBLISH over npm advisories
+│   ├── loop.json
+│   └── stages/{scan,upgrade,verify,publish}.md
+└── main-sitter/          # DIAGNOSE → REMEDY → VERIFY → PUBLISH over red default-branch CI
     ├── loop.json
-    └── stages/{triage,fix,verify,publish}.md
+    └── stages/{diagnose,remedy,verify,publish}.md
 ```
 
-Ideas for kinds beyond these two are cataloged in
+Ideas for further kinds are cataloged in
 [`docs/design/proposed-loops.md`](../../../docs/design/proposed-loops.md).
 
 ## loop.json anatomy
@@ -29,7 +38,7 @@ fails loud at host startup). A minimal two-stage kind:
   "version": 1,
   "description": "What this loop sits on and does.",
   "workSource": {                       // where claimable work comes from
-    "type": "backlog",                  // or "github-pr"
+    "type": "backlog",                  // or "github-pr" | "dependency-scan" | "ci-runs"
     "statuses": ["queued", "done"],     // the folder set (backlog only)
     "pools": [                          // claim pools, priority order
       { "status": "queued", "entryStage": "work" }
@@ -114,17 +123,36 @@ code platform — pr-sitter stages branch on these to pick `gh` vs ADO REST
   atomic `.claims/` mkdir markers; `claimPredicate` names a registered
   predicate (e.g. `engineering.isClaimable`).
 - **`github-pr`** — open hosted PRs needing attention per the `triggers` list
-  (`failing-checks`, `changes-requested`, `new-comments`, `merge-conflict`),
-  deduped by the per-PR ledger under `<tasksDir>/runs/pr-sitter/`. Drafts and
-  fork PRs are skipped; the PR's head is fetched into a local branch at claim
-  so isolation reuses it. The concrete platform is resolved from config
-  `codePlatform` at wiring time: `github` polls `gh pr list --search <query>`;
-  `ado` polls the REST API
-  (`_apis/git/pullrequests?searchCriteria.status=active`, the sitter's own
-  active PRs) with failing checks read from blocking branch policy evaluations
-  — a repo without a build policy never fires `failing-checks`. Stage
-  `platformAllowlist` entries merge into `bashAllowlist` for the resolved
-  platform.
+  (`failing-checks`, `changes-requested`, `new-comments`, `merge-conflict`,
+  `review-requested`), deduped by the per-PR ledger under
+  `<tasksDir>/runs/<kind>/` (namespaced per kind, so pr-sitter and
+  review-sitter never share bookkeeping). Drafts and fork PRs are skipped;
+  the PR's head is fetched into a local branch at claim so isolation reuses
+  it. The optional `role` (`author`, the default, or `reviewer`) states the
+  kind's relationship to the PRs it claims — on ADO, where there is no
+  server-side search query, it picks the client-side identity filter
+  (`createdBy` vs pending-reviewer membership). The concrete platform is
+  resolved from config `codePlatform` at wiring time: `github` polls
+  `gh pr list --search <query>`; `ado` polls the REST API
+  (`_apis/git/pullrequests?searchCriteria.status=active`) with failing checks
+  read from blocking branch policy evaluations — a repo without a build
+  policy never fires `failing-checks`. Stage `platformAllowlist` entries
+  merge into `bashAllowlist` for the resolved platform.
+- **`dependency-scan`** — direct dependencies with a fixable advisory
+  (`npm audit --json`) at or above `severityFloor`, optionally plus plainly
+  outdated ones (`includeOutdated`). One item per dependency, deduped by a
+  per-dependency ledger under `<tasksDir>/runs/<kind>/dep-<pkg>.json`; a
+  bump outside the `autoFix` classes (majors always) is logged and never
+  claimed. GitHub-only for now — on an `ado` platform the wiring skips the
+  kind with a warning.
+- **`ci-runs`** — the watched branch's newest head when its completed CI runs
+  conclude red (`gh run list`; `branch` defaults to the remote default
+  branch, `workflows` narrows the judgement). Heads with runs still in
+  flight are left alone; a green re-run or a newer push retires the item
+  naturally. Deduped per head under `<tasksDir>/runs/<kind>/head-<sha>.json`;
+  at claim the red head is pinned to a local `<kind>/<sha>` branch for
+  isolation. GitHub-only for now — on an `ado` platform the wiring skips the
+  kind with a warning.
 
 ## The TS escape hatch
 
@@ -155,7 +183,10 @@ landed). The registry path is there for kinds whose validation is pure.
 ```json
 {
   "loops": {
-    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" },
+    "review-sitter": { "enabled": true },
+    "dep-sitter": { "enabled": true, "severityFloor": "high" },
+    "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```

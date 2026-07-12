@@ -1,0 +1,22 @@
+description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit, npm outdated, npm view), emitted as an upgrade work order plus a loop_verdict (PASS = upgrade needed). Never edits, never installs.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    "npm audit*": allow
+    "npm ls*": allow
+    "npm outdated*": allow
+    "npm view *": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "find *": allow
+    "wc *": allow

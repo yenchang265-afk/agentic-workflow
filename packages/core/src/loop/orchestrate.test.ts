@@ -85,3 +85,47 @@ test("a kind filter restricts the sources to that kind", () => {
   assert.equal(buildWorkSources(deps, config, manifestFor, "pr-sitter").length, 1)
   assert.equal(buildWorkSources(deps, DEFAULT_CONFIG, manifestFor, "engineering").length, 1)
 })
+
+test("buildWorkSources wires review-sitter as a second github-pr source alongside pr-sitter", () => {
+  const config = parseConfigWith(ConfigSchema, {
+    loops: { "pr-sitter": { enabled: true }, "review-sitter": { enabled: true } },
+  })
+  const manifestFor = makeManifestCache(defaultLoopsDir())
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const sources = buildWorkSources(deps, config, manifestFor)
+  assert.equal(sources.length, 3)
+  assert.deepEqual(
+    sources.map((s) => s.loopKind),
+    ["engineering", "pr-sitter", "review-sitter"],
+  )
+  // The claim/watch kind filter reaches the reviewer kind on its own too.
+  assert.equal(buildWorkSources(deps, config, manifestFor, "review-sitter")[0]?.loopKind, "review-sitter")
+})
+
+test("buildWorkSources wires dep-sitter and main-sitter on github, and skips them with a warning on ado", () => {
+  const config = parseConfigWith(ConfigSchema, {
+    loops: { "dep-sitter": { enabled: true }, "main-sitter": { enabled: true } },
+  })
+  const manifestFor = makeManifestCache(defaultLoopsDir())
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  assert.deepEqual(
+    buildWorkSources(deps, config, manifestFor).map((s) => s.loopKind),
+    ["engineering", "dep-sitter", "main-sitter"],
+  )
+  const warnings: string[] = []
+  const ado = parseConfigWith(ConfigSchema, {
+    codePlatform: "ado",
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+    loops: { "dep-sitter": { enabled: true } },
+  })
+  const sources = buildWorkSources(
+    { ...deps, log: (_l: string, m: string) => void warnings.push(m) },
+    ado,
+    manifestFor,
+  )
+  assert.deepEqual(
+    sources.map((s) => s.loopKind),
+    ["engineering"],
+  )
+  assert.ok(warnings.some((w) => w.includes("dep-sitter") && w.includes('codePlatform "github"')))
+})

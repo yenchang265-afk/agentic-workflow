@@ -81,6 +81,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   if (binding.type !== "github-pr") {
     throw new Error(`loop kind "${loaded.manifest.kind}" does not use a hosted-PR work source`)
   }
+  const kind = loaded.manifest.kind
+  const role = binding.role
   const now = deps.now ?? (() => new Date().toISOString())
   const http = deps.http ?? defaultHttp
   // Precedence: explicit dep (tests) → env var → config `ado.pat`.
@@ -91,7 +93,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   // Config headers as a base, env `AGENTIC_LOOP_ADO_HEADERS` overriding (env wins, like the PAT).
   const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
 
-  const markers = makeClaimMarkers($, directory, tasksDir)
+  const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
   const authHeader = `Basic ${Buffer.from(`:${pat}`).toString("base64")}`
 
@@ -138,7 +140,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   }
 
   return {
-    loopKind: loaded.manifest.kind,
+    loopKind: kind,
 
     async claimNext() {
       if (!pat) {
@@ -146,7 +148,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           item: null,
           skip: {
             message:
-              `pr-sitter: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Code (read) scope so the ` +
+              `${kind}: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Code (read) scope so the ` +
               `sitter can call the ADO REST API.`,
             actionable: true,
           } satisfies ClaimSkipReason,
@@ -159,8 +161,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           item: null,
           skip: {
             message:
-              "pr-sitter: could not resolve the sitter's own ADO identity (a PAT cannot) — " +
-              "set ado.selfLogin in .agentic-loop.json so the sitter only claims its own PRs.",
+              `${kind}: could not resolve the sitter's own ADO identity (a PAT cannot) — ` +
+              `set ado.selfLogin in .agentic-loop.json so the sitter claims only the PRs its role names.`,
             actionable: true,
           } satisfies ClaimSkipReason,
         }
@@ -174,7 +176,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           item: null,
           skip: {
             message:
-              `pr-sitter: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
+              `${kind}: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
               `Is ${PAT_ENV} a valid token with Code (read) scope, and are ado.organization/project correct?`,
             actionable: true,
           } satisfies ClaimSkipReason,
@@ -187,20 +189,35 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
       } catch (err) {
         return {
           item: null,
-          skip: { message: `pr-sitter: could not parse the ADO response — ${(err as Error).message}`, actionable: true },
+          skip: { message: `${kind}: could not parse the ADO response — ${(err as Error).message}`, actionable: true },
         }
       }
       const heldIds: string[] = []
       for (const pr of prs.sort((a, b) => a.pullRequestId - b.pullRequestId)) {
         if (pr.isDraft) continue
-        if (pr.forkSource != null) continue // fork PRs: can't push the head branch — a human's PR to sit on later
-        if (!sameLogin(pr.createdBy?.uniqueName ?? "", login)) continue // parity with gh's author:@me
+        // Fork PRs are skipped for every role: an author-role kind can't push the
+        // head branch, and a reviewer-role kind would execute untrusted fork code
+        // in its assess worktree (threat model T10).
+        if (pr.forkSource != null) continue
+        // ADO has no server-side search query, so the manifest's `role` picks the
+        // client-side identity filter: author-role kinds claim their own PRs
+        // (parity with gh's author:@me); reviewer-role kinds claim other people's
+        // PRs on which selfLogin is listed as a reviewer whose vote is still
+        // pending — vote 0 is ADO's "review not cast yet", the nearest mirror of
+        // GitHub's review-requested:@me dropping a PR once the review is submitted.
+        if (role === "reviewer") {
+          if (sameLogin(pr.createdBy?.uniqueName ?? "", login)) continue
+          const mine = (pr.reviewers ?? []).find((r) => sameLogin(r.uniqueName, login))
+          if (!mine || mine.vote !== 0) continue
+        } else if (!sameLogin(pr.createdBy?.uniqueName ?? "", login)) {
+          continue
+        }
         const number = pr.pullRequestId
         const headRefOid = pr.lastMergeSourceCommit?.commitId ?? ""
         // No head SHA yet (merge evaluation queued / never run): the snapshot
         // isn't ready — a "" head would poison the ledger's dedup. Next poll.
         if (!headRefOid) continue
-        const ledger = await loadLedger(client, directory, tasksDir, number, now())
+        const ledger = await loadLedger(client, directory, tasksDir, kind, number, now())
         const watermark = ledger.lastCommentAtHandled ?? ""
         const enabled = binding.triggers
         const repositoryId = pr.repository?.id || pr.repository?.name || ""
@@ -225,7 +242,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           continue
         }
         if (!(await fetchHead($, directory, snapshot.headRefName))) {
-          await log("warn", `pr-sitter: could not fetch ${snapshot.headRefName} for PR #${number} — skipping`)
+          await log("warn", `${kind}: could not fetch ${snapshot.headRefName} for PR #${number} — skipping`)
           await markers.release(number)
           continue
         }
@@ -234,12 +251,12 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
       if (heldIds.length) {
         return {
           item: null,
-          skip: { message: `pr-sitter: claim marker held for ${heldIds.join(", ")}`, actionable: true },
+          skip: { message: `${kind}: claim marker held for ${heldIds.join(", ")}`, actionable: true },
         }
       }
       return {
         item: null,
-        skip: { message: `pr-sitter: no PRs need attention (${prs.length} active in the project)`, actionable: false },
+        skip: { message: `${kind}: no PRs need attention (${prs.length} active in the project)`, actionable: false },
       }
     },
 
@@ -250,7 +267,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
 
     async onTerminal(work, outcome: TerminalOutcome) {
       const { snapshot, triggers } = work.ref as { snapshot: PrSnapshot; triggers: PrTrigger[] }
-      const ledger = await loadLedger(client, directory, tasksDir, snapshot.number, now())
+      const ledger = await loadLedger(client, directory, tasksDir, kind, snapshot.number, now())
       // Re-read the PR head: after a publish it is the sitter's own push, and
       // recording it as handled is exactly what prevents self-triggering.
       const fresh = await get(`${org}/${project}/_apis/git/pullrequests/${snapshot.number}?${API_VERSION}`)
@@ -275,7 +292,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         }
       }
       const updated = terminalLedgerUpdate(ledger, outcome, triggers, snapshot.headRefOid, head, lastCommentAt, now())
-      await saveLedger($, directory, tasksDir, updated)
+      await saveLedger($, directory, tasksDir, kind, updated)
       await markers.release(snapshot.number)
     },
   }

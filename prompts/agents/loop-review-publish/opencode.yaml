@@ -1,0 +1,27 @@
+description: Publisher for the review sitter's PUBLISH stage. Posts the drafted review as exactly one PR comment (gh on GitHub, a new ADO thread via curl+PAT on Azure DevOps), framed as an automated first pass. Comment-only — never approves, votes, pushes, or merges.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # Comment-only authority: no push, no gh api, no gh pr review. The ADO curl
+    # is scoped to `/threads*` so votes/completions can't get through.
+    "gh pr comment *": allow
+    "gh pr view*": allow
+    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "wc *": allow

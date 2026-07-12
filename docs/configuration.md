@@ -79,7 +79,10 @@ config order.
     "pr-sitter": {
       "enabled": true,
       "query": "is:open author:@me"
-    }
+    },
+    "review-sitter": { "enabled": true },
+    "dep-sitter": { "enabled": true, "severityFloor": "high" },
+    "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```
@@ -92,6 +95,35 @@ config order.
   `gh pr list --search` query (default `is:open author:@me`) selecting which
   PRs the sitter watches. GitHub only — on ADO the sitter watches active PRs
   authored by its own identity.
+- **`loops.review-sitter.enabled`** — default off; sits on PRs whose review
+  is requested from this identity and posts one structured review comment per
+  requested head (fetch → assess → publish). Comment-only authority: it never
+  approves, votes, pushes, or merges. Re-fires only when a human pushes a new
+  head; fork and draft PRs are skipped.
+- **`loops.review-sitter.query`** — overrides the manifest's query (default
+  `is:open review-requested:@me`). GitHub only — on ADO the sitter claims
+  active PRs where `ado.selfLogin` is a reviewer whose vote is still pending
+  (vote 0), never its own PRs.
+- **`loops.dep-sitter.enabled`** — default off; sits on `npm audit` /
+  `npm outdated` and turns each auto-fixable direct-dependency upgrade into a
+  verified draft PR (scan → upgrade → verify → publish). Major bumps are never
+  auto-fixed — they are logged and left for a human. GitHub only for now (the
+  publish stage uses `gh pr create`); on an `ado` platform the kind is skipped
+  with a warning.
+- **`loops.dep-sitter.severityFloor`** — minimum advisory severity that makes
+  a vulnerable dependency claimable: `low` | `moderate` | `high` (manifest
+  default) | `critical`.
+- **`loops.dep-sitter.includeOutdated`** — default `false`; also claim
+  non-vulnerable but outdated direct dependencies within the patch/minor
+  policy.
+- **`loops.main-sitter.enabled`** — default off; sits on the watched branch's
+  CI (`gh run list`): when the newest head goes red it diagnoses (bisecting
+  when needed) and publishes a verified draft fix/revert PR on a
+  `main-sitter/*` branch (diagnose → remedy → verify → publish), commenting
+  once on the culprit PR. The watched branch itself is never pushed. GitHub
+  only for now; on an `ado` platform the kind is skipped with a warning.
+- **`loops.main-sitter.branch`** — overrides the watched branch; unset ⇒ the
+  remote default branch (from `origin/HEAD`, falling back to `main`).
 - **`loops.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
@@ -151,9 +183,15 @@ Unknown keys under `hub` are rejected (typo safety). See
 
 ## Code platform (`codePlatform` / `ado`)
 
-The PR sitter binds to a hosted-PR work source (`workSource.type:
-"github-pr"` in its manifest); which platform that source actually talks to
-is resolved from config at wiring time — the manifest is never forked.
+The PR sitter and review sitter bind to a hosted-PR work source
+(`workSource.type: "github-pr"` in their manifests); which platform that
+source actually talks to is resolved from config at wiring time — the
+manifest is never forked. The manifest's `role` picks the ADO identity
+filter: `author` kinds (pr-sitter) claim PRs created by `ado.selfLogin`,
+`reviewer` kinds (review-sitter) claim other people's PRs where that login's
+reviewer vote is still pending. The `dependency-scan` (dep-sitter) and
+`ci-runs` (main-sitter) sources are GitHub-only for now — on an `ado`
+platform those kinds are skipped with a warning at wiring time.
 
 ```json
 {

@@ -1,0 +1,67 @@
+description: Diagnostician for the main sitter's DIAGNOSE stage. Reproduces a red default-branch head locally, bisects to the culprit when needed, and emits a remedy work order (fix-forward, revert, or flake) plus a loop_verdict. Never edits files, never pushes.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    "gh run view*": allow
+    "gh run list*": allow
+    "gh pr list*": allow
+    "gh pr view*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git bisect*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "git -C * bisect*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "find *": allow
+    "wc *": allow
+    "npm ci*": allow
+    "npm install*": allow
+    "npm test*": allow
+    "npm run *": allow
+    "pnpm test*": allow
+    "pnpm run *": allow
+    "yarn test*": allow
+    "yarn run *": allow
+    "bun test*": allow
+    "node --test*": allow
+    "npx tsc*": allow
+    "npx vitest*": allow
+    "npx jest*": allow
+    "npx eslint*": allow
+    "pytest*": allow
+    "go test*": allow
+    "cargo test*": allow
+    "make test*": allow
+    "make check*": allow
+    "cd * && npm ci*": allow
+    "cd * && npm install*": allow
+    "cd * && npm test*": allow
+    "cd * && npm run *": allow
+    "cd * && pnpm test*": allow
+    "cd * && pnpm run *": allow
+    "cd * && yarn test*": allow
+    "cd * && yarn run *": allow
+    "cd * && bun test*": allow
+    "cd * && node --test*": allow
+    "cd * && npx tsc*": allow
+    "cd * && npx vitest*": allow
+    "cd * && npx jest*": allow
+    "cd * && npx eslint*": allow
+    "cd * && pytest*": allow
+    "cd * && go test*": allow
+    "cd * && cargo test*": allow
+    "cd * && make test*": allow
+    "cd * && make check*": allow
+    "cd * && git bisect*": allow

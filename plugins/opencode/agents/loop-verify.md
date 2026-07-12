@@ -21,6 +21,11 @@ permission:
     "grep *": allow
     "find *": allow
     "wc *": allow
+    "npm ci*": allow
+    "npm install*": allow
+    "npm audit*": allow
+    "npm ls*": allow
+    "npm outdated*": allow
     "npm test*": allow
     "npm run *": allow
     "pnpm test*": allow
@@ -38,6 +43,10 @@ permission:
     "cargo test*": allow
     "make test*": allow
     "make check*": allow
+    "cd * && npm ci*": allow
+    "cd * && npm install*": allow
+    "cd * && npm audit*": allow
+    "cd * && npm ls*": allow
     "cd * && npm test*": allow
     "cd * && npm run *": allow
     "cd * && pnpm test*": allow

@@ -126,3 +126,46 @@ test("gateStatuses derives the engineering kind's gates from its shipped manifes
   const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "loops", "engineering", "loop.json"), "utf8"))
   assert.deepEqual(gateStatuses(parseManifest(raw)).sort(), ["in-review", "plan-review"])
 })
+
+test("github-pr source accepts the review-requested trigger and a reviewer role; role defaults to author", () => {
+  const pr = {
+    ...base,
+    workSource: { type: "github-pr", query: "is:open review-requested:@me", triggers: ["review-requested"], role: "reviewer" },
+  }
+  const m = parseManifest(pr)
+  assert.equal(m.workSource.type === "github-pr" && m.workSource.role, "reviewer")
+  const defaulted = parseManifest({
+    ...base,
+    workSource: { type: "github-pr", query: "is:open author:@me", triggers: ["failing-checks"] },
+  })
+  assert.equal(defaulted.workSource.type === "github-pr" && defaulted.workSource.role, "author")
+  assert.throws(() =>
+    parseManifest({
+      ...base,
+      workSource: { type: "github-pr", query: "q", triggers: ["failing-checks"], role: "owner" },
+    }),
+  )
+})
+
+test("dependency-scan source parses with its policy defaults", () => {
+  const m = parseManifest({ ...base, workSource: { type: "dependency-scan" } })
+  assert.equal(m.workSource.type, "dependency-scan")
+  if (m.workSource.type === "dependency-scan") {
+    assert.deepEqual(m.workSource.autoFix, ["patch", "minor"])
+    assert.equal(m.workSource.severityFloor, "high")
+    assert.equal(m.workSource.includeOutdated, false)
+  }
+  // Majors are never auto-fixable — the enum has no "major" member.
+  assert.throws(() => parseManifest({ ...base, workSource: { type: "dependency-scan", autoFix: ["major"] } }))
+})
+
+test("ci-runs source parses with an optional branch and empty workflows default", () => {
+  const m = parseManifest({ ...base, workSource: { type: "ci-runs" } })
+  assert.equal(m.workSource.type, "ci-runs")
+  if (m.workSource.type === "ci-runs") {
+    assert.equal(m.workSource.branch, undefined)
+    assert.deepEqual(m.workSource.workflows, [])
+  }
+  const pinned = parseManifest({ ...base, workSource: { type: "ci-runs", branch: "main", workflows: ["ci.yml"] } })
+  if (pinned.workSource.type === "ci-runs") assert.equal(pinned.workSource.branch, "main")
+})

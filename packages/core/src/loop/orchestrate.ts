@@ -4,6 +4,8 @@ import { loadManifest } from "../manifest/load.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { makeAdoPrSource } from "../source/ado-pr.js"
 import { makeBacklogSource } from "../source/backlog.js"
+import { makeCiRunsSource } from "../source/ci-runs.js"
+import { makeDependencyScanSource } from "../source/dependency-scan.js"
 import { makeGithubPrSource } from "../source/github-pr.js"
 import type { WorkSource } from "../source/types.js"
 import type { Task } from "../task/schema.js"
@@ -108,6 +110,28 @@ export const buildWorkSources = (
         }
         const query = config.loops[kind]?.["query"]
         return [makeGithubPrSource({ ...base, ...(typeof query === "string" ? { query } : {}) })]
+      }
+      if (loaded.manifest.workSource.type === "dependency-scan" || loaded.manifest.workSource.type === "ci-runs") {
+        // These sources publish via `gh` (draft PRs); no ADO flavor yet.
+        if (platformFor(config, kind) === "ado") {
+          void deps.log(
+            "warn",
+            `loop kind "${kind}" uses a ${loaded.manifest.workSource.type} work source, which supports only ` +
+              `codePlatform "github" for now — skipping it.`,
+          )
+          return []
+        }
+        const knobs: Record<string, unknown> = config.loops[kind] ?? {}
+        if (loaded.manifest.workSource.type === "dependency-scan") {
+          return [
+            makeDependencyScanSource({
+              ...base,
+              ...(typeof knobs["severityFloor"] === "string" ? { severityFloor: knobs["severityFloor"] } : {}),
+              ...(typeof knobs["includeOutdated"] === "boolean" ? { includeOutdated: knobs["includeOutdated"] } : {}),
+            }),
+          ]
+        }
+        return [makeCiRunsSource({ ...base, ...(typeof knobs["branch"] === "string" ? { branch: knobs["branch"] } : {}) })]
       }
       return [makeBacklogSource({ ...base, isDriving: deps.isDriving })]
     })

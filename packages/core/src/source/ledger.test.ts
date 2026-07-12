@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import { test } from "node:test"
-import { attentionTriggers, emptyLedger, type PrLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
+import { attentionTriggers, emptyLedger, ledgerPath, type PrLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
 
 const ALL: readonly PrTrigger[] = ["failing-checks", "changes-requested", "new-comments", "merge-conflict"]
 
@@ -66,4 +67,24 @@ test("a conflict triggers once per (head, base) pair", () => {
 test("disabled triggers never fire", () => {
   const s = snap({ failingChecks: ["ci"], mergeable: "CONFLICTING" })
   assert.deepEqual(attentionTriggers(s, ledger(), ["new-comments"]), [])
+})
+
+test("review-requested fires once per head: unhandled head triggers, handled/failed heads don't, a new push re-fires", () => {
+  const enabled: readonly PrTrigger[] = ["review-requested"]
+  // A quiet PR the query matched (review wanted) needs exactly one review pass.
+  assert.deepEqual(attentionTriggers(snap(), ledger(), enabled), ["review-requested"])
+  // The kind's own terminal recorded this head — no re-review until a human pushes.
+  assert.deepEqual(attentionTriggers(snap(), ledger({ headShaHandled: "sha-1" }), enabled), [])
+  // A capped/failed attempt on this head parks it the same way.
+  const failed = ledger({ failedAttempts: [{ headSha: "sha-1", trigger: "review-requested", at: "2026-01-01T01:00:00Z" }] })
+  assert.deepEqual(attentionTriggers(snap(), failed, enabled), [])
+  // A new head (human push) re-fires.
+  assert.deepEqual(attentionTriggers(snap({ headRefOid: "sha-2" }), ledger({ headShaHandled: "sha-1" }), enabled), ["review-requested"])
+  // Not enabled ⇒ never fires (the author-role kinds don't opt in).
+  assert.deepEqual(attentionTriggers(snap(), ledger(), ALL), [])
+})
+
+test("ledgers are namespaced per loop kind; pr-sitter's path is byte-identical to the pre-namespacing layout", () => {
+  assert.equal(ledgerPath("/r", "docs/tasks", "pr-sitter", 7), path.join("/r", "docs/tasks", "runs", "pr-sitter", "pr-7.json"))
+  assert.equal(ledgerPath("/r", "docs/tasks", "review-sitter", 7), path.join("/r", "docs/tasks", "runs", "review-sitter", "pr-7.json"))
 })

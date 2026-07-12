@@ -1,0 +1,28 @@
+description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR. Never pushes the watched branch, never merges, never marks ready.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # Push is scoped to main-sitter/* so the watched branch can never be pushed.
+    "git push origin main-sitter/*": allow
+    "git -C * push origin main-sitter/*": allow
+    "gh pr create *": allow
+    "gh pr view*": allow
+    "gh pr list*": allow
+    "gh pr comment *": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "git -C * status*": allow
+    "git -C * diff*": allow
+    "git -C * log*": allow
+    "git -C * show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "wc *": allow
