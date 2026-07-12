@@ -70,6 +70,14 @@ export const matchRoute = (pattern: string, pathname: string): Record<string, st
   return params
 }
 
+/**
+ * Whether a decoded path param is a safe task/run id: no traversal, no
+ * separators, no leading dot. `matchRoute` percent-decodes each segment, so a
+ * raw `..%2f..` arrives here as `../..` — every route that feeds an id into a
+ * filesystem lookup must screen it through this before touching disk. Pure.
+ */
+export const isSafeId = (id: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)
+
 /** Whether a Host header addresses this machine locally. Pure. */
 export const isLocalHost = (host: string | undefined): boolean => {
   if (!host) return false

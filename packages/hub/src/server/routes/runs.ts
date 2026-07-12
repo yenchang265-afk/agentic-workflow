@@ -2,11 +2,9 @@ import { z } from "zod"
 import { parseRunLog } from "@agentic-loop/core/loop/runlog"
 import type { RunDetailResponse, RunListItem, RunsResponse, SnapshotView } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
-import { notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
+import { isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 
 /** Run history: the durable `runs/<id>.md` logs plus display-only snapshot views. */
-
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 /**
  * Snapshots are parsed permissively for DISPLAY — unlike core's `loadState`,
@@ -80,7 +78,7 @@ export const getRuns = async (deps: HubDeps): Promise<JsonResponse> => {
 
 export const getRunDetail = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const id = req.params["id"] ?? ""
-  if (!ID_RE.test(id)) return notFound(`run ${id}`)
+  if (!isSafeId(id)) return notFound(`run ${id}`)
   const content = await readRunLog(deps, id)
   if (content === null) return notFound(`run ${id}`)
   const response: RunDetailResponse = {

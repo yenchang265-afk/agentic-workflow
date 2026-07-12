@@ -132,6 +132,20 @@ test("getTaskDetail 404s on a missing task and 400s on a bogus status", async ()
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+test("getTaskDetail 400s on a traversal id and never reaches the filesystem", async () => {
+  const dir = makeFixture()
+  // A secret .md outside the backlog that a `..`-traversal id would resolve to.
+  fs.writeFileSync(path.join(dir, "secret.md"), "---\ntitle: secret\n---\ntop secret")
+  // `matchRoute` percent-decodes segments, so `..%2f..%2fsecret` arrives as this.
+  const res = await getTaskDetail(depsFor(dir), {
+    params: { status: "queued", id: "../../secret" },
+    query: new URLSearchParams(),
+  })
+  assert.equal(res.status, 400)
+  assert.match((res.body as { error: string }).error, /invalid task id/)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test("getBacklog serves a non-engineering backlog kind from its manifest shape, without the lifecycle summary", async () => {
   const dir = makeFixture()
   const tasks = path.join(dir, "docs", "tasks")
