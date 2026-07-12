@@ -53,6 +53,14 @@ for arg in "$@"; do
       usage
       exit 0
       ;;
+    -*)
+      # Reject an unknown flag rather than silently treating it as the config
+      # dir (a typo'd `--coppy` must error, not install into `./--coppy`).
+      # Matches bootstrap.sh. A bare path is still accepted as the config dir below.
+      echo "unknown option: $arg" >&2
+      usage
+      exit 1
+      ;;
     *) CONFIG_DIR="$arg" ;;
   esac
 done

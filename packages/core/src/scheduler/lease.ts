@@ -66,9 +66,9 @@ const writeOwner = async ($: Shell, directory: string, tasksDir: string, owner: 
 
 /**
  * Acquire the clone's watch lease. Wins the atomic `mkdir`, or takes over a
- * stale lease (`rm -rf` + one retry — losing the retry means another process
- * raced the takeover; report the winner). On refusal, returns the live owner
- * so the caller can say who holds it.
+ * stale lease by atomically renaming the stale dir aside (see below) before
+ * recreating it. On refusal, returns the live (or takeover-winning) owner so the
+ * caller can say who holds it.
  */
 export const acquireLease = async (
   $: Shell,
@@ -91,12 +91,25 @@ export const acquireLease = async (
   }
   const current = await readLeaseOwner($, directory, tasksDir)
   if (isLeaseStale(current, now, staleThresholdMs(current?.intervalMs || owner.intervalMs))) {
-    await $`rm -rf ${dir}`.quiet().nothrow()
+    // Take over atomically. The old `rm -rf ${dir}` + `mkdir ${dir}` was NOT
+    // atomic: two processes that both saw the same stale owner could each remove
+    // the other's freshly-created dir and both believe they won. Instead, rename
+    // the stale dir to a per-process-unique path — `mv` (rename) of one source is
+    // atomic, so the FIRST taker moves it and every other taker's `mv` fails
+    // because the source is already gone. Only the mover proceeds to recreate.
+    const graveyard = `${dir}.dead-${owner.pid}-${now.getTime()}`
+    const claimed = await $`mv ${dir} ${graveyard}`.quiet().nothrow()
+    if (claimed.exitCode !== 0) {
+      // Lost the rename race (or the owner refreshed/released) — report who holds it now.
+      return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
+    }
+    await $`rm -rf ${graveyard}`.quiet().nothrow()
     const retry = await $`mkdir ${dir}`.quiet().nothrow()
     if (retry.exitCode === 0) {
       await writeOwner($, directory, tasksDir, record)
       return { ok: true }
     }
+    // A fresh acquirer created the lease between our rename and mkdir — they hold it.
     return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
   }
   return { ok: false, owner: current }

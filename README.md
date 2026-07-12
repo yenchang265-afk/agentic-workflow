@@ -205,8 +205,10 @@ npm install && npm run typecheck:all && npm run test:all
 `typecheck:all` / `test:all` cover every workspace: the core package
 (`packages/core` — engine, manifest, scheduler, sources, store), the admin hub
 (`packages/hub`), the OpenCode plugin (`src/**/*.test.ts`), and the Claude
-Code MCP server (`plugins/claude/mcp-server`). Plain `npm run typecheck` /
-`npm test` run just the OpenCode plugin's suite.
+Code MCP server (`plugins/claude/mcp-server`). To run just the OpenCode plugin's
+suite, scope to its workspace — `npm run typecheck -w agentic-loop` /
+`npm test -w agentic-loop` (or `npm run typecheck` from inside
+`plugins/opencode/`); the root package defines only the `:all` scripts.
 
 ## License
 

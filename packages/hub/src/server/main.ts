@@ -67,6 +67,12 @@ if (resolved.length === 0) {
 }
 
 const port = Number(argValues("--port")[0] ?? settings?.port ?? 4317)
+if (!Number.isInteger(port) || port < 0 || port > 65535) {
+  // Guard the parse: `--port foo` → NaN, and `listen(NaN)` silently binds a
+  // random ephemeral port, so the URL we print below would be wrong.
+  console.error(`hub: invalid --port "${argValues("--port")[0] ?? settings?.port}" — expected an integer 0–65535`)
+  process.exit(1)
+}
 
 const log: HubDeps["log"] = (level, message) => process.stderr.write(`[hub] ${level}: ${message}\n`)
 

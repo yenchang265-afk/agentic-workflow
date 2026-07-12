@@ -7,7 +7,7 @@ import { acquireLease, heartbeatLease, isLeaseStale, type LeaseOwner, readLeaseO
  * exists and the owner.json content, so acquire/contend/takeover sequences
  * behave like the real thing. Mirrors makeShell in ../task/store.test.ts.
  */
-const makeLeaseFs = (initial?: { ownerJson?: string }) => {
+const makeLeaseFs = (initial?: { ownerJson?: string; mvFails?: boolean }) => {
   const state = { dirExists: initial ? true : false, ownerJson: initial?.ownerJson ?? "" }
   const log: string[] = []
   const handler = (cmd: string): { exitCode?: number; stdout?: string } => {
@@ -17,7 +17,18 @@ const makeLeaseFs = (initial?: { ownerJson?: string }) => {
       state.dirExists = true
       return { exitCode: 0 }
     }
+    if (cmd.startsWith("mv ")) {
+      // Atomic takeover rename: succeeds only if the lease dir still exists
+      // (consuming it, like renaming it to the graveyard); a lost race fails.
+      if (initial?.mvFails || !state.dirExists) return { exitCode: 1 }
+      state.dirExists = false
+      state.ownerJson = ""
+      return { exitCode: 0 }
+    }
     if (cmd.startsWith("rm -rf")) {
+      // In the takeover path this removes the graveyard, not the live lease; the
+      // single-dir model already cleared the lease on `mv`, so this is a no-op there.
+      if (/\.dead-/.test(cmd)) return { exitCode: 0 }
       state.dirExists = false
       state.ownerJson = ""
       return { exitCode: 0 }
@@ -101,12 +112,26 @@ test("acquireLease refuses when a live owner holds the lease, reporting who", as
   assert.equal(!res.ok && res.owner?.pid, 200)
 })
 
-test("acquireLease takes over a stale lease", async () => {
-  const { $ } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")) })
+test("acquireLease takes over a stale lease by renaming it aside atomically", async () => {
+  const { $, log } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")) })
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.deepEqual(res, { ok: true })
   const owner = await readLeaseOwner($, "/r", "docs/tasks")
   assert.equal(owner?.pid, 100)
+  // Takeover goes through an atomic rename (mv), never a bare rm -rf of the live dir.
+  assert.ok(
+    log.some((c) => c.startsWith("mv ") && /\.dead-/.test(c)),
+    "expected an atomic mv-based takeover",
+  )
+})
+
+test("acquireLease that loses the takeover rename backs off and reports the winner", async () => {
+  // Two takers see the same stale lease; the one whose `mv` fails (the other moved
+  // it first) must NOT recreate the lease — it reports the current owner instead.
+  const { $ } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")), mvFails: true })
+  const res = await acquireLease($, "/r", "docs/tasks", me, now)
+  assert.equal(res.ok, false)
+  assert.equal(!res.ok && res.owner?.pid, 200)
 })
 
 test("acquireLease treats a garbled owner record as stale and takes over", async () => {
