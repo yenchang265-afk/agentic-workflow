@@ -590,7 +590,7 @@ test("id-less approve refuses a planless plan-review task and points at replan",
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /no Implementation Plan/)
-  assert.match(toasts[0]?.message ?? "", /\/agentic-loop:engineering replan/)
+  assert.match(toasts[0]?.message ?? "", /replan/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move for a planless task")
 })
 

@@ -65,7 +65,7 @@ import {
   worktreeForBranch,
 } from "@agentic-loop/core/loop/git"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
-import { shipPr } from "@agentic-loop/core/loop/ship-pr"
+import { approveAny, rejectAny, type GateCtx } from "@agentic-loop/core/loop/gate"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens } from "@agentic-loop/core/loop/metrics"
 import { appendRunMetrics, metricsPath } from "@agentic-loop/core/loop/metrics-file"
 import {
@@ -1185,109 +1185,18 @@ const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise
 const ECMD = "/agentic-loop:engineering"
 
 // --- Shared human-gate transitions -----------------------------------------
-// The happy-path move for each gate, all reached through the unified
-// folder-driven `approve` (and `replan` for rejections). Each assumes the task
-// has already been located in its source folder; callers own the not-found /
-// wrong-folder messaging and the try/catch error toast.
-
-/** approve: draft/ → queued/ (audited note + commit). */
-const doApprove = async (deps: Deps, config: Config, task: Task): Promise<void> => {
-  const actor = await gitActor(deps.$, deps.directory)
-  await appendNote(deps.$, task, auditNote("Task approved — queued for planning", new Date(), actor))
-  await moveTask(deps.$, task, "queued")
-  await commitTasks(deps, config, `loop(${task.id}): task approved — queued for planning`)
-  await toast(
-    deps.client,
-    `Task approved — "${task.title}" queued in ${config.tasksDir}/queued/. ${ECMD} watch (or ${ECMD} plan ${task.id}) will plan it.`,
-    "success",
-  )
-}
-
-/** Plan gate: plan-review/ → in-progress/. Caller must have checked `hasPlan`. */
-const doApprovePlan = async (deps: Deps, config: Config, task: Task): Promise<void> => {
-  const actor = await gitActor(deps.$, deps.directory)
-  await appendNote(deps.$, task, auditNote("Plan approved — parked for execution", new Date(), actor))
-  await moveTask(deps.$, task, "in-progress")
-  await commitTasks(deps, config, `loop(${task.id}): plan approved — parked for execution`)
-  await toast(
-    deps.client,
-    `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/. ${ECMD} watch (or ${ECMD} claim) will build it.`,
-    "success",
-  )
-}
-
-/** ship: in-review/ → completed/. */
-const doShip = async (deps: Deps, config: Config, task: Task): Promise<void> => {
-  await appendNote(deps.$, task, auditNote("Shipped — moved to completed", new Date(), await gitActor(deps.$, deps.directory)))
-  const newPath = await moveTask(deps.$, task, "completed")
-  await commitTasks(deps, config, `loop(${task.id}): shipped — completed`)
-
-  const pr = await shipPr(deps.$, deps.log, deps.directory, config, "engineering", task.id, task.title)
-  if (pr.url) {
-    await appendNote(deps.$, { id: task.id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()))
-    await commitTasks(deps, config, `loop(${task.id}): PR ${pr.created ? "opened" : "linked"}`)
-  } else if (pr.attempted) {
-    await appendNote(deps.$, { id: task.id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()))
-    await commitTasks(deps, config, `loop(${task.id}): PR not opened`)
-  }
-  await toast(deps.client, `"${task.title}" completed.${pr.url ? ` PR: ${pr.url}` : ""}`, "success")
-}
-
-/** replan: plan-review/ or in-progress/ → queued/, with an optional reason. */
-const doReplan = async (deps: Deps, config: Config, task: Task, reason?: string): Promise<void> => {
-  const actor = await gitActor(deps.$, deps.directory)
-  const why = reason ? ` — ${reason}` : ""
-  await appendNote(deps.$, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor))
-  await moveTask(deps.$, task, "queued")
-  await commitTasks(deps, config, `loop(${task.id}): plan rejected — re-queued for planning`)
-  await toast(
-    deps.client,
-    `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
-    "success",
-  )
-}
-
-/** Outcome of resolving which task a folder-driven gate shortcut should act on. */
-type GatePick =
-  | { readonly ok: true; readonly task: Task; readonly from: TaskStatus }
-  | { readonly ok: false; readonly kind: "none" }
-  | { readonly ok: false; readonly kind: "message"; readonly message: string; readonly variant: "info" | "warning" }
-
 /**
- * Resolve the single task a shortcut (`approve`, `replan`) should act on,
- * searching `folders` in priority order.
- *
- * - With `id`: the task must be in one of `folders`; otherwise a precise message
- *   ("already in X" for a forward status, "no task found" otherwise).
- * - Without `id`: exactly one candidate across all `folders` advances; zero →
- *   `none` (caller supplies the wording); two+ → an ambiguity message asking for
- *   an explicit id. Fail-safe — never guesses when ambiguous.
+ * Build the shared gate context from this host's deps. `isDriving` answers from
+ * the in-memory session map so replan refuses a task a live loop is building.
  */
-const resolveGateTask = async (deps: Deps, config: Config, id: string, folders: readonly TaskStatus[]): Promise<GatePick> => {
-  if (id) {
-    for (const from of folders) {
-      const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, from, id)
-      if (task) return { ok: true, task, from }
-    }
-    const elsewhere = await findAnyStatus(deps, config, id)
-    // A forward status means the move already happened — report it as harmless, not an error.
-    const alreadyForward = elsewhere === "queued" || elsewhere === "in-progress" || elsewhere === "completed"
-    return {
-      ok: false,
-      kind: "message",
-      message: elsewhere ? `"${id}" is in ${elsewhere} — nothing to do.` : `No task "${id}" found.`,
-      variant: alreadyForward ? "info" : "warning",
-    }
-  }
-  const found: { task: Task; from: TaskStatus }[] = []
-  for (const from of folders) {
-    for (const task of await listByStatus(deps.client, deps.directory, config.tasksDir, from, deps.log)) found.push({ task, from })
-  }
-  if (found.length === 0) return { ok: false, kind: "none" }
-  if (found.length === 1) return { ok: true, ...found[0]! }
-  const list = found.map((f) => `${f.task.id} (${f.from})`).join(", ")
-  return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id, e.g. ${ECMD} approve ${found[0]!.task.id}.`, variant: "warning" }
-}
+const gateCtx = (deps: Deps, config: Config): GateCtx => ({
+  $: deps.$,
+  client: deps.client,
+  log: deps.log,
+  directory: deps.directory,
+  config,
+  isDriving: (id) => findSessionDriving(id) !== undefined,
+})
 
 /**
  * Handle `approve [id]` — the unified, folder-driven gate (the only approval
@@ -1303,24 +1212,11 @@ const resolveGateTask = async (deps: Deps, config: Config, id: string, folders: 
 export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
-  const folders: readonly TaskStatus[] = id ? ["plan-review", "in-review", "draft"] : ["plan-review", "in-review"]
-  const pick = await resolveGateTask(deps, config, id, folders)
-  if (!pick.ok) {
-    if (pick.kind === "none") {
-      return void (await toast(client, `Nothing awaiting approval at a loop gate. (Approve a draft with ${ECMD} approve <id>.)`, "info"))
-    }
-    return void (await toast(client, pick.message, pick.variant))
-  }
-  const { task, from } = pick
-  if (from === "plan-review" && !hasPlan(task)) {
-    return void (await toast(client, `Task "${task.id}" has no Implementation Plan — send it back with ${ECMD} replan ${task.id}.`, "warning"))
-  }
   try {
-    if (from === "draft") await doApprove(deps, config, task)
-    else if (from === "plan-review") await doApprovePlan(deps, config, task)
-    else await doShip(deps, config, task) // in-review
+    const r = await approveAny(gateCtx(deps, config), id)
+    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
   } catch (err) {
-    await toast(client, `Approve failed for "${task.id}": ${(err as Error).message}`, "error")
+    await toast(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
 }
 
@@ -1333,38 +1229,11 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
  */
 export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const arg = args.trim()
-  const [first = "", ...restParts] = arg.split(/\s+/)
-  const folders = ["plan-review", "in-progress"] as const
-
-  // Treat the leading token as an explicit id only if it names a rejectable task.
-  let picked: { task: Task; reason: string } | null = null
-  if (first) {
-    for (const from of folders) {
-      const t = await findByIdIn(deps.$, deps.directory, config.tasksDir, from, first)
-      if (t) {
-        picked = { task: t, reason: restParts.join(" ") }
-        break
-      }
-    }
-  }
-  if (!picked) {
-    // No explicit id — auto-resolve the single plan-review task; the whole arg is the reason.
-    const pick = await resolveGateTask(deps, config, "", ["plan-review"])
-    if (!pick.ok) {
-      if (pick.kind === "none") return void (await toast(client, "No plan awaiting rejection.", "info"))
-      return void (await toast(client, pick.message, pick.variant))
-    }
-    picked = { task: pick.task, reason: arg }
-  }
-
-  if (findSessionDriving(picked.task.id)) {
-    return void (await toast(client, `Task "${picked.task.id}" is being driven by a live loop — ${ECMD} stop it first.`, "warning"))
-  }
   try {
-    await doReplan(deps, config, picked.task, picked.reason || undefined)
+    const r = await rejectAny(gateCtx(deps, config), args.trim())
+    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
   } catch (err) {
-    await toast(client, `Replan failed for "${picked.task.id}": ${(err as Error).message}`, "error")
+    await toast(client, `Replan failed: ${(err as Error).message}`, "error")
   }
 }
 
