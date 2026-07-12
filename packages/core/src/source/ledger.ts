@@ -81,7 +81,12 @@ export type PrTrigger = "failing-checks" | "changes-requested" | "new-comments" 
  * - failing checks / changes requested count only on a head the sitter
  *   hasn't already handled or failed on;
  * - new comments count via the timestamp watermark (own-login comments were
- *   already filtered out of the snapshot);
+ *   already filtered out of the snapshot), independent of the head: a comment
+ *   arriving after the sitter's own push is genuinely new (the push advanced the
+ *   watermark, so the snapshot only surfaces post-push comments). It is gated on
+ *   `failed`, not `headHandled` — a capped attempt does NOT advance the watermark
+ *   (`terminalLedgerUpdate`), so its triggering comment is still in the snapshot;
+ *   re-firing there would re-claim → re-fail forever;
  * - a conflict counts once per (head, base) pair.
  */
 export const attentionTriggers = (
@@ -90,15 +95,14 @@ export const attentionTriggers = (
   enabled: readonly PrTrigger[],
   baseSha = "",
 ): PrTrigger[] => {
-  const headHandled =
-    ledger.headShaHandled === snapshot.headRefOid ||
-    ledger.failedAttempts.some((f) => f.headSha === snapshot.headRefOid)
+  const failed = ledger.failedAttempts.some((f) => f.headSha === snapshot.headRefOid)
+  const headHandled = ledger.headShaHandled === snapshot.headRefOid || failed
   const out: PrTrigger[] = []
   if (enabled.includes("failing-checks") && snapshot.failingChecks.length && !headHandled) out.push("failing-checks")
   if (enabled.includes("changes-requested") && snapshot.reviewDecision === "CHANGES_REQUESTED" && !headHandled) {
     out.push("changes-requested")
   }
-  if (enabled.includes("new-comments") && snapshot.newComments.length && !headHandled) out.push("new-comments")
+  if (enabled.includes("new-comments") && snapshot.newComments.length && !failed) out.push("new-comments")
   if (
     enabled.includes("merge-conflict") &&
     snapshot.mergeable === "CONFLICTING" &&

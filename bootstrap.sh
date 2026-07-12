@@ -6,7 +6,7 @@
 # MCP server) but assumes the system prerequisites already exist. This script
 # fills that gap: it verifies/installs the system CLIs (Node 20+, git, curl, gh,
 # Chrome), registers the chrome-devtools MCP server the loop's skills expect,
-# and finally delegates to ./install.sh both.
+# and finally delegates to ./install.sh all.
 #
 # Auth is never automated — the script only reminds you to run `gh auth login`
 # and (for Azure DevOps) export AZURE_DEVOPS_EXT_PAT at the end. Re-run any
@@ -24,7 +24,7 @@ CHECK_ONLY=0
 usage() {
   cat <<'EOF'
 Usage:
-  ./bootstrap.sh                  # install everything, then ./install.sh both
+  ./bootstrap.sh                  # install everything, then ./install.sh all
   ./bootstrap.sh --no-ado         # skip the Azure DevOps prerequisite check
   ./bootstrap.sh --no-browser     # skip Chrome + the chrome-devtools MCP server
   ./bootstrap.sh --check-only     # report status of every dependency, change nothing
@@ -343,7 +343,7 @@ if [ "$CHECK_ONLY" -eq 0 ]; then
   echo
 else
   echo "== plugins =="
-  skip "install.sh (check-only) — run ./install.sh both to install the plugins"
+  skip "install.sh (check-only) — run ./install.sh all to install the plugins"
   echo
 fi
 

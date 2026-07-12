@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ReactFlow,
   Background,
@@ -166,11 +166,20 @@ export const Creator = () => {
     setSaved(null)
   }
 
+  // Bumped on every open so a slow response for a kind the user has since
+  // navigated away from is dropped instead of clobbering the current one.
+  const openSeq = useRef(0)
   const openKind = (kind: string): void => {
+    const seq = ++openSeq.current
     setLoadedKind(kind)
+    setError(null) // clear any prior open/save error before the new load
     fetchJson<KindDetailResponse>(`/api/kinds/${encodeURIComponent(kind)}`)
-      .then((r) => load(r.manifest, { ...r.prompts }, false))
-      .catch((e: Error) => setError(e.message))
+      .then((r) => {
+        if (seq === openSeq.current) load(r.manifest, { ...r.prompts }, false)
+      })
+      .catch((e: Error) => {
+        if (seq === openSeq.current) setError(e.message)
+      })
   }
 
   const currentManifest = useMemo(

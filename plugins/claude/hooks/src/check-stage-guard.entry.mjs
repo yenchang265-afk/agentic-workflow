@@ -33,6 +33,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { classifyMutation } from "@agentic-loop/core/task/guard"
+import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, isGithubPrMutation } from "./allowlist.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -46,16 +47,9 @@ const block = (reason) => {
   process.exit(2)
 }
 
-// --- allowlists (ported from loop-verify.md / loop-review.md frontmatter) ---
-const GIT_READ = ["git status*", "git diff*", "git log*", "git show*", "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*"]
-const READ = ["ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *"]
-const RUNNERS = ["npm test*", "npm run *", "pnpm test*", "pnpm run *", "yarn test*", "yarn run *", "bun test*", "node --test*", "npx tsc*", "npx vitest*", "npx jest*", "npx eslint*", "pytest*", "go test*", "cargo test*", "make test*", "make check*"]
-const CD_RUNNERS = RUNNERS.map((r) => `cd * && ${r}`)
-const VERIFY_ALLOW = [...GIT_READ, ...READ, ...RUNNERS, ...CD_RUNNERS]
-const REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ]
-
-const toRe = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")
-const matchesAny = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()))
+// Check-stage allowlist matching (built-in fallback lists + the segment-splitting
+// `commandAllowed`) lives in ./allowlist.mjs so it is unit-testable and the
+// chain-split rule has a single home.
 
 // A Bash command that calls the Azure DevOps REST API (curl against an ADO host).
 const isAdoCurl = (cmd) =>
@@ -138,6 +132,20 @@ const main = async () => {
 
   if (!marker) return allow() // no active loop stage — nothing else to enforce
 
+  // (3b) GitHub PR-mutation backstop — on whenever a loop stage is live (the
+  // mirror of the ADO write backstop above). No loop stage — publish, fix, or any
+  // other — may merge, close, approve, or otherwise mutate a pull request; the
+  // stage allowlist permits `gh api *` for reads/replies but can't exclude the
+  // mutating REST route (`gh api -X PUT …/merge`), so this catches it. Gated on the
+  // marker so a human's manual `gh pr merge` outside a loop is untouched.
+  if (tool === "Bash" && isGithubPrMutation(String(ti.command ?? ""))) {
+    return block(
+      `agentic-loop: the loop must never mutate a pull request — this GitHub command is blocked. ` +
+        `Only reads and review-comment replies (gh pr comment, or gh api GET/POST to a comments/reviews resource) ` +
+        `are permitted; merging, closing, approving, reviewer changes, and edits stay a human call.`,
+    )
+  }
+
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
   // tools so it returns control; loop_advance then stops the loop.
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
@@ -159,7 +167,7 @@ const main = async () => {
   if (tool === "Bash" && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const cmd = String(ti.command ?? "")
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW)
-    if (!matchesAny(cmd, list)) {
+    if (!commandAllowed(cmd, list)) {
       return block(
         `agentic-loop: the ${marker.stage.toUpperCase()} stage is read-only — the command "${cmd}" is not on its allowlist. ` +
           `Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it. ` +

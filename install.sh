@@ -44,6 +44,7 @@ TARGET_DIR="${AGENTIC_LOOP_DIR:-$PWD}"
 for arg in "$@"; do
   case "$arg" in
     opencode|claude|all) TARGET="$arg" ;;
+    both) TARGET=all ;;  # tolerate the historical alias; never let it fall to the config-dir catch-all
     --copy) MODE=copy ;;
     --config) WANT_CONFIG=1 ;;
     --no-config) WANT_CONFIG=0 ;;

@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react"
 import type { ActiveResponse, KindBoardInfo } from "../../shared/api.js"
-import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { useJson } from "../useJson.js"
 import { Chip } from "../ui/Chip.js"
 
 /**
@@ -12,15 +11,9 @@ import { Chip } from "../ui/Chip.js"
  * Deliberately modest — the data model records no more per PR yet.
  */
 export const PrKindPanel = ({ info }: { info: KindBoardInfo }) => {
-  const [data, setData] = useState<ActiveResponse | null>(null)
   const { versions } = useEvents()
   const { repoId } = useRepo()
-
-  useEffect(() => {
-    fetchJson<ActiveResponse>(repoPath("/api/active", repoId))
-      .then(setData)
-      .catch(() => setData(null))
-  }, [versions.active, repoId])
+  const { data } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
 
   const ledgers = data?.prLedgers ?? []
   return (

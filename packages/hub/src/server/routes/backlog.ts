@@ -12,7 +12,7 @@ import { isPaired, type Task } from "@agentic-loop/core/task/schema"
 import { auditBacklog, hasAnomalies } from "@agentic-loop/core/task/audit"
 import type { BacklogResponse, KindBoardInfo, TaskCard, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
-import { badRequest, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
+import { badRequest, isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 import { extractAuditNotes } from "../notes.js"
 
 /**
@@ -78,6 +78,9 @@ export const getTaskDetail = async (deps: HubDeps, req: ParsedRequest): Promise<
   // as the fallback when no manifest loaded).
   const known = new Set<string>([...deps.boards.flatMap((b) => b.statuses), ...STATUSES])
   if (!known.has(status)) return badRequest(`unknown status "${status}"`)
+  // `id` becomes a path segment in `findByIdIn` — screen out traversal
+  // (`..%2f..`) before it reaches the filesystem, like the runs/tokens routes.
+  if (!isSafeId(id)) return badRequest(`invalid task id "${id}"`)
   const task = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, status, id, deps.log)
   if (!task) return notFound(`task ${id} in ${status}`)
   const response: TaskDetailResponse = {

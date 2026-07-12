@@ -62,13 +62,27 @@ export const matchRoute = (pattern: string, pathname: string): Record<string, st
     const pat = patSegs[i] as string
     const seg = pathSegs[i] as string
     if (pat.startsWith(":")) {
-      params[pat.slice(1)] = decodeURIComponent(seg)
+      // A malformed percent-encoding (`/api/tasks/todo/%`) throws URIError; treat
+      // it as no-match rather than letting it bubble out and hang the request.
+      try {
+        params[pat.slice(1)] = decodeURIComponent(seg)
+      } catch {
+        return null
+      }
     } else if (pat !== seg) {
       return null
     }
   }
   return params
 }
+
+/**
+ * Whether a decoded path param is a safe task/run id: no traversal, no
+ * separators, no leading dot. `matchRoute` percent-decodes each segment, so a
+ * raw `..%2f..` arrives here as `../..` — every route that feeds an id into a
+ * filesystem lookup must screen it through this before touching disk. Pure.
+ */
+export const isSafeId = (id: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)
 
 /** Whether a Host header addresses this machine locally. Pure. */
 export const isLocalHost = (host: string | undefined): boolean => {
@@ -110,18 +124,45 @@ const sendJson = (res: ServerResponse, out: JsonResponse): void => {
   res.end(payload)
 }
 
-const readBody = (req: IncomingMessage): Promise<unknown> =>
+/** Cap on a POST body — hub payloads are small manifests/prompts. Over this,
+ * the body is dropped (the handler validates and 400s) rather than buffered. */
+const MAX_BODY_BYTES = 1_000_000
+
+/**
+ * Buffer the request body as Buffers (not string concatenation), cap the total
+ * size, and decode once at the end. Concatenating string chunks corrupts a UTF-8
+ * codepoint split across two TCP packets; a single decode over the joined bytes
+ * does not. A missing/oversized/garbled body resolves to `undefined`.
+ */
+export const readBody = (req: IncomingMessage): Promise<unknown> =>
   new Promise((resolve) => {
-    let raw = ""
-    req.on("data", (d) => (raw += d))
+    const chunks: Buffer[] = []
+    let size = 0
+    let done = false
+    const finish = (value: unknown) => {
+      if (done) return
+      done = true
+      resolve(value)
+    }
+    req.on("data", (d: Buffer) => {
+      if (done) return
+      size += d.length
+      if (size > MAX_BODY_BYTES) {
+        req.destroy()
+        finish(undefined)
+        return
+      }
+      chunks.push(d)
+    })
     req.on("end", () => {
       try {
-        resolve(raw ? JSON.parse(raw) : undefined)
+        const raw = Buffer.concat(chunks).toString("utf8")
+        finish(raw ? JSON.parse(raw) : undefined)
       } catch {
-        resolve(undefined)
+        finish(undefined)
       }
     })
-    req.on("error", () => resolve(undefined))
+    req.on("error", () => finish(undefined))
   })
 
 /**
@@ -132,56 +173,77 @@ const readBody = (req: IncomingMessage): Promise<unknown> =>
 export const makeListener = (routes: readonly Route[], webRoot: string, rawRoutes: readonly RawRoute[] = []) => {
   const root = path.resolve(webRoot)
   return async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (!isLocalHost(req.headers.host)) {
-      sendJson(res, json(403, { error: "hub only answers local requests" }))
-      return
+    // Outer net: node:http does not await this async listener, so ANY throw
+    // (a malformed URL, a decode error, a handler bug) would become an unhandled
+    // rejection and leave the socket hanging. Catch everything and always answer.
+    try {
+      await handleRequest(req, res, root, routes, rawRoutes)
+    } catch (err) {
+      if (!res.headersSent) sendJson(res, json(500, { error: (err as Error).message }))
+      else res.end()
     }
-    const url = new URL(req.url ?? "/", "http://localhost")
-    const method = req.method === "POST" ? "POST" : "GET"
-
-    for (const route of rawRoutes) {
-      if (route.method !== method) continue
-      const params = matchRoute(route.pattern, url.pathname)
-      if (!params) continue
-      route.handle(req, res, params)
-      return
-    }
-
-    for (const route of routes) {
-      if (route.method !== method) continue
-      const params = matchRoute(route.pattern, url.pathname)
-      if (!params) continue
-      if (route.mutating && req.headers["x-hub-client"] !== "1") {
-        sendJson(res, json(403, { error: "missing X-Hub-Client header" }))
-        return
-      }
-      const body = method === "POST" ? await readBody(req) : undefined
-      try {
-        sendJson(res, await route.handler({ params, query: url.searchParams, body }))
-      } catch (err) {
-        sendJson(res, json(500, { error: (err as Error).message }))
-      }
-      return
-    }
-
-    if (url.pathname.startsWith("/api/")) {
-      sendJson(res, notFound("route"))
-      return
-    }
-
-    const file = safeStaticPath(root, url.pathname)
-    if (file) {
-      try {
-        const content = fs.readFileSync(file)
-        const type = CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream"
-        res.writeHead(200, { "content-type": type, "cache-control": "no-store" })
-        res.end(content)
-        return
-      } catch {
-        // fall through to 404
-      }
-    }
-    res.writeHead(404, { "content-type": "text/plain; charset=utf-8" })
-    res.end("not found")
   }
+}
+
+/** The routed request pipeline, wrapped by makeListener's outer try/catch. */
+const handleRequest = async (
+  req: IncomingMessage,
+  res: ServerResponse,
+  root: string,
+  routes: readonly Route[],
+  rawRoutes: readonly RawRoute[],
+): Promise<void> => {
+  if (!isLocalHost(req.headers.host)) {
+    sendJson(res, json(403, { error: "hub only answers local requests" }))
+    return
+  }
+  let url: URL
+  try {
+    url = new URL(req.url ?? "/", "http://localhost")
+  } catch {
+    sendJson(res, json(400, { error: "malformed request URL" }))
+    return
+  }
+  const method = req.method === "POST" ? "POST" : "GET"
+
+  for (const route of rawRoutes) {
+    if (route.method !== method) continue
+    const params = matchRoute(route.pattern, url.pathname)
+    if (!params) continue
+    route.handle(req, res, params)
+    return
+  }
+
+  for (const route of routes) {
+    if (route.method !== method) continue
+    const params = matchRoute(route.pattern, url.pathname)
+    if (!params) continue
+    if (route.mutating && req.headers["x-hub-client"] !== "1") {
+      sendJson(res, json(403, { error: "missing X-Hub-Client header" }))
+      return
+    }
+    const body = method === "POST" ? await readBody(req) : undefined
+    sendJson(res, await route.handler({ params, query: url.searchParams, body }))
+    return
+  }
+
+  if (url.pathname.startsWith("/api/")) {
+    sendJson(res, notFound("route"))
+    return
+  }
+
+  const file = safeStaticPath(root, url.pathname)
+  if (file) {
+    try {
+      const content = fs.readFileSync(file)
+      const type = CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream"
+      res.writeHead(200, { "content-type": type, "cache-control": "no-store" })
+      res.end(content)
+      return
+    } catch {
+      // fall through to 404
+    }
+  }
+  res.writeHead(404, { "content-type": "text/plain; charset=utf-8" })
+  res.end("not found")
 }

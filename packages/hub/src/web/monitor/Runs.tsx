@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import type { RunDetailResponse, RunsResponse } from "../../shared/api.js"
-import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
 import { TokenPanel } from "./TokenPanel.js"
@@ -13,16 +13,11 @@ const outcomeTone = (outcome?: string): "neutral" | "ok" | "gate" =>
   outcome === "done" ? "ok" : outcome === "error" || outcome === "stopped" ? "gate" : "neutral"
 
 const RunDetail = ({ id }: { id: string }) => {
-  const [detail, setDetail] = useState<RunDetailResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const { repoId } = useRepo()
-
-  useEffect(() => {
-    setDetail(null)
-    fetchJson<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId))
-      .then(setDetail)
-      .catch((e: Error) => setError(e.message))
-  }, [id, repoId])
+  const { data: detail, error } = useJson<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId), [
+    id,
+    repoId,
+  ])
 
   if (error) return <div className="error-banner">{error}</div>
   if (!detail) return <div className="placeholder">Loading run…</div>
@@ -99,17 +94,14 @@ const RunDetail = ({ id }: { id: string }) => {
 }
 
 export const Runs = () => {
-  const [data, setData] = useState<RunsResponse | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const { versions } = useEvents()
   const { repoId } = useRepo()
+  const { data } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, repoId])
 
-  useEffect(() => {
-    setSelected(null)
-    fetchJson<RunsResponse>(repoPath("/api/runs", repoId))
-      .then(setData)
-      .catch(() => setData({ runs: [] }))
-  }, [versions.run, repoId])
+  // Collapse the open run whenever the list refreshes or the repo changes — the
+  // selected id may no longer exist.
+  useEffect(() => setSelected(null), [versions.run, repoId])
 
   if (!data) return null
   if (data.runs.length === 0) return <div className="placeholder">No run logs yet.</div>

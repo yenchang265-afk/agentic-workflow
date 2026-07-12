@@ -152,6 +152,17 @@ const writeStageMarker = (stage: string | null) => {
       const m = activeManifest()
       const def = stageDef(m.manifest, stage)
       stageDeadline = Date.now() + (def.timeoutMinutes ?? config.stageTimeoutMinutes) * 60_000
+      // The platform stamped into the state at claim time wins over the live
+      // config: prompt guidance renders from the same stamp, and a config flip
+      // mid-loop must not strand a claimed PR with an allowlist that contradicts
+      // its prompt.
+      // Write the allowlist for EVERY stage that declares one, not just check
+      // stages: pr-sitter `publish` is a WORK stage whose allowlist ("git push"
+      // + "gh pr comment", never "gh pr merge") is this host's only deterministic
+      // "never merge / never mutate the PR" backstop (threat-model T8/T1). A stage
+      // that declares none (engineering plan/build, pr-sitter fix) writes no list
+      // and stays unrestricted — those stages must write code freely.
+      const allowlist = effectiveAllowlist(def, active?.platform ?? platformFor(config, m.manifest.kind))
       fs.writeFileSync(
         stageMarkerPath(),
         JSON.stringify({
@@ -162,13 +173,7 @@ const writeStageMarker = (stage: string | null) => {
           taskId: active?.task?.id ?? null,
           worktree: active?.git?.worktree ?? null,
           deadline: stageDeadline,
-          // The platform stamped into the state at claim time wins over the
-          // live config: prompt guidance renders from the same stamp, and a
-          // config flip mid-loop must not strand a claimed PR with an
-          // allowlist that contradicts its prompt.
-          ...(def.kind === "check"
-            ? { bashAllowlist: effectiveAllowlist(def, active?.platform ?? platformFor(config, m.manifest.kind)) }
-            : {}),
+          ...(allowlist.length ? { bashAllowlist: allowlist } : {}),
         }),
       )
     }
@@ -428,7 +433,7 @@ server.registerTool(
       return fail((err as Error).message)
     }
     await snapshot()
-    return ok({ isolated: Boolean(active.git), git: active.git ?? null })
+    return ok({ isolated: Boolean(active.isolated), git: active.git ?? null })
   },
 )
 
@@ -647,8 +652,15 @@ const runTerminal = async (action: Action) => {
     }
     await commitPaths(sh, directory, [config.tasksDir], `loop(${active.task.id}): ${outcome}`)
   }
-  if (active.git) await commitAll(sh, workTree(), `loop(${loopId(active)}): ${outcome}`)
-  await teardownIsolation(sh, log, directory, active)
+  // Gate on `isolated`, not `git`: a PR source pre-sets `git` to name the branch
+  // to isolate ONTO, so a stage that never isolated (pr-sitter `triage` → done,
+  // "nothing actionable") must NOT `commitAll`/teardown the human's MAIN tree —
+  // `workTree()` returns `directory` when no worktree exists. Mirrors the
+  // OpenCode driver, which gates every main-tree write on `isolated`.
+  if (active.isolated) {
+    await commitAll(sh, workTree(), `loop(${loopId(active)}): ${outcome}`)
+    await teardownIsolation(sh, log, directory, active)
+  }
   if (active.task) await clearState(sh, directory, config.tasksDir, active.task.id)
   writeStageMarker(null)
   if (activeClaim) {

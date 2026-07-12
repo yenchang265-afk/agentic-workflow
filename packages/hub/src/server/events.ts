@@ -16,8 +16,20 @@ export interface EventHub {
 export const makeEventHub = (heartbeatMs = 25_000): EventHub => {
   const clients = new Set<ServerResponse>()
 
+  // Writing to a client whose socket has died throws (or emits 'error'); an
+  // unhandled write throw would abort the fan-out mid-loop (starving later
+  // clients) and an unhandled stream 'error' can crash the process. Prune the
+  // dead client instead of propagating.
+  const safeWrite = (res: ServerResponse, payload: string): void => {
+    try {
+      res.write(payload)
+    } catch {
+      clients.delete(res)
+    }
+  }
+
   const heartbeat = setInterval(() => {
-    for (const res of clients) res.write(": ping\n\n")
+    for (const res of clients) safeWrite(res, ": ping\n\n")
   }, heartbeatMs)
   heartbeat.unref()
 
@@ -28,14 +40,17 @@ export const makeEventHub = (heartbeatMs = 25_000): EventHub => {
         "cache-control": "no-store",
         connection: "keep-alive",
       })
-      res.write(": connected\n\n")
+      // A client that aborts mid-write emits 'error' on the response stream;
+      // without a listener that becomes an uncaught exception. Prune on both.
+      res.on("error", () => clients.delete(res))
       clients.add(res)
+      safeWrite(res, ": connected\n\n")
       req.on("close", () => clients.delete(res))
     },
     broadcast(events) {
       if (events.length === 0) return
       const payload = events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")
-      for (const res of clients) res.write(payload)
+      for (const res of clients) safeWrite(res, payload)
     },
     close() {
       clearInterval(heartbeat)

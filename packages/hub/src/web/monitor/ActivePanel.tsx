@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react"
 import type { ActiveResponse } from "../../shared/api.js"
-import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
 
@@ -21,15 +21,9 @@ const Deadline = ({ deadline }: { deadline: number | null | undefined }) => {
 }
 
 export const ActivePanel = () => {
-  const [data, setData] = useState<ActiveResponse | null>(null)
   const { versions } = useEvents()
   const { repoId } = useRepo()
-
-  useEffect(() => {
-    fetchJson<ActiveResponse>(repoPath("/api/active", repoId))
-      .then(setData)
-      .catch(() => setData(null))
-  }, [versions.active, repoId])
+  const { data } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
 
   if (!data) return null
   const idle = !data.stage && !data.lease && data.snapshotIds.length === 0 && data.prLedgers.length === 0

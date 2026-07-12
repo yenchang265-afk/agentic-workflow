@@ -1,7 +1,6 @@
 import { StrictMode, useEffect, useState } from "react"
 import { createRoot } from "react-dom/client"
-import type { KindBoardInfo, MonitorKindsResponse } from "../shared/api.js"
-import { fetchJson } from "./api.js"
+import type { MonitorKindsResponse } from "../shared/api.js"
 import { Creator } from "./creator/Creator.js"
 import { EventsProvider, useEvents } from "./events.js"
 import { ActivePanel } from "./monitor/ActivePanel.js"
@@ -9,6 +8,7 @@ import { Board } from "./monitor/Board.js"
 import { PrKindPanel } from "./monitor/PrKindPanel.js"
 import { Runs } from "./monitor/Runs.js"
 import { RepoPicker, RepoProvider, repoPath, useRepo } from "./repo.js"
+import { useJson } from "./useJson.js"
 import { Button } from "./ui/Button.js"
 import { BellIcon } from "./ui/icons.js"
 import { ThemeToggle } from "./ui/ThemeToggle.js"
@@ -48,16 +48,16 @@ const HeaderStatus = () => {
  * panel. Selection persists per repo in localStorage.
  */
 const Monitor = () => {
-  const [kinds, setKinds] = useState<readonly KindBoardInfo[] | null>(null)
   const { repoId } = useRepo()
   const storageKey = `hub.kind.${repoId ?? ""}`
-  const [kind, setKind] = useState<string | null>(() => localStorage.getItem(storageKey))
+  const [kind, setKind] = useState<string | null>(null)
+  // Restore the per-repo kind when the repo resolves or the user switches — the
+  // mount-time `repoId` is null, so reading localStorage in the initializer would
+  // always miss the real per-repo key (and never re-read on a repo switch).
+  useEffect(() => setKind(localStorage.getItem(storageKey)), [storageKey])
 
-  useEffect(() => {
-    fetchJson<MonitorKindsResponse>(repoPath("/api/monitor/kinds", repoId))
-      .then((d) => setKinds(d.kinds))
-      .catch(() => setKinds([]))
-  }, [repoId])
+  const { data, error } = useJson<MonitorKindsResponse>(repoPath("/api/monitor/kinds", repoId), [repoId])
+  const kinds = data?.kinds ?? (error ? [] : null)
 
   if (!kinds) return <div className="placeholder">Loading kinds…</div>
   const active = kinds.find((k) => k.kind === kind) ?? kinds[0]

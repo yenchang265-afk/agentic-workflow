@@ -1,15 +1,13 @@
 import type { TokensSummaryEntry, TokensSummaryResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
-import { notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
+import { isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 import { resolveRunTokens } from "../tokens/resolve.js"
 
 /** Token usage views — per run and the roll-up across all runs. */
 
-const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
-
 export const getRunTokens = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const id = req.params["id"] ?? ""
-  if (!ID_RE.test(id)) return notFound(`run ${id}`)
+  if (!isSafeId(id)) return notFound(`run ${id}`)
   const resolved = await resolveRunTokens(deps, id)
   if (!resolved) return notFound(`run ${id}`)
   return ok(resolved)

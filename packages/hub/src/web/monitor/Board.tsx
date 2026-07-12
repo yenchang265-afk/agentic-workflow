@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react"
 import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.js"
-import { fetchJson } from "../api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
+import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
@@ -31,16 +30,12 @@ const TaskCardView = ({ task, gated, claimed }: { task: TaskCard; gated: boolean
 )
 
 export const Board = ({ info }: { info: KindBoardInfo }) => {
-  const [data, setData] = useState<BacklogResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const { versions } = useEvents()
   const { repoId } = useRepo()
-
-  useEffect(() => {
-    fetchJson<BacklogResponse>(repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId))
-      .then((d) => setData(d))
-      .catch((e: Error) => setError(e.message))
-  }, [versions.backlog, versions.gate, repoId, info.kind])
+  const { data, error } = useJson<BacklogResponse>(
+    repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId),
+    [versions.backlog, versions.gate, repoId, info.kind],
+  )
 
   if (error) return <div className="error-banner">Could not load backlog: {error}</div>
   if (!data) return <div className="placeholder">Loading backlog…</div>

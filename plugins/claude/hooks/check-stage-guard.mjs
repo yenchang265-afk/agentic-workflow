@@ -108,6 +108,74 @@ var classifyMutation = (tool, args, ctx) => {
   return ALLOW;
 };
 
+// plugins/claude/hooks/src/allowlist.mjs
+var GIT_READ = ["git status*", "git diff*", "git log*", "git show*", "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*"];
+var READ = ["ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *"];
+var RUNNERS = ["npm test*", "npm run *", "pnpm test*", "pnpm run *", "yarn test*", "yarn run *", "bun test*", "node --test*", "npx tsc*", "npx vitest*", "npx jest*", "npx eslint*", "pytest*", "go test*", "cargo test*", "make test*", "make check*"];
+var VERIFY_ALLOW = [...GIT_READ, ...READ, ...RUNNERS];
+var REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ];
+var toRe2 = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s");
+var matchesAny2 = (cmd, globs) => globs.some((g) => toRe2(g).test(cmd.trim()));
+var isBareCd = (seg) => /^cd\s+[^;&|<>()`$]+$/.test(seg);
+var splitSegments = (cmd) => {
+  const segments = [];
+  let cur = "";
+  let quote = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) {
+      cur += c;
+      if (c === quote) quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      cur += c;
+      continue;
+    }
+    if (c === "\n" || c === "\r" || c === ";") {
+      segments.push(cur);
+      cur = "";
+      continue;
+    }
+    if (c === "&" && cmd[i + 1] === "&") {
+      segments.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    if (c === "|" && cmd[i + 1] === "|") {
+      segments.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    if (c === "|" || c === "&") {
+      segments.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  segments.push(cur);
+  return segments.map((s) => s.trim()).filter(Boolean);
+};
+var commandAllowed = (cmd, globs) => {
+  const segments = splitSegments(cmd);
+  return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny2(s, globs));
+};
+var isGithubPrMutation = (cmd) => {
+  const c = cmd.trim();
+  if (/^gh\s+(?:-\S+\s+)*pr\s+(?:merge|close|ready|edit|lock|unlock|review)\b/.test(c)) return true;
+  if (/^gh\s+(?:-\S+\s+)*api\b/.test(c)) {
+    if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true;
+    const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c);
+    const method = m ? m[1].toUpperCase() : "GET";
+    return !(method === "GET" || method === "POST");
+  }
+  return false;
+};
+
 // plugins/claude/hooks/src/check-stage-guard.entry.mjs
 var read = () => new Promise((resolve) => {
   let s = "";
@@ -118,14 +186,6 @@ var block2 = (reason) => {
   process.stderr.write(reason + "\n");
   process.exit(2);
 };
-var GIT_READ = ["git status*", "git diff*", "git log*", "git show*", "git -C * status*", "git -C * diff*", "git -C * log*", "git -C * show*"];
-var READ = ["ls*", "cat *", "head *", "tail *", "grep *", "find *", "wc *"];
-var RUNNERS = ["npm test*", "npm run *", "pnpm test*", "pnpm run *", "yarn test*", "yarn run *", "bun test*", "node --test*", "npx tsc*", "npx vitest*", "npx jest*", "npx eslint*", "pytest*", "go test*", "cargo test*", "make test*", "make check*"];
-var CD_RUNNERS = RUNNERS.map((r) => `cd * && ${r}`);
-var VERIFY_ALLOW = [...GIT_READ, ...READ, ...RUNNERS, ...CD_RUNNERS];
-var REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ];
-var toRe2 = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s");
-var matchesAny2 = (cmd, globs) => globs.some((g) => toRe2(g).test(cmd.trim()));
 var isAdoCurl = (cmd) => /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd);
 var curlMethod = (cmd) => {
   const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd);
@@ -182,6 +242,11 @@ var main = async () => {
   );
   if (!backlogVerdict.allow) return block2(backlogVerdict.reason);
   if (!marker) return allow();
+  if (tool === "Bash" && isGithubPrMutation(String(ti.command ?? ""))) {
+    return block2(
+      `agentic-loop: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and review-comment replies (gh pr comment, or gh api GET/POST to a comments/reviews resource) are permitted; merging, closing, approving, reviewer changes, and edits stay a human call.`
+    );
+  }
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
     if (["Bash", "Edit", "Write", "MultiEdit"].includes(tool)) {
       return block2(
@@ -193,7 +258,7 @@ var main = async () => {
   if (tool === "Bash" && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const cmd = String(ti.command ?? "");
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW);
-    if (!matchesAny2(cmd, list)) {
+    if (!commandAllowed(cmd, list)) {
       return block2(
         `agentic-loop: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${cmd}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it. ` + (marker.worktree ? `Test commands must use the \`cd ${marker.worktree} && <runner>\` form.` : "")
       );

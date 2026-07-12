@@ -30,16 +30,24 @@ test("failing checks trigger on an unhandled head only", () => {
   assert.deepEqual(attentionTriggers(s, ledger({ headShaHandled: "older" }), ALL), ["failing-checks"])
 })
 
-test("the sitter's own push suppresses re-triggering (headShaHandled)", () => {
+test("the sitter's own push suppresses check/review re-triggering, but a genuinely-new comment still fires", () => {
+  // headShaHandled = the sitter's push. failing-checks/changes-requested are the
+  // same head → suppressed. newComments is watermark-filtered, so its presence
+  // means a comment arrived AFTER the push → it must still trigger (B6).
   const s = snap({ failingChecks: ["ci"], reviewDecision: "CHANGES_REQUESTED", newComments: [{ author: "alice", at: "2026-01-02T00:00:00Z" }] })
-  assert.deepEqual(attentionTriggers(s, ledger({ headShaHandled: "sha-1" }), ALL), [])
+  assert.deepEqual(attentionTriggers(s, ledger({ headShaHandled: "sha-1" }), ALL), ["new-comments"])
+  // Same head, no new comment → nothing.
+  assert.deepEqual(attentionTriggers(snap({ failingChecks: ["ci"] }), ledger({ headShaHandled: "sha-1" }), ALL), [])
 })
 
-test("a failed attempt parks the PR until the head changes", () => {
-  const s = snap({ failingChecks: ["ci"] })
+test("a failed attempt parks the PR until the head changes — including new comments", () => {
+  const s = snap({ failingChecks: ["ci"], newComments: [{ author: "alice", at: "2026-01-02T00:00:00Z" }] })
   const l = ledger({ failedAttempts: [{ headSha: "sha-1", trigger: "failing-checks", at: "2026-01-01T01:00:00Z" }] })
+  // A cap does NOT advance the comment watermark, so the triggering comment is
+  // still in the snapshot; new-comments must stay suppressed to avoid re-claim →
+  // re-fail forever. Checks stay suppressed too.
   assert.deepEqual(attentionTriggers(s, l, ALL), [])
-  assert.deepEqual(attentionTriggers(snap({ failingChecks: ["ci"], headRefOid: "sha-2" }), l, ALL), ["failing-checks"])
+  assert.deepEqual(attentionTriggers(snap({ failingChecks: ["ci"], newComments: [{ author: "alice", at: "2026-01-02T00:00:00Z" }], headRefOid: "sha-2" }), l, ALL), ["failing-checks", "new-comments"])
 })
 
 test("new comments come pre-filtered; presence triggers, watermark handled upstream", () => {
