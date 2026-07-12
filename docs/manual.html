@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>agentic-loop — User Manual</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
@@ -306,6 +307,7 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
     <div class="grp">Reference</div>
     <a href="#config">Config reference</a>
     <a href="#commands">Command cheat-sheet</a>
+    <a href="#hub">Admin hub <span class="def">beta</span></a>
   </nav>
 
   <main>
@@ -614,6 +616,56 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">The command <em>is</em> the kind — <code>claim</code>/<code>watch</code> take no kind argument. Opt in via <code>loops.pr-sitter.enabled</code> in <code>.agentic-loop.json</code>.</p>
         </div>
       </div>
+    </section>
+
+    <!-- ===================================================== HUB -->
+    <section id="hub">
+      <div class="eyebrow">Reference</div>
+      <h2>Admin hub <span class="def">beta</span></h2>
+      <p class="lede">A local web dashboard for watching loops and authoring kinds — the visual companion to the slash-commands. It is <b>read-only for the loop</b>: it shows you what the backlog, runs and gates are doing and lets you edit kind manifests, but it never claims work or approves a gate. Those stay in your host (Claude Code / OpenCode).</p>
+
+      <div class="pillrow">
+        <span class="pill"><b>localhost only</b> · binds 127.0.0.1, no auth by design</span>
+        <span class="pill"><b>read-only monitor</b> · never drives the loop</span>
+        <span class="pill"><b>visual creator</b> · edit a kind's manifest as a graph</span>
+      </div>
+
+      <h3>Launch</h3>
+      <p>One command builds core + the SPA and serves it. Point <code>--dir</code> at the repo the loop drives (the same directory that holds <code>.agentic-loop.json</code>).</p>
+      <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>npm run hub -- --dir /path/to/repo      <span class="c"># → http://127.0.0.1:4317</span>
+npm run hub -- --dir /a --dir /b        <span class="c"># watch several repos (repeat --dir; '*' wildcards ok)</span>
+npm run hub -- --dir /path --port 4400  <span class="c"># override the port</span></pre></div>
+      <p style="font-size:14px;color:var(--muted-txt)">With no <code>--dir</code>, the hub reads a <code>hub.config.json</code> (<code>{"repos":[…],"port":…}</code>) instead; if neither is present it exits with usage. When more than one repo is watched a repo picker appears in the header and every view is scoped to the selected one.</p>
+
+      <div class="note warn"><b>Local by design — do not expose it.</b> The server answers only requests whose <code>Host</code> is loopback and binds <code>127.0.0.1</code>; there is no login. Mutating routes (saving a kind) additionally require an <code>X-Hub-Client</code> header, so a stray browser tab cannot POST to it. Keep it on your machine — don't put it behind a public proxy.</p>
+
+      <h3>The two views</h3>
+      <div class="two">
+        <div class="card">
+          <h4 style="margin-top:0">Loop monitor <span style="text-transform:none;color:var(--ink-2)">— what's happening</span></h4>
+          <p style="font-size:14px;margin-top:0">One sub-tab per enabled kind. Top to bottom:</p>
+          <div class="tblwrap" style="margin-top:4px"><table style="min-width:0"><tbody>
+            <tr><td><b>Active strip</b></td><td>The stage running right now with a live countdown to its deadline, the watcher lease (pid/host, flagged when stale), resumable snapshots, and PR ledgers.</td></tr>
+            <tr><td><b>Backlog board</b></td><td>A kanban column per lifecycle folder; <span class="verd fail" style="padding:0 6px">gate</span> columns (where the loop parked for you) glow amber and their cards read <em>awaiting you</em>. Read-only — approve from your host.</td></tr>
+            <tr><td><b>Run history</b></td><td>Each run expands to its per-stage table (verdict · iteration · wall-clock) plus token usage &amp; cost and the raw stage transcripts.</td></tr>
+          </tbody></table></div>
+          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Updates stream live (SSE + a polling reconciler). Arm the header <b>bell</b> once and the browser notifies you the moment a task parks at a gate.</p>
+        </div>
+        <div class="card">
+          <h4 style="margin-top:0">Loop creator <span style="text-transform:none;color:var(--ink-2)">— author a kind</span></h4>
+          <p style="font-size:14px;margin-top:0">Opens a kind's manifest as an editable node graph:</p>
+          <div class="tblwrap" style="margin-top:4px"><table style="min-width:0"><tbody>
+            <tr><td><b>Nodes</b></td><td>Work / check <b>stages</b> (blue) wired by pass / fail / error handles to <b>terminal</b> pills — <span class="verd done" style="padding:0 6px">done</span>, <span class="verd fail" style="padding:0 6px">park</span>, <span class="verd err" style="padding:0 6px">stop</span>.</td></tr>
+            <tr><td><b>Side panel</b></td><td>Edits the selected stage (agent, isolation, timeout, bash allowlist, prompt), edge (transition message / iteration count), or the kind's meta &amp; work source.</td></tr>
+            <tr><td><b>Validate + Save</b></td><td>The same Zod schema the engine uses runs live; <b>Save</b> is disabled until it's clean and writes only into <code>packages/core/loops/&lt;kind&gt;/</code> — it never clobbers a hand-tuned prompt, and prints a checklist of the manual steps left.</td></tr>
+          </tbody></table></div>
+        </div>
+      </div>
+
+      <h3>Look &amp; feel</h3>
+      <p>The hub follows your OS light/dark preference and the header carries a <b>sun/moon toggle</b> to override it (remembered per browser). Machine values — task ids, run ids, timestamps, token counts — render in a monospace face so the dense views stay scannable.</p>
+
+      <p style="font-size:13.5px;color:var(--muted-txt)">Kind manifests live in core, so the creator's kind list and saves are <em>not</em> repo-scoped even in multi-repo mode; the monitor always is.</p>
     </section>
   </main>
 </div>
