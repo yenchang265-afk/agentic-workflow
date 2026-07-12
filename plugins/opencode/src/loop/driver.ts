@@ -6,7 +6,6 @@ import { type Task } from "@agentic-loop/core/task/schema"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
 import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
 import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
-import { resolveValidateHook } from "@agentic-loop/core/manifest/registry"
 import { stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-loop/core/scheduler/scheduler"
 import {
@@ -66,6 +65,7 @@ import {
 } from "@agentic-loop/core/loop/git"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { approveAny, rejectAny, type GateCtx } from "@agentic-loop/core/loop/gate"
+import { runTerminal, type TerminalCtx } from "@agentic-loop/core/loop/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens } from "@agentic-loop/core/loop/metrics"
 import { appendRunMetrics, metricsPath } from "@agentic-loop/core/loop/metrics-file"
 import {
@@ -734,120 +734,65 @@ export const drive = async (
   }
 
   const { state, action } = step
-  switch (action.kind) {
-    case "park": {
-      // A manifest may name a pre-transition validator for this stage
-      // (`hooks.validateBeforeTransition`); a registered hook returning a reason
-      // vetoes the park. Engineering's plan-landed check needs backlog IO, so it
-      // stays hardcoded below (its ref resolves to null here — harmless skip).
-      const validate = resolveValidateHook(loaded.manifest.hooks.validateBeforeTransition[state.stage])
-      const veto = validate ? await validate(state) : null
-      if (veto) {
-        await deps.log("warn", `loop: ${state.stage} park vetoed by validator — ${veto}`)
-        if (state.task) {
-          const held = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", state.task.id)
-          if (held) await releaseClaim(deps.$, held)
-        }
-        await renderMetrics(deps, sessionID, config, state, "error", veto)
-        clearLoop(sessionID)
-        await toast(client, `Park vetoed for "${state.task?.id ?? state.goal}" — ${veto}`, "error")
-        return { kind: "error", message: veto }
-      }
-      // PLAN finished. Validate the plan actually landed on disk before
-      // parking — a stage that wrote nothing must not put a planless task in
-      // front of the human gate.
-      if (!state.task) {
-        clearLoop(sessionID)
-        return { kind: "park", message: action.message }
-      }
-      const fresh = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", state.task.id)
-      if (!fresh || !hasPlan(fresh)) {
-        const why = fresh ? "the PLAN stage wrote no ## Implementation Plan" : "the task left queued/ mid-plan"
-        await deps.log("warn", `loop(${state.task.id}): not parking — ${why}`)
-        if (fresh) {
-          await appendNote(deps.$, fresh, auditNote(`PLAN stage failed — ${why}; still queued`, new Date(), actor), deps.log)
-          await releaseClaim(deps.$, fresh)
-        }
-        await renderMetrics(deps, sessionID, config, state, "error", why)
-        clearLoop(sessionID)
-        await toast(client, `PLAN failed for "${state.task.id}" — ${why}. It stays in queued/.`, "error")
-        return { kind: "error", message: why }
-      }
-      await appendNote(deps.$, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), deps.log)
-      await moveTask(deps.$, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
-      await commitTasks(deps, config, `loop(${state.task.id}): plan written — parked for review`)
-      await renderMetrics(deps, sessionID, config, state, "done", "plan parked for review")
-      clearLoop(sessionID)
-      await toast(
-        client,
-        `${action.message} Review it, then /agentic-loop:engineering approve (or replan <why>).`,
-        "success",
-      )
-      return { kind: "park", message: action.message }
-    }
+  if (action.kind === "noop") return null
+
+  // Terminal bookkeeping (park/done/stop) is shared with the Claude host in
+  // `@agentic-loop/core/loop/terminal`. This host feeds it its commit/metrics
+  // strategies as ports and renders the returned report as toasts.
+  const ctx: TerminalCtx = {
+    $: deps.$,
+    log: deps.log,
+    directory: deps.directory,
+    config,
+    state,
+    manifest: loaded,
+    actor,
+    // Unconditional backlog commit on the main tree (serialized per tree); core
+    // decides WHEN to call it (always on park, on done/stop only when a shared-tree
+    // checkpoint won't fold the move in).
+    commitBacklog: async (message) => void (await commitTasks(deps, config, message)),
+    // Commit-all checkpoint on the work tree; core calls it only when state.isolated.
+    checkpoint: (message) => checkpoint(deps, state, message),
+    writeMetrics: (outcome, detail) => renderMetrics(deps, sessionID, config, state, outcome, detail),
+  }
+  const report = await runTerminal(ctx, action)
+  clearLoop(sessionID)
+
+  switch (report.kind) {
+    case "error":
+      await toast(client, report.message, "error")
+      return { kind: "error", message: report.message }
+    case "park-free":
+      return { kind: "park", message: report.message }
+    case "park":
+      await toast(client, `${report.message} Review it, then /agentic-loop:engineering approve (or replan <why>).`, "success")
+      return { kind: "park", message: report.message }
     case "done": {
-      // "Done" for the loop is not "completed" for the task: a human still
-      // has to look at the diff. The task parks in in-review/; moving it to
-      // completed/ (e.g. when the PR merges) is the human's call.
-      let moved = false
-      if (state.task) {
-        // Re-resolve the real current path (shell-authoritative) rather than trust
-        // the claim-time state.task.path, which goes stale if the file moved since
-        // the claim — a stale path makes the move fail and (before this) get
-        // swallowed into a false "parked in in-review" success.
-        const cur = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", state.task.id)
-        if (cur) {
-          try {
-            await appendNote(deps.$, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor))
-            await moveTask(deps.$, cur, (action.toStatus ?? "in-review") as TaskStatus)
-            await commitBacklog(deps, config, state, `loop(${state.task.id}): done — parked in in-review`)
-            moved = true
-          } catch (err) {
-            await deps.log("warn", `loop done but task move failed: ${(err as Error).message}`)
-          }
-        } else {
-          await deps.log("warn", `loop done but task ${state.task.id} not in in-progress/ — not moved`)
-        }
-      }
-      await renderMetrics(deps, sessionID, config, state, "done", "review passed")
-      await checkpoint(deps, state, `loop(${loopId(state)}): done — review passed`)
-      await teardownIsolation(deps, state)
-      if (state.task) await clearState(deps.$, deps.directory, config.tasksDir, state.task.id)
-      clearLoop(sessionID)
-      const where = state.git ? ` on branch ${state.git.branch}` : ""
-      const next = state.task
-        ? ` Review the diff${where}, then /agentic-loop:engineering approve when it ships.`
-        : where
-          ? ` Review the diff${where}.`
-          : ""
-      if (state.task && !moved) {
+      if (report.taskId && !report.moved) {
         await toast(
           client,
-          `Loop finished "${state.task.id}" but couldn't park it in in-review/ — it's still in in-progress/. Check the audit note.`,
+          `Loop finished "${report.taskId}" but couldn't park it in in-review/ — it's still in in-progress/. Check the audit note.`,
           "warning",
         )
       } else {
-        await toast(client, `${action.message}${next}`, "success")
+        // "Done" for the loop is not "completed" for the task: a human still has to
+        // look at the diff. The task parks in in-review/; moving it to completed/
+        // (e.g. when the PR merges) is the human's call.
+        const where = report.branch ? ` on branch ${report.branch}` : ""
+        const next = report.taskId
+          ? ` Review the diff${where}, then /agentic-loop:engineering approve when it ships.`
+          : where
+            ? ` Review the diff${where}.`
+            : ""
+        await toast(client, `${report.message}${next}`, "success")
       }
-      return { kind: "done", message: action.message }
+      return { kind: "done", message: report.message }
     }
     case "stop": {
-      // Per design: a failed/stopped task stays in-progress, annotated for a human.
-      if (state.task) {
-        await appendNote(deps.$, state.task, auditNote(action.message, new Date(), actor))
-        await commitBacklog(deps, config, state, `loop(${state.task.id}): stopped — ${action.message}`)
-      }
-      await renderMetrics(deps, sessionID, config, state, "stopped", action.message)
-      await checkpoint(deps, state, `loop(${loopId(state)}): incomplete — ${action.message}`)
-      await teardownIsolation(deps, state)
-      if (state.task) await clearState(deps.$, deps.directory, config.tasksDir, state.task.id)
-      clearLoop(sessionID)
-      const where = state.git ? ` Partial work is preserved on branch ${state.git.branch}.` : ""
-      await toast(client, `${action.message}${where}`, "warning")
-      return { kind: "stop", message: action.message }
+      const where = report.branch ? ` Partial work is preserved on branch ${report.branch}.` : ""
+      await toast(client, `${report.message}${where}`, "warning")
+      return { kind: "stop", message: report.message }
     }
-    case "noop":
-      return null
   }
 }
 
