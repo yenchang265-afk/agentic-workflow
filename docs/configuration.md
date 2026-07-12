@@ -52,7 +52,7 @@ afterward.
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-loop:engineering watch`; overridable per session via `/agentic-loop:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `loops` | `{}` | Per-loop-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps via its REST API, PAT auth). Overridable per kind with `loops.<kind>.codePlatform`. See below. |
-| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
+| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-loop:engineering status`. See below. |
 | `worktreesDir` | unset | See hardening below. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
@@ -187,6 +187,40 @@ is resolved from config at wiring time — the manifest is never forked.
   for them — on OpenCode at plugin init (`applyAdoPatEnv`), on Claude Code via a
   `SessionStart` hook (`inject-ado-pat.mjs`) that writes it to `$CLAUDE_ENV_FILE`.
   Neither ever overrides a PAT you exported yourself.
+- **`ado.customHeaders`** — optional; extra HTTP headers attached to every ADO
+  REST call the driver makes (the `pr-sitter` work source and the engineering
+  ship gate). Its home is a corporate proxy in front of Azure DevOps — e.g. a
+  `Proxy-Authorization` token or a routing header. It's a plain string→string
+  object; keys and values must be non-empty. The headers are merged **over** the
+  built-in `Authorization`/`Accept`/`Content-Type`, so a key here can override
+  one of those (rarely wanted, but yours to decide). The
+  `AGENTIC_LOOP_ADO_HEADERS` env var — a JSON object of the same shape —
+  **overrides `customHeaders` key by key** (env wins, mirroring how
+  `AZURE_DEVOPS_EXT_PAT` overrides `ado.pat`), so a secret proxy token can come
+  from your secret manager while non-secret routing headers stay in config. A
+  malformed env value is ignored (→ no override), never fatal. Like `ado.pat`,
+  a header that carries a secret belongs in the user-scope `~/.agentic-loop.json`
+  (or the env var), not a committed repo file. Note this reaches only the
+  driver's own `fetch` calls; the stage agents' raw `curl` (which authenticate
+  via `$AZURE_DEVOPS_EXT_PAT`) do not inherit it — front those with the proxy's
+  own environment (`HTTPS_PROXY` etc.) if they need it.
+
+  ```json
+  {
+    "ado": {
+      "organization": "https://dev.azure.com/acme",
+      "project": "widgets",
+      "repository": "widgets-api",
+      "selfLogin": "sitter@acme.com",
+      "customHeaders": { "X-Route": "internal-network" }
+    }
+  }
+  ```
+
+  ```bash
+  # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
+  export AGENTIC_LOOP_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
+  ```
 - **Prerequisites for `"ado"`**: a Personal Access Token — in
   `AZURE_DEVOPS_EXT_PAT` (preferred) or `ado.pat` — scoped to Code (read) +
   Pull Request contribute (comment), and `curl`. The token is sent as HTTP Basic

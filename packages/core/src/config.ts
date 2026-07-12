@@ -123,6 +123,12 @@ const BaseConfigSchema = z.object({
        * `.agentic-loop.json` gitignored so the secret is never committed.
        */
       pat: z.string().min(1).optional(),
+      /**
+       * Extra HTTP headers sent on every ADO REST call (e.g. a proxy auth or
+       * routing header). Keys and values must be non-empty. The
+       * `AGENTIC_LOOP_ADO_HEADERS` env var (JSON) overrides these key by key.
+       */
+      customHeaders: z.record(z.string().min(1), z.string().min(1)).optional(),
     })
     .optional(),
   /**

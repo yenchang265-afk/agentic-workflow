@@ -7,6 +7,53 @@ import { z } from "zod"
  * live here so the source stays a thin transport over these pure functions.
  */
 
+/** The env var holding a JSON object of extra headers to send on every ADO REST call. */
+export const ADO_HEADERS_ENV = "AGENTIC_LOOP_ADO_HEADERS"
+
+/**
+ * Parse the `AGENTIC_LOOP_ADO_HEADERS` value: a JSON object of string→string
+ * header pairs. Anything malformed — not JSON, not an object, or a non-string
+ * value — is ignored (→ `{}`) rather than thrown, so a bad env var degrades to
+ * "no override" instead of crashing the driver. Empty-string keys are dropped.
+ * Pure.
+ */
+export const parseAdoHeadersEnv = (raw: string | undefined): Record<string, string> => {
+  if (!raw?.trim()) return {}
+  let json: unknown
+  try {
+    json = JSON.parse(raw)
+  } catch {
+    return {}
+  }
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return {}
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(json)) {
+    if (key && typeof value === "string") out[key] = value
+  }
+  return out
+}
+
+/**
+ * Resolve the effective custom headers with the same env-wins precedence as the
+ * PAT: config `ado.customHeaders` is the base, and `AGENTIC_LOOP_ADO_HEADERS`
+ * (parsed via {@link parseAdoHeadersEnv}) overrides it key by key. Pure over its
+ * inputs — callers pass `process.env[ADO_HEADERS_ENV]`.
+ */
+export const resolveAdoHeaders = (
+  configHeaders: Readonly<Record<string, string>> | undefined,
+  env: string | undefined,
+): Record<string, string> => ({ ...(configHeaders ?? {}), ...parseAdoHeadersEnv(env) })
+
+/**
+ * Merge the built-in per-request headers (Authorization/Accept, plus
+ * Content-Type on writes) with the user's custom headers. Custom headers win on
+ * a key clash — documented as the user's responsibility. Pure.
+ */
+export const buildAdoHeaders = (
+  base: Readonly<Record<string, string>>,
+  custom: Readonly<Record<string, string>> | undefined,
+): Record<string, string> => ({ ...base, ...(custom ?? {}) })
+
 /** `refs/heads/x` → `x`. */
 export const stripRef = (ref: string): string => ref.replace(/^refs\/heads\//, "")
 

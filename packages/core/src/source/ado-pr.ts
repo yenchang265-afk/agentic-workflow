@@ -5,12 +5,15 @@ import type { AdoConfig } from "../loop/state.js"
 import { attentionTriggers, loadLedger, saveLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js"
 import {
+  ADO_HEADERS_ENV,
   AdoPolicySchema,
   AdoPrListSchema,
   AdoThreadsSchema,
+  buildAdoHeaders,
   failingPolicyNames,
   flattenThreadComments,
   newerThan,
+  resolveAdoHeaders,
   sameLogin,
   stripRef,
 } from "./ado-shared.js"
@@ -85,6 +88,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   const org = ado.organization.replace(/\/+$/, "")
   const project = encodeURIComponent(ado.project)
   const login = ado.selfLogin ?? ""
+  // Config headers as a base, env `AGENTIC_LOOP_ADO_HEADERS` overriding (env wins, like the PAT).
+  const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
 
   const markers = makeClaimMarkers($, directory, tasksDir)
 
@@ -93,7 +98,9 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   /** One authenticated GET. Never throws — a network error reads as a non-ok response, like the CLI's `nothrow()`. */
   const get = async (url: string): Promise<{ ok: boolean; status: number; statusText: string; body: string }> => {
     try {
-      const res = await http(url, { headers: { Authorization: authHeader, Accept: "application/json" } })
+      const res = await http(url, {
+        headers: buildAdoHeaders({ Authorization: authHeader, Accept: "application/json" }, customHeaders),
+      })
       const body = await res.text().catch(() => "")
       return { ok: res.ok, status: res.status, statusText: res.statusText, body }
     } catch (err) {

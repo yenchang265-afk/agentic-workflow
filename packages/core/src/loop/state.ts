@@ -127,6 +127,16 @@ export interface AdoConfig {
    * never committed.
    */
   readonly pat?: string
+  /**
+   * Extra HTTP headers attached to every ADO REST call the driver makes (the PR
+   * work source and the ship gate) — e.g. `Proxy-Authorization` or a routing
+   * header for a corporate proxy in front of Azure DevOps. Merged over the
+   * built-in `Authorization`/`Accept`/`Content-Type` headers, so a key here can
+   * override one of those (rarely wanted, but yours to decide). The
+   * `AGENTIC_LOOP_ADO_HEADERS` env var (a JSON object) overrides this key by
+   * key, mirroring how `AZURE_DEVOPS_EXT_PAT` overrides `pat`.
+   */
+  readonly customHeaders?: Readonly<Record<string, string>>
 }
 
 /** Project-management setup: the team's tracker and how tasks pair to it. */

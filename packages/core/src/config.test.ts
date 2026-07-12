@@ -136,6 +136,28 @@ test("global codePlatform ado requires the ado section and a selfLogin", () => {
   assert.equal(platformFor(c, "pr-sitter"), "ado")
 })
 
+test("ado.customHeaders parses as a string map and rejects empty keys or values", () => {
+  const c = parseConfig({
+    codePlatform: "ado",
+    ado: {
+      organization: "https://dev.azure.com/acme",
+      project: "widgets",
+      selfLogin: "sitter@acme.com",
+      customHeaders: { "Proxy-Authorization": "Bearer proxy-token", "X-Route": "internal" },
+    },
+  })
+  assert.deepEqual(c.ado?.customHeaders, { "Proxy-Authorization": "Bearer proxy-token", "X-Route": "internal" })
+  const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, customHeaders: { "": "value" } } }),
+    /Invalid .*customHeaders/,
+  )
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, customHeaders: { "X-Route": "" } } }),
+    /Invalid .*customHeaders/,
+  )
+})
+
 test("per-loop codePlatform overrides the global default and also requires the ado section and selfLogin", () => {
   assert.throws(
     () => parseConfig({ loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } } }),

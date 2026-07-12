@@ -1,5 +1,6 @@
 import type { Log, Shell } from "../host.js"
 import { platformFor } from "../config.js"
+import { ADO_HEADERS_ENV, buildAdoHeaders, resolveAdoHeaders } from "../source/ado-shared.js"
 import type { Config } from "./state.js"
 import { branchExists, currentBranch, pushBranch } from "./git.js"
 
@@ -78,12 +79,13 @@ const adoCall = async (
   url: string,
   authHeader: string,
   method: "GET" | "POST",
+  customHeaders: Readonly<Record<string, string>>,
   body?: string,
 ): Promise<{ ok: boolean; status: number; statusText: string; body: string }> => {
   try {
-    const headers: Record<string, string> = { Authorization: authHeader, Accept: "application/json" }
-    if (body !== undefined) headers["Content-Type"] = "application/json"
-    const res = await http(url, { method, headers, body })
+    const base: Record<string, string> = { Authorization: authHeader, Accept: "application/json" }
+    if (body !== undefined) base["Content-Type"] = "application/json"
+    const res = await http(url, { method, headers: buildAdoHeaders(base, customHeaders), body })
     return { ok: res.ok, status: res.status, statusText: res.statusText, body: await res.text().catch(() => "") }
   } catch (err) {
     return { ok: false, status: 0, statusText: (err as Error).message, body: "" }
@@ -91,8 +93,13 @@ const adoCall = async (
 }
 
 /** The repo's default branch (`refs/heads/x` stripped), or null on any failure. */
-const adoDefaultBranch = async (http: ShipHttp, repoBase: string, authHeader: string): Promise<string | null> => {
-  const out = await adoCall(http, `${repoBase}?${API_VERSION}`, authHeader, "GET")
+const adoDefaultBranch = async (
+  http: ShipHttp,
+  repoBase: string,
+  authHeader: string,
+  customHeaders: Readonly<Record<string, string>>,
+): Promise<string | null> => {
+  const out = await adoCall(http, `${repoBase}?${API_VERSION}`, authHeader, "GET", customHeaders)
   if (!out.ok) return null
   try {
     const data = JSON.parse(out.body || "{}") as { defaultBranch?: string }
@@ -103,9 +110,15 @@ const adoDefaultBranch = async (http: ShipHttp, repoBase: string, authHeader: st
 }
 
 /** The first active PR's id for `branch`, or null when none exists. */
-const adoExistingPrId = async (http: ShipHttp, repoBase: string, branch: string, authHeader: string): Promise<number | null> => {
+const adoExistingPrId = async (
+  http: ShipHttp,
+  repoBase: string,
+  branch: string,
+  authHeader: string,
+  customHeaders: Readonly<Record<string, string>>,
+): Promise<number | null> => {
   const url = `${repoBase}/pullrequests?searchCriteria.sourceRefName=${encodeURIComponent(`refs/heads/${branch}`)}&searchCriteria.status=active&${API_VERSION}`
-  const out = await adoCall(http, url, authHeader, "GET")
+  const out = await adoCall(http, url, authHeader, "GET", customHeaders)
   if (!out.ok) return null
   try {
     const data = JSON.parse(out.body || "{}") as { value?: Array<{ pullRequestId?: number }> }
@@ -136,16 +149,19 @@ const shipAdo = async (
   const authHeader = `Basic ${Buffer.from(`:${pat}`).toString("base64")}`
   const repoBase = `${org}/${project}/_apis/git/repositories/${repo}`
   const prUrl = (id: number): string => `${org}/${ado.project}/_git/${ado.repository}/pullrequest/${id}`
+  // Config headers as a base, env `AGENTIC_LOOP_ADO_HEADERS` overriding (env wins, like the PAT).
+  const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
 
-  const existingId = await adoExistingPrId(http, repoBase, branch, authHeader)
+  const existingId = await adoExistingPrId(http, repoBase, branch, authHeader, customHeaders)
   if (existingId) return { attempted: true, created: false, url: prUrl(existingId) }
 
-  const base = (await adoDefaultBranch(http, repoBase, authHeader)) ?? (await currentBranch($, directory)) ?? "main"
+  const base = (await adoDefaultBranch(http, repoBase, authHeader, customHeaders)) ?? (await currentBranch($, directory)) ?? "main"
   const createOut = await adoCall(
     http,
     `${repoBase}/pullrequests?${API_VERSION}`,
     authHeader,
     "POST",
+    customHeaders,
     JSON.stringify({ sourceRefName: `refs/heads/${branch}`, targetRefName: `refs/heads/${base}`, title, isDraft: true }),
   )
   if (!createOut.ok) {

@@ -193,6 +193,42 @@ test("shipPr (ado) reports a reason when PR creation fails", async () => {
   assert.match(result.reason ?? "", /403/)
 })
 
+test("shipPr (ado) sends ado.customHeaders on every REST call, with the env var overriding them", async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
+  const seen: Array<Readonly<Record<string, string>>> = []
+  const capturingHttp: ShipHttp = async (url, init) => {
+    seen.push(init.headers)
+    const body = url.includes("searchCriteria")
+      ? JSON.stringify({ value: [] })
+      : url.includes("_apis/git/repositories/widgets?api-version")
+        ? JSON.stringify({ defaultBranch: "refs/heads/main" })
+        : JSON.stringify({ pullRequestId: 99 })
+    return { ok: true, status: 200, statusText: "ok", text: async () => body }
+  }
+  const cfg: Config = {
+    ...adoConfig,
+    ado: { ...adoConfig.ado!, customHeaders: { "Proxy-Authorization": "cfg-token", "X-Route": "internal" } },
+  }
+  const prevEnv = process.env.AGENTIC_LOOP_ADO_HEADERS
+  process.env.AGENTIC_LOOP_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
+  try {
+    const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", capturingHttp)
+    assert.equal(result.created, true)
+    assert.ok(seen.length >= 1)
+    for (const headers of seen) {
+      assert.ok(headers.Authorization?.startsWith("Basic ")) // built-in auth preserved
+      assert.equal(headers["X-Route"], "internal") // config-only header present
+      assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
+    }
+    // The POST create call also carries Content-Type alongside the custom headers.
+    const post = seen[seen.length - 1]
+    assert.equal(post["Content-Type"], "application/json")
+  } finally {
+    if (prevEnv === undefined) delete process.env.AGENTIC_LOOP_ADO_HEADERS
+    else process.env.AGENTIC_LOOP_ADO_HEADERS = prevEnv
+  }
+})
+
 test("shipPr never throws on an unexpected error", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
   const throwingHttp: ShipHttp = async () => {

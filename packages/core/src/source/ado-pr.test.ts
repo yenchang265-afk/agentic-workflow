@@ -5,6 +5,7 @@ import path from "node:path"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
 import { makeAdoPrSource, type AdoHttp } from "./ado-pr.js"
+import type { AdoHttpResponse } from "./ado-pr.js"
 
 /**
  * The ado-pr source over the real pr-sitter manifest, against a scripted ADO
@@ -324,6 +325,45 @@ test("unresolvable identity (no selfLogin) skips actionably instead of sitting o
   assert.match(skip?.message ?? "", /could not resolve the sitter's own ADO identity/)
   assert.match(skip?.message ?? "", /ado\.selfLogin/)
   assert.equal(skip?.actionable, true)
+})
+
+test("ado.customHeaders ride every REST call, with AGENTIC_LOOP_ADO_HEADERS overriding them", async () => {
+  const seen: Array<Readonly<Record<string, string>>> = []
+  const capturingHttp: AdoHttp = async (_url, init): Promise<AdoHttpResponse> => {
+    seen.push(init.headers)
+    return { ok: true, status: 200, statusText: "ok", text: async () => listBody([]) }
+  }
+  const prevEnv = process.env.AGENTIC_LOOP_ADO_HEADERS
+  process.env.AGENTIC_LOOP_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
+  try {
+    const src = makeAdoPrSource({
+      $: scriptedShell([]),
+      http: capturingHttp,
+      client: ledgerClient({}),
+      directory: "/r",
+      tasksDir: "docs/tasks",
+      log: () => {},
+      loaded: sitter,
+      ado: {
+        organization: "https://dev.azure.com/acme",
+        project: "widgets",
+        selfLogin: "sitter@acme.com",
+        customHeaders: { "Proxy-Authorization": "cfg-token", "X-Route": "internal" },
+      },
+      pat: "test-pat",
+      now: () => "2026-07-05T00:00:00Z",
+    })
+    await src.claimNext()
+    assert.ok(seen.length >= 1, "at least the PR-list call was made")
+    for (const headers of seen) {
+      assert.ok(headers.Authorization?.startsWith("Basic ")) // built-in auth preserved
+      assert.equal(headers["X-Route"], "internal") // config-only header present
+      assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
+    }
+  } finally {
+    if (prevEnv === undefined) delete process.env.AGENTIC_LOOP_ADO_HEADERS
+    else process.env.AGENTIC_LOOP_ADO_HEADERS = prevEnv
+  }
 })
 
 test("a PR without a head SHA (merge evaluation queued) is skipped, not claimed with a poisoned ledger key", async () => {
