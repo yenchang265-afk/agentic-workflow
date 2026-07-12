@@ -91,7 +91,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   // Config headers as a base, env `AGENTIC_LOOP_ADO_HEADERS` overriding (env wins, like the PAT).
   const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
 
-  const markers = makeClaimMarkers($, directory, tasksDir)
+  const kind = loaded.manifest.kind
+  const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
   const authHeader = `Basic ${Buffer.from(`:${pat}`).toString("base64")}`
 
@@ -138,7 +139,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   }
 
   return {
-    loopKind: loaded.manifest.kind,
+    loopKind: kind,
 
     async claimNext() {
       if (!pat) {
@@ -200,7 +201,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         // No head SHA yet (merge evaluation queued / never run): the snapshot
         // isn't ready — a "" head would poison the ledger's dedup. Next poll.
         if (!headRefOid) continue
-        const ledger = await loadLedger(client, directory, tasksDir, number, now())
+        const ledger = await loadLedger(client, directory, tasksDir, kind, number, now())
         const watermark = ledger.lastCommentAtHandled ?? ""
         const enabled = binding.triggers
         const repositoryId = pr.repository?.id || pr.repository?.name || ""
@@ -250,7 +251,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
 
     async onTerminal(work, outcome: TerminalOutcome) {
       const { snapshot, triggers } = work.ref as { snapshot: PrSnapshot; triggers: PrTrigger[] }
-      const ledger = await loadLedger(client, directory, tasksDir, snapshot.number, now())
+      const ledger = await loadLedger(client, directory, tasksDir, kind, snapshot.number, now())
       // Re-read the PR head: after a publish it is the sitter's own push, and
       // recording it as handled is exactly what prevents self-triggering.
       const fresh = await get(`${org}/${project}/_apis/git/pullrequests/${snapshot.number}?${API_VERSION}`)
@@ -275,7 +276,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         }
       }
       const updated = terminalLedgerUpdate(ledger, outcome, triggers, snapshot.headRefOid, head, lastCommentAt, now())
-      await saveLedger($, directory, tasksDir, updated)
+      await saveLedger($, directory, tasksDir, kind, updated)
       await markers.release(snapshot.number)
     },
   }
