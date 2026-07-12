@@ -1,0 +1,484 @@
+# Proposed loop kinds — an enterprise workflow catalog
+
+This is a **proposal catalog**, not a design record of shipped work (that's
+[`improvements/`](./improvements/README.md)). It answers one question: beyond
+the shipped `engineering` and `pr-sitter` kinds, what other loops would
+automate the daily workflow of software engineers in enterprise environments?
+
+Every entry is written against the real manifest contract
+([`packages/core/loops/README.md`](../../packages/core/loops/README.md),
+zod schema in `packages/core/src/manifest/schema.ts`) so any of them can be
+promoted to an implementation plan without re-translation:
+
+- **Work source** — whether the kind reuses `backlog` / `github-pr` or needs
+  a new `WorkSource` under `packages/core/src/source/`. New sources dominate
+  the implementation cost.
+- **Stage graph** — stages with their `kind` (`work` completes on its own,
+  `check` must record a `loop_verdict` or it FAILs), isolation, and the
+  transition sketch (`fire` / `park` / `done` / `stop`, iteration budget).
+- **Human gates** — where the loop parks and why. Every kind keeps the
+  framework's stance: agents propose, humans dispose.
+- **Authority & threat notes** — what authority the kind holds (see the
+  legend below), tied back to [`threat-model.md`](./threat-model.md).
+- **Config sketch** — its `loops.<kind>` section in `.agentic-loop.json`
+  (every kind below is opt-in, like `pr-sitter`).
+- **Cost** — S / M / L:
+  - **S** — manifest + stage prompts + agents only; reuses an existing work
+    source and grants no new authority.
+  - **M** — needs one new work source or one new authority, with tests.
+  - **L** — new source *and* new external authority; requires threat-model
+    additions before it ships.
+
+Authority levels used below, in increasing order of blast radius:
+
+1. **backlog-write** — writes task files under the configured `tasksDir`
+   (what engineering already holds).
+2. **push** — pushes branches to the remote (never a protected branch).
+3. **comment** — posts comments/reviews on PRs, issues, or work items.
+4. **external-read** — reads an external system beyond the code platform
+   (registry advisory DBs, Sentry, PagerDuty).
+5. **external-write** — writes to an external system (Slack webhook, alert
+   acknowledgement). The widest surface; always called out explicitly.
+
+## Summary
+
+| Kind | Category | Work source | Authority | Cost |
+|------|----------|-------------|-----------|------|
+| [debt-groomer](#debt-groomer) | Code health | `backlog` (reused) | backlog-write | S |
+| [backlog-groomer](#backlog-groomer) | Collaboration | `backlog` (reused) | backlog-write | S |
+| [review-sitter](#review-sitter) | Collaboration | `github-pr` (+ `review-requested` trigger) | comment | S/M |
+| [coverage-filler](#coverage-filler) | Code health | `backlog` (reused, own pool) | push | S/M |
+| [issue-triager](#issue-triager) | Collaboration | new `github-issue` | backlog-write, comment | M |
+| [dep-sitter](#dep-sitter) | Code health | new `dependency-scan` | push, external-read | M |
+| [release-gardener](#release-gardener) | CI/CD & release | new `merge-window` | push | M |
+| [main-sitter](#main-sitter) | CI/CD & release | new `ci-runs` | push, comment | M/L |
+| [digest-reporter](#digest-reporter) | Ops & reporting | new `cron` | backlog-write (+ optional external-write) | S/M |
+| [alert-triager](#alert-triager) | Ops & reporting | new `alert-feed` | backlog-write, external-read (+ optional push) | L |
+
+---
+
+## Code health & maintenance
+
+### debt-groomer
+
+Sweeps `TODO` / `FIXME` / deprecation markers out of the code and into the
+backlog as reviewable task files. Never edits code.
+
+- **Work source**: `backlog` reused inversely — the groomer doesn't claim
+  existing tasks; a scheduled sweep (one synthetic task per run, claimed from
+  a `groom-queue` status folder the kind seeds on poll) keeps the claim/lock
+  discipline without a new source. If that bends the backlog source too far,
+  a trivial `cron` source (shared with [digest-reporter](#digest-reporter))
+  is the fallback.
+- **Stage graph**:
+  1. `scan` (**check**, isolation `none`, read-only `bashAllowlist`:
+     `grep *`, `git log*`, `ls*`, `cat *`) — inventories markers, dedupes
+     against open backlog tasks and its own ledger, records a verdict: PASS
+     = new debt found, FAIL = nothing new.
+  2. `draft` (**work**, isolation `none`) — writes one task file per debt
+     cluster under `tasksDir`, with acceptance criteria naming the marker
+     sites.
+- **Transitions**: `scan` onPass → fire `draft`; onFail → done ("nothing
+  new"). `draft` onDone → park `toStatus: "queued"` — straight into the
+  existing engineering **task gate**; a human promotes or deletes.
+- **Human gates**: everything. The groomer only ever produces parked task
+  files; the engineering loop (with its own plan and ship gates) does the
+  fixing.
+- **Authority & threat notes**: backlog-write only — no push, no comment, no
+  network. The cheapest and safest kind in this catalog; T3b (backlog
+  corruption) is the only relevant threat, covered by the existing audited
+  task-store writes.
+- **Config sketch**:
+  ```json
+  { "loops": { "debt-groomer": { "enabled": true, "markers": ["TODO", "FIXME", "@deprecated"], "maxTasksPerRun": 5 } } }
+  ```
+- **Cost**: **S**.
+
+### dep-sitter
+
+Sits on outdated and vulnerable dependencies: upgrades them on a branch,
+verifies, and opens a draft PR. Patch/minor CVE fixes flow straight to a
+draft PR; major bumps park for a human first.
+
+- **Work source**: new `dependency-scan` — polls `npm audit --json` /
+  `npm outdated --json` (enterprise variants: Artifactory Xray, OSS Index)
+  and emits one work item per advisory/upgrade group, deduped by a ledger
+  under `<tasksDir>/runs/dep-sitter/` exactly like the PR-sitter's per-PR
+  ledger.
+- **Stage graph**:
+  1. `scan` (**check**, isolation `none`, external-read allowlist for the
+     registry) — confirms the finding still applies, classifies severity and
+     semver impact.
+  2. `upgrade` (**work**, isolation `worktree`) — applies the bump, runs
+     codemods/lockfile updates.
+  3. `verify` (**check**, isolation `worktree`) — same test-runner
+     `bashAllowlist` as pr-sitter's verify stage.
+  4. `publish` (**work**, isolation `worktree`, `git push origin *` +
+     platform allowlist) — pushes the branch, opens/updates a draft PR.
+- **Transitions**: `scan` onPass → fire `upgrade`; onFail → done. For major
+  bumps, a `validateBeforeTransition.scan` hook vetoes the fire and parks
+  `toStatus: "upgrade-review"` instead. `verify` onFail → fire `upgrade`
+  with `countIteration: true` (budget 2 — dependency fixes that don't
+  converge fast never will); `onError` → stop. `publish` onDone → done.
+- **Human gates**: major-version bumps park before any code is written;
+  every upgrade lands as a **draft PR** — merging stays human, mirroring
+  pr-sitter's "never merges."
+- **Authority & threat notes**: push + external-read. Advisory text is
+  untrusted input (same discipline as T7 — PR comment injection): the scan
+  stage treats advisory prose as data, never as instructions. Registry
+  queries go through the same allowlist mechanism as the ADO REST calls.
+- **Config sketch**:
+  ```json
+  { "loops": { "dep-sitter": { "enabled": true, "severityFloor": "high", "autoFix": ["patch", "minor"], "parkFor": ["major"] } } }
+  ```
+- **Cost**: **M** (one new source; push authority already modeled by
+  pr-sitter).
+
+### coverage-filler
+
+Writes missing tests for modules a human has queued for coverage. Humans
+seed the targets; the loop does the drudgework.
+
+- **Work source**: `backlog` reused with its own claim pool — task files in a
+  `coverage-queue` status folder (seeded by humans, by
+  [digest-reporter](#digest-reporter)'s coverage section, or by a coverage
+  diff in CI), claimed with a `coverage.isClaimable` predicate via the
+  existing registry.
+- **Stage graph**:
+  1. `target` (**check**, isolation `none`) — confirms the module is still
+     under-covered and enumerates the untested branches; FAIL = already
+     covered (done).
+  2. `write` (**work**, isolation `worktree`) — writes the tests, following
+     the repo's test conventions.
+  3. `verify` (**check**, isolation `worktree`) — new tests pass, coverage
+     actually moved, and the tests fail when the code under test is broken
+     (mutation spot-check — a test that can't fail is worthless).
+  4. `publish` (**work**, isolation `worktree`) — pushes a branch and opens
+     a draft PR.
+- **Transitions**: `verify` onFail → fire `write`, `countIteration: true`
+  (budget 3); onError → stop. `publish` onDone → done `toStatus:
+  "in-review"`.
+- **Human gates**: humans control the queue (nothing is claimed that a human
+  didn't park into `coverage-queue`), and output is a draft PR.
+- **Authority & threat notes**: push only, same posture as engineering's
+  ship path. T1 (repo-content injection) applies to the code being read —
+  covered by the existing verdict-tool-only discipline.
+- **Config sketch**:
+  ```json
+  { "loops": { "coverage-filler": { "enabled": true, "coverageCommand": "npm run coverage -- --json" } } }
+  ```
+- **Cost**: **S/M** (no new source; the mutation spot-check in verify is the
+  novel prompt work).
+
+---
+
+## Collaboration & triage
+
+### issue-triager
+
+Sits on incoming issues/work items: reproduces, dedupes, labels, and converts
+accepted ones into backlog task files parked at the task gate — the bridge
+from "someone filed a bug" to "the engineering loop can claim it."
+
+- **Work source**: new `github-issue` — mirrors `github-pr`: a `query`
+  (e.g. `is:open is:issue no:label`), triggers (`new-issue`,
+  `new-comments`), a per-issue dedup ledger under
+  `<tasksDir>/runs/issue-triager/`. ADO flavor polls work items via the
+  existing REST/PAT plumbing.
+- **Stage graph**:
+  1. `triage` (**check**, isolation `none`, read-only + platform read
+     allowlist) — attempts reproduction from the report, searches for
+     duplicates, drafts a severity/area classification. PASS = actionable,
+     FAIL = not actionable (needs-info / duplicate).
+  2. `respond` (**work**, isolation `none`, platform comment allowlist) —
+     for non-actionable issues: posts one comment (duplicate link or a
+     specific needs-info ask) and applies labels.
+  3. `draft` (**work**, isolation `none`) — for actionable issues: writes a
+     backlog task file with reproduction steps and acceptance criteria,
+     linking the issue.
+- **Transitions**: `triage` onPass → fire `draft`; onFail → fire `respond`.
+  `draft` onDone → park `toStatus: "queued"` (the task gate). `respond`
+  onDone → done.
+- **Human gates**: accepted issues become *parked task files*, not work in
+  flight; a human promotes them. The triager never closes an issue — it
+  labels and comments only.
+- **Authority & threat notes**: backlog-write + comment. Issue bodies are
+  the canonical untrusted input — the T7 injection discipline (external text
+  is data, verdicts only via `loop_verdict`) applies verbatim, and the
+  triage stage's allowlist keeps it read-only. Comment authority is bounded
+  to the claimed issue, mirroring T8's "authority no wider than the job."
+- **Config sketch**:
+  ```json
+  { "loops": { "issue-triager": { "enabled": true, "query": "is:open is:issue no:label", "labels": { "needsInfo": "needs-info", "duplicate": "duplicate" } } } }
+  ```
+- **Cost**: **M** (one new source; comment authority already modeled).
+
+### review-sitter
+
+The mirror image of pr-sitter: sits on PRs where **your review is
+requested**, reads the diff against the codebase, and posts one structured
+review comment. Never approves, never requests changes, never merges.
+
+- **Work source**: `github-pr` reused with a different query
+  (`is:open review-requested:@me`) and one new trigger, `review-requested`
+  (plus the existing `new-commits` semantics so a re-push re-fires). ADO
+  flavor: PRs where the PAT identity is a required/optional reviewer.
+- **Stage graph**:
+  1. `fetch` (**check**, isolation `none`) — pulls the PR head into a local
+     branch (the source already does this at claim), confirms the review is
+     still wanted (not already reviewed since the request), sizes the diff.
+  2. `review` (**work**, isolation `worktree` on the PR head, read-only
+     bash + test-runner allowlist) — reads the diff *in context of the
+     surrounding code*, optionally runs the tests, and drafts findings.
+  3. `publish` (**work**, isolation `none`, platform comment allowlist) —
+     posts a single review-style comment: summary, findings with file/line
+     references, explicit "this is an automated first pass" framing.
+- **Transitions**: `fetch` onPass → fire `review`; onFail → done ("nothing
+  to review"). `review` onDone → fire `publish`. `publish` onDone → done.
+  No iteration budget — one pass per request; a human's re-request or a new
+  push re-fires via the trigger.
+- **Human gates**: the human reviewer stays the reviewer of record — the
+  sitter's comment is an input to their review, and GitHub/ADO approval
+  state is never touched (the platform allowlist simply has no
+  approve/reject verbs).
+- **Authority & threat notes**: comment only — strictly *less* authority
+  than pr-sitter (no push). T7 applies to the PR diff and description; the
+  worktree isolation plus read-only allowlist contains T2-style escapes.
+- **Config sketch**:
+  ```json
+  { "loops": { "review-sitter": { "enabled": true, "query": "is:open review-requested:@me", "maxDiffLines": 2000 } } }
+  ```
+- **Cost**: **S/M** (source reuse; the new trigger and the ADO reviewer
+  query are the only plumbing).
+
+### backlog-groomer
+
+Walks stale `queued` backlog tasks and keeps them shovel-ready: adds missing
+acceptance criteria, splits tasks too big to verify, flags ones the codebase
+has drifted past.
+
+- **Work source**: `backlog` reused — a pool over `queued` with a
+  `groomer.isStale` claim predicate (no acceptance bullets, or untouched for
+  N days; both readable from the task file and its git history).
+- **Stage graph**:
+  1. `assess` (**check**, isolation `none`, read-only allowlist) — decides
+     whether the task needs grooming and what kind (criteria / split /
+     obsolete). FAIL = fine as-is.
+  2. `groom` (**work**, isolation `none`) — edits the task file in place
+     (audited store write), or writes the split-out children, or appends an
+     "obsolete?" note with evidence.
+- **Transitions**: `assess` onPass → fire `groom`; onFail → done. `groom`
+  onDone → park `toStatus: "queued"` — groomed tasks land back at the task
+  gate marked as groomed (so the same task isn't re-claimed next poll; the
+  predicate checks the groom marker).
+- **Human gates**: the groomer never deletes or promotes a task — obsolete
+  ones are *flagged*, splits are *proposed as new queued tasks*, and the
+  human decides at the existing task gate.
+- **Authority & threat notes**: backlog-write only, same T3b surface as
+  debt-groomer; the audited task-store writes and claim locks already cover
+  it.
+- **Config sketch**:
+  ```json
+  { "loops": { "backlog-groomer": { "enabled": true, "staleAfterDays": 14 } } }
+  ```
+- **Cost**: **S**.
+
+---
+
+## CI/CD & release
+
+### main-sitter
+
+Sits on the default branch's CI. When main goes red after a merge, it
+bisects to the breaking change, then proposes either a fix or a revert — as
+a draft PR, never a direct push to main.
+
+- **Work source**: new `ci-runs` — polls recent runs on the default branch
+  (`gh run list --branch main` / ADO pipeline runs REST), emits a work item
+  on a red run not yet in its ledger; a later green run for the same head
+  retires pending items (self-healing mains shouldn't page the loop).
+- **Stage graph**:
+  1. `diagnose` (**check**, isolation `worktree` on main's head; allowlist
+     adds `git bisect*`, log-fetch verbs) — reproduces the failure,
+     bisects/blames to the culprit merge, classifies: fixable-forward,
+     revert-worthy, or infra-flake. FAIL = flake/already green.
+  2. `remedy` (**work**, isolation `worktree`) — writes the forward fix, or
+     constructs the revert commit.
+  3. `verify` (**check**, isolation `worktree`) — the failing job's command
+     now passes on the remedy branch.
+  4. `publish` (**work**; push + comment allowlist) — pushes the remedy
+     branch, opens a draft PR, comments once on the culprit PR linking it.
+- **Transitions**: `diagnose` onPass → fire `remedy`; onFail → done
+  ("flake or already recovered"). `verify` onFail → fire `remedy`,
+  `countIteration: true`, budget 2, and the cap message recommends the
+  revert path; onError → stop. `publish` onDone → done.
+- **Human gates**: main is never pushed to; the remedy is a draft PR and the
+  merge is a human call — even for reverts. The comment on the culprit PR is
+  informational, not an assignment.
+- **Authority & threat notes**: push + comment; CI logs are untrusted input
+  (T7 discipline — logs are data). Bisect runs arbitrary repo code from
+  historical commits inside the worktree: the T2 containment (allowlist +
+  isolation) is the control, and the entry inherits T5's runaway guard via
+  the iteration budget. Threat model gains a short "CI-runs source" section.
+- **Config sketch**:
+  ```json
+  { "loops": { "main-sitter": { "enabled": true, "branch": "main", "workflows": ["ci.yml"], "preferRevertAfterMinutes": 60 } } }
+  ```
+- **Cost**: **M/L** (new source; bisect prompting and the retire-on-green
+  ledger semantics are the hard parts).
+
+### release-gardener
+
+Tends the release: when unreleased merges accumulate past a threshold (or a
+cadence arrives), it drafts the changelog, release notes, and version bump
+on a branch, then parks at a release gate. Tagging and publishing stay
+human.
+
+- **Work source**: new `merge-window` — computes "merges since the last
+  tag" (`git log <lastTag>..origin/main`, PR metadata via the platform);
+  emits one work item when the threshold/cadence trips, deduped by the
+  candidate base commit in its ledger.
+- **Stage graph**:
+  1. `collect` (**check**, isolation `none`, read-only + platform read) —
+     gathers merged PRs since the last tag, classifies (feature / fix /
+     breaking) from labels and conventional-commit prefixes; FAIL = window
+     not worth a release.
+  2. `draft` (**work**, isolation `worktree`) — writes the changelog
+     section, release notes, and version bump per the repo's versioning
+     convention.
+  3. `verify` (**check**, isolation `worktree`) — build passes with the
+     bumped version; changelog references only real PRs (spot-checked
+     against the collect artifact); no source files touched beyond the
+     allowlisted release files.
+  4. `publish` (**work**; push allowlist) — pushes the release branch and
+     opens a draft release PR.
+- **Transitions**: `collect` onPass → fire `draft`; onFail → done. `verify`
+  onFail → fire `draft`, `countIteration: true`, budget 2. `publish`
+  onDone → park `toStatus: "release-review"` — the **release gate**.
+- **Human gates**: the release gate is the point — a human reviews notes,
+  merges, tags, and publishes. The gardener holds no tag or registry
+  authority whatsoever.
+- **Authority & threat notes**: push only. PR titles/labels feeding the
+  notes are lightly untrusted (T7-lite): the verify stage's
+  cross-check-against-collect artifact is the control against fabricated
+  changelog entries.
+- **Config sketch**:
+  ```json
+  { "loops": { "release-gardener": { "enabled": true, "minMerges": 8, "cadence": "weekly", "versioning": "semver" } } }
+  ```
+- **Cost**: **M**.
+
+---
+
+## Ops & reporting
+
+### digest-reporter
+
+The standup you don't have to write: each morning it summarizes yesterday's
+merges, open-PR states, CI health, and loop-run metrics into a markdown
+digest — committed to the repo, optionally posted to chat.
+
+- **Work source**: new `cron` — the simplest possible source: fires one work
+  item per configured schedule slot, deduped by date in its ledger. (Once it
+  exists, [debt-groomer](#debt-groomer) and
+  [release-gardener](#release-gardener)'s cadence mode ride on it too.)
+- **Stage graph**:
+  1. `gather` (**check**, isolation `none`, read-only + platform read
+     allowlist) — collects merges, PR states, CI status, and per-run stage
+     timings/verdicts from the existing run metrics
+     (`packages/core/src/loop/metrics.ts`); FAIL = nothing happened (skip
+     quiet days).
+  2. `render` (**work**, isolation `none`) — writes
+     `<tasksDir>/runs/digest/YYYY-MM-DD.md` via the audited store (secret
+     redaction applies on the way in, per the existing redaction path).
+  3. `post` (**work**, optional — only wired when a webhook is configured;
+     allowlist is exactly one `curl` glob to the configured webhook host) —
+     posts the digest summary to Slack/Teams.
+- **Transitions**: `gather` onPass → fire `render`; onFail → done ("quiet
+  day"). `render` onDone → fire `post` if configured, else done. `post`
+  onDone → done.
+- **Human gates**: none needed for the committed digest (read-only
+  reporting); the external post is gated by configuration, not by a human
+  per-run.
+- **Authority & threat notes**: backlog-write for the digest file;
+  **external-write** only if the webhook leg is enabled — the first
+  external-write in the framework, so it gets the strictest shape: one
+  destination, allowlisted host, digest content passes the existing secret
+  redaction (T6) before leaving the machine. Threat model gains a "webhook
+  egress" note.
+- **Config sketch**:
+  ```json
+  { "loops": { "digest-reporter": { "enabled": true, "schedule": "weekdays 08:00", "webhook": null } } }
+  ```
+- **Cost**: **S/M** (trivial source; the webhook leg is the only novel
+  authority and is optional).
+
+### alert-triager
+
+Sits on production alerts (Sentry, PagerDuty, Datadog): correlates each new
+alert with recent merges and stack traces, and parks a written diagnosis for
+the on-call human — optionally continuing into a draft fix PR.
+
+- **Work source**: new `alert-feed` — polls the alerting API for new/open
+  alerts matching a filter, deduped by alert ID in its ledger; credentials
+  via env (PAT-style, mirroring `AZURE_DEVOPS_EXT_PAT`).
+- **Stage graph**:
+  1. `triage` (**check**, isolation `none`; external-read allowlist for the
+     alert API + read-only git) — pulls the alert payload and stack trace,
+     correlates against recent merges (`git log` since last deploy),
+     classifies: code-linked, infra, or noise. FAIL = noise/known.
+  2. `diagnose` (**work**, isolation `worktree`) — reads the implicated
+     code, reproduces if a test can express it, writes a diagnosis document:
+     suspected commit, mechanism, blast radius, suggested remedy.
+  3. `propose-fix` (**work**, isolation `worktree`; **optional**, off by
+     default) — writes the fix + regression test.
+  4. `verify` (**check**, isolation `worktree`) — regression test fails
+     before / passes after.
+  5. `publish` (**work**; push allowlist) — draft PR linking the alert and
+     the diagnosis.
+- **Transitions**: `triage` onPass → fire `diagnose`; onFail → done.
+  `diagnose` onDone → park `toStatus: "diagnosis-review"` when `autoFix` is
+  off (the default) — the on-call human reads the diagnosis and decides;
+  when `autoFix` is on → fire `propose-fix`. `verify` onFail → fire
+  `propose-fix`, `countIteration: true`, budget 2. `publish` onDone → done.
+- **Human gates**: the default terminal state *is* the gate — a parked
+  diagnosis. The fix path is an explicit opt-in, and even then lands as a
+  draft PR. The triager never acknowledges, resolves, or silences alerts.
+- **Authority & threat notes**: the largest surface in this catalog —
+  external-read of an alert API plus (opt-in) push. Alert payloads are
+  attacker-influenceable in the worst case (error messages contain user
+  input): the T7 injection discipline applies at full strength, the triage
+  stage is allowlist-pinned read-only, and credentials never enter durable
+  artifacts (T6 redaction). Ships only after its own threat-model section
+  (new trust boundary: the alerting provider).
+- **Config sketch**:
+  ```json
+  { "loops": { "alert-triager": { "enabled": true, "provider": "sentry", "filter": "is:unresolved level:error", "autoFix": false } } }
+  ```
+- **Cost**: **L**.
+
+---
+
+## Suggested build order
+
+Cheapest-first, each wave reusing what the previous one built:
+
+1. **No new source, no new authority** — [debt-groomer](#debt-groomer),
+   [backlog-groomer](#backlog-groomer),
+   [review-sitter](#review-sitter): manifests, stage prompts, and agents
+   only. These prove the catalog format against the engine as it stands.
+2. **One new source each** — [issue-triager](#issue-triager)
+   (`github-issue`), [dep-sitter](#dep-sitter) (`dependency-scan`),
+   [main-sitter](#main-sitter) (`ci-runs`),
+   [release-gardener](#release-gardener) (`merge-window`), plus
+   [coverage-filler](#coverage-filler) riding the backlog. Each source
+   follows the `WorkSource` contract and the pr-sitter ledger pattern.
+3. **External integrations last** — [digest-reporter](#digest-reporter)'s
+   webhook leg and [alert-triager](#alert-triager), each preceded by its
+   threat-model addition.
+
+Promoting any entry to real work means walking the existing
+[checklist for a new kind](../../packages/core/loops/README.md#checklist-for-a-new-kind)
+— manifest + stages, agents for both plugins via `gen:prompts`, command
+wrappers, source + tests, registry hooks, and the config/threat-model docs.
+That checklist is authoritative; this catalog only supplies the *what*.

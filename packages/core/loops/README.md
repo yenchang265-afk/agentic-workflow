@@ -15,6 +15,9 @@ loops/
     └── stages/{triage,fix,verify,publish}.md
 ```
 
+Ideas for kinds beyond these two are cataloged in
+[`docs/design/proposed-loops.md`](../../../docs/design/proposed-loops.md).
+
 ## loop.json anatomy
 
 Validated by `packages/core/src/manifest/schema.ts` (zod — a broken manifest
