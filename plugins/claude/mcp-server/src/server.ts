@@ -26,7 +26,7 @@ import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type 
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { appendRunMetrics, metricsPath } from "@agentic-loop/core/loop/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
-import { ensureIsolation, loopId, teardownIsolation } from "@agentic-loop/core/loop/isolate"
+import { ensureIsolation, loopId } from "@agentic-loop/core/loop/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
@@ -38,7 +38,8 @@ import {
   type GateCtx,
   type GateResult,
 } from "@agentic-loop/core/loop/gate"
-import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
+import { runTerminal as coreRunTerminal, type TerminalCtx } from "@agentic-loop/core/loop/terminal"
+import { loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { type Task } from "@agentic-loop/core/task/schema"
 import {
   appendNote,
@@ -46,7 +47,6 @@ import {
   auditNote,
   claimTask,
   findByIdIn,
-  hasPlan,
   isClaimable,
   isOrphanedPlanClaim,
   isRecoverable,
@@ -54,7 +54,6 @@ import {
   listClaimIds,
   moveTask,
   pairingCoverage,
-  releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
   STATUSES,
@@ -214,6 +213,30 @@ const fail = (message: string) => ({ isError: true, content: [{ type: "text" as 
  * live loop is driving (the MCP tool's `active`, or the CLI's on-disk marker).
  */
 const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id })
+
+/**
+ * The shared terminal context for this host — the ports core's `runTerminal`
+ * needs. Backlog commits and checkpoints go straight through `commitPaths`/
+ * `commitAll` (no per-tree lock: the pull host drives one loop at a time), and
+ * metrics render into this host's run log + `host: "claude"` sidecar.
+ */
+const terminalCtx = (state: LoopState, actor: string | null): TerminalCtx => ({
+  $: sh,
+  log,
+  directory,
+  config,
+  state,
+  manifest: manifestFor(state.kind ?? "engineering"),
+  actor,
+  commitBacklog: async (message) => void (await commitPaths(sh, directory, [config.tasksDir], message)),
+  checkpoint: async (message) => void (await commitAll(sh, loopWorkTree(directory, state), message)),
+  writeMetrics: async (outcome, detail) => {
+    const stamp = new Date().toISOString()
+    const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
+    await appendRunLog(sh, directory, config.tasksDir, loopId(state), `run · ${outcome}`, summary, log)
+    writeRunMetrics(loopId(state), outcome, detail, stamp)
+  },
+})
 
 /** Locate which status folder a task id lives in. */
 const findAnyStatus = (id: string): Promise<Task | null> => coreFindAnyStatus(gateCtx(), id)
@@ -559,44 +582,36 @@ server.registerTool(
   },
 )
 
-/** Terminal bookkeeping for the PLAN stage's park: validate, move, commit, clear. */
+/**
+ * Terminal bookkeeping for the PLAN stage's park — a thin adapter over core's
+ * shared `runTerminal` (validate, plan-landed check, move, commit, metrics). This
+ * host owns only the presentation: null the in-memory loop, fire the work source's
+ * `onTerminal`, clear the stage marker, and serialize the plan-gate descriptor.
+ */
 const runPark = async (
   action: Extract<Action, { kind: "park" }>,
 ): Promise<
   | { error: string }
   | { action: { kind: "park"; message: string }; path: string; gate: { kind: "plan"; id: string }; next: string }
 > => {
-  if (!active?.task) {
+  if (!active) {
     activeClaim = null
     active = null
     writeStageMarker(null)
     return { error: "No task-backed loop to park." }
   }
-  const id = active.task.id
-  const fresh = await findByIdIn(sh, directory, config.tasksDir, "queued", id)
   const actor = await gitActor(sh, directory)
-  if (!fresh || !hasPlan(fresh)) {
-    const why = fresh ? "the PLAN stage wrote no ## Implementation Plan" : "the task left queued/ mid-plan"
-    if (fresh) {
-      await appendNote(sh, fresh, auditNote(`PLAN stage failed — ${why}; still queued`, new Date(), actor), log)
-      await releaseClaim(sh, fresh)
-    }
-    const stamp = new Date().toISOString()
-    const summary = renderRunSummary(samples, "error", why, config.maxIterations, stamp)
-    await appendRunLog(sh, directory, config.tasksDir, id, "run · error", summary, log)
-    writeRunMetrics(id, "error", why, stamp)
-    activeClaim = null // the queued claim was already released above
+  const report = await coreRunTerminal(terminalCtx(active, actor), action)
+  // A task-less park and a veto/plan-not-landed both leave nothing to review (a park
+  // action never yields done/stop, but narrowing keeps the descriptor's types honest).
+  if (report.kind !== "park") {
+    activeClaim = null // core already released any queued claim
     active = null
     writeStageMarker(null)
-    return { error: `PLAN failed for "${id}" — ${why}. It stays in queued/.` }
+    return { error: report.kind === "park-free" ? "No task-backed loop to park." : report.message }
   }
-  await appendNote(sh, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), log)
-  const newPath = await moveTask(sh, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
-  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan written — parked for review`)
-  const stamp = new Date().toISOString()
-  const summary = renderRunSummary(samples, "done", "plan parked for review", config.maxIterations, stamp)
-  await appendRunLog(sh, directory, config.tasksDir, id, "run · done", summary, log)
-  writeRunMetrics(id, "done", "plan parked for review", stamp)
+  // report.kind === "park": the plan landed and parked in plan-review/.
+  const id = report.taskId
   if (activeClaim) {
     await activeClaim.source.onTerminal?.(activeClaim.item, { kind: "park", message: action.message })
     activeClaim = null
@@ -605,7 +620,7 @@ const runPark = async (
   writeStageMarker(null)
   return {
     action: { kind: "park", message: action.message },
-    path: newPath,
+    path: report.path,
     gate: { kind: "plan", id },
     next:
       `plan gate: show the user the plan summary, then ask with AskUserQuestion — ` +
@@ -632,50 +647,21 @@ server.registerTool(
   },
 )
 
-/** Terminal bookkeeping for done/stop, mirroring the driver's switch. */
+/**
+ * Terminal bookkeeping for done/stop — a thin adapter over core's shared
+ * `runTerminal` (audit note, task move, backlog commit, metrics, and the
+ * `isolated`-gated checkpoint + teardown that keeps a never-isolated stage off
+ * the human's main tree). This host owns only the presentation: clear the stage
+ * marker, fire the work source's `onTerminal`, and null the in-memory loop.
+ */
 const runTerminal = async (action: Action) => {
   if (!active || (action.kind !== "done" && action.kind !== "stop")) return
   const actor = await gitActor(sh, directory)
-  const outcome: Outcome = action.kind === "done" ? "done" : "stopped"
-  const detail = action.kind === "done" ? "review passed" : (action as { message: string }).message
-  // metrics summary into the run log
-  const stamp = new Date().toISOString()
-  const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
-  await appendRunLog(sh, directory, config.tasksDir, loopId(active), `run · ${outcome}`, summary, log)
-  writeRunMetrics(loopId(active), outcome, detail, stamp)
-  if (active.task) {
-    if (action.kind === "done") {
-      // Re-resolve the current path (shell-authoritative) — the claim-time
-      // active.task.path goes stale if the file moved since the claim.
-      const cur = await findByIdIn(sh, directory, config.tasksDir, "in-progress", active.task.id)
-      if (cur) {
-        await appendNote(sh, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
-        await moveTask(sh, cur, ((action as { toStatus?: string }).toStatus ?? "in-review") as TaskStatus)
-      } else {
-        log("warn", `loop done but task ${active.task.id} not in in-progress/ — not moved`)
-      }
-    } else {
-      await appendNote(sh, active.task, auditNote((action as { message: string }).message, new Date(), actor), log)
-      // A loop stopped mid-PLAN leaves the task in queued/ — release its claim
-      // marker or no later claim can ever pick it up (there is no staleness
-      // sweep on this substrate).
-      if (active.stage === "plan") await releaseClaim(sh, active.task)
-    }
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${active.task.id}): ${outcome}`)
-  }
-  // Gate on `isolated`, not `git`: a PR source pre-sets `git` to name the branch
-  // to isolate ONTO, so a stage that never isolated (pr-sitter `triage` → done,
-  // "nothing actionable") must NOT `commitAll`/teardown the human's MAIN tree —
-  // `workTree()` returns `directory` when no worktree exists. Mirrors the
-  // OpenCode driver, which gates every main-tree write on `isolated`.
-  if (active.isolated) {
-    await commitAll(sh, workTree(), `loop(${loopId(active)}): ${outcome}`)
-    await teardownIsolation(sh, log, directory, active)
-  }
-  if (active.task) await clearState(sh, directory, config.tasksDir, active.task.id)
+  const report = await coreRunTerminal(terminalCtx(active, actor), action)
   writeStageMarker(null)
   if (activeClaim) {
-    const outcome = { kind: action.kind === "done" ? ("done" as const) : ("stop" as const), message: detail }
+    const detail = report.kind === "done" ? "review passed" : report.message
+    const outcome = { kind: report.kind === "done" ? ("done" as const) : ("stop" as const), message: detail }
     await activeClaim.source.onTerminal?.(activeClaim.item, outcome)
     activeClaim = null
   }
