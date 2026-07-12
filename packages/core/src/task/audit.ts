@@ -1,5 +1,8 @@
 import type { Client } from "../host.js"
-import { STATUSES, type TaskStatus } from "./store.js"
+// Import STATUSES from the dependency-free leaf module, not store.js: auditBacklog
+// is bundled into the Claude reconcile hook (esbuild), and pulling store.js would
+// drag its yaml/zod machinery into that bundle.
+import { STATUSES, type TaskStatus } from "./statuses.js"
 
 /**
  * Backlog reconciliation sweep: detect the damage a confused agent can do

@@ -1,0 +1,118 @@
+#!/usr/bin/env node
+/**
+ * SOURCE of the SessionStart reconciliation hook. `npm run build:hooks`
+ * (scripts/build-hooks.mjs) esbuild-bundles this file — inlining the
+ * @agentic-loop/core interruption + audit logic — into the self-contained
+ * ../reconcile.mjs that hooks.json runs (hooks execute under bare `node` from a
+ * possibly-copied plugin dir with no node_modules). Never edit the bundled output
+ * by hand; edit this file and rebuild.
+ *
+ * Surfaces loops that died mid-run so the human knows to resume them — the Claude
+ * mirror of the OpenCode plugin's startup reconciliation (src/index.ts
+ * `reconcileOnce`). Read-only: it only prints additionalContext, never mutates.
+ *
+ * The backlog anomaly sweep (`auditBacklog`/`formatAnomalies`) is imported from
+ * core rather than re-implemented — one source of truth, bundled by esbuild. The
+ * interruption test stays a tiny local mirror of core's `wasInterrupted`
+ * (store.ts): importing it would drag the whole task store — and its `yaml`
+ * dependency — into this bundle for two `lastIndexOf` calls.
+ */
+import fs from "node:fs"
+import path from "node:path"
+import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-loop/core/task/audit"
+
+/** Mirror of core `wasInterrupted` (store.ts): a BUILD started with no later finish. */
+const wasInterrupted = (body) => {
+  const lastStart = body.lastIndexOf("> BUILD started")
+  if (lastStart === -1) return false
+  return body.lastIndexOf("> BUILD finished") < lastStart
+}
+
+const read = () =>
+  new Promise((resolve) => {
+    let s = ""
+    process.stdin.on("data", (c) => (s += c)).on("end", () => resolve(s))
+  })
+
+/**
+ * A minimal core `Client` over node fs — enough for `auditBacklog`, which only
+ * calls `file.list`. Mirrors the shape of the MCP server's fsClient shim.
+ */
+const fsClient = {
+  file: {
+    list: async ({ query: { path: rel, directory } }) => {
+      try {
+        const entries = fs.readdirSync(path.join(directory, rel), { withFileTypes: true })
+        return { data: entries.map((e) => ({ type: e.isDirectory() ? "directory" : "file", name: e.name })) }
+      } catch {
+        return { data: [] }
+      }
+    },
+    read: async () => ({ data: null }),
+  },
+  app: { log: async () => undefined },
+}
+
+const main = async () => {
+  let input = {}
+  try {
+    input = JSON.parse(await read())
+  } catch {
+    /* ignore */
+  }
+  const cwd = input.cwd || process.cwd()
+  let tasksDir = "docs/tasks"
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-loop.json"), "utf8"))
+    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) tasksDir = cfg.tasksDir
+  } catch {
+    /* default */
+  }
+
+  const notes = []
+  const inProgress = path.join(cwd, tasksDir, "in-progress")
+  try {
+    for (const name of fs.readdirSync(inProgress)) {
+      if (!name.endsWith(".md")) continue
+      const body = fs.readFileSync(path.join(inProgress, name), "utf8")
+      if (wasInterrupted(body)) notes.push(name.replace(/\.md$/, ""))
+    }
+  } catch {
+    /* no folder */
+  }
+  let snapshots = []
+  try {
+    snapshots = fs
+      .readdirSync(path.join(cwd, tasksDir, "runs"))
+      .filter((n) => n.endsWith(".state.json"))
+      .map((n) => n.replace(/\.state\.json$/, ""))
+  } catch {
+    /* none */
+  }
+  // A claim marker in queued/.claims/ with no live loop means a run died
+  // mid-PLAN — it blocks every future claim of that task until removed.
+  let planClaims = []
+  try {
+    planClaims = fs.readdirSync(path.join(cwd, tasksDir, "queued", ".claims"))
+  } catch {
+    /* none */
+  }
+
+  const anomalies = await auditBacklog(fsClient, cwd, tasksDir)
+
+  const lines = []
+  if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agentic-loop:engineering recover <id>\` to resume.`)
+  if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agentic-loop:engineering recover <id>\` resumes at the exact stage.`)
+  if (planClaims.length) lines.push(`agentic-loop: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`loop_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
+  if (hasAnomalies(anomalies)) {
+    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-loop: ${line} — \`loop_doctor\` reports and repairs.`)
+  }
+  if (!lines.length) return process.exit(0)
+
+  process.stdout.write(
+    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }),
+  )
+  process.exit(0)
+}
+
+main()

@@ -5,20 +5,4 @@ permission:
   webfetch: deny
   bash:
     "*": deny
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git blame*": allow
-    "git -C * status*": allow
-    "git -C * diff*": allow
-    "git -C * log*": allow
-    "git -C * show*": allow
-    "git -C * blame*": allow
-    "ls*": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "grep *": allow
-    "find *": allow
-    "wc *": allow
+    # {{allowlist}} — globs generated from the stage's bashAllowlist in loops/*/loop.json; edit the manifest, not here
