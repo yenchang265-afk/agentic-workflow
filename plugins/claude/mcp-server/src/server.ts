@@ -27,7 +27,17 @@ import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/
 import { appendRunMetrics, metricsPath } from "@agentic-loop/core/loop/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
 import { ensureIsolation, loopId, teardownIsolation } from "@agentic-loop/core/loop/isolate"
-import { shipPr } from "@agentic-loop/core/loop/ship-pr"
+import {
+  approveAny as coreApproveAny,
+  approvePlan as coreApprovePlan,
+  approveTask as coreApproveTask,
+  findAnyStatus as coreFindAnyStatus,
+  rejectAny as coreRejectAny,
+  replanTask as coreReplanTask,
+  shipAny as coreShipAny,
+  type GateCtx,
+  type GateResult,
+} from "@agentic-loop/core/loop/gate"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { type Task } from "@agentic-loop/core/task/schema"
 import {
@@ -198,14 +208,15 @@ const activeManifest = (): LoadedManifest => manifestFor(active?.kind ?? "engine
 const ok = (data: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] })
 const fail = (message: string) => ({ isError: true, content: [{ type: "text" as const, text: message }] })
 
+/**
+ * The shared gate context for this host. `isDriving` defaults to the single
+ * in-memory `active` loop; the replan/reject paths override it with the id a
+ * live loop is driving (the MCP tool's `active`, or the CLI's on-disk marker).
+ */
+const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id })
+
 /** Locate which status folder a task id lives in. */
-const findAnyStatus = async (id: string): Promise<Task | null> => {
-  for (const s of STATUSES) {
-    const t = await findByIdIn(sh, directory, config.tasksDir, s, id)
-    if (t) return t
-  }
-  return null
-}
+const findAnyStatus = (id: string): Promise<Task | null> => coreFindAnyStatus(gateCtx(), id)
 
 /** The work sources loop_claim polls, in claim-priority order (config order).
  *  An `only` kind restricts the poll to that one kind. */
@@ -789,238 +800,23 @@ server.registerTool(
 )
 
 /**
- * The three gate moves — approve, approve-plan, replan — extracted so the MCP
- * tools AND the deterministic `gate` CLI (invoked by the UserPromptSubmit hook)
- * run the exact same logic. Each assumes `loadCfg()` has already run and returns
- * a structured result: `data` feeds the MCP `ok(...)` envelope, `message` is the
- * human line the CLI prints / the hook surfaces to the user.
+ * The human gate moves — approve (task), approve-plan, replan, ship — now live in
+ * @agentic-loop/core/loop/gate, shared with the OpenCode driver. These thin
+ * adapters bind this host's substrate into the shared `GateCtx` and keep the exact
+ * signatures the MCP tools + the deterministic `gate` CLI already call. `replan`/
+ * `reject` take the id a live loop is driving explicitly (the MCP tool's `active`;
+ * the CLI's on-disk stage marker); the rest use the default `active`-based liveness.
  */
-type GateResult =
-  | { ok: true; message: string; path: string; data: Record<string, unknown> }
-  | { ok: false; message: string }
-
-/** approve: a reviewed draft/ task → queued/ (audited note + commit). */
-const approveTask = async (id: string): Promise<GateResult> => {
-  const draft = await findByIdIn(sh, directory, config.tasksDir, "draft", id)
-  if (!draft) {
-    const elsewhere = await findAnyStatus(id)
-    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-    // A retry (model re-calling after a prior success, or a race with the
-    // harness gate hook) lands here with the task already at the transition's
-    // target — report success instead of an error so retries stay harmless.
-    if (where === "queued") {
-      return {
-        ok: true,
-        message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
-        path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` },
-      }
-    }
-    return {
-      ok: false,
-      message: where ? `Can't approve "${id}": it's in ${where} — only draft tasks can be approved.` : `Can't approve "${id}": no task found.`,
-    }
-  }
-  const actor = await gitActor(sh, directory)
-  await appendNote(sh, draft, auditNote("Task approved — queued for planning", new Date(), actor), log)
-  const newPath = await moveTask(sh, draft, "queued")
-  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): task approved — queued for planning`)
-  return {
-    ok: true,
-    message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
-    path: newPath,
-    data: { approved: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` },
-  }
-}
+const approveTask = (id: string): Promise<GateResult> => coreApproveTask(gateCtx(), id)
+const approvePlan = (id: string): Promise<GateResult> => coreApprovePlan(gateCtx(), id)
+const approveAny = (id: string): Promise<GateResult> => coreApproveAny(gateCtx(), id)
+const shipAny = (id: string): Promise<GateResult> => coreShipAny(gateCtx(), id)
+const replanTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
+  coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
+const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> =>
+  coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
-const approvePlan = async (id: string): Promise<GateResult> => {
-  const task = await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)
-  if (!task) {
-    const elsewhere = await findAnyStatus(id)
-    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-    if (where === "in-progress") {
-      return {
-        ok: true,
-        message: `Plan for "${elsewhere!.title}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
-        path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}", or loop_claim` },
-      }
-    }
-    return {
-      ok: false,
-      message:
-        where === "queued"
-          ? `Can't approve the plan for "${id}": it's still queued — the loop hasn't planned it yet (loop_start runs its PLAN stage).`
-          : where === "draft"
-            ? `Can't approve the plan for "${id}": it's a draft — approve the task first with loop_task_approve.`
-            : where
-              ? `Can't approve the plan for "${id}": it's in ${where} — only plan-review tasks can be plan-approved.`
-              : `Can't approve the plan for "${id}": no task found.`,
-    }
-  }
-  if (!hasPlan(task)) return { ok: false, message: `Task "${id}" has no Implementation Plan — send it back with loop_replan.` }
-  const actor = await gitActor(sh, directory)
-  await appendNote(sh, task, auditNote("Plan approved — parked for execution", new Date(), actor), log)
-  const newPath = await moveTask(sh, task, "in-progress")
-  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan approved — parked for execution`)
-  return {
-    ok: true,
-    message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.`,
-    path: newPath,
-    data: { approved: true, path: newPath, next: `loop_start with id "${id}", or loop_claim` },
-  }
-}
-
-/**
- * replan: a rejected plan-review/ or cap-tripped in-progress/ task → queued/.
- * `liveTaskId` is the id of the task a live loop is currently driving (the
- * in-memory `active` for the MCP tool; the on-disk stage marker for the CLI) —
- * refused so we never re-queue a task mid-build.
- */
-const replanTask = async (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> => {
-  if (liveTaskId === id) return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agentic-loop:engineering stop).` }
-  const task =
-    (await findByIdIn(sh, directory, config.tasksDir, "plan-review", id)) ??
-    (await findByIdIn(sh, directory, config.tasksDir, "in-progress", id))
-  if (!task) {
-    const elsewhere = await findAnyStatus(id)
-    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-    if (where === "queued") {
-      return {
-        ok: true,
-        message: `"${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
-        path: elsewhere!.path,
-        data: { requeued: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}" (or loop_claim) re-plans it` },
-      }
-    }
-    return {
-      ok: false,
-      message: where
-        ? `Can't replan "${id}": it's in ${where} — only plan-review or in-progress tasks can be sent back to planning.`
-        : `Can't replan "${id}": no task found.`,
-    }
-  }
-  const actor = await gitActor(sh, directory)
-  const why = reason ? ` — ${reason}` : ""
-  await appendNote(sh, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor), log)
-  const newPath = await moveTask(sh, task, "queued")
-  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): plan rejected — re-queued for planning`)
-  return {
-    ok: true,
-    message: `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
-    path: newPath,
-    data: { requeued: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) re-plans it` },
-  }
-}
-
-/** ship: an in-review/ task → completed/ (the final human gate). */
-const shipTask = async (id: string): Promise<GateResult> => {
-  const t = await findByIdIn(sh, directory, config.tasksDir, "in-review", id)
-  if (!t) {
-    const elsewhere = await findAnyStatus(id)
-    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-    if (where === "completed") {
-      return { ok: true, message: `"${elsewhere!.title}" is already completed. Nothing to do.`, path: elsewhere!.path, data: { completed: elsewhere!.path, alreadyDone: true } }
-    }
-    return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : `No in-review task "${id}".` }
-  }
-  await appendNote(sh, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor(sh, directory)), log)
-  const newPath = await moveTask(sh, { id, path: t.path }, "completed")
-  await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): shipped — completed`)
-
-  const pr = await shipPr(sh, log, directory, config, "engineering", id, t.title)
-  const data: Record<string, unknown> = { completed: newPath }
-  if (pr.url) {
-    data.pr = { url: pr.url }
-    await appendNote(sh, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
-  } else if (pr.attempted) {
-    await appendNote(sh, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
-    await commitPaths(sh, directory, [config.tasksDir], `loop(${id}): PR not opened`)
-  }
-  return { ok: true, message: `"${t.title}" completed.${pr.url ? ` PR: ${pr.url}` : ""}`, path: newPath, data }
-}
-
-/** Which task a folder-driven gate shortcut (loop_approve / loop_reject) should act on. */
-type GatePick =
-  | { readonly ok: true; readonly id: string; readonly from: TaskStatus }
-  | { readonly ok: false; readonly kind: "none" }
-  | { readonly ok: false; readonly kind: "message"; readonly message: string }
-
-/**
- * Resolve the single task a shortcut should act on, searching `folders` in order.
- * With `id`: the task must be in one of `folders`. Without `id`: exactly one
- * candidate advances; zero → `none`; two+ → an ambiguity message (never guesses).
- */
-const resolveGateTask = async (id: string, folders: readonly TaskStatus[]): Promise<GatePick> => {
-  if (id) {
-    for (const from of folders) {
-      const t = await findByIdIn(sh, directory, config.tasksDir, from, id)
-      if (t) return { ok: true, id, from }
-    }
-    const elsewhere = await findAnyStatus(id)
-    const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
-    return { ok: false, kind: "message", message: where ? `"${id}" is in ${where} — nothing to do.` : `No task "${id}" found.` }
-  }
-  const found: { id: string; from: TaskStatus }[] = []
-  for (const from of folders) {
-    for (const t of await listByStatus(fsClient, directory, config.tasksDir, from, log)) found.push({ id: t.id, from })
-  }
-  if (found.length === 0) return { ok: false, kind: "none" }
-  if (found.length === 1) return { ok: true, ...found[0]! }
-  const list = found.map((f) => `${f.id} (${f.from})`).join(", ")
-  return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id.` }
-}
-
-/**
- * approve shortcut — the unified, folder-driven gate. With an explicit `id` it
- * advances that task by the gate its folder implies: draft/ → queued (task
- * gate), plan-review/ → in-progress (plan gate), or in-review/ → completed
- * (ship). Without an id it advances the single task at a loop wait-gate
- * (plan-review/ or in-review/) — draft/ is deliberately excluded from
- * auto-resolution: drafts accumulate (including the never-approve epic
- * tracking draft), so approving one always takes an explicit id.
- */
-const approveAny = async (id: string): Promise<GateResult> => {
-  const folders: readonly TaskStatus[] = id ? ["plan-review", "in-review", "draft"] : ["plan-review", "in-review"]
-  const pick = await resolveGateTask(id, folders)
-  if (!pick.ok) {
-    return { ok: false, message: pick.kind === "none" ? "Nothing awaiting approval at a loop gate. (Approve a draft with /agentic-loop:engineering approve <id>.)" : pick.message }
-  }
-  if (pick.from === "draft") return approveTask(pick.id)
-  if (pick.from === "plan-review") return approvePlan(pick.id)
-  return shipTask(pick.id) // in-review
-}
-
-/** ship shortcut: id optional — ships the single in-review/ task when omitted. */
-const shipAny = async (id: string): Promise<GateResult> => {
-  if (id) return shipTask(id)
-  const pick = await resolveGateTask("", ["in-review"])
-  if (!pick.ok) return { ok: false, message: pick.kind === "none" ? "Nothing awaiting ship." : pick.message }
-  return shipTask(pick.id)
-}
-
-/**
- * reject shortcut: send a parked plan back to queued/ for re-planning. Auto-targets
- * the single plan-review/ task; an explicit leading id may also name a cap-tripped
- * in-progress/ task, with the rest of `arg` as the reason. When no leading token
- * names a rejectable task, the whole `arg` is the reason.
- */
-const rejectAny = async (arg: string, liveTaskId: string | null): Promise<GateResult> => {
-  const [first = "", ...restParts] = arg.trim().split(/\s+/).filter(Boolean)
-  if (first) {
-    for (const from of ["plan-review", "in-progress"] as const) {
-      if (await findByIdIn(sh, directory, config.tasksDir, from, first)) {
-        return replanTask(first, restParts.join(" ").trim() || undefined, liveTaskId)
-      }
-    }
-  }
-  const pick = await resolveGateTask("", ["plan-review"])
-  if (!pick.ok) return { ok: false, message: pick.kind === "none" ? "No plan awaiting rejection." : pick.message }
-  return replanTask(pick.id, arg.trim() || undefined, liveTaskId)
-}
-
 server.registerTool(
   "loop_task_approve",
   {
