@@ -35,7 +35,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { classifyMutation } from "@agentic-loop/core/task/guard"
-import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, isAdoWriteBackstopViolation, isGithubPrMutation } from "./allowlist.mjs"
+import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "./allowlist.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -89,7 +89,7 @@ const main = async () => {
   // curl+PAT and may only GET, POST a thread-comment reply, or POST a brand-new
   // pull request; every mutation of an EXISTING PR is off-limits (threat-model
   // T8/T12/T13).
-  if (tool === "Bash" && isAdoWriteBackstopViolation(String(ti.command ?? ""))) {
+  if (tool === "Bash" && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block(
       `agentic-loop: the loop must never mutate an existing pull request — this Azure DevOps REST call is blocked. ` +
         `Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR ` +
@@ -121,11 +121,23 @@ const main = async () => {
   // stage allowlist permits `gh api *` for reads/replies but can't exclude the
   // mutating REST route (`gh api -X PUT …/merge`), so this catches it. Gated on the
   // marker so a human's manual `gh pr merge` outside a loop is untouched.
-  if (tool === "Bash" && isGithubPrMutation(String(ti.command ?? ""))) {
+  if (tool === "Bash" && chainedGithubPrMutation(String(ti.command ?? ""))) {
     return block(
       `agentic-loop: the loop must never mutate a pull request — this GitHub command is blocked. ` +
-        `Only reads and review-comment replies (gh pr comment, or gh api GET/POST to a comments/reviews resource) ` +
-        `are permitted; merging, closing, approving, reviewer changes, and edits stay a human call.`,
+        `Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) ` +
+        `are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`,
+    )
+  }
+
+  // (3c) git-push backstop — on whenever a loop stage is live. The sitters push
+  // only their own head fast-forward; a refspec (`x:main`), a force, or a delete
+  // that the dotAll push allowlist glob can't exclude is blocked here. A human's
+  // manual push outside a loop is untouched (gated on the marker, like 3b).
+  if (tool === "Bash" && chainedGitPushViolation(String(ti.command ?? ""))) {
+    return block(
+      `agentic-loop: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
+        `Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; ` +
+        `the watched and default branches stay a human call.`,
     )
   }
 

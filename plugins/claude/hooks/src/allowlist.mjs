@@ -109,10 +109,18 @@ export const commandAllowed = (cmd, globs) => {
  *    (the sitter replies with `gh pr comment`, never these);
  *  - `gh api` with a non-GET/POST method (PUT/PATCH/DELETE) or hitting a `/merge`
  *    endpoint — GET reads and POST review-comment replies stay allowed, mirroring
- *    the ADO backstop's "GET or POST-to-/threads only" rule.
+ *    the ADO backstop's "GET or POST-to-/threads only" rule;
+ *  - `gh api` with any write method to a `/reviews` or `/requested_reviewers`
+ *    resource — a review SUBMISSION (`event=APPROVE|REQUEST_CHANGES|COMMENT`) or a
+ *    reviewer change is a POST, so the GET/POST rule above would wave it through;
+ *    a review is a PR state change (T1), and the sitter comments via `gh pr comment`
+ *    / a POST to `.../issues/N/comments`, never a review. GET reads of reviews stay allowed.
  *
- * The caller gates this on an active loop marker, so a human's manual `gh pr merge`
- * outside a loop is untouched.
+ * Evaluate PER SEGMENT (`chainedGithubPrMutation`): the `^gh` anchor means a whole
+ * command starting with an allowlisted read (`gh pr view && gh api -X PUT …/merge`)
+ * would otherwise slip the mutation past this classifier while the segment-aware
+ * allowlist happily passes both. The caller gates this on an active loop marker, so
+ * a human's manual `gh pr merge` outside a loop is untouched.
  */
 export const isGithubPrMutation = (cmd) => {
   const c = cmd.trim()
@@ -121,6 +129,8 @@ export const isGithubPrMutation = (cmd) => {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true
     const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c)
     const method = m ? m[1].toUpperCase() : "GET"
+    // Submitting a review or changing reviewers mutates PR state even via POST.
+    if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true
     return !(method === "GET" || method === "POST")
   }
   return false
@@ -159,3 +169,48 @@ export const isAdoWriteBackstopViolation = (cmd) => {
   const createsNewPr = /\/pullrequests(?![a-zA-Z0-9/])/i.test(cmd)
   return !(method === "GET" || (method === "POST" && (targetsThread || createsNewPr)))
 }
+
+/**
+ * A `git push` that could move a branch the loop must never move. The sitters push
+ * ONLY their own head (`feature/*`, `main-sitter/*`) fast-forward, never the watched
+ * or default branch, never force. A push allowlist glob (`git push origin main-sitter/*`)
+ * compiles with dotAll, so `.*` matches a `:dst` refspec and a space —
+ * `git push origin x:main` or `... --force` slip through the glob. On top of it, reject:
+ *  - any force (`-f`, `--force`, `--force-with-lease`) or a delete (`--delete`, `:dst` with empty src);
+ *  - a `+`-prefixed refspec (a forced ref update);
+ *  - a `src:dst` refspec whose destination differs from its source (pushing onto a
+ *    DIFFERENT branch — the `x:main` / `x:refs/heads/main` escape).
+ * The `refs/heads/` prefix is normalized so `x:refs/heads/x` (same branch) still passes.
+ * Gated on an active loop marker by the caller, so a human's manual push is untouched.
+ */
+export const isGitPushViolation = (cmd) => {
+  const c = cmd.trim()
+  if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false
+  if (/(?:^|\s)(?:-f|--force|--force-with-lease)(?:[=\s]|$)/.test(c)) return true
+  if (/(?:^|\s)--delete(?:\s|$)/.test(c)) return true
+  const bare = (ref) => ref.replace(/^refs\/heads\//, "")
+  for (const t of c.split(/\s+/)) {
+    if (t.startsWith("-")) continue // flag/option, not a refspec
+    if (t.startsWith("+")) return true // forced ref update (+src:dst or +ref)
+    const ci = t.indexOf(":")
+    if (ci !== -1) {
+      const src = t.slice(0, ci)
+      const dst = t.slice(ci + 1)
+      if (src === "") return true // delete form (:dst)
+      if (dst && bare(dst) !== bare(src)) return true // pushing onto a different-named branch
+    }
+  }
+  return false
+}
+
+/**
+ * The write backstops evaluated PER chain/pipe segment (like `commandAllowed`).
+ * The classifiers anchor on a single command, so a whole-command scan lets a
+ * chained allowlisted read hide a mutation (`gh pr view && gh api -X PUT …/merge`,
+ * `curl -X GET … && curl -X PATCH …`). Splitting first is what actually closes the
+ * bypass — the segment-aware allowlist already passes each real command, and now the
+ * backstop inspects each real command too.
+ */
+export const chainedGithubPrMutation = (cmd) => splitSegments(cmd).some(isGithubPrMutation)
+export const chainedAdoWriteBackstopViolation = (cmd) => splitSegments(cmd).some(isAdoWriteBackstopViolation)
+export const chainedGitPushViolation = (cmd) => splitSegments(cmd).some(isGitPushViolation)

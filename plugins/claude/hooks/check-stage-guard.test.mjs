@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { VERIFY_ALLOW, commandAllowed, isAdoWriteBackstopViolation, isGithubPrMutation, splitSegments } from "./src/allowlist.mjs"
+import {
+  VERIFY_ALLOW,
+  chainedAdoWriteBackstopViolation,
+  chainedGitPushViolation,
+  chainedGithubPrMutation,
+  commandAllowed,
+  isAdoWriteBackstopViolation,
+  isGitPushViolation,
+  isGithubPrMutation,
+  splitSegments,
+} from "./src/allowlist.mjs"
 
 /**
  * The check-stage bash allowlist and the GitHub PR-mutation backstop. The
@@ -114,4 +124,65 @@ test("isAdoWriteBackstopViolation ignores non-ADO curls and non-curl commands en
   assert.equal(isAdoWriteBackstopViolation("curl -sS https://example.com/pullrequests -X POST"), false)
   assert.equal(isAdoWriteBackstopViolation("gh pr create --draft"), false)
   assert.equal(isAdoWriteBackstopViolation("git status"), false)
+})
+
+// --- S2: a GitHub review submission (approve / request-changes) is a mutation ---
+
+test("isGithubPrMutation flags a review submission even though it is a POST", () => {
+  // Approving / requesting changes is POST .../pulls/N/reviews — the GET/POST rule
+  // for comment replies must not wave these through (review-sitter's core promise).
+  assert.equal(isGithubPrMutation("gh api -X POST repos/o/r/pulls/7/reviews -f event=APPROVE"), true)
+  assert.equal(isGithubPrMutation("gh api --method POST repos/o/r/pulls/7/reviews -f event=REQUEST_CHANGES"), true)
+  assert.equal(isGithubPrMutation("gh api -X PUT repos/o/r/pulls/7/requested_reviewers"), true)
+  // A GET read of the reviews list stays allowed (reads are the fetch stage's job).
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/7/reviews"), false)
+  // An ordinary issue-comment reply stays allowed.
+  assert.equal(isGithubPrMutation("gh api repos/o/r/issues/7/comments -f body=done"), false)
+})
+
+// --- S1: the write backstops must match per chain/pipe segment, not whole-command ---
+
+test("chainedGithubPrMutation catches a merge hidden behind an allowlisted read", () => {
+  // Whole-command isGithubPrMutation misses this (command starts with `gh pr view`),
+  // but the segment-aware allowlist passes both segments — so the split-aware backstop
+  // is what actually blocks the merge.
+  assert.equal(isGithubPrMutation("gh pr view 1 && gh api -X PUT repos/o/r/pulls/1/merge"), false)
+  assert.equal(chainedGithubPrMutation("gh pr view 1 && gh api -X PUT repos/o/r/pulls/1/merge"), true)
+  assert.equal(chainedGithubPrMutation("cat notes.txt | gh api -X POST repos/o/r/pulls/7/reviews -f event=APPROVE"), true)
+  // A clean read chain stays allowed.
+  assert.equal(chainedGithubPrMutation("gh pr view 1 && gh pr diff 1"), false)
+})
+
+test("chainedAdoWriteBackstopViolation catches a PATCH hidden behind a leading GET curl", () => {
+  const get = `curl -sS -u :"$PAT" -X GET "${ADO_PRS}/5?api-version=7.1"`
+  const patch = `curl -sS -u :"$PAT" -X PATCH -d '{"status":"completed"}' "${ADO_PRS}/5?api-version=7.1"`
+  // curlMethod on the whole command returns the FIRST -X (GET) → whole-command misses it.
+  assert.equal(isAdoWriteBackstopViolation(`${get} && ${patch}`), false)
+  assert.equal(chainedAdoWriteBackstopViolation(`${get} && ${patch}`), true)
+})
+
+// --- S3: the git-push backstop (refspec dst != src, force, delete) ---
+
+test("isGitPushViolation blocks a refspec onto a different branch, force, and delete", () => {
+  // The dotAll `git push origin main-sitter/*` glob matches all of these; the backstop rejects them.
+  assert.equal(isGitPushViolation("git push origin main-sitter/x:main"), true)
+  assert.equal(isGitPushViolation("git push origin main-sitter/x:refs/heads/main"), true)
+  assert.equal(isGitPushViolation("git push origin main-sitter/x --force"), true)
+  assert.equal(isGitPushViolation("git push --force-with-lease origin feature/x"), true)
+  assert.equal(isGitPushViolation("git push origin +feature/x"), true)
+  assert.equal(isGitPushViolation("git push origin :feature/x"), true) // delete
+  assert.equal(isGitPushViolation("git push origin --delete feature/x"), true)
+})
+
+test("isGitPushViolation allows a plain fast-forward push of the loop's own head", () => {
+  assert.equal(isGitPushViolation("git push origin feature/fix-bar"), false)
+  assert.equal(isGitPushViolation("git push origin main-sitter/abc123"), false)
+  assert.equal(isGitPushViolation("git push -u origin feature/x"), false)
+  assert.equal(isGitPushViolation("git push origin feature/x:refs/heads/feature/x"), false) // dst == src
+  assert.equal(isGitPushViolation("git status"), false) // not a push
+})
+
+test("chainedGitPushViolation catches a bad push hidden behind an allowlisted push", () => {
+  assert.equal(chainedGitPushViolation("git push origin feature/x && git push origin feature/x:main"), true)
+  assert.equal(chainedGitPushViolation("git push origin feature/x"), false)
 })

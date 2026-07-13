@@ -171,6 +171,7 @@ var isGithubPrMutation = (cmd) => {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true;
     const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c);
     const method = m ? m[1].toUpperCase() : "GET";
+    if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true;
     return !(method === "GET" || method === "POST");
   }
   return false;
@@ -188,6 +189,28 @@ var isAdoWriteBackstopViolation = (cmd) => {
   const createsNewPr = /\/pullrequests(?![a-zA-Z0-9/])/i.test(cmd);
   return !(method === "GET" || method === "POST" && (targetsThread || createsNewPr));
 };
+var isGitPushViolation = (cmd) => {
+  const c = cmd.trim();
+  if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false;
+  if (/(?:^|\s)(?:-f|--force|--force-with-lease)(?:[=\s]|$)/.test(c)) return true;
+  if (/(?:^|\s)--delete(?:\s|$)/.test(c)) return true;
+  const bare = (ref) => ref.replace(/^refs\/heads\//, "");
+  for (const t of c.split(/\s+/)) {
+    if (t.startsWith("-")) continue;
+    if (t.startsWith("+")) return true;
+    const ci = t.indexOf(":");
+    if (ci !== -1) {
+      const src = t.slice(0, ci);
+      const dst = t.slice(ci + 1);
+      if (src === "") return true;
+      if (dst && bare(dst) !== bare(src)) return true;
+    }
+  }
+  return false;
+};
+var chainedGithubPrMutation = (cmd) => splitSegments(cmd).some(isGithubPrMutation);
+var chainedAdoWriteBackstopViolation = (cmd) => splitSegments(cmd).some(isAdoWriteBackstopViolation);
+var chainedGitPushViolation = (cmd) => splitSegments(cmd).some(isGitPushViolation);
 
 // plugins/claude/hooks/src/check-stage-guard.entry.mjs
 var read = () => new Promise((resolve) => {
@@ -226,7 +249,7 @@ var main = async () => {
   const marker = readMarker(cwd, tasksDir);
   const tool = input.tool_name;
   const ti = input.tool_input || {};
-  if (tool === "Bash" && isAdoWriteBackstopViolation(String(ti.command ?? ""))) {
+  if (tool === "Bash" && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block2(
       `agentic-loop: the loop must never mutate an existing pull request \u2014 this Azure DevOps REST call is blocked. Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR (POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`
     );
@@ -243,9 +266,14 @@ var main = async () => {
   );
   if (!backlogVerdict.allow) return block2(backlogVerdict.reason);
   if (!marker) return allow();
-  if (tool === "Bash" && isGithubPrMutation(String(ti.command ?? ""))) {
+  if (tool === "Bash" && chainedGithubPrMutation(String(ti.command ?? ""))) {
     return block2(
-      `agentic-loop: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and review-comment replies (gh pr comment, or gh api GET/POST to a comments/reviews resource) are permitted; merging, closing, approving, reviewer changes, and edits stay a human call.`
+      `agentic-loop: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`
+    );
+  }
+  if (tool === "Bash" && chainedGitPushViolation(String(ti.command ?? ""))) {
+    return block2(
+      `agentic-loop: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );
   }
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
