@@ -96,6 +96,25 @@ test("newestHeadVerdict judges only the newest head, by its latest run per workf
   assert.equal(newestHeadVerdict([], []), null)
 })
 
+test("a RE-RUN of an older commit's workflow does not shadow the branch tip", () => {
+  // OLD's workflow was re-run AFTER the tip's runs started — heads rank by
+  // their FIRST run (push order), so the tip's red still gets judged.
+  const rerunOld = [
+    run({ headSha: OLD, conclusion: "success", createdAt: "2026-07-05T03:00:00Z" }),
+    run({ createdAt: "2026-07-05T02:00:00Z" }),
+    run({ headSha: OLD, createdAt: "2026-07-05T01:00:00Z" }),
+  ]
+  assert.deepEqual(newestHeadVerdict(rerunOld, []), { sha: SHA, verdict: "red", failing: ["CI"] })
+})
+
+test("equal run timestamps are judged stably", () => {
+  const tied = [
+    run({ workflowName: "CI" }),
+    run({ workflowName: "Lint" }),
+  ]
+  assert.deepEqual(newestHeadVerdict(tied, [])?.failing.sort(), ["CI", "Lint"])
+})
+
 const source = (runs: unknown[], opts: { ledgers?: Record<string, string>; script?: Cmd[]; log?: string[]; branch?: string } = {}) =>
   makeCiRunsSource({
     $: scriptedShell(

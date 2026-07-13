@@ -38,9 +38,13 @@ export const resolveComposeHook = (ref: string): ComposeHook => {
   return hook
 }
 
-/** Resolve a validate hook by ref, or null when the manifest names none. */
-export const resolveValidateHook = (ref: string | undefined): ValidateHook | null =>
-  ref ? (validateHooks.get(ref) ?? null) : null
+/** Resolve a validate hook by ref (null when the manifest names none); throws on a dangling reference. */
+export const resolveValidateHook = (ref: string | undefined): ValidateHook | null => {
+  if (!ref) return null
+  const hook = validateHooks.get(ref)
+  if (!hook) throw new Error(`unknown validate hook "${ref}" — register it before driving this loop kind`)
+  return hook
+}
 
 export const registerClaimPredicate = (ref: string, predicate: ClaimPredicate): void =>
   void claimPredicates.set(ref, predicate)

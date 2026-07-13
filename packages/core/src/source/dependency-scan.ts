@@ -221,7 +221,12 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
     const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
     return read?.data?.content ?? ""
   }
-  const exists = async (rel: string): Promise<boolean> => Boolean(await readText(rel))
+  // Presence = the read succeeded, NOT non-empty content — an empty pom.xml /
+  // package.json still declares its ecosystem.
+  const exists = async (rel: string): Promise<boolean> => {
+    const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
+    return read?.data?.content != null
+  }
 
   /** What one ecosystem's scan yielded — candidates to merge, or a reason it couldn't scan. */
   type Collected =

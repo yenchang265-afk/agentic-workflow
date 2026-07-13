@@ -68,6 +68,14 @@ test("rejects a fire at an unknown stage and a counted fire without capMessage",
   )
 })
 
+test("rejects a backlog pool whose entryStage names no stage", () => {
+  const raw = {
+    ...base,
+    workSource: { type: "backlog", statuses: ["queued", "done"], pools: [{ status: "queued", entryStage: "wrok" }] },
+  }
+  assert.throws(() => parseManifest(raw), /pool "queued" enters unknown stage "wrok"/)
+})
+
 test("rejects duplicate stage names", () => {
   assert.throws(() => parseManifest({ ...base, stages: [...base.stages, base.stages[0]] }), /duplicate stage names/)
 })

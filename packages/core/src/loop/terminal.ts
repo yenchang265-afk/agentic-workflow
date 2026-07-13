@@ -93,8 +93,8 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   // A manifest may name a pre-transition validator for this stage
   // (`hooks.validateBeforeTransition`); a registered hook returning a reason vetoes
   // the park. Resolving it HERE fixes the drift where only the OpenCode host honored
-  // it. Engineering's plan-landed check is done explicitly below (its ref resolves to
-  // null — a harmless skip); an unregistered ref is also null.
+  // it. Engineering's plan-landed check is done explicitly below (its ref is a
+  // registered pass-through); an unregistered ref throws — dangling refs fail loudly.
   const validate = resolveValidateHook(ctx.manifest.manifest.hooks.validateBeforeTransition[state.stage])
   const veto = validate ? await validate(state) : null
   if (veto) {

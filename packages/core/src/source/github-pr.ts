@@ -39,6 +39,12 @@ const PrListSchema = z.array(
   }),
 )
 
+/** The post-terminal `gh pr view` re-read — validated, not cast, like every other gh parse here. */
+const FreshHeadSchema = z.object({
+  headRefOid: z.string().optional(),
+  comments: z.array(z.object({ createdAt: z.string().optional() })).default([]),
+})
+
 const FAILING = new Set(["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"])
 
 interface GithubPrDeps {
@@ -168,12 +174,9 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
       let lastCommentAt = ledger.lastCommentAtHandled ?? ""
       if (fresh.exitCode === 0) {
         try {
-          const data = JSON.parse(fresh.stdout.toString()) as {
-            headRefOid?: string
-            comments?: { createdAt?: string }[]
-          }
+          const data = FreshHeadSchema.parse(JSON.parse(fresh.stdout.toString()))
           head = data.headRefOid ?? head
-          for (const c of data.comments ?? []) {
+          for (const c of data.comments) {
             if (c.createdAt && c.createdAt > lastCommentAt) lastCommentAt = c.createdAt
           }
         } catch {

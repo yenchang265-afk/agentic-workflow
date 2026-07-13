@@ -144,10 +144,24 @@ test("heartbeatLease refreshes heartbeatAt but preserves startedAt", async () =>
   const { $ } = makeLeaseFs()
   await acquireLease($, "/r", "docs/tasks", me, now)
   const later = new Date("2026-07-06T12:01:00.000Z")
-  await heartbeatLease($, "/r", "docs/tasks", me, later)
+  assert.equal(await heartbeatLease($, "/r", "docs/tasks", me, later), true)
   const owner = await readLeaseOwner($, "/r", "docs/tasks")
   assert.equal(owner?.startedAt, now.toISOString())
   assert.equal(owner?.heartbeatAt, later.toISOString())
+})
+
+test("heartbeatLease refuses to clobber a lease it no longer owns (post-takeover resurrection, T3)", async () => {
+  // A new owner took over — the old watcher's heartbeat must not overwrite it.
+  const { $ } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T11:59:00.000Z")) })
+  assert.equal(await heartbeatLease($, "/r", "docs/tasks", me, now), false)
+  const owner = await readLeaseOwner($, "/r", "docs/tasks")
+  assert.equal(owner?.pid, 200, "the new owner's record survives")
+})
+
+test("heartbeatLease refuses when the lease is gone (released or renamed aside)", async () => {
+  const { $ } = makeLeaseFs()
+  assert.equal(await heartbeatLease($, "/r", "docs/tasks", me, now), false)
+  assert.equal(await readLeaseOwner($, "/r", "docs/tasks"), null, "nothing resurrected")
 })
 
 test("releaseLease frees the clone for the next acquirer", async () => {

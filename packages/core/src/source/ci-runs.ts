@@ -52,8 +52,17 @@ export const newestHeadVerdict = (
   workflows: readonly string[],
 ): { sha: string; verdict: "red" | "green" | "pending"; failing: string[] } | null => {
   const watched = workflows.length ? runs.filter((r) => workflows.includes(r.workflowName)) : runs
-  const sorted = [...watched].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-  const sha = sorted[0]?.headSha
+  const sorted = [...watched].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  // The newest run is not the newest COMMIT: a re-run of an older commit's
+  // workflow has a fresher createdAt and would shadow the real tip. A head's
+  // FIRST run tracks push order, so rank heads by their earliest run and take
+  // the newest. (The desc walk makes the last Map.set per head the earliest run.)
+  const earliestRun = new Map<string, string>()
+  for (const r of sorted) earliestRun.set(r.headSha, r.createdAt)
+  const sha = [...earliestRun.entries()].reduce(
+    (top, e) => (top && top[1] >= e[1] ? top : e),
+    null as [string, string] | null,
+  )?.[0]
   if (!sha) return null
   const onHead = sorted.filter((r) => r.headSha === sha)
   if (onHead.some((r) => r.status !== "completed")) return { sha, verdict: "pending", failing: [] }

@@ -14,7 +14,7 @@
 set -euo pipefail
 
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(cd "$PLUGIN_DIR/.." && pwd)"
+REPO_DIR="$(cd "$PLUGIN_DIR/../.." && pwd)"
 
 echo "Building the agentic-loop MCP server…"
 # npm workspaces: install at the repo root (which also builds @agentic-loop/core
@@ -36,7 +36,7 @@ for d in "$REPO_DIR"/skills/*/; do
     *" $name "*) continue ;;   # keep the Claude-specific version
   esac
   dest="$PLUGIN_DIR/skills/$name"
-  target="../../skills/$name"
+  target="../../../skills/$name"
   if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$target" ]; then
     continue
   fi
@@ -49,7 +49,7 @@ done
 for f in "$REPO_DIR"/references/*.md; do
   base="$(basename "$f")"
   dest="$PLUGIN_DIR/references/$base"
-  target="../../references/$base"
+  target="../../../references/$base"
   if [ -L "$dest" ] && [ "$(readlink "$dest")" = "$target" ]; then
     continue
   fi

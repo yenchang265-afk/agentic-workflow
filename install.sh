@@ -483,6 +483,10 @@ maybe_configure() {
         return
       fi
     else
+      if [ ! -d "$TARGET_DIR" ]; then
+        skip "config wizard — '$TARGET_DIR' is not a directory"
+        return
+      fi
       target_config="$TARGET_DIR/.agentic-loop.json"
     fi
     if [ -f "$target_config" ]; then

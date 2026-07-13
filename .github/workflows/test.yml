@@ -43,9 +43,19 @@ jobs:
           echo "$out"
           echo "$out" | grep -q "MCP server ready"
 
-      - name: Install-script check
+      - name: Shell-script syntax check
+        run: bash -n install.sh uninstall.sh bootstrap.sh scripts/clean.sh plugins/claude/install.sh
+
+      - name: Shellcheck
+        run: shellcheck --severity=error install.sh uninstall.sh bootstrap.sh scripts/clean.sh plugins/claude/install.sh
+
+      - name: Install-script round trip (install twice, then uninstall)
         run: |
-          bash -n install.sh plugins/claude/install.sh
           d=$(mktemp -d)
           ./install.sh opencode "$d"
           ./install.sh opencode "$d"
+          ./uninstall.sh opencode "$d"
+          leftovers=$(find "$d" -lname "$GITHUB_WORKSPACE/*" 2>/dev/null)
+          if [ -n "$leftovers" ]; then
+            echo "uninstall left entries behind:"; echo "$leftovers"; exit 1
+          fi

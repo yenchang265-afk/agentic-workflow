@@ -192,6 +192,13 @@ export const LoopManifestSchema = z
     if (names.size !== m.stages.length) {
       ctx.addIssue({ code: "custom", message: "duplicate stage names" })
     }
+    if (m.workSource.type === "backlog") {
+      for (const pool of m.workSource.pools) {
+        if (!names.has(pool.entryStage)) {
+          ctx.addIssue({ code: "custom", message: `pool "${pool.status}" enters unknown stage "${pool.entryStage}"` })
+        }
+      }
+    }
     for (const stage of m.stages) {
       const t = m.transitions[stage.name]
       if (!t) {

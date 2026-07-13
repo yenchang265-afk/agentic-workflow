@@ -214,7 +214,8 @@ link to it; don't copy.
 - `packages/core/` — `@agentic-loop/core`: the pure loop engine, manifest
   layer, work sources + scheduler, task store, git isolation, snapshots,
   verdicts, metrics, config — everything both plugins share
-- `packages/core/loops/` — the declarative loop kinds (`engineering/`, `pr-sitter/`): a
+- `packages/core/loops/` — the declarative loop kinds, one dir per kind (`engineering/`,
+  `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`): a
   `loop.json` manifest + `stages/*.md` prompt templates per kind
 - `packages/hub/` — the **admin hub (beta)**: a localhost web app with the loop
   monitor and visual loop creator

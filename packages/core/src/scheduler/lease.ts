@@ -115,20 +115,27 @@ export const acquireLease = async (
   return { ok: false, owner: current }
 }
 
-/** Refresh the lease's heartbeat, preserving its `startedAt`. Best-effort. */
+/**
+ * Refresh the lease's heartbeat, preserving its `startedAt`. Best-effort.
+ * Writes ONLY while this process still owns the lease — a watcher that was
+ * judged stale and taken over must not resurrect and clobber the new owner's
+ * record (T3). Returns whether the heartbeat landed.
+ */
 export const heartbeatLease = async (
   $: Shell,
   directory: string,
   tasksDir: string,
   owner: { readonly pid: number; readonly host: string; readonly intervalMs: number },
   now: Date,
-): Promise<void> => {
+): Promise<boolean> => {
   const current = await readLeaseOwner($, directory, tasksDir)
+  if (!current || current.pid !== owner.pid || current.host !== owner.host) return false
   await writeOwner($, directory, tasksDir, {
     ...owner,
-    startedAt: current?.startedAt ?? now.toISOString(),
+    startedAt: current.startedAt,
     heartbeatAt: now.toISOString(),
   })
+  return true
 }
 
 /** Drop the lease. Best-effort — callers release on unwatch/stop/dispose. */

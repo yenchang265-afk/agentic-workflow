@@ -8,7 +8,7 @@ Produce an implementation plan for:
 
 **$ARGUMENTS**
 
-Delegated to the read-only `plan` subagent, which reads the relevant code
+Delegated to the read-only `loop-plan` subagent, which reads the relevant code
 itself, sharpens and bounds the raw goal into a short problem/non-goals
 framing, then turns that into an ordered, review-sized implementation plan
 with explicit acceptance criteria. Relay its plan and stop. This is a

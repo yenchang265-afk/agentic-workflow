@@ -5,7 +5,7 @@
     {
       "name": "agentic-loop",
       "source": "./plugins/claude",
-      "description": "Supervised PLAN → BUILD → VERIFY → REVIEW loop for Claude Code: human plan gate, git isolation, trusted verdicts, task backlog, audit trail."
+      "description": "Supervised PLAN → BUILD → VERIFY → REVIEW engineering loop for Claude Code, plus experimental sitter kinds (pr-sitter, review-sitter, dep-sitter, main-sitter): human gates, git isolation, trusted verdicts, task backlog, audit trail."
     }
   ]
 }

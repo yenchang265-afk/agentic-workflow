@@ -11,7 +11,10 @@
 # script prints the reminder.
 #
 # It never touches your .agentic-loop.json or the docs/tasks/ backlog — use
-# ./scripts/clean.sh for that. Re-run any time; idempotent.
+# ./scripts/clean.sh for that. It also does NOT reverse ./bootstrap.sh extras
+# (e.g. the chrome-devtools MCP registration in the user-global Claude /
+# OpenCode configs) — remove those entries by hand if you want them gone.
+# Re-run any time; idempotent.
 
 set -euo pipefail
 
