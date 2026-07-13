@@ -1,7 +1,7 @@
 /** Small monospace status badge — wraps the `.badge` class + tone modifiers. */
 import type { HTMLAttributes, ReactNode } from "react"
 
-type Tone = "neutral" | "gate" | "ok"
+type Tone = "neutral" | "gate" | "ok" | "live"
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone
@@ -12,6 +12,7 @@ const TONE_CLASS: Readonly<Record<Tone, string>> = {
   neutral: "",
   gate: "gate",
   ok: "ok",
+  live: "live",
 }
 
 export function Badge({ tone = "neutral", className, children, ...rest }: BadgeProps) {

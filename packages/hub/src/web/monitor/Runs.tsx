@@ -97,7 +97,9 @@ export const Runs = () => {
   const [selected, setSelected] = useState<string | null>(null)
   const { versions } = useEvents()
   const { repoId } = useRepo()
-  const { data } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, repoId])
+  // Refetch on `versions.active` too: the live `.stage.json` marker flips a
+  // run's `active` flag when a loop starts/ends, without touching any run `.md`.
+  const { data } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, versions.active, repoId])
 
   // Collapse the open run whenever the list refreshes or the repo changes — the
   // selected id may no longer exist.
@@ -116,7 +118,11 @@ export const Runs = () => {
             onClick={() => setSelected(selected === r.id ? null : r.id)}
           >
             <span className="run-id">{r.id}</span>
-            {r.outcome && <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>}
+            {r.active ? (
+              <Badge tone="live">in progress</Badge>
+            ) : (
+              r.outcome && <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
+            )}
             {r.detail && <span className="muted">{r.detail}</span>}
             {r.at && <span className="muted">{new Date(r.at).toLocaleString()}</span>}
           </button>

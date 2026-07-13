@@ -609,6 +609,21 @@ body {
   color: var(--ok);
   border-color: var(--ok);
 }
+.badge.live {
+  color: var(--accent);
+  border-color: var(--accent);
+  animation: badge-pulse 1.6s ease-in-out infinite;
+}
+@keyframes badge-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .badge.live {
+    animation: none;
+  }
+}
 
 /* --- monitor board (kanban) ------------------------------------------------- */
 

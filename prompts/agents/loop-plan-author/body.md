@@ -132,11 +132,18 @@ The plan section contains: **Problem**, **Non-goals**, **Assumptions**, an
 
 ## Filename (modes `new` and `retask`)
 
-Mode `new`: slug = the title lowercased, non-alphanumerics collapsed to single
-hyphens, trimmed (e.g. "Add rate limiting to the API" →
-`add-rate-limiting-to-the-api`). Write to `docs/tasks/draft/<slug>.md`. **Never
-overwrite** — if that file exists, append `-2`, `-3`, … until the name is free
-(check first with your read/list tools).
+Mode `new`: the id is `<shortid>-<slug>`.
+- **`shortid`** — 4 random lowercase base36 chars (`a`–`z`, `0`–`9`, no hyphen),
+  e.g. `f7k3`. It's the short handle a human types to approve the task, so keep it
+  short and opaque; don't derive it from the title.
+- **`slug`** — the title lowercased, non-alphanumerics collapsed to single hyphens,
+  trimmed (e.g. "Add rate limiting to the API" → `add-rate-limiting-to-the-api`).
+
+Write to `docs/tasks/draft/<shortid>-<slug>.md` (e.g.
+`f7k3-add-rate-limiting-to-the-api.md`) — the short id keeps it targetable, the
+slug keeps the name readable on disk and the board. **Never overwrite** — list
+`draft/` first; if a file with your `shortid` already exists (any slug), re-roll a
+fresh `shortid` until it's free.
 
 Mode `retask`: the filename is fixed — `docs/tasks/draft/<id>.md` from your
 prompt. **Overwrite it in place**; never re-slug from the new title and never
@@ -148,17 +155,18 @@ When your prompt carries a **confirmed slice set** — an epic title plus ordere
 children, each with its own acceptance subset — write one file per child plus
 one epic tracking file, all into `docs/tasks/draft/`:
 
-- **Each child** `docs/tasks/draft/<child-slug>.md` — the schema above, with
-  `priority` set to its order (`0`, `1`, `2`, …) and `acceptance` its own
+- **Each child** `docs/tasks/draft/<shortid>-<child-slug>.md` — the schema above,
+  with `priority` set to its order (`0`, `1`, `2`, …) and `acceptance` its own
   subset. End the body with a prose line `Part of epic: <epic-id> (slice k of
   N)`. Still **planless** — the PLAN stage plans each child on claim.
-- **The epic** `docs/tasks/draft/<epic-slug>.md` — add `type: epic` to the
-  frontmatter (`acceptance` may be empty or a one-line rollup). The body lists
+- **The epic** `docs/tasks/draft/<shortid>-<epic-slug>.md` — add `type: epic` to
+  the frontmatter (`acceptance` may be empty or a one-line rollup). The body lists
   the child ids in order and notes: tracking parent, **never approved**, closed
   by hand once every child ships.
 
-Derive each slug and confirm it's free before writing (append `-2`, `-3`, … on
-a clash). Write the **epic last** so its body can name the children's final ids.
+Mint a distinct 4-char `shortid` per file (as in mode `new`) and confirm it's
+free before writing (re-roll on a clash). Write the **epic last** so its body can
+name the children's final ids.
 
 ## Steps
 

@@ -94,6 +94,13 @@ export interface RunListItem {
   readonly at?: string
   /** Number of terminal summaries recorded in the log (plan run + build run…). */
   readonly runs: number
+  /**
+   * A loop is driving this task RIGHT NOW (the live `.stage.json` marker's
+   * taskId matches this run's id). Set so run history can show "in progress"
+   * instead of the last completed run's terminal outcome — which otherwise
+   * lingers as "done" through a whole subsequent pass (plan park → engineering).
+   */
+  readonly active?: boolean
 }
 
 export interface RunsResponse {

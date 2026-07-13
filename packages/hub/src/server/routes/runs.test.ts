@@ -72,6 +72,24 @@ test("getRuns lists run logs, latest summary first", async () => {
   assert.equal(body.runs[0]?.runs, 1)
   assert.equal(body.runs[1]?.id, "no-summary")
   assert.equal(body.runs[1]?.outcome, undefined)
+  // No live stage marker → nothing is active.
+  assert.equal(body.runs[0]?.active, undefined)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("getRuns marks the run whose task the live stage marker is driving", async () => {
+  const dir = makeFixture()
+  // A loop is driving fix-bar right now — its last summary ("done") describes the
+  // PRIOR plan pass, so the run must surface as in-progress, not done.
+  fs.writeFileSync(
+    path.join(dir, "docs", "tasks", "runs", ".stage.json"),
+    JSON.stringify({ kind: "engineering", stage: "build", taskId: "fix-bar", worktree: null, deadline: 123 }),
+  )
+  const body = (await getRuns(depsFor(dir))).body as RunsResponse
+  const fixBar = body.runs.find((r) => r.id === "fix-bar")
+  assert.equal(fixBar?.active, true)
+  assert.equal(fixBar?.outcome, "done") // outcome still carried; UI prefers the live badge
+  assert.equal(body.runs.find((r) => r.id === "no-summary")?.active, undefined)
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
