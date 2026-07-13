@@ -205,7 +205,9 @@ test("composePrompt reproduces the frozen composeArgs byte-identically for every
 // --- golden parity: advance ≡ the frozen advanceOnIdle across the transition table ---
 
 const strip = <T extends object>(o: T): Record<string, unknown> => {
-  const { toStatus: _dropped, ...rest } = o as Record<string, unknown>
+  // Drop the fields the frozen legacy oracle could not express (additive manifest
+  // semantics): `toStatus` and the `retryable` stop flag (asserted separately below).
+  const { toStatus: _dropped, retryable: _retryable, ...rest } = o as Record<string, unknown>
   return rest
 }
 
@@ -246,6 +248,19 @@ test("park and done actions carry the manifest's toStatus", () => {
   const done = advance(eng, { ...mk("g"), stage: "review" }, config, "clean", "PASS")
   assert.equal(done.action.kind, "done")
   if (done.action.kind === "done") assert.equal(done.action.toStatus, "in-review")
+})
+
+test("an onError (ERROR verdict) stop is marked retryable; a cap stop is not (C2)", () => {
+  // A transient environment/tooling error the manifest asks to retry next poll — the
+  // work source must NOT record it as a failed attempt, so it stays claimable.
+  const onError = advance(eng, { ...mk("g"), stage: "verify" }, config, "test runner missing", "ERROR")
+  assert.equal(onError.action.kind, "stop")
+  if (onError.action.kind === "stop") assert.equal(onError.action.retryable, true)
+
+  // A genuine iteration-cap exhaustion stays unmarked ⇒ recorded as a failed attempt.
+  const cap = advance(eng, { ...mk("g"), stage: "verify", iteration: 2 }, config, "gaps remain", "FAIL")
+  assert.equal(cap.action.kind, "stop")
+  if (cap.action.kind === "stop") assert.equal(cap.action.retryable, undefined)
 })
 
 test("firstStep fires the state's own stage with its composed prompt", () => {

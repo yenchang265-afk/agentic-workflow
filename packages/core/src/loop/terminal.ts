@@ -76,7 +76,7 @@ export type TerminalReport =
   | { readonly kind: "park-free"; readonly message: string }
   | { readonly kind: "error"; readonly message: string; readonly taskId?: string }
   | { readonly kind: "done"; readonly message: string; readonly taskId?: string; readonly moved: boolean; readonly branch?: string }
-  | { readonly kind: "stop"; readonly message: string; readonly taskId?: string; readonly branch?: string }
+  | { readonly kind: "stop"; readonly message: string; readonly taskId?: string; readonly branch?: string; readonly retryable?: boolean }
 
 /**
  * Will a following main-tree checkpoint fold the backlog move into its commit? Only
@@ -167,7 +167,7 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
   }
   await ctx.writeMetrics("stopped", action.message)
   await finishIsolation(ctx, `loop(${loopId(state)}): incomplete — ${action.message}`)
-  return { kind: "stop", message: action.message, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}) }
+  return { kind: "stop", message: action.message, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}), ...(action.retryable ? { retryable: true } : {}) }
 }
 
 /**

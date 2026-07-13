@@ -685,7 +685,12 @@ const runTerminal = async (action: Action) => {
   writeStageMarker(null)
   if (activeClaim) {
     const detail = report.kind === "done" ? "review passed" : report.message
-    const outcome = { kind: report.kind === "done" ? ("done" as const) : ("stop" as const), message: detail }
+    const outcome = {
+      kind: report.kind === "done" ? ("done" as const) : ("stop" as const),
+      message: detail,
+      // A retryable stop (transient onError) must not be recorded as a failed attempt (C2).
+      ...(report.kind === "stop" && report.retryable ? { retryable: true } : {}),
+    }
     await activeClaim.source.onTerminal?.(activeClaim.item, outcome)
     activeClaim = null
   }

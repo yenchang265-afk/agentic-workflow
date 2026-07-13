@@ -286,3 +286,21 @@ test("review-sitter onTerminal(done) records the reviewed head in its own ledger
   assert.match(write ?? "", /runs\/review-sitter\/pr-7\.json/)
   assert.match(write ?? "", /sha-1/)
 })
+
+test("review-sitter onTerminal: a retryable (onError fetch) stop leaves the head claimable (C2)", async () => {
+  const log: string[] = []
+  const src = reviewerSource([pr()], {
+    script: [{ cmd: "gh pr view 7", result: { stdout: JSON.stringify({ headRefOid: "sha-1", comments: [] }) } }],
+    log,
+  })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  // A transient fetch error is review-sitter's ONLY failedAttempt source; without C2 it
+  // pinned the head forever. A retryable stop must write no ledger, so the next poll re-claims.
+  await src.onTerminal?.(item, { kind: "stop", message: "gh pr diff failed", retryable: true })
+  assert.ok(
+    !log.some((c) => c.startsWith("printf") && c.includes("pr-7.json")),
+    "retryable stop leaves the ledger untouched",
+  )
+  assert.ok(log.some((c) => c.includes("runs/review-sitter/.claims/pr-7")), "claim marker still released")
+})

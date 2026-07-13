@@ -35,6 +35,14 @@ export interface WorkItem {
 export interface TerminalOutcome {
   readonly kind: "done" | "park" | "stop" | "error"
   readonly message: string
+  /**
+   * Set on a `stop` that must NOT be recorded as a failed attempt: a transient
+   * `onError` stop (environment/tooling error the manifest asks to retry next poll)
+   * or a mid-drive interrupt/human ESC. A dedup ledger leaves the target/head
+   * claimable so the next poll re-claims it. Absent ⇒ record the failed attempt
+   * (a genuine iteration-cap exhaustion), preserving prior behavior (C2).
+   */
+  readonly retryable?: boolean
 }
 
 export interface WorkSource {

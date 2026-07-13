@@ -81,14 +81,20 @@ export const terminalLedgerUpdate = (
         ...(triggers.includes("merge-conflict") ? { conflictAttempt: { headSha: freshHead, baseSha: "" } } : {}),
         updatedAt: now,
       }
-    : {
-        ...ledger,
-        failedAttempts: [
-          ...ledger.failedAttempts,
-          { headSha: snapshotHead, trigger: triggers.join("+") || "unknown", at: now },
-        ],
-        updatedAt: now,
-      }
+    : // A retryable stop (transient onError / interrupt) leaves the ledger unchanged
+      // (returns the same object, so the caller can skip the save) — the head stays
+      // claimable and the watermark un-advanced, so the next poll re-claims (C2). Only a
+      // genuine (cap) stop records the failed attempt that suppresses re-claim.
+      outcome.retryable
+      ? ledger
+      : {
+          ...ledger,
+          failedAttempts: [
+            ...ledger.failedAttempts,
+            { headSha: snapshotHead, trigger: triggers.join("+") || "unknown", at: now },
+          ],
+          updatedAt: now,
+        }
 
 /** Build the WorkItem a claimed PR enters the loop as, stamped with its code platform. */
 export const prWorkItem = (

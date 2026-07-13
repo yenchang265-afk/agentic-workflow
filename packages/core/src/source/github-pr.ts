@@ -181,7 +181,8 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
         }
       }
       const updated = terminalLedgerUpdate(ledger, outcome, triggers, snapshot.headRefOid, head, lastCommentAt, now())
-      await saveLedger($, directory, tasksDir, kind, updated)
+      // A retryable stop returns the ledger unchanged (C2) — skip the write so the head stays claimable.
+      if (updated !== ledger) await saveLedger($, directory, tasksDir, kind, updated)
       await markers.release(snapshot.number)
     },
   }

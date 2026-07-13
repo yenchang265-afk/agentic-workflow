@@ -698,7 +698,10 @@ export const drive = async (
       // so both interrupt paths converge on exact-stage resume.
       if (step.state.task && !wasInterrupted) await clearState(deps.$, deps.directory, config.tasksDir, step.state.task.id)
       clearLoop(sessionID) // self-contained — no-op no-harm when stop already cleared it
-      return { kind: "stop", message: `${how} during ${stage}` }
+      // A mid-drive interrupt / human ESC (or an externally-cleared loop) is not a
+      // genuine exhaustion — mark it retryable so the work source keeps the item
+      // claimable for the next poll rather than suppressing it forever (C2).
+      return { kind: "stop", message: `${how} during ${stage}`, retryable: true }
     }
     // Checkpoint after any isolated code-writing (`work`) stage, not just the
     // engineering `build` — pr-sitter's `fix` stage writes code too and otherwise
@@ -791,7 +794,7 @@ export const drive = async (
     case "stop": {
       const where = report.branch ? ` Partial work is preserved on branch ${report.branch}.` : ""
       await toast(client, `${report.message}${where}`, "warning")
-      return { kind: "stop", message: report.message }
+      return { kind: "stop", message: report.message, ...(report.retryable ? { retryable: true } : {}) }
     }
   }
 }

@@ -137,6 +137,11 @@ export const advance = (
     case "done":
       return { state: s, action: { kind: "done", message: effect.message, toStatus: effect.toStatus } }
     case "stop":
-      return { state: s, action: { kind: "stop", message: effect.message } }
+      // A stop reached via the ERROR verdict is an `onError` transition — a transient
+      // environment/tooling failure the manifest asks to retry on the next poll, NOT a
+      // genuine exhaustion. Mark it retryable so the work source leaves the target/head
+      // claimable instead of suppressing it forever (C2). The iteration-cap stop above
+      // and the no-transition fail-safe stay unmarked ⇒ recorded as failed attempts.
+      return { state: s, action: { kind: "stop", message: effect.message, ...(verdict === "ERROR" ? { retryable: true } : {}) } }
   }
 }

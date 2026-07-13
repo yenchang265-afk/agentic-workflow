@@ -208,6 +208,27 @@ test("onTerminal(done) records the published target; stop records a failed attem
   assert.ok(log.some((c) => c.startsWith("rmdir") && c.includes("dep-lodash")))
 })
 
+test("onTerminal: a genuine stop records a failed attempt; a retryable (onError) stop does not (C2)", async () => {
+  const genuine: string[] = []
+  const g = source({ log: genuine })
+  const c1 = await g.claimNext()
+  assert.ok(c1.item)
+  await g.onTerminal?.(c1.item, { kind: "stop", message: "capped" })
+  const gWrite = genuine.find((c) => c.startsWith("printf") && c.includes("dep-lodash.json"))
+  assert.match(gWrite ?? "", /failedAttempts/, "genuine stop records a failed attempt")
+
+  const transient: string[] = []
+  const t = source({ log: transient })
+  const c2 = await t.claimNext()
+  assert.ok(c2.item)
+  await t.onTerminal?.(c2.item, { kind: "stop", message: "osv-scanner unavailable", retryable: true })
+  assert.ok(
+    !transient.some((c) => c.startsWith("printf") && c.includes("dep-lodash.json")),
+    "retryable stop leaves the ledger untouched so the next poll re-claims",
+  )
+  assert.ok(transient.some((c) => c.startsWith("rmdir") && c.includes("dep-lodash")), "claim marker still released")
+})
+
 test("an unparsable audit report is an actionable skip, not a crash", async () => {
   const { item, skip } = await source({ auditJson: "not json" }).claimNext()
   assert.equal(item, null)

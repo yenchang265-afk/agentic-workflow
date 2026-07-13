@@ -187,11 +187,15 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
     async onTerminal(work, outcome: TerminalOutcome) {
       const { sha } = work.ref as { sha: string }
       const ledger = await loadHeadLedger(client, directory, tasksDir, kind, sha, now())
+      // A retryable stop (transient onError / interrupt) leaves the ledger untouched so
+      // the next poll re-claims this head; only done and a genuine (cap) stop update it.
       const updated =
         outcome.kind === "done"
           ? { ...ledger, handled: true, updatedAt: now() }
-          : { ...ledger, failedAttempts: [...ledger.failedAttempts, { at: now() }], updatedAt: now() }
-      await saveHeadLedger($, directory, tasksDir, kind, updated)
+          : outcome.retryable
+            ? ledger
+            : { ...ledger, failedAttempts: [...ledger.failedAttempts, { at: now() }], updatedAt: now() }
+      if (updated !== ledger) await saveHeadLedger($, directory, tasksDir, kind, updated)
       await $`rmdir ${`${claimsDir}/head-${shortSha(sha)}`}`.quiet().nothrow()
     },
   }

@@ -192,6 +192,27 @@ test("onTerminal(done) marks the head handled; stop records a failed attempt", a
   assert.ok(log.some((c) => c.startsWith("rmdir") && c.includes(`head-${shortSha(SHA)}`)))
 })
 
+test("onTerminal: a genuine stop records a failed attempt; a retryable (onError) stop does not (C2)", async () => {
+  const genuine: string[] = []
+  const g = source([run()], { log: genuine })
+  const c1 = await g.claimNext()
+  assert.ok(c1.item)
+  await g.onTerminal?.(c1.item, { kind: "stop", message: "capped" })
+  const gWrite = genuine.find((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`))
+  assert.match(gWrite ?? "", /failedAttempts/, "genuine stop records a failed attempt")
+
+  const transient: string[] = []
+  const t = source([run()], { log: transient })
+  const c2 = await t.claimNext()
+  assert.ok(c2.item)
+  await t.onTerminal?.(c2.item, { kind: "stop", message: "gh api blip", retryable: true })
+  assert.ok(
+    !transient.some((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`)),
+    "retryable stop leaves the head ledger untouched so the next poll re-claims",
+  )
+  assert.ok(transient.some((c) => c.startsWith("rmdir") && c.includes(`head-${shortSha(SHA)}`)), "claim marker still released")
+})
+
 test("a configured branch override skips default-branch detection", async () => {
   const log: string[] = []
   const src = makeCiRunsSource({

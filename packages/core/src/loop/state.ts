@@ -96,7 +96,14 @@ export type Action =
   | { readonly kind: "done"; readonly message: string; readonly toStatus?: string }
   /** A gate stage finished: the driver validates its output, moves the item to `toStatus`, and the loop exits. */
   | { readonly kind: "park"; readonly message: string; readonly toStatus?: string }
-  | { readonly kind: "stop"; readonly message: string }
+  /**
+   * The loop stopped incomplete. `retryable` marks a stop that a work source must
+   * NOT record as a failed attempt — a transient `onError` stop (the stage reported
+   * an ENVIRONMENT/tooling error the manifest asks to retry next poll), as opposed to
+   * a genuine iteration-cap exhaustion. Absent ⇒ suppress (record the failed attempt),
+   * preserving the cap and legacy behavior.
+   */
+  | { readonly kind: "stop"; readonly message: string; readonly retryable?: boolean }
   | { readonly kind: "noop" }
 
 /**

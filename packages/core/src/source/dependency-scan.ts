@@ -486,15 +486,19 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
     async onTerminal(work, outcome: TerminalOutcome) {
       const { candidate } = work.ref as { candidate: UpgradeCandidate }
       const ledger = await loadDepLedger(candidate.pkg)
+      // A retryable stop (transient onError / interrupt) leaves the ledger untouched so
+      // the next poll re-claims this target; only done and a genuine (cap) stop update it.
       const updated: DepLedger =
         outcome.kind === "done"
           ? { ...ledger, versionHandled: candidate.target, updatedAt: now() }
-          : {
-              ...ledger,
-              failedAttempts: [...ledger.failedAttempts, { target: candidate.target, at: now() }],
-              updatedAt: now(),
-            }
-      await saveDepLedger(updated)
+          : outcome.retryable
+            ? ledger
+            : {
+                ...ledger,
+                failedAttempts: [...ledger.failedAttempts, { target: candidate.target, at: now() }],
+                updatedAt: now(),
+              }
+      if (updated !== ledger) await saveDepLedger(updated)
       await $`rmdir ${`${claimsDir}/dep-${slugify(candidate.pkg)}`}`.quiet().nothrow()
     },
   }
