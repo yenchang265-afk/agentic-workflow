@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdAnywhere, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, gitActor } from "./git.js"
 import { shipPr } from "./ship-pr.js"
@@ -347,12 +347,18 @@ export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering"): P
  * names a rejectable task, the whole `arg` is the reason.
  */
 export const rejectAny = async (ctx: GateCtx, arg: string): Promise<GateResult> => {
-  const { $, directory, config } = ctx
+  const { $, directory, config, log } = ctx
   const [first = "", ...restParts] = arg.trim().split(/\s+/).filter(Boolean)
   if (first) {
+    // Resolve the leading token as a task id the same way `approve` does — so the
+    // short-hash handle the UIs surface (`f7k3`) targets the task instead of being
+    // silently folded into the rejection reason. A hash that matches several tasks
+    // in a rejectable folder is an ambiguity to surface, not a reason word.
     for (const from of ["plan-review", "in-progress"] as const) {
-      if (await findByIdIn($, directory, config.tasksDir, from, first)) {
-        return replanTask(ctx, first, restParts.join(" ").trim() || undefined)
+      const r = await resolveTaskIdIn($, directory, config.tasksDir, from, first, log)
+      if (r && "id" in r) return replanTask(ctx, r.id, restParts.join(" ").trim() || undefined)
+      if (r && "ambiguous" in r) {
+        return { ok: false, message: `Ambiguous id "${first}" — matches ${r.ambiguous.join(", ")}. Use more characters.`, variant: "warning" }
       }
     }
   }

@@ -477,6 +477,16 @@ test("resolveTaskIdIn reports ambiguity when a prefix matches several", async ()
   assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f"), { ambiguous: ["f7k3-add-foo", "fa2b-do-bar"] })
 })
 
+test("resolveTaskIdIn disambiguates a colliding hash by a longer full-id prefix", async () => {
+  // Two tasks share the 4-char hash f7k3: the bare hash is ambiguous, but a longer
+  // prefix of the full id resolves the one — so "Use more characters" actually works.
+  const $ = idResolverShell(QDIR, ["f7k3-add-foo", "f7k3-fix-bar"])
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f7k3"), {
+    ambiguous: ["f7k3-add-foo", "f7k3-fix-bar"],
+  })
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f7k3-add"), { id: "f7k3-add-foo" })
+})
+
 test("resolveTaskIdIn never treats a legacy slug as a hash prefix", async () => {
   // "add-rate-limiting" is not a modern <hash>- id, so a bare "add" prefix must not match it.
   const $ = idResolverShell(QDIR, ["add-rate-limiting"])

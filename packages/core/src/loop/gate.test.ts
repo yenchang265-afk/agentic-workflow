@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { approvePlan, approveTask, replanTask, shipTask, type GateCtx } from "./gate.js"
+import { approvePlan, approveTask, rejectAny, replanTask, shipTask, type GateCtx } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -130,6 +130,33 @@ test("replanTask sends a parked plan back to queued", async () => {
   const r = await replanTask(ctx, "t", "missed the cache")
   assert.ok(r.ok && r.data.requeued === true)
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("queued")))
+})
+
+// `replan <id> <reason>` used to detect the leading id with an exact filename match,
+// so a short-hash handle (`f7k3`) fell through into the reason and the SOLE plan-review
+// task was replanned instead of the one the human named. rejectAny now resolves the
+// short hash like `approve` does.
+test("rejectAny replans the short-hash-named task, not the sole plan-review task", async () => {
+  const { ctx, fs } = makeCtx({
+    "in-progress/a1b2-do-thing.md": task("Do thing", `${PLAN_HEADING}\n\n1. step`),
+    "plan-review/f7k3-fix-bar.md": task("Fix bar", `${PLAN_HEADING}\n\n1. step`),
+  })
+  const r = await rejectAny(ctx, "a1b2 wrong approach")
+  assert.ok(r.ok && r.data.requeued === true)
+  assert.ok("/repo/docs/tasks/queued/a1b2-do-thing.md" in fs, "the task addressed by its short hash moved to queued")
+  assert.ok("/repo/docs/tasks/plan-review/f7k3-fix-bar.md" in fs, "the unrelated parked plan is untouched")
+})
+
+test("rejectAny surfaces an ambiguous short hash instead of folding it into the reason", async () => {
+  const { ctx, fs } = makeCtx({
+    "plan-review/f7k3-fix-bar.md": task("Fix bar", `${PLAN_HEADING}\n\n1. step`),
+    "plan-review/f7k3-add-foo.md": task("Add foo", `${PLAN_HEADING}\n\n1. step`),
+  })
+  const r = await rejectAny(ctx, "f7k3 bad plan")
+  assert.equal(r.ok, false)
+  assert.ok(!r.ok && r.variant === "warning")
+  assert.match(!r.ok ? r.message : "", /Ambiguous id "f7k3"/)
+  assert.ok(!("/repo/docs/tasks/queued/f7k3-fix-bar.md" in fs), "nothing moved on ambiguity")
 })
 
 test("shipTask moves an in-review task to completed (no branch → no PR)", async () => {

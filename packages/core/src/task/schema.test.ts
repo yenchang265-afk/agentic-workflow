@@ -175,9 +175,18 @@ test("buildTaskFile re-rolls the short id when the combined id is taken", () => 
 })
 
 test("buildTaskFile falls back to a numeric suffix if the short id keeps clashing", () => {
-  // A stub that never varies (or an exhausted RNG) must still terminate.
+  // A stub that never varies (or an exhausted RNG) can't free the hash — the write
+  // still needs a unique FILE, so the slug gets a numeric suffix and the loop terminates.
   const file = buildTaskFile({ title: "Foo" }, ["aaaa-foo"], mintSeq("aaaa"))
-  assert.equal(file.id, "aaaa-foo-8")
+  assert.equal(file.id, "aaaa-foo-0")
+})
+
+test("buildTaskFile re-rolls when the short hash is taken even by a different slug", () => {
+  // f7k3 already belongs to an unrelated task; the new task must NOT reuse the hash,
+  // so a human typing `f7k3` always targets exactly one task (Fix C).
+  const file = buildTaskFile({ title: "Bar" }, ["f7k3-something-else"], mintSeq("f7k3", "a1b2"))
+  assert.equal(file.id, "a1b2-bar")
+  assert.equal(shortIdOf(file.id), "a1b2")
 })
 
 test("buildTaskFile falls back to 'task' when the title has no slug chars", () => {

@@ -324,11 +324,18 @@ export const serializeTask = (input: TaskInput): string => {
 export const buildTaskFile = (input: TaskInput, taken: Iterable<string> = [], mint: () => string = mintShortId): TaskFile => {
   const content = serializeTask(input) // validates title before we bother with a slug
   const slug = slugify(input.title) || "task"
-  const takenSet = new Set(taken)
-  // A random 4-char prefix almost never clashes; re-roll it if it does. After a
-  // few tries (e.g. a deterministic `mint` stub in tests) fall back to a `-N` suffix
-  // so the loop always terminates.
+  const takenList = [...taken]
+  // Dedup on the short HASH, not the whole id: the 4-char handle is what a human types
+  // to target the task, so it must be unique even when the slug differs. `taken` should
+  // span every status folder (see `writeTask`) so a draft can't reuse a live task's hash.
+  const takenHashes = new Set(takenList.map(shortIdOf))
+  const takenIds = new Set(takenList)
+  // The real random mint frees a hash in ~1 try (≈1.5M space); re-roll on a clash.
   let id = `${mint()}-${slug}`
-  for (let tries = 0; takenSet.has(id); tries++) id = tries < 8 ? `${mint()}-${slug}` : `${mint()}-${slug}-${tries}`
+  for (let tries = 0; takenHashes.has(shortIdOf(id)) && tries < 8; tries++) id = `${mint()}-${slug}`
+  // A mint that can't produce a free hash (a deterministic stub, or an exhausted RNG)
+  // still needs a unique FILE — disambiguate the slug so the write never clobbers an
+  // existing task or loops forever.
+  for (let tries = 0; takenIds.has(id); tries++) id = `${mint()}-${slug}-${tries}`
   return { id, filename: `${id}.md`, content }
 }

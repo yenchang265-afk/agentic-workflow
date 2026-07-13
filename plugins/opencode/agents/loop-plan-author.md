@@ -133,9 +133,12 @@ Mode `new`: the id is `<shortid>-<slug>`.
 
 Write to `docs/tasks/draft/<shortid>-<slug>.md` (e.g.
 `f7k3-add-rate-limiting-to-the-api.md`) — the short id keeps it targetable, the
-slug keeps the name readable on disk and the board. **Never overwrite** — list
-`draft/` first; if a file with your `shortid` already exists (any slug), re-roll a
-fresh `shortid` until it's free.
+slug keeps the name readable on disk and the board. **Never overwrite, and keep
+the `shortid` unique board-wide** — a human types it to target the task, so a
+duplicate across folders makes approval ambiguous. List every live task folder
+(`draft/`, `queued/`, `plan-review/`, `in-progress/`, `in-review/`); if any holds
+a file whose `shortid` matches yours (any slug), re-roll a fresh `shortid` until
+it's free everywhere.
 
 Mode `retask`: the filename is fixed — `docs/tasks/draft/<id>.md` from your
 prompt. **Overwrite it in place**; never re-slug from the new title and never
@@ -156,9 +159,10 @@ one epic tracking file, all into `docs/tasks/draft/`:
   the child ids in order and notes: tracking parent, **never approved**, closed
   by hand once every child ships.
 
-Mint a distinct 4-char `shortid` per file (as in mode `new`) and confirm it's
-free before writing (re-roll on a clash). Write the **epic last** so its body can
-name the children's final ids.
+Mint a distinct 4-char `shortid` per file (as in mode `new`) — free board-wide
+across every live task folder AND distinct from the other files in this set;
+re-roll on any clash. Write the **epic last** so its body can name the children's
+final ids.
 
 ## Steps
 

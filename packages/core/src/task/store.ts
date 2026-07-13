@@ -286,7 +286,10 @@ export const resolveTaskIdIn = async (
     .split("\n")
     .filter((n) => isMarkdown(n))
     .map((n) => n.replace(/\.md$/i, ""))
-  const matches = ids.filter((id) => SHORT_ID_RE.test(id) && shortIdOf(id).startsWith(query))
+  // Match on the short-hash handle OR on a longer full-id prefix, so when two tasks
+  // share a 4-char hash the human can actually disambiguate by typing more of the id
+  // (`f7k3-add`) — the "Use more characters" advice the gate gives on ambiguity.
+  const matches = ids.filter((id) => SHORT_ID_RE.test(id) && (shortIdOf(id).startsWith(query) || id.startsWith(query)))
   if (matches.length === 0) return null
   if (matches.length === 1) return { id: matches[0]! }
   log?.("info", `ambiguous id "${query}" — matches ${matches.join(", ")}`)
@@ -654,7 +657,10 @@ export const writeTask = async (
   const tasksDir = loc.tasksDir ?? "docs/tasks"
   const status = loc.status ?? "draft"
   const rel = `${tasksDir}/${status}`
-  const taken = await listIds(client, loc.directory, rel)
+  // Gather ids across EVERY status folder, not just the destination — the minted short
+  // hash must be unique board-wide so its 4-char handle unambiguously targets one task,
+  // whichever folder the task has since advanced to.
+  const taken = (await Promise.all(STATUSES.map((s) => listIds(client, loc.directory, `${tasksDir}/${s}`)))).flat()
   const { id, filename, content } = buildTaskFile(input, taken)
 
   const destDir = path.join(loc.directory, rel)
