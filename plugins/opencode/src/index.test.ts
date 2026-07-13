@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { PluginInput } from "@opencode-ai/plugin"
-import { AgenticLoop, loadFailureHooks, loadFailureMessage } from "./index.ts"
+import { AgenticLoop } from "./index.ts"
+import { loadFailureHooks, loadFailureMessage } from "./load-failure.ts"
+import * as entry from "./index.ts"
 
 /**
  * The plugin initializer runs inside opencode's instance bootstrap. Any
@@ -75,6 +77,13 @@ test("the plugin exposes dispose (watch-timer cleanup) and no loop_begin tool", 
   assert.ok(!("loop_begin" in tools), "loop_begin was removed with the old free-text command mode")
   assert.ok("loop_verdict" in tools)
   await (hooks as { dispose: () => Promise<void> }).dispose() // must not throw with no timers
+})
+
+test("the entry module exports ONLY plugin factories (opencode calls every export as one)", () => {
+  // Regression: exporting loadFailureHooks from index.ts made opencode call it
+  // as Plugin(input, options) — its hooks closed over client=options
+  // (undefined) and threw `client.app` on EVERY command, killing the turn.
+  assert.deepEqual(Object.keys(entry).sort(), ["AgenticLoop"])
 })
 
 // --- fail-loud fallback (impl.ts failed to import: stale/missing core dist) ---

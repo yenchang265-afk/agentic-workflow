@@ -1,4 +1,5 @@
-import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin"
+import type { Plugin } from "@opencode-ai/plugin"
+import { loadFailureHooks } from "./load-failure.ts"
 
 /**
  * agentic-loop plugin entry.
@@ -13,38 +14,16 @@ import type { Hooks, Plugin, PluginInput } from "@opencode-ai/plugin"
  * plain prompt and a weak model happily reports a task-file move that never
  * happened.
  *
- * This entry therefore imports NOTHING from core statically and loads
- * `impl.ts` dynamically inside the factory. On load failure it returns a
- * minimal fallback plugin whose only job is to fail LOUDLY: every
- * `/agentic-loop:*` command toasts + logs the load error with the rebuild
- * instruction, so no gate verb can silently no-op again.
+ * This entry therefore imports nothing from core statically and loads
+ * `impl.ts` dynamically. On load failure it returns a minimal fallback plugin
+ * (see load-failure.ts) that fails LOUDLY: every `/agentic-loop:*` command
+ * toasts + logs the load error with the rebuild instruction.
+ *
+ * IMPORTANT: this module may export ONLY plugin factories. opencode calls
+ * every export of the entry module as `Plugin(input, options)` — a stray
+ * helper export becomes a broken second plugin whose thrown hook kills every
+ * command turn. Helpers live in load-failure.ts.
  */
-
-const REBUILD_HINT = "Rebuild it: run `npm install` at the agentic-loop repo root (or `npm run build -w @agentic-loop/core`), then restart opencode."
-
-/** The user-facing load-failure message: first error line + rebuild hint. Pure. */
-export const loadFailureMessage = (err: unknown): string => {
-  const detail = (err instanceof Error ? err.message : String(err)).split("\n")[0]?.trim() || "unknown error"
-  return `agentic-loop plugin failed to load: ${detail}. ${REBUILD_HINT}`
-}
-
-/**
- * The fallback hooks returned when `impl.ts` can't be imported: intercept the
- * plugin's own commands and surface the load error (toast for the human, log
- * for the record) instead of letting the command template run as if the
- * deterministic gate work had happened. No client call happens at factory
- * time — opencode's plugin init deadlocks on them; hooks fire after bootstrap.
- */
-export const loadFailureHooks = (err: unknown, client: PluginInput["client"]): Hooks => {
-  const message = loadFailureMessage(err)
-  return {
-    "command.execute.before": async (input) => {
-      if (!/^agentic-loop:/.test(input.command)) return
-      await client.app.log({ body: { service: "agentic-loop", level: "error", message } }).catch(() => {})
-      await client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
-    },
-  }
-}
 
 // Kick the impl load off at module-import time (opencode's plugin scan), so
 // its cost is paid before the factory runs and a failure is captured — never
