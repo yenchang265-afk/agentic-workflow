@@ -142,11 +142,34 @@ export interface PrLedgerView {
   readonly failedAttempts: number
 }
 
+/** Dependency-scan dedup ledger (`runs/<kind>/dep-<slug>.json`) — dep-sitter's per-package state. */
+export interface DepLedgerView {
+  readonly kind: string
+  readonly pkg: string
+  /** The last target version published for this package, if any. */
+  readonly versionHandled?: string
+  readonly updatedAt?: string
+  readonly failedAttempts: number
+}
+
+/** CI-runs (branch-head) dedup ledger (`runs/<kind>/head-<sha>.json`) — main-sitter's per-head state. */
+export interface HeadLedgerView {
+  readonly kind: string
+  readonly sha: string
+  readonly handled: boolean
+  readonly updatedAt?: string
+  readonly failedAttempts: number
+}
+
 export interface ActiveResponse {
   readonly stage: StageMarker | null
   readonly lease: LeaseView | null
   readonly snapshotIds: readonly string[]
   readonly prLedgers: readonly PrLedgerView[]
+  /** dependency-scan kinds' per-package ledgers (dep-sitter); [] when none. */
+  readonly depLedgers: readonly DepLedgerView[]
+  /** ci-runs kinds' per-head ledgers (main-sitter); [] when none. */
+  readonly headLedgers: readonly HeadLedgerView[]
 }
 
 export interface ApiError {

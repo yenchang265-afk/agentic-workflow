@@ -1,7 +1,15 @@
 import { z } from "zod"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/core/scheduler/lease"
 import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
-import type { ActiveResponse, LeaseView, PrLedgerView, StageMarker } from "../../shared/api.js"
+import type {
+  ActiveResponse,
+  DepLedgerView,
+  HeadLedgerView,
+  KindBoardInfo,
+  LeaseView,
+  PrLedgerView,
+  StageMarker,
+} from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { ok, type JsonResponse } from "../http.js"
 
@@ -26,6 +34,54 @@ const LedgerSchema = z.object({
   headShaHandled: z.string().optional(),
   failedAttempts: z.array(z.unknown()).default([]),
 })
+
+const DepLedgerSchema = z.object({
+  pkg: z.string(),
+  versionHandled: z.string().optional(),
+  updatedAt: z.string().optional(),
+  failedAttempts: z.array(z.unknown()).default([]),
+})
+
+const HeadLedgerSchema = z.object({
+  sha: z.string(),
+  handled: z.boolean().default(false),
+  updatedAt: z.string().optional(),
+  failedAttempts: z.array(z.unknown()).default([]),
+})
+
+/**
+ * List and parse the `<prefix>*.json` ledger files under `runs/<kind>` for every
+ * board of a given source type, mapping each into a view. The shared shape behind
+ * the three source-specific readers below — a source keeps its dedup ledgers under
+ * its own `runs/<kind>/` (core's ledgerDir), one file per deduped unit.
+ */
+const scanLedgers = async <T>(
+  deps: HubDeps,
+  sourceType: KindBoardInfo["sourceType"],
+  prefix: string,
+  parse: (content: string, kind: string) => T | null,
+): Promise<T[]> => {
+  const kinds = deps.boards.filter((b) => b.sourceType === sourceType).map((b) => b.kind)
+  const out: T[] = []
+  for (const kind of kinds) {
+    const listed = await deps.client.file
+      .list({ query: { path: `${deps.tasksDir}/runs/${kind}`, directory: deps.directory } })
+      .catch(() => null)
+    const files = (listed?.data ?? []).filter((n) => n.type === "file" && n.name.startsWith(prefix) && n.name.endsWith(".json"))
+    for (const file of files) {
+      const read = await deps.client.file.read({ query: { path: file.path, directory: deps.directory } }).catch(() => null)
+      const content = read?.data?.content
+      if (!content) continue
+      try {
+        const view = parse(content, kind)
+        if (view) out.push(view)
+      } catch {
+        // unparseable ledger — skip
+      }
+    }
+  }
+  return out
+}
 
 const readStageMarker = async (deps: HubDeps): Promise<StageMarker | null> => {
   const read = await deps.client.file
@@ -53,38 +109,57 @@ const readLease = async (deps: HubDeps, now: Date): Promise<LeaseView | null> =>
   }
 }
 
+// Each work source keeps its ledgers under `runs/<kind>/`; scan every enabled kind of
+// each source type (not just the literal pr-sitter/dep-sitter/main-sitter), stamped with
+// its kind so the monitor can show each kind ONLY its own dedup state (C4/C8).
 const readPrLedgers = async (deps: HubDeps): Promise<PrLedgerView[]> => {
-  // Each PR-shaped kind keeps its ledgers under `runs/<kind>/` (core's ledgerDir);
-  // scan every enabled github-pr kind, not just the literal pr-sitter, so a second
-  // PR kind's ledgers surface too — each view stamped with its kind.
-  const prKinds = deps.boards.filter((b) => b.sourceType === "github-pr").map((b) => b.kind)
-  const ledgers: PrLedgerView[] = []
-  for (const kind of prKinds) {
-    const listed = await deps.client.file
-      .list({ query: { path: `${deps.tasksDir}/runs/${kind}`, directory: deps.directory } })
-      .catch(() => null)
-    const files = (listed?.data ?? []).filter((n) => n.type === "file" && n.name.endsWith(".json"))
-    for (const file of files) {
-      const read = await deps.client.file.read({ query: { path: file.path, directory: deps.directory } }).catch(() => null)
-      const content = read?.data?.content
-      if (!content) continue
-      try {
-        const parsed = LedgerSchema.safeParse(JSON.parse(content))
-        if (!parsed.success) continue
-        const l = parsed.data
-        ledgers.push({
-          pr: l.pr,
-          kind,
-          ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
-          ...(l.headShaHandled ? { headShaHandled: l.headShaHandled } : {}),
-          failedAttempts: l.failedAttempts.length,
-        })
-      } catch {
-        // unparseable ledger — skip
-      }
+  const ledgers = await scanLedgers<PrLedgerView>(deps, "github-pr", "pr-", (content, kind) => {
+    const parsed = LedgerSchema.safeParse(JSON.parse(content))
+    if (!parsed.success) return null
+    const l = parsed.data
+    return {
+      pr: l.pr,
+      kind,
+      ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
+      ...(l.headShaHandled ? { headShaHandled: l.headShaHandled } : {}),
+      failedAttempts: l.failedAttempts.length,
     }
-  }
+  })
   ledgers.sort((a, b) => a.pr - b.pr || (a.kind ?? "").localeCompare(b.kind ?? ""))
+  return ledgers
+}
+
+const readDepLedgers = async (deps: HubDeps): Promise<DepLedgerView[]> => {
+  const ledgers = await scanLedgers<DepLedgerView>(deps, "dependency-scan", "dep-", (content, kind) => {
+    const parsed = DepLedgerSchema.safeParse(JSON.parse(content))
+    if (!parsed.success) return null
+    const l = parsed.data
+    return {
+      kind,
+      pkg: l.pkg,
+      ...(l.versionHandled ? { versionHandled: l.versionHandled } : {}),
+      ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
+      failedAttempts: l.failedAttempts.length,
+    }
+  })
+  ledgers.sort((a, b) => a.pkg.localeCompare(b.pkg) || a.kind.localeCompare(b.kind))
+  return ledgers
+}
+
+const readHeadLedgers = async (deps: HubDeps): Promise<HeadLedgerView[]> => {
+  const ledgers = await scanLedgers<HeadLedgerView>(deps, "ci-runs", "head-", (content, kind) => {
+    const parsed = HeadLedgerSchema.safeParse(JSON.parse(content))
+    if (!parsed.success) return null
+    const l = parsed.data
+    return {
+      kind,
+      sha: l.sha,
+      handled: l.handled,
+      ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
+      failedAttempts: l.failedAttempts.length,
+    }
+  })
+  ledgers.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") || a.sha.localeCompare(b.sha))
   return ledgers
 }
 
@@ -94,6 +169,8 @@ export const getActive = async (deps: HubDeps, now: Date = new Date()): Promise<
     lease: await readLease(deps, now),
     snapshotIds: await listSnapshotIds(deps.client, deps.directory, deps.tasksDir),
     prLedgers: await readPrLedgers(deps),
+    depLedgers: await readDepLedgers(deps),
+    headLedgers: await readHeadLedgers(deps),
   }
   return ok(response)
 }
