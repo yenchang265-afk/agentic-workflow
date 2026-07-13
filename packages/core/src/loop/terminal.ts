@@ -28,6 +28,13 @@ import type { Outcome } from "./metrics.js"
  * structured sidecar, which observe tokens/sessionID differently per host). The
  * control flow — veto, plan-landed check, task move, ordering, isolated-gating —
  * is shared here.
+ *
+ * Ordering invariant: on done/stop the work-tree checkpoint + isolation teardown
+ * run BEFORE any backlog write. In shared-tree mode the main tree sits on
+ * `feature/<id>` until teardown, so a task move or note made earlier would be
+ * committed onto the loop branch and vanish from the human branch at the teardown
+ * checkout — the loop reports "done" while the human's backlog still shows the
+ * task in in-progress/, and the ship gate can't find it.
  */
 
 export interface TerminalCtx {
@@ -44,8 +51,9 @@ export interface TerminalCtx {
   /**
    * Commit the backlog (tasksDir) on the MAIN tree — the host's strategy
    * (OpenCode serializes via its per-tree commit lock; Claude calls commitPaths).
-   * Core decides WHEN to call it: always on a park (no checkpoint follows), and
-   * on done/stop only when a following checkpoint won't fold the move in.
+   * Core decides WHEN to call it: on every park, done-move, and stop note —
+   * always after the work-tree checkpoint + teardown, so in shared-tree mode
+   * the commit lands on the human branch, never on the loop branch.
    */
   readonly commitBacklog: (message: string) => Promise<void>
   /**
@@ -79,13 +87,19 @@ export type TerminalReport =
   | { readonly kind: "stop"; readonly message: string; readonly taskId?: string; readonly branch?: string; readonly retryable?: boolean }
 
 /**
- * Will a following main-tree checkpoint fold the backlog move into its commit? Only
- * when the loop actually isolated AND runs in shared-tree mode — there the terminal
- * `checkpoint` (commitAll on the main tree) sweeps the just-moved task file in, so a
- * separate backlog commit would be redundant. In worktree mode the checkpoint commits
- * the worktree, leaving the main-tree move uncommitted, so it must be committed here.
+ * Checkpoint the work tree and tear the isolation down — but ONLY when the loop
+ * actually isolated. A source-pre-set `git` (naming the branch to isolate ONTO)
+ * without `isolated` must NOT reach here: `checkpoint` would `git add -A && commit`
+ * the human's main tree and `teardownIsolation` would check out the base branch on
+ * it (the centralized B5 fix — both hosts route through this). Runs FIRST on
+ * done/stop, before any backlog write — see the module doc's ordering invariant.
  */
-const checkpointFoldsBacklog = (state: LoopState): boolean => state.isolated === true && !state.git?.worktree
+const closeIsolation = async (ctx: TerminalCtx, checkpointMessage: string): Promise<void> => {
+  const { $, directory, state, log } = ctx
+  if (!state.isolated) return
+  await ctx.checkpoint(checkpointMessage)
+  await teardownIsolation($, log, directory, state)
+}
 
 /** park: PLAN finished — validate the plan landed, move the task to plan-review/, or veto. */
 const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" }>): Promise<TerminalReport> => {
@@ -132,6 +146,10 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
 /** done: the loop finished — park the task in in-review/ for human diff review. */
 const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
+  // Checkpoint + teardown FIRST — after this, a shared-tree main tree is back on
+  // the base branch, so the note/move/commit below land where the human (and the
+  // ship gate) will actually look.
+  await closeIsolation(ctx, `loop(${loopId(state)}): done — review passed`)
   let moved = false
   if (state.task) {
     // Re-resolve the real current path (shell-authoritative) rather than trust the
@@ -141,7 +159,7 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
       try {
         await appendNote($, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
         await moveTask($, cur, (action.toStatus ?? "in-review") as TaskStatus)
-        if (!checkpointFoldsBacklog(state)) await ctx.commitBacklog(`loop(${state.task.id}): done — parked in in-review`)
+        await ctx.commitBacklog(`loop(${state.task.id}): done — parked in in-review`)
         moved = true
       } catch (err) {
         await log("warn", `loop done but task move failed: ${(err as Error).message}`)
@@ -151,40 +169,24 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
     }
   }
   await ctx.writeMetrics("done", "review passed")
-  await finishIsolation(ctx, `loop(${loopId(state)}): done — review passed`)
+  if (state.task) await clearState($, directory, config.tasksDir, state.task.id)
   return { kind: "done", message: action.message, moved, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}) }
 }
 
 /** stop: the loop stopped incomplete — annotate the task and preserve partial work. */
 const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor } = ctx
+  await closeIsolation(ctx, `loop(${loopId(state)}): incomplete — ${action.message}`)
   if (state.task) {
     await appendNote($, state.task, auditNote(action.message, new Date(), actor), ctx.log)
     // A loop stopped mid-PLAN leaves the task in queued/ — release its claim marker
     // or no later claim can pick it up (there is no staleness sweep on every substrate).
     if (state.stage === "plan") await releaseClaim($, state.task)
-    if (!checkpointFoldsBacklog(state)) await ctx.commitBacklog(`loop(${state.task.id}): stopped — ${action.message}`)
+    await ctx.commitBacklog(`loop(${state.task.id}): stopped — ${action.message}`)
   }
   await ctx.writeMetrics("stopped", action.message)
-  await finishIsolation(ctx, `loop(${loopId(state)}): incomplete — ${action.message}`)
-  return { kind: "stop", message: action.message, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}), ...(action.retryable ? { retryable: true } : {}) }
-}
-
-/**
- * Checkpoint the work tree and tear the isolation down — but ONLY when the loop
- * actually isolated. A source-pre-set `git` (naming the branch to isolate ONTO)
- * without `isolated` must NOT reach here: `checkpoint` would `git add -A && commit`
- * the human's main tree and `teardownIsolation` would check out the base branch on
- * it. This is the centralized B5 fix — both hosts route through it. `clearState`
- * runs regardless (the crash snapshot is per-task, not per-isolation).
- */
-const finishIsolation = async (ctx: TerminalCtx, checkpointMessage: string): Promise<void> => {
-  const { $, directory, config, state, log } = ctx
-  if (state.isolated) {
-    await ctx.checkpoint(checkpointMessage)
-    await teardownIsolation($, log, directory, state)
-  }
   if (state.task) await clearState($, directory, config.tasksDir, state.task.id)
+  return { kind: "stop", message: action.message, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}), ...(action.retryable ? { retryable: true } : {}) }
 }
 
 /**

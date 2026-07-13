@@ -56,6 +56,7 @@ const makeCtx = (
   const metrics: { outcome: Outcome; detail: string }[] = []
   const commits: string[] = []
   const checkpoints: string[] = []
+  const ops: string[] = [] // interleaved port order — asserts checkpoint-before-backlog-commit
   const manifest =
     opts.manifest ??
     ({ manifest: { hooks: { validateBeforeTransition: opts.validate ? { [state.stage]: opts.validate } : {} } } } as unknown as LoadedManifest)
@@ -67,11 +68,17 @@ const makeCtx = (
     state,
     manifest,
     actor: "tester",
-    commitBacklog: async (m) => void commits.push(m),
-    checkpoint: async (m) => void checkpoints.push(m),
+    commitBacklog: async (m) => {
+      commits.push(m)
+      ops.push(`commit:${m}`)
+    },
+    checkpoint: async (m) => {
+      checkpoints.push(m)
+      ops.push(`checkpoint:${m}`)
+    },
     writeMetrics: async (outcome, detail) => void metrics.push({ outcome, detail }),
   }
-  return { ctx, fs, log, metrics, commits, checkpoints }
+  return { ctx, fs, log, metrics, commits, checkpoints, ops }
 }
 
 const taskRef = (id: string, status: string) => ({ id, path: `/repo/docs/tasks/${status}/${id}.md`, acceptance: [] })
@@ -131,7 +138,9 @@ test("done parks the task in in-review and commits the backlog when not isolated
   assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
 })
 
-test("done on an isolated shared-tree loop checkpoints (folding the move in) instead of a separate backlog commit", async () => {
+test("done on an isolated shared-tree loop checkpoints and tears down BEFORE the backlog move + commit", async () => {
+  // The stranding regression: a backlog write made before teardown would be
+  // committed onto feature/<id> and vanish from the human branch at checkout.
   const state: LoopState = {
     goal: "Do it",
     stage: "review",
@@ -141,12 +150,34 @@ test("done on an isolated shared-tree loop checkpoints (folding the move in) ins
     git: { base: "main", branch: "feature/t" }, // shared-tree: no worktree
     isolated: true,
   }
-  const { ctx, metrics, commits, checkpoints } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  const { ctx, log, metrics, commits, checkpoints, ops } = makeCtx({ "in-progress/t.md": body(true) }, state)
   const report = await runTerminal(ctx, done)
   assert.ok(report.kind === "done" && report.moved === true)
-  assert.equal(commits.length, 0, "shared-tree checkpoint folds the backlog move in")
   assert.equal(checkpoints.length, 1, "isolated → checkpoint runs")
+  assert.equal(commits.length, 1, "the backlog move gets its own commit on the human branch")
+  assert.ok(ops[0]!.startsWith("checkpoint:") && ops[1]!.startsWith("commit:"), `checkpoint must precede the backlog commit: ${ops.join(" | ")}`)
+  const checkpointAt = log.findIndex((c) => c.startsWith("git ") && c.includes("checkout")) // teardown's checkout back to base
+  const moveAt = log.findIndex((c) => c.startsWith("mv ") && c.includes("in-review"))
+  assert.ok(checkpointAt !== -1 && moveAt !== -1 && checkpointAt < moveAt, `teardown must precede the task move: ${log.join(" | ")}`)
   assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
+})
+
+test("stop on an isolated shared-tree loop checkpoints and tears down BEFORE the note + backlog commit", async () => {
+  const state: LoopState = {
+    goal: "Do it",
+    stage: "build",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "main", branch: "feature/t" },
+    isolated: true,
+  }
+  const { ctx, commits, checkpoints, ops } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.equal(checkpoints.length, 1)
+  assert.equal(commits.length, 1, "the stop note gets its own commit on the human branch")
+  assert.ok(ops[0]!.startsWith("checkpoint:") && ops[1]!.startsWith("commit:"), `checkpoint must precede the backlog commit: ${ops.join(" | ")}`)
 })
 
 test("stop annotates the task and leaves it in place (no move)", async () => {
