@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import type { Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdAnywhere, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, gitActor } from "./git.js"
 import { shipPr } from "./ship-pr.js"
@@ -67,21 +67,10 @@ const statusFolder = (t: Task): string => path.basename(path.dirname(t.path))
 const resolveGateId = async (ctx: GateCtx, query: string): Promise<{ id: string } | { error: GateResult } | null> => {
   if (!query) return { id: query }
   const { $, directory, config, log } = ctx
-  const prefix = new Set<string>()
-  for (const s of STATUSES) {
-    const r = await resolveTaskIdIn($, directory, config.tasksDir, s, query, log)
-    if (!r) continue
-    if ("id" in r) {
-      if (r.id === query) return { id: query } // exact filename (full id or legacy slug) wins immediately
-      prefix.add(r.id)
-    } else for (const m of r.ambiguous) prefix.add(m)
-  }
-  if (prefix.size === 1) return { id: [...prefix][0]! }
-  if (prefix.size > 1) {
-    const list = [...prefix].sort().join(", ")
-    return { error: { ok: false, message: `Ambiguous id "${query}" — matches ${list}. Use more characters.`, variant: "warning" } }
-  }
-  return null
+  const r = await resolveTaskIdAnywhere($, directory, config.tasksDir, query, log)
+  if (!r) return null
+  if ("id" in r) return r
+  return { error: { ok: false, message: `Ambiguous id "${query}" — matches ${r.ambiguous.join(", ")}. Use more characters.`, variant: "warning" } }
 }
 
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */

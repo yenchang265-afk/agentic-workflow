@@ -269,6 +269,14 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
       } else {
         out = { exitCode: 1, stdout: "", stderr: `mv: cannot stat '${src}'` }
       }
+    } else if (parts[0] === "ls" && parts[1]) {
+      // Short-id resolution lists a status folder — serve the fake fs's basenames.
+      const dir = parts[1]!
+      const names = Object.keys(fs)
+        .filter((p) => p.startsWith(`${dir}/`))
+        .map((p) => p.slice(dir.length + 1))
+        .filter((n) => !n.includes("/"))
+      out = names.length ? { exitCode: 0, stdout: names.join("\n"), stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
     }
     const result = {
       exitCode: out.exitCode,
@@ -334,6 +342,18 @@ test("approve <id> on a task at no gate (in-progress) reports info, no move", as
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /is in in-progress/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on a refusal")
+})
+
+test("plan <short-id> resolves the short-hash handle and starts planning", async () => {
+  const queued = serializeTask({ title: "Do the thing", body: "Just a body, no plan yet." })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/queued/f7k3-do-the-thing.md": queued }, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-plan-short", "plan f7k3", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /planning…/, `unexpected toast: ${toasts[0]?.message}`)
 })
 
 test("plan <id> on a plan-review task points at the gate verbs, no move", async () => {

@@ -42,6 +42,7 @@ import {
   releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
+  resolveTaskIdAnywhere,
   selectOrder,
   STALE_CLAIM_MINUTES,
   STATUSES,
@@ -1243,6 +1244,13 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
  */
 const startPlanById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<void> => {
   const { client } = deps
+  // Accept the short-hash handle (`plan f7k3`) the UIs surface as the copyable
+  // id — the same resolution the gate verbs do.
+  const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
+  if (resolved && "ambiguous" in resolved) {
+    return void (await toast(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning"))
+  }
+  if (resolved) id = resolved.id
   const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
   if (!queued) {
     const elsewhere = await findAnyStatus(deps, config, id)
@@ -1438,8 +1446,14 @@ export const handleCommand = async (
   }
 
   if (lower === "recover" || lower.startsWith("recover ")) {
-    const id = arg.slice("recover".length).trim()
+    let id = arg.slice("recover".length).trim()
     if (!id) return void (await toast(client, `Usage: ${ECMD} recover <id>.`, "warning"))
+    // Accept the short-hash handle, same as the gate verbs and `plan <id>`.
+    const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
+    if (resolved && "ambiguous" in resolved) {
+      return void (await toast(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning"))
+    }
+    if (resolved) id = resolved.id
     const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
     if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
     const driving = findSessionDriving(id)

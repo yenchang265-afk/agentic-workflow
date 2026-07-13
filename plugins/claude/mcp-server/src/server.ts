@@ -57,6 +57,7 @@ import {
   pairingCoverage,
   releaseOrphanedClaims,
   rescueStray,
+  resolveTaskIdAnywhere,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
@@ -398,6 +399,13 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
+    // Accept the short-hash handle (`f7k3`) the UIs surface as the copyable id —
+    // the same resolution the gate tools do.
+    const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
+    if (resolved && "ambiguous" in resolved) {
+      return fail(`Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`)
+    }
+    if (resolved) id = resolved.id
     const t = await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)
     if (!t) {
       const queued = await findByIdIn(sh, directory, config.tasksDir, "queued", id)
@@ -1059,6 +1067,12 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
+    // Accept the short-hash handle, same as loop_start and the gate tools.
+    const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
+    if (resolved && "ambiguous" in resolved) {
+      return fail(`Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`)
+    }
+    if (resolved) id = resolved.id
     const t = await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)
     if (!t) return fail(`No in-progress task "${id}".`)
     if (isClaimable(t)) return fail(`Task "${id}" never started — start it with loop_start or loop_claim.`)

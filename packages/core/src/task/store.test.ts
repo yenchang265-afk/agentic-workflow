@@ -18,6 +18,7 @@ import {
   pairingCoverage,
   PLAN_HEADING,
   releaseOrphanedClaims,
+  resolveTaskIdAnywhere,
   resolveTaskIdIn,
   selectNext,
   selectOrder,
@@ -485,6 +486,47 @@ test("resolveTaskIdIn never treats a legacy slug as a hash prefix", async () => 
 test("resolveTaskIdIn returns null when nothing matches", async () => {
   const $ = idResolverShell(QDIR, ["f7k3-add-foo"])
   assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "zzzz"), null)
+})
+
+// --- resolveTaskIdAnywhere (cross-status: what plan/recover/loop_start accept) ---
+
+/** A fake shell over several status folders at once: `dirs` maps folder path → filenames. */
+const multiDirShell = (dirs: Record<string, string[]>) =>
+  makeShell((cmd) => {
+    if (cmd.startsWith("cat ")) {
+      const file = cmd.slice("cat ".length)
+      const dir = file.slice(0, file.lastIndexOf("/"))
+      const name = file.slice(dir.length + 1).replace(/\.md$/, "")
+      return dirs[dir]?.includes(name) ? { exitCode: 0, stdout: "x" } : { exitCode: 1 }
+    }
+    if (cmd.startsWith("ls ")) {
+      const dir = cmd.slice("ls ".length)
+      const files = dirs[dir]
+      return files ? { exitCode: 0, stdout: files.map((f) => `${f}.md`).join("\n") } : { exitCode: 1 }
+    }
+    return { exitCode: 1 }
+  })
+
+test("resolveTaskIdAnywhere resolves a short-hash handle whichever folder the task is in", async () => {
+  const $ = multiDirShell({ "/r/docs/tasks/queued": ["f7k3-add-foo"], "/r/docs/tasks/in-progress": ["a1b2-do-bar"] })
+  assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "f7k3"), { id: "f7k3-add-foo" })
+  assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "a1b2"), { id: "a1b2-do-bar" })
+})
+
+test("resolveTaskIdAnywhere: an exact full id wins immediately", async () => {
+  const $ = multiDirShell({ "/r/docs/tasks/queued": ["f7k3-add-foo"] })
+  assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "f7k3-add-foo"), { id: "f7k3-add-foo" })
+})
+
+test("resolveTaskIdAnywhere merges prefix hits across folders into an ambiguity", async () => {
+  const $ = multiDirShell({ "/r/docs/tasks/queued": ["f7k3-add-foo"], "/r/docs/tasks/draft": ["fa2b-do-bar"] })
+  assert.deepEqual(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "f"), { ambiguous: ["f7k3-add-foo", "fa2b-do-bar"] })
+})
+
+test("resolveTaskIdAnywhere returns null for an unknown id and an empty query", async () => {
+  const $ = multiDirShell({ "/r/docs/tasks/queued": ["f7k3-add-foo"] })
+  assert.equal(await resolveTaskIdAnywhere($, "/r", "docs/tasks", "zzzz"), null)
+  assert.equal(await resolveTaskIdAnywhere($, "/r", "docs/tasks", ""), null)
 })
 
 // --- selectOrder (the claim walk's candidate ordering) ---

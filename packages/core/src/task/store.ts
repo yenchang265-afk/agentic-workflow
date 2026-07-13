@@ -293,6 +293,39 @@ export const resolveTaskIdIn = async (
   return { ambiguous: [...matches].sort() }
 }
 
+/**
+ * Resolve a user-typed id — possibly a short-hash handle (`f7k3`) rather than
+ * the full `f7k3-add-rate-limit` filename — to the single canonical task id
+ * across ALL status folders. An exact filename hit in any folder wins
+ * immediately (full modern ids and legacy slugs); otherwise the short-hash
+ * prefix matches from every folder are merged: exactly one → resolved, several
+ * → ambiguous (never guesses), none → null. This is the resolution the gate
+ * verbs (approve/replan) have always done — exported so every id-taking verb
+ * (`plan`, `recover`, loop_start) accepts the same short handles the UIs
+ * surface as "the copyable id".
+ */
+export const resolveTaskIdAnywhere = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  query: string,
+  log?: Log,
+): Promise<ResolvedId> => {
+  if (!query) return null
+  const prefix = new Set<string>()
+  for (const s of STATUSES) {
+    const r = await resolveTaskIdIn($, directory, tasksDir, s, query, log)
+    if (!r) continue
+    if ("id" in r) {
+      if (r.id === query) return { id: query } // exact filename (full id or legacy slug) wins immediately
+      prefix.add(r.id)
+    } else for (const m of r.ambiguous) prefix.add(m)
+  }
+  if (prefix.size === 1) return { id: [...prefix][0]! }
+  if (prefix.size > 1) return { ambiguous: [...prefix].sort() }
+  return null
+}
+
 /** Directory of atomic claim markers, alongside the task files of one status folder. */
 const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
 
