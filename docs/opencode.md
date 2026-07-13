@@ -141,7 +141,7 @@ The dependency sitter (`/agentic-loop:dep-sitter`, opt-in via
 `loops.dep-sitter` in `.agentic-loop.json`):
 
 - `/agentic-loop:dep-sitter claim` — one-shot pull: scan the project's
-  dependencies (npm, pip/Python, Maven, and Gradle — `loops.dep-sitter.ecosystem`
+  dependencies (npm, Maven, and Gradle — `loops.dep-sitter.ecosystem`
   picks or `auto`-detects) for the next vulnerable one at or above
   `severityFloor` and drive it through scan → upgrade → verify → publish. It
   confirms the advisory, applies the patch/minor bump on a `dep-sitter/*`

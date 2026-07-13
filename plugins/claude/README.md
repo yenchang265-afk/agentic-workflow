@@ -135,7 +135,7 @@ The dependency sitter (`/agentic-loop:dep-sitter`, opt-in via
 
 - `/agentic-loop:dep-sitter claim` — one-shot pull (maps to
   `loop_claim({kind: "dep-sitter"})`): scan the project's dependencies (npm,
-  pip/Python, Maven, and Gradle — ecosystem auto-detected, tunable via
+  Maven, and Gradle — ecosystem auto-detected, tunable via
   `loops.dep-sitter.ecosystem`) for vulnerable or outdated packages above the
   configured `severityFloor`, then drive scan → upgrade → verify → publish on a
   `dep-sitter/*` branch: it confirms the advisory, applies the patch/minor
@@ -188,8 +188,10 @@ The whole engineering lifecycle lives on `/agentic-loop:engineering` (`new`,
   `task-backlog-management`).
 - `hooks/` — a PreToolUse guard enforcing the read-only bash allowlist during
   VERIFY/REVIEW, worktree pinning, the stage deadline, and the Azure DevOps
-  write backstop; and SessionStart hooks that reconcile interrupted loops and
-  export config `ado.pat` into the session env for the sitter's ADO stages.
+  write backstop; UserPromptSubmit hooks (`gate-command`/`gate-parse`) that
+  handle the deterministic `approve` gate before the agent's turn; and
+  SessionStart hooks that reconcile interrupted loops and export config
+  `ado.pat` into the session env for the sitter's ADO stages.
 - `mcp-server/` — the `agentic-loop` MCP server (`mcp__agentic-loop__loop_*`
   tools), reusing the original pure state machine and porting its
   git/backlog/persistence IO.

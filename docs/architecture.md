@@ -272,7 +272,7 @@ posture in the [threat model](design/threat-model.md).
 - **dep-sitter** (`packages/core/loops/dep-sitter/`) — work source
   `dependency-scan` (`autoFix: ["patch","minor"]`, `severityFloor: "high"`,
   `includeOutdated: false`, `ecosystem: "auto"`), which surfaces direct
-  dependencies with a fixable advisory across npm, pip, Maven, and Gradle.
+  dependencies with a fixable advisory across npm, Maven, and Gradle.
   **scan** (check) → **upgrade** (worktree, on a `dep-sitter/*` branch: bump
   the manifest, refresh the lockfile, fix the fallout) → **verify** (worktree,
   runs the suite) → **publish** pushes and opens a **draft PR**. **Major bumps
