@@ -85,12 +85,13 @@ const fakeShell = (held: Set<string>): Shell => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-const file = (id: string, opts: { plan?: boolean; started?: boolean } = {}): FakeFile => {
+const file = (id: string, opts: { plan?: boolean; started?: boolean; claimed?: boolean } = {}): FakeFile => {
   const plan = opts.plan ? `\n${PLAN_HEADING}\n\n1. Do the thing.\n` : ""
+  const claimed = opts.claimed ? `\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]\n` : ""
   const started = opts.started ? `\n> BUILD started (iteration 1) — 2026-01-01T00:00:00.000Z\n` : ""
   return {
     name: `${id}.md`,
-    content: `---\ntitle: ${id}\npriority: 2\n---\n\nBody of ${id}.\n${plan}${started}`,
+    content: `---\ntitle: ${id}\npriority: 2\n---\n\nBody of ${id}.\n${plan}${claimed}${started}`,
   }
 }
 
@@ -165,6 +166,17 @@ test("release frees a still-claimable build claim but keeps a started one", asyn
   folders["in-progress"] = [file("t", { plan: true, started: true })]
   const again = await source(folders, new Set(["t"])).claimNext()
   assert.equal(again.item, null) // held + no longer claimable
+})
+
+test("a CLAIMED note (durable claim evidence on the human branch) blocks re-claiming and points at recover", async () => {
+  // The theater-booking-0 bug: isolation committed every BUILD note onto
+  // feature/<id>, the human branch's task file looked untouched, and the
+  // watcher re-claimed a task whose run already finished. The CLAIMED note —
+  // committed before the branch is cut — is what must defeat the re-claim.
+  const src = source({ "in-progress": [file("ran-already", { plan: true, claimed: true })], queued: [] })
+  const { item, skip } = await src.claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /already started: ran-already/)
 })
 
 test("taskGoal joins title and body", () => {

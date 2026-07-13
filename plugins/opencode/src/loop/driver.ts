@@ -37,6 +37,7 @@ import {
   listClaimIds,
   listInProgress,
   listQueued,
+  markClaimed,
   moveTask,
   releaseClaim,
   releaseOrphanedClaims,
@@ -436,6 +437,18 @@ const commitTasks = (deps: Deps, config: Config, message: string): Promise<boole
 const commitBacklog = async (deps: Deps, config: Config, state: LoopState, message: string): Promise<void> => {
   if (!state.git?.worktree) return
   await commitTasks(deps, config, message)
+}
+
+/**
+ * Durable claim evidence on the human branch, appended + committed BEFORE
+ * isolation cuts feature/<id> (shared-tree mode checks the loop branch out in
+ * place, so anything later lands there and the human branch's task file looks
+ * untouched after teardown — the watcher would re-claim a finished task; see
+ * core store.ts CLAIMED_MARKER).
+ */
+const markClaimedOnHumanBranch = async (deps: Deps, config: Config, task: { id: string; path: string }): Promise<void> => {
+  await markClaimed(deps.$, task, await gitActor(deps.$, deps.directory), deps.log)
+  await commitTasks(deps, config, `loop(${task.id}): claimed`)
 }
 
 /** The slash command a stage fires — named by the manifest (e.g. plan → `plan-task`). Pure. */
@@ -859,6 +872,11 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
   lastSkipReason.delete(sessionID)
   const { item } = claim
   await toast(deps.client, item.claimMessage, "info")
+  // Task-backed claims entering an isolated stage get the durable CLAIMED note
+  // before drive() establishes isolation.
+  if (item.state.task && stageDef(manifestFor(item.loopKind).manifest, item.state.stage).isolation !== "none") {
+    await markClaimedOnHumanBranch(deps, config, item.state.task)
+  }
   try {
     const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.loopKind), item.state))
     if (outcome && claim.source.onTerminal) await claim.source.onTerminal(item, outcome)
@@ -1001,7 +1019,9 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       // `start-task`: a `plan <id>` / a claim claim entering execution at build.
       // `recover`: a human-forced resume of a started-but-dead task with no
       // valid snapshot. Both re-enter the state machine at build with the
-      // persisted plan.
+      // persisted plan. Only a fresh start writes the durable CLAIMED note —
+      // a recovered task already carries one (or a BUILD marker).
+      if (work.kind === "start-task") await markClaimedOnHumanBranch(deps, config, work.task)
       await drive(deps, sessionID, config, firstStep(eng, buildEntryState(work.task)))
     } else if (work?.kind === "start-plan") {
       // A `plan <id>` / a claim claim on a queued (planless) task: run the PLAN

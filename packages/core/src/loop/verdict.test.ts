@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { failedCriteriaBlock, LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict, worstOf } from "./verdict.js"
+import { failedCriteriaBlock, LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict, verdictContractBlock, worstOf } from "./verdict.js"
 
 test("parses a PASS verdict", () => {
   assert.equal(parseVerdict("checks ran\nLOOP_VERIFY: PASS", LOOP_VERIFY_TAG), "PASS")
@@ -30,6 +30,21 @@ test("parses the LOOP_REVIEW tag independently of LOOP_VERIFY", () => {
 
 test("a LOOP_VERIFY tag in the text does not satisfy a LOOP_REVIEW lookup", () => {
   assert.equal(parseVerdict("LOOP_VERIFY: PASS", LOOP_REVIEW_TAG), null)
+})
+
+// --- verdictContractBlock (the prompt-carried tool contract for check stages) ---
+
+test("verdictContractBlock names the stage, the tool, and both registered tool names", () => {
+  const block = verdictContractBlock("verify")
+  assert.match(block, /loop_verdict/)
+  assert.match(block, /stage: "verify"/)
+  assert.match(block, /mcp__agentic-loop__loop_verdict/)
+  assert.match(block, /mcp__plugin_agentic-loop_agentic-loop__loop_verdict/)
+  assert.match(block, /PASS/)
+})
+
+test("verdictContractBlock warns that prose verdicts are ignored", () => {
+  assert.match(verdictContractBlock("review"), /prose is IGNORED/i)
 })
 
 // --- worstOf (multi-lens review combination) ---

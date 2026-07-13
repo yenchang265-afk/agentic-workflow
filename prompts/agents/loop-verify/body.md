@@ -46,7 +46,10 @@ verdict `PASS`, `FAIL`, or `ERROR` — exactly once, at the end of your turn.
 Call the **`loop_verdict`** MCP tool exactly once, at the end of your turn:
 `stage: "verify"`, `verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason` (on
 FAIL/ERROR), and `criteria` mirroring the acceptance criteria you were given
-(`{criterion, pass}` each).
+(`{criterion, pass}` each). In your tool list it appears as
+`mcp__agentic-loop__loop_verdict` or, plugin-bundled,
+`mcp__plugin_agentic-loop_agentic-loop__loop_verdict` — if neither is present,
+say so explicitly in your final message and finish.
 {{/host}}
 The tool call is the loop's only trusted verdict channel; a verdict written in
 plain text is ignored and counts as FAIL. Use `ERROR` **only** when the check

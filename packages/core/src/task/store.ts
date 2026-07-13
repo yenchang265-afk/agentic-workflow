@@ -32,13 +32,30 @@ export const PLAN_HEADING = "## Implementation Plan"
 export const hasPlan = (task: Task): boolean => task.body.includes(PLAN_HEADING)
 
 /**
+ * The audited note a host appends to the task file — on the human-visible
+ * branch, BEFORE cutting the isolation branch — the moment a claim wins.
+ * Isolation commits everything else (BUILD notes, run logs, the done-path
+ * move) onto `feature/<id>`, so after teardown the human branch's task file
+ * would otherwise look untouched and the watcher would re-claim a task whose
+ * work already ran. This marker is the durable "work happened" evidence that
+ * survives on the human branch.
+ */
+export const CLAIMED_MARKER = "> CLAIMED"
+
+/** Append the durable claim note (see `CLAIMED_MARKER`). Call while the tree is still on the human branch. */
+export const markClaimed = async ($: Shell, task: FileRef, actor?: string | null, log?: Log): Promise<void> => {
+  await appendNote($, task, auditNote("CLAIMED — loop starting", new Date(), actor), log)
+}
+
+/**
  * Eligible for `/agentic-loop:engineering watch` to claim: planned, and never had ANY
- * "> BUILD started" note — not just "last pair unmatched" (that's
+ * "> BUILD started" or CLAIMED note — not just "last pair unmatched" (that's
  * `wasInterrupted`, below). Any marker at all means another live LoopState
  * is driving it right now, or it crashed and needs manual recovery — a
  * watch session must never silently reclaim either case. Pure.
  */
-export const isClaimable = (task: Task): boolean => hasPlan(task) && !task.body.includes("> BUILD started")
+export const isClaimable = (task: Task): boolean =>
+  hasPlan(task) && !task.body.includes("> BUILD started") && !task.body.includes(CLAIMED_MARKER)
 
 /** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
 export const extractPlan = (task: Task): string | undefined => {
@@ -52,7 +69,8 @@ export const extractPlan = (task: Task): string | undefined => {
  * but a human can force-resume it with `/agentic-loop:engineering recover <id>` once no live
  * loop is driving it (crashed runs, restarted plugins). Pure.
  */
-export const isRecoverable = (task: Task): boolean => hasPlan(task) && task.body.includes("> BUILD started")
+export const isRecoverable = (task: Task): boolean =>
+  hasPlan(task) && (task.body.includes("> BUILD started") || task.body.includes(CLAIMED_MARKER))
 
 /**
  * Whether the task's last recorded BUILD run has no matching "finished" note —

@@ -1,7 +1,7 @@
 ---
 name: loop-review-fetch
 description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a verdict via the loop_verdict MCP tool. Never edits, never comments, never votes.
-tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict
+tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict, mcp__plugin_agentic-loop_agentic-loop__loop_verdict
 ---
 
 You are the **loop-review-fetch** subagent — the FETCH stage of the

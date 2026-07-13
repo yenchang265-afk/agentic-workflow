@@ -7,7 +7,7 @@ import { effectiveAllowlist } from "../manifest/schema.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
 import type { Action, Config, LoopState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import type { Verdict } from "./verdict.js"
+import { verdictContractBlock, type Verdict } from "./verdict.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -90,9 +90,17 @@ const withoutArtifact = (state: LoopState, stage: string): LoopState => {
   return { ...state, artifacts: rest }
 }
 
+// Additive semantics on top of the frozen oracle: check stages now carry the
+// mandatory verdict-contract paragraph in the prompt itself (see verdict.ts) —
+// appended here rather than "fixed" inside the frozen composeArgs.
+const oracleCompose = (state: LoopState, stage: string): string => {
+  const base = oracleComposeArgs(state, stage)
+  return stage === "verify" || stage === "review" ? `${base}\n\n${verdictContractBlock(stage)}` : base
+}
+
 const oracleFire = (state: LoopState, stage: string): { state: LoopState; action: Action } => ({
   state: { ...state, stage },
-  action: { kind: "fire", stage, arguments: oracleComposeArgs({ ...state, stage }, stage) },
+  action: { kind: "fire", stage, arguments: oracleCompose({ ...state, stage }, stage) },
 })
 
 const oracleAdvance = (
@@ -197,8 +205,20 @@ const PROMPT_STATES: Record<string, LoopState> = {
 test("composePrompt reproduces the frozen composeArgs byte-identically for every stage × state", () => {
   for (const [label, state] of Object.entries(PROMPT_STATES)) {
     for (const stage of ["plan", "build", "verify", "review"]) {
-      assert.equal(composePrompt(eng, state, stage), oracleComposeArgs(state, stage), `${label} → ${stage}`)
+      assert.equal(composePrompt(eng, state, stage), oracleCompose(state, stage), `${label} → ${stage}`)
     }
+  }
+})
+
+test("composePrompt appends the verdict contract to check stages only", () => {
+  const state = resumeAtBuild("add foo", task, "PLAN BODY")
+  for (const stage of ["verify", "review"]) {
+    const prompt = composePrompt(eng, { ...state, stage }, stage)
+    assert.ok(prompt.endsWith(verdictContractBlock(stage)), `${stage} carries the contract`)
+    assert.match(prompt, /loop_verdict/)
+  }
+  for (const stage of ["plan", "build"]) {
+    assert.doesNotMatch(composePrompt(eng, { ...state, stage }, stage), /MANDATORY VERDICT/, `${stage} has no contract`)
   }
 })
 

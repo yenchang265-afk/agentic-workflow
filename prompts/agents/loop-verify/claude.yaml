@@ -1,3 +1,3 @@
 name: loop-verify
 description: Verifier for the VERIFY stage of the agentic loop. Runs tests and checks the build against the plan's acceptance criteria, then records the verdict via the loop_verdict MCP tool. Runs read/test commands (constrained by a PreToolUse allowlist) but never edits files.
-tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict
+tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict, mcp__plugin_agentic-loop_agentic-loop__loop_verdict

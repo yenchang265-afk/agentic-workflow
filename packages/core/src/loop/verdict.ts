@@ -67,6 +67,25 @@ export const failedCriteriaBlock = (record: VerdictRecord | null): string => {
 export const LOOP_VERIFY_TAG = "LOOP_VERIFY"
 export const LOOP_REVIEW_TAG = "LOOP_REVIEW"
 
+/**
+ * The mandatory verdict-contract paragraph appended to every CHECK stage's
+ * composed prompt (see engine.ts `composePrompt`). The contract normally
+ * lives in the loop-verify/loop-review agent definitions, but a mis-resolved
+ * subagent binding or a stripped tool allowlist silently loses it — and the
+ * stage then "passes" in prose while the loop records FAIL. Carrying the
+ * contract in the prompt itself makes it survive any dispatch path, on both
+ * hosts. Pure.
+ */
+export const verdictContractBlock = (stage: string): string =>
+  [
+    "MANDATORY VERDICT: before you finish, record your verdict by calling the `loop_verdict` tool",
+    "(on Claude Code it appears as `mcp__agentic-loop__loop_verdict` or, plugin-bundled,",
+    "`mcp__plugin_agentic-loop_agentic-loop__loop_verdict`)",
+    `exactly once, with stage: "${stage}", verdict: "PASS" | "FAIL" | "ERROR", and a one-line reason on FAIL/ERROR.`,
+    "A verdict written only in prose is IGNORED and the loop records this stage as a failure.",
+    "If the loop_verdict tool is not in your tool list, state that explicitly in your final message and finish.",
+  ].join(" ")
+
 export const parseVerdict = (text: string, tag: string): Verdict | null => {
   if (!text) return null
   const re = new RegExp(`${tag}:\\s*(PASS|FAIL|ERROR)`, "gi")

@@ -47,7 +47,10 @@ trusted verdict channel.
 {{/host}}
 {{#host claude}}
 **Record your verdict by calling the `loop_verdict` MCP tool**
-(`mcp__agentic-loop__loop_verdict`) — the loop's only trusted verdict channel.
+(`mcp__agentic-loop__loop_verdict` or, plugin-bundled,
+`mcp__plugin_agentic-loop_agentic-loop__loop_verdict`) — the loop's only
+trusted verdict channel. If neither is in your tool list, say so explicitly in
+your final message and finish.
 {{/host}}
 Call it exactly once, at the end of your turn, with `stage: "review"`,
 `verdict: "PASS" | "FAIL" | "ERROR"`, and a one-line `reason` on FAIL or

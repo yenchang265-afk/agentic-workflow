@@ -13,6 +13,7 @@ import {
   isOrphanedClaim,
   isRecoverable,
   listClaimIds,
+  markClaimed,
   moveTask,
   pairingCoverage,
   PLAN_HEADING,
@@ -174,6 +175,37 @@ test("isRecoverable is true once a planned task has any build marker", () => {
 test("isRecoverable stays true after a matched finish (recover is for any stuck started task)", () => {
   const body = `${PLAN_HEADING}\n\n1. Do it.\n\n> BUILD started (iteration 1)\n> BUILD finished (iteration 1)`
   assert.equal(isRecoverable(task("a", 0, body)), true)
+})
+
+// --- CLAIMED marker: durable claim evidence on the human-visible branch ---
+// Isolation commits BUILD notes onto feature/<id>; without this marker the
+// human branch's task file looks untouched after a full run and the watcher
+// re-claims a task whose work already ran (the theater-booking-0 bug).
+
+test("isClaimable is false once a CLAIMED note is on the body, even with zero build markers", () => {
+  const at = new Date("2026-07-13T08:31:53.000Z")
+  const body = `${PLAN_HEADING}\n\n1. Do it.\n\n> ${auditNote("CLAIMED — loop starting", at, "w")}`
+  assert.equal(isClaimable(task("a", 0, body)), false)
+})
+
+test("isRecoverable is true for a planned task with only a CLAIMED note (crashed before BUILD)", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do it.\n\n> CLAIMED — loop starting [2026-07-13T08:31:53.000Z]`
+  assert.equal(isRecoverable(task("a", 0, body)), true)
+})
+
+test("isOrphanedClaim is false once CLAIMED landed — the sweep must not release a run's marker", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do it.\n\n> CLAIMED — loop starting [2026-07-13T08:31:53.000Z]`
+  assert.equal(isOrphanedClaim(task("a", 0, body), { drivenByLiveLoop: false, markerStale: true }), false)
+})
+
+test("markClaimed appends the CLAIMED audit note to the task file", async () => {
+  const cmds: string[] = []
+  const $ = makeShell(() => ({}), cmds)
+  await markClaimed($, task("a", 0), "Alice <alice@acme.com>")
+  assert.ok(
+    cmds.some((c) => c.includes("CLAIMED — loop starting") && c.includes("by Alice")),
+    `no CLAIMED append in: ${cmds.join(" | ")}`,
+  )
 })
 
 test("auditNote suffixes the timestamp and actor", () => {

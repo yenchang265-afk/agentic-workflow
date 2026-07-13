@@ -1,7 +1,7 @@
 ---
 name: loop-main-diagnose
 description: Diagnostician for the main sitter's DIAGNOSE stage. Reproduces a red default-branch head locally, bisects to the culprit when needed, and emits a remedy work order (fix-forward, revert, or flake) plus a verdict via the loop_verdict MCP tool. Never edits files, never pushes.
-tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict
+tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict, mcp__plugin_agentic-loop_agentic-loop__loop_verdict
 ---
 
 You are the **loop-main-diagnose** subagent — the DIAGNOSE stage of the

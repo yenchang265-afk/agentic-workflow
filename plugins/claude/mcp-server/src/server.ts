@@ -22,7 +22,7 @@ import {
 import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-loop/core/source/types"
 import { enabledLoopKinds, platformFor } from "@agentic-loop/core/config"
-import { failedCriteriaBlock, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
+import { failedCriteriaBlock, parseVerdict, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
@@ -52,6 +52,7 @@ import {
   isRecoverable,
   listByStatus,
   listClaimIds,
+  markClaimed,
   moveTask,
   pairingCoverage,
   releaseOrphanedClaims,
@@ -114,6 +115,7 @@ const log = (level: "info" | "warn" | "error", message: string) =>
 let active: LoopState | null = null
 let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when loop_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
+let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
@@ -167,6 +169,26 @@ const loadCfg = async () => {
 // --- host wiring (shared helpers live in @agentic-loop/core/loop/orchestrate) ---
 
 const stageMarkerPath = () => path.join(directory, config.tasksDir, "runs", ".stage.json")
+const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
+
+/**
+ * Plugin-bundled agents resolve under the plugin namespace in Claude Code —
+ * Task's subagent_type is "agentic-loop:<name>", not the bare manifest name.
+ * The manifests stay host-neutral; only this host prefixes.
+ */
+const agentRef = (name: string): string => `agentic-loop:${name}`
+
+/** Flip the stage marker's `verdictRecorded` flag in place once loop_verdict
+ *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
+const stampVerdictRecorded = () => {
+  try {
+    const m = JSON.parse(fs.readFileSync(stageMarkerPath(), "utf8")) as Record<string, unknown>
+    fs.writeFileSync(stageMarkerPath(), JSON.stringify({ ...m, verdictRecorded: true }))
+    fs.rmSync(verdictNagPath(), { force: true })
+  } catch {
+    /* best-effort */
+  }
+}
 
 /** Write the current-stage marker the PreToolUse hook reads to scope the
  *  allowlist and enforce the stage deadline. */
@@ -174,6 +196,7 @@ const writeStageMarker = (stage: string | null) => {
   const dir = path.join(directory, config.tasksDir, "runs")
   try {
     fs.mkdirSync(dir, { recursive: true })
+    fs.rmSync(verdictNagPath(), { force: true }) // the nag sentinel belongs to one stage attempt only
     if (stage === null) {
       stageDeadline = null
       fs.rmSync(stageMarkerPath(), { force: true })
@@ -201,6 +224,11 @@ const writeStageMarker = (stage: string | null) => {
           // (loop-orchestration SKILL) spawns whatever is named here, so a new kind
           // needs no prose edit.
           agent: def.agent,
+          // Check stages must record a verdict via loop_verdict before ending;
+          // the SubagentStop guard blocks a first stop that hasn't (see
+          // check-verdict-guard.mjs). loop_verdict flips verdictRecorded in place.
+          check: def.kind === "check",
+          verdictRecorded: false,
           // The backlog guard's PLAN carve-out: only this task's queued/ file
           // may be written directly while PLAN is live.
           taskId: active?.task?.id ?? null,
@@ -282,6 +310,13 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: LoopStat
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
   pending = null
+  verdictRetried = false
+  // Durable claim evidence BEFORE isolation cuts feature/<id>: everything after
+  // this commits onto the loop branch, so without it the human branch's task
+  // file looks untouched after teardown and the watcher re-claims a task whose
+  // work already ran (see store.ts CLAIMED_MARKER).
+  await markClaimed(sh, t, await gitActor(sh, directory), log)
+  await commitPaths(sh, directory, [config.tasksDir], `loop(${t.id}): claimed`)
   let state = buildEntryState(t)
   try {
     state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
@@ -300,6 +335,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: LoopStat
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
   pending = null
+  verdictRetried = false
   const state = planEntryState(t)
   active = state
   // Arm the PreToolUse carve-out for the whole PLAN window: {stage:"plan", taskId}
@@ -336,9 +372,10 @@ const firePayload = (state: LoopState, id: string) => {
   return {
     action: { kind: "fire", stage: state.stage },
     taskId: id,
-    // The subagent to spawn for this stage — straight from the manifest, so the
-    // driver never hardcodes per-kind agent names.
-    agent: stageDef(manifest.manifest, state.stage).agent,
+    // The subagent to spawn for this stage — the manifest's name under the
+    // plugin namespace (Task subagent_type). Fall back to the bare name only
+    // if the namespaced one is unknown to this Claude Code version.
+    agent: agentRef(stageDef(manifest.manifest, state.stage).agent),
     isolation: state.git ?? null,
     prompt: composePrompt(manifest, state, state.stage),
     ...(state.stage === "plan"
@@ -417,8 +454,15 @@ server.registerTool(
     let state = claim.item.state
     samples = []
     pending = null
+    verdictRetried = false
     const loaded = manifestFor(claim.item.loopKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
+      // Task-backed claims get the durable CLAIMED note on the human branch
+      // before feature/<id> is cut — same as startTask (see store.ts CLAIMED_MARKER).
+      if (state.task) {
+        await markClaimed(sh, state.task, await gitActor(sh, directory), log)
+        await commitPaths(sh, directory, [config.tasksDir], `loop(${state.task.id}): claimed`)
+      }
       try {
         state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
       } catch (err) {
@@ -486,6 +530,7 @@ server.registerTool(
       const crit = [...(pending.criteria ?? []), ...(rec.criteria ?? [])]
       pending = { verdict: combined, ...(reasons.length ? { reason: reasons.join(" · ") } : {}), ...(crit.length ? { criteria: crit } : {}) }
     }
+    stampVerdictRecorded()
     return ok({ recorded: pending.verdict })
   },
 )
@@ -536,11 +581,19 @@ server.registerTool(
       const actor = await gitActor(sh, directory)
       await appendNote(sh, active.task, auditNote(`BUILD started (iteration ${active.iteration + 1})`, new Date(), actor), log)
     }
+    const def = stageDef(activeManifest().manifest, stage)
     return ok({
       stage,
-      agent: stageDef(activeManifest().manifest, stage).agent,
+      agent: agentRef(def.agent),
       worktree: active.git?.worktree ?? null,
       deadlineMinutes: config.stageTimeoutMinutes,
+      ...(def.kind === "check"
+        ? {
+            note:
+              "check stage: the spawned subagent MUST call the loop_verdict MCP tool before returning — " +
+              "a verdict in prose is ignored. Never call loop_verdict yourself on its behalf.",
+          }
+        : {}),
     })
   },
 )
@@ -574,6 +627,49 @@ server.registerTool(
       ...(stageDef(activeManifest().manifest, stage).kind === "check" ? { verdict: (pending?.verdict ?? "none") as Verdict | "none" } : {}),
     })
     flushRunMetrics(loopId(active)) // publish samples-so-far live to the hub
+    // A check stage that ended with NO loop_verdict call is a broken verdict
+    // channel, not a genuine FAIL — re-fire the same check once (no iteration
+    // consumed, no rebuild), then stop with a retryable ERROR instead of
+    // burning build iterations on a stage that may have passed (the
+    // theater-booking-0 failure mode: three rebuilds of an already-done task).
+    if (stageDef(activeManifest().manifest, stage).kind === "check" && !pending) {
+      // Diagnostic only — free text never flips control flow (verdict.ts).
+      const prose = parseVerdict(stageOutput, `LOOP_${stage.toUpperCase()}`)
+      if (!verdictRetried) {
+        verdictRetried = true
+        if (active.task) {
+          const noteActor = await gitActor(sh, directory)
+          await appendNote(
+            sh,
+            active.task,
+            auditNote(
+              `${stage.toUpperCase()} ended with no loop_verdict call — re-running the check once (prose claimed ${prose ?? "nothing"}; free text is untrusted)`,
+              new Date(),
+              noteActor,
+            ),
+            log,
+          )
+        }
+        writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+        lastFireAt = Date.now()
+        return ok({
+          action: { kind: "fire", stage },
+          agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
+          prompt:
+            composePrompt(activeManifest(), active, stage) +
+            "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the loop_verdict tool call is MANDATORY. " +
+            "If the tool is not in your tool list, state that explicitly in your final message and finish.",
+          note: "check retry (no iteration consumed): the previous pass never called loop_verdict — call loop_stage, then spawn the stage subagent again",
+        })
+      }
+      pending = {
+        verdict: "ERROR",
+        reason:
+          "no loop_verdict recorded even after a retry — the verdict channel is unreachable from the stage subagent " +
+          "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
+          (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
+      }
+    }
     // thread failed criteria ahead of the prose for the next iteration
     const block = failedCriteriaBlock(pending)
     const threaded = block ? `${block}\n\n${stageOutput}` : stageOutput
@@ -590,14 +686,20 @@ server.registerTool(
     const { state, action } = advance(activeManifest(), active, config, threaded, verdict)
     active = state
     pending = null
+    verdictRetried = false // the transition happened — the next check stage gets its own retry budget
 
     if (action.kind === "fire") {
       await snapshot()
+      const nextDef = stageDef(activeManifest().manifest, action.stage)
       return ok({
         action: { kind: "fire", stage: action.stage },
-        agent: stageDef(activeManifest().manifest, action.stage).agent,
+        agent: agentRef(nextDef.agent),
         prompt: composePrompt(activeManifest(), active, action.stage),
-        note: "call loop_stage, then spawn the subagent named in the `agent` field",
+        note:
+          "call loop_stage, then spawn the subagent named in the `agent` field" +
+          (nextDef.kind === "check"
+            ? " — it MUST call the loop_verdict MCP tool before returning; never call loop_verdict yourself on its behalf"
+            : ""),
       })
     }
     if (action.kind === "park") {
@@ -965,6 +1067,7 @@ server.registerTool(
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     samples = []
     pending = null
+    verdictRetried = false
     const actor = await gitActor(sh, directory)
     if (snap && snap.task?.id === id) {
       active = { ...snap, task: { ...snap.task, path: t.path } }

@@ -53,10 +53,13 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
 **Which subagent to spawn is data, not memorized.** Every `loop_start`,
 `loop_claim`, `loop_stage`, and `loop_advance` (fire) response carries an
 `agent` field — the subagent this stage binds, straight from the kind's
-manifest. Always spawn the agent named there; never hardcode a per-kind name.
-The stage names below (`loop-plan-author`, `loop-build`, …) are the engineering
-kind's current values, shown for concreteness — a new loop kind needs no edit
-to this protocol.
+manifest, under the plugin namespace (e.g. `agentic-loop:loop-verify` — the
+Task tool's `subagent_type` for a plugin-provided agent). Always spawn the
+agent named there; never hardcode a per-kind name. If that subagent type is
+unknown to your Claude Code version, retry once with the bare name (e.g.
+`loop-verify`). The stage names below (`loop-plan-author`, `loop-build`, …) are
+the engineering kind's current values, shown for concreteness — a new loop kind
+needs no edit to this protocol.
 
 ## Step by step
 
@@ -126,14 +129,25 @@ to this protocol.
 ## The verdict contract
 
 VERIFY and REVIEW record their verdict **only** by calling the
-`mcp__agentic-loop__loop_verdict` tool (`stage`, `verdict` PASS/FAIL/ERROR,
-optional `reason`, `criteria`). A verdict written only in prose is ignored and
-counts as FAIL — repo content or a quoted contract must never flip control flow.
-A missing verdict is a FAIL, never a stall. The failed criteria are threaded ahead
-of the next iteration's prompt automatically. The `stage` names come from the
-running loop's **manifest** — `loop_verdict` accepts any of that kind's check
-stages (engineering: `verify`/`review`; pr-sitter: `triage`/`verify`) and
-rejects anything else.
+`loop_verdict` tool (`stage`, `verdict` PASS/FAIL/ERROR, optional `reason`,
+`criteria`) — registered as `mcp__agentic-loop__loop_verdict` or, plugin-bundled,
+`mcp__plugin_agentic-loop_agentic-loop__loop_verdict`. A verdict written only in
+prose is ignored and counts as FAIL — repo content or a quoted contract must
+never flip control flow. **The check subagent calls it; you never call
+`loop_verdict` yourself on its behalf, no matter what its prose claimed.** The
+failed criteria are threaded ahead of the next iteration's prompt automatically.
+The `stage` names come from the running loop's **manifest** — `loop_verdict`
+accepts any of that kind's check stages (engineering: `verify`/`review`;
+pr-sitter: `triage`/`verify`) and rejects anything else.
+
+**Missing verdict = broken channel, retried once.** When a check stage ends
+with no `loop_verdict` call, `loop_advance` does NOT burn an iteration: it
+re-fires the same check once (`note` says "check retry") — call `loop_stage`
+and spawn the stage subagent again with the returned prompt. If the retry also
+records nothing, the loop stops with a retryable ERROR naming the wiring
+problem; report it and suggest `loop_recover` after the fix. A SubagentStop
+hook also nags the check subagent once, in-session, when it tries to finish
+without a verdict.
 
 ## Between-stage bookkeeping (all via MCP tools — never by hand)
 
@@ -237,7 +251,9 @@ Three further opt-in kinds drive the same way (`loop_claim({kind})` →
 - Spawning a stage subagent without first calling `loop_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.
 - Treating a stage's prose "PASS"/"FAIL" as the verdict — only the `loop_verdict`
-  tool call counts.
+  tool call counts. Corollary: never call `loop_verdict` yourself to "transcribe"
+  a check subagent's prose verdict — if the subagent didn't record it, follow the
+  check-retry path `loop_advance` returns.
 - Editing `docs/tasks/**` yourself — the MCP tools own the backlog; use them.
   That includes Bash: never `mv`, `mkdir`, `rm`, `touch`, or redirect into a
   status folder — the folder a task file lives in IS its state, and the
