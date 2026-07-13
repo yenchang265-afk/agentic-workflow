@@ -3,9 +3,15 @@
 Two layers. The **framework** — a shared core package, a manifest-interpreted
 loop engine, and a work-source scheduler — knows nothing about engineering
 tasks or pull requests. The **loop kinds** (`packages/core/loops/<kind>/`) are declarative
-manifests plus stage prompts that the framework interprets: `engineering` is
-the reference kind (the original PLAN / BUILD → VERIFY → REVIEW workflow,
-behavior-identical to when it was hardcoded), `pr-sitter` is the second.
+manifests plus stage prompts that the framework interprets. Five ship today:
+`engineering` is the reference kind (the original PLAN / BUILD → VERIFY →
+REVIEW workflow, behavior-identical to when it was hardcoded), and four opt-in
+**sitters** watch a hosted surface and drive a fix — `pr-sitter` (your open
+PRs), `review-sitter` (PRs awaiting your review), `dep-sitter` (vulnerable or
+outdated dependencies), and `main-sitter` (the default branch's CI). Each
+sitter keeps the terminal call — merge, approve, close — human. **The four
+sitters are experimental** — their manifests, config keys, and defaults may
+still change; `engineering` is the stable, default-on kind.
 
 ## The framework — one engine, many kinds
 
@@ -20,7 +26,9 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts<br/>gh pr list + dedup ledger"]
+            ghpr["github-pr.ts<br/>gh pr list + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            depscan["dependency-scan.ts<br/>advisory reports"]
+            ciruns["ci-runs.ts<br/>watched-branch CI heads"]
         end
         engine["loop/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
         manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
@@ -28,15 +36,19 @@ flowchart TB
 
     subgraph kinds["LOOP KINDS — loops/&lt;kind&gt;/"]
         eng["engineering/loop.json<br/>+ stages/*.md"]
-        sitter["pr-sitter/loop.json<br/>+ stages/*.md"]
+        sitter["pr-sitter · review-sitter ·<br/>dep-sitter · main-sitter<br/>loop.json + stages/*.md"]
     end
 
     oc --> sched
     cc --> sched
     sched --> backlog
     sched --> ghpr
+    sched --> depscan
+    sched --> ciruns
     backlog -->|"WorkItem + entry LoopState"| engine
     ghpr -->|"WorkItem + entry LoopState"| engine
+    depscan -->|"WorkItem + entry LoopState"| engine
+    ciruns -->|"WorkItem + entry LoopState"| engine
     manifest --> engine
     eng --> manifest
     sitter --> manifest
@@ -181,11 +193,13 @@ step doesn't.
 Verdicts are only trusted through the `loop_verdict` plugin tool — a stage
 agent claiming "PASS" in prose is ignored. `loop_verdict` accepts any check
 stage the active loop's manifest declares (engineering: `verify`/`review`;
-pr-sitter: `triage`/`verify`) and validates the recording against it. Stage
+pr-sitter: `triage`/`verify`; review-sitter: `fetch`; dep-sitter:
+`scan`/`verify`; main-sitter: `diagnose`/`verify`) and validates the recording
+against it. Stage
 agents can't approve tasks, move backlog folders, or ship; the plugin and the
 human own every transition between statuses.
 
-## The PR sitter kind (`packages/core/loops/pr-sitter/`)
+## The PR sitter kind — experimental (`packages/core/loops/pr-sitter/`)
 
 Opt-in (`loops.pr-sitter.enabled` in `.agentic-loop.json`). Its work source
 is chosen from config `codePlatform` at wiring time: on GitHub
@@ -234,6 +248,44 @@ comment/read-only globs (`gh pr comment`/`gh api` on GitHub,
 resource on ADO, via the manifest's per-stage `platformAllowlist`), and failed
 pushes are reported, never forced. See the
 [threat model](design/threat-model.md).
+
+## The other sitter kinds — experimental
+
+Three more sitters follow the same shape — a **check** stage that decides
+whether there is claimable work, one or more **work** stages behind worktree
+isolation, and a terminal that publishes through a narrow platform allowlist —
+but bind a different work source and hold a narrower authority. Each is opt-in
+(`loops.<kind>.enabled`), resolves GitHub vs. Azure DevOps from `codePlatform`
+at wiring time, and treats the diff/comment/CI text it reads as untrusted
+input. Full config lives in [configuration.md](configuration.md); the security
+posture in the [threat model](design/threat-model.md).
+
+- **review-sitter** (`packages/core/loops/review-sitter/`) — work source
+  `github-pr` with `role: reviewer` and query `is:open review-requested:@me`,
+  so it claims *other people's* PRs where your review is requested (not your
+  own). **fetch** (read-only `gh`/git) → **assess** (worktree; reads the diff
+  in the context of the surrounding code, may run the suite to sanity-check) →
+  **publish** posts **one structured review comment** per requested head via
+  `gh pr comment`. Its authority is **comment-only**: it never approves,
+  requests changes, or merges — enforced by the publish stage allowlist and the
+  ADO write backstop — so the human stays reviewer of record.
+- **dep-sitter** (`packages/core/loops/dep-sitter/`) — work source
+  `dependency-scan` (`autoFix: ["patch","minor"]`, `severityFloor: "high"`,
+  `includeOutdated: false`, `ecosystem: "auto"`), which surfaces direct
+  dependencies with a fixable advisory across npm, pip, Maven, and Gradle.
+  **scan** (check) → **upgrade** (worktree, on a `dep-sitter/*` branch: bump
+  the manifest, refresh the lockfile, fix the fallout) → **verify** (worktree,
+  runs the suite) → **publish** pushes and opens a **draft PR**. **Major bumps
+  are never auto-fixed** — they are logged and left for a human, and merging
+  stays a human call.
+- **main-sitter** (`packages/core/loops/main-sitter/`) — work source `ci-runs`,
+  claiming the watched branch's newest head when its completed CI is red
+  (`loops.main-sitter.branch` overrides the branch; unset ⇒ the remote
+  default). **diagnose** (worktree, pinned to the red head, bisecting when
+  needed) → **remedy** (worktree; the smallest forward fix, or a
+  `git revert`) → **verify** (worktree) → **publish** opens a **draft remedy
+  PR** on a `main-sitter/*` branch and comments **once** on the culprit PR. It
+  **never pushes the watched branch itself**; merging stays a human call.
 
 ## Claude Code variant (`plugins/claude/`)
 

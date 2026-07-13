@@ -47,6 +47,13 @@ Run from the repo root, `./install.sh claude` finishes with the interactive
 `cd plugins/claude && ./install.sh` shortcut runs only the Claude half and
 does not include the wizard.
 
+To uninstall, run `./uninstall.sh claude` from the repo root — it removes the
+built `mcp-server/dist`; detach the plugin itself with
+`/plugin uninstall agentic-loop` (or drop `--plugin-dir`). The in-repo
+skill/reference symlinks are git-tracked and stay. To clear a project's local
+loop state, use `./scripts/clean.sh` (ephemeral `runs/` state by default;
+`--backlog` / `--config` / `--purge` go further — see its `--help`).
+
 ## Commands
 
 Authoring + gates (`/agentic-loop:engineering`):
@@ -94,6 +101,10 @@ The loop (`/agentic-loop:engineering`):
 - `/agentic-loop:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 
+The sitters (**experimental** — the four sitter commands below, their
+manifests, and their config keys may still change; `engineering` is the stable,
+default-on kind):
+
 The PR sitter (`/agentic-loop:pr-sitter`, opt-in via `loops.pr-sitter` in
 `.agentic-loop.json`):
 
@@ -104,6 +115,51 @@ The PR sitter (`/agentic-loop:pr-sitter`, opt-in via `loops.pr-sitter` in
   watch on this host — `claim` is the pull.
 - `/agentic-loop:pr-sitter status` · `stop` — report / abort the active loop (bare
   `/agentic-loop:pr-sitter` = status).
+
+The review sitter (`/agentic-loop:review-sitter`, opt-in via
+`loops.review-sitter.enabled` in `.agentic-loop.json`):
+
+- `/agentic-loop:review-sitter claim` — one-shot pull (maps to
+  `loop_claim({kind: "review-sitter"})`): poll for the next open PR where your
+  review is requested (`is:open review-requested:@me`, overridable via
+  `loops.review-sitter.query`) and drive it through fetch → assess → publish,
+  reading the diff against the surrounding code and posting **one structured
+  review comment** per requested head. Comment-only — it never approves,
+  requests changes, or merges, so the human stays reviewer of record. No
+  standing watch on this host — `claim` is the pull.
+- `/agentic-loop:review-sitter status` · `stop` — report / abort the active loop
+  (bare `/agentic-loop:review-sitter` = status).
+
+The dependency sitter (`/agentic-loop:dep-sitter`, opt-in via
+`loops.dep-sitter.enabled` in `.agentic-loop.json`):
+
+- `/agentic-loop:dep-sitter claim` — one-shot pull (maps to
+  `loop_claim({kind: "dep-sitter"})`): scan the project's dependencies (npm,
+  pip/Python, Maven, and Gradle — ecosystem auto-detected, tunable via
+  `loops.dep-sitter.ecosystem`) for vulnerable or outdated packages above the
+  configured `severityFloor`, then drive scan → upgrade → verify → publish on a
+  `dep-sitter/*` branch: it confirms the advisory, applies the patch/minor
+  bump, fixes the fallout, verifies the suite is green, and opens a **draft
+  PR**. Major bumps are never auto-fixed — they are logged and left for a
+  human, and merging stays human. No standing watch on this host — `claim` is
+  the pull.
+- `/agentic-loop:dep-sitter status` · `stop` — report / abort the active loop
+  (bare `/agentic-loop:dep-sitter` = status).
+
+The main sitter (`/agentic-loop:main-sitter`, opt-in via
+`loops.main-sitter.enabled` in `.agentic-loop.json`):
+
+- `/agentic-loop:main-sitter claim` — one-shot pull (maps to
+  `loop_claim({kind: "main-sitter"})`): watch the default branch's CI (override
+  the branch via `loops.main-sitter.branch`, limit to named workflows via
+  `.workflows`) and, when it goes red, drive diagnose → remedy → verify →
+  publish: it diagnoses the failure on that exact head (bisecting when needed),
+  writes a **verified forward fix or revert**, opens a **draft remedy PR** on a
+  `main-sitter/*` branch, and comments once on the culprit PR. It **never
+  pushes the watched branch**, and merging stays human. No standing watch on
+  this host — `claim` is the pull.
+- `/agentic-loop:main-sitter status` · `stop` — report / abort the active loop
+  (bare `/agentic-loop:main-sitter` = status).
 
 Ancillary:
 
@@ -121,7 +177,12 @@ The whole engineering lifecycle lives on `/agentic-loop:engineering` (`new`,
   loop's PLAN stage in task mode), `loop-plan` (standalone read-only
   planner), the three build-phase stage subagents
   `loop-build` / `loop-verify` / `loop-review`, the pr-sitter stage
-  subagents `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`.
+  subagents `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`, and the
+  sitter stage subagents for the opt-in kinds: review-sitter's
+  `loop-review-fetch` / `loop-review-assess` / `loop-review-publish`,
+  dep-sitter's `loop-dep-scan` / `loop-dep-upgrade` / `loop-dep-publish`, and
+  main-sitter's `loop-main-diagnose` / `loop-main-remedy` / `loop-main-publish`
+  (the shared `loop-verify` is reused as the VERIFY stage by several of these).
 - `skills/` — `loop-orchestration` (Claude-specific driving protocol), plus
   the shared workflow-skill library (symlinked, including
   `task-backlog-management`).

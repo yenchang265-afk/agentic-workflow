@@ -35,14 +35,23 @@ have different home directories — hosts running inside WSL resolve the WSL
 home; point `AGENTIC_LOOP_USER_CONFIG` at one file if you straddle both.
 
 `./install.sh` seeds this file for you: on an interactive terminal it runs a
-short wizard (code platform, PR sitter, worktrees, plus an advanced gate for the
-tracker, review lenses, and iteration cap) and writes a valid `.agentic-loop.json`
-into the project the loop will drive — the same directory the plugin reads config
-from at runtime (`$AGENTIC_LOOP_DIR`, else the current directory), which it
-prompts for. It never overwrites an existing file and is skipped under piped/CI
-runs. Flags: `--no-config` skips it, `--config` forces it on, `-y`/`--yes` writes
-an all-defaults file without prompting. Everything below can also be hand-edited
-afterward.
+short wizard (code platform, sitters, worktrees, plus an advanced gate for the
+tracker, review lenses, and iteration cap) and writes a valid `.agentic-loop.json`.
+Its first question is the **scope** — where to write:
+
+- **repo scope** (default) — `<project>/.agentic-loop.json` in the directory the
+  plugin reads config from at runtime (`$AGENTIC_LOOP_DIR`, else the current
+  directory), which it prompts for. Per-project settings live here.
+- **user scope** — the shared user-scope file (`$AGENTIC_LOOP_USER_CONFIG`, else
+  `~/.agentic-loop.json`), read for every repo you drive. Settings shared across
+  repos (the `ado` block, review lenses) belong here; a repo file overrides it
+  field by field (see [Layers & precedence](#layers--precedence) above).
+
+Force the scope non-interactively with `--user` or `--repo`. It never overwrites
+an existing file and is skipped under piped/CI runs. Other flags: `--no-config`
+skips it, `--config` forces it on, `-y`/`--yes` writes an all-defaults file
+without prompting (honoring `--user`/`--repo`). Everything below can also be
+hand-edited afterward.
 
 | Field | Default | What it does |
 |-------|---------|--------------|
@@ -71,6 +80,10 @@ every other kind is opt-in with `"enabled": true`. Kind-specific knobs ride
 along in the same section and are validated by the kind itself. Enabled kinds
 are polled in claim-priority order: engineering first, then opted-in kinds in
 config order.
+
+> **The four sitters (`pr-sitter`, `review-sitter`, `dep-sitter`,
+> `main-sitter`) are experimental** — their knobs and defaults below may still
+> change between releases. `engineering` is the stable, default-on kind.
 
 ```json
 {

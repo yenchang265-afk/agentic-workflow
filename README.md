@@ -9,14 +9,12 @@ for **Claude Code** ([`plugins/claude/`](plugins/claude/README.md)) — both bui
 on one core package ([`packages/core`](packages/core)) and sharing the human
 gates, git isolation, trusted verdicts, and audit trail.
 
-Two loop kinds ship today:
-
-- **engineering** (default-on) — a goal through PLAN → BUILD → VERIFY → REVIEW
-  over the `docs/tasks/` backlog, with human task and plan gates.
-- **pr-sitter** (opt-in) — sits on your open PRs (GitHub, or Azure DevOps via
-  config `codePlatform: "ado"` for its REST API, PAT auth): triages review
-  comments, failing checks, and merge conflicts; fixes; verifies; pushes and
-  replies. Never merges.
+Five loop kinds ship today. **engineering** (default-on) drives a goal through
+PLAN → BUILD → VERIFY → REVIEW over the `docs/tasks/` backlog, with human task
+and plan gates. Four **experimental**, opt-in **sitters** — `pr-sitter`,
+`review-sitter`, `dep-sitter`, `main-sitter` — watch a hosted surface (open
+PRs, review requests, vulnerable deps, red CI) and drive a fix, keeping every
+terminal call human. See [The sitters](#the-sitters-experimental) below.
 
 Authoring a new kind is a `loop.json` + stage prompts away — see
 [`packages/core/loops/README.md`](packages/core/loops/README.md).
@@ -54,29 +52,37 @@ reuses) a **draft** PR (GitHub or Azure DevOps, per `codePlatform`) as part of
 shipping. Full execution model (watch mode, iteration caps, recovery):
 [docs/opencode.md](docs/opencode.md).
 
-## The PR sitter
+## The sitters (experimental)
 
-Opt in via `.agentic-loop.json`:
+Four opt-in sitters watch a hosted surface and drive a fix, each on its own
+`/agentic-loop:<kind>` command sharing the `claim` / `status` / `stop` verbs
+(plus `watch [trigger]` / `unwatch` on OpenCode). They are **experimental** —
+the manifests, config keys, and defaults may still change. Enable per repo in
+`.agentic-loop.json`:
 
 ```json
-{ "loops": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
+{
+  "loops": {
+    "pr-sitter":     { "enabled": true, "query": "is:open author:@me" },
+    "review-sitter": { "enabled": true },
+    "dep-sitter":    { "enabled": true, "severityFloor": "high" },
+    "main-sitter":   { "enabled": true, "branch": "main" }
+  }
+}
 ```
 
-The sitter has its own command: `/agentic-loop:pr-sitter watch` (OpenCode
-worker mode) or `/agentic-loop:pr-sitter claim` (one-shot pull, both hosts)
-walks your open PRs and claims any that need attention — failing checks,
-changes requested, unanswered comments, or a merge conflict:
+| Kind | Sits on | Pipeline | Ships |
+|------|---------|----------|-------|
+| pr-sitter | your open PRs needing attention (checks, comments, conflicts) | triage → fix → verify → publish | pushes fixes + a reply per finding; never merges |
+| review-sitter | PRs where your review is requested | fetch → assess → publish | one comment-only review per head; never approves |
+| dep-sitter | vulnerable/outdated deps (npm, pip, Maven, Gradle) | scan → upgrade → verify → publish | a draft PR for the patch/minor bump; majors left for a human |
+| main-sitter | the default branch's CI when it goes red | diagnose → remedy → verify → publish | a draft remedy PR; never pushes the watched branch |
 
-| Stage | Does |
-|-------|------|
-| TRIAGE | Read-only `gh` inspection; structured findings; FAIL verdict = nothing to do |
-| FIX | Worktree on the PR's **existing** branch; local commits only |
-| VERIFY | Runs tests + checks the findings were covered; FAIL re-fires FIX (shared cap) |
-| PUBLISH | `git push origin <branch>` + a `gh pr comment` reply per addressed finding |
-
-A per-PR dedup ledger stops the sitter from reacting to its own pushes and
-replies; PR comments and diffs are treated as untrusted input; merging,
-closing, and approving stay human calls. Security posture:
+Every sitter treats the PR/comment/diff/CI text it reads as untrusted input,
+stays behind per-stage bash + platform allowlists, and keeps the terminal call
+— merge, approve, close — human. Design detail:
+[docs/architecture.md](docs/architecture.md); config keys:
+[docs/configuration.md](docs/configuration.md); security posture:
 [docs/design/threat-model.md](docs/design/threat-model.md).
 
 ## Install
@@ -114,6 +120,32 @@ npm install             # npm workspaces — also builds @agentic-loop/core (pre
 
 Idempotent — re-run after `git pull` for updates.
 
+## Uninstall & clean
+
+Two scripts undo the two kinds of footprint — the installed plugin, and the
+local state a running loop leaves behind:
+
+```bash
+./uninstall.sh                 # reverse install.sh; or opencode | claude | all
+./scripts/clean.sh             # remove <tasksDir>/runs/ ephemeral state only
+./scripts/clean.sh --purge     # also delete backlog task files + .agentic-loop.json
+```
+
+- **`./uninstall.sh`** removes the agents/commands/skills/references entries and
+  the local plugin file this repo linked into your OpenCode config (only the
+  symlinks that point back here; `--copy` also removes copies), and drops the
+  built Claude `mcp-server/dist`. It leaves your `.agentic-loop.json` and the
+  backlog alone; detaching the Claude plugin itself is a
+  `/plugin uninstall agentic-loop`.
+- **`./scripts/clean.sh`** clears the loop's local state for the project it
+  drives (`$AGENTIC_LOOP_DIR` or the current dir). Default wipes only the
+  ephemeral `<tasksDir>/runs/` machine memory — snapshots, metrics, the stage
+  marker, the watch lease, claim markers, and the per-kind dedup ledgers — which
+  the loop regenerates. `--backlog` also deletes the task files in the status
+  folders (kept `.gitkeep`s and folders), `--config` also removes
+  `.agentic-loop.json`, and `--purge` does all three. Destructive tiers prompt
+  first (skip with `-y`); `--dry-run` previews without deleting.
+
 ## Commands
 
 - `/agentic-loop:engineering new <idea>` · `retask <id> [note]` — interview → planless
@@ -132,6 +164,10 @@ Idempotent — re-run after `git pull` for updates.
   scoped to the engineering kind
 - `/agentic-loop:pr-sitter claim` · `watch [interval]` (OpenCode) · `unwatch` ·
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
+- `/agentic-loop:review-sitter` · `/agentic-loop:dep-sitter` ·
+  `/agentic-loop:main-sitter` — the same `claim` / `watch` (OpenCode) /
+  `unwatch` / `stop` / `status` verbs, each scoped to its own kind (opt-in via
+  `loops.<kind>.enabled`)
 
 Full command reference: [docs/opencode.md](docs/opencode.md) (OpenCode) ·
 [`plugins/claude/README.md`](plugins/claude/README.md) (Claude Code — no
@@ -141,7 +177,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — the framework (core package,
-  manifest engine, scheduler, work sources), the two shipped loop kinds, and
+  manifest engine, scheduler, work sources), the five shipped loop kinds, and
   how the Claude Code variant differs
 - [packages/core/loops/README.md](packages/core/loops/README.md) — how to author a new loop kind
   (manifest schema, prompt templates, hooks, work sources)

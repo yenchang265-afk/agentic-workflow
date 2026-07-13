@@ -105,6 +105,10 @@ The loop (`/agentic-loop:engineering`):
   plus a whole-backlog roll-up (counts, awaiting-approval/claimable/
   interrupted/in-review). Bare `/agentic-loop:engineering` does the same
 
+The sitters (**experimental** — the four `/agentic-loop:<sitter>` commands
+below, their manifests, and their config keys may still change; `engineering`
+is the stable, default-on kind):
+
 The PR sitter (`/agentic-loop:pr-sitter`, opt-in via `loops.pr-sitter` in
 `.agentic-loop.json`):
 
@@ -116,6 +120,56 @@ The PR sitter (`/agentic-loop:pr-sitter`, opt-in via `loops.pr-sitter` in
   one-watcher-per-clone lease), scoped to the pr-sitter kind
 - `/agentic-loop:pr-sitter stop` (alias `abort`) · `status` — abort the active loop /
   print it (bare `/agentic-loop:pr-sitter` = status)
+
+The review sitter (`/agentic-loop:review-sitter`, opt-in via
+`loops.review-sitter` in `.agentic-loop.json`):
+
+- `/agentic-loop:review-sitter claim` — one-shot pull: poll the open PRs where
+  your review is requested (`is:open review-requested:@me`, overridable via
+  `loops.review-sitter.query`) for the next one and drive it through fetch →
+  assess → publish — reading the diff in the context of the surrounding code
+  and posting **one structured review comment** per requested head. It stays
+  comment-only: it never approves, requests changes, or merges, so the human
+  remains reviewer of record
+- `/agentic-loop:review-sitter watch [trigger]` · `unwatch` — the same
+  standing-worker semantics as the engineering `watch` (trigger/interval
+  syntax, one-watcher-per-clone lease), scoped to the review-sitter kind
+- `/agentic-loop:review-sitter stop` (alias `abort`) · `status` — abort the
+  active loop / print it (bare `/agentic-loop:review-sitter` = status)
+
+The dependency sitter (`/agentic-loop:dep-sitter`, opt-in via
+`loops.dep-sitter` in `.agentic-loop.json`):
+
+- `/agentic-loop:dep-sitter claim` — one-shot pull: scan the project's
+  dependencies (npm, pip/Python, Maven, and Gradle — `loops.dep-sitter.ecosystem`
+  picks or `auto`-detects) for the next vulnerable one at or above
+  `severityFloor` and drive it through scan → upgrade → verify → publish. It
+  confirms the advisory, applies the patch/minor bump on a `dep-sitter/*`
+  branch, fixes the fallout, verifies the suite is green, and opens a **draft
+  PR**. **Major bumps are never auto-fixed** — they are logged and left for a
+  human, and merging stays human
+- `/agentic-loop:dep-sitter watch [trigger]` · `unwatch` — the same
+  standing-worker semantics as the engineering `watch` (trigger/interval
+  syntax, one-watcher-per-clone lease), scoped to the dep-sitter kind
+- `/agentic-loop:dep-sitter stop` (alias `abort`) · `status` — abort the
+  active loop / print it (bare `/agentic-loop:dep-sitter` = status)
+
+The main sitter (`/agentic-loop:main-sitter`, opt-in via
+`loops.main-sitter` in `.agentic-loop.json`):
+
+- `/agentic-loop:main-sitter claim` — one-shot pull: poll the watched branch's
+  CI runs (the remote default branch, or `loops.main-sitter.branch`; limit to
+  named workflows with `loops.main-sitter.workflows`) and, when they go **red**,
+  drive the failure through diagnose → remedy → verify → publish. It diagnoses
+  on that exact head (bisecting when needed), writes a **verified forward fix or
+  revert**, opens a **draft remedy PR** on a `main-sitter/*` branch, and
+  comments **once** on the culprit PR. It **never pushes the watched branch**,
+  and merging stays human
+- `/agentic-loop:main-sitter watch [trigger]` · `unwatch` — the same
+  standing-worker semantics as the engineering `watch` (trigger/interval
+  syntax, one-watcher-per-clone lease), scoped to the main-sitter kind
+- `/agentic-loop:main-sitter stop` (alias `abort`) · `status` — abort the
+  active loop / print it (bare `/agentic-loop:main-sitter` = status)
 
 The old umbrella `/agent-loop` command is gone — its free-text mode and its
 `task <id>`, `run`, `ship`, `approve-plan`, `reject`, and `go`/`ok` verbs with
@@ -155,8 +209,25 @@ somewhere other than the default OpenCode config dir. Bare `./install.sh`
 installs the Claude Code plugin too.
 
 On an interactive terminal the install ends with a short **config wizard** that
-seeds `.agentic-loop.json` into the project the loop will drive — see
-[configuration.md](configuration.md).
+seeds `.agentic-loop.json` — it first asks whether to write repo scope (the
+project the loop drives) or user scope (shared across every repo); `--user` /
+`--repo` force the choice. See [configuration.md](configuration.md).
 
 On Windows, symlinks need WSL or symlink-capable Windows (Developer Mode);
 without that, use `--copy` (no live updates — re-run after `git pull`).
+
+## Uninstall & clean
+
+`./uninstall.sh opencode [dir]` reverses the install — it removes the
+agents/commands/skills/references entries and the local plugin file that point
+back into this repo from `$OPENCODE_CONFIG_DIR` (add `--copy` to also remove
+copies a `--copy` install left). Foreign entries and your OpenCode config file
+are left untouched.
+
+`./scripts/clean.sh` clears the loop's local state for the project it drives
+(`$AGENTIC_LOOP_DIR` or `$PWD`): by default only the ephemeral
+`<tasksDir>/runs/` machine state (snapshots, metrics, stage marker, watch
+lease, claim markers, per-kind ledgers), which is regenerated on the next run.
+`--backlog` also deletes the status-folder task files, `--config` the
+`.agentic-loop.json`, `--purge` all three; destructive tiers confirm first
+(`-y` to skip, `--dry-run` to preview).

@@ -29,10 +29,19 @@ guide covers the OpenCode plugin. It provides:
    That pipeline is the **engineering loop kind** — the default of several
    declarative kinds under `packages/core/loops/<kind>/` (manifest + stage prompts) run by
    the shared `@agentic-loop/core` engine. Other kinds are enabled via
-   `loops.<kind>` in `.agentic-loop.json`; `pr-sitter` (agents
+   `loops.<kind>` in `.agentic-loop.json` and are all **experimental** (their
+   manifests and config keys may still change; `engineering` is the stable
+   default): `pr-sitter` (agents
    `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`, plus
    the shared `loop-verify`) sits on open PRs — triages, fixes, verifies, and pushes
-   replies, but never merges. Each enabled kind has its own command —
+   replies, but never merges; `review-sitter` sits on PRs where your review is
+   requested and posts one structured review comment per head, but never
+   approves or requests changes — the human stays reviewer of record;
+   `dep-sitter` sits on vulnerable or outdated dependencies and opens a draft PR
+   with the verified patch/minor bump, but never auto-fixes major bumps and
+   never merges; and `main-sitter` sits on the default branch's CI and, when it
+   goes red, opens a draft remedy PR with a verified forward fix or revert, but
+   never pushes the watched branch. Each enabled kind has its own command —
    `claim`/`watch` on `/agentic-loop:pr-sitter` are scoped to the sitter, just
    as `/agentic-loop:engineering`'s are to the backlog.
 2. **Ad-hoc, skill-driven execution** — for a single request that doesn't
@@ -93,8 +102,8 @@ Correct behavior: always check for and use skills first.
 - `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
 - `packages/core/loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (`engineering/`, `pr-sitter/`)
-- `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*` plus `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`)
-- `plugins/opencode/commands/` — the slash commands (`/agentic-loop:engineering`, `/agentic-loop:pr-sitter`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, and the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`)
+- `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*`, pr-sitter's `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`, review-sitter's `loop-review-fetch`/`loop-review-assess`/`loop-review-publish`, dep-sitter's `loop-dep-scan`/`loop-dep-upgrade`/`loop-dep-publish`, and main-sitter's `loop-main-diagnose`/`loop-main-remedy`/`loop-main-publish`, with the shared `loop-verify` reused as the VERIFY stage across several kinds)
+- `plugins/opencode/commands/` — the slash commands (`/agentic-loop:engineering`, `/agentic-loop:pr-sitter`, `/agentic-loop:review-sitter`, `/agentic-loop:dep-sitter`, `/agentic-loop:main-sitter`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`, and the new-kind stage commands `/review-fetch`, `/review-assess`, `/review-publish`, `/dep-scan`, `/dep-upgrade`, `/dep-publish`, `/main-diagnose`, `/main-remedy`, `/main-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
