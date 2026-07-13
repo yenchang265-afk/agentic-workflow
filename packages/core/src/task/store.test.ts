@@ -17,6 +17,7 @@ import {
   pairingCoverage,
   PLAN_HEADING,
   releaseOrphanedClaims,
+  resolveTaskIdIn,
   selectNext,
   selectOrder,
   statusOf,
@@ -366,6 +367,53 @@ test("findByIdIn returns null and warns on unparseable content", async () => {
   })
   assert.equal(found, null)
   assert.equal(warnings.length, 1)
+})
+
+// --- resolveTaskIdIn: exact hit, short-hash prefix, ambiguity, legacy back-compat ---
+
+/** A fake shell for `cat <dir>/<name>.md` (present in `files`) and `ls <dir>`. */
+const idResolverShell = (dir: string, files: string[]) =>
+  makeShell((cmd) => {
+    if (cmd.startsWith("cat ")) {
+      const name = cmd.slice(`cat ${dir}/`.length).replace(/\.md$/, "")
+      return files.includes(name) ? { exitCode: 0, stdout: "x" } : { exitCode: 1 }
+    }
+    if (cmd === `ls ${dir}`) return { exitCode: 0, stdout: files.map((f) => `${f}.md`).join("\n") }
+    return { exitCode: 1 }
+  })
+
+const QDIR = "/r/docs/tasks/queued"
+
+test("resolveTaskIdIn resolves an exact full id", async () => {
+  const $ = idResolverShell(QDIR, ["f7k3-add-foo", "a1b2-do-bar"])
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f7k3-add-foo"), { id: "f7k3-add-foo" })
+})
+
+test("resolveTaskIdIn resolves a legacy slug id by exact filename (back-compat)", async () => {
+  const $ = idResolverShell(QDIR, ["add-rate-limiting"])
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "add-rate-limiting"), { id: "add-rate-limiting" })
+})
+
+test("resolveTaskIdIn resolves a unique short-hash prefix", async () => {
+  const $ = idResolverShell(QDIR, ["f7k3-add-foo", "a1b2-do-bar"])
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f7k"), { id: "f7k3-add-foo" })
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f7k3"), { id: "f7k3-add-foo" })
+})
+
+test("resolveTaskIdIn reports ambiguity when a prefix matches several", async () => {
+  const $ = idResolverShell(QDIR, ["f7k3-add-foo", "fa2b-do-bar"])
+  assert.deepEqual(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "f"), { ambiguous: ["f7k3-add-foo", "fa2b-do-bar"] })
+})
+
+test("resolveTaskIdIn never treats a legacy slug as a hash prefix", async () => {
+  // "add-rate-limiting" is not a modern <hash>- id, so a bare "add" prefix must not match it.
+  const $ = idResolverShell(QDIR, ["add-rate-limiting"])
+  assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "add"), null)
+})
+
+test("resolveTaskIdIn returns null when nothing matches", async () => {
+  const $ = idResolverShell(QDIR, ["f7k3-add-foo"])
+  assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "zzzz"), null)
 })
 
 // --- selectOrder (the claim walk's candidate ordering) ---

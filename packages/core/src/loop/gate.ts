@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import type { Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, gitActor } from "./git.js"
 import { shipPr } from "./ship-pr.js"
@@ -56,9 +56,40 @@ export const findAnyStatus = async (ctx: GateCtx, id: string): Promise<Task | nu
 
 const statusFolder = (t: Task): string => path.basename(path.dirname(t.path))
 
+/**
+ * Resolve a user-typed id — which may be a short-hash prefix (`f7k3`) rather than
+ * the full `f7k3-add-rate-limit` — to the single canonical task id across all
+ * status folders. An exact filename hit always wins; a prefix hitting several tasks
+ * is a warning-variant ambiguity error. Returns `{ id }` to proceed, `{ error }` to
+ * surface, or `null` when nothing matched (callers keep their own "no task found"
+ * messaging). An empty query passes straight through (the folder-driven auto-gate).
+ */
+const resolveGateId = async (ctx: GateCtx, query: string): Promise<{ id: string } | { error: GateResult } | null> => {
+  if (!query) return { id: query }
+  const { $, directory, config, log } = ctx
+  const prefix = new Set<string>()
+  for (const s of STATUSES) {
+    const r = await resolveTaskIdIn($, directory, config.tasksDir, s, query, log)
+    if (!r) continue
+    if ("id" in r) {
+      if (r.id === query) return { id: query } // exact filename (full id or legacy slug) wins immediately
+      prefix.add(r.id)
+    } else for (const m of r.ambiguous) prefix.add(m)
+  }
+  if (prefix.size === 1) return { id: [...prefix][0]! }
+  if (prefix.size > 1) {
+    const list = [...prefix].sort().join(", ")
+    return { error: { ok: false, message: `Ambiguous id "${query}" — matches ${list}. Use more characters.`, variant: "warning" } }
+  }
+  return null
+}
+
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */
 export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
   const draft = await findByIdIn($, directory, config.tasksDir, "draft", id)
   if (!draft) {
     const elsewhere = await findAnyStatus(ctx, id)
@@ -94,6 +125,9 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
   const task = await findByIdIn($, directory, config.tasksDir, "plan-review", id)
   if (!task) {
     const elsewhere = await findAnyStatus(ctx, id)
@@ -141,6 +175,9 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
  */
 export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
   if (ctx.isDriving?.(id)) return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agentic-loop:engineering stop).`, variant: "warning" }
   const task =
     (await findByIdIn($, directory, config.tasksDir, "plan-review", id)) ??
@@ -179,6 +216,9 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
 /** ship: an in-review/ task → completed/ (the final human gate). Opens/links the draft PR. */
 export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
   const t = await findByIdIn($, directory, config.tasksDir, "in-review", id)
   if (!t) {
     const elsewhere = await findAnyStatus(ctx, id)
@@ -222,6 +262,9 @@ const FORWARD_STATUSES: readonly TaskStatus[] = ["queued", "in-progress", "compl
 export const resolveGateTask = async (ctx: GateCtx, id: string, folders: readonly TaskStatus[]): Promise<GatePick> => {
   const { $, client, directory, config, log } = ctx
   if (id) {
+    const resolved = await resolveGateId(ctx, id)
+    if (resolved && "error" in resolved) return { ok: false, kind: "message", message: resolved.error.message, variant: "warning" }
+    if (resolved) id = resolved.id
     for (const from of folders) {
       const t = await findByIdIn($, directory, config.tasksDir, from, id)
       if (t) return { ok: true, id, from }

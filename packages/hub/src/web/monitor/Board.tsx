@@ -17,7 +17,7 @@ const TaskCardView = ({ task, gated, claimed }: { task: TaskCard; gated: boolean
   <Card gated={gated} title={task.acceptance.join("\n")}>
     <div className="card-title">{task.title}</div>
     <div className="card-meta">
-      <Badge>{task.id}</Badge>
+      <Badge title={task.id}>{task.shortId}</Badge>
       {task.type && <Badge>{task.type}</Badge>}
       {task.hasPlan && <Badge tone="ok">plan</Badge>}
       {claimed && <Badge tone="gate">claimed</Badge>}

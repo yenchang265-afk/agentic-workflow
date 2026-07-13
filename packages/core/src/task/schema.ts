@@ -133,8 +133,29 @@ export interface Task {
 /** Leading `---\n…\n---` frontmatter block, then the body. */
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
 
-/** Derive the task id from its filename (`add-foo.md` → `add-foo`). */
+/** Derive the task id from its filename (`f7k3-add-foo.md` → `f7k3-add-foo`). */
 export const taskId = (filename: string): string => filename.replace(/\.md$/i, "")
+
+/** Length of the leading short-hash segment on a modern task id. */
+export const SHORT_ID_LEN = 4
+const SHORT_ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+/**
+ * A "modern" id starts with a fixed-length base36 short hash then `-`
+ * (`f7k3-add-foo`). A real short hash never contains `-`, so a legacy slug like
+ * `add-rate-limiting` — which has a `-` inside its first four chars — never
+ * matches, and can't be mistaken for a hash prefix.
+ */
+export const SHORT_ID_RE = new RegExp(`^[a-z0-9]{${SHORT_ID_LEN}}-`)
+
+/** The short-hash handle for an id: the leading segment on a modern id, else the whole id. */
+export const shortIdOf = (id: string): string => (SHORT_ID_RE.test(id) ? id.slice(0, SHORT_ID_LEN) : id)
+
+/** Mint a random `SHORT_ID_LEN`-char base36 short hash. Impure (host RNG). */
+export const mintShortId = (rand: () => number = Math.random): string => {
+  let s = ""
+  for (let i = 0; i < SHORT_ID_LEN; i++) s += SHORT_ID_ALPHABET[Math.floor(rand() * SHORT_ID_ALPHABET.length)]
+  return s
+}
 
 /** Whether a task is paired to a tracker item (has a `tracker` block). Pure. */
 export const isPaired = (task: Pick<Task, "tracker">): boolean => task.tracker !== undefined
@@ -245,15 +266,20 @@ export const serializeTask = (input: TaskInput): string => {
 }
 
 /**
- * Build a task file with an id that does not collide with `taken` (existing ids,
- * without the `.md`). On a clash the slug gets a numeric suffix (`-2`, `-3`, …).
- * Pure: it decides the id and content; writing to disk is `store.writeTask`.
+ * Build a task file whose id is `<shortHash>-<slug>` (e.g. `f7k3-add-rate-limit`):
+ * a short random handle for targeting, plus the readable slug so the name shows on
+ * the filesystem. `taken` is the existing ids (without `.md`) to avoid colliding
+ * with. `mint` supplies the short hash — injectable so tests stay deterministic.
+ * Pure given `mint`: it decides the id and content; writing to disk is `store.writeTask`.
  */
-export const buildTaskFile = (input: TaskInput, taken: Iterable<string> = []): TaskFile => {
+export const buildTaskFile = (input: TaskInput, taken: Iterable<string> = [], mint: () => string = mintShortId): TaskFile => {
   const content = serializeTask(input) // validates title before we bother with a slug
-  const base = slugify(input.title) || "task"
+  const slug = slugify(input.title) || "task"
   const takenSet = new Set(taken)
-  let id = base
-  for (let n = 2; takenSet.has(id); n++) id = `${base}-${n}`
+  // A random 4-char prefix almost never clashes; re-roll it if it does. After a
+  // few tries (e.g. a deterministic `mint` stub in tests) fall back to a `-N` suffix
+  // so the loop always terminates.
+  let id = `${mint()}-${slug}`
+  for (let tries = 0; takenSet.has(id); tries++) id = tries < 8 ? `${mint()}-${slug}` : `${mint()}-${slug}-${tries}`
   return { id, filename: `${id}.md`, content }
 }

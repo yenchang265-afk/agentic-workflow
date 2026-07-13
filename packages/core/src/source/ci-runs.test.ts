@@ -139,7 +139,7 @@ test("claims the red newest head: default branch resolved, head pinned to a main
   const log: string[] = []
   const { item, skip } = await source([run()], { log }).claimNext()
   assert.equal(skip, null)
-  assert.equal(item?.id, `head-${shortSha(SHA)}`)
+  assert.equal(item?.id, `${SHA.slice(0, 6)}-main`) // display id: short sha + readable branch
   assert.equal(item?.entryStage, "diagnose")
   assert.equal(item?.state.kind, "main-sitter")
   assert.deepEqual(item?.state.git, { base: "main", branch: `main-sitter/${shortSha(SHA)}` })

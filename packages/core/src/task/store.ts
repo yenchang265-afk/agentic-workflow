@@ -1,7 +1,7 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
-import { buildTaskFile, isPaired, parseTask, type Task, type TaskInput } from "./schema.js"
+import { buildTaskFile, isPaired, parseTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
 
 /**
  * Filesystem IO for the task backlog. **Impure**: reads via the host client
@@ -205,6 +205,48 @@ export const findByIdIn = async (
     log?.("warn", `skipping ${file}: ${(err as Error).message}`)
     return null
   }
+}
+
+/** Outcome of resolving a user-typed id query: a hit, an ambiguity, or nothing. */
+export type ResolvedId = { readonly id: string } | { readonly ambiguous: readonly string[] } | null
+
+/**
+ * Resolve a user-supplied `query` to a concrete task id in `status`, so a human can
+ * target a task by its short-hash handle (`f7k3`) instead of the full
+ * `f7k3-add-rate-limit` filename. Real-FS `ls`/`cat` through the shell for the same
+ * lag-avoidance reason `findByIdIn` documents above.
+ *
+ * - Exact `<query>.md` present → that id (covers full modern ids AND legacy `<slug>.md`).
+ * - Else among modern `<hash>-<slug>.md` files, those whose short hash starts with
+ *   `query`: exactly one → resolve, several → ambiguous (never guesses).
+ * - Nothing → null.
+ */
+export const resolveTaskIdIn = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  status: string,
+  query: string,
+  log?: Log,
+): Promise<ResolvedId> => {
+  if (!query) return null
+  const dir = path.join(directory, tasksDir, status)
+  // (a) exact filename — a full modern id, or a legacy slug id.
+  const exact = await $`cat ${path.join(dir, `${query}.md`)}`.quiet().nothrow()
+  if (exact.exitCode === 0) return { id: query }
+  // (b) short-hash prefix among modern ids only.
+  const ls = await $`ls ${dir}`.quiet().nothrow()
+  if (ls.exitCode !== 0) return null
+  const ids = ls.stdout
+    .toString()
+    .split("\n")
+    .filter((n) => isMarkdown(n))
+    .map((n) => n.replace(/\.md$/i, ""))
+  const matches = ids.filter((id) => SHORT_ID_RE.test(id) && shortIdOf(id).startsWith(query))
+  if (matches.length === 0) return null
+  if (matches.length === 1) return { id: matches[0]! }
+  log?.("info", `ambiguous id "${query}" — matches ${matches.join(", ")}`)
+  return { ambiguous: [...matches].sort() }
 }
 
 /** Directory of atomic claim markers, alongside the task files of one status folder. */

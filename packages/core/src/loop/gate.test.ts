@@ -32,6 +32,12 @@ const makeCtx = (files: Record<string, string>, opts: { driving?: string } = {})
         fs[dest!] = fs[src!]!
         delete fs[src!]
       } else out = { exitCode: 1, stdout: "" }
+    } else if (parts[0] === "ls") {
+      const dir = parts[1]!
+      const names = Object.keys(fs)
+        .filter((p) => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes("/"))
+        .map((p) => p.slice(dir.length + 1))
+      out = { exitCode: 0, stdout: names.join("\n") }
     } else if (parts[0] === "git") out = { exitCode: 1, stdout: "" } // no actor, no branch → no PR
     const chain = {
       quiet: () => chain,
@@ -122,4 +128,37 @@ test("shipTask moves an in-review task to completed (no branch → no PR)", asyn
   assert.ok(r.ok && typeof r.data.completed === "string")
   assert.ok(!("pr" in (r.ok ? r.data : {})), "no PR attempted without a feature branch")
   assert.ok("/repo/docs/tasks/completed/t.md" in fs)
+})
+
+// --- id resolution: approve by short-hash prefix, ambiguity, legacy back-compat ---
+
+test("approveTask resolves a draft by its short-hash prefix", async () => {
+  const { ctx, fs } = makeCtx({ "draft/f7k3-flight-map.md": task("Flight Map") })
+  const r = await approveTask(ctx, "f7k3")
+  assert.ok(r.ok && r.data.approved === true)
+  assert.ok("/repo/docs/tasks/queued/f7k3-flight-map.md" in fs, "moved by the resolved full id")
+})
+
+test("approveTask on an ambiguous prefix refuses with a warning (never guesses)", async () => {
+  const { ctx, fs } = makeCtx({ "draft/f7k3-flight-map.md": task("Flight Map"), "draft/fa2b-fee-calc.md": task("Fee Calc") })
+  const r = await approveTask(ctx, "f")
+  assert.equal(r.ok, false)
+  assert.ok(!r.ok && r.variant === "warning")
+  assert.match(r.message, /[Aa]mbiguous/)
+  assert.match(r.message, /f7k3-flight-map/)
+  assert.ok(!("/repo/docs/tasks/queued/f7k3-flight-map.md" in fs), "nothing moved on ambiguity")
+})
+
+test("approveTask still resolves a legacy slug id exactly (back-compat)", async () => {
+  const { ctx, fs } = makeCtx({ "draft/add-rate-limiting.md": task("Add rate limiting") })
+  const r = await approveTask(ctx, "add-rate-limiting")
+  assert.ok(r.ok && r.data.approved === true)
+  assert.ok("/repo/docs/tasks/queued/add-rate-limiting.md" in fs)
+})
+
+test("approvePlan resolves a plan-review task by its short-hash prefix", async () => {
+  const { ctx, fs } = makeCtx({ "plan-review/a1b2-do-bar.md": `${task("Do bar")}\n\n${PLAN_HEADING}\n\nStep 1.` })
+  const r = await approvePlan(ctx, "a1b2")
+  assert.ok(r.ok && r.data.approved === true)
+  assert.ok("/repo/docs/tasks/in-progress/a1b2-do-bar.md" in fs)
 })

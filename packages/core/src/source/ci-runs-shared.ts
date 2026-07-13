@@ -3,6 +3,7 @@ import { z } from "zod"
 import type { Client, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, LoopState } from "../loop/state.js"
+import { slugify } from "../task/schema.js"
 import type { WorkItem } from "./types.js"
 
 /**
@@ -94,7 +95,9 @@ export const redHeadWorkItem = (
     platform,
   }
   return {
-    id: `head-${shortSha(sha)}`,
+    // Display id: short sha + readable branch (`a1b2c3-main`), so the handle reads.
+    // The dedup ledger + remedy branch stay keyed on `shortSha(sha)` — decoupled.
+    id: `${sha.slice(0, 6)}-${slugify(branch)}`,
     loopKind: kind,
     title: `Red ${branch} @ ${shortSha(sha)}: ${failing.join(", ")}`,
     entryStage: state.stage,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { buildTaskFile, isPaired, parseTask, serializeTask, slugify } from "./schema.js"
+import { buildTaskFile, isPaired, mintShortId, parseTask, serializeTask, shortIdOf, slugify, SHORT_ID_LEN } from "./schema.js"
 
 const PATH = "/repo/docs/tasks/in-progress/add-foo.md"
 
@@ -115,21 +115,51 @@ test("serializeTask rejects an empty title", () => {
   assert.throws(() => serializeTask({ title: "" }), /title is required/)
 })
 
-test("buildTaskFile derives id/filename from the title", () => {
-  const file = buildTaskFile({ title: "Add a foo helper" })
-  assert.equal(file.id, "add-a-foo-helper")
-  assert.equal(file.filename, "add-a-foo-helper.md")
+/** A deterministic `mint` stub that yields the given short ids in order. */
+const mintSeq = (...ids: string[]) => {
+  let i = 0
+  return () => ids[Math.min(i++, ids.length - 1)]!
+}
+
+test("buildTaskFile prefixes a short hash to the readable slug", () => {
+  const file = buildTaskFile({ title: "Add a foo helper" }, [], mintSeq("f7k3"))
+  assert.equal(file.id, "f7k3-add-a-foo-helper")
+  assert.equal(file.filename, "f7k3-add-a-foo-helper.md")
   assert.match(file.content, /title: Add a foo helper/)
 })
 
-test("buildTaskFile avoids id collisions with a numeric suffix", () => {
-  assert.equal(buildTaskFile({ title: "Foo" }, ["foo"]).id, "foo-2")
-  assert.equal(buildTaskFile({ title: "Foo" }, ["foo", "foo-2"]).id, "foo-3")
-  assert.equal(buildTaskFile({ title: "Foo" }, ["bar"]).id, "foo")
+test("buildTaskFile re-rolls the short id when the combined id is taken", () => {
+  // First mint clashes with an existing id; the second is free.
+  const file = buildTaskFile({ title: "Foo" }, ["aaaa-foo"], mintSeq("aaaa", "bbbb"))
+  assert.equal(file.id, "bbbb-foo")
+})
+
+test("buildTaskFile falls back to a numeric suffix if the short id keeps clashing", () => {
+  // A stub that never varies (or an exhausted RNG) must still terminate.
+  const file = buildTaskFile({ title: "Foo" }, ["aaaa-foo"], mintSeq("aaaa"))
+  assert.equal(file.id, "aaaa-foo-8")
 })
 
 test("buildTaskFile falls back to 'task' when the title has no slug chars", () => {
-  assert.equal(buildTaskFile({ title: "!!!" }).id, "task")
+  assert.equal(buildTaskFile({ title: "!!!" }, [], mintSeq("f7k3")).id, "f7k3-task")
+})
+
+test("shortIdOf returns the leading hash of a modern id, else the whole id", () => {
+  assert.equal(shortIdOf("f7k3-add-a-foo-helper"), "f7k3")
+  assert.equal(shortIdOf("a1b2-x"), "a1b2")
+  // Legacy slug ids have a hyphen inside the first four chars → returned whole.
+  assert.equal(shortIdOf("add-rate-limiting"), "add-rate-limiting")
+  assert.equal(shortIdOf("foo"), "foo")
+})
+
+test("mintShortId yields SHORT_ID_LEN base36 chars with no hyphen", () => {
+  // A seeded RNG makes the output deterministic.
+  let n = 0
+  const rand = () => ((n = (n * 9301 + 49297) % 233280), n / 233280)
+  const id = mintShortId(rand)
+  assert.equal(id.length, SHORT_ID_LEN)
+  assert.match(id, /^[a-z0-9]+$/)
+  assert.doesNotMatch(id, /-/)
 })
 
 // --- Jira / Azure DevOps alignment fields ---

@@ -16,6 +16,8 @@ export type { StageTokens } from "@agentic-loop/core/loop/metrics"
 /** A task card on the monitor board — frontmatter summary, no body. */
 export interface TaskCard {
   readonly id: string
+  /** Short-hash handle — the copyable approve id (`f7k3`); the full id lives in `id`. */
+  readonly shortId: string
   readonly title: string
   readonly type?: string
   readonly priority: number

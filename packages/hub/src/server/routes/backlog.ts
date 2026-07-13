@@ -8,7 +8,7 @@ import {
   STATUSES,
   type TaskStatus,
 } from "@agentic-loop/core/task/store"
-import { isPaired, type Task } from "@agentic-loop/core/task/schema"
+import { isPaired, shortIdOf, type Task } from "@agentic-loop/core/task/schema"
 import { auditBacklog, hasAnomalies } from "@agentic-loop/core/task/audit"
 import type { BacklogResponse, KindBoardInfo, TaskCard, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
@@ -24,6 +24,7 @@ import { extractAuditNotes } from "../notes.js"
 
 const toCard = (task: Task): TaskCard => ({
   id: task.id,
+  shortId: shortIdOf(task.id),
   title: task.title,
   type: task.type,
   priority: task.priority,

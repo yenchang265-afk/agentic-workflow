@@ -124,7 +124,7 @@ test("claims the red newest head: default branch resolved via git, head pinned t
   const httpLog: string[] = []
   const { item, skip } = await source([build()], { shellLog, httpLog }).claimNext()
   assert.equal(skip, null)
-  assert.equal(item?.id, `head-${shortSha(SHA)}`)
+  assert.equal(item?.id, `${SHA.slice(0, 6)}-main`) // display id: short sha + readable branch
   assert.equal(item?.entryStage, "diagnose")
   assert.equal(item?.state.kind, "main-sitter")
   assert.equal(item?.state.platform, "ado")
