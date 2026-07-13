@@ -26,7 +26,12 @@ After installing, a short wizard offers to write an initial .agentic-loop.json
 into the project the loop will drive (interactive terminals only):
   --config                        # force the config wizard on
   --no-config                     # skip the config wizard
+  --user                          # write config to the user scope (~/.agentic-loop.json), not the repo
+  --repo                          # write config to the project's .agentic-loop.json (default)
   -y, --yes                       # non-interactive: seed a defaults .agentic-loop.json, no prompts
+
+To reverse an install: ./uninstall.sh [opencode|claude|all].
+To clear local run state / backlog / config: ./scripts/clean.sh (see --help).
 EOF
 }
 
@@ -36,10 +41,27 @@ MODE=symlink
 CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 WANT_CONFIG=1
 ASSUME_YES=0
+# Config scope the wizard writes to: "" = ask, "repo" = <project>/.agentic-loop.json,
+# "user" = the user-scope file shared across every repo. Forced by --repo/--user.
+CONFIG_SCOPE=""
 # The directory the plugin actually reads .agentic-loop.json from at runtime:
 # the Claude host uses `AGENTIC_LOOP_DIR ?? cwd`, the OpenCode host the project
 # dir. Default the wizard's target to that same resolution; it is prompted for.
 TARGET_DIR="${AGENTIC_LOOP_DIR:-$PWD}"
+
+# Where the user-scope config lives, mirroring core's resolveUserConfigPath:
+# $AGENTIC_LOOP_USER_CONFIG when set non-empty, else ~/.agentic-loop.json.
+# ("" disables the layer for the runtime; for the wizard we fall back to $HOME
+# so a scoped write still has a home, and warn.) Echoes the path, or "" if none.
+user_config_path() {
+  if [ -n "${AGENTIC_LOOP_USER_CONFIG-}" ]; then
+    printf '%s' "$AGENTIC_LOOP_USER_CONFIG"
+  elif [ -n "${HOME-}" ]; then
+    printf '%s' "$HOME/.agentic-loop.json"
+  else
+    printf ''
+  fi
+}
 
 for arg in "$@"; do
   case "$arg" in
@@ -48,6 +70,8 @@ for arg in "$@"; do
     --copy) MODE=copy ;;
     --config) WANT_CONFIG=1 ;;
     --no-config) WANT_CONFIG=0 ;;
+    --user) CONFIG_SCOPE=user ;;
+    --repo) CONFIG_SCOPE=repo ;;
     -y|--yes) ASSUME_YES=1 ;;
     -h|--help)
       usage
@@ -200,19 +224,57 @@ json_escape() {
 MEMBERS=""
 add_member() { MEMBERS="${MEMBERS:+$MEMBERS,}$1"; }
 
+# Loop kinds accumulate into one "loops" object so several can be enabled at
+# once without emitting a duplicate "loops" key. add_loop takes a
+# "\"kind\":{…}" fragment; flush_loops folds them into a single member.
+LOOPS=""
+add_loop()    { LOOPS="${LOOPS:+$LOOPS,}$1"; }
+# `return 0`: with no sitters the `[ -n ]` test is the last command and returns
+# 1, which would trip `set -e` at the bare `flush_loops` call before the write.
+flush_loops() { [ -n "$LOOPS" ] && add_member "\"loops\":{$LOOPS}"; return 0; }
+
 configure() {
   echo
   echo "== config (.agentic-loop.json) =="
   echo "A few questions to seed an initial config. Blank accepts the [default]."
 
-  # Q0 — which project the loop will drive (the dir the plugin reads config from).
-  local dir
-  dir="$(ask "Write config for which project directory" "$TARGET_DIR")"
-  TARGET_DIR="$dir"
-  local target_config="$TARGET_DIR/.agentic-loop.json"
-  if [ ! -d "$TARGET_DIR" ]; then
-    skip "config wizard — '$TARGET_DIR' is not a directory"
-    return
+  # Q0a — scope: user-scope (shared across every repo) or repo-scope (this
+  # project only). The runtime layers repo OVER user, so shared settings
+  # (ado org/selfLogin/pat, review lenses) belong in user scope and
+  # project-specific ones (a PR query, worktreesDir) in the repo file.
+  local scope="$CONFIG_SCOPE"
+  if [ -z "$scope" ]; then
+    echo
+    echo "Where should this config be written?"
+    echo "  [1] This project only — <dir>/.agentic-loop.json (repo scope, default)"
+    echo "  [2] User scope — shared across every repo you drive"
+    case "$(ask "Choice" "1")" in
+      2) scope="user" ;;
+      *) scope="repo" ;;
+    esac
+  fi
+
+  # Q0b — resolve the destination path for the chosen scope.
+  local target_config
+  if [ "$scope" = "user" ]; then
+    target_config="$(user_config_path)"
+    if [ -z "$target_config" ]; then
+      skip "config wizard — cannot resolve a user-scope path (no \$AGENTIC_LOOP_USER_CONFIG and no \$HOME)"
+      return
+    fi
+    if [ "${AGENTIC_LOOP_USER_CONFIG-x}" = "" ]; then
+      echo "note: \$AGENTIC_LOOP_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
+      echo "      writing to $target_config anyway — unset it to have the loop read this file." >&2
+    fi
+  else
+    local dir
+    dir="$(ask "Write config for which project directory" "$TARGET_DIR")"
+    TARGET_DIR="$dir"
+    target_config="$TARGET_DIR/.agentic-loop.json"
+    if [ ! -d "$TARGET_DIR" ]; then
+      skip "config wizard — '$TARGET_DIR' is not a directory"
+      return
+    fi
   fi
   if [ -f "$target_config" ]; then
     skip "$target_config already exists — leaving it untouched"
@@ -220,6 +282,7 @@ configure() {
   fi
 
   MEMBERS=""
+  LOOPS=""
 
   # Q1 — code platform.
   local platform choice
@@ -261,16 +324,59 @@ configure() {
     echo "    user-scope ~/.agentic-loop.json; the repo file overrides it field by field."
   fi
 
-  # Q2 — PR sitter.
+  # Q2 — PR sitter (experimental).
   echo
-  if confirm "Enable the PR-sitter loop (watches your open PRs)?"; then
+  if confirm "Enable the PR-sitter loop (experimental — watches your open PRs)?"; then
     if [ "$platform" = "github" ]; then
       local query
       query="$(ask "PR search query" "is:open author:@me")"
-      add_member "\"loops\":{\"pr-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$query")\"}}"
+      add_loop "\"pr-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$query")\"}"
     else
       # query is a GitHub-only knob; on ADO the sitter watches its own PRs.
-      add_member "\"loops\":{\"pr-sitter\":{\"enabled\":true}}"
+      add_loop "\"pr-sitter\":{\"enabled\":true}"
+    fi
+  fi
+
+  # Q2b — the other sitters (all experimental). One gate, then per-sitter.
+  echo
+  if confirm "Enable any of the other experimental sitters (review / dep / main)?"; then
+    echo "  These are experimental — manifests and config keys may still change."
+
+    # review-sitter — PRs where your review is requested. Comment-only.
+    if confirm "  review-sitter — sit on PRs awaiting your review, post one review comment?"; then
+      if [ "$platform" = "github" ]; then
+        local rquery
+        rquery="$(ask "  Review-request search query" "is:open review-requested:@me")"
+        add_loop "\"review-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$rquery")\"}"
+      else
+        add_loop "\"review-sitter\":{\"enabled\":true}"
+      fi
+    fi
+
+    # dep-sitter — vulnerable/outdated deps. Platform-agnostic source.
+    if confirm "  dep-sitter — sit on vulnerable/outdated deps, open a draft PR for patch/minor bumps?"; then
+      local floor
+      echo "    Minimum advisory severity to act on:"
+      echo "      [1] high (default)  [2] critical  [3] moderate  [4] low"
+      floor="$(ask "    Choice" "1")"
+      case "$floor" in
+        2) floor="critical" ;;
+        3) floor="moderate" ;;
+        4) floor="low" ;;
+        *) floor="high" ;;
+      esac
+      add_loop "\"dep-sitter\":{\"enabled\":true,\"severityFloor\":\"$floor\"}"
+    fi
+
+    # main-sitter — the default branch's CI. Never pushes the watched branch.
+    if confirm "  main-sitter — sit on the default branch's CI, open a draft remedy PR when it goes red?"; then
+      local mbranch
+      mbranch="$(ask "  Watched branch (blank = the remote default branch)" "")"
+      if [ -n "$mbranch" ]; then
+        add_loop "\"main-sitter\":{\"enabled\":true,\"branch\":\"$(json_escape "$mbranch")\"}"
+      else
+        add_loop "\"main-sitter\":{\"enabled\":true}"
+      fi
     fi
   fi
 
@@ -343,6 +449,7 @@ configure() {
     esac
   fi
 
+  flush_loops
   printf '{\n  %s\n}\n' "$MEMBERS" > "$target_config"
 
   # Safety net: confirm the file parses. We author it deterministically, so a
@@ -353,8 +460,10 @@ configure() {
       return
     fi
   fi
-  ok "wrote $target_config"
-  if [ "$TARGET_DIR" != "$REPO_DIR" ]; then
+  ok "wrote $target_config ($scope scope)"
+  if [ "$scope" = "user" ]; then
+    echo "         (shared across every repo you drive; a repo's own .agentic-loop.json overrides it field by field)"
+  elif [ "$TARGET_DIR" != "$REPO_DIR" ]; then
     echo "         (the loop reads this from the project it runs in — move it if you drive a different repo)"
   fi
 }
@@ -364,20 +473,27 @@ maybe_configure() {
     skip "config wizard (--no-config)"
     return
   fi
-  local target_config="$TARGET_DIR/.agentic-loop.json"
   if [ "$ASSUME_YES" -eq 1 ]; then
+    # Non-interactive: honor a forced --user/--repo scope, default to repo.
+    local scope="${CONFIG_SCOPE:-repo}" target_config
+    if [ "$scope" = "user" ]; then
+      target_config="$(user_config_path)"
+      if [ -z "$target_config" ]; then
+        skip "config wizard — cannot resolve a user-scope path (no \$AGENTIC_LOOP_USER_CONFIG and no \$HOME)"
+        return
+      fi
+    else
+      target_config="$TARGET_DIR/.agentic-loop.json"
+    fi
     if [ -f "$target_config" ]; then
       skip "$target_config already exists — leaving it untouched"
     else
       printf '{}\n' > "$target_config"
-      ok "wrote defaults $target_config"
+      ok "wrote defaults $target_config ($scope scope)"
     fi
     return
   fi
-  if [ -f "$target_config" ]; then
-    skip "$target_config already exists — leaving it untouched"
-    return
-  fi
+  # Interactive: configure() asks scope and checks existence for that scope.
   if [ -t 0 ] && [ -t 1 ] && [ -z "${CI:-}" ]; then
     configure
   else
