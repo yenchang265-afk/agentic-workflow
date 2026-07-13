@@ -410,6 +410,14 @@ server.registerTool(
       await snapshot()
     } else {
       active = state
+      // Arm the stage marker for a no-isolation entry stage, mirroring startPlan
+      // (loop_start's queued path). Engineering's PLAN is spawned straight off this
+      // claim with no loop_stage call (firePayload emits no such instruction for
+      // plan), so without the marker the {stage:"plan", taskId} carve-out never
+      // exists and the plan-author's one write to queued/<id>.md is blocked (exit 2)
+      // → loop_advance finds no plan. Sitter check-stage entries re-arm via loop_stage
+      // anyway, so this is the fix for PLAN and a harmless no-op for them.
+      writeStageMarker(state.stage)
     }
     const warnings = await claimWarnings()
     return ok({ ...firePayload(state, claim.item.id), ...(warnings.length ? { warnings } : {}) })
