@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { semverImpact, severityRank, type Severity, type UpgradeCandidate } from "./dependency-scan.js"
+import { severityRank, type Severity, type SemverImpact, type UpgradeCandidate } from "./dependency-scan.js"
 
 /**
  * The pure OSV-Scanner report normalizer for the dependency-scan work
@@ -94,6 +94,32 @@ export const compareLooseVersions = (a: string, b: string): number => {
   return 0
 }
 
+/**
+ * Semver-style impact of `current → target` for LOOSE (JVM) version strings, the
+ * ordering-comparator's classifier sibling. The npm `semverImpact` demands three
+ * numeric segments (`X.Y.Z`), so a two-segment Maven/Gradle version (`4.4 → 4.5`, a
+ * minor bump) parses as unknown and is misclassified `major` — routed to
+ * `skippedMajors` and never claimed even for a critical advisory (C3). This splits on
+ * `.`/`-` like `compareLooseVersions`, compares the first three positions (missing ⇒ 0),
+ * and stays conservative: an unreadable/qualifier-led major on either side ⇒ `major`.
+ * Pure.
+ */
+export const looseImpact = (current: string, target: string): SemverImpact => {
+  const split = (v: string) => v.trim().replace(/^v/, "").split(/[.-]/).filter(Boolean)
+  const numAt = (arr: string[], i: number): number | null => {
+    const s = arr[i]
+    return s !== undefined && /^\d+$/.test(s) ? Number(s) : null
+  }
+  const c = split(current)
+  const t = split(target)
+  const cMaj = numAt(c, 0)
+  const tMaj = numAt(t, 0)
+  if (cMaj === null || tMaj === null) return "major" // can't read a numeric major ⇒ don't auto-fix
+  if (cMaj !== tMaj) return "major"
+  if ((numAt(c, 1) ?? 0) !== (numAt(t, 1) ?? 0)) return "minor"
+  return "patch"
+}
+
 /** Band a numeric CVSS score string into the npm severity vocabulary; "" when unparsable. Pure. */
 export const bandCvss = (score: string): Severity | "" => {
   const n = Number.parseFloat(score)
@@ -172,7 +198,7 @@ export const osvCandidates = (
         if (!target || compareLooseVersions(minimal, target) > 0) target = minimal
       }
 
-      const impact = semverImpact(current, target)
+      const impact = looseImpact(current, target)
       const candidate: UpgradeCandidate = { pkg, current, target, impact, severity, ecosystem }
       if (!fixable || !target) {
         out.unfixable.push({ ...candidate, target: "" })

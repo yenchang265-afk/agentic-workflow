@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { bandCvss, compareLooseVersions, osvCandidates, OsvReportSchema } from "./osv.js"
+import { bandCvss, compareLooseVersions, looseImpact, osvCandidates, OsvReportSchema } from "./osv.js"
 
 /**
  * The pure OSV-Scanner normalizer: loose version comparison, CVSS banding,
@@ -44,6 +44,30 @@ test("compareLooseVersions orders JVM-style versions", () => {
   assert.ok(compareLooseVersions("2.0.0", "2.0.0-M1") > 0) // release beats milestone
   assert.ok(compareLooseVersions("2.0.0-M1", "2.0.0-M2") < 0)
   assert.equal(compareLooseVersions("v1.2.3", "1.2.3"), 0)
+})
+
+test("looseImpact classifies JVM two-segment and multi-segment versions", () => {
+  assert.equal(looseImpact("4.4", "4.5"), "minor") // C3: two-segment minor bump, NOT major
+  assert.equal(looseImpact("4.4", "5.0"), "major")
+  assert.equal(looseImpact("4.4", "4.4.1"), "patch")
+  assert.equal(looseImpact("2.9.10", "2.9.10.8"), "patch") // post-release build segment
+  assert.equal(looseImpact("2.9.10", "2.10.0"), "minor")
+  assert.equal(looseImpact("1.2.3.RELEASE", "1.2.4.RELEASE"), "patch")
+  assert.equal(looseImpact("1.2.RELEASE", "1.3.RELEASE"), "minor")
+  assert.equal(looseImpact("", "4.5"), "major") // unknown current ⇒ conservative
+  assert.equal(looseImpact("RELEASE", "4.5"), "major") // unreadable major ⇒ conservative
+})
+
+test("a critical two-segment JVM advisory whose fix is a minor bump is claimable, not a skipped major (C3)", () => {
+  // Before C3, semverImpact's 3-segment regex read `4.4 → 4.5` as unparsable ⇒ major ⇒
+  // skippedMajors, so a critical Maven advisory with a minor fix was never claimed.
+  const r = report(osvPackage("g:widget", "4.4", [{ id: "GHSA-9", label: "CRITICAL", fixed: ["4.5"] }]))
+  const { claimable, skippedMajors } = osvCandidates(r, POLICY, ALL_DECLARED, "maven")
+  assert.equal(skippedMajors.length, 0)
+  assert.equal(claimable.length, 1)
+  assert.equal(claimable[0]?.target, "4.5")
+  assert.equal(claimable[0]?.impact, "minor")
+  assert.equal(claimable[0]?.severity, "critical")
 })
 
 test("bandCvss bands numeric strings at the 4/7/9 boundaries and rejects garbage", () => {
