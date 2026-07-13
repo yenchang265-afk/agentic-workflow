@@ -4,6 +4,7 @@
 // plugins/claude/hooks/src/reconcile.entry.mjs
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // packages/core/dist/task/statuses.js
 var STATUSES = [
@@ -116,7 +117,10 @@ var main = async () => {
   } catch {
   }
   const anomalies = await auditBacklog(fsClient, cwd, tasksDir);
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const serverBuilt = fs.existsSync(path.join(pluginRoot, "mcp-server", "dist", "server.js"));
   const lines = [];
+  if (!serverBuilt) lines.push("agentic-loop: MCP server not built (mcp-server/dist/server.js missing) \u2014 gates and loop tools will not work. Run plugins/claude/install.sh, then restart the session.");
   if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} \u2014 run \`/agentic-loop:engineering recover <id>\` to resume.`);
   if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} \u2014 \`/agentic-loop:engineering recover <id>\` resumes at the exact stage.`);
   if (planClaims.length) lines.push(`agentic-loop: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} \u2014 a prior run died mid-PLAN; \`loop_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);

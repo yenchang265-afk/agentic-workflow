@@ -102,6 +102,14 @@ Dispatch:
   audit note. (Fallback: `mcp__agentic-loop__loop_reject({id, reason})`, id
   optional.)
 
+**Verify before you report a gate.** A gate verb reaching you means the hook
+failed open — run the MCP fallback tool; if it is unavailable, the plugin's
+MCP server is not built. Either way, only report the gate as done after
+observing the task file in its **target** folder (glob `docs/tasks/*/<id>*`).
+File still in its old folder ⇒ nothing moved — report that the plugin isn't
+built/running (fix: run `plugins/claude/install.sh`, restart the session) and
+never claim the approval happened.
+
 ## Execution
 
 - **`plan <id>`** — plan one approved task now. Call
