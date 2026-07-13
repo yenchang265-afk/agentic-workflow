@@ -138,23 +138,36 @@ export const taskId = (filename: string): string => filename.replace(/\.md$/i, "
 
 /** Length of the leading short-hash segment on a modern task id. */
 export const SHORT_ID_LEN = 4
-const SHORT_ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
+const SHORT_ID_DIGITS = "0123456789"
+const SHORT_ID_ALPHABET = `${SHORT_ID_DIGITS}abcdefghijklmnopqrstuvwxyz`
 /**
- * A "modern" id starts with a fixed-length base36 short hash then `-`
- * (`f7k3-add-foo`). A real short hash never contains `-`, so a legacy slug like
- * `add-rate-limiting` — which has a `-` inside its first four chars — never
- * matches, and can't be mistaken for a hash prefix.
+ * A "modern" id is `<hash>-<slug>` where `<hash>` is a fixed-length base36 mint
+ * that ALWAYS carries at least one digit (guaranteed by `mintShortId`). That
+ * digit is the discriminator: a legacy slug whose first word is exactly
+ * `SHORT_ID_LEN` all-letter chars (`rate-limiting`, `code-review`, `auth-fix`)
+ * has the same `<4>-` shape, so shape alone is ambiguous — requiring a digit in
+ * the leading segment rules those out and keeps their full id as the handle. A
+ * legacy slug that happens to carry a digit in its first four chars (`utf8-fix`)
+ * is a rare, benign false positive: it still resolves by its exact full id.
  */
-export const SHORT_ID_RE = new RegExp(`^[a-z0-9]{${SHORT_ID_LEN}}-`)
+export const SHORT_ID_RE = new RegExp(`^(?=[a-z0-9]{${SHORT_ID_LEN}}-)[a-z0-9]*[0-9][a-z0-9]*-`)
 
 /** The short-hash handle for an id: the leading segment on a modern id, else the whole id. */
 export const shortIdOf = (id: string): string => (SHORT_ID_RE.test(id) ? id.slice(0, SHORT_ID_LEN) : id)
 
-/** Mint a random `SHORT_ID_LEN`-char base36 short hash. Impure (host RNG). */
+/**
+ * Mint a random `SHORT_ID_LEN`-char base36 short hash carrying at least one digit,
+ * so `SHORT_ID_RE` can tell a mint apart from an all-letter legacy slug. Impure
+ * (host RNG).
+ */
 export const mintShortId = (rand: () => number = Math.random): string => {
+  const pick = (alphabet: string): string => alphabet[Math.floor(rand() * alphabet.length)]!
   let s = ""
-  for (let i = 0; i < SHORT_ID_LEN; i++) s += SHORT_ID_ALPHABET[Math.floor(rand() * SHORT_ID_ALPHABET.length)]
-  return s
+  for (let i = 0; i < SHORT_ID_LEN; i++) s += pick(SHORT_ID_ALPHABET)
+  if (/[0-9]/.test(s)) return s
+  // No digit landed — force one into a random slot so the mint stays detectable.
+  const pos = Math.floor(rand() * SHORT_ID_LEN)
+  return s.slice(0, pos) + pick(SHORT_ID_DIGITS) + s.slice(pos + 1)
 }
 
 /** Whether a task is paired to a tracker item (has a `tracker` block). Pure. */
