@@ -92,13 +92,20 @@ Dispatch:
   re-planning; the reason is recorded in the audit note and the next PLAN
   pass must address it.
 
-**Verify before you report a gate.** The move happens in the plugin's command
-hook *before* your turn, so by the time you run the file must ALREADY sit in
-its target folder — glob `docs/tasks/*/<id>*` and check. If it is still in
-its old folder, the plugin did not run (not loaded, or its `@agentic-loop/core`
-build is stale) — report **that**, with the fix (`npm install` at the
-agentic-loop repo root, then restart opencode), and never claim the gate
-happened. A gate is only "done" when you observed the file in its new folder.
+**Verify before you report a gate — `approve` and `replan` ONLY.** Their move
+happens in the plugin's command hook *before* your turn, so by the time you
+run the file must ALREADY sit in its target folder — glob
+`docs/tasks/*/<id>*` and check. If it is still in its old folder, the plugin
+did not run (not loaded, or its `@agentic-loop/core` build is stale) — report
+**that**, with the fix (`npm install` at the agentic-loop repo root, then
+restart opencode), and never claim the gate happened. A gate is only "done"
+when you observed the file in its new folder.
+
+This check applies to NOTHING but those two gate verbs. `claim`, `plan`,
+`watch`, and `recover` defer their work until this turn settles — a task
+still sitting in its folder right after them is EXPECTED, not a plugin
+failure. For those verbs report the toast's outcome and stop; never prescribe
+a rebuild from an unmoved file on an execution verb.
 
 ## Execution
 
