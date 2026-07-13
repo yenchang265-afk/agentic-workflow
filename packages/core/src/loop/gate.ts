@@ -110,6 +110,15 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
       message: where ? `Can't approve "${id}": it's in ${where} — only draft tasks can be approved.` : `Can't approve "${id}": no task found.`,
     }
   }
+  // A tracking epic is never approved — it only orders its child slices;
+  // queuing it would have the loop plan/build the tracking file itself.
+  if (draft.type === "epic") {
+    return {
+      ok: false,
+      message: `Can't approve "${id}": it is a tracking epic — approve its child slices instead, and close the epic by hand once every child has shipped.`,
+      variant: "warning",
+    }
+  }
   const actor = await gitActor($, directory)
   await appendNote($, draft, auditNote("Task approved — queued for planning", new Date(), actor), log)
   const newPath = await moveTask($, draft, "queued")

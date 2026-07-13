@@ -85,6 +85,16 @@ test("approveTask on a missing task fails", async () => {
   assert.equal(r.ok, false)
 })
 
+test("approveTask refuses a tracking epic — it stays in draft/, untouched", async () => {
+  const { ctx, fs, log } = makeCtx({ "draft/epic.md": serializeTask({ title: "Big feature", type: "epic", body: "children in order…" }) })
+  const r = await approveTask(ctx, "epic")
+  assert.equal(r.ok, false)
+  assert.ok(!r.ok && r.variant === "warning")
+  assert.match(r.message, /tracking epic/)
+  assert.ok("/repo/docs/tasks/draft/epic.md" in fs, "the epic must stay in draft/")
+  assert.ok(!log.some((c) => c.startsWith("mv ") || c.startsWith("printf")), "no move, no audit note on a refusal")
+})
+
 test("approvePlan advances a planned plan-review task to in-progress", async () => {
   const { ctx, log } = makeCtx({ "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) })
   const r = await approvePlan(ctx, "t")
