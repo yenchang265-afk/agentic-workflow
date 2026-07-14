@@ -83,15 +83,23 @@ needs no edit to this protocol.
    plan landed, parks the task in `plan-review/`, and returns `{kind:"park"}`
    with a `gate` field. **The plan gate is now live.** Show the user a short
    summary of the plan, then ask with **AskUserQuestion**:
-   - **Approve** → `loop_plan_approve({id})`, then `loop_start({id})` — the
-     task is claimed from `in-progress/` and the loop continues at step 3
-     (BUILD) in this same session.
+   - **Approve** → `loop_plan_approve({id})` — the task moves to
+     `in-progress/` (build-ready) only. Then ask a second
+     **AskUserQuestion**: "Build it now?"
+     - **Yes** → `loop_start({id})` — the task is claimed from
+       `in-progress/` and the loop continues at step 3 (BUILD) in this same
+       session.
+     - **No** → stop here; `/agentic-loop:engineering claim` builds it
+       whenever the user is ready — the task is already build-ready, no
+       further approve needed.
    - **Replan** (with the user's reason) → `loop_replan({id, reason})`; the
      next PLAN pass addresses it.
    - **Park for later** → stop here; `/agentic-loop:engineering approve <id>`
      (or just `/agentic-loop:engineering approve`) resumes it whenever the user is ready.
-   Never call `loop_plan_approve` without an explicit user answer — the gate
-   exists so no unapproved plan reaches BUILD.
+   Never call `loop_plan_approve` without an explicit user answer, and never
+   call `loop_start` to build without a separate explicit answer to the
+   "build now?" question — the gate exists so no unapproved plan reaches
+   BUILD, and approving a plan must not silently start a build.
 3. **Build.** Call `mcp__agentic-loop__loop_stage({stage:"build"})` — it arms
    the stage deadline, reconciles isolation, and appends the audited
    `BUILD started` note — then spawn the response's `agent` (**`loop-build`**)
@@ -245,9 +253,12 @@ Three further opt-in kinds drive the same way (`loop_claim({kind})` →
   (`/agentic-loop:engineering approve <id>` on the parked plan) — impossible via the
   tools (BUILD entry only reads `in-progress/`); never work around it.
 - Continuing into BUILD after a `{kind:"park"}` without the user's explicit
-  Approve answer — the plan gate sits between PLAN and BUILD. The ONLY path
-  through it is `loop_plan_approve` + `loop_start` after the user approves
-  (inline via AskUserQuestion, or later via `/agentic-loop:engineering approve`).
+  Approve answer, or without a separate explicit "build now?" answer — the
+  plan gate sits between PLAN and BUILD, and approving a plan is not by
+  itself authorization to build it. The ONLY path through it is
+  `loop_plan_approve` (on an explicit Approve) followed by `loop_start` (on
+  a separate explicit "build now" answer) — inline via AskUserQuestion, or
+  later via `/agentic-loop:engineering approve` then `claim`.
 - Spawning a stage subagent without first calling `loop_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.
 - Treating a stage's prose "PASS"/"FAIL" as the verdict — only the `loop_verdict`

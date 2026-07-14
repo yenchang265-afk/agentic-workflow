@@ -49,13 +49,29 @@ Dispatch:
      confirmed set to write the draft file(s) — one draft, or N child drafts
      plus one epic tracking file. No plan is written now — the loop's PLAN
      stage plans each task right before execution, so plans don't rot while it
-     sits parked. The next step is `/agentic-loop:engineering approve <id>`
+     sits parked. The next step is the task gate (step 5 below), asked inline
      per child.
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
        body listing the children in order). **Never approve it** — an
        un-approved draft is inert, so the loop never claims it. Close it by
        hand with `mcp__agentic-loop__loop_move` (to `abandoned/` or
        `completed/`) once every child has shipped.
+  5. **Task gate — ask, don't require a command.** For each non-epic drafted
+     child (skip the epic tracking file — never approve it), ask with
+     **AskUserQuestion**: "Approve `<id>` now?"
+     - **Approve** → call `mcp__agentic-loop__loop_approve({id})` directly
+       (task gate: `draft/` → `queued/`) — the user does not need to type
+       `/agentic-loop:engineering approve <id>`. Then ask a second
+       **AskUserQuestion**: "Plan it now?"
+       - **Yes** → follow the `plan <id>` procedure below: `loop_start({id})`,
+         spawn `loop-plan-author` (task mode) with the returned prompt, then
+         `loop_advance` — the task parks in `plan-review/` and the plan gate
+         goes live (offer Approve / Replan / Park, per the
+         `loop-orchestration` skill).
+       - **No** → stop; `/agentic-loop:engineering plan <id>` (or `claim`)
+         plans it later.
+     - **Not yet** → leave it in `draft/`; `/agentic-loop:engineering approve
+       <id>` (or `retask <id>`) resumes it later.
   - **Project-management pairing** — when `.agentic-loop.json` has a
     `projectManagement` section, pre-fill the draft's `tracker` block so the
     task is ready to pair with the team's tracker: set `tracker.system` to the
@@ -79,8 +95,8 @@ Dispatch:
      with the id and the confirmed title/priority/acceptance/body (carry
      forward the `tracker` block if the draft had one) to rewrite
      `docs/tasks/draft/<id>.md` **in place** — the id/filename never changes.
-     Still no plan. The next step is unchanged:
-     `/agentic-loop:engineering approve <id>`.
+     Still no plan. The next step is the same task-gate ask as `new` step 5
+     above (approve inline, then ask to plan immediately).
 
 ## Human gates (deterministic — handled by the plugin's hook before your turn)
 
@@ -95,7 +111,10 @@ Dispatch:
   Without an id it advances the single task at a loop wait-gate
   (`plan-review/` or `in-review/`); drafts always need the explicit id.
   **Spawn nothing** — report the outcome. (Fallback:
-  `mcp__agentic-loop__loop_approve({id})`, id optional.)
+  `mcp__agentic-loop__loop_approve({id})`, id optional.) Within an
+  interactive `new`/`retask` turn, call `mcp__agentic-loop__loop_approve({id})`
+  directly instead of routing through this hook — see `new` step 5, which
+  asks inline and follows up with a "plan it now?" question.
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning. **Handled by the same hook**; the reason is recorded in the
@@ -153,9 +172,11 @@ never claim the approval happened.
   usage instead.
 
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
-`retask <id>` if it's off) → `approve <id>` queues it → `plan <id>` (or
-`claim`) plans it and parks the plan in `plan-review/` → human reviews the
-plan → `approve` (or `replan <why>`) → `claim` builds it → `in-review/` →
+`retask <id>` if it's off) → approve queues it (asked inline right after
+drafting, or `approve <id>` later) → plan it (asked inline in the same
+breath, or `plan <id>`/`claim` later) and parks the plan in `plan-review/` →
+human reviews the plan → approve (asked inline, or `replan <why>`) → build it
+(asked inline as a separate question, or `claim` later) → `in-review/` →
 `approve` ships it.
 
 On a VERIFY or REVIEW FAIL the loop re-**builds** with the feedback threaded
@@ -163,10 +184,12 @@ in, within the iteration cap; when the cap trips, the plan itself is suspect
 — a human sends it back with `/agentic-loop:engineering replan <id> <why>`
 and the next PLAN pass addresses the failure.
 
-When a loop you are driving hits a gate live (a plan just parked, or a build
-just finished), the `loop-orchestration` skill has you offer the gate choices
-inline via AskUserQuestion instead of making the user type a command; the
-command verbs above are the deferred path for gates hit while you were away.
+When a loop you are driving hits a gate live (a draft just written, a plan
+just parked, or a build just finished), offer the gate choices inline via
+AskUserQuestion instead of making the user type a command — see `new` step 5
+above for the task gate, and the `loop-orchestration` skill for the plan and
+ship gates. The command verbs above are the deferred path for gates hit
+while you were away.
 
 Do not invent your own control flow — the `loop-orchestration` skill defines
 the exact sequence of tool calls and Task spawns. The MCP tools own the state
