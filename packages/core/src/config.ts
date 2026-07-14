@@ -66,13 +66,14 @@ const BaseConfigSchema = z.object({
   /** Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. */
   stageTimeoutMinutes: z.number().int().positive().default(60),
   /**
-   * Repo-relative (or absolute) directory for per-task git worktrees. When set,
-   * each loop's BUILD/VERIFY/REVIEW runs against its own worktree instead of
+   * Repo-relative (or absolute) directory for per-task git worktrees. Each
+   * loop's BUILD/VERIFY/REVIEW runs against its own worktree instead of
    * switching branches in the shared checkout — the human's tree is never
-   * touched and concurrent watch sessions become safe. Unset → today's
-   * shared-tree branch switching. See docs/design/improvements/01.
+   * touched and concurrent watch sessions become safe. Defaults to
+   * `.loop-worktrees`; set explicitly to `false` to opt back into shared-tree
+   * branch switching. See docs/design/improvements/01.
    */
-  worktreesDir: z.string().min(1).optional(),
+  worktreesDir: z.union([z.string().min(1), z.literal(false)]).default(".loop-worktrees"),
   /** Optional shell command run inside a freshly created worktree (e.g. "npm ci"). */
   worktreeSetup: z.string().min(1).optional(),
   /**

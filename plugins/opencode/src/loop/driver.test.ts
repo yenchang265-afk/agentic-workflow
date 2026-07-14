@@ -301,6 +301,7 @@ const testConfig: Config = {
   tasksDir: "docs/tasks",
   stageTimeoutMinutes: 10,
   watchIntervalMinutes: 5,
+  worktreesDir: false,
   reviewLenses: [],
   loops: {},
 }

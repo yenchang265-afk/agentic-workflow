@@ -189,8 +189,8 @@ export interface Config {
   readonly tasksDir: string
   /** Wall-clock cap on a single stage before the loop gives up on it. */
   readonly stageTimeoutMinutes: number
-  /** Per-task worktree root; unset ⇒ shared-tree branch switching. */
-  readonly worktreesDir?: string
+  /** Per-task worktree root; `false` ⇒ shared-tree branch switching (opt-out). */
+  readonly worktreesDir: string | false
   /** Shell command run in a fresh worktree after creation. */
   readonly worktreeSetup?: string
   /** Extra REVIEW lenses; each runs one more focused review pass. */

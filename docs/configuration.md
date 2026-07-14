@@ -63,7 +63,7 @@ hand-edited afterward.
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps via its REST API, PAT auth). Overridable per kind with `loops.<kind>.codePlatform`. See below. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-loop:engineering status`. See below. |
-| `worktreesDir` | unset | See hardening below. |
+| `worktreesDir` | `".loop-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
@@ -374,9 +374,11 @@ Impact on the commands:
 - **`worktreesDir`** — run each loop in its own `git worktree` instead of
   switching branches in the shared checkout. The human's tree is never
   touched and multiple `/agentic-loop:engineering watch` sessions can build concurrently in one
-  instance. Off by default (a fresh worktree has no installed deps — pair it
-  with `worktreeSetup`, e.g. `"npm ci"`). Audit notes and task moves stay in
-  the main tree and are committed there per terminal event.
+  instance. **On by default** (`.loop-worktrees`) — set `worktreesDir: false`
+  to opt back into shared-tree branch switching. A fresh worktree has **no
+  installed deps**: pair it with `worktreeSetup` (e.g. `"npm ci"`), or VERIFY
+  will fail in a bare checkout. Audit notes and task moves stay in the main
+  tree and are committed there per terminal event.
 - **`reviewLenses`** — run REVIEW once per lens (e.g.
   `["correctness", "security", "test-adequacy"]`) and take the worst verdict,
   so a single prompt-injected reviewer can't wave a change through. Costs ~N×

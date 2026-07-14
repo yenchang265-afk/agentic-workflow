@@ -356,8 +356,8 @@ field has a default:
   "tasksDir": "docs/tasks",     // root of the task backlog — see task-backlog-management
   "stageTimeoutMinutes": 60,    // wall-clock cap per stage; exceeding it fails the loop
   "watchIntervalMinutes": 5,    // default /agentic-loop:engineering watch polling cadence (override: /agentic-loop:engineering watch 30s)
-  "worktreesDir": ".loop-worktrees", // OPTIONAL: per-task git worktree isolation (unset ⇒ shared-tree branch switching)
-  "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out)
+  "worktreesDir": ".loop-worktrees", // DEFAULT: per-task git worktree isolation (set to `false` to opt into shared-tree branch switching)
+  "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out otherwise)
   "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review, worst verdict wins
   "loops": {                    // OPTIONAL: per-kind sections; engineering is on by default, other kinds off until listed
     "pr-sitter": { "enabled": true, "query": "is:open author:@me" }

@@ -17,8 +17,8 @@ import {
 } from "./config.js"
 import type { Client } from "./host.js"
 
-test("defaults leave worktree isolation off and review single-pass", () => {
-  assert.equal(DEFAULT_CONFIG.worktreesDir, undefined)
+test("defaults enable worktree isolation and leave review single-pass", () => {
+  assert.equal(DEFAULT_CONFIG.worktreesDir, ".loop-worktrees")
   assert.equal(DEFAULT_CONFIG.worktreeSetup, undefined)
   assert.deepEqual(DEFAULT_CONFIG.reviewLenses, [])
 })
@@ -27,6 +27,10 @@ test("parseConfig accepts worktree knobs", () => {
   const c = parseConfig({ worktreesDir: ".loop-worktrees", worktreeSetup: "npm ci" })
   assert.equal(c.worktreesDir, ".loop-worktrees")
   assert.equal(c.worktreeSetup, "npm ci")
+})
+
+test("parseConfig accepts worktreesDir: false as an explicit opt-out", () => {
+  assert.equal(parseConfig({ worktreesDir: false }).worktreesDir, false)
 })
 
 test("parseConfig rejects an empty worktreesDir", () => {

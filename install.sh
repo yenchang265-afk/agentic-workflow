@@ -25,10 +25,16 @@ Usage:
 After installing, a short wizard offers to write an initial .agentic-loop.json
 into the project the loop will drive (interactive terminals only):
   --config                        # force the config wizard on
-  --no-config                     # skip the config wizard
+  --no-config                     # skip the config wizard (also skips the
+                                   # user-scope defaults file below)
   --user                          # write config to the user scope (~/.agentic-loop.json), not the repo
   --repo                          # write config to the project's .agentic-loop.json (default)
   -y, --yes                       # non-interactive: seed a defaults .agentic-loop.json, no prompts
+
+Every run (regardless of the above) also seeds a fully-expanded user-scope
+~/.agentic-loop.json — every field at its default, every sitter listed with
+enabled:false — if one doesn't already exist there, so every knob is visible
+without reading docs/configuration.md. Never overwrites an existing file.
 
 To reverse an install: ./uninstall.sh [opencode|claude|all].
 To clear local run state / backlog / config: ./scripts/clean.sh (see --help).
@@ -380,12 +386,22 @@ configure() {
     fi
   fi
 
-  # Q3 — worktrees.
+  # Q3 — worktrees. On by default (schema default: worktreesDir=".loop-worktrees"),
+  # so nothing needs writing unless the path is overridden or opted out of.
   echo
-  if confirm "Run each task in an isolated git worktree?"; then
-    local wtdir wtsetup
-    wtdir="$(ask "Worktrees directory" ".worktrees")"
-    add_member "\"worktreesDir\":\"$(json_escape "$wtdir")\""
+  local wt_opt_out=""
+  if confirm "Worktree isolation runs by default (.loop-worktrees) — customize the path or opt out?"; then
+    if confirm "  Opt out (use shared-tree branch switching instead)?"; then
+      add_member "\"worktreesDir\":false"
+      wt_opt_out="1"
+    else
+      local wtdir
+      wtdir="$(ask "  Worktrees directory" ".loop-worktrees")"
+      add_member "\"worktreesDir\":\"$(json_escape "$wtdir")\""
+    fi
+  fi
+  if [ -z "$wt_opt_out" ]; then
+    local wtsetup
     wtsetup="$(ask "Setup command to run in a fresh worktree (blank = none, e.g. npm ci)" "")"
     [ -n "$wtsetup" ] && add_member "\"worktreeSetup\":\"$(json_escape "$wtsetup")\""
   fi
@@ -505,6 +521,73 @@ maybe_configure() {
   fi
 }
 
+# Ensure a fully-expanded user-scope defaults file exists. A repo-scope file
+# stays sparse (only the fields someone actively chose), but the runtime
+# layers it OVER this one field-by-field (mergeConfigLayers), so seeding
+# every default here once makes every knob visible/adjustable — without
+# reading docs/configuration.md or touching this checkout again — for every
+# repo the user drives. Idempotent: never touches an existing file. Sitters
+# are listed but left `enabled: false` — they open PRs / post PR comments
+# under the user's identity, so they must stay an explicit opt-in.
+ensure_user_defaults() {
+  if [ "$WANT_CONFIG" -ne 1 ]; then
+    return
+  fi
+  local target_config
+  target_config="$(user_config_path)"
+  if [ -z "$target_config" ]; then
+    skip "user-scope defaults — cannot resolve a path (no \$AGENTIC_LOOP_USER_CONFIG and no \$HOME)"
+    return
+  fi
+  if [ -f "$target_config" ]; then
+    skip "$target_config already exists — leaving it untouched"
+    return
+  fi
+  if [ "${AGENTIC_LOOP_USER_CONFIG-x}" = "" ]; then
+    echo "note: \$AGENTIC_LOOP_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
+    echo "      writing to $target_config anyway — unset it to have the loop read this file." >&2
+  fi
+  cat <<'EOF' > "$target_config"
+{
+  "maxIterations": 3,
+  "tasksDir": "docs/tasks",
+  "stageTimeoutMinutes": 60,
+  "codePlatform": "github",
+  "worktreesDir": ".loop-worktrees",
+  "reviewLenses": [],
+  "loops": {
+    "pr-sitter": { "enabled": false, "query": "is:open author:@me" },
+    "review-sitter": { "enabled": false, "query": "is:open review-requested:@me" },
+    "dep-sitter": { "enabled": false, "severityFloor": "high" },
+    "main-sitter": { "enabled": false }
+  }
+}
+EOF
+
+  # Safety net: confirm the file parses. We author it deterministically, so a
+  # failure here is a bug, not user error — warn, don't fail the install.
+  if command -v node >/dev/null 2>&1; then
+    if ! node -e 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))' "$target_config" 2>/dev/null; then
+      echo "warning: wrote $target_config but it did not parse as JSON — please review" >&2
+      return
+    fi
+  fi
+  ok "wrote $target_config (user scope, full defaults — shared across every repo you drive)"
+  echo "         Every field has a sane default; edit any of them, or flip a sitter's"
+  echo "         \"enabled\" to true, to change behavior. What's here:"
+  echo "           maxIterations (3)                 — cap on verify/review-FAIL re-builds"
+  echo "           tasksDir (\"docs/tasks\")           — root of the task backlog"
+  echo "           stageTimeoutMinutes (60)           — wall-clock cap per stage"
+  echo "           codePlatform (\"github\")            — or \"ado\" (needs an \"ado\" section)"
+  echo "           worktreesDir (\".loop-worktrees\")   — per-task git worktree isolation; false to opt out"
+  echo "           reviewLenses ([])                  — extra REVIEW passes, e.g. [\"security\"]"
+  echo "           loops.pr-sitter    (off) — watches your own open PRs"
+  echo "           loops.review-sitter (off) — comments on PRs awaiting your review"
+  echo "           loops.dep-sitter   (off) — opens draft PRs for vulnerable/outdated deps"
+  echo "           loops.main-sitter  (off) — opens a draft PR when the default branch's CI goes red"
+  echo "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
+}
+
 case "$TARGET" in
   opencode) install_opencode ;;
   claude) install_claude ;;
@@ -516,3 +599,4 @@ case "$TARGET" in
 esac
 
 maybe_configure
+ensure_user_defaults
