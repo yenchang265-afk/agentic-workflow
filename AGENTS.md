@@ -6,22 +6,28 @@ Guidance for AI coding agents working in this repository.
 
 `agentic-loop` is a multi-kind agentic-loop framework (shared engine in
 `@agentic-loop/core`, shipping both an OpenCode and a Claude Code plugin); this
-guide covers the OpenCode plugin. It provides:
+guide covers the OpenCode plugin — see `plugins/claude/README.md` for the
+Claude Code equivalent. It provides:
 
 1. **The automatic agentic loop** (`/agentic-loop:engineering`) — a real plugin
    (`plugins/opencode/src/`, agents/commands under `plugins/opencode/`) that
    drives the whole lifecycle from one command: `/agentic-loop:engineering new` interviews you
    into a planless draft task (`new <idea>` — always), `retask <id>` reshapes
    a draft in place, `approve [id]` is the one folder-driven gate (draft →
-   queued, parked plan → in-progress, finished review → completed), and
+   queued, parked plan → in-progress, finished review parked in `in-review/`
+   → completed), and
    `replan [id]` sends a parked plan back;
    the loop claims work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
-   engineering kind), plans a queued task right
+   engineering kind; `unwatch` takes this session back out), plans a queued task right
    before execution (PLAN parks the plan in `plan-review/` for your gate and
    exits; `plan <id>` runs it on demand), and drives BUILD→VERIFY→REVIEW
    unattended on plan-approved
-   tasks. Use this
+   tasks. `recover <id>` resumes a run that stopped early (crash or ESC
+   interrupt); `stop`/`abort` ends a run outright; `status` reports the
+   current loop plus a backlog roll-up; `kinds` lists which loop kinds this
+   repo has enabled; `doctor [fix]` audits (and optionally repairs) backlog
+   structural damage. Use this
    when a goal should run the whole lifecycle largely unattended. See the
    `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
    and `task-backlog-management` for driving it from

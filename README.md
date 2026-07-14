@@ -189,7 +189,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   reference (user-scope + repo-scope layering), per-kind `loops` sections, and
   optional hardening (worktrees, review lenses, redaction)
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) — starter
-  `AGENTS.md`/`CLAUDE.md` (Karpathy rules + loop workflow) to copy into
+  `AGENTS.md`/`CLAUDE.md` (loop workflow + skill mapping) to copy into
   projects driven by agentic-loop
 - [docs/migration.md](docs/migration.md) — migrating from earlier layouts
   (the single `/agent-loop` command, `/agent-loop-plan`, `in-planning/`, the
