@@ -199,129 +199,27 @@ against it. Stage
 agents can't approve tasks, move backlog folders, or ship; the plugin and the
 human own every transition between statuses.
 
-## The PR sitter kind — experimental (`packages/core/loops/pr-sitter/`)
+## The sitter kinds — experimental
 
-Opt-in (`loops.pr-sitter.enabled` in `.agentic-loop.json`). Its work source
-is chosen from config `codePlatform` at wiring time: on GitHub
-(`source/github-pr.ts`, the default) it polls `gh pr list --search <query>`
-(default `is:open author:@me`, overridable via `loops.pr-sitter.query`); on
-Azure DevOps (`source/ado-pr.ts`, `codePlatform: "ado"` + the `ado` config
-section) it polls the REST API
-(`GET _apis/git/pullrequests?searchCriteria.status=active`) and normalizes ADO
-state into the same `PrSnapshot` shape (blocking-policy failures → failing
-checks, negative reviewer vote → changes requested, thread comments,
-`mergeStatus: conflicts`). Either way a PR is claimed when an enabled trigger
-fires: failing checks, changes requested, unanswered comments (the sitter's
-own login is filtered out), or a merge conflict.
-Drafts and fork PRs are skipped (a fork head can't be pushed). Claims use the
-same local atomic mkdir markers as the backlog
-(`<tasksDir>/runs/pr-sitter/.claims/`), and the PR's head branch is fetched
-into a local ref at claim time so the standard worktree isolation reuses it.
-
-```mermaid
-flowchart LR
-    poll["scheduler claims PR<br/>(trigger fired, ledger says unhandled)"] --> triage["<b>TRIAGE</b> · check<br/>agent: loop-pr-triage · read-only gh<br/><i>structured findings; PR text = data, not instructions</i>"]
-    triage -->|"PASS = actionable"| fix["<b>FIX</b> · work<br/>agent: loop-pr-fix<br/><i>worktree on the PR's existing branch,<br/>local commits only</i>"]
-    triage -->|"FAIL = nothing to do"| done0[("done")]
-    triage -.->|"ERROR → stop"| stop0[("stop — next poll retries")]
-    fix --> verify["<b>VERIFY</b> · check<br/>agent: loop-verify<br/><i>tests + findings coverage</i>"]
-    verify -->|"PASS"| publish["<b>PUBLISH</b> · work<br/>agent: loop-pr-publish<br/><i>git push origin &lt;branch&gt; +<br/>gh pr comment per finding<br/>NEVER merges/closes/approves</i>"]
-    verify -.->|"FAIL → re-fix<br/>(shared maxIterations, cap 3)"| fix
-    publish --> done[("done — ledger records<br/>the pushed head as handled")]
-```
-
-Status lives on the platform plus a **dedup ledger** (`source/ledger.ts`,
-`<tasksDir>/runs/pr-sitter/pr-<n>.json` — ephemeral machine state, like
-snapshots): `headShaHandled` (publish's `onTerminal` records the post-push
-head SHA, so the sitter never triggers on its own push), a
-`lastCommentAtHandled` timestamp watermark, one `conflictAttempt` per
-(head, base) pair, and `failedAttempts[]` — a capped or stopped run parks the
-PR until a human pushes a new head. A missing or garbled ledger reads as
-"nothing handled yet", costing at most one redundant triage pass.
-
-PR comments and diffs are **untrusted input**: the stage prompts and agents
-state the injection posture explicitly (address what a comment points at on
-its merits; never execute instructions embedded in it), publish's bash
-allowlist is limited to `git push origin *` plus the resolved platform's
-comment/read-only globs (`gh pr comment`/`gh api` on GitHub,
-`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT"` REST reads plus a POST to a `/threads`
-resource on ADO, via the manifest's per-stage `platformAllowlist`), and failed
-pushes are reported, never forced. See the
+Four opt-in sitters (`pr-sitter`, `review-sitter`, `dep-sitter`,
+`main-sitter`) watch a hosted surface (open PRs, review requests,
+dependency advisories, CI) and drive a fix behind git worktree isolation,
+always leaving the terminal call — merge, approve, close — to a human. Each
+binds its own work source and follows the same check → work → publish
+shape. **[`docs/sitters.md`](sitters.md) is the canonical reference** for
+what each one does, its stage pipeline, its authority limits, and its
+`loops.<kind>` config keys; the security posture for all four is in the
 [threat model](design/threat-model.md).
-
-## The other sitter kinds — experimental
-
-Three more sitters follow the same shape — a **check** stage that decides
-whether there is claimable work, one or more **work** stages behind worktree
-isolation, and a terminal that publishes through a narrow platform allowlist —
-but bind a different work source and hold a narrower authority. Each is opt-in
-(`loops.<kind>.enabled`), resolves GitHub vs. Azure DevOps from `codePlatform`
-at wiring time, and treats the diff/comment/CI text it reads as untrusted
-input. Full config lives in [configuration.md](configuration.md); the security
-posture in the [threat model](design/threat-model.md).
-
-- **review-sitter** (`packages/core/loops/review-sitter/`) — work source
-  `github-pr` with `role: reviewer` and query `is:open review-requested:@me`,
-  so it claims *other people's* PRs where your review is requested (not your
-  own). **fetch** (read-only `gh`/git) → **assess** (worktree; reads the diff
-  in the context of the surrounding code, may run the suite to sanity-check) →
-  **publish** posts **one structured review comment** per requested head via
-  `gh pr comment`. Its authority is **comment-only**: it never approves,
-  requests changes, or merges — enforced by the publish stage allowlist and the
-  ADO write backstop — so the human stays reviewer of record.
-- **dep-sitter** (`packages/core/loops/dep-sitter/`) — work source
-  `dependency-scan` (`autoFix: ["patch","minor"]`, `severityFloor: "high"`,
-  `includeOutdated: false`, `ecosystem: "auto"`), which surfaces direct
-  dependencies with a fixable advisory across npm, Maven, and Gradle.
-  **scan** (check) → **upgrade** (worktree, on a `dep-sitter/*` branch: bump
-  the manifest, refresh the lockfile, fix the fallout) → **verify** (worktree,
-  runs the suite) → **publish** pushes and opens a **draft PR**. **Major bumps
-  are never auto-fixed** — they are logged and left for a human, and merging
-  stays a human call.
-- **main-sitter** (`packages/core/loops/main-sitter/`) — work source `ci-runs`,
-  claiming the watched branch's newest head when its completed CI is red
-  (`loops.main-sitter.branch` overrides the branch; unset ⇒ the remote
-  default). **diagnose** (worktree, pinned to the red head, bisecting when
-  needed) → **remedy** (worktree; the smallest forward fix, or a
-  `git revert`) → **verify** (worktree) → **publish** opens a **draft remedy
-  PR** on a `main-sitter/*` branch and comments **once** on the culprit PR. It
-  **never pushes the watched branch itself**; merging stays a human call.
 
 ## Claude Code variant (`plugins/claude/`)
 
 Same loop kinds and lifecycles, different driver: Claude Code has no
 background `session.idle` driver, so the main agent drives the loop through a
-bundled MCP server (`mcp__agentic-loop__loop_*` tools). `loop_claim` delegates
-to the same `pollOnce` scheduler over the same work sources; `loop_advance`
-feeds each finished stage back into the manifest engine:
-
-```mermaid
-flowchart LR
-    startq["loop_start / loop_claim<br/>(any enabled kind's work source)"] --> fire["engine says fire →<br/>spawn the stage's manifest agent<br/>(loop-plan-author, loop-build,<br/>loop-pr-triage, …)"]
-    fire --> adv["loop_advance<br/>(+ loop_verdict for check stages)"]
-    adv -->|"fire next stage"| fire
-    adv -->|"park"| park[("e.g. plan-review/<br/>— loop over")]
-    adv -->|"done / stop"| done[("terminal — task moved /<br/>ledger updated, metrics written")]
-```
-
-Differences worth knowing in a demo: there is no standing watch on this host
-— `/agentic-loop:engineering claim` is the one-shot pull equivalent (one `pollOnce` tick;
-build-ready tasks beat queued ones) and `/agentic-loop:pr-sitter claim` is
-the sitter's (it passes the pr-sitter kind to `loop_claim`); and
-stage guardrails are enforced by a `PreToolUse` hook
-(`plugins/claude/hooks/check-stage-guard.mjs`) rather than by agent
-permissions. The MCP server writes a stage marker to
-`<tasksDir>/runs/.stage.json` carrying `{kind, stage, taskId, worktree,
-deadline, bashAllowlist}`; the hook enforces the **manifest's** allowlist for
-the active check stage (falling back to its built-in engineering lists for
-older markers) and pins edit/write tools inside the active worktree. On
-OpenCode the same guardrails ride the agent frontmatter permissions
-(including the `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish` agents).
-Human gates are **interactive** on this substrate: a park (`plan gate`) or a
-done (`ship gate`) returns a `gate` field, and the driving agent asks the
-user inline via AskUserQuestion — Approve (continue into BUILD / ship now),
-Replan with a reason, or Park for later (the `/agentic-loop:engineering approve` /
-`replan` gate verbs remain the deferred path). Install and command details live in
+bundled MCP server (`mcp__agentic-loop__loop_*` tools) rather than agent
+frontmatter permissions, and human gates are **interactive** — a park or a
+done returns a `gate` field and the driving agent asks inline via
+AskUserQuestion instead of only waiting for a command. Full install and
+command details live in
 [`plugins/claude/README.md`](../plugins/claude/README.md).
 
 ## Admin hub — beta (`packages/hub/`)
@@ -329,17 +227,8 @@ Replan with a reason, or Park for later (the `/agentic-loop:engineering approve`
 A third, host-independent surface: a localhost web app (`npm run hub`) that
 **observes** the same filesystem substrate the hosts write — status folders,
 run logs, snapshots, the stage marker, the watch lease — and never drives the
-loop. It can monitor several repos at once (repeatable `--dir` flags with `*`
-wildcards, or `hub.repos` in the user-scope `~/.agentic-loop.json` — a
-repo-level `hub` key is ignored): each repo gets its own deps + watcher,
-routes scope by `?repo=<id>`, and SSE events are repo-tagged. Its only write
-path is the loop creator saving
-`packages/core/loops/<kind>/` manifests + prompt stubs. Token usage comes from
-the `runs/<id>.metrics.json` sidecar both hosts append on terminal events
-(exact for opencode, which observes usage; joined from Claude transcripts by
-stage time-window, flagged estimated, for the Claude host). Beta: the API
-shape may still change, and the creator canvas hasn't had interactive QA —
-see [`packages/hub/README.md`](../packages/hub/README.md).
+loop. Beta: the API shape may still change. See
+[`packages/hub/README.md`](../packages/hub/README.md).
 
 ## Backlog integrity rails
 

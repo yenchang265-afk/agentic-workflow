@@ -71,18 +71,10 @@ the manifests, config keys, and defaults may still change. Enable per repo in
 }
 ```
 
-| Kind | Sits on | Pipeline | Ships |
-|------|---------|----------|-------|
-| pr-sitter | your open PRs needing attention (checks, comments, conflicts) | triage → fix → verify → publish | pushes fixes + a reply per finding; never merges |
-| review-sitter | PRs where your review is requested | fetch → assess → publish | one comment-only review per head; never approves |
-| dep-sitter | vulnerable/outdated deps (npm, pip, Maven, Gradle) | scan → upgrade → verify → publish | a draft PR for the patch/minor bump; majors left for a human |
-| main-sitter | the default branch's CI when it goes red | diagnose → remedy → verify → publish | a draft remedy PR; never pushes the watched branch |
-
 Every sitter treats the PR/comment/diff/CI text it reads as untrusted input,
 stays behind per-stage bash + platform allowlists, and keeps the terminal call
-— merge, approve, close — human. Design detail:
-[docs/architecture.md](docs/architecture.md); config keys:
-[docs/configuration.md](docs/configuration.md); security posture:
+— merge, approve, close — human. What each one does, its pipeline, and its
+config keys: [docs/sitters.md](docs/sitters.md); security posture:
 [docs/design/threat-model.md](docs/design/threat-model.md).
 
 ## Install
@@ -176,9 +168,13 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 
 ## Documentation
 
+- [docs/README.md](docs/README.md) — index of every doc under `docs/`, and
+  which one is canonical for a given topic
 - [docs/architecture.md](docs/architecture.md) — the framework (core package,
-  manifest engine, scheduler, work sources), the five shipped loop kinds, and
+  manifest engine, scheduler, work sources), the engineering pipeline, and
   how the Claude Code variant differs
+- [docs/sitters.md](docs/sitters.md) — what each of the four experimental
+  sitters does, its pipeline, and its config keys
 - [packages/core/loops/README.md](packages/core/loops/README.md) — how to author a new loop kind
   (manifest schema, prompt templates, hooks, work sources)
 - [docs/opencode.md](docs/opencode.md) — OpenCode execution model, commands,
@@ -203,11 +199,9 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   is repeatable and takes `*` wildcards, or set `hub.repos` in the user-scope
   `~/.agentic-loop.json` — no repos configured, no watching)
 
-Each topic is canonical in one file — config/wizard in
-[docs/configuration.md](docs/configuration.md), OpenCode/Claude install +
-commands in their plugin docs, architecture in
-[docs/architecture.md](docs/architecture.md). Update the canonical file and
-link to it; don't copy.
+Each topic is canonical in one file — see [docs/README.md](docs/README.md)
+for the full index of which doc owns which topic. Update the canonical file
+and link to it; don't copy.
 
 ## Layout
 

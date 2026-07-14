@@ -102,58 +102,12 @@ config order.
 
 - **`loops.engineering.enabled`** — default `true`; set `false` to run only
   other kinds (e.g. a dedicated PR-sitter watcher).
-- **`loops.pr-sitter.enabled`** — default off; requires authenticated access
-  to the platform: `gh` (GitHub), or a PAT in `AZURE_DEVOPS_EXT_PAT` (ADO).
-- **`loops.pr-sitter.query`** — overrides the manifest's
-  `gh pr list --search` query (default `is:open author:@me`) selecting which
-  PRs the sitter watches. GitHub only — on ADO the sitter watches active PRs
-  authored by its own identity.
-- **`loops.review-sitter.enabled`** — default off; sits on PRs whose review
-  is requested from this identity and posts one structured review comment per
-  requested head (fetch → assess → publish). Comment-only authority: it never
-  approves, votes, pushes, or merges. Re-fires only when a human pushes a new
-  head; fork and draft PRs are skipped.
-- **`loops.review-sitter.query`** — overrides the manifest's query (default
-  `is:open review-requested:@me`). GitHub only — on ADO the sitter claims
-  active PRs where `ado.selfLogin` is a reviewer whose vote is still pending
-  (vote 0), never its own PRs.
-- **`loops.dep-sitter.enabled`** — default off; sits on vulnerable
-  dependencies and turns each auto-fixable direct-dependency upgrade into a
-  verified draft PR (scan → upgrade → verify → publish). Major bumps are never
-  auto-fixed — they are logged and left for a human. Three ecosystems: **npm**
-  via the native `npm audit` / `npm outdated`; **Maven and Gradle (Spring
-  Boot)** via [OSV-Scanner](https://google.github.io/osv-scanner/) —
-  `osv-scanner --format json -L <pom.xml|gradle.lockfile>`, querying the
-  OSV.dev database. The `osv-scanner` binary must be installed on the watcher
-  host for the JVM ecosystems (missing → an actionable skip; npm keeps
-  working without it). Gradle scanning needs dependency locking — osv-scanner
-  cannot parse `build.gradle` itself; without a committed `gradle.lockfile`
-  (or `gradle/verification-metadata.xml`) the kind skips with instructions to
-  enable it. Vulnerable JVM packages not declared in the build files
-  (transitives) are logged, never claimed — pinning a transitive is a human
-  call, mirroring npm's direct-only rule. The publish stage opens the draft
-  PR via `gh pr create` (GitHub) or the Azure DevOps REST API (`ado`).
-- **`loops.dep-sitter.ecosystem`** — `auto` (manifest default: detect every
-  ecosystem the repo declares — `package.json` / `pom.xml` /
-  `build.gradle(.kts)` — and merge their candidates severity-first, so
-  monorepos work) | `npm` | `maven` | `gradle` (scan only that one).
-- **`loops.dep-sitter.severityFloor`** — minimum advisory severity that makes
-  a vulnerable dependency claimable: `low` | `moderate` | `high` (manifest
-  default) | `critical`. Applies uniformly: OSV advisories band their CVSS
-  score into the same vocabulary.
-- **`loops.dep-sitter.includeOutdated`** — default `false`; also claim
-  non-vulnerable but outdated direct dependencies within the patch/minor
-  policy. **npm only** — JVM staleness reporting would need build-plugin
-  setup the sitter must not perform; ignored (with a log line) for
-  maven/gradle.
-- **`loops.main-sitter.enabled`** — default off; sits on the watched branch's
-  CI (`gh run list`, or the Azure DevOps Build API on `ado`): when the newest
-  head goes red it diagnoses (bisecting when needed) and publishes a verified
-  draft fix/revert PR on a `main-sitter/*` branch (diagnose → remedy →
-  verify → publish), commenting once on the culprit PR. The watched branch
-  itself is never pushed.
-- **`loops.main-sitter.branch`** — overrides the watched branch; unset ⇒ the
-  remote default branch (from `origin/HEAD`, falling back to `main`).
+- **`loops.pr-sitter`**, **`loops.review-sitter`**, **`loops.dep-sitter`**,
+  **`loops.main-sitter`** — each `enabled: false` by default. What each sitter
+  does, its stage pipeline, and its full set of kind-specific keys
+  (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
+  documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —
+  don't duplicate that content here.
 - **`loops.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
@@ -212,6 +166,10 @@ Unknown keys under `hub` are rejected (typo safety). See
 [packages/hub/README.md](../packages/hub/README.md).
 
 ## Code platform (`codePlatform` / `ado`)
+
+Platform *mechanics* (config fields, auth, the ADO write-backstop) live here;
+what each sitter kind actually does is in
+[`docs/sitters.md`](sitters.md).
 
 The PR sitter and review sitter bind to a hosted-PR work source
 (`workSource.type: "github-pr"` in their manifests); which platform that

@@ -5,6 +5,12 @@ This is a **proposal catalog**, not a design record of shipped work (that's
 the shipped `engineering` and `pr-sitter` kinds, what other loops would
 automate the daily workflow of software engineers in enterprise environments?
 
+Three entries below — `review-sitter`, `dep-sitter`, `main-sitter` — have
+since shipped; each is marked **SHIPPED** with its deltas from the original
+sketch. **For their current behavior and config, see
+[`docs/sitters.md`](../sitters.md)** — the sketches below are kept as design
+history, not as a second source of truth for what they do today.
+
 Every entry is written against the real manifest contract
 ([`packages/core/loops/README.md`](../../packages/core/loops/README.md),
 zod schema in `packages/core/src/manifest/schema.ts`) so any of them can be

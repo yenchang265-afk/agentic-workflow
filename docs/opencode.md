@@ -7,37 +7,34 @@ details. For the shared pipeline picture see
 
 ## Execution model
 
-Work runs either on demand (`/agentic-loop:engineering plan <id>` plans one task,
-`/agentic-loop:engineering claim` pulls the next item) or in a `/agentic-loop:engineering watch
-[interval]` worker session — scoped to the engineering kind — which claims
-tasks on every idle tick plus a polling timer (default 5m, e.g.
-`/agentic-loop:engineering watch 30s`) — build-ready
-`in-progress/` tasks first, then `queued/` tasks to plan. A claimed queued
-task runs the PLAN stage: the plan is written onto the task file (main tree,
-no branch) and the task **parks in `plan-review/`** for the human plan gate
-— the loop exits rather than blocking. Execution is
-isolated on a `feature/<id>` git branch with a commit checkpoint per build
-iteration; VERIFY/REVIEW record their verdicts through a `loop_verdict`
-plugin tool (free-text verdicts are ignored), and every approval, verdict,
-and build run is appended to the task file as a timestamped, attributed
-audit note. Re-build loops are capped by `maxIterations` — if the cap trips,
-the plan itself is suspect and a human sends it back with
-`/agentic-loop:engineering replan <id> <why>`.
-A stage that outlives `stageTimeoutMinutes` fails the loop instead of
-hanging it. On a REVIEW PASS the task parks in `in-review/` — the loop never
-pushes or opens a PR on its own; you review the branch diff, then run
-`/agentic-loop:engineering approve <id>` to move it to `completed/`, which
-also pushes the `feature/<id>` branch and opens (or reuses) a draft PR —
-GitHub or Azure DevOps, per `codePlatform`. A run that stops early —
-a crash, or a user **interrupt (ESC)** mid-drive — is resumed with
-`/agentic-loop:engineering recover <id>`: loop state is snapshotted after every stage, so
-recovery resumes at the exact stage it reached. ESC is a **pause** — it halts
-the loop after the in-flight stage settles and stops watch mode, but keeps the
-snapshot (recover picks up there); a deliberate `/agentic-loop:engineering stop` **ends** the
-run and drops the snapshot, so there is nothing to recover.
+The shared engineering pipeline (gates, PLAN park, BUILD/VERIFY/REVIEW,
+`maxIterations`, ship) is documented once in
+[architecture.md](architecture.md#the-engineering-kind-packagescoreloopsengineering) —
+this section covers only what's specific to running it on OpenCode.
 
-Both knobs above (and the optional hardening: worktrees, review lenses,
-secret redaction, run summaries) are configured in `.agentic-loop.json`,
+Work runs either on demand (`/agentic-loop:engineering plan <id>` plans one
+task, `/agentic-loop:engineering claim` pulls the next item) or in a
+`/agentic-loop:engineering watch [interval]` worker session — scoped to the
+engineering kind — which claims tasks on every idle tick plus a polling
+timer (default 5m, e.g. `/agentic-loop:engineering watch 30s`) — build-ready
+`in-progress/` tasks first, then `queued/` tasks to plan.
+
+A run that stops early — a crash, or a user **interrupt (ESC)** mid-drive —
+is resumed with `/agentic-loop:engineering recover <id>`: loop state is
+snapshotted after every stage, so recovery resumes at the exact stage it
+reached. ESC is a **pause** — it halts the loop after the in-flight stage
+settles and stops watch mode, but keeps the snapshot (recover picks up
+there); a deliberate `/agentic-loop:engineering stop` **ends** the run and
+drops the snapshot, so there is nothing to recover.
+
+Gates on this substrate are **park-only**: watch mode has no interactive
+channel, so a parked plan or a finished loop always waits for
+`/agentic-loop:engineering approve [id]` (or `replan [id] [reason]` to send
+a plan back) — see [`plugins/claude/README.md`](../plugins/claude/README.md)
+for the Claude Code variant, which offers the same choices inline instead.
+
+All of the above (and the optional hardening: worktrees, review lenses,
+secret redaction, run summaries) is configured in `.agentic-loop.json`,
 layered over an optional user-scope `~/.agentic-loop.json` (repo wins) —
 see [configuration.md](configuration.md).
 
@@ -107,82 +104,22 @@ The loop (`/agentic-loop:engineering`):
 
 The sitters (**experimental** — the four `/agentic-loop:<sitter>` commands
 below, their manifests, and their config keys may still change; `engineering`
-is the stable, default-on kind):
-
-The PR sitter (`/agentic-loop:pr-sitter`, opt-in via `loops.pr-sitter` in
-`.agentic-loop.json`):
-
-- `/agentic-loop:pr-sitter claim` — one-shot pull: poll the configured PR source for
-  the next actionable open PR (failing checks, unanswered review threads, a
-  merge conflict) and drive it through triage → fix → verify → publish
-- `/agentic-loop:pr-sitter watch [trigger]` · `unwatch` — the same standing-worker
-  semantics as the engineering `watch` (trigger/interval syntax,
-  one-watcher-per-clone lease), scoped to the pr-sitter kind
-- `/agentic-loop:pr-sitter stop` (alias `abort`) · `status` — abort the active loop /
-  print it (bare `/agentic-loop:pr-sitter` = status)
-
-The review sitter (`/agentic-loop:review-sitter`, opt-in via
-`loops.review-sitter` in `.agentic-loop.json`):
-
-- `/agentic-loop:review-sitter claim` — one-shot pull: poll the open PRs where
-  your review is requested (`is:open review-requested:@me`, overridable via
-  `loops.review-sitter.query`) for the next one and drive it through fetch →
-  assess → publish — reading the diff in the context of the surrounding code
-  and posting **one structured review comment** per requested head. It stays
-  comment-only: it never approves, requests changes, or merges, so the human
-  remains reviewer of record
-- `/agentic-loop:review-sitter watch [trigger]` · `unwatch` — the same
-  standing-worker semantics as the engineering `watch` (trigger/interval
-  syntax, one-watcher-per-clone lease), scoped to the review-sitter kind
-- `/agentic-loop:review-sitter stop` (alias `abort`) · `status` — abort the
-  active loop / print it (bare `/agentic-loop:review-sitter` = status)
-
-The dependency sitter (`/agentic-loop:dep-sitter`, opt-in via
-`loops.dep-sitter` in `.agentic-loop.json`):
-
-- `/agentic-loop:dep-sitter claim` — one-shot pull: scan the project's
-  dependencies (npm, Maven, and Gradle — `loops.dep-sitter.ecosystem`
-  picks or `auto`-detects) for the next vulnerable one at or above
-  `severityFloor` and drive it through scan → upgrade → verify → publish. It
-  confirms the advisory, applies the patch/minor bump on a `dep-sitter/*`
-  branch, fixes the fallout, verifies the suite is green, and opens a **draft
-  PR**. **Major bumps are never auto-fixed** — they are logged and left for a
-  human, and merging stays human
-- `/agentic-loop:dep-sitter watch [trigger]` · `unwatch` — the same
-  standing-worker semantics as the engineering `watch` (trigger/interval
-  syntax, one-watcher-per-clone lease), scoped to the dep-sitter kind
-- `/agentic-loop:dep-sitter stop` (alias `abort`) · `status` — abort the
-  active loop / print it (bare `/agentic-loop:dep-sitter` = status)
-
-The main sitter (`/agentic-loop:main-sitter`, opt-in via
-`loops.main-sitter` in `.agentic-loop.json`):
-
-- `/agentic-loop:main-sitter claim` — one-shot pull: poll the watched branch's
-  CI runs (the remote default branch, or `loops.main-sitter.branch`; limit to
-  named workflows with `loops.main-sitter.workflows`) and, when they go **red**,
-  drive the failure through diagnose → remedy → verify → publish. It diagnoses
-  on that exact head (bisecting when needed), writes a **verified forward fix or
-  revert**, opens a **draft remedy PR** on a `main-sitter/*` branch, and
-  comments **once** on the culprit PR. It **never pushes the watched branch**,
-  and merging stays human
-- `/agentic-loop:main-sitter watch [trigger]` · `unwatch` — the same
-  standing-worker semantics as the engineering `watch` (trigger/interval
-  syntax, one-watcher-per-clone lease), scoped to the main-sitter kind
-- `/agentic-loop:main-sitter stop` (alias `abort`) · `status` — abort the
-  active loop / print it (bare `/agentic-loop:main-sitter` = status)
+is the stable, default-on kind). Each has the identical command surface —
+`claim` (one-shot pull), `watch [trigger]` / `unwatch` (standing worker,
+same trigger/interval syntax and one-watcher-per-clone lease as
+engineering's `watch`, scoped to that kind), and `stop` (alias `abort`) /
+`status` (bare command = status). **What each one does is documented once in
+[`docs/sitters.md`](sitters.md)** — the four commands are:
+`/agentic-loop:pr-sitter` (opt-in via `loops.pr-sitter`),
+`/agentic-loop:review-sitter` (`loops.review-sitter`),
+`/agentic-loop:dep-sitter` (`loops.dep-sitter`), and
+`/agentic-loop:main-sitter` (`loops.main-sitter`).
 
 The old umbrella `/agent-loop` command is gone — its free-text mode and its
 `task <id>`, `run`, `ship`, `approve-plan`, `reject`, and `go`/`ok` verbs with
 it. The whole engineering lifecycle lives on `/agentic-loop:engineering`
 (`new`, `retask`, `approve`, `replan`, `plan`, `claim`, `watch`), and the PR
 sitter on `/agentic-loop:pr-sitter`.
-
-Gates on this substrate are **park-only**: watch mode has no interactive
-channel, so a parked plan or a finished loop always waits for
-`/agentic-loop:engineering approve [id]` (or `/agentic-loop:engineering replan [id] [reason]`
-to send a plan back). (The Claude Code
-variant additionally offers the same choices inline via AskUserQuestion when
-a human is driving.)
 
 Outside the loop, one-off requests are handled ad hoc: see
 [AGENTS.md](../AGENTS.md) for the intent-to-skill mapping — the plugin

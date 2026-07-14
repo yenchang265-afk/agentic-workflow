@@ -73,18 +73,12 @@ would all have been available to VERIFY/REVIEW.
 
 One task's half-finished diff leaks into another task's build or review.
 
-- **Control:** each execution runs on its own `feature/<id>` branch with a
-  commit checkpoint per build iteration; REVIEW is told the exact
-  `git diff base...branch` boundary; an atomic claim marker prevents two
-  watchers from taking the same task. In shared-tree mode a per-directory
-  lock also serializes drives within one opencode instance. With
-  `worktreesDir` set, each execution runs in its **own git worktree**, so the
-  shared checkout is never branch-switched under a concurrent drive and the
-  serialization lock is unnecessary — same-instance concurrent watchers are
-  safe. Across processes, a **single-watcher lease**
-  (`<tasksDir>/runs/.watch-lease/`: atomic `mkdir` + heartbeat JSON,
-  `scheduler/lease.ts`) refuses a second watch-mode process on the same
-  clone; a dead watcher's lease is taken over once its heartbeat goes stale.
+- **Control:** per-task branch/worktree isolation plus the single-watcher
+  lease — mechanism detailed in
+  [architecture.md § Backlog integrity rails](../architecture.md#backlog-integrity-rails);
+  in short, each execution gets its own `feature/<id>` branch or (with
+  `worktreesDir` set) its own git worktree, and a lease refuses a second
+  watch-mode process on the same clone.
 - **Residual:** one-shot claims (`/agent-loop task`, the MCP server's
   `loop_claim`/`loop_start`) are **warned, not blocked**, when a live foreign
   watcher holds the lease — they can still race its `index.lock` and
@@ -98,17 +92,12 @@ a direct file write against `<tasksDir>/` creates stray folders (`run/`),
 skips lifecycle stages (draft → completed), or strands task files where no
 pool ever polls them.
 
-- **Control:** an always-on **backlog-mutation guard** (`task/guard.ts`;
-  Claude Code: the PreToolUse hook; OpenCode: `tool.execute.before`)
-  default-denies agent tool calls that would mutate `<tasksDir>/` — only
-  read-only commands may reference it, and direct writes are limited to
-  authoring `draft/*.md` plus the live PLAN stage's own `queued/` task. The
-  deterministic layer (`moveTask` + `canTransition`) remains authoritative:
-  one stage at a time, unknown folders rejected. A **reconciliation sweep**
-  (`task/audit.ts`, surfaced at session start, in `loop_status`, and on
-  claims) detects stray folders/files and duplicate ids; `loop_doctor` /
-  `/agent-loop doctor` repairs the unambiguous cases (rescue strays to
-  `draft/`, drop emptied stray folders, release stale claim markers).
+- **Control:** an always-on backlog-mutation guard, a reconciliation sweep,
+  and `loop_doctor` — mechanism detailed in
+  [architecture.md § Backlog integrity rails](../architecture.md#backlog-integrity-rails);
+  in short, agent tool calls that would mutate `<tasksDir>/` are
+  default-denied, the deterministic mover layer stays authoritative, and a
+  sweep + doctor detect and repair stray folders/files and duplicate ids.
 - **Residual:** the guard string-matches tool calls — it is heuristic
   defense-in-depth against confused agents, **not a sandbox**; an obfuscated
   shell command can slip past it (the audit sweep then catches the damage
