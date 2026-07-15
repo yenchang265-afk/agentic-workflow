@@ -1133,3 +1133,136 @@ body {
   opacity: 0.35;
   background: transparent;
 }
+
+/* --- confirm dialog --------------------------------------------------------- */
+/* Every hub action with a real-world side effect (a commit, a PR) routes through
+   ui/Confirm. Native <dialog>, so the backdrop/focus-trap are the platform's. */
+
+.confirm-trigger {
+  display: contents;
+}
+
+.confirm {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  color: var(--text);
+  padding: var(--sp-5);
+  max-width: 32rem;
+  font-family: var(--font-sans);
+}
+.confirm::backdrop {
+  background: rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(2px);
+}
+
+.confirm__title {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.confirm__detail {
+  margin-bottom: var(--sp-4);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+
+.confirm__body {
+  margin-bottom: var(--sp-4);
+}
+
+.confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+/* --- creator: prompt preview ------------------------------------------------ */
+
+.preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0;
+}
+
+.preview__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.preview__toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.preview__toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  cursor: pointer;
+}
+
+.preview__out {
+  margin: 0;
+  padding: var(--sp-3);
+  max-height: 24rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--panel-raised);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview__note,
+.preview__error {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.preview__note {
+  color: var(--muted);
+}
+.preview__error {
+  color: var(--warn);
+}
+
+/* --- gate actions ----------------------------------------------------------- */
+/* The write surface on a task card: approve / replan / ship. Each commits, and
+   ship opens a PR — every one routes through ui/Confirm. */
+
+.gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.gate-msg {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+.gate-msg--ok {
+  color: var(--ok);
+}
+.gate-msg--info {
+  color: var(--muted);
+}
+.gate-msg--warning {
+  color: var(--warn);
+}

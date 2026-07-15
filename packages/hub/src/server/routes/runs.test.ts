@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
 import type { ActiveResponse, RunDetailResponse, RunsResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
@@ -47,6 +48,7 @@ const makeFixture = (): string => {
 const depsFor = (directory: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
+  config: DEFAULT_CONFIG,
   // A github-pr kind so getActive scans its runs/<kind>/ ledger dir.
   boards: [
     { kind: "pr-sitter", description: "pr sitter", sourceType: "github-pr", statuses: [], gateStatuses: [], pools: [] },

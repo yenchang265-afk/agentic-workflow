@@ -1,25 +1,20 @@
 import http from "node:http"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { loadConfig } from "@agentic-loop/core/config"
-import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
-import { STATUSES } from "@agentic-loop/core/task/store"
 import type { ReposResponse } from "../shared/api.js"
 import type { HubDeps } from "./deps.js"
 import { makeEventHub } from "./events.js"
-import { fsClient, sh } from "./fsclient.js"
 import { badRequest, makeListener, ok, type JsonResponse, type ParsedRequest, type RawRoute, type Route } from "./http.js"
 import { loadHubSettings } from "./config.js"
-import { kindBoards, unionGates, unionStatuses } from "./kindboard.js"
+import { makeRepo, watchShape, type Repo } from "./repo.js"
 import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
-import { getKind, getKinds, saveKind, validateKind } from "./routes/kinds.js"
+import { postGate } from "./routes/gate.js"
+import { getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
 import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
-import { defaultOpencodeDbPath } from "./tokens/opencodedb.js"
-import { defaultProjectsDir } from "./tokens/transcripts.js"
 
 /**
  * Hub server entry. Binds 127.0.0.1 only — this is a local admin tool, never
@@ -76,30 +71,20 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 
 const log: HubDeps["log"] = (level, message) => process.stderr.write(`[hub] ${level}: ${message}\n`)
 
-interface Repo {
-  readonly id: string
-  readonly deps: HubDeps
+const events = makeEventHub()
+
+const watcherStops = new Map<string, () => void>()
+
+const restartWatcher = (repo: Repo): void => {
+  watcherStops.get(repo.id)?.()
+  watcherStops.set(
+    repo.id,
+    startWatcher(watchShape(repo.deps), (evts) => events.broadcast(evts.map((e) => ({ ...e, repo: repo.id })))),
+  )
 }
 
 const repos: Repo[] = []
-for (const { id, directory } of resolved) {
-  const config = await loadConfig(fsClient, directory)
-  const boards = kindBoards(defaultLoopsDir(), config, log)
-  repos.push({
-    id,
-    deps: {
-      directory,
-      tasksDir: config.tasksDir,
-      boards,
-      loopsDir: defaultLoopsDir(),
-      projectsDir: defaultProjectsDir(),
-      opencodeDbPath: defaultOpencodeDbPath(),
-      client: fsClient,
-      sh,
-      log,
-    },
-  })
-}
+for (const { id, directory } of resolved) repos.push(await makeRepo(id, directory, log, restartWatcher))
 
 const byId = new Map(repos.map((r) => [r.id, r]))
 const defaultRepo = repos[0] as Repo
@@ -125,38 +110,34 @@ const reposResponse: ReposResponse = {
   repos: repos.map((r) => ({ id: r.id, directory: r.deps.directory })),
 }
 
-// Kind routes stay unscoped: loop kinds live in the core package, shared by every repo.
+/**
+ * The loop-kind manifests themselves live in the core package and are shared by
+ * every repo, but these handlers read the *repo* around them — saveKind's
+ * checklist probes `deps.directory` for agent personas, command wrappers, and
+ * the kind's `.agentic-loop.json` entry. Unscoped they answered for the first
+ * repo whatever `?repo=` asked for, so they are scoped like everything else.
+ */
 const routes: Route[] = [
   { method: "GET", pattern: "/api/repos", handler: async () => ok(reposResponse) },
   { method: "GET", pattern: "/api/monitor/kinds", handler: scoped(async (deps) => ok({ kinds: deps.boards })) },
   { method: "GET", pattern: "/api/backlog", handler: scoped(getBacklog) },
   { method: "GET", pattern: "/api/tasks/:status/:id", handler: scoped(getTaskDetail) },
-  { method: "GET", pattern: "/api/kinds", handler: () => getKinds(defaultRepo.deps) },
-  { method: "GET", pattern: "/api/kinds/:kind", handler: (req) => getKind(defaultRepo.deps, req) },
+  { method: "GET", pattern: "/api/kinds", handler: scoped((deps) => getKinds(deps)) },
+  { method: "GET", pattern: "/api/kinds/:kind", handler: scoped(getKind) },
   { method: "GET", pattern: "/api/runs", handler: scoped((deps) => getRuns(deps)) },
   { method: "GET", pattern: "/api/runs/:id", handler: scoped(getRunDetail) },
   { method: "GET", pattern: "/api/active", handler: scoped((deps) => getActive(deps)) },
   { method: "GET", pattern: "/api/tokens", handler: scoped((deps) => getTokensSummary(deps)) },
   { method: "GET", pattern: "/api/tokens/:id", handler: scoped(getRunTokens) },
-  { method: "POST", pattern: "/api/kinds/validate", handler: (req) => validateKind(defaultRepo.deps, req) },
-  { method: "POST", pattern: "/api/kinds/:kind", handler: (req) => saveKind(defaultRepo.deps, req), mutating: true },
+  // validate/preview write nothing, so they carry no `mutating` guard — the
+  // X-Hub-Client header gates side effects, not reads that happen to POST.
+  { method: "POST", pattern: "/api/kinds/validate", handler: scoped(validateKind) },
+  { method: "POST", pattern: "/api/kinds/preview", handler: scoped(previewKind) },
+  { method: "POST", pattern: "/api/kinds/:kind", handler: scoped(saveKind), mutating: true },
+  { method: "POST", pattern: "/api/gate/:action", handler: scoped(postGate), mutating: true },
 ]
 
-const events = makeEventHub()
-const watcherStops = repos.map((repo) => {
-  // Scan every folder any enabled kind declares; fall back to the engineering
-  // shape when no manifest loaded (e.g. a bare repo with no kinds on disk).
-  const statuses = unionStatuses(repo.deps.boards)
-  return startWatcher(
-    {
-      directory: repo.deps.directory,
-      tasksDir: repo.deps.tasksDir,
-      statuses: statuses.length > 0 ? statuses : STATUSES,
-      gateStatuses: unionGates(repo.deps.boards),
-    },
-    (evts) => events.broadcast(evts.map((e) => ({ ...e, repo: repo.id }))),
-  )
-})
+for (const repo of repos) restartWatcher(repo)
 
 const rawRoutes: RawRoute[] = [
   { method: "GET", pattern: "/api/events", handle: (req, res) => events.handle(req, res) },
@@ -173,7 +154,7 @@ server.listen(port, "127.0.0.1", () => {
 })
 
 const shutdown = (): void => {
-  for (const stop of watcherStops) stop()
+  for (const stop of watcherStops.values()) stop()
   events.close()
   server.close(() => process.exit(0))
 }

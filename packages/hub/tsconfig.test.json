@@ -1,0 +1,14 @@
+{
+  // tsconfig.json doubles as the build config (outDir/rootDir), so it excludes
+  // *.test.ts to keep tests out of dist/ — which also left them unchecked: the
+  // test runner is tsx, which strips types without checking them. A fixture that
+  // stopped satisfying HubDeps failed neither the build nor the suite. This
+  // config type-checks them and nothing else. The web tests already get this via
+  // tsconfig.web.json, which has no exclude.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/server/**/*.ts", "src/shared/**/*.ts"],
+  "exclude": ["dist"]
+}

@@ -1,4 +1,5 @@
 import type { Client, Log, Shell } from "@agentic-loop/core/host"
+import type { Config } from "@agentic-loop/core/loop/state"
 import type { KindBoardInfo } from "../shared/api.js"
 
 /**
@@ -12,6 +13,14 @@ export interface HubDeps {
   readonly tasksDir: string
   /** Per-kind dashboard metadata for this repo's enabled kinds (see kindboard.ts). */
   readonly boards: readonly KindBoardInfo[]
+  /**
+   * This repo's parsed config. Core's shared entry points take a whole `Config`
+   * (`GateCtx.config`), so the hub carries one rather than rebuilding it per
+   * call. `tasksDir` and `boards` above are derived from it at build time and
+   * kept for convenience — this is the single source, they are not independent
+   * truth. Swapped wholesale on reload (see main.ts), never mutated in place.
+   */
+  readonly config: Config
   readonly loopsDir: string
   /** Claude Code transcript root (~/.claude/projects) for token joins. */
   readonly projectsDir: string

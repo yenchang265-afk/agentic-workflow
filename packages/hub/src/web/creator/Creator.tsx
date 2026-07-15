@@ -367,6 +367,8 @@ export const Creator = () => {
             <StageForm
               stage={(selectedNode.data as StageNodeData).stage}
               prompt={prompts[(selectedNode.data as StageNodeData).stage.name] ?? ""}
+              manifest={currentManifest}
+              prompts={prompts}
               onChange={(next) => {
                 const prev = (selectedNode.data as StageNodeData).stage.name
                 if (prev !== next.name && prompts[prev] !== undefined) {

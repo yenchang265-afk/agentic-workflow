@@ -3,9 +3,13 @@ import type { BacklogAnomalies } from "@agentic-loop/core/task/audit"
 import type { LoopManifest } from "@agentic-loop/core/manifest/schema"
 import type { ParsedRunLog } from "@agentic-loop/core/loop/runlog"
 import type { StageTokens } from "@agentic-loop/core/loop/metrics"
+import type { TaskStatus } from "@agentic-loop/core/task/statuses"
 
 export type { ParsedRunLog, RunLogStageSection, RunLogSummary, RunSummaryRow } from "@agentic-loop/core/loop/runlog"
 export type { StageTokens } from "@agentic-loop/core/loop/metrics"
+/** The gate's result shape is core's, verbatim — the hub renders it, it doesn't define it. */
+export type { GateResult, GateVariant } from "@agentic-loop/core/loop/gate"
+export type { TaskStatus } from "@agentic-loop/core/task/statuses"
 
 /**
  * The hub's wire types, shared verbatim by the node server and the browser
@@ -205,6 +209,62 @@ export interface SaveKindResponse {
   readonly written: readonly string[]
   /** Remaining manual steps the hub cannot (or should not) generate. */
   readonly checklist: readonly ChecklistItem[]
+}
+
+/**
+ * The human gate moves the hub can perform. Each maps 1:1 onto a core op in
+ * `loop/gate.ts` — never core's `*Any` shortcuts, which infer the gate from
+ * wherever the task sits. A button knows its own column.
+ */
+export type GateAction = "approve-task" | "approve-plan" | "replan" | "ship"
+
+export interface GateRequest {
+  /** The full task id (not a short-hash prefix) — the board has it. */
+  readonly id: string
+  /**
+   * The status the client believed the task was in. The board is SSE-driven and
+   * can lag; the server refuses with a 409 rather than gate a task the human
+   * did not actually see there.
+   */
+  readonly expectStatus: TaskStatus
+  /** replan only: why the plan was rejected, threaded into the audit note and the next PLAN pass. */
+  readonly reason?: string
+  /** ship only: the loop kind, for the PR it opens. Defaults to engineering. */
+  readonly kind?: string
+}
+
+/**
+ * Which optional pieces of loop state the previewed prompt renders against.
+ * These are the switches that make conditional blocks (`{{#task.id}}`,
+ * `{{#worktree}}`, `{{#platform.ado}}`) fire or vanish — the point of the
+ * preview is watching them do so, not reading the text once.
+ */
+export interface PreviewSample {
+  /** Loop started from a backlog task → `{{#task.id}}` / `{{#acceptance}}` render. */
+  readonly task: boolean
+  /** Git isolation established → `{{#git}}` / `{{git.diffCmd}}` render. */
+  readonly git: boolean
+  /** Worktree isolation (implies git) → `{{#worktree}}` renders. */
+  readonly worktree: boolean
+  /** Code platform the prompt renders for → `{{#platform.ado}}` vs `{{#platform.github}}`. */
+  readonly platform: "github" | "ado"
+}
+
+export interface PreviewRequest {
+  readonly manifest: unknown
+  /** Stage prompt sources, keyed by stage name — the creator's unsaved drafts. */
+  readonly prompts: Readonly<Record<string, string>>
+  readonly stage: string
+  readonly sample?: Partial<PreviewSample>
+}
+
+export interface PreviewResponse {
+  /** The stage prompt as the loop would compose it, sample values substituted. */
+  readonly rendered: string
+  /** Set when the render is not the whole story (e.g. the stage has a compose hook). */
+  readonly note?: string
+  /** The sample actually used, after defaults — so the UI can reflect its own toggles. */
+  readonly sample: PreviewSample
 }
 
 /** Where a token row's numbers came from. */

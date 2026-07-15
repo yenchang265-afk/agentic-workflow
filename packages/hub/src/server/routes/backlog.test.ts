@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
 import type { BacklogResponse, KindBoardInfo, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
@@ -60,6 +61,7 @@ const depsFor = (directory: string, boards: readonly KindBoardInfo[] = [ENGINEER
   directory,
   tasksDir: "docs/tasks",
   boards,
+  config: DEFAULT_CONFIG,
   loopsDir: path.join(directory, "loops-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",

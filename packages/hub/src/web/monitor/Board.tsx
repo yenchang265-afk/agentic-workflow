@@ -5,6 +5,7 @@ import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
+import { GateActions } from "./GateActions.js"
 
 /**
  * The backlog board for one loop kind: one column per manifest status, task
@@ -13,7 +14,19 @@ import { Chip } from "../ui/Chip.js"
  * Engineering-only lifecycle chips render when the server sends its summary.
  */
 
-const TaskCardView = ({ task, gated, claimed }: { task: TaskCard; gated: boolean; claimed: boolean }) => (
+const TaskCardView = ({
+  task,
+  gated,
+  claimed,
+  status,
+  kind,
+}: {
+  task: TaskCard
+  gated: boolean
+  claimed: boolean
+  status: string
+  kind: string
+}) => (
   <Card gated={gated} title={task.acceptance.join("\n")}>
     <div className="card-title">{task.title}</div>
     <div className="card-meta">
@@ -26,6 +39,9 @@ const TaskCardView = ({ task, gated, claimed }: { task: TaskCard; gated: boolean
         <Badge key={l}>{l}</Badge>
       ))}
     </div>
+    {/* An epic only orders its child slices — approving it would have the loop
+        plan the tracking file itself, which core refuses. Don't offer it. */}
+    {task.type !== "epic" && <GateActions task={task} status={status} kind={kind} claimed={claimed} />}
   </Card>
 )
 
@@ -75,7 +91,14 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                 <span>{tasks.length}</span>
               </div>
               {tasks.map((t) => (
-                <TaskCardView key={t.id} task={t} gated={gate} claimed={claimed.has(t.id)} />
+                <TaskCardView
+                  key={t.id}
+                  task={t}
+                  gated={gate}
+                  claimed={claimed.has(t.id)}
+                  status={status}
+                  kind={info.kind}
+                />
               ))}
             </div>
           )

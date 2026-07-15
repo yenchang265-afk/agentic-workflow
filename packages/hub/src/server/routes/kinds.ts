@@ -1,22 +1,38 @@
 import fs from "node:fs"
 import path from "node:path"
+import { promptContext } from "@agentic-loop/core/loop/engine"
+import type { LoopState } from "@agentic-loop/core/loop/state"
+import { verdictContractBlock } from "@agentic-loop/core/loop/verdict"
 import { listLoopKinds, loadManifest } from "@agentic-loop/core/manifest/load"
-import { LoopManifestSchema, type LoopManifest } from "@agentic-loop/core/manifest/schema"
+import { LoopManifestSchema, type LoopManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
+import { renderPrompt } from "@agentic-loop/core/manifest/template"
 import type {
   ChecklistItem,
   KindDetailResponse,
   KindsResponse,
   ManifestIssue,
+  PreviewRequest,
+  PreviewResponse,
+  PreviewSample,
   SaveKindResponse,
   ValidateResponse,
 } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { badRequest, json, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 
-/** Loop-kind manifest views + the creator's validate/save surface. */
+/** Loop-kind manifest views + the creator's validate/save/preview surface. */
 
 /** Kind and stage names come from URLs and file writes — same slug rule everywhere. */
 export const SLUG_RE = /^[a-z][a-z0-9-]{1,32}$/
+
+/**
+ * Sub-paths of `/api/kinds/` that are verbs, not kind names. `POST
+ * /api/kinds/:kind` (saveKind) would otherwise happily write a loop kind called
+ * "preview" if it ever matched first — the route table orders the verbs ahead of
+ * `:kind`, but that is array order, and array order is not a safety property.
+ * Both spellings pass SLUG_RE, so reject them here where it cannot drift.
+ */
+const RESERVED_KINDS: readonly string[] = ["validate", "preview"]
 
 export const getKinds = async (deps: HubDeps): Promise<JsonResponse> => {
   const kinds = listLoopKinds(deps.loopsDir).flatMap((kind) => {
@@ -53,6 +69,82 @@ export const validateKind = async (_deps: HubDeps, req: ParsedRequest): Promise<
   if (!body?.manifest) return badRequest("body must be {manifest}")
   const issues = issuesOf(body.manifest)
   const response: ValidateResponse = { valid: issues === null, issues: issues ?? [] }
+  return ok(response)
+}
+
+// --- creator: prompt preview ---
+
+const DEFAULT_SAMPLE: PreviewSample = { task: true, git: true, worktree: true, platform: "github" }
+
+/**
+ * A plausible `LoopState` to render a prompt against. Values are visibly sample
+ * text rather than realistic-looking fakes — an author reading the preview should
+ * never wonder whether `f7k3-add-rate-limit` is a real task of theirs.
+ *
+ * Artifacts are filled for every stage *except* the previewed one, since a stage
+ * can only read what ran before it; that makes `{{artifacts.plan}}` and friends
+ * render instead of silently vanishing.
+ */
+const sampleState = (manifest: LoopManifest, stage: string, sample: PreviewSample): LoopState => {
+  const artifacts: Record<string, string> = {}
+  for (const s of manifest.stages) if (s.name !== stage) artifacts[s.name] = `<sample ${s.name} output>`
+  // The approved plan rides in artifacts under its own key, not a stage name.
+  if (!artifacts["plan"]) artifacts["plan"] = "<sample approved plan>"
+
+  const worktree = sample.git && sample.worktree ? "/sample/worktree/path" : undefined
+  return {
+    kind: manifest.kind,
+    goal: "<sample goal>",
+    stage,
+    iteration: 0,
+    artifacts,
+    platform: sample.platform,
+    ...(sample.task
+      ? { task: { id: "sample-task-id", path: "docs/tasks/in-progress/sample-task-id.md", acceptance: ["<sample acceptance criterion>"] } }
+      : {}),
+    ...(sample.git ? { git: { base: "main", branch: "feature/sample-task-id", ...(worktree ? { worktree } : {}) } } : {}),
+  }
+}
+
+/**
+ * Render a stage prompt exactly as the loop would compose it, against sample state.
+ *
+ * Deliberately does NOT call core's `composePrompt`, which would throw on exactly
+ * the kinds the creator authors: it loads the manifest's prompts from disk (the
+ * manifest being previewed isn't saved yet) and resolves `hooks.compose[stage]`
+ * through the registry, which for a hub-authored kind names a hook no host has
+ * registered. Instead it composes the same two primitives `composePrompt` does —
+ * `renderPrompt(tpl, promptContext(state))` plus the check-stage verdict contract
+ * — so the output matches without the throw. A composed-hooked stage is reported
+ * via `note` rather than guessed at.
+ */
+export const previewKind = async (_deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
+  const body = req.body as Partial<PreviewRequest> | undefined
+  if (!body?.manifest || typeof body.stage !== "string") return badRequest("body must be {manifest, stage, prompts, sample?}")
+
+  const issues = issuesOf(body.manifest)
+  if (issues) return json(400, { error: "manifest invalid", issues })
+  const manifest = LoopManifestSchema.parse(body.manifest)
+
+  const def: StageDef | undefined = manifest.stages.find((s) => s.name === body.stage)
+  if (!def) return badRequest(`unknown stage "${body.stage}" — the manifest declares ${manifest.stages.map((s) => s.name).join(", ")}`)
+
+  const tpl = body.prompts?.[def.name]
+  if (typeof tpl !== "string") return badRequest(`no prompt source provided for stage "${def.name}"`)
+
+  const sample: PreviewSample = { ...DEFAULT_SAMPLE, ...body.sample }
+  const rendered = renderPrompt(tpl, promptContext(sampleState(manifest, def.name, sample)))
+  // Check stages carry the verdict contract in the prompt itself (see verdict.ts).
+  const full = def.kind === "check" ? `${rendered}\n\n${verdictContractBlock(def.name)}` : rendered
+
+  const hookRef = manifest.hooks.compose?.[def.name]
+  const response: PreviewResponse = {
+    rendered: full,
+    sample,
+    ...(hookRef
+      ? { note: `Stage "${def.name}" has a compose hook ("${hookRef}") that rewrites its context at run time — this preview shows the un-hooked render.` }
+      : {}),
+  }
   return ok(response)
 }
 
@@ -113,6 +205,7 @@ const buildChecklist = (deps: HubDeps, manifest: LoopManifest): ChecklistItem[] 
 export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const kind = req.params["kind"] ?? ""
   if (!SLUG_RE.test(kind)) return badRequest(`kind must match ${SLUG_RE}`)
+  if (RESERVED_KINDS.includes(kind)) return badRequest(`"${kind}" is a reserved route name, not a loop kind`)
   const body = req.body as
     | { manifest?: unknown; prompts?: Record<string, string>; overwrite?: boolean }
     | undefined

@@ -8,9 +8,9 @@ import type {
   KindBoardInfo,
   LeaseView,
   PrLedgerView,
-  StageMarker,
 } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
+import { readStageMarker } from "../driving.js"
 import { ok, type JsonResponse } from "../http.js"
 
 /**
@@ -18,15 +18,10 @@ import { ok, type JsonResponse } from "../http.js"
  * `.stage.json` exists only while the Claude host runs a stage, the watch
  * lease only while an opencode watcher lives, snapshots only for crashed or
  * mid-flight loops, pr-sitter ledgers only once that kind has acted.
+ *
+ * The stage marker is read via driving.ts — the writes gate on the same marker,
+ * so one reader, not two that drift.
  */
-
-const StageMarkerSchema = z.object({
-  kind: z.string().optional(),
-  stage: z.string(),
-  taskId: z.string().nullable().optional(),
-  worktree: z.string().nullable().optional(),
-  deadline: z.number().nullable().optional(),
-})
 
 const LedgerSchema = z.object({
   pr: z.number(),
@@ -81,20 +76,6 @@ const scanLedgers = async <T>(
     }
   }
   return out
-}
-
-const readStageMarker = async (deps: HubDeps): Promise<StageMarker | null> => {
-  const read = await deps.client.file
-    .read({ query: { path: `${deps.tasksDir}/runs/.stage.json`, directory: deps.directory } })
-    .catch(() => null)
-  const content = read?.data?.content
-  if (!content) return null
-  try {
-    const parsed = StageMarkerSchema.safeParse(JSON.parse(content))
-    return parsed.success ? parsed.data : null
-  } catch {
-    return null
-  }
 }
 
 const readLease = async (deps: HubDeps, now: Date): Promise<LeaseView | null> => {

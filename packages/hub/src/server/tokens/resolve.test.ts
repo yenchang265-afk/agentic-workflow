@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
 import { projectSlug } from "./transcripts.js"
@@ -21,6 +22,7 @@ const depsFor = (directory: string, projectsDir: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
   boards: [],
+  config: DEFAULT_CONFIG,
   loopsDir: "/loops-unused",
   projectsDir,
   opencodeDbPath: "/nonexistent.db",
