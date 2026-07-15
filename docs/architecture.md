@@ -226,9 +226,29 @@ command details live in
 
 A third, host-independent surface: a localhost web app (`npm run hub`) that
 **observes** the same filesystem substrate the hosts write — status folders,
-run logs, snapshots, the stage marker, the watch lease — and never drives the
-loop. Beta: the API shape may still change. See
-[`packages/hub/README.md`](../packages/hub/README.md).
+run logs, snapshots, the stage marker, the watch lease — and **performs the
+human gate moves on it**: approve, replan, ship.
+
+It does so by calling the *same* shared entry points both hosts call
+(`loop/gate.ts`), never its own copy of the moves — so an approval from a
+browser and an approval from a slash command are the same audited,
+committed transition. The line it does not cross is **driving**: the hub never
+claims work and never runs a stage. It is a fourth caller of the gate, not a
+fourth driver.
+
+Two consequences worth stating, because they are what keep that line honest:
+
+- A gate move on a task some loop is **already driving** is refused. The hub
+  answers `GateCtx.isDriving` from the filesystem — a claim marker (a loop
+  claims before it drives, so driving implies claimed) or the stage marker —
+  rather than from an in-memory session map it doesn't have.
+- **Ship opens a pull request**, which is visible outside the machine. Every
+  hub write is behind a confirm that names its real effect.
+
+Its write surface is bounded by the localhost bind, a Host-header check, and an
+`X-Hub-Client` header on every mutating route — see
+[`design/threat-model.md`](./design/threat-model.md). Beta: the API shape may
+still change. See [`packages/hub/README.md`](../packages/hub/README.md).
 
 ## Backlog integrity rails
 

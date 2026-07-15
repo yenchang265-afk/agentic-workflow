@@ -53,14 +53,22 @@ creator tab is unaffected.
 
 ## Tabs
 
-- **Loop monitor** (read-only): one sub-tab per enabled loop kind, each view
-  derived from the kind's manifest — backlog kinds get a board over their own
+- **Loop monitor**: one sub-tab per enabled loop kind, each view derived from
+  the kind's manifest — backlog kinds get a board over their own
   `docs/tasks/<status>/` folders with gate columns taken from the manifest's
   park/done targets (not hardcoded), PR-shaped kinds get a ledger panel — plus
   the live-activity strip (`.stage.json` marker, watch-lease liveness,
   resumable snapshots), run history parsed from `runs/<id>.md`, and per-stage
   token usage. Live updates via `fs.watch` + a polling reconciler (DrvFs-safe)
   → SSE; arm the 🔔 to get a browser notification when a task parks at a gate.
+
+  Task cards carry the **human gate moves** for their column — approve a draft
+  or a parked plan, replan, ship — performed through the same
+  `@agentic-loop/core` entry points the hosts call, so a browser approval and a
+  slash-command approval are the same audited, committed move. Each one is
+  behind a confirm naming its real effect; **ship also opens a pull request**.
+  The hub gates but never *drives*: it never claims work and never runs a
+  stage, and it refuses a move on a task a loop is already driving.
 - **Loop creator**: the manifest state machine on a React Flow canvas —
   work/check stages as nodes, fire/park/done/stop transitions as edges,
   side-panel forms for stage fields, effects, work source, and stage prompts.
@@ -69,6 +77,11 @@ creator tab is unaffected.
   `packages/core/loops/<kind>/loop.json` + prompt stubs **only** and returns
   the checklist of steps it deliberately doesn't generate (agent personas,
   `gen:prompts`, command wrappers, hook registration, enablement).
+
+  Each stage form can **preview its prompt** as the loop would compose it, with
+  toggles for the optional state (task / git / worktree / platform) — a stage
+  prompt is mostly conditional sections, and the mistake worth catching is a
+  block that silently never fires.
 
 ## Token usage sources
 
@@ -86,8 +99,18 @@ creator tab is unaffected.
 Localhost tool, no auth by design: binds `127.0.0.1` only, rejects non-local
 `Host` headers (DNS rebinding), never serves CORS, and mutating routes require
 the `X-Hub-Client: 1` header (cross-origin pages can't send it without a
-failing preflight). The only writable path is `packages/core/loops/<kind>/`,
+failing preflight). Task ids are slug-screened before they reach the
+filesystem; loop-kind writes are confined to `packages/core/loops/<kind>/`,
 slug-validated and prefix-checked.
+
+The hub can write in exactly two ways, and neither drives a loop:
+
+| Write | What it touches | Guard |
+|---|---|---|
+| Save a loop kind (creator) | `packages/core/loops/<kind>/` | slug + prefix check; 409 without `overwrite` |
+| A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
+
+It never claims work, never runs a stage, and never merges anything.
 
 ## Beta status
 
@@ -107,8 +130,14 @@ Known beta caveats:
   transcripts) — always flagged `~` in the UI, never exact
 - **API shape may change** between beta releases; the hub is a local tool,
   nothing external should depend on its JSON yet
-- The monitor is deliberately **read-only** — gate actions (approve/replan
-  buttons) are a candidate for a later release
+- **Gate moves are refused while a loop is driving the task.** The hub reads
+  that off the filesystem — a claim marker, or the stage marker — since it has
+  no in-memory view of what a host is doing. A *stranded* claim (from a loop
+  that crashed) reads the same way, so it will refuse until the claim is
+  released; that is deliberate, because the alternative is re-queueing a task
+  mid-BUILD and losing the work
+- **Ship opens a real pull request** — the one hub action visible outside your
+  machine
 
 ## Development
 
@@ -120,5 +149,11 @@ npm run test -w @agentic-loop/hub       # node --test via tsx
 
 The web bundle (`dist/web/`) is built locally, never checked in. Manual QA
 that automated tests don't cover: creator drag/connect UX, SSE reconnect
-after killing the server, and the Notification permission flow — open the hub
-in a real browser and click through both tabs.
+after killing the server, the Notification permission flow, the confirm
+dialogs on gate buttons, and a gate move attempted while a watcher is live —
+open the hub in a real browser and click through both tabs.
+
+The server bundle is built too (`dist/server/`), and a **stale `dist` is the
+classic trap here**: `npm run hub` rebuilds, but running
+`node dist/server/main.js` directly after editing `src/` serves the old code —
+a new route 404s and looks like a routing bug. Rebuild first.
