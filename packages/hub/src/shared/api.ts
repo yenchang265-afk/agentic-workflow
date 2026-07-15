@@ -207,6 +207,40 @@ export interface SaveKindResponse {
   readonly checklist: readonly ChecklistItem[]
 }
 
+/**
+ * Which optional pieces of loop state the previewed prompt renders against.
+ * These are the switches that make conditional blocks (`{{#task.id}}`,
+ * `{{#worktree}}`, `{{#platform.ado}}`) fire or vanish — the point of the
+ * preview is watching them do so, not reading the text once.
+ */
+export interface PreviewSample {
+  /** Loop started from a backlog task → `{{#task.id}}` / `{{#acceptance}}` render. */
+  readonly task: boolean
+  /** Git isolation established → `{{#git}}` / `{{git.diffCmd}}` render. */
+  readonly git: boolean
+  /** Worktree isolation (implies git) → `{{#worktree}}` renders. */
+  readonly worktree: boolean
+  /** Code platform the prompt renders for → `{{#platform.ado}}` vs `{{#platform.github}}`. */
+  readonly platform: "github" | "ado"
+}
+
+export interface PreviewRequest {
+  readonly manifest: unknown
+  /** Stage prompt sources, keyed by stage name — the creator's unsaved drafts. */
+  readonly prompts: Readonly<Record<string, string>>
+  readonly stage: string
+  readonly sample?: Partial<PreviewSample>
+}
+
+export interface PreviewResponse {
+  /** The stage prompt as the loop would compose it, sample values substituted. */
+  readonly rendered: string
+  /** Set when the render is not the whole story (e.g. the stage has a compose hook). */
+  readonly note?: string
+  /** The sample actually used, after defaults — so the UI can reflect its own toggles. */
+  readonly sample: PreviewSample
+}
+
 /** Where a token row's numbers came from. */
 export type TokenSource = "sidecar" | "transcripts" | "opencode-db"
 

@@ -11,7 +11,7 @@ import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
-import { getKind, getKinds, saveKind, validateKind } from "./routes/kinds.js"
+import { getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
 import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
 
@@ -128,7 +128,10 @@ const routes: Route[] = [
   { method: "GET", pattern: "/api/active", handler: scoped((deps) => getActive(deps)) },
   { method: "GET", pattern: "/api/tokens", handler: scoped((deps) => getTokensSummary(deps)) },
   { method: "GET", pattern: "/api/tokens/:id", handler: scoped(getRunTokens) },
+  // validate/preview write nothing, so they carry no `mutating` guard — the
+  // X-Hub-Client header gates side effects, not reads that happen to POST.
   { method: "POST", pattern: "/api/kinds/validate", handler: scoped(validateKind) },
+  { method: "POST", pattern: "/api/kinds/preview", handler: scoped(previewKind) },
   { method: "POST", pattern: "/api/kinds/:kind", handler: scoped(saveKind), mutating: true },
 ]
 

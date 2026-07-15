@@ -1,5 +1,6 @@
-import type { StageDef } from "@agentic-loop/core/manifest/schema"
+import type { LoopManifest, StageDef } from "@agentic-loop/core/manifest/schema"
 import type { GraphMeta } from "./graphmodel.js"
+import { PromptPreview } from "./PromptPreview.js"
 import { Button } from "../ui/Button.js"
 
 /**
@@ -24,12 +25,17 @@ const fromCsv = (text: string): string[] =>
 export const StageForm = ({
   stage,
   prompt,
+  manifest,
+  prompts,
   onChange,
   onPromptChange,
   onDelete,
 }: {
   stage: StageDef
   prompt: string
+  /** The live graph as a manifest, for the preview. Null while it doesn't validate. */
+  manifest: LoopManifest | null
+  prompts: Readonly<Record<string, string>>
   onChange: (next: StageDef) => void
   onPromptChange: (text: string) => void
   onDelete: () => void
@@ -88,6 +94,7 @@ export const StageForm = ({
       <Field label="stage prompt (stages/{name}.md)">
         <textarea rows={10} value={prompt} onChange={(e) => onPromptChange(e.target.value)} />
       </Field>
+      <PromptPreview manifest={manifest} stage={stage.name} prompts={prompts} />
       <Button variant="danger" onClick={onDelete}>
         Delete stage
       </Button>
