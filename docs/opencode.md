@@ -9,7 +9,7 @@ details. For the shared pipeline picture see
 
 The shared engineering pipeline (gates, PLAN park, BUILD/VERIFY/REVIEW,
 `maxIterations`, ship) is documented once in
-[architecture.md](architecture.md#the-engineering-kind-packagescoreloopsengineering) —
+[`docs/loops/engineering.md`](loops/engineering.md#architecture) —
 this section covers only what's specific to running it on OpenCode.
 
 Work runs either on demand (`/agentic-loop:engineering plan <id>` plans one

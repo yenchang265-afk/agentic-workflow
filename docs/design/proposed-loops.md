@@ -102,55 +102,19 @@ backlog as reviewable task files. Never edits code.
 
 ### dep-sitter
 
-> **Status: SHIPPED** — `packages/core/loops/dep-sitter/`. v1 deltas from
-> the sketch below: majors are *skipped and logged* rather than parked (the
+> **Status: SHIPPED** — `packages/core/loops/dep-sitter/`. See
+> [`docs/sitters.md`](../sitters.md) and
+> [`docs/loops/dep-sitter.md`](../loops/dep-sitter.md) for its current
+> behavior and config; the original sketch below is history only. v1 deltas
+> from the sketch: majors are *skipped and logged* rather than parked (the
 > `dependency-scan` source claims only patch/minor fixes whose target
 > version the report pins — no `validateBeforeTransition` hook needed);
-> `maxIterations` is 2. Supports both GitHub (`gh pr create`) and Azure
-> DevOps (the publish stage opens the draft PR via the REST API) — the
-> dependency scan itself is platform-agnostic. Ecosystems: **npm** (native
-> `npm audit`), **Maven and Gradle** via OSV-Scanner (`ecosystem` binding,
-> default `auto` — detect and merge; Gradle needs a committed lockfile;
-> undeclared/transitive JVM packages are never claimed). See threat model
-> T12.
+> `maxIterations` is 2; ecosystems are **npm** (native `npm audit`) and
+> **Maven/Gradle** via OSV-Scanner. See threat model T12.
 
-Sits on outdated and vulnerable dependencies: upgrades them on a branch,
-verifies, and opens a draft PR. Patch/minor CVE fixes flow straight to a
-draft PR; major bumps park for a human first.
-
-- **Work source**: new `dependency-scan` — polls `npm audit --json` /
-  `npm outdated --json` (enterprise variants: Artifactory Xray, OSS Index)
-  and emits one work item per advisory/upgrade group, deduped by a ledger
-  under `<tasksDir>/runs/dep-sitter/` exactly like the PR-sitter's per-PR
-  ledger.
-- **Stage graph**:
-  1. `scan` (**check**, isolation `none`, external-read allowlist for the
-     registry) — confirms the finding still applies, classifies severity and
-     semver impact.
-  2. `upgrade` (**work**, isolation `worktree`) — applies the bump, runs
-     codemods/lockfile updates.
-  3. `verify` (**check**, isolation `worktree`) — same test-runner
-     `bashAllowlist` as pr-sitter's verify stage.
-  4. `publish` (**work**, isolation `worktree`, `git push origin *` +
-     platform allowlist) — pushes the branch, opens/updates a draft PR.
-- **Transitions**: `scan` onPass → fire `upgrade`; onFail → done. For major
-  bumps, a `validateBeforeTransition.scan` hook vetoes the fire and parks
-  `toStatus: "upgrade-review"` instead. `verify` onFail → fire `upgrade`
-  with `countIteration: true` (budget 2 — dependency fixes that don't
-  converge fast never will); `onError` → stop. `publish` onDone → done.
-- **Human gates**: major-version bumps park before any code is written;
-  every upgrade lands as a **draft PR** — merging stays human, mirroring
-  pr-sitter's "never merges."
-- **Authority & threat notes**: push + external-read. Advisory text is
-  untrusted input (same discipline as T7 — PR comment injection): the scan
-  stage treats advisory prose as data, never as instructions. Registry
-  queries go through the same allowlist mechanism as the ADO REST calls.
-- **Config sketch**:
-  ```json
-  { "loops": { "dep-sitter": { "enabled": true, "severityFloor": "high", "autoFix": ["patch", "minor"], "parkFor": ["major"] } } }
-  ```
-- **Cost**: **M** (one new source; push authority already modeled by
-  pr-sitter).
+Original sketch: outdated/vulnerable dependencies, new `dependency-scan`
+work source, `scan → upgrade → verify → publish` (push + external-read
+authority), major bumps parked for a human. **Cost**: M.
 
 ### coverage-filler
 
@@ -233,49 +197,20 @@ from "someone filed a bug" to "the engineering loop can claim it."
 
 ### review-sitter
 
-> **Status: SHIPPED** — `packages/core/loops/review-sitter/`. v1 deltas from
-> the sketch below: the middle work stage is named `assess` (not `review` —
+> **Status: SHIPPED** — `packages/core/loops/review-sitter/`. See
+> [`docs/sitters.md`](../sitters.md) and
+> [`docs/loops/review-sitter.md`](../loops/review-sitter.md) for its current
+> behavior and config; the original sketch below is history only. v1 deltas
+> from the sketch: the middle work stage is named `assess` (not `review` —
 > the OpenCode driver special-cases a stage named `review` for lens fan-out);
 > there is no `maxDiffLines` knob — the fetch stage FAILs (→ done) on
 > unreviewably-large diffs instead; a re-request without a new push does not
 > re-fire (dedup rides the head SHA); fork and draft PRs stay skipped
 > (threat model T10/T11).
 
-The mirror image of pr-sitter: sits on PRs where **your review is
-requested**, reads the diff against the codebase, and posts one structured
-review comment. Never approves, never requests changes, never merges.
-
-- **Work source**: `github-pr` reused with a different query
-  (`is:open review-requested:@me`) and one new trigger, `review-requested`
-  (plus the existing `new-commits` semantics so a re-push re-fires). ADO
-  flavor: PRs where the PAT identity is a required/optional reviewer.
-- **Stage graph**:
-  1. `fetch` (**check**, isolation `none`) — pulls the PR head into a local
-     branch (the source already does this at claim), confirms the review is
-     still wanted (not already reviewed since the request), sizes the diff.
-  2. `review` (**work**, isolation `worktree` on the PR head, read-only
-     bash + test-runner allowlist) — reads the diff *in context of the
-     surrounding code*, optionally runs the tests, and drafts findings.
-  3. `publish` (**work**, isolation `none`, platform comment allowlist) —
-     posts a single review-style comment: summary, findings with file/line
-     references, explicit "this is an automated first pass" framing.
-- **Transitions**: `fetch` onPass → fire `review`; onFail → done ("nothing
-  to review"). `review` onDone → fire `publish`. `publish` onDone → done.
-  No iteration budget — one pass per request; a human's re-request or a new
-  push re-fires via the trigger.
-- **Human gates**: the human reviewer stays the reviewer of record — the
-  sitter's comment is an input to their review, and GitHub/ADO approval
-  state is never touched (the platform allowlist simply has no
-  approve/reject verbs).
-- **Authority & threat notes**: comment only — strictly *less* authority
-  than pr-sitter (no push). T7 applies to the PR diff and description; the
-  worktree isolation plus read-only allowlist contains T2-style escapes.
-- **Config sketch**:
-  ```json
-  { "loops": { "review-sitter": { "enabled": true, "query": "is:open review-requested:@me", "maxDiffLines": 2000 } } }
-  ```
-- **Cost**: **S/M** (source reuse; the new trigger and the ADO reviewer
-  query are the only plumbing).
+Original sketch: the mirror of pr-sitter, `github-pr` reused with a
+`review-requested` query/trigger, `fetch → review → publish` (comment-only
+authority, no iteration budget). **Cost**: S/M.
 
 ### backlog-groomer
 
@@ -315,8 +250,11 @@ has drifted past.
 
 ### main-sitter
 
-> **Status: SHIPPED** — `packages/core/loops/main-sitter/`. v1 deltas from
-> the sketch below: the `ci-runs` source judges only the branch's *newest*
+> **Status: SHIPPED** — `packages/core/loops/main-sitter/`. See
+> [`docs/sitters.md`](../sitters.md) and
+> [`docs/loops/main-sitter.md`](../loops/main-sitter.md) for its current
+> behavior and config; the original sketch below is history only. v1 deltas
+> from the sketch: the `ci-runs` source judges only the branch's *newest*
 > head (older red heads are moot once a newer push exists; a green re-run
 > retires the item naturally) and never claims a head with runs still in
 > flight; the remedy branch is `main-sitter/<sha>` and the push allowlist is
@@ -325,43 +263,10 @@ has drifted past.
 > API, `ado-ci-runs.ts`, sharing its ledger/WorkItem mechanics with the
 > GitHub source). See threat model T13.
 
-Sits on the default branch's CI. When main goes red after a merge, it
-bisects to the breaking change, then proposes either a fix or a revert — as
-a draft PR, never a direct push to main.
-
-- **Work source**: new `ci-runs` — polls recent runs on the default branch
-  (`gh run list --branch main` / ADO pipeline runs REST), emits a work item
-  on a red run not yet in its ledger; a later green run for the same head
-  retires pending items (self-healing mains shouldn't page the loop).
-- **Stage graph**:
-  1. `diagnose` (**check**, isolation `worktree` on main's head; allowlist
-     adds `git bisect*`, log-fetch verbs) — reproduces the failure,
-     bisects/blames to the culprit merge, classifies: fixable-forward,
-     revert-worthy, or infra-flake. FAIL = flake/already green.
-  2. `remedy` (**work**, isolation `worktree`) — writes the forward fix, or
-     constructs the revert commit.
-  3. `verify` (**check**, isolation `worktree`) — the failing job's command
-     now passes on the remedy branch.
-  4. `publish` (**work**; push + comment allowlist) — pushes the remedy
-     branch, opens a draft PR, comments once on the culprit PR linking it.
-- **Transitions**: `diagnose` onPass → fire `remedy`; onFail → done
-  ("flake or already recovered"). `verify` onFail → fire `remedy`,
-  `countIteration: true`, budget 2, and the cap message recommends the
-  revert path; onError → stop. `publish` onDone → done.
-- **Human gates**: main is never pushed to; the remedy is a draft PR and the
-  merge is a human call — even for reverts. The comment on the culprit PR is
-  informational, not an assignment.
-- **Authority & threat notes**: push + comment; CI logs are untrusted input
-  (T7 discipline — logs are data). Bisect runs arbitrary repo code from
-  historical commits inside the worktree: the T2 containment (allowlist +
-  isolation) is the control, and the entry inherits T5's runaway guard via
-  the iteration budget. Threat model gains a short "CI-runs source" section.
-- **Config sketch**:
-  ```json
-  { "loops": { "main-sitter": { "enabled": true, "branch": "main", "workflows": ["ci.yml"], "preferRevertAfterMinutes": 60 } } }
-  ```
-- **Cost**: **M/L** (new source; bisect prompting and the retire-on-green
-  ledger semantics are the hard parts).
+Original sketch: default-branch CI, new `ci-runs` work source,
+`diagnose → remedy → verify → publish` (push + comment authority, bisects
+to the culprit, proposes a fix or revert as a draft PR — never a direct
+push to main). **Cost**: M/L.
 
 ### release-gardener
 

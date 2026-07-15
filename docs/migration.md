@@ -38,96 +38,17 @@
 - Re-run `./install.sh` after updating; a previously installed
   `commands/agent-loop.md` symlink now dangles — delete it if it lingers.
 
-## To the single `/agent-loop` command and same-layer plugins
+## Early history (pre-1.0 internal iteration)
 
-- **`/agent-loop-task` is gone** — all its verbs live on `/agent-loop`:
-  `new <idea>` · `retask <id> [note]` · `approve [id]` (aliases `ok`, `go`;
-  with an explicit id it now also queues a reviewed draft — the unified,
-  folder-driven gate) · `reject [id] [reason]` (aliases `redo`, `replan`) ·
-  `approve-plan <id>` (the explicit plan-gate form survives). New verbs:
-  `claim [kind]` (both hosts — the one-shot pull), `kinds`, the `run` alias
-  for `task`, a bare-id shorthand (`/agent-loop <id>` runs a startable task),
-  and `watch [interval] [kind]` (OpenCode) accepts a loop-kind filter.
-- **Repo layout is same-layer now**: the OpenCode plugin lives in
-  `plugins/opencode/` (was the repo root + `.opencode/`), the Claude Code
-  plugin in `plugins/claude/` (was `claude-plugin/`), and the loop-kind
-  manifests ship inside core (`packages/core/loops/`, was `loops/`).
-  - OpenCode: re-run `./install.sh opencode` — it regenerates the config-dir
-    plugin shim and re-points the symlinks.
-  - Claude Code: re-add the marketplace once (`/plugin marketplace add
-    <repo>`; the plugin source moved to `./plugins/claude`), then reinstall.
-- **Agent prompts are generated** from `prompts/agents/` (`npm run
-  gen:prompts`); the Claude guard hook is bundled from
-  `plugins/claude/hooks/src/` (`npm run build:hooks`). Edit the sources,
-  never the outputs — CI enforces both.
-
-## To the backlog guard, watch lease, and inline gates
-
-- **Raw backlog edits are now blocked.** Bash `mv`/`mkdir`/`rm`/redirects
-  against `<tasksDir>/` and direct Write/Edit of files in status folders are
-  rejected on both substrates (PreToolUse hook / `tool.execute.before`);
-  only `draft/*.md` authoring and the live PLAN stage's own `queued/` task
-  stay writable. Use the MCP verbs / the `/agent-loop` gate verbs; repair damage with
-  `loop_doctor` / `/agent-loop doctor [fix]`.
-- **New gitignored dir `docs/tasks/runs/.watch-lease/`** — the single-watcher
-  lease. A second `/agent-loop watch` process on the same clone is refused;
-  run extra watchers in their own clones/worktrees. Nothing to migrate;
-  delete the dir if a crashed watcher's lease ever wedges (or just wait —
-  stale leases are taken over automatically).
-- **Stage marker gained a `taskId` field** (`runs/.stage.json`). Old markers
-  still parse; hooks from this version paired with an older MCP server just
-  won't apply the PLAN carve-out (PLAN would be blocked from writing the
-  plan — update both sides together).
-- **Claude Code gates are interactive now.** A plan park / loop done returns
-  a `gate` field and the driver asks Approve / Replan / Park inline
-  (AskUserQuestion). The `/agent-loop approve` and
-  `/agent-loop ship` verbs are unchanged and remain the deferred path (now also
-  reachable via the shorter `/agent-loop approve` / `/agent-loop reject` shortcuts).
-
-## To the in-loop PLAN stage (`queued/`, `plan-review/`)
-
-Planning moved **into** the loop: the plan is now written right before
-execution (PLAN stage) and parked in `plan-review/` for a human gate,
-instead of being authored up front by a planning command.
-
-- **Command rename** — `/agent-loop-plan` is gone; task authoring and both
-  human gates live in `/agent-loop` (`new <idea>` · `retask <id> [note]` ·
-  `approve [id]` · `reject [id] [reason]`; since the single-command merge, `/agent-loop-task` itself is gone). Re-run
-  `./install.sh` after
-  updating; a previously installed `commands/agent-loop-plan.md` symlink now
-  dangles — delete it if it lingers.
-- **Folder migration** — `in-planning/` was replaced by `queued/` (task
-  approved, planless, awaiting the loop's PLAN stage) and `plan-review/`
-  (plan written, parked for the gate). For an existing backlog:
-
-  ```bash
-  cd docs/tasks
-  mkdir -p queued plan-review
-  # planned tasks await the plan gate; planless ones go back to draft review
-  for f in in-planning/*.md; do
-    grep -q '^## Implementation Plan' "$f" && git mv "$f" plan-review/ || git mv "$f" draft/
-  done
-  rmdir in-planning 2>/dev/null; git add queued plan-review
-  ```
-
-  Tasks already in `in-progress/` keep working unchanged — they have
-  approved plans and the loop still enters them at BUILD.
-- **Re-planning** — `/agent-loop-plan task <id>` is gone; to re-plan anything
-  (a rejected plan, a cap-tripped task) run `/agent-loop reject <id>
-  <why>` — it re-queues the task and the next PLAN pass addresses the
-  audited reason. This also fixes the old dead end where a cap-tripped
-  `in-progress/` task could not be re-planned at all.
-- **Snapshots** — `*.state.json` snapshots at stage `plan` are invalidated
-  by design (the PLAN stage never snapshots); `/agent-loop recover <id>` falls
-  back to the plan persisted on the task file.
-
-## From the pre-`/agent-loop-plan` versions
-
-- The `/task` command was renamed (via `/agent-loop-plan` and `/agent-loop-task`, now
-  merged into `/agent-loop`) and its agent to `loop-plan-author`; delete dangling
-  `commands/task.md` symlinks.
-- `gateBeforeBuild` and `interviewBeforePlan` in `.agentic-loop.json` are
-  ignored (the gates are `/agent-loop approve` and `approve-plan`;
-  interviewing lives in `/agent-loop new`).
-- `new` never writes a plan — it interviews you into a planless draft in
-  `draft/`.
+Before the current per-kind command layout, this repo went through several
+rounds of consolidation in its first weeks: a `/task`/`/agent-loop-plan`
+split merged into a single `/agent-loop-task`, which then merged into one
+umbrella `/agent-loop` command (`new`/`retask`/`approve`/`reject`/`claim`/
+`watch [kind]`/`kinds`); planning moved from an upfront command into an
+in-loop PLAN stage (`in-planning/` became `queued/` + `plan-review/`); and
+the backlog gained a mutation guard, a single-watcher lease
+(`docs/tasks/runs/.watch-lease/`), and interactive Claude Code gates. None of
+these intermediate states shipped to anyone outside active development — if
+you're migrating from something this old, the per-kind command rename above
+supersedes it directly. Delete any dangling `commands/agent-loop*.md` or
+`commands/task.md` symlinks and re-run `./install.sh`.

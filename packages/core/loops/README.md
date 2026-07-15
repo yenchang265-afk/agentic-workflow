@@ -223,6 +223,8 @@ polls enabled kinds in claim-priority order — engineering's backlog first.
    `npm run gen:prompts`; it renders into `plugins/opencode/agents/` and
    `plugins/claude/agents/` (never edit those outputs — CI drift-checks them;
    the PreToolUse guard enforces the manifest allowlist via the stage marker).
+   See [`prompts/README.md`](../../../prompts/README.md) for how the
+   generation pipeline works.
 3. OpenCode **commands** for each stage `command` that doesn't already exist
    (`plugins/opencode/commands/<command>.md`, thin `agent:`-frontmatter
    wrappers).
