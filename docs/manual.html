@@ -685,11 +685,11 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="hub">
       <div class="eyebrow">Reference</div>
       <h2>Admin hub <span class="def">beta</span></h2>
-      <p class="lede">A local web dashboard for watching loops and authoring kinds — the visual companion to the slash-commands. It is <b>read-only for the loop</b>: it shows you what the backlog, runs and gates are doing and lets you edit kind manifests, but it never claims work or approves a gate. Those stay in your host (Claude Code / OpenCode).</p>
+      <p class="lede">A local web dashboard for watching loops, answering their gates, and authoring kinds — the visual companion to the slash-commands. It shows you what the backlog, runs and gates are doing, and lets you <b>approve, replan and ship</b> from the board — through the same shared entry points the hosts call, so a click and a slash-command are the same audited move. It <b>never drives a loop</b>: it doesn't claim work or run a stage. Those stay in your host (Claude Code / OpenCode).</p>
 
       <div class="pillrow">
         <span class="pill"><b>localhost only</b> · binds 127.0.0.1, no auth by design</span>
-        <span class="pill"><b>read-only monitor</b> · never drives the loop</span>
+        <span class="pill"><b>gates, never drives</b> · approve/replan/ship, but never claims or runs a stage</span>
         <span class="pill"><b>visual creator</b> · edit a kind's manifest as a graph</span>
       </div>
 

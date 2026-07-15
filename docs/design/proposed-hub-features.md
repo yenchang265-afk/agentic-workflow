@@ -4,8 +4,9 @@ This is a **proposal + implementation plan**, not a design record of shipped
 work (that's [`improvements/`](./improvements/README.md), whose seven plans are
 all **core-side** — the hub has had no design home until this file).
 
-It answers one question: beyond the shipped read-only monitor and loop creator,
-what should [`packages/hub/`](../../packages/hub/README.md) do next?
+It answers one question: beyond the read-only monitor and loop creator the hub
+shipped with, what should [`packages/hub/`](../../packages/hub/README.md) do
+next?
 
 The answer is driven by a single measurable observation: **core exposes a
 complete write API that the hub never calls.** Every feature below closes one of
@@ -45,12 +46,16 @@ Authority levels, in increasing order of blast radius:
 
 ## Summary
 
-| # | Feature | Gap it closes | Authority | Cost |
-|---|---------|---------------|-----------|------|
-| [1](#1--gate-actions) | Gate actions | `loop/gate.ts` — **zero hub callers** | backlog-write, push | M |
-| [2](#2--backlog-doctor) | Backlog doctor | write half of `task/store.ts` | backlog-write | M |
-| [3](#3--creator-prompt-preview) | Creator prompt preview | `manifest/template.ts` `renderPrompt` | read | S |
-| [4](#4--config-editor) | Config editor | **nothing anywhere writes `.agentic-loop.json`** | config-write | L |
+| # | Feature | Gap it closes | Authority | Cost | Status |
+|---|---------|---------------|-----------|------|--------|
+| [1](#1--gate-actions) | Gate actions | `loop/gate.ts` — **zero hub callers** | backlog-write, push | M | **shipped** |
+| [2](#2--backlog-doctor) | Backlog doctor | write half of `task/store.ts` | backlog-write | M | proposed |
+| [3](#3--creator-prompt-preview) | Creator prompt preview | `manifest/template.ts` `renderPrompt` | read | S | **shipped** |
+| [4](#4--config-editor) | Config editor | **nothing anywhere writes `.agentic-loop.json`** | config-write | L | proposed |
+
+PR 0 (the foundation) and features 1 and 3 have shipped; the gaps they closed
+are described below in the past tense they were written in. Features 2 and 4
+remain proposals.
 
 Recommended order — **PR 0 (foundation) → 3 → 1 → 2 → 4** — is justified under
 [Sequencing](#sequencing). The config editor is the headline ask and ships
@@ -60,12 +65,17 @@ Recommended order — **PR 0 (foundation) → 3 → 1 → 2 → 4** — is justi
 
 ## The gap
 
-The hub is a beta admin app that **observes** the loop: backlog board, live
+> **Written before any of this shipped**, and kept in its original tense: it is
+> the argument for the change, not a description of today. Features 1 and 3 have
+> since landed, so `architecture.md` and `packages/hub/README.md` now describe
+> the write surface — they, not this doc, are canonical for what the hub does.
+
+The hub was a beta admin app that **observed** the loop: backlog board, live
 activity, run history, token usage, loop creator. All read-only, by design —
-[`architecture.md`](../architecture.md) says it "**observes** … and never drives
+[`architecture.md`](../architecture.md) said it "**observes** … and never drives
 the loop".
 
-That stance has gone stale in four specific places:
+That stance had gone stale in four specific places:
 
 | Core capability | Status | Hub today |
 |---|---|---|
@@ -114,7 +124,7 @@ drifted.**
 
 ## 1 — Gate actions
 
-**Authority: backlog-write, push · Cost: M**
+**Authority: backlog-write, push · Cost: M · Status: SHIPPED**
 
 Approve / replan / ship buttons on gate-column task cards.
 
@@ -206,7 +216,7 @@ and always safe to fix.
 
 ## 3 — Creator prompt preview
 
-**Authority: read · Cost: S**
+**Authority: read · Cost: S · Status: SHIPPED**
 
 Render a stage prompt with sample context, inside the creator.
 
@@ -655,25 +665,26 @@ in `$EDITOR` and confirm the watcher reloads.
 Per the [improvements convention](./improvements/README.md#conventions-every-plan-follows),
 docs are part of done:
 
-- **[`architecture.md`](../architecture.md)** — the load-bearing edit. "**observes**
-  … and never drives the loop" becomes false the moment PR 1 lands. Rewrite to
-  the precise boundary: the hub observes *and* performs the human gate moves,
-  backlog repairs, and config edits, through the **same shared core entry
-  points** both hosts use — it does not drive *stages*. **A fourth caller of the
-  gate, not a fourth driver.**
-- **[`packages/hub/README.md`](../../packages/hub/README.md)** — delete "The
-  monitor is deliberately **read-only** — gate actions … a candidate for a later
-  release" (:110-111). Replace with the write surface, the posture, and the two
-  honest limitations: **a gate move on a claimed task is refused until the loop
-  releases it (or the doctor does)**, and **ship opens a real PR**. Add
-  manual-QA items: confirm dialogs, config save → reload without restart, gate
-  buttons against a live watcher.
-- **[`configuration.md`](../configuration.md)** — document the editor:
+- ~~**[`architecture.md`](../architecture.md)**~~ — **done** (PR 1). "observes …
+  and never drives the loop" was false the moment PR 1 landed. Now states the
+  precise boundary: the hub performs the human gate moves through the **same
+  shared core entry points** both hosts use — it does not drive *stages*. **A
+  fourth caller of the gate, not a fourth driver.**
+- ~~**[`packages/hub/README.md`](../../packages/hub/README.md)**~~ — **done**
+  (PR 1). The "deliberately read-only" caveat is gone; the write surface, the
+  two-row write table, and the honest limitations are in (**a gate move on a
+  claimed task is refused until the claim is released**, and **ship opens a real
+  PR**). `docs/manual.html`'s read-only pill was stale for the same reason and
+  is fixed too.
+- **[`configuration.md`](../configuration.md)** — still open, with the config
+  editor ([4](#4--config-editor)). Document the editor:
   layer-explicit editing, provenance, the passthrough rule, `ado.pat`
   redaction, the gitignore guard, advisory knob linting. **Cross-link the
   `loops.<kind>` knob table** ([Crux C](#crux-c--loops-is-looseobject)) and fix
   the "validated by the kind itself" claim at :126 — a doc fix that pays for
   itself independent of this feature.
-- **[`threat-model.md`](./threat-model.md)** — the new mutating surface: which
-  routes write, what they commit, why localhost + Host guard + `X-Hub-Client` is
-  the boundary, and that a PR-opening click now exists.
+- **[`threat-model.md`](./threat-model.md)** — **still open, and now overdue**:
+  PR 1 shipped the mutating surface it should describe. Needs: which routes
+  write, what they commit, why localhost + Host guard + `X-Hub-Client` is the
+  boundary, and that a PR-opening click now exists. `architecture.md` and the
+  hub README cover it for readers in the meantime; the threat model does not.
