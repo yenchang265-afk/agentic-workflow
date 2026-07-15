@@ -62,13 +62,13 @@ This walkthrough shows the full happy path from interview through delivery.
    ```
    /agentic-loop:engineering watch 30s
    ```
-   Starts a standing watcher that polls every 30 seconds. When it finds a task in `in-progress`, it runs BUILD (code changes) → VERIFY (tests pass?) → REVIEW (code review) unattended. If all stages PASS, the task lands in `in-review/` (human review before merge). If any stage FAIL, it retries BUILD up to 3 times, then stops.
+   Starts a standing watcher that polls every 30 seconds. When it finds a task in `in-progress`, it runs BUILD (code changes) → VERIFY (tests pass?) → REVIEW (code review) unattended. If all stages PASS, the task lands in `in-review/` (human review before merge). If any stage FAIL, it retries BUILD up to 3 times, then stops. `watch` turns *this* session into the worker — to run the next step, use a separate terminal/session, or press ESC (pauses, keeps the run recoverable) or `unwatch` (stops watching, lets any in-flight loop finish) first.
 
 6. **Approve the finished work**
    ```
    /agentic-loop:engineering approve my-dashboard-dark-mode
    ```
-   Moves the task from `in-review/` to `completed/` — shipped.
+   BUILD/VERIFY/REVIEW never push or open a PR themselves — this is the step that ships it: it pushes the `feature/my-dashboard-dark-mode` branch and opens (or reuses) a draft PR, then moves the task from `in-review/` to `completed/`.
 
 ## Example: Recover a stalled task
 
@@ -84,7 +84,7 @@ If a build crashes or you interrupt it (ESC), the task stalls in `in-progress`. 
    ```
    /agentic-loop:engineering recover my-dashboard-dark-mode
    ```
-   Re-enters the BUILD stage at the point it stopped, re-reads the task file (in case you edited it while stalled), and continues. On next `watch` or `claim`, BUILD → VERIFY → REVIEW runs again.
+   Resumes immediately, this turn — re-claims the task and re-enters the exact stage its state snapshot stopped at (re-reading the task file first, in case you edited it while stalled), then continues BUILD → VERIFY → REVIEW.
 
 ## Learn more
 

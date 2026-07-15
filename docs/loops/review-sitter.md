@@ -16,7 +16,7 @@ Add to `.agentic-loop.json`:
 }
 ```
 
-See [`docs/sitters.md`](../sitters.md) for all config options.
+The default query (`is:open review-requested:@me`) is overridable via `loops.review-sitter.query` (GitHub-only, like pr-sitter's). See [`docs/sitters.md`](../sitters.md) for all config options.
 
 ## Commands
 
@@ -58,13 +58,13 @@ Let the loop watch and review PRs automatically whenever you're idle:
    ```
    /agentic-loop:review-sitter watch idle
    ```
-   (OpenCode only.) The watcher polls on editor idle events (no keystroke for 5+ minutes) and claims one review. Useful if you want reviews posted without setting a fixed schedule.
+   (OpenCode only.) `watch` turns this session into the worker; it claims a new review every time the session goes idle, instead of on a fixed timer. Useful if you want reviews posted without setting a schedule.
 
 2. **Stop the watcher**
    ```
    /agentic-loop:review-sitter stop
    ```
-   Stops watching.
+   Run from a separate session/terminal (the watching session is occupied), or press ESC/`unwatch` first.
 
 ## Learn more
 

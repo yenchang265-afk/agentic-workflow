@@ -61,12 +61,13 @@ Set up a standing watcher to catch and fix red CI quickly:
    ```
    /agentic-loop:main-sitter watch 10m
    ```
-   (OpenCode only.) The watcher polls every 10 minutes and claims one red CI head each time, fixing it unattended. Useful for high-priority repos where you want CI green ASAP.
+   (OpenCode only.) `watch` turns this session into the worker; it polls every 10 minutes and claims one red CI head each time, fixing it unattended. Useful for high-priority repos where you want CI green ASAP.
 
 2. **Stop the watcher**
    ```
    /agentic-loop:main-sitter stop
    ```
+   Run from a separate session/terminal (the watching session is occupied), or press ESC/`unwatch` first.
 
 ## Learn more
 

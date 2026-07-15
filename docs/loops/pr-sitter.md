@@ -45,7 +45,7 @@ Manually invoke the loop once to fix the next actionable PR:
    ```
    /agentic-loop:pr-sitter claim
    ```
-   Polls your open PRs for failing checks, review comments, or merge conflicts. If it finds one, runs TRIAGE (assess the problem), then FIX (push commits), then VERIFY (re-run checks), then PUBLISH (push result). On PUBLISH, the PR is left in a ready state for you to review and merge by hand.
+   Polls your open PRs for failing checks, review comments, or merge conflicts. If it finds one, runs TRIAGE (assess the problem), then FIX (commit locally on the PR's existing branch — no push yet), then VERIFY (re-run checks), then PUBLISH (`git push origin <branch>` plus one `gh pr comment` per finding). PUBLISH never merges, closes, or approves — you review and merge by hand.
 
 2. **Check status**
    ```
@@ -61,7 +61,7 @@ Set up an ongoing watcher that checks every hour:
    ```
    /agentic-loop:pr-sitter watch 1h
    ```
-   (OpenCode only.) The watcher polls every 1 hour and claims one PR each time, fixing it unattended. Run this in a tmux/screen session or (in VS Code) let it idle in the background; ESC stops it.
+   (OpenCode only.) `watch` turns this session into the worker; it polls every 1 hour and claims one PR each time, fixing it unattended. Pressing ESC pauses it (keeps state); the next two steps need a separate session/terminal, or `unwatch`/ESC first.
 
 2. **Check status while watching**
    ```

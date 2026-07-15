@@ -61,12 +61,13 @@ Set up a cron job to scan and fix dependencies every Monday at 9 AM:
    ```
    /agentic-loop:dep-sitter watch cron "0 9 * * 1"
    ```
-   (OpenCode only.) The watcher fires on the cron schedule and claims one dependency each time. Useful for regular security hygiene.
+   (OpenCode only.) `watch` turns this session into the worker; it fires on the cron schedule and claims one dependency each time. Useful for regular security hygiene.
 
 2. **Stop the watcher**
    ```
    /agentic-loop:dep-sitter stop
    ```
+   Run from a separate session/terminal (the watching session is occupied), or press ESC/`unwatch` first.
 
 ## Learn more
 
