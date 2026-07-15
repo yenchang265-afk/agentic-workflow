@@ -189,11 +189,14 @@ them with the same guidance ("keep one copy, move the rest to abandoned"). The
 hub is the *worst* place to guess which copy is canonical — do not add a
 hub-only "resolve duplicate" button.
 
-**`isDriving` is stricter here than at the gate.** Releasing a claim an OpenCode
-watcher actively holds lets a second claimer grab the same task. When a watcher
-lease is live with no stage marker, **skip claim release entirely** and report
-why; strays and empty dirs are still safe to fix. See
-[the `isDriving` oracle](#the-isdriving-oracle).
+**Claim release is the delicate half.** Releasing a claim a loop actively holds
+lets a second claimer grab the same task. Note the inversion from the gate:
+there, a claim means "refuse"; here, the claim *is* the thing being released, so
+`isDriving` cannot be the test — every candidate is claimed by definition. Use
+core's own orphan predicates instead (`isOrphanedClaim:394`, and
+`isOrphanedPlanClaim:406` for `queued/`), which is exactly what
+`releaseOrphanedClaims:456` takes them for. Strays and empty dirs are unrelated
+and always safe to fix.
 
 **Web** — `web/monitor/DoctorPanel.tsx`. The hook point already exists: turn
 `Board.tsx:65`'s dead-end chip into the button that opens the panel.
@@ -455,28 +458,34 @@ later PR small.
 - **Gate before doctor** — doctor reuses `isDriving` under a *stricter*
   correctness bar (releasing a live claim is worse than refusing a replan).
 
-### PR 0 — write-path foundation
+### PR 0 — write-path foundation — **SHIPPED**
 
 Ships no user-visible feature. Everything after it is small.
 
-- **`server/deps.ts`** — add `readonly config: Config` to `HubDeps`.
-- **`server/main.ts:79-122`** — make `Repo.deps` mutable, add `reload()`.
-  `scoped()` already re-reads `repo.deps` per request, so reassigning the field
-  needs no handler plumbing. `reload()` is try/catch and **keeps the old deps on
-  failure**.
-- **Scope the kinds routes** (`main.ts:134-142`) — `getKinds` / `getKind` /
-  `validateKind` / `saveKind` currently pass `defaultRepo.deps`, so
-  `buildChecklist` (`kinds.ts:78-111`) is **already silently wrong for repo #2**.
-  A latent bug fix, not just prep.
+- **`server/deps.ts`** — `readonly config: Config` on `HubDeps`.
+- **`server/repo.ts`** (new) — the repo registry, with `reload()`. Extracted out
+  of `main.ts` rather than added to it: `main.ts` is a side-effecting entry
+  script (parses argv, binds a socket, exits on bad input), so nothing in it can
+  be imported by a test — and `reload()`'s keep-the-last-good-config rail is
+  worth proving. `scoped()` already re-reads `repo.deps` per request, so
+  reassigning the field needs no handler plumbing. A reload that moves `tasksDir`
+  or the status union also restarts the watcher, which is built from both.
+- **Scope the kinds routes** — `getKinds` / `getKind` / `validateKind` /
+  `saveKind` passed `defaultRepo.deps`, so `buildChecklist` (`kinds.ts:78-111`)
+  was **silently wrong for repo #2**. A latent bug fix, not just prep: `?repo=`
+  with an unknown id now 400s instead of quietly serving the default.
 - **New `server/gatectx.ts`** — six lines mapping `HubDeps` → `GateCtx`. The
   whole reason core needs no changes.
 - **New `server/driving.ts`** — [the `isDriving` oracle](#the-isdriving-oracle).
+  Also becomes the single stage-marker reader (`routes/active.ts` imports it).
 - **New `web/ui/Confirm.tsx`** — modeled on `ui/Button.tsx`'s one-primitive
   style. `detail` is **prose naming the real-world side effect** ("commits to
   git and opens a pull request against `main`"), not "Are you sure?". Every
   mutating button in PRs 1–4 goes through it.
-- **`web/api.ts`** — add `postAction<T>`, which does not throw on a
+- **`web/api.ts`** — `postAction<T>`, which does not throw on a
   200-with-`ok:false` (see [the 200 rule](#1--gate-actions)).
+- **`tsconfig.test.json`** (new, unplanned) — test files were never typechecked;
+  see the [Verification](#verification) gotchas.
 
 ### The `isDriving` oracle
 
@@ -485,25 +494,38 @@ The subtlest piece in this document. Extract `readStageMarker` /
 have `active.ts` import it — one reader, not two that drift.
 
 ```
-makeIsDriving(deps) → { isDriving: (id) => boolean; watcherLive: boolean }
+makeDrivingOracle(deps, now?) → { isDriving: (id) => boolean; markerTaskId; claimedIds; watcherLive; leasePid }
 ```
 
-Semantics, and the bias is deliberate:
+Two signals, in order of strength:
 
-- **Stage marker with `taskId === id` → driving: true**, regardless of deadline
-  or lease. A stale marker causing a spurious refusal is a recoverable annoyance
-  ("stop the loop first"); a false *not*-driving re-queues a task mid-BUILD and
-  destroys work. **When unsure, say driving.**
-- **No matching marker, but a non-stale watch lease → `watcherLive: true`.**
-  This is the honest hard case: **the OpenCode host writes no `.stage.json` at
-  all**, so an OpenCode watcher could be driving *anything* and the hub cannot
-  tell which. Callers decide: replan refuses outright ("a live watcher holds
-  this clone's lease — stop it first"); doctor skips claim release but still
-  fixes strays.
-- Neither → not driving.
+1. **Claim markers — the load-bearing one.** A loop claims a task (an atomic
+   `mkdir` under `<status>/.claims/`, `store.ts:341`) *before* it starts driving
+   it and holds the claim throughout, so **driving implies claimed**. That makes
+   claims a **per-task** signal. Scan every pool any enabled kind declares
+   (`board.pools`, as `routes/backlog.ts:51` already does) — PLAN claims live in
+   `queued/`, not just `in-progress/`.
+2. **The stage marker** (`runs/.stage.json`) — written by the Claude host while a
+   stage runs, and it names the task. The OpenCode host writes none.
 
-**This limitation is real. State it in the UI copy and in
-`packages/hub/README.md` — do not paper over it.**
+`isDriving(id)` is `claimed.has(id) || id === markerTaskId`.
+
+The bias is deliberate: a stranded claim causes a spurious refusal, a
+recoverable annoyance the doctor clears. A false *not*-driving re-queues a task
+mid-BUILD and destroys work. **When unsure, say driving.**
+
+**The watch lease is deliberately not a driving signal.** It is tempting — the
+OpenCode host writes no stage marker, so a live watcher looks like an opaque
+blind spot. It isn't: a watcher claims before it drives, so a live watcher
+holding *no* claim is polling, not driving. Blocking on the lease would refuse
+every gate move for as long as a watcher runs, which is the normal workflow
+(the watcher polls while you approve). It is reported as `watcherLive` /
+`leasePid` for context and honest refusal messages only.
+
+The residual race — the watcher lists claimable work, you replan, the watcher
+then claims — is the same window `claimTask`'s atomic `mkdir` leaves for any two
+claimers, and both hosts already live with it. `expectStatus`
+([1](#1--gate-actions)) narrows it further.
 
 ---
 
@@ -529,10 +551,10 @@ Ranked risks, each with its rail:
 |---|---|---|
 | 1 | Config write flattens the user layer → **commits `ado.pat`** | Layer-explicit routes; `effective` never written; sentinel round-trip; gitignore guard ([Crux B](#crux-b--the-layer-footgun)) |
 | 2 | Config write **strips `watchIntervalMinutes` / `hub`** | Raw-is-the-model; headline regression test; visible passthrough ([Crux A](#crux-a--the-strip-footgun)) |
-| 3 | **replan re-queues a task mid-BUILD** → destroys work | `isDriving` biased to "driving"; honest refusal on a marker-less live lease |
+| 3 | **replan re-queues a task mid-BUILD** → destroys work | `isDriving` reads claims (driving implies claimed) + the stage marker, biased to "driving" ([oracle](#the-isdriving-oracle)) |
 | 4 | A click **opens a real PR** | Danger `<Confirm>` naming the effect in plain words |
 | 5 | Stale-board gate action | `expectStatus` → 409 |
-| 6 | Doctor **releases a live claim** | Marker oracle; skip release entirely when a watcher lease is live with no marker |
+| 6 | Doctor **releases a live claim** | Core's own orphan predicates (`isOrphanedClaim` / `isOrphanedPlanClaim`), not `isDriving` — every candidate is claimed by definition |
 | 7 | Bad hand-edited config kills the server | Keep-old-deps-on-throw |
 
 Risks 1 and 2 are why the config editor is **Cost: L** and ships last.
@@ -570,7 +592,12 @@ assert on the `JsonResponse`. Real-fs fixtures via `os.tmpdir()`
 **Two gotchas:**
 
 - `HubDeps` gains `config` in PR 0 → **every existing test fixture must add
-  it**. Mechanical, ~6 files; do it in PR 0, not later.
+  it**. Mechanical, ~6 files; do it in PR 0, not later. Worse, nothing *tells*
+  you: `tsconfig.json` doubles as the build config, so it excludes `*.test.ts`
+  to keep tests out of `dist/` — and the runner is `tsx`, which strips types
+  without checking them. A fixture that stopped satisfying `HubDeps` failed
+  neither the build nor the suite. PR 0 adds `tsconfig.test.json` to close this;
+  `packages/core` has the same gap, unfixed.
 - The test glob does not cover `src/web/*.test.ts` outside `creator/`. Keep new
   web tests there, or widen the glob explicitly.
 
@@ -578,15 +605,17 @@ Per feature:
 
 - **Gate** (`routes/gate.test.ts`) — tmpdir + `git init`. Each action moves the
   file and commits; `expectStatus` mismatch → 409; traversal id → 400; **replan
-  refused when the marker names the id**; **replan refused when a live lease
-  exists with no marker**; `ok:false` returns 200 preserving `variant`. Ship uses
-  a stub `sh` that fails `gh` — assert the task still completes and the note
-  records "PR not opened" (`gate.ts:265-268`). **No network in tests.**
+  refused when the marker names the id**; **replan refused when the task holds a
+  claim**; **replan allowed when a watcher lease is live but the task is
+  unclaimed** (the watcher is polling, not driving); `ok:false` returns 200
+  preserving `variant`. Ship uses a stub `sh` that fails `gh` — assert the task
+  still completes and the note records "PR not opened" (`gate.ts:265-268`).
+  **No network in tests.** (driving.ts's own matrix is covered by
+  `driving.test.ts`, landed in PR 0.)
 - **Doctor** — the report is read-only (assert the fs is byte-identical after a
   GET); fix rescues a stray and commits; duplicates reported but untouched; a
-  claim on a marker-named task is **not** released; `watcherLive && !marker` →
-  claims skipped, strays still fixed; a stray colliding with an existing draft
-  lands in `failed` without throwing.
+  **fresh** claim is not released while an **orphaned** one is; a stray colliding
+  with an existing draft lands in `failed` without throwing.
 - **Preview** — engineering's real shipped prompts render; toggles change the
   output; a check stage gets the verdict block; a compose-hooked stage returns
   the note and does not throw; unknown stage → 400.
@@ -635,10 +664,10 @@ docs are part of done:
 - **[`packages/hub/README.md`](../../packages/hub/README.md)** — delete "The
   monitor is deliberately **read-only** — gate actions … a candidate for a later
   release" (:110-111). Replace with the write surface, the posture, and the two
-  honest limitations: **replan and doctor's claim release refuse while an
-  OpenCode watcher holds the lease with no stage marker**, and **ship opens a
-  real PR**. Add manual-QA items: confirm dialogs, config save → reload without
-  restart, gate buttons against a live watcher.
+  honest limitations: **a gate move on a claimed task is refused until the loop
+  releases it (or the doctor does)**, and **ship opens a real PR**. Add
+  manual-QA items: confirm dialogs, config save → reload without restart, gate
+  buttons against a live watcher.
 - **[`configuration.md`](../configuration.md)** — document the editor:
   layer-explicit editing, provenance, the passthrough rule, `ado.pat`
   redaction, the gitignore guard, advisory knob linting. **Cross-link the
