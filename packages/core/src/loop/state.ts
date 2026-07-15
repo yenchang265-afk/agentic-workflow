@@ -144,6 +144,16 @@ export interface AdoConfig {
    * key, mirroring how `AZURE_DEVOPS_EXT_PAT` overrides `pat`.
    */
   readonly customHeaders?: Readonly<Record<string, string>>
+  /**
+   * Skip TLS certificate verification on every ADO REST call the driver makes
+   * (the PR/CI-runs work sources and the ship gate). Off by default — only for
+   * a self-hosted Azure DevOps Server behind a self-signed or internal-CA
+   * certificate the runtime doesn't trust; never enable this against the
+   * hosted `dev.azure.com` service. Scoped to these calls only (a dedicated
+   * `undici` dispatcher), so it never weakens TLS for unrelated requests
+   * (GitHub, npm, …) in the same process.
+   */
+  readonly insecureSkipTlsVerify?: boolean
 }
 
 /** Project-management setup: the team's tracker and how tasks pair to it. */

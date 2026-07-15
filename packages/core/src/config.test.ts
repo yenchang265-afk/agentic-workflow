@@ -162,6 +162,18 @@ test("ado.customHeaders parses as a string map and rejects empty keys or values"
   )
 })
 
+test("ado.insecureSkipTlsVerify parses as an optional boolean, off by default", () => {
+  const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
+  const unset = parseConfig({ codePlatform: "ado", ado: base })
+  assert.equal(unset.ado?.insecureSkipTlsVerify, undefined)
+  const on = parseConfig({ codePlatform: "ado", ado: { ...base, insecureSkipTlsVerify: true } })
+  assert.equal(on.ado?.insecureSkipTlsVerify, true)
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, insecureSkipTlsVerify: "yes" } }),
+    /Invalid .*insecureSkipTlsVerify/,
+  )
+})
+
 test("per-loop codePlatform overrides the global default and also requires the ado section and selfLogin", () => {
   assert.throws(
     () => parseConfig({ loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } } }),

@@ -130,6 +130,12 @@ const BaseConfigSchema = z.object({
        * `AGENTIC_LOOP_ADO_HEADERS` env var (JSON) overrides these key by key.
        */
       customHeaders: z.record(z.string().min(1), z.string().min(1)).optional(),
+      /**
+       * Skip TLS certificate verification on every ADO REST call. Off by
+       * default; only for a self-hosted ADO Server behind a self-signed or
+       * internal-CA cert — never for the hosted `dev.azure.com` service.
+       */
+      insecureSkipTlsVerify: z.boolean().optional(),
     })
     .optional(),
   /**

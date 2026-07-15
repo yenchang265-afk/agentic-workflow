@@ -105,7 +105,7 @@ hand-edited afterward.
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-loop:engineering watch`; overridable per session via `/agentic-loop:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `loops` | `{}` | Per-loop-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps via its REST API, PAT auth). Overridable per kind with `loops.<kind>.codePlatform`. See below. |
-| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
+| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`, `insecureSkipTlsVerify`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-loop:engineering status`. See below. |
 | `worktreesDir` | `".loop-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
@@ -312,6 +312,28 @@ outright, regardless of loop kind or stage.
   ```bash
   # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
   export AGENTIC_LOOP_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
+  ```
+- **`ado.insecureSkipTlsVerify`** — optional, `false` by default; skip TLS
+  certificate verification on every ADO REST call the driver makes (the
+  PR/CI-runs work sources and the ship gate). It's for a self-hosted Azure
+  DevOps Server sitting behind a self-signed or internal-CA certificate the
+  runtime doesn't trust — never enable it against the hosted `dev.azure.com`
+  service, since it drops protection against a MITM'd token. The calls go
+  through a dedicated `undici` dispatcher, so this only weakens TLS for these
+  ADO calls, not for unrelated requests (GitHub, npm, …) in the same process.
+  Like `customHeaders`, it reaches only the driver's own `fetch` calls; the
+  stage agents' raw `curl` does not inherit it — pass `-k`/`--insecure` (or
+  point `curl` at your internal CA bundle) yourself if they need it too.
+
+  ```json
+  {
+    "ado": {
+      "organization": "https://ado.internal.acme.com/tfs/DefaultCollection",
+      "project": "widgets",
+      "selfLogin": "sitter@acme.com",
+      "insecureSkipTlsVerify": true
+    }
+  }
   ```
 - **Prerequisites for `"ado"`**: a Personal Access Token — in
   `AZURE_DEVOPS_EXT_PAT` (preferred) or `ado.pat` — scoped to Code (read) +

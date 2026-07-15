@@ -1,6 +1,11 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
+import { createServer } from "node:https"
+import { mkdtempSync, readFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { test } from "node:test"
-import { buildAdoHeaders, parseAdoHeadersEnv, resolveAdoHeaders } from "./ado-shared.js"
+import { adoFetch, buildAdoHeaders, parseAdoHeadersEnv, resolveAdoHeaders } from "./ado-shared.js"
 
 /**
  * The pure custom-header helpers shared by the ADO work source and ship gate:
@@ -105,4 +110,57 @@ test("normalizeAdoBuild falls back through queueTime → startTime → finishTim
   assert.equal(normalizeAdoBuild(noQueueTime).createdAt, "2026-07-05T01:00:00Z")
   const onlyFinish = AdoBuildSchema.parse({ sourceVersion: "x", finishTime: "2026-07-05T02:00:00Z" })
   assert.equal(normalizeAdoBuild(onlyFinish).createdAt, "2026-07-05T02:00:00Z")
+})
+
+/**
+ * `adoFetch`'s TLS behavior against a real self-signed HTTPS server: proves
+ * the default path still verifies (rejects the untrusted cert) and that
+ * `insecureSkipTlsVerify: true` is what actually lets the call through — not
+ * just a flag that's threaded around unused. Skips if `openssl` isn't on
+ * PATH rather than failing the suite over an environment gap.
+ */
+const withSelfSignedServer = async (run: (url: string) => Promise<void>): Promise<void> => {
+  const dir = mkdtempSync(join(tmpdir(), "ado-fetch-tls-"))
+  const keyPath = join(dir, "key.pem")
+  const certPath = join(dir, "cert.pem")
+  execFileSync("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-keyout",
+    keyPath,
+    "-out",
+    certPath,
+    "-days",
+    "1",
+    "-nodes",
+    "-subj",
+    "/CN=localhost",
+  ])
+  const server = createServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, (_req, res) => res.end("ok"))
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  try {
+    const address = server.address()
+    if (address === null || typeof address === "string") throw new Error("expected a bound TCP address")
+    await run(`https://127.0.0.1:${address.port}/`)
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  }
+}
+
+test("adoFetch verifies certificates by default and only skips verification when told to", async (t) => {
+  try {
+    execFileSync("openssl", ["version"])
+  } catch {
+    t.skip("openssl not available")
+    return
+  }
+  await withSelfSignedServer(async (url) => {
+    await assert.rejects(adoFetch(undefined)(url, { headers: {} }))
+    await assert.rejects(adoFetch(false)(url, { headers: {} }))
+    const res = await adoFetch(true)(url, { headers: {} })
+    assert.equal(res.ok, true)
+    assert.equal(await res.text(), "ok")
+  })
 })

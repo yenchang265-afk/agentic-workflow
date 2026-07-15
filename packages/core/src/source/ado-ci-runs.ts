@@ -6,6 +6,7 @@ import { newestHeadVerdict, shortSha, type CiRun } from "./ci-runs.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger } from "./ci-runs-shared.js"
 import {
   ADO_HEADERS_ENV,
+  adoFetch,
   AdoBuildListSchema,
   buildAdoHeaders,
   normalizeAdoBuild,
@@ -31,8 +32,6 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
  * identity, only to the watched branch.
  */
 
-const defaultHttp: AdoHttp = (url, init) => fetch(url, init)
-
 const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
 const API_VERSION = "api-version=7.1"
 
@@ -45,7 +44,7 @@ interface AdoCiRunsDeps {
   readonly loaded: LoadedManifest
   /** Azure DevOps coordinates (config `ado`). */
   readonly ado: AdoConfig
-  /** HTTP transport for ADO REST calls; defaults to the global `fetch`. */
+  /** HTTP transport for ADO REST calls; defaults to `adoFetch(ado.insecureSkipTlsVerify)`. */
   readonly http?: AdoHttp
   /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
   readonly pat?: string
@@ -63,7 +62,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
   }
   const kind = loaded.manifest.kind
   const now = deps.now ?? (() => new Date().toISOString())
-  const http = deps.http ?? defaultHttp
+  const http = deps.http ?? adoFetch(ado.insecureSkipTlsVerify)
   // Precedence: explicit dep (tests) → env var → config `ado.pat`.
   const pat = deps.pat ?? process.env[PAT_ENV] ?? ado.pat ?? ""
   const org = ado.organization.replace(/\/+$/, "")

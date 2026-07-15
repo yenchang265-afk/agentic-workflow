@@ -1,3 +1,4 @@
+import { Agent, fetch as undiciFetch } from "undici"
 import { z } from "zod"
 
 /**
@@ -53,6 +54,50 @@ export const buildAdoHeaders = (
   base: Readonly<Record<string, string>>,
   custom: Readonly<Record<string, string>> | undefined,
 ): Record<string, string> => ({ ...base, ...(custom ?? {}) })
+
+/** Minimal HTTP response shape the ADO transports read — structurally satisfied by `fetch`'s `Response`. */
+export interface AdoTransportResponse {
+  readonly ok: boolean
+  readonly status: number
+  readonly statusText: string
+  text(): Promise<string>
+}
+
+/** Request shape both the GET-only PR/CI-runs sources and the POST-capable ship gate pass through. */
+export interface AdoTransportInit {
+  readonly method?: string
+  readonly headers: Readonly<Record<string, string>>
+  readonly body?: string
+}
+
+/**
+ * A single `undici` `Agent` that skips certificate verification, built lazily
+ * (and only once) the first time a config actually opts into
+ * `ado.insecureSkipTlsVerify` — the default, verified path never touches this.
+ * Shared across calls so insecure ADO requests still pool connections instead
+ * of paying a fresh TLS handshake per call.
+ */
+let insecureDispatcher: Agent | undefined
+const getInsecureDispatcher = (): Agent =>
+  (insecureDispatcher ??= new Agent({ connect: { rejectUnauthorized: false } }))
+
+/**
+ * Build the default transport for ADO REST calls, honoring
+ * `ado.insecureSkipTlsVerify`. When set, requests go through a dedicated
+ * `undici` dispatcher with certificate verification disabled — scoped to
+ * these calls only, unlike the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0`
+ * escape hatch, so it never weakens TLS for unrelated requests (GitHub, npm,
+ * …) made elsewhere in the same process. Only for a self-hosted Azure DevOps
+ * Server behind a self-signed or internal-CA cert; never for the hosted
+ * `dev.azure.com` service. Pure given the flag (the dispatcher itself is a
+ * cached singleton, not per-call state).
+ */
+export const adoFetch =
+  (insecureSkipTlsVerify: boolean | undefined) =>
+  (url: string, init: AdoTransportInit): Promise<AdoTransportResponse> =>
+    insecureSkipTlsVerify
+      ? undiciFetch(url, { ...init, dispatcher: getInsecureDispatcher() })
+      : fetch(url, init)
 
 /** `refs/heads/x` → `x`. */
 export const stripRef = (ref: string): string => ref.replace(/^refs\/heads\//, "")

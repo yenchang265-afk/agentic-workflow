@@ -6,6 +6,7 @@ import { attentionTriggers, loadLedger, saveLedger, type PrSnapshot, type PrTrig
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js"
 import {
   ADO_HEADERS_ENV,
+  adoFetch,
   AdoPolicySchema,
   AdoPrListSchema,
   AdoThreadsSchema,
@@ -52,8 +53,6 @@ export type AdoHttp = (
   init: { readonly headers: Readonly<Record<string, string>> },
 ) => Promise<AdoHttpResponse>
 
-const defaultHttp: AdoHttp = (url, init) => fetch(url, init)
-
 /** The env var holding the Azure DevOps PAT — the same name the `az` extension used, for continuity. */
 const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
 const API_VERSION = "api-version=7.1"
@@ -67,7 +66,7 @@ interface AdoPrDeps {
   readonly loaded: LoadedManifest
   /** Azure DevOps coordinates (config `ado`); `selfLogin` is required for this platform. */
   readonly ado: AdoConfig
-  /** HTTP transport for ADO REST calls; defaults to the global `fetch`. */
+  /** HTTP transport for ADO REST calls; defaults to `adoFetch(ado.insecureSkipTlsVerify)`. */
   readonly http?: AdoHttp
   /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
   readonly pat?: string
@@ -84,7 +83,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   const kind = loaded.manifest.kind
   const role = binding.role
   const now = deps.now ?? (() => new Date().toISOString())
-  const http = deps.http ?? defaultHttp
+  const http = deps.http ?? adoFetch(ado.insecureSkipTlsVerify)
   // Precedence: explicit dep (tests) → env var → config `ado.pat`.
   const pat = deps.pat ?? process.env[PAT_ENV] ?? ado.pat ?? ""
   const org = ado.organization.replace(/\/+$/, "")

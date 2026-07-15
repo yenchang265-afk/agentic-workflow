@@ -1,6 +1,6 @@
 import type { Log, Shell } from "../host.js"
 import { platformFor } from "../config.js"
-import { ADO_HEADERS_ENV, buildAdoHeaders, resolveAdoHeaders } from "../source/ado-shared.js"
+import { ADO_HEADERS_ENV, adoFetch, buildAdoHeaders, resolveAdoHeaders } from "../source/ado-shared.js"
 import type { Config } from "./state.js"
 import { branchExists, currentBranch, pushBranch } from "./git.js"
 
@@ -36,8 +36,6 @@ export type ShipHttp = (
   url: string,
   init: { readonly method: string; readonly headers: Readonly<Record<string, string>>; readonly body?: string },
 ) => Promise<ShipHttpResponse>
-
-const defaultHttp: ShipHttp = (url, init) => fetch(url, init)
 
 // --- GitHub (via `gh`) ---
 
@@ -191,7 +189,7 @@ export const shipPr = async (
   kind: string,
   id: string,
   title: string,
-  http: ShipHttp = defaultHttp,
+  http: ShipHttp = adoFetch(config.ado?.insecureSkipTlsVerify),
 ): Promise<ShipPrResult> => {
   try {
     const branch = `feature/${id}`
