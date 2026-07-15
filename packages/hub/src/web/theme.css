@@ -1238,3 +1238,31 @@ body {
 .preview__error {
   color: var(--warn);
 }
+
+/* --- gate actions ----------------------------------------------------------- */
+/* The write surface on a task card: approve / replan / ship. Each commits, and
+   ship opens a PR — every one routes through ui/Confirm. */
+
+.gate-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.gate-msg {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+}
+.gate-msg--ok {
+  color: var(--ok);
+}
+.gate-msg--info {
+  color: var(--muted);
+}
+.gate-msg--warning {
+  color: var(--warn);
+}

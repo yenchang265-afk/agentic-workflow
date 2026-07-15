@@ -11,6 +11,7 @@ import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
+import { postGate } from "./routes/gate.js"
 import { getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
 import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
@@ -133,6 +134,7 @@ const routes: Route[] = [
   { method: "POST", pattern: "/api/kinds/validate", handler: scoped(validateKind) },
   { method: "POST", pattern: "/api/kinds/preview", handler: scoped(previewKind) },
   { method: "POST", pattern: "/api/kinds/:kind", handler: scoped(saveKind), mutating: true },
+  { method: "POST", pattern: "/api/gate/:action", handler: scoped(postGate), mutating: true },
 ]
 
 for (const repo of repos) restartWatcher(repo)

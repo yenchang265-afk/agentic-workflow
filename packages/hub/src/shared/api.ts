@@ -3,9 +3,13 @@ import type { BacklogAnomalies } from "@agentic-loop/core/task/audit"
 import type { LoopManifest } from "@agentic-loop/core/manifest/schema"
 import type { ParsedRunLog } from "@agentic-loop/core/loop/runlog"
 import type { StageTokens } from "@agentic-loop/core/loop/metrics"
+import type { TaskStatus } from "@agentic-loop/core/task/statuses"
 
 export type { ParsedRunLog, RunLogStageSection, RunLogSummary, RunSummaryRow } from "@agentic-loop/core/loop/runlog"
 export type { StageTokens } from "@agentic-loop/core/loop/metrics"
+/** The gate's result shape is core's, verbatim — the hub renders it, it doesn't define it. */
+export type { GateResult, GateVariant } from "@agentic-loop/core/loop/gate"
+export type { TaskStatus } from "@agentic-loop/core/task/statuses"
 
 /**
  * The hub's wire types, shared verbatim by the node server and the browser
@@ -205,6 +209,28 @@ export interface SaveKindResponse {
   readonly written: readonly string[]
   /** Remaining manual steps the hub cannot (or should not) generate. */
   readonly checklist: readonly ChecklistItem[]
+}
+
+/**
+ * The human gate moves the hub can perform. Each maps 1:1 onto a core op in
+ * `loop/gate.ts` — never core's `*Any` shortcuts, which infer the gate from
+ * wherever the task sits. A button knows its own column.
+ */
+export type GateAction = "approve-task" | "approve-plan" | "replan" | "ship"
+
+export interface GateRequest {
+  /** The full task id (not a short-hash prefix) — the board has it. */
+  readonly id: string
+  /**
+   * The status the client believed the task was in. The board is SSE-driven and
+   * can lag; the server refuses with a 409 rather than gate a task the human
+   * did not actually see there.
+   */
+  readonly expectStatus: TaskStatus
+  /** replan only: why the plan was rejected, threaded into the audit note and the next PLAN pass. */
+  readonly reason?: string
+  /** ship only: the loop kind, for the PR it opens. Defaults to engineering. */
+  readonly kind?: string
 }
 
 /**
