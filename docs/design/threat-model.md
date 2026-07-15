@@ -75,7 +75,7 @@ One task's half-finished diff leaks into another task's build or review.
 
 - **Control:** per-task branch/worktree isolation plus the single-watcher
   lease — mechanism detailed in
-  [architecture.md § Backlog integrity rails](../architecture.md#backlog-integrity-rails);
+  [docs/loops/engineering.md § Backlog integrity rails](../loops/engineering.md#backlog-integrity-rails);
   in short, each execution gets its own `feature/<id>` branch or (with
   `worktreesDir` set) its own git worktree, and a lease refuses a second
   watch-mode process on the same clone.
@@ -94,7 +94,7 @@ pool ever polls them.
 
 - **Control:** an always-on backlog-mutation guard, a reconciliation sweep,
   and `loop_doctor` — mechanism detailed in
-  [architecture.md § Backlog integrity rails](../architecture.md#backlog-integrity-rails);
+  [docs/loops/engineering.md § Backlog integrity rails](../loops/engineering.md#backlog-integrity-rails);
   in short, agent tool calls that would mutate `<tasksDir>/` are
   default-denied, the deterministic mover layer stays authoritative, and a
   sweep + doctor detect and repair stray folders/files and duplicate ids.

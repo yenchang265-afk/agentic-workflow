@@ -170,11 +170,15 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 
 - [docs/README.md](docs/README.md) — index of every doc under `docs/`, and
   which one is canonical for a given topic
-- [docs/architecture.md](docs/architecture.md) — the framework (core package,
-  manifest engine, scheduler, work sources), the engineering pipeline, and
+- [docs/loops/](docs/loops/README.md) — one file per kind (engineering,
+  pr-sitter, review-sitter, dep-sitter, main-sitter): its architecture (stage
+  pipeline, mermaid diagram, config keys), how to enable it, its commands,
+  and 1-2 worked examples
+- [docs/architecture.md](docs/architecture.md) — the framework only (core
+  package, manifest engine, scheduler, work sources, the watch lease) and
   how the Claude Code variant differs
-- [docs/sitters.md](docs/sitters.md) — what each of the four experimental
-  sitters does, its pipeline, and its config keys
+- [docs/sitters.md](docs/sitters.md) — what the four experimental sitters
+  have in common, indexing into their individual files under `docs/loops/`
 - [packages/core/loops/README.md](packages/core/loops/README.md) — how to author a new loop kind
   (manifest schema, prompt templates, hooks, work sources)
 - [docs/opencode.md](docs/opencode.md) — OpenCode execution model, commands,

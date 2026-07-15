@@ -34,6 +34,23 @@ The default query (`is:open review-requested:@me`) is overridable via `loops.rev
 
 (Claude Code has no standing watcher; call `claim` again to pull the next PR.)
 
+## Architecture
+
+Sits on **other people's** PRs where your review is requested — never your
+own. Work source `github-pr` with `role: reviewer`, query
+`is:open review-requested:@me` (overridable with `loops.review-sitter.query`,
+GitHub only); on ADO it claims active PRs where `ado.selfLogin` is a reviewer
+with a pending vote (vote 0). **fetch** (read-only) → **assess** (worktree;
+reads the diff in the context of the surrounding code, may run the suite) →
+**publish** posts **one structured review comment** per requested head.
+Authority is **comment-only** — it never approves, requests changes, or
+merges, so the human stays reviewer of record. Re-fires only when a human
+pushes a new head; fork and draft PRs are skipped.
+
+- **`loops.review-sitter.enabled`** — default off.
+- **`loops.review-sitter.query`** — GitHub only; default
+  `is:open review-requested:@me`.
+
 ## Example: One-shot review of a PR
 
 Manually invoke the loop to review one pending PR:
@@ -68,6 +85,6 @@ Let the loop watch and review PRs automatically whenever you're idle:
 
 ## Learn more
 
-- Full pipeline, authority limits, and config: [`docs/sitters.md`](../sitters.md)
+- What all four sitters share, and the threat model: [`docs/sitters.md`](../sitters.md), [`docs/design/threat-model.md`](../design/threat-model.md)
 - Command reference: [`docs/opencode.md`](../opencode.md) (OpenCode), [`plugins/claude/README.md`](../../plugins/claude/README.md) (Claude Code)
-- Architecture: [`docs/architecture.md`](../architecture.md)
+- Framework internals: [`docs/architecture.md`](../architecture.md)

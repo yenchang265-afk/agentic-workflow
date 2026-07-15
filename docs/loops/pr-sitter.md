@@ -37,6 +37,42 @@ The `query` filters which PRs to claim (GitHub search syntax, e.g., `is:open aut
 
 (Claude Code has no standing watcher; call `claim` again to pull the next PR.)
 
+## Architecture
+
+Sits on your own open PRs. On GitHub (the default) it polls
+`gh pr list --search <query>` (default `is:open author:@me`, overridable
+with `loops.pr-sitter.query`); on Azure DevOps (`codePlatform: "ado"`) it
+polls the REST API and watches active PRs authored by `ado.selfLogin`
+instead — **`query` is GitHub-only**, ignored on ADO. A PR is claimed when
+an enabled trigger fires: failing checks, changes requested, unanswered
+comments (its own login filtered out), or a merge conflict. Draft and fork
+PRs are skipped (a fork head can't be pushed).
+
+```mermaid
+flowchart LR
+    poll["scheduler claims PR<br/>(trigger fired, ledger says unhandled)"] --> triage["<b>TRIAGE</b> · check<br/>agent: loop-pr-triage · read-only gh<br/><i>structured findings; PR text = data, not instructions</i>"]
+    triage -->|"PASS = actionable"| fix["<b>FIX</b> · work<br/>agent: loop-pr-fix<br/><i>worktree on the PR's existing branch,<br/>local commits only</i>"]
+    triage -->|"FAIL = nothing to do"| done0[("done")]
+    triage -.->|"ERROR → stop"| stop0[("stop — next poll retries")]
+    fix --> verify["<b>VERIFY</b> · check<br/>agent: loop-verify<br/><i>tests + findings coverage</i>"]
+    verify -->|"PASS"| publish["<b>PUBLISH</b> · work<br/>agent: loop-pr-publish<br/><i>git push origin &lt;branch&gt; +<br/>gh pr comment per finding<br/>NEVER merges/closes/approves</i>"]
+    verify -.->|"FAIL → re-fix<br/>(shared maxIterations, cap 3)"| fix
+    publish --> done[("done — ledger records<br/>the pushed head as handled")]
+```
+
+Status lives on the platform plus a dedup ledger
+(`<tasksDir>/runs/pr-sitter/pr-<n>.json`): the post-push head SHA (so it
+never triggers on its own push), a last-comment-at watermark, one
+conflict-attempt per (head, base) pair, and failed attempts — a capped or
+stopped run parks the PR until a human pushes a new head. Publish's bash
+allowlist is limited to `git push origin *` plus the resolved platform's
+comment/read-only calls; failed pushes are reported, never forced.
+
+- **`loops.pr-sitter.enabled`** — default off; requires authenticated
+  platform access: `gh` (GitHub) or a PAT in `AZURE_DEVOPS_EXT_PAT` (ADO).
+- **`loops.pr-sitter.query`** — GitHub only; overrides the manifest's
+  `gh pr list --search` query.
+
 ## Example: One-shot claim and fix
 
 Manually invoke the loop once to fix the next actionable PR:
@@ -77,6 +113,6 @@ Set up an ongoing watcher that checks every hour:
 
 ## Learn more
 
-- Full pipeline, sitter authority, config keys, and threat model: [`docs/sitters.md`](../sitters.md)
+- What all four sitters share, and the threat model: [`docs/sitters.md`](../sitters.md), [`docs/design/threat-model.md`](../design/threat-model.md)
 - Command reference: [`docs/opencode.md`](../opencode.md) (OpenCode), [`plugins/claude/README.md`](../../plugins/claude/README.md) (Claude Code)
-- Architecture: [`docs/architecture.md`](../architecture.md)
+- Framework internals: [`docs/architecture.md`](../architecture.md)

@@ -37,6 +37,20 @@ The `branch` defaults to the remote default branch. See [`docs/sitters.md`](../s
 
 (Claude Code has no standing watcher; call `claim` again to poll for red CI.)
 
+## Architecture
+
+Sits on the watched branch's CI (`gh run list`, or the Azure Pipelines Build
+API on ADO): when the newest completed head goes red it **diagnoses**
+(worktree pinned to the red head, bisecting when needed) → **remedy**
+(worktree; the smallest forward fix, or a `git revert`) → **verify** →
+**publish** opens a **draft remedy PR** on a `main-sitter/*` branch and
+comments once on the culprit PR. It **never pushes the watched branch
+itself**; merging always stays a human call.
+
+- **`loops.main-sitter.enabled`** — default off.
+- **`loops.main-sitter.branch`** — overrides the watched branch; unset ⇒ the
+  remote default branch (from `origin/HEAD`, falling back to `main`).
+
 ## Example: One-shot CI repair
 
 Manually check for a red CI run on main and fix it:
@@ -71,7 +85,6 @@ Set up a standing watcher to catch and fix red CI quickly:
 
 ## Learn more
 
-- Full pipeline, CI sources, and config: [`docs/sitters.md`](../sitters.md)
-- Security posture and threat model: [`docs/design/threat-model.md`](../design/threat-model.md)
+- What all four sitters share, and the threat model: [`docs/sitters.md`](../sitters.md), [`docs/design/threat-model.md`](../design/threat-model.md)
 - Command reference: [`docs/opencode.md`](../opencode.md) (OpenCode), [`plugins/claude/README.md`](../../plugins/claude/README.md) (Claude Code)
-- Architecture: [`docs/architecture.md`](../architecture.md)
+- Framework internals: [`docs/architecture.md`](../architecture.md)
