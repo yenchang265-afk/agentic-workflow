@@ -391,7 +391,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <div class="flow">
         <span class="f">/agentic-loop:engineering new &lt;idea&gt;</span><span class="arr">→</span>
         <span class="f">approve &lt;id&gt;</span><span class="arr">→</span>
-        <span class="f">loop plans it</span><span class="arr">→</span>
+        <span class="f">plan &lt;id&gt;</span><span class="arr">→</span>
         <span class="f">approve</span><span class="arr">→</span>
         <span class="f">claim builds it</span><span class="arr">→</span>
         <span class="f term">approve</span>
@@ -538,7 +538,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <h3>Folder-as-status lifecycle</h3>
       <div class="flow">
         <span class="f">draft/</span><span class="arr">→ approve →</span>
-        <span class="f">queued/</span><span class="arr">→ PLAN parks →</span>
+        <span class="f">queued/</span><span class="arr">→ plan &lt;id&gt; parks →</span>
         <span class="f">plan-review/</span><span class="arr">→ approve →</span>
         <span class="f">in-progress/</span><span class="arr">→ REVIEW pass →</span>
         <span class="f">in-review/</span><span class="arr">→ approve →</span>
@@ -629,8 +629,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a draft in place. Draft-only.</td></tr>
             <tr><td><code>approve [id]</code></td><td>THE gate verb, folder-driven: draft → queued (id required) · plan-review → in-progress · in-review → completed. Id-less form advances the one task at a loop wait-gate, never a draft.</td></tr>
             <tr><td><code>replan [id] [reason]</code></td><td>The sole rejection verb: a parked plan (or a cap-tripped task, by id) → back to queued.</td></tr>
-            <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review. Building stays with <code>claim</code>/<code>watch</code>.</td></tr>
-            <tr><td><code>claim</code></td><td>Pull &amp; drive the next engineering item (build-ready beats planless).</td></tr>
+            <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review — the only PLAN entry. Building stays with <code>claim</code>/<code>watch</code>.</td></tr>
+            <tr><td><code>claim</code></td><td>Pull &amp; drive the next build-ready in-progress/ task; queued tasks are never auto-planned (use <code>plan &lt;id&gt;</code>).</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
             <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>

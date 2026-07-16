@@ -12,8 +12,8 @@ its status** — there is no `status:` field, so the two can never drift. The
 `/agentic-loop:engineering` command carries the whole lifecycle: `new` drafts via
 interview, the unified folder-driven `approve` verb holds every human gate
 (task, plan, ship), and the loop side (see
-`loop-orchestration`) plans a queued task right before execution and builds
-plan-approved ones.
+`loop-orchestration`) plans a queued task on demand (`plan <id>` — right
+before execution, never auto-claimed) and builds plan-approved ones.
 
 This folder lifecycle is the **engineering loop kind's work source** (bound
 via `packages/core/loops/engineering/loop.json`). Other loop kinds don't use these folders

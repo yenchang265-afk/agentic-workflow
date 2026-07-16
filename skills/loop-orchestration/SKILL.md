@@ -65,11 +65,11 @@ authoring + gates (interactive /agentic-loop:engineering verbs):
   /agentic-loop:engineering replan [id] [why] ▶ back to queued/ (audited rejection)
 
 the loop (the /agentic-loop:engineering command, unattended — never blocks on a human):
-  /agentic-loop:engineering plan <id>  — run PLAN on one queued task now (parks, exits)
-  /agentic-loop:engineering claim      — one-shot pull of the next item (build work beats plan work)
-  /agentic-loop:engineering watch [interval] — claim work as it appears (idle events + polling timer)
+  /agentic-loop:engineering plan <id>  — run PLAN on one queued task now (parks, exits — the only PLAN entry)
+  /agentic-loop:engineering claim      — one-shot pull of the next build-ready task (never auto-plans queued/)
+  /agentic-loop:engineering watch [interval] — claim build work as it appears (idle events + polling timer)
 
-  queued task:      claim ─▶ PLAN ─▶ park (task → plan-review/, loop exits)
+  queued task:      plan <id> ─▶ PLAN ─▶ park (task → plan-review/, loop exits)
   in-progress task: claim ─▶ BUILD ─▶ VERIFY ─▶ REVIEW ─▶ done (task → in-review/)
                               ▲        │FAIL              │FAIL
                               └────────┴──────────────────┘

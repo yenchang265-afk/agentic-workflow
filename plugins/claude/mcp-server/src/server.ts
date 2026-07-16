@@ -76,8 +76,9 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/co
  * Task authoring happens before the loop, via `/agentic-loop:engineering new`: it interviews
  * the user into a draft (main-agent turn) and `loop_approve` (unified gate)
  * parks it planless in `queued/`. Planning happens inside the loop, right before
- * execution: `loop_start`/`loop_claim` on a queued task enter at PLAN (no git
- * isolation — it writes only the task file), and `loop_advance` after PLAN
+ * execution, and only on demand: `loop_start` on a queued task enters at PLAN
+ * (no git isolation — it writes only the task file; `loop_claim` never
+ * auto-plans from `queued/`), and `loop_advance` after PLAN
  * parks the task in `plan-review/` and ends the loop (`park`). The human plan
  * gate is `loop_plan_approve` (plan-review → in-progress); `loop_replan`
  * sends a rejected or cap-tripped task back to `queued/`. From `in-progress/`
@@ -331,7 +332,8 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: LoopStat
 
 /** Claim a queued (planless) task and construct its PLAN-entry state. No git
  *  isolation and no snapshot: PLAN writes only the task file, in the main
- *  tree, and a died PLAN is recovered by re-claiming from queued/. */
+ *  tree. A died PLAN leaves a stale marker in queued/.claims/ — release it
+ *  with loop_doctor fix, then re-run loop_start on the task. */
 const startPlan = async (t: Task): Promise<{ error: string } | { state: LoopState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
@@ -445,7 +447,7 @@ server.registerTool(
   "loop_claim",
   {
     description:
-      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-loop:engineering watch. Polls all enabled loop kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-loop:engineering claim pr-sitter). Build-ready in-progress/ tasks win over planless queued/ ones (finish work in flight before planning new work); within each pool, lowest priority number first. Returns null when nothing is claimable.",
+      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-loop:engineering watch. Polls all enabled loop kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-loop:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with loop_start({id}). Returns null when nothing is claimable.",
     inputSchema: { kind: z.string().optional().describe("Restrict the pull to one enabled loop kind (e.g. pr-sitter).") },
   },
   async ({ kind }) => {

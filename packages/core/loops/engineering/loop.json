@@ -21,7 +21,8 @@
       },
       {
         "status": "queued",
-        "entryStage": "plan"
+        "entryStage": "plan",
+        "manual": true
       }
     ]
   },

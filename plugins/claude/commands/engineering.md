@@ -5,9 +5,9 @@ argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [rea
 
 You are about to work the **engineering agentic loop** (typed as
 `/agentic-loop:engineering`) — one command for task authoring, the human
-gates, and execution over the task queues. The loop plans a queued task right
-before execution (and parks the plan for the human gate) or builds a
-plan-approved task. Read the `loop-orchestration` skill now — it is the
+gates, and execution over the task queues. The loop plans a queued task on
+demand via `plan <id>` (and parks the plan for the human gate); `claim` builds
+plan-approved tasks only. Read the `loop-orchestration` skill now — it is the
 authoritative protocol for how you (the main agent) drive the stages and how
 verdicts terminate the loop. Then act on the argument below. (The PR sitter
 has its own command: `/agentic-loop:pr-sitter`.)
@@ -68,8 +68,8 @@ Dispatch:
          `loop_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `loop-orchestration` skill).
-       - **No** → stop; `/agentic-loop:engineering plan <id>` (or `claim`)
-         plans it later.
+       - **No** → stop; `/agentic-loop:engineering plan <id>` plans it later
+         (`claim` never auto-plans a queued task).
      - **Not yet** → leave it in `draft/`; `/agentic-loop:engineering approve
        <id>` (or `retask <id>`) resumes it later.
   - **Project-management pairing** — when `.agentic-loop.json` has a
@@ -140,9 +140,9 @@ never claim the approval happened.
   only telling them which command to run. If the id is already build-ready
   (`in-progress/`), don't start it here — `claim` builds it.
 - **`claim`** — call `mcp__agentic-loop__loop_claim` to pick up the next
-  engineering item and drive it: build-ready `in-progress/` tasks win over
-  planless `queued/` ones (work in flight finishes before new work spins
-  up); within each pool, lowest priority number first. An `in-progress/`
+  engineering item and drive it: build-ready `in-progress/` tasks only,
+  lowest priority number first — planless `queued/` tasks are never
+  auto-planned (use `plan <id>`). An `in-progress/`
   task starts at BUILD on `feature/<id>`; follow the `loop-orchestration`
   protocol: `loop_stage` before spawning each stage subagent (`loop-build` /
   `loop-verify` / `loop-review` via the Task tool) and `loop_advance` after
@@ -174,7 +174,7 @@ never claim the approval happened.
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
 `retask <id>` if it's off) → approve queues it (asked inline right after
 drafting, or `approve <id>` later) → plan it (asked inline in the same
-breath, or `plan <id>`/`claim` later) and parks the plan in `plan-review/` →
+breath, or `plan <id>` later) and parks the plan in `plan-review/` →
 human reviews the plan → approve (asked inline, or `replan <why>`) → build it
 (asked inline as a separate question, or `claim` later) → `in-review/` →
 `approve` ships it.

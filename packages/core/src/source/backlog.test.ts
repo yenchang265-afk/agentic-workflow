@@ -121,16 +121,24 @@ test("claims build-ready in-progress work before queued plan work", async () => 
   assert.match(item?.claimMessage ?? "", /building…/)
 })
 
-test("falls back to the queued pool when in-progress has nothing claimable", async () => {
+test("never claims from the queued pool even when in-progress has nothing claimable", async () => {
   const src = source({
     "in-progress": [file("already-started", { plan: true, started: true })],
     queued: [file("plan-me")],
   })
-  const { item } = await src.claimNext()
-  assert.equal(item?.id, "plan-me")
-  assert.equal(item?.entryStage, "plan")
-  assert.deepEqual(item?.state.artifacts, {})
-  assert.match(item?.claimMessage ?? "", /planning…/)
+  const { item, skip } = await src.claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /already started: already-started .*recover/)
+})
+
+test("queued-only backlog claims nothing and points at plan <id>", async () => {
+  const held = new Set<string>()
+  const src = source({ "in-progress": [], queued: [file("plan-me")] }, held)
+  const { item, skip } = await src.claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /awaiting a plan in queued\/ .*plan <id>/)
+  assert.equal(skip?.actionable, true)
+  assert.equal(held.size, 0)
 })
 
 test("an empty backlog yields the both-empty skip reason", async () => {
@@ -183,9 +191,10 @@ test("taskGoal joins title and body", () => {
   assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], body: "B", path: "/p" }), "T\n\nB")
 })
 
-test("claimSkipReason precedence: held beats empty beats started", () => {
+test("claimSkipReason precedence: held beats empty beats started beats queued", () => {
   assert.match(claimSkipReason(0, 0, 0, [], ["h"]).message, /held/)
   assert.match(claimSkipReason(0, 0, 0, [], []).message, /both empty/)
   assert.match(claimSkipReason(2, 0, 0, ["a"], []).message, /already started/)
+  assert.match(claimSkipReason(0, 0, 3, [], []).message, /3 task\(s\) awaiting a plan .*plan <id>/)
   assert.match(claimSkipReason(2, 0, 0, [], []).message, /no persisted plan/)
 })

@@ -28,6 +28,21 @@ test("a well-formed manifest parses with defaults applied", () => {
   assert.equal(m.stages[0]?.isolation, "worktree")
   assert.deepEqual(m.stages[0]?.bashAllowlist, [])
   assert.deepEqual(m.hooks.compose, {})
+  assert.ok(m.workSource.type === "backlog")
+  assert.equal(m.workSource.pools[0]?.manual, false)
+})
+
+test("a pool can opt out of auto-claiming with manual: true", () => {
+  const raw = {
+    ...base,
+    workSource: {
+      type: "backlog",
+      statuses: ["queued", "done"],
+      pools: [{ status: "queued", entryStage: "work", manual: true }],
+    },
+  }
+  const m = parseManifest(raw)
+  assert.equal(m.workSource.type === "backlog" && m.workSource.pools[0]?.manual, true)
 })
 
 test("rejects a stage with no transitions entry", () => {

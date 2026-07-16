@@ -109,11 +109,11 @@ import { clearLoop, findSessionDriving, getLoop, setLoop } from "@agentic-loop/c
  * task to `in-progress/` — the build-ready queue — and the next claim enters at
  * `build` via `resumeAtBuild` with the approved plan threaded in as an artifact.
  *
- * PLAN, or BUILD → VERIFY → REVIEW, runs either on demand (`plan <id>` / a claim
- * claims one task) or via **watch mode** (the `watching` set + `tryClaim`): a
+ * PLAN runs only on demand (`plan <id>`); BUILD → VERIFY → REVIEW runs on
+ * demand (a claim) or via **watch mode** (the `watching` set + `tryClaim`): a
  * watching session scans `in-progress/` for one claimable task (`isClaimable`:
- * has a persisted plan, never started) — build work first — and falls back to
- * `queued/` for a task to plan. Watch is triggered two ways — every
+ * has a persisted plan, never started). `queued/` is a manual pool — claim and
+ * watch never auto-plan from it. Watch is triggered two ways — every
  * `session.idle` event, plus a per-session interval timer (`watch
  * [interval]`) whose ticks call `onIdle` only when the session is actually
  * idle (queried via `client.session.status()`), so a task approved while the
@@ -896,12 +896,11 @@ export { claimSkipReason } from "@agentic-loop/core/source/backlog"
 export type { ClaimSkipReason } from "@agentic-loop/core/source/types"
 
 /**
- * A `watch` session's own idle check, over two pools in order:
- * first a claimable task in `in-progress/` (plan approved, never started) is
- * driven straight through BUILD → VERIFY → REVIEW — build work beats plan
- * work, so in-flight tasks finish before new ones spin up. Otherwise a
- * `queued/` task (approved, planless) is claimed for the PLAN stage, which
- * writes its plan and parks it in `plan-review/` for the human gate.
+ * A `watch` session's own idle check: a claimable task in `in-progress/`
+ * (plan approved, never started) is driven straight through
+ * BUILD → VERIFY → REVIEW. `queued/` is a manual pool — never auto-claimed;
+ * a planless task waits there until a human runs `plan <id>` (the skip
+ * reason points at it).
  * FAIL-driven re-builds happen inline in this same session, exactly like a
  * normal loop's iteration cap. Never silent: when nothing is claimed, the
  * reason is always logged, and toasted when actionable (deduped until the

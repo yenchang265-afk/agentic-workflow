@@ -17,13 +17,12 @@ Claude Code equivalent. It provides:
    queued, parked plan → in-progress, finished review parked in `in-review/`
    → completed), and
    `replan [id]` sends a parked plan back;
-   the loop claims work (`claim`, or a `watch [trigger]` worker
+   the loop claims build-ready work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
-   engineering kind; `unwatch` takes this session back out), plans a queued task right
-   before execution (PLAN parks the plan in `plan-review/` for your gate and
-   exits; `plan <id>` runs it on demand), and drives BUILD→VERIFY→REVIEW
-   unattended on plan-approved
-   tasks. `recover <id>` resumes a run that stopped early (crash or ESC
+   engineering kind; `unwatch` takes this session back out) and drives
+   BUILD→VERIFY→REVIEW unattended on plan-approved tasks; a queued task is
+   planned only on demand via `plan <id>` (PLAN parks the plan in
+   `plan-review/` for your gate and exits — `claim`/`watch` never auto-plan). `recover <id>` resumes a run that stopped early (crash or ESC
    interrupt); `stop`/`abort` ends a run outright; `status` reports the
    current loop plus a backlog roll-up; `kinds` lists which loop kinds this
    repo has enabled; `doctor [fix]` audits (and optionally repairs) backlog

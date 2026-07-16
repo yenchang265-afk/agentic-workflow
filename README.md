@@ -33,13 +33,14 @@ finished review after you've read the diff — a task lives in exactly one
 folder, so the move is never ambiguous, and id-less `approve` advances the
 one task waiting at a loop gate (never a draft). **`replan [id] [reason]`**
 is the sole rejection verb: a parked plan (or a cap-tripped task, by id) goes
-back to `queued/` for re-planning. The loop plans a queued task **right
-before execution** — so plans don't rot while tasks sit parked (`plan <id>`
-plans one now and parks it) — and `claim`/`watch` build plan-approved ones:
+back to `queued/` for re-planning. Planning happens **right before execution,
+on demand** — `plan <id>` plans one queued task now and parks it, so plans
+don't rot while tasks sit parked — and `claim`/`watch` build plan-approved
+ones (they never auto-plan a queued task):
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
-| PLAN | Writes the `## Implementation Plan` onto the claimed queued task, then **parks it in `plan-review/` and exits** | parks — `approve` / `replan` is the gate, the loop never blocks |
+| PLAN | Writes the `## Implementation Plan` onto the queued task claimed by `plan <id>`, then **parks it in `plan-review/` and exits** | parks — `approve` / `replan` is the gate, the loop never blocks |
 | BUILD | Implements the approved plan test-first, on its own `feature/<id>` branch | no |
 | VERIFY | Runs tests; FAIL re-builds with the failure | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
@@ -151,9 +152,9 @@ local state a running loop leaves behind:
   a cap-tripped task, by id) back to `queued/` for re-planning
 - `/agentic-loop:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
-  `plan` runs PLAN on one queued task and parks it; `claim` pulls the next
-  engineering item (build-ready beats planless); `watch` is a standing worker
-  scoped to the engineering kind
+  `plan` runs PLAN on one queued task and parks it (the only PLAN entry);
+  `claim` pulls the next build-ready `in-progress/` task; `watch` is a
+  standing worker scoped to the engineering kind
 - `/agentic-loop:pr-sitter claim` · `watch [interval]` (OpenCode) · `unwatch` ·
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
 - `/agentic-loop:review-sitter` · `/agentic-loop:dep-sitter` ·

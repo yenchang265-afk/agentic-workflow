@@ -65,7 +65,7 @@ flowchart TB
 
     subgraph execution["THE LOOP — /agentic-loop:engineering · unattended, driven on session.idle"]
         direction TB
-        claim["<b>/agentic-loop:engineering plan &lt;id&gt;</b> — plan one now<br/><b>/agentic-loop:engineering claim</b> — one-shot pull<br/><b>/agentic-loop:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build work beats plan work)"]
+        claim["<b>/agentic-loop:engineering plan &lt;id&gt;</b> — plan one now (the only PLAN entry)<br/><b>/agentic-loop:engineering claim</b> — one-shot pull (build-ready only)<br/><b>/agentic-loop:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(claim/watch never auto-plan queued/)"]
         planstage["<b>PLAN</b><br/>agent: loop-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: loop-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
         verify["<b>VERIFY</b><br/>agent: loop-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via loop_verdict tool only</i>"]
@@ -78,7 +78,7 @@ flowchart TB
     new -->|"writes draft"| draft
     draft -->|"you review the draft"| approve
     approve -->|"queues (audited, committed)"| queued
-    queued -->|"claimed"| claim
+    queued -->|"plan &lt;id&gt;"| claim
     claim --> planstage
     planstage -->|"parks (audited, committed)"| planreview
     planreview --> approveplan
@@ -99,9 +99,12 @@ flowchart TB
 
 Dotted edges are failure paths. VERIFY/REVIEW FAIL both re-enter BUILD and
 share one iteration budget (`maxIterations`, default 3); an ERROR verdict
-stops the loop for a human without burning an iteration. PLAN never blocks:
-its only exit is the park into `plan-review/` — a watcher can plan a whole
-queue overnight and you batch-review the plans. The engineering loop never
+stops the loop for a human without burning an iteration. PLAN runs only on
+demand (`plan <id>` — `claim`/`watch` never auto-plan a `queued/` task) and
+never blocks: its only exit is the park into `plan-review/` for your gate. A
+`plan <id>` run that crashes leaves a stale claim marker in `queued/.claims/`;
+`doctor fix` releases it (the watch walk no longer auto-releases queued
+markers). The engineering loop never
 pushes or opens a PR on its own — REVIEW PASS just parks the task in
 `in-review/` for you. Ship (`in-review/` → `completed/`) is still a
 human-invoked gate, but it now pushes the task's `feature/<id>` branch and

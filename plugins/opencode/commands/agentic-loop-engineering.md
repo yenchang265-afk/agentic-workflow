@@ -113,14 +113,13 @@ a rebuild from an unmoved file on an execution verb.
   runs the PLAN stage (writes the `## Implementation Plan` onto the task
   file, parks it in `plan-review/` for your gate, exits). Building is not
   reachable from here — `claim`/`watch` drive builds.
-- **`claim`** — one-shot pull: claim the next engineering item (build-ready
-  `in-progress/` tasks win over planless `queued/` ones — work in flight
-  finishes before new work spins up; within each pool, lowest priority number
-  first) and drive it once this turn settles.
+- **`claim`** — one-shot pull: claim the next build-ready `in-progress/` task
+  (lowest priority number first) and drive it once this turn settles. Planless
+  `queued/` tasks are never auto-planned — plan them with `plan <id>`.
 - **`watch [trigger]`** — put **this** session into engineering worker mode.
-  Each tick polls the backlog: one build-ready `in-progress/` task to drive
-  BUILD → VERIFY → REVIEW, falling back to a `queued/` task to plan-and-park
-  when no build work exists. Bare `watch` uses the kind's configured trigger
+  Each tick polls the backlog for one build-ready `in-progress/` task to drive
+  BUILD → VERIFY → REVIEW; planless `queued/` tasks are left for `plan <id>`
+  (a tick that finds only those says so). Bare `watch` uses the kind's configured trigger
   (`loops.engineering.trigger`, default poll); an argument overrides it for
   this session only: `poll [interval]` / a bare interval (`30s`, `5m`, `2h`,
   or a bare number of minutes; default `watchIntervalMinutes`, 5m; floor:
@@ -129,9 +128,11 @@ a rebuild from an unmoved file on an execution verb.
   session goes idle. The poll timer only claims work
   while the session is actually idle, so a task approved elsewhere gets
   picked up even if this session generates no events. A tick that claims
-  nothing always logs why (empty queue, tasks already started, claim marker
-  held); actionable reasons are toasted once. A claim marker orphaned by a
-  crashed run auto-releases after 15 minutes.
+  nothing always logs why (empty queue, tasks awaiting a plan, tasks already
+  started, claim marker held); actionable reasons are toasted once. An
+  `in-progress/` claim marker orphaned by a crashed run auto-releases after 15
+  minutes; a stale `queued/` marker (a crashed `plan <id>`) is released by
+  `doctor fix`.
   **One watcher process per clone:** watch takes an on-disk lease
   (`<tasksDir>/runs/.watch-lease/`, heartbeat every tick); a second opencode
   process watching the same clone is refused — run it in its own

@@ -92,6 +92,13 @@ const BacklogSourceSchema = z.object({
         entryStage: z.string().min(1),
         /** Registry ref of a claimability predicate (defaults to "any file in the folder"). */
         claimPredicate: z.string().min(1).optional(),
+        /**
+         * Never auto-claimed by claim/watch — only explicit verbs (e.g.
+         * `plan <id>`) claim from it. Still listed so its folder counts feed
+         * skip reasons and its `.claims/` markers stay visible to the hub
+         * board/doctor.
+         */
+        manual: z.boolean().default(false),
       }),
     )
     .min(1),

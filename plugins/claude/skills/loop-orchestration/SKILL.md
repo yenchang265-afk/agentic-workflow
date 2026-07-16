@@ -32,8 +32,8 @@ authoring + gates (interactive /agentic-loop:engineering verbs, BEFORE the loop)
   /agentic-loop:engineering replan [id] [why] ─▶ loop_replan: back to queued/ (audited rejection)
 
 the loop (/agentic-loop:engineering plan <id> or /agentic-loop:engineering claim — this skill):
-  queued task (planless):
-    loop_start/loop_claim ─▶ loop_stage(plan) ─▶ spawn loop-plan-author (task mode)
+  queued task (planless — `plan <id>`/loop_start only; claim never auto-plans):
+    loop_start ─▶ loop_stage(plan) ─▶ spawn loop-plan-author (task mode)
         ─▶ loop_advance ─▶ park (task → plan-review/, loop over — never blocks on a human)
   in-progress task (plan approved):
     loop_start/loop_claim ─▶ loop_stage(build) ─▶ spawn loop-build ─▶ loop_advance
@@ -65,13 +65,15 @@ needs no edit to this protocol.
 
 1. **Start.** `mcp__agentic-loop__loop_start({id})` for one task, or
    `mcp__agentic-loop__loop_claim()` for the next item — scoped to the
-   calling command's kind: `/agentic-loop:engineering claim` pulls from the
-   engineering backlog (build-ready `in-progress/` tasks beat planless
-   `queued/` ones; lowest priority number first within each pool), and
+   calling command's kind: `/agentic-loop:engineering claim` pulls build-ready
+   `in-progress/` tasks only (lowest priority number first; planless `queued/`
+   tasks are never auto-planned — PLAN entry is exclusively
+   `loop_start({id})`), and
    `/agentic-loop:pr-sitter claim` passes `{kind: "pr-sitter"}` to poll its
    PRs instead. An in-progress task is claimed, isolated (the `feature/<id>`
    branch, or a git worktree when `worktreesDir` is configured), and entered
-   at BUILD; a queued task is claimed and entered at PLAN with **no git
+   at BUILD; a queued task started by `loop_start` is claimed and entered at
+   PLAN with **no git
    isolation** (it writes only the task file, in the main tree). The composed
    stage `prompt` comes back either way.
 2. **Plan (queued tasks only).** `loop_stage({stage:"plan"})`, then spawn the

@@ -44,9 +44,9 @@ unattended (a feature, a refactor with tests, anything worth a task file):
 1. `/agentic-loop:engineering new <idea>` — interview produces a draft task with the
    goal and testable acceptance criteria (always from you, never guessed)
 2. Review the draft, then `/agentic-loop:engineering approve <id>` — queues it
-3. `/agentic-loop:engineering plan <id>` (or a `watch` worker) claims the queued task,
+3. `/agentic-loop:engineering plan <id>` claims the queued task,
    writes the `## Implementation Plan` right before execution, and parks it
-   at the plan gate
+   at the plan gate (`claim`/`watch` never auto-plan a queued task)
 4. `/agentic-loop:engineering approve <id>` (or `replan <id> [why]`) — after
    approval a `claim`/`watch` worker runs BUILD→VERIFY→REVIEW unattended on a
    `feature/<id>` branch; you review the result and
