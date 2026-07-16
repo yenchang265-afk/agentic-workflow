@@ -175,7 +175,9 @@ Two consequences worth stating, because they are what keep that line honest:
 It also **edits `.agentic-loop.json`**, one named layer at a time — never the
 merged view, which would flatten the user-scope layer (and its `ado.pat`) into
 the repo's file. It writes raw JSON, so keys core's schema doesn't know survive
-a save instead of being stripped.
+a save instead of being stripped. And it exposes the **backlog doctor**
+(`loop_doctor`) — rescuing strays, removing invented folders, and releasing the
+stale, undriven claim markers that would otherwise keep refusing a gate move.
 
 Its write surface is bounded by the localhost bind, a Host-header check, and an
 `X-Hub-Client` header on every mutating route — see

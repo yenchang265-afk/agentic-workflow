@@ -12,6 +12,7 @@ import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
 import { getConfig, saveConfig } from "./routes/config.js"
+import { getDoctor, postDoctorFix } from "./routes/doctor.js"
 import { postGate } from "./routes/gate.js"
 import { getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
@@ -144,6 +145,8 @@ const routes: Route[] = [
   { method: "POST", pattern: "/api/gate/:action", handler: scoped(postGate), mutating: true },
   { method: "GET", pattern: "/api/config", handler: scoped(getConfig) },
   { method: "POST", pattern: "/api/config", handler: scoped(saveConfig), mutating: true },
+  { method: "GET", pattern: "/api/doctor", handler: scoped((deps) => getDoctor(deps)) },
+  { method: "POST", pattern: "/api/doctor/fix", handler: scoped((deps) => postDoctorFix(deps)), mutating: true },
 ]
 
 for (const repo of repos) restartWatcher(repo)

@@ -49,14 +49,14 @@ Authority levels, in increasing order of blast radius:
 | # | Feature | Gap it closes | Authority | Cost | Status |
 |---|---------|---------------|-----------|------|--------|
 | [1](#1--gate-actions) | Gate actions | `loop/gate.ts` — **zero hub callers** | backlog-write, push | M | **shipped** |
-| [2](#2--backlog-doctor) | Backlog doctor | write half of `task/store.ts` | backlog-write | M | proposed |
+| [2](#2--backlog-doctor) | Backlog doctor | write half of `task/store.ts` | backlog-write | M | **shipped** |
 | [3](#3--creator-prompt-preview) | Creator prompt preview | `manifest/template.ts` `renderPrompt` | read | S | **shipped** |
 | [4](#4--config-editor) | Config editor | **nothing anywhere writes `.agentic-loop.json`** | config-write | L | **shipped** |
 
-PR 0 (the foundation) and features 1, 3 and 4 have shipped. Only the backlog
-doctor (2) remains a proposal. The gaps they closed are described below in the
-present tense they were written in — see `architecture.md`, the hub README and
-`configuration.md` for what the hub does today.
+**All four features have shipped**, plus the PR 0 foundation. The gaps they
+closed are described below in the present tense they were written in — see
+`architecture.md`, the hub README and `configuration.md` for what the hub does
+today. This doc is now design history, not a backlog.
 
 Recommended order — **PR 0 (foundation) → 3 → 1 → 2 → 4** — is justified under
 [Sequencing](#sequencing). The config editor is the headline ask and ships
@@ -67,9 +67,10 @@ Recommended order — **PR 0 (foundation) → 3 → 1 → 2 → 4** — is justi
 ## The gap
 
 > **Written before any of this shipped**, and kept in its original tense: it is
-> the argument for the change, not a description of today. Features 1 and 3 have
-> since landed, so `architecture.md` and `packages/hub/README.md` now describe
-> the write surface — they, not this doc, are canonical for what the hub does.
+> the argument for the change, not a description of today. All four features have
+> since landed, so `architecture.md`, `packages/hub/README.md`,
+> `configuration.md` and `threat-model.md` (T14–T16) now describe the write
+> surface — they, not this doc, are canonical for what the hub does.
 
 The hub was a beta admin app that **observed** the loop: backlog board, live
 activity, run history, token usage, loop creator. All read-only, by design —
@@ -180,7 +181,7 @@ reconcile.
 
 ## 2 — Backlog doctor
 
-**Authority: backlog-write · Cost: M**
+**Authority: backlog-write · Cost: M · Status: SHIPPED**
 
 Mirror `loop_doctor` semantics **exactly** — the MCP server and the OpenCode
 verb already agree, and a third divergent semantic would be a bug factory.

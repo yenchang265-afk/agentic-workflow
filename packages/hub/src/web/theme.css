@@ -1355,3 +1355,67 @@ body {
   font-size: var(--fs-xs);
   color: var(--warn);
 }
+
+/* --- backlog doctor --------------------------------------------------------- */
+
+.chip-button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+.doctor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: var(--sp-3) 0;
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-3);
+  background: var(--panel);
+}
+
+.doctor-clean {
+  margin: var(--sp-3) 0;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.doctor-findings {
+  margin: 0;
+  padding-left: var(--sp-4);
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text);
+}
+.doctor-findings code {
+  font-family: var(--font-mono);
+}
+
+.doctor-note {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--muted);
+}
+.doctor-note--warn {
+  color: var(--warn);
+}
+
+.doctor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.doctor-result {
+  font-size: var(--fs-xs);
+  color: var(--ok);
+  font-family: var(--font-mono);
+}
+.doctor-error {
+  font-size: var(--fs-xs);
+  color: var(--warn);
+}

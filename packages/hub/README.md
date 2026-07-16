@@ -69,6 +69,13 @@ creator tab is unaffected.
   behind a confirm naming its real effect; **ship also opens a pull request**.
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
+
+  When the backlog has structural damage (a stray file, an invented folder, a
+  claim marker a crashed loop left behind), the anomaly chip opens the
+  **backlog doctor** — the same `loop_doctor` repair the CLI runs. It rescues
+  strays to `draft/`, removes empty stray folders, and releases the *stale,
+  undriven* claim markers that would otherwise refuse a gate move forever;
+  duplicate ids it only reports.
 - **Loop creator**: the manifest state machine on a React Flow canvas —
   work/check stages as nodes, fire/park/done/stop transitions as edges,
   side-panel forms for stage fields, effects, work source, and stage prompts.
@@ -121,6 +128,7 @@ The hub can write in exactly two ways, and neither drives a loop:
 | Save a loop kind (creator) | `packages/core/loops/<kind>/` | slug + prefix check; 409 without `overwrite` |
 | A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a draft pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
 | Save config | one layer of `.agentic-loop.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
+| Backlog doctor fix | task files under `tasksDir` (rescue strays, remove empty stray folders, release **stale, undriven** claim markers), plus a git commit | `X-Hub-Client`; releases a claim only when stale and not driven; skips claim release entirely while a watch lease is live; never resolves duplicate ids |
 
 It never claims work, never runs a stage, and never merges anything. Full
 analysis in [docs/design/threat-model.md](../../docs/design/threat-model.md)

@@ -211,6 +211,45 @@ export interface SaveKindResponse {
   readonly checklist: readonly ChecklistItem[]
 }
 
+// --- backlog doctor ----------------------------------------------------------
+
+/** One task id present in more than one status folder — reported, never auto-fixed. */
+export interface DuplicateTask {
+  readonly id: string
+  readonly statuses: readonly string[]
+}
+
+/** One held claim marker: a task id and the pool status whose `.claims/` holds it. */
+export interface HeldClaim {
+  readonly id: string
+  readonly status: string
+}
+
+export interface DoctorReport {
+  /** Human-readable anomaly lines (from core's formatAnomalies). */
+  readonly findings: readonly string[]
+  readonly unknownDirs: readonly string[]
+  readonly strayFiles: readonly string[]
+  readonly duplicates: readonly DuplicateTask[]
+  readonly heldClaims: readonly HeldClaim[]
+  /** An OpenCode watcher lease is live — it writes no stage marker, so /fix can't tell which task it drives. */
+  readonly watcherLive: boolean
+  readonly watcherPid?: number
+}
+
+export interface DoctorFixResponse {
+  /** Stray files rescued to draft/ (repo-relative source paths). */
+  readonly rescued: readonly string[]
+  readonly removedDirs: readonly string[]
+  readonly releasedClaims: readonly string[]
+  /** True when claim release was skipped wholesale: a watcher is live with no marker. */
+  readonly claimsSkipped: boolean
+  /** Reported, unchanged — the hub won't guess which duplicate is canonical. */
+  readonly duplicates: readonly DuplicateTask[]
+  /** Strays that couldn't be rescued (e.g. a draft/<id>.md collision) — left for a human. */
+  readonly failed?: readonly { readonly path: string; readonly reason: string }[]
+}
+
 // --- config editor -----------------------------------------------------------
 
 /**

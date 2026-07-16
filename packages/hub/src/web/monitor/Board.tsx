@@ -2,9 +2,11 @@ import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
+import { useState } from "react"
 import { Badge } from "../ui/Badge.js"
 import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
+import { DoctorPanel } from "./DoctorPanel.js"
 import { GateActions } from "./GateActions.js"
 
 /**
@@ -48,6 +50,7 @@ const TaskCardView = ({
 export const Board = ({ info }: { info: KindBoardInfo }) => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
+  const [doctorOpen, setDoctorOpen] = useState(false)
   const { data, error } = useJson<BacklogResponse>(
     repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId),
     [versions.backlog, versions.gate, repoId, info.kind],
@@ -78,8 +81,13 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
             interrupted <strong>{summary.interrupted.length}</strong>
           </Chip>
         )}
-        {data.anomalies && <Chip gate>backlog anomalies — run doctor</Chip>}
+        {data.anomalies && (
+          <button type="button" className="chip-button" onClick={() => setDoctorOpen((o) => !o)}>
+            <Chip gate>backlog anomalies — {doctorOpen ? "hide" : "run"} doctor</Chip>
+          </button>
+        )}
       </div>
+      {doctorOpen && <DoctorPanel kind={info.kind} />}
       <div className="board">
         {data.statuses.map((status) => {
           const tasks = data.tasks[status] ?? []
