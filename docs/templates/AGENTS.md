@@ -5,7 +5,8 @@
 
   How to use:
   1. Copy this file to your repo root as `AGENTS.md` (OpenCode) or `CLAUDE.md`
-     (Claude Code) — or symlink one to the other.
+     (Claude Code). Want both? Copy it twice, don't symlink — symlinks don't
+     survive every checkout path (zip export, some CI artifact steps).
   2. Fill in every `<placeholder>` and delete these comments.
   3. Keep it short. Agents read this file on every session; every line here
      costs context. State facts an agent cannot derive from the code, and
