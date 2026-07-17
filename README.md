@@ -1,3 +1,5 @@
+English | [繁體中文](README.zh-TW.md)
+
 # agentic-loop
 
 Runs long-lived goals as supervised state machines instead of a chat

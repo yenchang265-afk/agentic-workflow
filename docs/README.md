@@ -28,3 +28,16 @@ most of the above for convenience (quickstart, config reference, command
 cheat-sheet). It is **not regenerated from these docs** — treat it as a
 known staleness risk, not a source of truth; if it and a canonical doc above
 disagree, the canonical doc wins.
+
+## Translations
+
+English is canonical; a translation is a manually maintained clone, not a
+generated one — when the English doc changes, update the translation in the
+same PR (or file a follow-up) rather than letting it drift silently. Name a
+translated file `<name>.<BCP-47-lang-code>.md` next to the English original
+(e.g. [`README.zh-TW.md`](../README.zh-TW.md) next to [`../README.md`](../README.md))
+and put a one-line language switcher as the first line of both files, e.g.
+`English | [繁體中文](README.zh-TW.md)` in the English file and
+`[English](README.md) | 繁體中文` in the translated one. Only `README.md`
+is translated today; add more docs or languages the same way as the need
+comes up — don't pre-translate everything.
