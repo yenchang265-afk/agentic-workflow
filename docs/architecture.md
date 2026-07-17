@@ -1,3 +1,5 @@
+English | [繁體中文](architecture.zh-TW.md)
+
 # Architecture
 
 Two layers. The **framework** — a shared core package, a manifest-interpreted

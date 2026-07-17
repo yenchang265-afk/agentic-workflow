@@ -1,3 +1,5 @@
+English | [繁體中文](proposed-loops.zh-TW.md)
+
 # Proposed loop kinds — an enterprise workflow catalog
 
 This is a **proposal catalog**, not a design record of shipped work (that's
