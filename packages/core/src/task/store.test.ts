@@ -647,6 +647,52 @@ test("claimFirst returns every held id in order when all claims fail", async () 
   assert.deepEqual(heldIds, ["a", "b"])
 })
 
+test("claimFirst hands out the fresh task from reverify, not the stale listing", async () => {
+  const $ = claimShell(new Set(), new Set())
+  const fresh = task("a", 1, `${PLAN_HEADING}\n\n1. Go — updated.`)
+  const { claimed } = await claimFirst($, [planned("a", 1)], {
+    ...notDriving,
+    reverify: async () => fresh,
+  })
+  assert.equal(claimed, fresh)
+})
+
+test("claimFirst releases a stale claim when reverify says the task is gone, and moves on", async () => {
+  const log: string[] = []
+  const $ = claimShell(new Set(), new Set(), log)
+  const { claimed, heldIds } = await claimFirst($, [planned("a", 1), planned("b", 2)], {
+    ...notDriving,
+    reverify: async (t) => (t.id === "a" ? null : t),
+  })
+  assert.equal(claimed?.id, "b")
+  // a's marker was created and then released; a is NOT held — nothing owns it.
+  assert.ok(log.some((cmd) => cmd.startsWith("rmdir ") && cmd.endsWith("/a")))
+  assert.deepEqual(heldIds, [])
+})
+
+test("claimFirst returns nothing when reverify drops every candidate", async () => {
+  const $ = claimShell(new Set(), new Set())
+  const { claimed, heldIds } = await claimFirst($, [planned("a", 1), planned("b", 2)], {
+    ...notDriving,
+    reverify: async () => null,
+  })
+  assert.equal(claimed, null)
+  assert.deepEqual(heldIds, [])
+})
+
+test("claimFirst reverifies the orphan-release retry win too", async () => {
+  const log: string[] = []
+  const $ = claimShell(new Set(["a"]), new Set(["a"]), log)
+  const { claimed, heldIds } = await claimFirst($, [planned("a", 1)], {
+    ...notDriving,
+    reverify: async () => null,
+  })
+  assert.equal(claimed, null)
+  assert.deepEqual(heldIds, [])
+  // Two rmdirs of a: the orphan release, then the reverify drop of the retry win.
+  assert.equal(log.filter((cmd) => cmd.startsWith("rmdir ") && cmd.endsWith("/a")).length, 2)
+})
+
 test("claimFirst treats a lost release-retry race as held", async () => {
   // rmdir "succeeds" but another instance re-claims instantly: mkdir keeps failing.
   const $ = makeShell((cmd) => {

@@ -429,17 +429,44 @@ export const claimFirst = async (
     readonly log?: Log
     /** Orphan predicate — defaults to `isOrphanedClaim`; use `isOrphanedPlanClaim` for `queued/` candidates. */
     readonly isOrphaned?: typeof isOrphanedClaim
+    /**
+     * Re-read a just-claimed task from the REAL filesystem. The candidate list
+     * may come from a lagging watcher index (see `listByStatus` vs `findByIdIn`):
+     * a task whose run just finished can still be listed in its old folder with
+     * a pre-CLAIMED body, and the marker `mkdir` wins because completion released
+     * it — starting a redundant second run. Return the fresh Task to hand out, or
+     * null to release the marker and skip the candidate (file moved away, or the
+     * fresh body is no longer claimable).
+     */
+    readonly reverify?: (task: Task) => Promise<Task | null>
   },
 ): Promise<ClaimAttempt> => {
   const heldIds: string[] = []
   const isOrphaned = opts.isOrphaned ?? isOrphanedClaim
+  // Confirm a claim win against the real FS; null means the listing was stale.
+  const settle = async (task: Task): Promise<Task | null> => {
+    if (!opts.reverify) return task
+    const fresh = await opts.reverify(task)
+    if (fresh) return fresh
+    opts.log?.("warn", `dropping stale claim of ${task.id} — the listed file is gone or no longer claimable on the real filesystem`)
+    await releaseClaim($, task)
+    return null
+  }
   for (const task of candidates) {
-    if (await claimTask($, task)) return { claimed: task, heldIds }
+    if (await claimTask($, task)) {
+      const fresh = await settle(task)
+      if (fresh) return { claimed: fresh, heldIds }
+      continue // stale listing, nothing holds it — not a held marker
+    }
     const markerStale = await claimOlderThan($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
     if (isOrphaned(task, { drivenByLiveLoop: opts.isDriving(task.id), markerStale })) {
       opts.log?.("warn", `releasing orphaned claim marker for ${task.id} — its claimer died before the stage started`)
       await releaseClaim($, task)
-      if (await claimTask($, task)) return { claimed: task, heldIds }
+      if (await claimTask($, task)) {
+        const fresh = await settle(task)
+        if (fresh) return { claimed: fresh, heldIds }
+        continue
+      }
     }
     heldIds.push(task.id)
   }

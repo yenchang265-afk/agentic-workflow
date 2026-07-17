@@ -17,6 +17,7 @@ import {
   parseWatchArgs,
   recordVerdict,
   resolveDrivingSession,
+  runStageWithLenses,
   type Deps,
 } from "./driver.ts"
 
@@ -991,4 +992,111 @@ test("recordVerdict accepts the verdict once the child session is resolved to th
   } finally {
     clearLoop("drv-sess")
   }
+})
+
+// --- runStageWithLenses: a missing lens verdict is a broken channel, not a FAIL ---
+// Regression guard for the spurious-second-iteration bug: with reviewLenses
+// configured, a lens whose loop_verdict call never lands used to combine as
+// null→FAIL (worstOf) and fire a rebuild of already-passing work; it must take
+// the same ERROR→recoverable-stop path as the single-pass case.
+
+const lensConfig: Config = { ...testConfig, reviewLenses: ["correctness", "security"] }
+
+/** Run the review stage with two lenses; `onCall(n)` runs before the nth stage command returns. */
+const runLensReview = async (sessionID: string, onCall: (call: number) => void, warns: string[] = []) => {
+  const { setLoop, clearLoop } = await import("@agentic-loop/core/loop/state")
+  setLoop(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  let calls = 0
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async () => {
+        calls++
+        onCall(calls)
+        return { data: { parts: [{ type: "text", text: `review pass ${calls}` }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = {
+    client,
+    $: makeShellFS({}, []),
+    directory: "/repo",
+    log: (level, msg) => {
+      if (level === "warn") warns.push(msg)
+    },
+  }
+  try {
+    const result = await runStageWithLenses(
+      deps,
+      sessionID,
+      lensConfig,
+      manifestFor("engineering"),
+      { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
+      "review",
+      "goal args",
+      0,
+    )
+    return { result, calls: () => calls }
+  } finally {
+    clearLoop(sessionID)
+  }
+}
+
+test("lenses: both PASS combines to PASS", async () => {
+  const sessionID = "sess-lens-pass"
+  const { result, calls } = await runLensReview(sessionID, () => {
+    recordVerdict(sessionID, "review", { verdict: "PASS" })
+  })
+  assert.equal(result.verdict, "PASS")
+  assert.equal(calls(), 2)
+})
+
+test("lenses: one lens never records a verdict → ERROR naming the lens, never FAIL", async () => {
+  const sessionID = "sess-lens-missing"
+  const { result, calls } = await runLensReview(sessionID, (call) => {
+    if (call === 1) recordVerdict(sessionID, "review", { verdict: "PASS" })
+    // calls 2 and 3 (the security lens and its retry): no verdict recorded
+  })
+  assert.equal(result.verdict, "ERROR", "a broken lens verdict channel must stop, not rebuild")
+  assert.match(result.record?.reason ?? "", /security/)
+  assert.equal(calls(), 3, "1 correctness pass + security pass and its one retry")
+})
+
+test("lenses: a genuine lens FAIL combines worst-wins with the lens-prefixed reason", async () => {
+  const sessionID = "sess-lens-fail"
+  const { result } = await runLensReview(sessionID, (call) => {
+    recordVerdict(
+      sessionID,
+      "review",
+      call === 1 ? { verdict: "PASS" } : { verdict: "FAIL", reason: "auth bypass in handler" },
+    )
+  })
+  assert.equal(result.verdict, "FAIL")
+  assert.match(result.record?.reason ?? "", /\[security\] auth bypass in handler/)
+})
+
+test("lenses: a genuine FAIL plus a missing lens still stops with ERROR (no rebuild on partial information)", async () => {
+  const sessionID = "sess-lens-fail-missing"
+  const { result } = await runLensReview(sessionID, (call) => {
+    if (call === 1) recordVerdict(sessionID, "review", { verdict: "FAIL", reason: "bug" })
+  })
+  assert.equal(result.verdict, "ERROR")
+  assert.match(result.record?.reason ?? "", /security/)
+})
+
+test("lenses: a stop mid-pass returns quietly — no ERROR, no retry, no warn", async () => {
+  const sessionID = "sess-lens-stop"
+  const warns: string[] = []
+  const { clearLoop } = await import("@agentic-loop/core/loop/state")
+  const { result, calls } = await runLensReview(
+    sessionID,
+    () => {
+      clearLoop(sessionID) // a user `stop` lands while the first lens runs
+    },
+    warns,
+  )
+  assert.equal(result.verdict, null)
+  assert.equal(result.record, null)
+  assert.equal(calls(), 1, "no retry and no further lens passes after a stop")
+  assert.ok(!warns.some((w) => /stopping with ERROR/.test(w)), `unexpected warn: ${warns.join(" | ")}`)
 })

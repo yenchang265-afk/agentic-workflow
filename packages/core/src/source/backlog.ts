@@ -160,6 +160,16 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
           isOrphaned: predicate
             ? (task, opts) => predicate(task) && !opts.drivenByLiveLoop && opts.markerStale
             : (_task, opts) => !opts.drivenByLiveLoop && opts.markerStale,
+          // The candidate came from the client index, which can lag the real FS
+          // (a just-finished run's mv + marker release may not be reflected yet)
+          // — confirm on the real FS before handing the claim out, and hand out
+          // the FRESH body so entryState reads current content.
+          reverify: async (t) => {
+            const fresh = await findByIdIn($, directory, tasksDir, pool.status, t.id, log)
+            if (!fresh) return null // moved off the real FS (e.g. a done run's mv)
+            if (predicate && !predicate(fresh)) return null // fresh body already claimed/started
+            return fresh
+          },
         })
         heldIds.push(...walk.heldIds)
         if (walk.claimed) return { item: item(pool, walk.claimed), skip: null }

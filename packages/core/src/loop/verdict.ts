@@ -43,7 +43,11 @@ export interface VerdictRecord {
 /**
  * Combine several review-lens verdicts into one: any ERROR wins (the check
  * couldn't run), else any FAIL/missing wins, else PASS. A missing verdict
- * (null) counts as FAIL — never a stall. Pure.
+ * (null) counts as FAIL — never a stall — as a conservative default; callers
+ * that can tell "the lens ran but its verdict channel broke" apart from a
+ * genuine FAIL must screen those nulls into ERROR before combining (the
+ * OpenCode driver does — a broken channel must not burn a rebuild iteration).
+ * Pure.
  */
 export const worstOf = (verdicts: readonly (Verdict | null)[]): Verdict => {
   if (verdicts.some((v) => v === "ERROR")) return "ERROR"

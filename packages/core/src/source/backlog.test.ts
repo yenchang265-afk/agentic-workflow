@@ -47,8 +47,12 @@ const fakeClient = (folders: Record<string, FakeFile[]>): Client => ({
   app: { async log() {} },
 })
 
-/** Marker-aware shell: mkdir fails on held ids; rmdir releases. */
-const fakeShell = (held: Set<string>): Shell => {
+/**
+ * Marker-aware shell: mkdir fails on held ids; rmdir releases. `cat` answers
+ * from `realFs` — the REAL filesystem the claim reverification reads, as
+ * opposed to the (possibly lagging) client index `fakeClient` serves.
+ */
+const fakeShell = (held: Set<string>, realFs: Record<string, FakeFile[]> = {}, log?: string[]): Shell => {
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -56,6 +60,7 @@ const fakeShell = (held: Set<string>): Shell => {
       if (i < exprs.length) cmd += String(exprs[i])
     })
     cmd = cmd.trim().replace(/\s+/g, " ")
+    log?.push(cmd)
     const id = cmd.split("/").pop() ?? ""
     const run = (): { exitCode: number; stdout: string } => {
       if (cmd.startsWith("mkdir -p")) return { exitCode: 0, stdout: "" }
@@ -63,6 +68,14 @@ const fakeShell = (held: Set<string>): Shell => {
       if (cmd.startsWith("rmdir ")) {
         held.delete(id)
         return { exitCode: 0, stdout: "" }
+      }
+      if (cmd.startsWith("cat ")) {
+        // cat /r/docs/tasks/<status>/<id>.md
+        const parts = cmd.split(" ")[1]?.split("/") ?? []
+        const name = parts.pop() ?? ""
+        const status = parts.pop() ?? ""
+        const f = (realFs[status] ?? []).find((x) => x.name === name)
+        return f ? { exitCode: 0, stdout: f.content } : { exitCode: 1, stdout: "" }
       }
       return { exitCode: 0, stdout: "" }
     }
@@ -95,9 +108,15 @@ const file = (id: string, opts: { plan?: boolean; started?: boolean; claimed?: b
   }
 }
 
-const source = (folders: Record<string, FakeFile[]>, held = new Set<string>()) =>
+const source = (
+  folders: Record<string, FakeFile[]>,
+  held = new Set<string>(),
+  opts: { realFs?: Record<string, FakeFile[]>; shellLog?: string[] } = {},
+) =>
   makeBacklogSource({
-    $: fakeShell(held),
+    // The client index and the real FS agree by default; pass `realFs` to
+    // model an index that lags the real filesystem.
+    $: fakeShell(held, opts.realFs ?? folders, opts.shellLog),
     client: fakeClient(folders),
     directory: "/r",
     tasksDir: "docs/tasks",
@@ -185,6 +204,40 @@ test("a CLAIMED note (durable claim evidence on the human branch) blocks re-clai
   const { item, skip } = await src.claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /already started: ran-already/)
+})
+
+test("a stale listing of a task already moved off the real FS is not claimed, and its marker is released", async () => {
+  // A finished run mv'd the task to in-review/ and released its marker, but
+  // the client index still lists it in in-progress/ with a claimable body.
+  const shellLog: string[] = []
+  const src = source({ "in-progress": [file("done-already", { plan: true })], queued: [] }, new Set(), {
+    realFs: { "in-progress": [], "in-review": [file("done-already", { plan: true, claimed: true })] },
+    shellLog,
+  })
+  const { item } = await src.claimNext()
+  assert.equal(item, null)
+  assert.ok(shellLog.some((cmd) => cmd.startsWith("rmdir ") && cmd.endsWith("/done-already")))
+})
+
+test("a stale listing whose real-FS body already carries the CLAIMED note is not claimed", async () => {
+  const src = source({ "in-progress": [file("racing", { plan: true })], queued: [] }, new Set(), {
+    realFs: { "in-progress": [file("racing", { plan: true, claimed: true })] },
+  })
+  const { item } = await src.claimNext()
+  assert.equal(item, null)
+})
+
+test("a claim is handed out with the real-FS body, not the stale listing's", async () => {
+  const freshFile: FakeFile = {
+    name: "evolving.md",
+    content: `---\ntitle: evolving\npriority: 2\n---\n\nBody of evolving.\n\n${PLAN_HEADING}\n\n1. The fresh plan.\n`,
+  }
+  const src = source({ "in-progress": [file("evolving", { plan: true })], queued: [] }, new Set(), {
+    realFs: { "in-progress": [freshFile] },
+  })
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "evolving")
+  assert.match(item?.state.artifacts.plan ?? "", /The fresh plan/)
 })
 
 test("taskGoal joins title and body", () => {

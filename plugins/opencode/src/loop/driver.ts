@@ -558,9 +558,9 @@ const combineRecords = (records: readonly (VerdictRecord | null)[], lenses: read
  * verdicts are combined worst-wins and non-PASS pass outputs concatenated, so
  * a single injected reviewer can't flip the outcome (threat model T1). All
  * other stages run exactly once. Stops firing further lens passes if a
- * `stop` clears the loop mid-pass.
+ * `stop` clears the loop mid-pass. Exported for tests.
  */
-const runStageWithLenses = async (
+export const runStageWithLenses = async (
   deps: Deps,
   sessionID: string,
   config: Config,
@@ -635,21 +635,38 @@ const runStageWithLenses = async (
 
   if (!isCheck) return { output: outputs[0] ?? "", verdict: null, record: null }
 
-  const record = lenses.length ? combineRecords(records, lenses) : (records[0] ?? null)
+  // A deliberate stop mid-pass: records may be short and/or end in null. The
+  // caller discards the result once the loop is cleared — return quietly, never
+  // routing a stop through the ERROR path below.
+  if (!getLoop(sessionID)) return { output: outputs.join("\n\n"), verdict: null, record: null }
+
+  // Lenses that FIRED but recorded nothing even after their retry. A missing
+  // lens verdict is a broken channel, not a FAIL: worst-wins combining would
+  // read it as FAIL and burn a rebuild iteration on possibly-done work, so it
+  // must take the same ERROR→recoverable-stop path as the single-pass case —
+  // even when another lens recorded a genuine FAIL (a rebuild on partial
+  // information is still wasted; the FAIL's output survives in the run log).
+  const missingLenses = lenses.filter((_, i) => i < records.length && records[i] === null)
+  const record = lenses.length
+    ? missingLenses.length
+      ? null
+      : combineRecords(records, lenses)
+    : (records[0] ?? null)
   const verdict = record?.verdict ?? null
   if (verdict === null) {
     // Still nothing after the retry: the verdict channel is unreachable —
     // surface it as a retryable ERROR (manifest onError → recoverable stop),
     // never as a FAIL that triggers a pointless rebuild.
     const inText = parseVerdict(outputs.join("\n"), stage === "verify" ? LOOP_VERIFY_TAG : LOOP_REVIEW_TAG)
+    const lensTag = missingLenses.length ? ` (lens${missingLenses.length > 1 ? "es" : ""}: ${missingLenses.join(", ")})` : ""
     await deps.log(
       "warn",
-      `${stage} recorded no verdict via loop_verdict even after a retry${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
+      `${stage} recorded no verdict via loop_verdict even after a retry${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
     )
     const errorRecord: VerdictRecord = {
       verdict: "ERROR",
       reason:
-        "no loop_verdict recorded even after a retry — the verdict channel is unreachable from the stage subagent " +
+        `no loop_verdict recorded even after a retry${lensTag} — the verdict channel is unreachable from the stage subagent ` +
         "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
         (inText ? ` (prose claimed ${inText}, ignored — free text is untrusted)` : ""),
     }
