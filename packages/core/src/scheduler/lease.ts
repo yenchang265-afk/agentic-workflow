@@ -1,4 +1,5 @@
 import path from "node:path"
+import { writeFileAtomic } from "../fsatomic.js"
 import type { Shell } from "../host.js"
 
 /**
@@ -61,14 +62,52 @@ export const readLeaseOwner = async ($: Shell, directory: string, tasksDir: stri
 }
 
 const writeOwner = async ($: Shell, directory: string, tasksDir: string, owner: LeaseOwner): Promise<void> => {
-  await $`printf '%s' ${JSON.stringify(owner)} > ${ownerFile(directory, tasksDir)}`.quiet().nothrow()
+  await writeFileAtomic($, ownerFile(directory, tasksDir), JSON.stringify(owner))
 }
 
 /**
- * Acquire the clone's watch lease. Wins the atomic `mkdir`, or takes over a
- * stale lease by atomically renaming the stale dir aside (see below) before
- * recreating it. On refusal, returns the live (or takeover-winning) owner so the
- * caller can say who holds it.
+ * Attempt to acquire by building a fully-formed staging dir (owner.json
+ * already inside) and renaming it onto the lease path. rename(2) is atomic,
+ * so the lease dir is never observable without its owner record — the old
+ * mkdir-then-write acquire left a window where a rival read the missing
+ * record, judged the fresh lease stale, and took it over (T3: two watchers
+ * on one clone). `mv` onto an EXISTING dir nests the staging dir inside it
+ * instead of failing, so winning is confirmed positively: the record at
+ * owner.json must be the one we just wrote.
+ */
+const stagedAcquire = async ($: Shell, directory: string, tasksDir: string, record: LeaseOwner): Promise<boolean> => {
+  const dir = leaseDir(directory, tasksDir)
+  const staging = `${dir}.new-${record.pid}-${Date.parse(record.startedAt)}`
+  await $`mkdir -p ${staging}`.quiet().nothrow()
+  const wrote = await $`printf '%s' ${JSON.stringify(record)} > ${path.join(staging, "owner.json")}`.quiet().nothrow()
+  if (wrote.exitCode !== 0) {
+    // Never expose a lease dir without its record — that's the exact hazard
+    // this staged rename exists to close.
+    await $`rm -rf ${staging}`.quiet().nothrow()
+    return false
+  }
+  const moved = await $`mv ${staging} ${dir}`.quiet().nothrow()
+  if (moved.exitCode !== 0) {
+    await $`rm -rf ${staging}`.quiet().nothrow()
+    return false
+  }
+  const current = await readLeaseOwner($, directory, tasksDir)
+  const won =
+    current !== null &&
+    current.pid === record.pid &&
+    current.host === record.host &&
+    current.startedAt === record.startedAt
+  // Lost: the mv nested our staging dir inside the holder's lease — remove
+  // only our own (uniquely named) debris, never the holder's record.
+  if (!won) await $`rm -rf ${path.join(dir, path.basename(staging))}`.quiet().nothrow()
+  return won
+}
+
+/**
+ * Acquire the clone's watch lease. Wins by atomically renaming a pre-built
+ * staging dir into place, or takes over a stale lease by atomically renaming
+ * the stale dir aside (see below) before re-acquiring. On refusal, returns
+ * the live (or takeover-winning) owner so the caller can say who holds it.
  */
 export const acquireLease = async (
   $: Shell,
@@ -84,19 +123,15 @@ export const acquireLease = async (
     heartbeatAt: now.toISOString(),
   }
   await $`mkdir -p ${path.dirname(dir)}`.quiet().nothrow()
-  const won = await $`mkdir ${dir}`.quiet().nothrow()
-  if (won.exitCode === 0) {
-    await writeOwner($, directory, tasksDir, record)
-    return { ok: true }
-  }
+  if (await stagedAcquire($, directory, tasksDir, record)) return { ok: true }
   const current = await readLeaseOwner($, directory, tasksDir)
   if (isLeaseStale(current, now, staleThresholdMs(current?.intervalMs || owner.intervalMs))) {
-    // Take over atomically. The old `rm -rf ${dir}` + `mkdir ${dir}` was NOT
+    // Take over atomically. A bare `rm -rf ${dir}` + re-acquire would NOT be
     // atomic: two processes that both saw the same stale owner could each remove
     // the other's freshly-created dir and both believe they won. Instead, rename
     // the stale dir to a per-process-unique path — `mv` (rename) of one source is
     // atomic, so the FIRST taker moves it and every other taker's `mv` fails
-    // because the source is already gone. Only the mover proceeds to recreate.
+    // because the source is already gone. Only the mover proceeds to re-acquire.
     const graveyard = `${dir}.dead-${owner.pid}-${now.getTime()}`
     const claimed = await $`mv ${dir} ${graveyard}`.quiet().nothrow()
     if (claimed.exitCode !== 0) {
@@ -104,12 +139,8 @@ export const acquireLease = async (
       return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
     }
     await $`rm -rf ${graveyard}`.quiet().nothrow()
-    const retry = await $`mkdir ${dir}`.quiet().nothrow()
-    if (retry.exitCode === 0) {
-      await writeOwner($, directory, tasksDir, record)
-      return { ok: true }
-    }
-    // A fresh acquirer created the lease between our rename and mkdir — they hold it.
+    if (await stagedAcquire($, directory, tasksDir, record)) return { ok: true }
+    // A fresh acquirer recreated the lease between our rename and re-acquire — they hold it.
     return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
   }
   return { ok: false, owner: current }

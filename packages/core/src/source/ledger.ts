@@ -1,5 +1,6 @@
 import path from "node:path"
 import { z } from "zod"
+import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 
 /**
@@ -63,7 +64,7 @@ export const saveLedger = async ($: Shell, directory: string, tasksDir: string, 
   const dir = path.join(directory, tasksDir, ledgerDir(kind))
   await $`mkdir -p ${dir}`.quiet().nothrow()
   const file = ledgerPath(directory, tasksDir, kind, ledger.pr)
-  await $`printf '%s' ${JSON.stringify(ledger, null, 2)} > ${file}`.quiet().nothrow()
+  await writeFileAtomic($, file, JSON.stringify(ledger, null, 2))
 }
 
 /** What a polled PR currently looks like, normalized from the platform API (`gh pr list --json` / the ADO pull-requests REST API). */

@@ -26,6 +26,7 @@ const makeCtx = (files: Record<string, string>, opts: { driving?: string } = {})
     const parts = norm.split(" ")
     let out = { exitCode: 0, stdout: "" }
     if (parts[0] === "cat") out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]! } : { exitCode: 1, stdout: "" }
+    else if (parts[0] === "test") out = parts[2]! in fs ? { exitCode: 0, stdout: "" } : { exitCode: 1, stdout: "" }
     else if (parts[0] === "mv") {
       const [, src, dest] = parts
       if (src! in fs) {

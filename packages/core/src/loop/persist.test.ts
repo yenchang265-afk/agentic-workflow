@@ -24,6 +24,8 @@ const fakeShell = () => {
           fs.mkdirSync(String(exprs[0]), { recursive: true })
         } else if (raw.startsWith("printf '%s' ")) {
           fs.writeFileSync(String(exprs[1]), String(exprs[0]))
+        } else if (raw.startsWith("mv ")) {
+          fs.renameSync(String(exprs[0]), String(exprs[1]))
         } else if (raw.startsWith("rm -f ")) {
           fs.rmSync(String(exprs[0]), { force: true })
         }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { detectEcosystems, makeDependencyScanSource, semverImpact, upgradeCandidates } from "./dependency-scan.js"
+import { depKey, detectEcosystems, makeDependencyScanSource, semverImpact, upgradeCandidates } from "./dependency-scan.js"
 
 /**
  * The dependency-scan source over the real dep-sitter manifest, against a
@@ -14,6 +14,20 @@ import { detectEcosystems, makeDependencyScanSource, semverImpact, upgradeCandid
 
 const LOOPS_DIR = defaultLoopsDir()
 const sitter = loadManifest(LOOPS_DIR, "dep-sitter")
+
+// Ledger/claim/work-item keys, derived exactly as the source derives them.
+const LODASH = depKey("lodash")
+const JACKSON_KEY = depKey("com.fasterxml.jackson.core:jackson-databind")
+const LOGBACK_KEY = depKey("ch.qos.logback:logback-classic")
+const SPRING_KEY = depKey("org.springframework:spring-web")
+
+test("depKey disambiguates packages whose slugs collide", () => {
+  // slugify collapses both to "babel-core"; a shared key would let one
+  // package's ledger suppress the other's security upgrade.
+  assert.notEqual(depKey("@babel/core"), depKey("babel-core"))
+  assert.match(depKey("@babel/core"), /^dep-babel-core-[0-9a-f]{8}$/)
+  assert.equal(depKey("lodash"), depKey("lodash"), "stable across calls")
+})
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
 
@@ -150,14 +164,14 @@ test("claims a fixable advisory: scan entry, feature-branch goal, claims under r
   const log: string[] = []
   const { item, skip } = await source({ log }).claimNext()
   assert.equal(skip, null)
-  assert.equal(item?.id, "dep-lodash")
+  assert.equal(item?.id, LODASH)
   assert.equal(item?.entryStage, "scan")
   assert.equal(item?.state.kind, "dep-sitter")
   assert.equal(item?.state.git, undefined)
   assert.match(item?.state.goal ?? "", /^Upgrade lodash to 4\.17\.21/)
   assert.match(item?.state.goal ?? "", /DRAFT pull request/)
   assert.match(item?.state.goal ?? "", /Never merge/)
-  assert.ok(log.some((c) => c.includes("runs/dep-sitter/.claims/dep-lodash")))
+  assert.ok(log.some((c) => c.includes(`runs/dep-sitter/.claims/${LODASH}`)))
 })
 
 test("a major-only report claims nothing and logs the human handoff", async () => {
@@ -174,7 +188,7 @@ test("a major-only report claims nothing and logs the human handoff", async () =
 
 test("a handled or failed target suppresses the claim until the target moves", async () => {
   const handled = {
-    "docs/tasks/runs/dep-sitter/dep-lodash.json": JSON.stringify({
+    [`docs/tasks/runs/dep-sitter/${LODASH}.json`]: JSON.stringify({
       pkg: "lodash",
       versionHandled: "4.17.21",
       failedAttempts: [],
@@ -183,7 +197,7 @@ test("a handled or failed target suppresses the claim until the target moves", a
   }
   assert.equal((await source({ ledgers: handled }).claimNext()).item, null)
   const failed = {
-    "docs/tasks/runs/dep-sitter/dep-lodash.json": JSON.stringify({
+    [`docs/tasks/runs/dep-sitter/${LODASH}.json`]: JSON.stringify({
       pkg: "lodash",
       failedAttempts: [{ target: "4.17.21", at: "2026-07-04T00:00:00Z" }],
       updatedAt: "2026-07-04T00:00:00Z",
@@ -192,7 +206,7 @@ test("a handled or failed target suppresses the claim until the target moves", a
   assert.equal((await source({ ledgers: failed }).claimNext()).item, null)
   // A newer fix version is a fresh claim.
   const newer = audit({ lodash: vuln({ fixAvailable: { name: "lodash", version: "4.17.22", isSemVerMajor: false } }) })
-  assert.equal((await source({ ledgers: handled, auditJson: newer }).claimNext()).item?.id, "dep-lodash")
+  assert.equal((await source({ ledgers: handled, auditJson: newer }).claimNext()).item?.id, LODASH)
 })
 
 test("onTerminal(done) records the published target; stop records a failed attempt", async () => {
@@ -201,11 +215,11 @@ test("onTerminal(done) records the published target; stop records a failed attem
   const { item } = await src.claimNext()
   assert.ok(item)
   await src.onTerminal?.(item, { kind: "done", message: "draft PR opened" })
-  const write = log.find((c) => c.startsWith("printf") && c.includes("dep-lodash.json"))
+  const write = log.find((c) => c.startsWith("printf") && c.includes(`${LODASH}.json`))
   assert.ok(write, "ledger written")
   assert.match(write ?? "", /versionHandled/)
   assert.match(write ?? "", /4\.17\.21/)
-  assert.ok(log.some((c) => c.startsWith("rmdir") && c.includes("dep-lodash")))
+  assert.ok(log.some((c) => c.startsWith("rmdir") && c.includes(LODASH)))
 })
 
 test("onTerminal: a genuine stop records a failed attempt; a retryable (onError) stop does not (C2)", async () => {
@@ -214,7 +228,7 @@ test("onTerminal: a genuine stop records a failed attempt; a retryable (onError)
   const c1 = await g.claimNext()
   assert.ok(c1.item)
   await g.onTerminal?.(c1.item, { kind: "stop", message: "capped" })
-  const gWrite = genuine.find((c) => c.startsWith("printf") && c.includes("dep-lodash.json"))
+  const gWrite = genuine.find((c) => c.startsWith("printf") && c.includes(`${LODASH}.json`))
   assert.match(gWrite ?? "", /failedAttempts/, "genuine stop records a failed attempt")
 
   const transient: string[] = []
@@ -223,10 +237,10 @@ test("onTerminal: a genuine stop records a failed attempt; a retryable (onError)
   assert.ok(c2.item)
   await t.onTerminal?.(c2.item, { kind: "stop", message: "osv-scanner unavailable", retryable: true })
   assert.ok(
-    !transient.some((c) => c.startsWith("printf") && c.includes("dep-lodash.json")),
+    !transient.some((c) => c.startsWith("printf") && c.includes(`${LODASH}.json`)),
     "retryable stop leaves the ledger untouched so the next poll re-claims",
   )
-  assert.ok(transient.some((c) => c.startsWith("rmdir") && c.includes("dep-lodash")), "claim marker still released")
+  assert.ok(transient.some((c) => c.startsWith("rmdir") && c.includes(LODASH)), "claim marker still released")
 })
 
 test("an unparsable audit report is an actionable skip, not a crash", async () => {
@@ -328,13 +342,13 @@ test("a maven repo claims an OSV advisory: -L pom.xml scan, maven work order, cl
     log,
   }).claimNext()
   assert.equal(skip, null)
-  assert.equal(item?.id, "dep-com-fasterxml-jackson-core-jackson-databind")
+  assert.equal(item?.id, JACKSON_KEY)
   assert.equal(item?.entryStage, "scan")
   assert.match(item?.state.goal ?? "", /^Upgrade com\.fasterxml\.jackson\.core:jackson-databind to 2\.9\.10\.8/)
   assert.match(item?.state.goal ?? "", /Ecosystem: Maven/)
   assert.match(item?.state.goal ?? "", /mvn versions:use-dep-version/)
   assert.match(item?.state.goal ?? "", /Spring Boot BOM/)
-  assert.ok(log.some((c) => c.includes("runs/dep-sitter/.claims/dep-com-fasterxml-jackson-core-jackson-databind")))
+  assert.ok(log.some((c) => c.includes(`runs/dep-sitter/.claims/${JACKSON_KEY}`)))
   // No npm manifest in this repo — the npm adapter must never have run.
   assert.ok(log.every((c) => !c.startsWith("npm ")))
 })
@@ -351,7 +365,7 @@ test("a gradle repo with a lockfile claims via -L gradle.lockfile with the versi
     log,
   }).claimNext()
   assert.equal(skip, null)
-  assert.equal(item?.id, "dep-ch-qos-logback-logback-classic")
+  assert.equal(item?.id, LOGBACK_KEY)
   assert.match(item?.state.goal ?? "", /Ecosystem: Gradle/)
   assert.match(item?.state.goal ?? "", /--write-locks/)
 })
@@ -391,7 +405,7 @@ test("npm keeps claiming when osv-scanner is missing in a mixed repo — the mav
     warnings,
   }).claimNext()
   assert.equal(skip, null)
-  assert.equal(item?.id, "dep-lodash")
+  assert.equal(item?.id, LODASH)
   assert.ok(warnings.some((w) => w.includes("osv-scanner not found")))
 })
 
@@ -423,13 +437,13 @@ test("a mixed monorepo merges ecosystems severity-first: a critical maven adviso
       { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: critical } },
     ],
   }).claimNext()
-  assert.equal(item?.id, "dep-org-springframework-spring-web")
+  assert.equal(item?.id, SPRING_KEY)
 })
 
 test("a maven ledger suppresses a handled target until it moves — the shared dedup, unchanged", async () => {
   const files = {
     "pom.xml": POM,
-    "docs/tasks/runs/dep-sitter/dep-com-fasterxml-jackson-core-jackson-databind.json": JSON.stringify({
+    [`docs/tasks/runs/dep-sitter/${JACKSON_KEY}.json`]: JSON.stringify({
       pkg: "com.fasterxml.jackson.core:jackson-databind",
       versionHandled: "2.9.10.8",
       failedAttempts: [],
@@ -450,7 +464,7 @@ test("an explicit ecosystem override scopes the scan — npm commands never run"
     log,
     ecosystem: "maven",
   }).claimNext()
-  assert.equal(item?.id, "dep-com-fasterxml-jackson-core-jackson-databind")
+  assert.equal(item?.id, JACKSON_KEY)
   assert.ok(log.every((c) => !c.startsWith("npm ")))
 })
 

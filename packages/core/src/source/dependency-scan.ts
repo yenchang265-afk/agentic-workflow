@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto"
 import path from "node:path"
 import { z } from "zod"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, LoopState } from "../loop/state.js"
+import { writeFileAtomic } from "../fsatomic.js"
 import { osvCandidates, OsvReportSchema } from "./osv.js"
 import { slugify } from "../task/schema.js"
 import type { ClaimSkipReason, TerminalOutcome, WorkItem, WorkSource } from "./types.js"
@@ -174,8 +176,19 @@ export const detectEcosystems = async (exists: (rel: string) => Promise<boolean>
 const bySeverityThenName = (a: UpgradeCandidate, b: UpgradeCandidate): number =>
   severityRank(b.severity) - severityRank(a.severity) || a.pkg.localeCompare(b.pkg)
 
+/**
+ * Per-dependency artifact key (ledger file, claim marker, work-item id).
+ * `slugify` alone collides across distinct packages — `@babel/core` and
+ * `babel-core` both slug to `babel-core`; scoped vs unscoped and
+ * `group:artifact` names likewise — and a collision lets one package's
+ * ledger silently suppress ANOTHER package's security upgrade. A short
+ * digest of the raw name disambiguates while keeping the slug readable.
+ */
+export const depKey = (pkg: string): string =>
+  `dep-${slugify(pkg)}-${createHash("sha256").update(pkg).digest("hex").slice(0, 8)}`
+
 const ledgerRel = (tasksDir: string, kind: string, pkg: string): string =>
-  `${tasksDir}/runs/${kind}/dep-${slugify(pkg)}.json`
+  `${tasksDir}/runs/${kind}/${depKey(pkg)}.json`
 
 interface DependencyScanDeps {
   readonly $: Shell
@@ -362,8 +375,8 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
   const saveDepLedger = async (ledger: DepLedger): Promise<void> => {
     const dir = path.join(directory, tasksDir, "runs", kind)
     await $`mkdir -p ${dir}`.quiet().nothrow()
-    const file = path.join(dir, `dep-${slugify(ledger.pkg)}.json`)
-    await $`printf '%s' ${JSON.stringify(ledger, null, 2)} > ${file}`.quiet().nothrow()
+    const file = path.join(dir, `${depKey(ledger.pkg)}.json`)
+    await writeFileAtomic($, file, JSON.stringify(ledger, null, 2))
   }
 
   const workItem = (c: UpgradeCandidate): WorkItem => {
@@ -399,7 +412,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
       platform,
     }
     return {
-      id: `dep-${slugify(c.pkg)}`,
+      id: depKey(c.pkg),
       loopKind: kind,
       title: `Upgrade ${c.pkg} ${c.current || "?"} → ${c.target}`,
       entryStage: state.stage,
@@ -461,9 +474,9 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
         if (ledger.versionHandled === candidate.target) continue
         if (ledger.failedAttempts.some((f) => f.target === candidate.target)) continue
         await $`mkdir -p ${claimsDir}`.quiet().nothrow()
-        const marker = await $`mkdir ${`${claimsDir}/dep-${slugify(candidate.pkg)}`}`.quiet().nothrow()
+        const marker = await $`mkdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
         if (marker.exitCode !== 0) {
-          heldIds.push(`dep-${slugify(candidate.pkg)}`)
+          heldIds.push(depKey(candidate.pkg))
           continue
         }
         return { item: workItem(candidate), skip: null }
@@ -485,7 +498,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
 
     async release(work) {
       const { candidate } = work.ref as { candidate: UpgradeCandidate }
-      await $`rmdir ${`${claimsDir}/dep-${slugify(candidate.pkg)}`}`.quiet().nothrow()
+      await $`rmdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
     },
 
     async onTerminal(work, outcome: TerminalOutcome) {
@@ -504,7 +517,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
                 updatedAt: now(),
               }
       if (updated !== ledger) await saveDepLedger(updated)
-      await $`rmdir ${`${claimsDir}/dep-${slugify(candidate.pkg)}`}`.quiet().nothrow()
+      await $`rmdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
     },
   }
 }

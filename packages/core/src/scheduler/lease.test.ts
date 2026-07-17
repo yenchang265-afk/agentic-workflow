@@ -2,48 +2,101 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { acquireLease, heartbeatLease, isLeaseStale, type LeaseOwner, readLeaseOwner, releaseLease, staleThresholdMs } from "./lease.js"
 
+const LEASE_DIR = "/r/docs/tasks/runs/.watch-lease"
+const OWNER = `${LEASE_DIR}/owner.json`
+
 /**
- * Fake shell with a tiny stateful filesystem: tracks whether the lease dir
- * exists and the owner.json content, so acquire/contend/takeover sequences
- * behave like the real thing. Mirrors makeShell in ../task/store.test.ts.
+ * Fake shell over a small path-based filesystem (dirs + files) with real
+ * rename semantics — crucially, `mv src dst` where dst is an existing
+ * directory NESTS src inside dst rather than failing, exactly like mv(1).
+ * The staged-rename acquire's win/lose detection depends on that behavior,
+ * so a string-matching fake can't exercise it. Mirrors the shape of
+ * makeShell in ../task/store.test.ts.
  */
-const makeLeaseFs = (initial?: { ownerJson?: string; mvFails?: boolean }) => {
-  const state = { dirExists: initial ? true : false, ownerJson: initial?.ownerJson ?? "" }
+const makeLeaseFs = (opts?: { failCmd?: (cmd: string) => boolean }) => {
+  const dirs = new Set<string>(["/", "/r"])
+  const files = new Map<string, string>()
   const log: string[] = []
+  /** Invariant probe: the lease dir must never be visible without its owner record. */
+  let exposedBare = false
+
+  const parent = (p: string): string => p.slice(0, p.lastIndexOf("/")) || "/"
+  const base = (p: string): string => p.slice(p.lastIndexOf("/") + 1)
+  const mkdirp = (p: string): void => {
+    const parts = p.split("/").filter(Boolean)
+    let cur = ""
+    for (const part of parts) {
+      cur += `/${part}`
+      dirs.add(cur)
+    }
+  }
+  const rmTree = (p: string): void => {
+    dirs.delete(p)
+    files.delete(p)
+    for (const d of [...dirs]) if (d.startsWith(`${p}/`)) dirs.delete(d)
+    for (const f of [...files.keys()]) if (f.startsWith(`${p}/`)) files.delete(f)
+  }
+  const moveTree = (src: string, dst: string): void => {
+    if (files.has(src)) {
+      files.set(dst, files.get(src)!)
+      files.delete(src)
+      return
+    }
+    const subDirs = [...dirs].filter((d) => d === src || d.startsWith(`${src}/`))
+    const subFiles = [...files.keys()].filter((f) => f.startsWith(`${src}/`))
+    for (const d of subDirs) {
+      dirs.delete(d)
+      dirs.add(dst + d.slice(src.length))
+    }
+    for (const f of subFiles) {
+      files.set(dst + f.slice(src.length), files.get(f)!)
+      files.delete(f)
+    }
+  }
+
   const handler = (cmd: string): { exitCode?: number; stdout?: string } => {
-    if (cmd.startsWith("mkdir -p")) return { exitCode: 0 }
-    if (cmd.startsWith("mkdir ")) {
-      if (state.dirExists) return { exitCode: 1 }
-      state.dirExists = true
+    if (opts?.failCmd?.(cmd)) return { exitCode: 1 }
+    let m
+    if ((m = /^mkdir -p (\S+)$/.exec(cmd))) {
+      mkdirp(m[1]!)
       return { exitCode: 0 }
     }
-    if (cmd.startsWith("mv ")) {
-      // Atomic takeover rename: succeeds only if the lease dir still exists
-      // (consuming it, like renaming it to the graveyard); a lost race fails.
-      if (initial?.mvFails || !state.dirExists) return { exitCode: 1 }
-      state.dirExists = false
-      state.ownerJson = ""
+    if ((m = /^mkdir (\S+)$/.exec(cmd))) {
+      if (dirs.has(m[1]!)) return { exitCode: 1 }
+      dirs.add(m[1]!)
       return { exitCode: 0 }
     }
-    if (cmd.startsWith("rm -rf")) {
-      // In the takeover path this removes the graveyard, not the live lease; the
-      // single-dir model already cleared the lease on `mv`, so this is a no-op there.
-      if (/\.dead-/.test(cmd)) return { exitCode: 0 }
-      state.dirExists = false
-      state.ownerJson = ""
+    if ((m = /^mv (\S+) (\S+)$/.exec(cmd))) {
+      const [, src, dstArg] = m
+      if (!dirs.has(src!) && !files.has(src!)) return { exitCode: 1 }
+      // mv into an existing directory nests the source inside it.
+      const dst = dirs.has(dstArg!) ? `${dstArg!}/${base(src!)}` : dstArg!
+      moveTree(src!, dst)
       return { exitCode: 0 }
     }
-    if (cmd.startsWith("cat ")) {
-      return state.dirExists && state.ownerJson ? { exitCode: 0, stdout: state.ownerJson } : { exitCode: 1 }
-    }
-    if (cmd.startsWith("printf ")) {
-      // printf '%s' <json> > <file> — the json is the second token onward, up to " > ".
-      const m = /^printf '%s' (.*) > .*owner\.json$/.exec(cmd)
-      if (m) state.ownerJson = m[1]!
+    if ((m = /^rm -rf (\S+)$/.exec(cmd))) {
+      rmTree(m[1]!)
       return { exitCode: 0 }
+    }
+    if ((m = /^rm -f (\S+)$/.exec(cmd))) {
+      files.delete(m[1]!)
+      return { exitCode: 0 }
+    }
+    if ((m = /^cat (\S+)$/.exec(cmd))) {
+      const content = files.get(m[1]!)
+      return content === undefined ? { exitCode: 1 } : { exitCode: 0, stdout: content }
+    }
+    if ((m = /^printf '%s' ([\s\S]*) > (\S+)$/.exec(cmd))) {
+      if (!dirs.has(parent(m[2]!))) return { exitCode: 1 }
+      files.set(m[2]!, m[1]!)
+      return { exitCode: 0 }
+    }
+    if ((m = /^test -[defs] (\S+)$/.exec(cmd))) {
+      return dirs.has(m[1]!) || files.has(m[1]!) ? { exitCode: 0 } : { exitCode: 1 }
     }
     return { exitCode: 0 }
   }
+
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -58,6 +111,7 @@ const makeLeaseFs = (initial?: { ownerJson?: string; mvFails?: boolean }) => {
       cwd: () => chain,
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
         const r = handler(cmd)
+        if (dirs.has(LEASE_DIR) && !files.has(OWNER)) exposedBare = true
         return Promise.resolve({
           exitCode: r.exitCode ?? 0,
           stdout: { toString: () => r.stdout ?? "" },
@@ -69,7 +123,11 @@ const makeLeaseFs = (initial?: { ownerJson?: string; mvFails?: boolean }) => {
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const $ = ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
-  return { $, state, log }
+  const seedLease = (ownerJson?: string) => {
+    mkdirp(LEASE_DIR)
+    if (ownerJson !== undefined) files.set(OWNER, ownerJson)
+  }
+  return { $, dirs, files, log, seedLease, wasExposedBare: () => exposedBare }
 }
 
 const now = new Date("2026-07-06T12:00:00.000Z")
@@ -96,24 +154,40 @@ test("isLeaseStale judges by heartbeat age; missing or garbled owners are stale"
 })
 
 test("acquireLease wins on a free clone and records the owner", async () => {
-  const { $, state } = makeLeaseFs()
+  const { $, dirs } = makeLeaseFs()
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.deepEqual(res, { ok: true })
   const owner = await readLeaseOwner($, "/r", "docs/tasks")
   assert.equal(owner?.pid, 100)
   assert.equal(owner?.heartbeatAt, now.toISOString())
-  assert.equal(state.dirExists, true)
+  assert.equal(dirs.has(LEASE_DIR), true)
+})
+
+test("acquireLease never exposes the lease dir without its owner record (T3 acquire race)", async () => {
+  // The old acquire won with `mkdir` and wrote owner.json in a SEPARATE call;
+  // a rival reading in that window saw a missing record, judged the fresh
+  // lease stale, and took it over. The staged rename must close that window.
+  const { $, wasExposedBare } = makeLeaseFs()
+  await acquireLease($, "/r", "docs/tasks", me, now)
+  assert.equal(wasExposedBare(), false, "lease dir was observable without owner.json")
 })
 
 test("acquireLease refuses when a live owner holds the lease, reporting who", async () => {
-  const { $ } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T11:59:00.000Z")) })
+  const { $, dirs, files, seedLease } = makeLeaseFs()
+  seedLease(JSON.stringify(liveOwner("2026-07-06T11:59:00.000Z")))
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.equal(res.ok, false)
   assert.equal(!res.ok && res.owner?.pid, 200)
+  // The loser's staging dir was nested into the holder's lease by `mv` — it
+  // must clean up its own debris and leave the holder's record untouched.
+  assert.equal(JSON.parse(files.get(OWNER)!).pid, 200)
+  const debris = [...dirs, ...files.keys()].filter((p) => p.includes(".new-"))
+  assert.deepEqual(debris, [], "loser left staging debris behind")
 })
 
 test("acquireLease takes over a stale lease by renaming it aside atomically", async () => {
-  const { $, log } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")) })
+  const { $, log, seedLease } = makeLeaseFs()
+  seedLease(JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")))
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.deepEqual(res, { ok: true })
   const owner = await readLeaseOwner($, "/r", "docs/tasks")
@@ -128,16 +202,29 @@ test("acquireLease takes over a stale lease by renaming it aside atomically", as
 test("acquireLease that loses the takeover rename backs off and reports the winner", async () => {
   // Two takers see the same stale lease; the one whose `mv` fails (the other moved
   // it first) must NOT recreate the lease — it reports the current owner instead.
-  const { $ } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")), mvFails: true })
+  const { $, seedLease } = makeLeaseFs({ failCmd: (cmd) => cmd.startsWith("mv ") && /\.dead-/.test(cmd) })
+  seedLease(JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")))
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.equal(res.ok, false)
   assert.equal(!res.ok && res.owner?.pid, 200)
 })
 
 test("acquireLease treats a garbled owner record as stale and takes over", async () => {
-  const { $ } = makeLeaseFs({ ownerJson: "not json" })
+  const { $, seedLease } = makeLeaseFs()
+  seedLease("not-json")
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.deepEqual(res, { ok: true })
+})
+
+test("acquireLease recovers a crashed winner's empty lease dir via takeover", async () => {
+  // A record-less lease dir can only be crash debris (a live winner's dir is
+  // never observable without owner.json) — it must be take-overable.
+  const { $, seedLease } = makeLeaseFs()
+  seedLease()
+  const res = await acquireLease($, "/r", "docs/tasks", me, now)
+  assert.deepEqual(res, { ok: true })
+  const owner = await readLeaseOwner($, "/r", "docs/tasks")
+  assert.equal(owner?.pid, 100)
 })
 
 test("heartbeatLease refreshes heartbeatAt but preserves startedAt", async () => {
@@ -152,7 +239,8 @@ test("heartbeatLease refreshes heartbeatAt but preserves startedAt", async () =>
 
 test("heartbeatLease refuses to clobber a lease it no longer owns (post-takeover resurrection, T3)", async () => {
   // A new owner took over — the old watcher's heartbeat must not overwrite it.
-  const { $ } = makeLeaseFs({ ownerJson: JSON.stringify(liveOwner("2026-07-06T11:59:00.000Z")) })
+  const { $, seedLease } = makeLeaseFs()
+  seedLease(JSON.stringify(liveOwner("2026-07-06T11:59:00.000Z")))
   assert.equal(await heartbeatLease($, "/r", "docs/tasks", me, now), false)
   const owner = await readLeaseOwner($, "/r", "docs/tasks")
   assert.equal(owner?.pid, 200, "the new owner's record survives")

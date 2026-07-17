@@ -390,10 +390,23 @@ test("statusOf throws for a path outside a known status folder", () => {
 
 test("moveTask succeeds on a valid adjacent hop and records the mv", async () => {
   const log: string[] = []
-  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  // `test -e dest` fails (no duplicate); everything else succeeds.
+  const $ = makeShell((cmd) => (cmd.startsWith("test -e") ? { exitCode: 1 } : { exitCode: 0 }), log)
   const dest = await moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued")
   assert.equal(dest, "/r/docs/tasks/queued/a.md")
   assert.ok(log.some((cmd) => cmd.startsWith("mv ")))
+})
+
+test("moveTask refuses to clobber an existing duplicate id at the destination", async () => {
+  // `test -e dest` succeeds — a same-id file already lives in the destination
+  // folder. The mv would silently destroy it, so moveTask must throw first.
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await assert.rejects(
+    () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued"),
+    /queued\/a\.md already exists/,
+  )
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no mv was attempted")
 })
 
 test("moveTask throws on a stage-skip attempt without touching the shell", async () => {
@@ -408,7 +421,8 @@ test("moveTask throws on a stage-skip attempt without touching the shell", async
 
 test("moveTask throws when mv reports success but the file did not land", async () => {
   // mv exits 0, but the post-move `test -f dest` fails — a false success must throw.
-  const $ = makeShell((cmd) => (cmd.startsWith("test -f") ? { exitCode: 1 } : { exitCode: 0 }))
+  // (`test -e` also fails: no pre-existing duplicate at the destination.)
+  const $ = makeShell((cmd) => (cmd.startsWith("test -") ? { exitCode: 1 } : { exitCode: 0 }))
   await assert.rejects(
     () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued"),
     /did not land at .*queued\/a\.md/,
