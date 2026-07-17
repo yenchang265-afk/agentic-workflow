@@ -1,3 +1,5 @@
+English | [繁體中文](README.zh-TW.md)
+
 # Agentic loop — engineering workflow improvement plans
 
 **Status: all seven plans below are implemented and tested**, now living in

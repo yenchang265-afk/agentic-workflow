@@ -1,3 +1,5 @@
+English | [繁體中文](migration.zh-TW.md)
+
 # Migrating between layouts
 
 ## To layered configuration (user scope + repo scope)

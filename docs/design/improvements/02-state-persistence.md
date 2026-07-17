@@ -1,3 +1,5 @@
+English | [繁體中文](02-state-persistence.zh-TW.md)
+
 # 02 — Persist LoopState across restarts
 
 ## Context

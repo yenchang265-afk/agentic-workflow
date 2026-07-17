@@ -1,3 +1,5 @@
+English | [繁體中文](configuration.zh-TW.md)
+
 # Configuration (`.agentic-loop.json`)
 
 Optional JSON file at the repo root. Every field has a sane default; a

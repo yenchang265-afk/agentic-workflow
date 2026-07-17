@@ -1,3 +1,5 @@
+English | [繁體中文](review-sitter.zh-TW.md)
+
 # review-sitter
 
 Sits on pull requests where your review is requested: reads the diff in the context of the surrounding code and posts one structured review comment per requested head. **Never approves, requests changes, or merges — the human reviewer stays the reviewer of record.**

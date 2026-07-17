@@ -1,3 +1,5 @@
+English | [繁體中文](05-secret-redaction.zh-TW.md)
+
 # 05 — Secret redaction on durable artifacts
 
 ## Context

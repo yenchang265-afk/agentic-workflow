@@ -1,3 +1,5 @@
+English | [繁體中文](main-sitter.zh-TW.md)
+
 # main-sitter
 
 Sits on the default branch's CI: when it goes red, diagnoses the failure on that exact head (bisecting when needed), writes a verified forward fix or revert, and opens a draft remedy PR — commenting once on the culprit PR. **Never pushes the watched branch; merging stays a human call.**
