@@ -1,3 +1,5 @@
+English | [繁體中文](README.zh-TW.md)
+
 # Loop kinds
 
 Each kind is a single agentic loop. Each file below is that kind's full

@@ -1,3 +1,5 @@
+English | [繁體中文](opencode.zh-TW.md)
+
 # OpenCode plugin
 
 How the OpenCode variant executes, its full command surface, and install

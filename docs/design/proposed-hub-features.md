@@ -1,3 +1,5 @@
+English | [繁體中文](proposed-hub-features.zh-TW.md)
+
 # Proposed hub features — closing the read/write gap
 
 This is a **proposal + implementation plan**, not a design record of shipped

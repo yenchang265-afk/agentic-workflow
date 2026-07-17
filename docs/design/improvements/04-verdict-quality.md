@@ -1,3 +1,5 @@
+English | [繁體中文](04-verdict-quality.zh-TW.md)
+
 # 04 — Verdict quality: structured reasons + multi-lens review
 
 Two independent features; implement in order (A is small and B builds on

@@ -1,3 +1,5 @@
+English | [繁體中文](engineering.zh-TW.md)
+
 # engineering
 
 The engineering workflow: PLAN (park at the human plan gate) then BUILD → VERIFY → REVIEW over the docs/tasks backlog.

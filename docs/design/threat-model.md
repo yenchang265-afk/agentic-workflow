@@ -1,3 +1,5 @@
+English | [繁體中文](threat-model.zh-TW.md)
+
 # Threat model — the agentic loop
 
 What can go wrong when a loop kind runs largely unattended — the engineering

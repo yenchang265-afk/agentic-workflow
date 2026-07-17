@@ -1,3 +1,5 @@
+English | [繁體中文](README.zh-TW.md)
+
 # Docs index
 
 One canonical file per topic — update the canonical file and link to it;
@@ -38,6 +40,7 @@ translated file `<name>.<BCP-47-lang-code>.md` next to the English original
 (e.g. [`README.zh-TW.md`](../README.zh-TW.md) next to [`../README.md`](../README.md))
 and put a one-line language switcher as the first line of both files, e.g.
 `English | [繁體中文](README.zh-TW.md)` in the English file and
-`[English](README.md) | 繁體中文` in the translated one. Only `README.md`
-is translated today; add more docs or languages the same way as the need
-comes up — don't pre-translate everything.
+`[English](README.md) | 繁體中文` in the translated one. All user-facing
+docs (this index, everything under `docs/`, and the package/plugin
+READMEs) have a zh-TW translation today; add more languages the same way
+as the need comes up.

@@ -1,3 +1,5 @@
+English | [繁體中文](pr-sitter.zh-TW.md)
+
 # pr-sitter
 
 Sits on open pull requests: answers review comments, fixes failing checks, resolves conflicts, and keeps the branch green until a human merges. **Never merges.**

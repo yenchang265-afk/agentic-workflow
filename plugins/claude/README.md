@@ -1,3 +1,5 @@
+English | [繁體中文](README.zh-TW.md)
+
 # agentic-loop — Claude Code plugin
 
 Drives backlog tasks through **PLAN / BUILD → VERIFY → REVIEW** as a

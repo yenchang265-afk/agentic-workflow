@@ -1,3 +1,5 @@
+English | [繁體中文](dep-sitter.zh-TW.md)
+
 # dep-sitter
 
 Sits on vulnerable and outdated dependencies: confirms the advisory, applies the patch/minor upgrade on a branch, fixes the fallout, verifies the suite is green, and opens a draft PR. **Major bumps are never auto-fixed and merging stays a human call.**

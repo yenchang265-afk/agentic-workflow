@@ -1,3 +1,5 @@
+English | [繁體中文](07-multi-loop-scheduler.zh-TW.md)
+
 # 07 — Multi-loop kinds on a common scheduler
 
 ## Context

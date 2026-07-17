@@ -1,3 +1,5 @@
+English | [繁體中文](README.zh-TW.md)
+
 # @agentic-loop/hub
 
 > **Beta.** The hub is functional and tested at the API level, but young:

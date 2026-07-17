@@ -1,3 +1,5 @@
+English | [繁體中文](AGENTS.zh-TW.md)
+
 # AGENTS.md — <project name>
 
 <!--

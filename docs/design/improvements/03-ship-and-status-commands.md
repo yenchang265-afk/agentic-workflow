@@ -1,3 +1,5 @@
+English | [繁體中文](03-ship-and-status-commands.zh-TW.md)
+
 # 03 — `/agent-loop ship` and a real `/agent-loop status` dashboard
 
 > **Addendum:** ship now also pushes the task's `feature/<id>` branch and
