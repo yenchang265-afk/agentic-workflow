@@ -179,8 +179,16 @@ export const makeListener = (routes: readonly Route[], webRoot: string, rawRoute
     try {
       await handleRequest(req, res, root, routes, rawRoutes)
     } catch (err) {
-      if (!res.headersSent) sendJson(res, json(500, { error: (err as Error).message }))
-      else res.end()
+      // The reply itself may throw synchronously (e.g. writing to a socket the
+      // oversized-body guard already destroyed) — an unguarded throw HERE is an
+      // unhandled rejection, which takes the whole server down under node's
+      // default policy. The net must never leak.
+      try {
+        if (!res.headersSent) sendJson(res, json(500, { error: (err as Error).message }))
+        else res.end()
+      } catch {
+        res.destroy()
+      }
     }
   }
 }

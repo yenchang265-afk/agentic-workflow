@@ -95,8 +95,14 @@ export const isGitIgnored = async ($: Shell, directory: string, file: string): P
   return out.exitCode === 0
 }
 
-/** Write raw JSON back, pretty-printed with a trailing newline (how the repo's own config is formatted). */
+/**
+ * Write raw JSON back, pretty-printed with a trailing newline (how the repo's
+ * own config is formatted). Temp + rename so a loop process running
+ * `loadConfig` concurrently never reads a torn file.
+ */
 export const writeRawLayer = (file: string, raw: unknown): void => {
   fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, `${JSON.stringify(raw, null, 2)}\n`)
+  const tmp = `${file}.tmp-${process.pid}`
+  fs.writeFileSync(tmp, `${JSON.stringify(raw, null, 2)}\n`)
+  fs.renameSync(tmp, file)
 }

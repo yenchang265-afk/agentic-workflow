@@ -251,20 +251,22 @@ const acquireWatchLease = async (
   config: Config,
 ): Promise<{ ok: true } | { ok: false; message: string }> => {
   const dir = deps.directory
-  const existing = watchLeases.get(dir)
-  if (existing) {
-    existing.count += 1
-    return { ok: true }
-  }
-  // Coalesce concurrent first-arms: joiners await the one in-flight acquisition, then
-  // take the refcount fast-path on success rather than racing a second `acquireLease`.
-  const inflight = watchLeaseAcquiring.get(dir)
-  if (inflight) {
+  for (;;) {
+    const existing = watchLeases.get(dir)
+    if (existing) {
+      existing.count += 1
+      return { ok: true }
+    }
+    // Coalesce concurrent first-arms: joiners await the one in-flight acquisition,
+    // then loop back to take the refcount fast-path on the entry it created. Looping
+    // (not a one-shot `get`) matters: a concurrent last-unwatch can release the
+    // entry between the acquisition resolving and this joiner's increment — a
+    // silent `ok` here would hold NO share, and its later release would underflow
+    // a future entry's refcount, dropping a lease another session still holds (T3).
+    const inflight = watchLeaseAcquiring.get(dir)
+    if (!inflight) break
     const res = await inflight
     if (!res.ok) return res
-    const e = watchLeases.get(dir)
-    if (e) e.count += 1
-    return { ok: true }
   }
   const attempt = (async (): Promise<{ ok: true } | { ok: false; message: string }> => {
     const res = await acquireLease(deps.$, dir, config.tasksDir, leaseOwner(), new Date())
@@ -478,12 +480,20 @@ const markClaimedOnHumanBranch = async (deps: Deps, config: Config, task: { id: 
 /** The slash command a stage fires — named by the manifest (e.g. plan → `plan-task`). Pure. */
 const stageCommand = (loaded: LoadedManifest, stage: Stage): string => stageDef(loaded.manifest, stage).command
 
+/** How long a timed-out stage gets to actually settle after `session.abort`
+ *  before the timeout error is allowed to unwind into checkpoint/teardown. */
+const ABORT_GRACE_MS = 30_000
+
 /**
  * Fire a stage command and return the assistant text it produced, plus the
  * usage totals (tokens/cost/model) the assistant message reports — previously
  * discarded, now recorded into the run metrics. Throws when the stage exceeds
  * the configured wall-clock cap — a hung stage must fail the loop (and
  * release its locks via onIdle's catch) rather than wedge the driver forever.
+ * On timeout the underlying turn is aborted and given a bounded grace to
+ * settle first: a merely-rejected race would leave the orphaned turn editing
+ * files and running git WHILE onIdle's catch checkpoints and tears down
+ * isolation in the same tree.
  */
 const runStage = async (
   client: Client,
@@ -497,11 +507,12 @@ const runStage = async (
     body: { command: stage, arguments: args },
   })
   let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${stage} stage timed out after ${timeoutMinutes} minutes`)),
-      timeoutMinutes * 60_000,
-    )
+    timer = setTimeout(() => {
+      timedOut = true
+      reject(new Error(`${stage} stage timed out after ${timeoutMinutes} minutes`))
+    }, timeoutMinutes * 60_000)
   })
   try {
     const res = await Promise.race([command, timeout])
@@ -526,6 +537,26 @@ const runStage = async (
         }
       : undefined
     return { text, ...(usage ? { usage } : {}) }
+  } catch (err) {
+    if (timedOut) {
+      // Kill the orphaned turn before the timeout unwinds into teardown, and
+      // swallow its eventual settlement so the lost race never surfaces as an
+      // unhandled rejection. Both are best-effort: after the grace, failing
+      // the loop still beats wedging the driver forever.
+      await client.session.abort({ path: { id: sessionID } }).catch(() => {})
+      let grace: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([
+        command.then(
+          () => {},
+          () => {},
+        ),
+        new Promise<void>((resolve) => {
+          grace = setTimeout(resolve, ABORT_GRACE_MS)
+        }),
+      ])
+      clearTimeout(grace)
+    }
+    throw err
   } finally {
     clearTimeout(timer)
   }

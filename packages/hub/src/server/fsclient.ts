@@ -68,10 +68,24 @@ const strOut = (s: string) => ({ toString: () => s })
 /** Bun-`$`-compatible tagged template. Never throws; capture via .exitCode/.stdout/.stderr. */
 export const sh: Shell = (strings, ...exprs) => new ShellPromise(render(strings, exprs))
 
+/**
+ * Containment rail: the resolved target must stay inside `directory`. Every
+ * current caller builds `query.path` from validated ids, but this is the hub's
+ * shared FS reader — a future route passing user input as `path` must not
+ * inherit a traversal primitive (`..` or an absolute path would escape the
+ * repo silently, since `path.resolve` honors both).
+ */
+const contained = (directory: string, rel: string): string | null => {
+  const root = path.resolve(directory)
+  const abs = path.resolve(root, rel)
+  return abs === root || abs.startsWith(root + path.sep) ? abs : null
+}
+
 export const fsClient: Client = {
   file: {
     async list({ query }) {
-      const abs = path.resolve(query.directory, query.path)
+      const abs = contained(query.directory, query.path)
+      if (!abs) return { data: [] }
       let entries: fs.Dirent[]
       try {
         entries = fs.readdirSync(abs, { withFileTypes: true })
@@ -87,7 +101,8 @@ export const fsClient: Client = {
       return { data }
     },
     async read({ query }) {
-      const abs = path.resolve(query.directory, query.path)
+      const abs = contained(query.directory, query.path)
+      if (!abs) return { data: null }
       try {
         return { data: { content: fs.readFileSync(abs, "utf8") } }
       } catch {
