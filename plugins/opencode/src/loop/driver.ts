@@ -2,6 +2,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { writeFileAtomic } from "@agentic-loop/core/fsatomic"
 import { type Task } from "@agentic-loop/core/task/schema"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
 import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
@@ -705,7 +706,7 @@ const flushMetrics = async (deps: Deps, sessionID: string, config: Config, state
     samples,
     open: true,
   })
-  await deps.$`printf '%s' ${doc} > ${file}`.quiet().nothrow()
+  await writeFileAtomic(deps.$, file, doc)
 }
 
 /**
@@ -744,7 +745,7 @@ const renderMetrics = async (
     sessionID,
     samples,
   })
-  await deps.$`printf '%s' ${doc} > ${file}`.quiet().nothrow()
+  await writeFileAtomic(deps.$, file, doc)
 }
 
 /** Run the stage chain from `first` until the pure logic yields a gate/done/stop.
@@ -1310,6 +1311,12 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
  */
 const startPlanById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<void> => {
   const { client } = deps
+  // Same busy guard as `claim`: this session may already be driving a
+  // DIFFERENT task (watch-claimed) — the unconditional clearLoop below would
+  // null that run's state and silently abandon it mid-stage.
+  if (driving.has(sessionID) || getLoop(sessionID)) {
+    return void (await toast(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning"))
+  }
   // Accept the short-hash handle (`plan f7k3`) the UIs surface as the copyable
   // id — the same resolution the gate verbs do.
   const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
@@ -1514,6 +1521,11 @@ export const handleCommand = async (
   if (lower === "recover" || lower.startsWith("recover ")) {
     let id = arg.slice("recover".length).trim()
     if (!id) return void (await toast(client, `Usage: ${ECMD} recover <id>.`, "warning"))
+    // Same busy guard as `claim`: recovering while this session drives a
+    // DIFFERENT task would clearLoop that run's state and abandon it mid-stage.
+    if (driving.has(sessionID) || getLoop(sessionID)) {
+      return void (await toast(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning"))
+    }
     // Accept the short-hash handle, same as the gate verbs and `plan <id>`.
     const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
     if (resolved && "ambiguous" in resolved) {
@@ -1522,8 +1534,7 @@ export const handleCommand = async (
     if (resolved) id = resolved.id
     const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
     if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
-    const driving = findSessionDriving(id)
-    if (driving) {
+    if (findSessionDriving(id)) {
       return void (await toast(client, `Task "${id}" is being driven by a live loop — nothing to recover.`, "warning"))
     }
     if (isClaimable(task)) {

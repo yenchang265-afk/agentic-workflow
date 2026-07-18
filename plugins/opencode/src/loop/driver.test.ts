@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-loop/core/task/store"
 import { serializeTask } from "@agentic-loop/core/task/schema"
 import { firstStep } from "@agentic-loop/core/loop/engine"
-import type { LoopState } from "@agentic-loop/core/loop/state"
+import { clearLoop, setLoop, type LoopState } from "@agentic-loop/core/loop/state"
 import type { Config } from "../config.ts"
 import {
   abortedSessionID,
@@ -259,7 +259,7 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
     let out = { exitCode: 0, stdout: "", stderr: "" }
     if (parts[0] === "cat") {
       out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]!, stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
-    } else if (parts[0] === "test" && parts[1] === "-f") {
+    } else if (parts[0] === "test" && (parts[1] === "-f" || parts[1] === "-e")) {
       out = { exitCode: parts[2]! in fs ? 0 : 1, stdout: "", stderr: "" }
     } else if (parts[0] === "mv") {
       const src = parts[1]!
@@ -357,6 +357,48 @@ test("plan <short-id> resolves the short-hash handle and starts planning", async
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /planning…/, `unexpected toast: ${toasts[0]?.message}`)
+})
+
+test("plan <id> refuses while this session is already driving a loop (no clearLoop clobber)", async () => {
+  // A watch session mid-BUILD on task A has live loop state; `plan C` used to
+  // clearLoop it unconditionally, silently abandoning A at the next stage
+  // boundary. It must refuse with the same busy guard `claim` uses.
+  const sessionID = "sess-busy-plan"
+  const busy: LoopState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
+  setLoop(sessionID, busy)
+  try {
+    const queued = serializeTask({ title: "Do the thing", body: "Just a body, no plan yet." })
+    const { client, toasts } = makeClient()
+    const log: string[] = []
+    const deps: Deps = { client, $: makeShellFS({ "docs/tasks/queued/f7k3-do-the-thing.md": queued }, log), directory: "/repo", log: () => {} }
+
+    await handleCommand(deps, sessionID, "plan f7k3", testConfig)
+
+    assert.equal(toasts.length, 1)
+    assert.match(toasts[0]?.message ?? "", /already driving in this session/)
+    assert.ok(!log.some((cmd) => cmd.startsWith("mkdir ")), "no claim marker was taken")
+  } finally {
+    clearLoop(sessionID)
+  }
+})
+
+test("recover <id> refuses while this session is already driving a loop (no clearLoop clobber)", async () => {
+  const sessionID = "sess-busy-recover"
+  const busy: LoopState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
+  setLoop(sessionID, busy)
+  try {
+    const inProgress = serializeTask({ title: "Other task", body: `${PLAN_HEADING}\n\n1. Step.` })
+    const { client, toasts } = makeClient()
+    const log: string[] = []
+    const deps: Deps = { client, $: makeShellFS({ "docs/tasks/in-progress/other.md": inProgress }, log), directory: "/repo", log: () => {} }
+
+    await handleCommand(deps, sessionID, "recover other", testConfig)
+
+    assert.equal(toasts.length, 1)
+    assert.match(toasts[0]?.message ?? "", /already driving in this session/)
+  } finally {
+    clearLoop(sessionID)
+  }
 })
 
 test("plan <id> on a plan-review task points at the gate verbs, no move", async () => {

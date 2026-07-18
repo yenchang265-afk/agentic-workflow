@@ -1,4 +1,5 @@
 import path from "node:path"
+import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import { z } from "zod"
 import { CODE_PLATFORMS, STAGES, type LoopState } from "./state.js"
@@ -67,7 +68,7 @@ export const saveState = async (
   const dir = path.join(directory, tasksDir, "runs")
   await $`mkdir -p ${dir}`.quiet().nothrow()
   const file = statePath(directory, tasksDir, id)
-  await $`printf '%s' ${JSON.stringify(state, null, 2)} > ${file}`.quiet().nothrow()
+  await writeFileAtomic($, file, JSON.stringify(state, null, 2))
 }
 
 /**

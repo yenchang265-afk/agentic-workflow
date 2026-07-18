@@ -1,4 +1,5 @@
 import path from "node:path"
+import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
 import { buildTaskFile, isPaired, parseTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
@@ -551,6 +552,13 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
   const root = path.dirname(path.dirname(task.path)) // …/docs/tasks
   const destDir = path.join(root, toStatus)
   const dest = path.join(destDir, `${task.id}.md`)
+  // Refuse to clobber a duplicate id (hand-authored drafts and audit-reported
+  // duplicates are real states) — `mv` would silently destroy the other task's
+  // file and audit trail. Mirrors rescueStray's guard.
+  const exists = await $`test -e ${dest}`.quiet().nothrow()
+  if (exists.exitCode === 0) {
+    throw new Error(`cannot move ${task.id} → ${toStatus}: ${toStatus}/${task.id}.md already exists — resolve the duplicate manually`)
+  }
   await $`mkdir -p ${destDir}`.quiet().nothrow()
   const out = await $`mv ${task.path} ${dest}`.quiet().nothrow()
   if (out.exitCode !== 0) {
@@ -693,7 +701,7 @@ export const writeTask = async (
   const destDir = path.join(loc.directory, rel)
   const dest = path.join(destDir, filename)
   await $`mkdir -p ${destDir}`.quiet().nothrow()
-  const out = await $`printf '%s' ${content} > ${dest}`.quiet().nothrow()
+  const out = await writeFileAtomic($, dest, content)
   if (out.exitCode !== 0) {
     throw new Error(`could not write task ${filename}: ${out.stderr.toString().trim()}`)
   }

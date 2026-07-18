@@ -1,5 +1,6 @@
 import path from "node:path"
 import { z } from "zod"
+import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, LoopState } from "../loop/state.js"
@@ -63,7 +64,7 @@ export const saveHeadLedger = async (
   const dir = path.join(directory, tasksDir, "runs", kind)
   await $`mkdir -p ${dir}`.quiet().nothrow()
   const file = path.join(dir, `head-${shortSha(ledger.sha)}.json`)
-  await $`printf '%s' ${JSON.stringify(ledger, null, 2)} > ${file}`.quiet().nothrow()
+  await writeFileAtomic($, file, JSON.stringify(ledger, null, 2))
 }
 
 /** The goal a red head enters the loop with — identical wording regardless of platform. Pure. */
