@@ -203,12 +203,79 @@ export interface ValidateResponse {
 export interface ChecklistItem {
   readonly done: boolean
   readonly label: string
+  /** Set when the hub can perform this step itself (the UI renders a button). */
+  readonly action?: "gen-prompts"
 }
 
 export interface SaveKindResponse {
   readonly written: readonly string[]
   /** Remaining manual steps the hub cannot (or should not) generate. */
   readonly checklist: readonly ChecklistItem[]
+}
+
+export interface ChecklistResponse {
+  readonly checklist: readonly ChecklistItem[]
+}
+
+// --- creator: repo assets ----------------------------------------------------
+
+/** An agent persona under prompts/agents/<name>/. */
+export interface AssetAgent {
+  readonly name: string
+  readonly description?: string
+}
+
+/** An OpenCode command wrapper plugins/opencode/commands/<name>.md. */
+export interface AssetCommand {
+  readonly name: string
+  readonly agent?: string
+  readonly description?: string
+}
+
+/** A skill skills/<name>/SKILL.md, invocable by name from agent prose. */
+export interface AssetSkill {
+  readonly name: string
+  readonly description?: string
+}
+
+export interface AssetsResponse {
+  readonly agents: readonly AssetAgent[]
+  readonly commands: readonly AssetCommand[]
+  readonly skills: readonly AssetSkill[]
+}
+
+/** builder = edits files, full bash; checker = read-only, allowlisted bash + verdict tool. */
+export type AgentPreset = "builder" | "checker"
+
+export interface ScaffoldAgentRequest {
+  readonly name: string
+  readonly description: string
+  readonly preset: AgentPreset
+  /** Skill names woven into body.md as "Invoke the `X` skill" prose; must exist in skills/. */
+  readonly skills?: readonly string[]
+}
+
+export interface ScaffoldCommandRequest {
+  readonly name: string
+  readonly description: string
+  readonly agent: string
+}
+
+export interface ScaffoldSkillRequest {
+  readonly name: string
+  readonly description: string
+}
+
+export interface ScaffoldResponse {
+  readonly written: readonly string[]
+  /** Caveats worth surfacing (e.g. the checker preset's gen:prompts ordering note). */
+  readonly notes?: readonly string[]
+}
+
+export interface GenPromptsResponse {
+  /** false = the generator ran and failed; the UI renders `output` either way. */
+  readonly ok: boolean
+  readonly output: string
 }
 
 // --- backlog doctor ----------------------------------------------------------

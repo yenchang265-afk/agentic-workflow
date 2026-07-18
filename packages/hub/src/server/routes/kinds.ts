@@ -8,6 +8,7 @@ import { LoopManifestSchema, type LoopManifest, type StageDef } from "@agentic-l
 import { renderPrompt } from "@agentic-loop/core/manifest/template"
 import type {
   ChecklistItem,
+  ChecklistResponse,
   KindDetailResponse,
   KindsResponse,
   ManifestIssue,
@@ -34,7 +35,7 @@ export const SLUG_RE = /^[a-z][a-z0-9-]{1,32}$/
  * `:kind`, but that is array order, and array order is not a safety property.
  * Both spellings pass SLUG_RE, so reject them here where it cannot drift.
  */
-const RESERVED_KINDS: readonly string[] = ["validate", "preview"]
+const RESERVED_KINDS: readonly string[] = ["validate", "preview", "checklist"]
 
 export const getKinds = async (deps: HubDeps): Promise<JsonResponse> => {
   const kinds = listLoopKinds(deps.loopsDir).flatMap((kind) => {
@@ -178,7 +179,7 @@ const buildChecklist = (deps: HubDeps, manifest: LoopManifest): ChecklistItem[] 
     items.push({ done: fs.existsSync(dir), label: `agent persona prompts/agents/${agent}/ (body.md + opencode.yaml + claude.yaml)` })
   }
   const missingAgent = agents.some((a) => !fs.existsSync(path.join(repo, "prompts", "agents", a)))
-  items.push({ done: !missingAgent, label: "run `npm run gen:prompts` after authoring the personas" })
+  items.push({ done: !missingAgent, label: "run `npm run gen:prompts` after authoring the personas", action: "gen-prompts" })
   for (const command of [...new Set(manifest.stages.map((s) => s.command))]) {
     const file = path.join(repo, "plugins", "opencode", "commands", `${command}.md`)
     items.push({ done: fs.existsSync(file), label: `opencode command wrapper plugins/opencode/commands/${command}.md` })
@@ -198,6 +199,21 @@ const buildChecklist = (deps: HubDeps, manifest: LoopManifest): ChecklistItem[] 
     items.push({ done: enabled, label: `enable it in the Config tab (loops.${manifest.kind}.enabled)` })
   }
   return items
+}
+
+/**
+ * Recompute the post-save checklist for a manifest without re-saving it —
+ * scaffolds and gen:prompts runs change what's on disk, and the creator
+ * refreshes through here. Writes nothing, so it carries no `mutating` guard.
+ */
+export const checklistKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
+  const body = req.body as { manifest?: unknown } | undefined
+  if (!body?.manifest) return badRequest("body must be {manifest}")
+  const issues = issuesOf(body.manifest)
+  if (issues) return json(400, { error: "manifest invalid", issues })
+  const manifest = LoopManifestSchema.parse(body.manifest)
+  const response: ChecklistResponse = { checklist: buildChecklist(deps, manifest) }
+  return ok(response)
 }
 
 export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {

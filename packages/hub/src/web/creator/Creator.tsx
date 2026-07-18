@@ -14,8 +14,19 @@ import {
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { LoopManifestSchema, type Effect, type LoopManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
-import type { ChecklistItem, KindDetailResponse, KindsResponse, ManifestIssue, SaveKindResponse } from "../../shared/api.js"
+import type {
+  AssetsResponse,
+  ChecklistItem,
+  ChecklistResponse,
+  GenPromptsResponse,
+  KindDetailResponse,
+  KindsResponse,
+  ManifestIssue,
+  SaveKindResponse,
+} from "../../shared/api.js"
 import { fetchJson, postJson } from "../api.js"
+import { useJson } from "../useJson.js"
+import { Confirm } from "../ui/Confirm.js"
 import { EdgeForm, MetaForm, StageForm, TerminalAddForm, type EdgeFormValue } from "./forms.js"
 import { manifestToGraph, sameTerminalSpec, type GraphMeta, type TerminalSpec, type TransitionSlot } from "./graphmodel.js"
 import { layoutGraph } from "./layout.js"
@@ -131,6 +142,10 @@ export const Creator = () => {
   const [error, setError] = useState<string | null>(null)
   // which add-terminal popover is open (stop never asks — it has no status)
   const [terminalDraft, setTerminalDraft] = useState<"park" | "done" | null>(null)
+  // repo asset inventory for the stage form's pickers; bumped after any scaffold
+  const [assetsVersion, setAssetsVersion] = useState(0)
+  const { data: assets } = useJson<AssetsResponse>("/api/assets", [assetsVersion])
+  const [genResult, setGenResult] = useState<GenPromptsResponse | null>(null)
 
   useEffect(() => {
     fetchJson<KindsResponse>("/api/kinds")
@@ -148,6 +163,7 @@ export const Creator = () => {
     setSelected(null)
     setIssues(null)
     setSaved(null)
+    setGenResult(null)
   }
 
   // Bumped on every open so a slow response for a kind the user has since
@@ -277,6 +293,32 @@ export const Creator = () => {
     }
   }
 
+  /** Scaffolds and gen:prompts change what's on disk — recompute without re-saving. */
+  const refreshChecklist = async (): Promise<void> => {
+    if (!saved || !currentManifest) return
+    try {
+      const res = await postJson<ChecklistResponse>("/api/kinds/checklist", { manifest: currentManifest })
+      setSaved((s) => s && { ...s, checklist: res.checklist })
+    } catch {
+      // non-fatal: the stale checklist corrects on the next save
+    }
+  }
+
+  const onScaffolded = (): void => {
+    setAssetsVersion((v) => v + 1)
+    void refreshChecklist()
+  }
+
+  const runGenPrompts = async (): Promise<void> => {
+    try {
+      const res = await postJson<GenPromptsResponse>("/api/gen-prompts", {})
+      setGenResult(res)
+      await refreshChecklist()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const selectedNode = selected?.kind === "node" ? nodes.find((n) => n.id === selected.id) : undefined
   const selectedEdge = selected?.kind === "edge" ? edges.find((e) => e.id === selected.id) : undefined
   const targetLabelOf = (edge: Edge): string => {
@@ -378,6 +420,8 @@ export const Creator = () => {
               prompt={prompts[(selectedNode.data as StageNodeData).stage.name] ?? ""}
               manifest={currentManifest}
               prompts={prompts}
+              assets={assets}
+              onScaffolded={onScaffolded}
               onChange={(next) => {
                 const prev = (selectedNode.data as StageNodeData).stage.name
                 if (prev !== next.name && prompts[prev] !== undefined) {
@@ -434,8 +478,23 @@ export const Creator = () => {
               {saved.checklist.map((c: ChecklistItem, k: number) => (
                 <div key={k} className={`check-item${c.done ? " done" : ""}`}>
                   {c.done ? <CheckIcon /> : <CircleIcon />} {c.label}
+                  {c.action === "gen-prompts" && (
+                    <Confirm
+                      title="Run gen:prompts?"
+                      detail="Runs node scripts/gen-prompts.mjs in the repo — regenerates the checked-in plugins/opencode/agents/ and plugins/claude/agents/ files and normalizes command agent bindings."
+                      confirmLabel="Run generator"
+                      onConfirm={runGenPrompts}
+                      trigger={<Button>run now</Button>}
+                    />
+                  )}
                 </div>
               ))}
+              {genResult &&
+                (genResult.ok ? (
+                  <div className="muted">gen:prompts succeeded</div>
+                ) : (
+                  <pre className="gen-output">{genResult.output || "gen:prompts failed with no output"}</pre>
+                ))}
             </div>
           )}
         </div>
