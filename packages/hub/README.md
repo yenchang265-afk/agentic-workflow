@@ -96,7 +96,8 @@ creator tab is unaffected.
   duplicate ids it only reports.
 - **Loop creator**: the manifest state machine on a React Flow canvas —
   work/check stages as nodes, fire/park/done/stop transitions as edges,
-  side-panel forms for stage fields, effects, work source, and stage prompts.
+  side-panel forms for stage fields (including the optional per-stage
+  `model`), effects, work source, and stage prompts.
   Validation runs the real `LoopManifestSchema` (client-side for instant
   feedback, server-side on save). Save writes
   `packages/core/loops/<kind>/loop.json` + prompt stubs **only** and returns

@@ -161,6 +161,9 @@ schema as the OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode
 here — see below); `loops.<kind>.trigger` parses but is a no-op on this
 pull-only host (`loop_claim` stays the manual trigger); the removed
 `gateBeforeBuild`/`interviewBeforePlan` keys are silently ignored.
+`loops.<kind>.stageModels` works here: the MCP server's fire payloads carry a
+`model` field the orchestration skill passes to the Task tool (a `provider/`
+prefix from an OpenCode-style value is stripped automatically).
 
 ## Known limitations
 

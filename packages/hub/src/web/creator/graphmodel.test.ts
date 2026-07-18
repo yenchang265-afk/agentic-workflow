@@ -16,6 +16,17 @@ test("graph round-trips every shipped manifest exactly", () => {
   }
 })
 
+test("a stage's optional model survives the graph round-trip", () => {
+  const { manifest } = loadManifest(defaultLoopsDir(), "engineering")
+  const withModel = parseManifest({
+    ...manifest,
+    stages: manifest.stages.map((s, i) => (i === 0 ? { ...s, model: "anthropic/claude-sonnet-4-5" } : s)),
+  })
+  const roundTripped = graphToManifest(manifestToGraph(withModel))
+  assert.equal(roundTripped.stages[0]?.model, "anthropic/claude-sonnet-4-5")
+  assert.equal(roundTripped.stages[1]?.model, undefined)
+})
+
 test("terminals dedupe by outcome+status while messages stay on edges", () => {
   const { manifest } = loadManifest(defaultLoopsDir(), "engineering")
   const graph = manifestToGraph(manifest)

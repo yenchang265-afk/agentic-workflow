@@ -4,6 +4,7 @@ import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
 import { CODE_PLATFORMS, type Config, type LoopTrigger } from "./loop/state.js"
+import type { StageDef } from "./manifest/schema.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
 /**
@@ -97,6 +98,8 @@ const BaseConfigSchema = z.object({
         codePlatform: CodePlatformSchema.optional(),
         /** How a watching host schedules claims for this kind (default: poll). */
         trigger: LoopTriggerSchema.optional(),
+        /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
+        stageModels: z.record(z.string(), z.string().min(1)).optional(),
       }),
     )
     .default({}),
@@ -189,6 +192,21 @@ export const platformFor = (config: Config, kind: string): CodePlatform =>
 /** How a watching host schedules claims for a loop kind: configured trigger, else poll. Pure. */
 export const triggerFor = (config: Config, kind: string): LoopTrigger =>
   config.loops[kind]?.trigger ?? { type: "poll" }
+
+/**
+ * The model a stage runs with: config `loops.<kind>.stageModels.<stage>`, else
+ * the manifest stage's `model`, else undefined (the host's default). Pure.
+ */
+export const modelFor = (config: Config, kind: string, def: StageDef): string | undefined =>
+  config.loops[kind]?.stageModels?.[def.name] ?? def.model
+
+/**
+ * A model string without its provider prefix ("anthropic/claude-sonnet-4-5" →
+ * "claude-sonnet-4-5") — for hosts that take bare model ids (Claude Code's
+ * Task tool), so a config written OpenCode-style works on both hosts. Pure.
+ */
+export const bareModel = (model: string): string =>
+  model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model
 
 /**
  * Build a tracker deep link from a task's `tracker.key` and the configured

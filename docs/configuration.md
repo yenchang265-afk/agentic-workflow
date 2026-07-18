@@ -208,6 +208,30 @@ it. The warnings are advisory: they annotate a save, never block it. See
   `watch poll [interval]` (or a bare interval), `watch cron "<schedule>"`,
   or `watch idle`.
 
+- **`loops.<kind>.stageModels`** — stage name → the model that stage runs
+  with, so cheap stages can run on a cheap model and hard stages on a strong
+  one:
+
+  ```json
+  {
+    "loops": {
+      "engineering": {
+        "stageModels": {
+          "build": "anthropic/claude-sonnet-4-5",
+          "review": "anthropic/claude-opus-4-5"
+        }
+      }
+    }
+  }
+  ```
+
+  The value is a host-specific model string: OpenCode wants
+  `provider/modelID` (as above); Claude Code wants a Task-tool model
+  (`sonnet`, `opus`, `haiku`, or a bare model id — a `provider/` prefix is
+  tolerated and stripped, so one shared config works on both hosts).
+  Precedence per stage: this key → the manifest stage's `model` field →
+  unset (the host's default model). Stages not listed keep the host default.
+
 ## Admin hub (`hub` — user scope only)
 
 The hub reads its settings from the `hub` section of the **user-scope**

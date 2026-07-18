@@ -10,7 +10,7 @@ import { type Action, type Config, type LoopState, type TaskRef } from "@agentic
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
 import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
 import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
-import { effectiveAllowlist, stageDef, type LoadedManifest } from "@agentic-loop/core/manifest/schema"
+import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
 import { pollOnce } from "@agentic-loop/core/scheduler/scheduler"
 import {
   buildEntryState,
@@ -21,7 +21,7 @@ import {
 } from "@agentic-loop/core/loop/orchestrate"
 import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-loop/core/source/types"
-import { enabledLoopKinds, platformFor } from "@agentic-loop/core/config"
+import { bareModel, enabledLoopKinds, modelFor, platformFor } from "@agentic-loop/core/config"
 import { failedCriteriaBlock, parseVerdict, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
@@ -179,6 +179,16 @@ const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".ver
  * The manifests stay host-neutral; only this host prefixes.
  */
 const agentRef = (name: string): string => `agentic-loop:${name}`
+
+/**
+ * The stage's configured model in this host's vocabulary (config > manifest,
+ * undefined ⇒ host default), with any "provider/" prefix (the OpenCode
+ * spelling) stripped so a shared config works on both hosts.
+ */
+const stageModel = (kind: string, def: StageDef): string | undefined => {
+  const m = modelFor(config, kind, def)
+  return m ? bareModel(m) : undefined
+}
 
 /** Flip the stage marker's `verdictRecorded` flag in place once loop_verdict
  *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
@@ -372,13 +382,16 @@ const claimWarnings = async (): Promise<string[]> => {
 /** The fire payload loop_start/loop_claim return for a fresh claim. */
 const firePayload = (state: LoopState, id: string) => {
   const manifest = manifestFor(state.kind ?? "engineering")
+  const def = stageDef(manifest.manifest, state.stage)
+  const model = stageModel(manifest.manifest.kind, def)
   return {
     action: { kind: "fire", stage: state.stage },
     taskId: id,
     // The subagent to spawn for this stage — the manifest's name under the
     // plugin namespace (Task subagent_type). Fall back to the bare name only
     // if the namespaced one is unknown to this Claude Code version.
-    agent: agentRef(stageDef(manifest.manifest, state.stage).agent),
+    agent: agentRef(def.agent),
+    ...(model ? { model } : {}),
     isolation: state.git ?? null,
     prompt: composePrompt(manifest, state, state.stage),
     ...(state.stage === "plan"
@@ -592,9 +605,11 @@ server.registerTool(
       await appendNote(sh, active.task, auditNote(`BUILD started (iteration ${active.iteration + 1})`, new Date(), actor), log)
     }
     const def = stageDef(activeManifest().manifest, stage)
+    const model = stageModel(activeManifest().manifest.kind, def)
     return ok({
       stage,
       agent: agentRef(def.agent),
+      ...(model ? { model } : {}),
       worktree: active.git?.worktree ?? null,
       deadlineMinutes: config.stageTimeoutMinutes,
       ...(def.kind === "check"
@@ -662,9 +677,11 @@ server.registerTool(
         }
         writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
         lastFireAt = Date.now()
+        const retryModel = stageModel(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
         return ok({
           action: { kind: "fire", stage },
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
+          ...(retryModel ? { model: retryModel } : {}),
           prompt:
             composePrompt(activeManifest(), active, stage) +
             "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the loop_verdict tool call is MANDATORY. " +
@@ -701,9 +718,11 @@ server.registerTool(
     if (action.kind === "fire") {
       await snapshot()
       const nextDef = stageDef(activeManifest().manifest, action.stage)
+      const nextModel = stageModel(activeManifest().manifest.kind, nextDef)
       return ok({
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
+        ...(nextModel ? { model: nextModel } : {}),
         prompt: composePrompt(activeManifest(), active, action.stage),
         note:
           "call loop_stage, then spawn the subagent named in the `agent` field" +

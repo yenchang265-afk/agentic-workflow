@@ -55,6 +55,12 @@ export const StageDefSchema = z.object({
   isolation: z.enum(["worktree", "none"]).default("worktree"),
   /** Wall-clock cap override; defaults to `config.stageTimeoutMinutes`. */
   timeoutMinutes: z.number().int().positive().optional(),
+  /**
+   * Host-specific model this stage runs with (OpenCode: `provider/modelID`;
+   * Claude Code: a Task-tool model). Unset ⇒ the host's default; config
+   * `loops.<kind>.stageModels.<name>` wins over this.
+   */
+  model: z.string().min(1).optional(),
   /** Bash-command globs this stage may run (enforced by the Claude Code stage guard). */
   bashAllowlist: z.array(z.string().min(1)).default([]),
   /** Extra bash globs merged into `bashAllowlist` for the resolved code platform (config `codePlatform`). */

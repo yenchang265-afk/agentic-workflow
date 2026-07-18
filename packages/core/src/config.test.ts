@@ -5,17 +5,20 @@ import path from "node:path"
 import { test } from "node:test"
 import {
   applyAdoPatEnv,
+  bareModel,
   DEFAULT_CONFIG,
   defaultTrackerSystem,
   enabledLoopKinds,
   loadConfig,
   mergeConfigLayers,
+  modelFor,
   parseConfig,
   platformFor,
   trackerUrl,
   triggerFor,
 } from "./config.js"
 import type { Client } from "./host.js"
+import type { StageDef } from "./manifest/schema.js"
 
 test("defaults enable worktree isolation and leave review single-pass", () => {
   assert.equal(DEFAULT_CONFIG.worktreesDir, ".loop-worktrees")
@@ -103,6 +106,39 @@ test("loops.<kind>.trigger accepts all three types and knobs still ride along", 
   assert.deepEqual(triggerFor(c, "pr-sitter"), { type: "cron", schedule: "0 9 * * 1-5" })
   assert.deepEqual(triggerFor(c, "nightly"), { type: "poll", intervalMinutes: 30 })
   assert.equal(c.loops["pr-sitter"]?.["query"], "author:@me")
+})
+
+const stageWith = (model?: string): StageDef => ({
+  name: "build",
+  kind: "work",
+  command: "build",
+  agent: "loop-build",
+  prompt: "stages/build.md",
+  isolation: "worktree",
+  bashAllowlist: [],
+  platformAllowlist: {},
+  ...(model ? { model } : {}),
+})
+
+test("modelFor: config stageModels wins over the manifest stage's model, which wins over nothing", () => {
+  const c = parseConfig({ loops: { engineering: { stageModels: { build: "anthropic/claude-opus-4-5" } } } })
+  assert.equal(modelFor(c, "engineering", stageWith("anthropic/claude-sonnet-4-5")), "anthropic/claude-opus-4-5")
+  assert.equal(modelFor(DEFAULT_CONFIG, "engineering", stageWith("anthropic/claude-sonnet-4-5")), "anthropic/claude-sonnet-4-5")
+  assert.equal(modelFor(DEFAULT_CONFIG, "engineering", stageWith()), undefined)
+  // A stageModels entry for a different stage leaves this one alone.
+  const other = parseConfig({ loops: { engineering: { stageModels: { review: "anthropic/claude-opus-4-5" } } } })
+  assert.equal(modelFor(other, "engineering", stageWith()), undefined)
+})
+
+test("loops.<kind>.stageModels validates fail-fast, unlike positional knobs", () => {
+  assert.throws(() => parseConfig({ loops: { engineering: { stageModels: { build: 42 } } } }), /stageModels/)
+  assert.throws(() => parseConfig({ loops: { engineering: { stageModels: { build: "" } } } }), /stageModels/)
+})
+
+test("bareModel strips a provider prefix and passes bare ids through", () => {
+  assert.equal(bareModel("anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5")
+  assert.equal(bareModel("openrouter/anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5")
+  assert.equal(bareModel("sonnet"), "sonnet")
 })
 
 test("loops.<kind>.trigger rejects unknown types and malformed shapes", () => {
@@ -299,6 +335,14 @@ test("mergeConfigLayers: loops merge per kind and per knob; other kinds survive"
   const repo = { loops: { "pr-sitter": { query: "author:@me" }, engineering: { enabled: false } } }
   assert.deepEqual(mergeConfigLayers(user, repo), {
     loops: { "pr-sitter": { enabled: true, query: "author:@me" }, engineering: { enabled: false } },
+  })
+})
+
+test("mergeConfigLayers: stageModels merge per stage; repo wins per key", () => {
+  const user = { loops: { engineering: { stageModels: { build: "a", review: "b" } } } }
+  const repo = { loops: { engineering: { stageModels: { build: "c" } } } }
+  assert.deepEqual(mergeConfigLayers(user, repo), {
+    loops: { engineering: { stageModels: { build: "c", review: "b" } } },
   })
 })
 

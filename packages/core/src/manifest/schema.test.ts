@@ -91,6 +91,17 @@ test("rejects a backlog pool whose entryStage names no stage", () => {
   assert.throws(() => parseManifest(raw), /pool "queued" enters unknown stage "wrok"/)
 })
 
+test("a stage's optional model round-trips, defaults to undefined, and rejects an empty string", () => {
+  const withModel = parseManifest({
+    ...base,
+    stages: [{ ...base.stages[0], model: "anthropic/claude-sonnet-4-5" }, base.stages[1]],
+  })
+  assert.equal(withModel.stages[0]?.model, "anthropic/claude-sonnet-4-5")
+  assert.equal(withModel.stages[1]?.model, undefined)
+  assert.equal(parseManifest(base).stages[0]?.model, undefined)
+  assert.throws(() => parseManifest({ ...base, stages: [{ ...base.stages[0], model: "" }, base.stages[1]] }), /model/)
+})
+
 test("rejects duplicate stage names", () => {
   assert.throws(() => parseManifest({ ...base, stages: [...base.stages, base.stages[0]] }), /duplicate stage names/)
 })

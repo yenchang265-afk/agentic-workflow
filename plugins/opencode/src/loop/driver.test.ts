@@ -906,6 +906,42 @@ test("drive interprets a pr-sitter loop with the pr-sitter manifest, not enginee
   assert.match(outcome?.message ?? "", /nothing actionable/i)
 })
 
+/**
+ * Per-stage model selection: a `loops.<kind>.stageModels.<stage>` config entry
+ * must ride the session.command body (the SDK's optional `model`), and an
+ * unconfigured stage must send no `model` key at all — the host default is
+ * "absent", not a hardcoded string.
+ */
+test("drive passes the configured stage model in the command body, and omits it when unconfigured", async () => {
+  const runWith = async (sessionID: string, config: typeof testConfig) => {
+    const bodies: Record<string, unknown>[] = []
+    const client = {
+      tui: { showToast: async () => ({ data: undefined }) },
+      session: {
+        command: async ({ body }: { body: Record<string, unknown> }) => {
+          bodies.push(body)
+          recordVerdict(sessionID, "triage", { verdict: "FAIL", reason: "nothing actionable" })
+          return { data: { parts: [{ type: "text", text: "triaged: no actionable signal" }] } }
+        },
+      },
+    } as unknown as Deps["client"]
+    const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
+    const state: LoopState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
+    const outcome = await drive(deps, sessionID, config, firstStep(manifestFor("pr-sitter"), state))
+    assert.equal(outcome?.kind, "done")
+    return bodies
+  }
+
+  const configured = await runWith("sess-model-set", {
+    ...testConfig,
+    loops: { "pr-sitter": { enabled: true, stageModels: { triage: "anthropic/claude-opus-4-5" } } },
+  })
+  assert.equal(configured[0]?.["model"], "anthropic/claude-opus-4-5")
+
+  const unconfigured = await runWith("sess-model-unset", testConfig)
+  assert.ok(!("model" in (unconfigured[0] ?? {})), "no model key when none is configured")
+})
+
 test("a timed-out stage aborts the orphaned session turn before unwinding", async () => {
   // The old timeout merely rejected the race: the orphaned turn kept running
   // server-side, editing files and invoking git WHILE onIdle's catch tore down

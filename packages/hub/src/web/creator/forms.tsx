@@ -81,6 +81,15 @@ export const StageForm = ({
           }}
         />
       </Field>
+      <Field label="model (blank = host default; host-specific, e.g. anthropic/claude-sonnet-4-5)">
+        <input
+          value={stage.model ?? ""}
+          onChange={(e) => {
+            const { model: _drop, ...rest } = stage
+            onChange(e.target.value ? ({ ...rest, model: e.target.value } as StageDef) : (rest as StageDef))
+          }}
+        />
+      </Field>
       <Field label="bash allowlist (comma-separated globs; blank = deny all in check stages)">
         <input
           value={csv(stage.bashAllowlist)}

@@ -51,8 +51,8 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
   "ci-runs": { branch: { type: "string", site: "orchestrate.ts:132" } },
 }
 
-/** `trigger` is an object validated by core's LoopTriggerSchema — not a positional knob. */
-const STRUCTURED_KEYS: readonly string[] = ["trigger"]
+/** Object-shaped keys validated by core's schema (LoopTriggerSchema; the `stageModels` record) — not positional knobs. */
+const STRUCTURED_KEYS: readonly string[] = ["trigger", "stageModels"]
 
 /** Levenshtein distance, capped: we only care whether it's 1. */
 const isNearMiss = (a: string, b: string): boolean => {

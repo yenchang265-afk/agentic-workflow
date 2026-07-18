@@ -80,7 +80,7 @@ import {
   type VerdictRecord,
   worstOf,
 } from "@agentic-loop/core/loop/verdict"
-import { enabledLoopKinds, triggerFor } from "@agentic-loop/core/config"
+import { enabledLoopKinds, modelFor, triggerFor } from "@agentic-loop/core/config"
 import type { Config } from "../config.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
 import type { Action, LoopState, Stage, TaskRef } from "@agentic-loop/core/loop/state"
@@ -501,10 +501,11 @@ const runStage = async (
   stage: string,
   args: string,
   timeoutMinutes: number,
+  model?: string,
 ): Promise<{ text: string; usage?: StageUsage }> => {
   const command = client.session.command({
     path: { id: sessionID },
-    body: { command: stage, arguments: args },
+    body: { command: stage, arguments: args, ...(model ? { model } : {}) },
   })
   let timer: ReturnType<typeof setTimeout> | undefined
   let timedOut = false
@@ -603,6 +604,7 @@ export const runStageWithLenses = async (
   iteration: number,
 ): Promise<{ output: string; verdict: Verdict | null; record: VerdictRecord | null }> => {
   const isCheck = stageDef(loaded.manifest, stage).kind === "check"
+  const model = modelFor(config, loaded.manifest.kind, stageDef(loaded.manifest, stage))
   const lenses = stage === "review" ? config.reviewLenses : []
   const passes: (string | null)[] = lenses.length ? [...lenses] : [null]
   const outputs: string[] = []
@@ -634,6 +636,7 @@ export const runStageWithLenses = async (
         stageCommand(loaded, stage),
         passArgs,
         config.stageTimeoutMinutes,
+        model,
       )
       const ms = Date.now() - t0
       const stamp = new Date().toISOString()

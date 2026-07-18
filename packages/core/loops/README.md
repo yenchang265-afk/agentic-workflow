@@ -56,7 +56,8 @@ fails loud at host startup). A minimal two-stage kind:
       "agent": "loop-build",            // subagent persona backing it
       "prompt": "stages/work.md",       // template, relative to this folder
       "isolation": "worktree",          // "worktree" | "none" (main tree, no snapshot)
-      "timeoutMinutes": 90              // optional wall-clock cap override; defaults to config.stageTimeoutMinutes
+      "timeoutMinutes": 90,             // optional wall-clock cap override; defaults to config.stageTimeoutMinutes
+      "model": "anthropic/claude-sonnet-4-5"  // optional host-specific model; config loops.<kind>.stageModels.<name> wins, unset = host default
     },
     {
       "name": "check",

@@ -189,6 +189,8 @@ export interface LoopKindConfig {
   readonly codePlatform?: CodePlatform
   /** How a watching host schedules claims for this kind (default: poll). */
   readonly trigger?: LoopTrigger
+  /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */
+  readonly stageModels?: Readonly<Record<string, string>>
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

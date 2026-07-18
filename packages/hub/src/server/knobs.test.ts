@@ -53,9 +53,9 @@ test("a section for a kind that isn't installed is reported as inert", () => {
   assert.match(w[0]?.message ?? "", /no loop kind "ghost-sitter" is installed/)
 })
 
-test("valid knobs, universal keys, and the structured trigger produce no warnings", () => {
+test("valid knobs, universal keys, and the structured trigger/stageModels produce no warnings", () => {
   const w = lint({
-    engineering: { enabled: true },
+    engineering: { enabled: true, stageModels: { build: "anthropic/claude-sonnet-4-5" } },
     "pr-sitter": { enabled: true, codePlatform: "ado", query: "is:open", trigger: { type: "cron", schedule: "0 * * * *" } },
     "dep-sitter": { severityFloor: "high", includeOutdated: true, ecosystem: "npm" },
     "main-sitter": { branch: "main" },

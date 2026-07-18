@@ -31,6 +31,7 @@ export const StageFlowNode = ({ data, selected }: NodeProps) => {
       <div className="flow-stage-name">{stage.name}</div>
       <div className="flow-stage-meta">
         {stage.kind} · {stage.agent}
+        {stage.model ? ` · ${stage.model}` : ""}
       </div>
       <div className="flow-stage-meta muted">{stage.isolation === "none" ? "main tree" : "worktree"}</div>
       {isCheck ? (

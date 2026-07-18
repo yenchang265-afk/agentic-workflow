@@ -59,7 +59,11 @@ agent named there; never hardcode a per-kind name. If that subagent type is
 unknown to your Claude Code version, retry once with the bare name (e.g.
 `loop-verify`). The stage names below (`loop-plan-author`, `loop-build`, …) are
 the engineering kind's current values, shown for concreteness — a new loop kind
-needs no edit to this protocol.
+needs no edit to this protocol. The same responses may also carry a `model`
+field — the model the user configured for that stage (manifest `model` or
+config `loops.<kind>.stageModels`). When present, pass it as the Task tool's
+`model` parameter when spawning that stage's subagent; when absent, don't set
+`model` (host default). Never hardcode a per-stage model.
 
 ## Step by step
 
