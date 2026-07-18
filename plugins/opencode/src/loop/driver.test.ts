@@ -906,6 +906,48 @@ test("drive interprets a pr-sitter loop with the pr-sitter manifest, not enginee
   assert.match(outcome?.message ?? "", /nothing actionable/i)
 })
 
+test("a timed-out stage aborts the orphaned session turn before unwinding", async () => {
+  // The old timeout merely rejected the race: the orphaned turn kept running
+  // server-side, editing files and invoking git WHILE onIdle's catch tore down
+  // isolation in the same tree. The timeout must abort the turn and wait for
+  // it to settle before the error unwinds.
+  const sessionID = "sess-timeout-abort"
+  const log: string[] = []
+  const events: string[] = []
+  let rejectCommand: ((e: Error) => void) | undefined
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: () =>
+        new Promise((_, reject) => {
+          rejectCommand = reject // never settles until aborted
+        }),
+      abort: async () => {
+        events.push("abort")
+        rejectCommand?.(new Error("aborted"))
+        return { data: true }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+  const state: LoopState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
+  try {
+    await assert.rejects(
+      () =>
+        drive(
+          deps,
+          sessionID,
+          { ...testConfig, stageTimeoutMinutes: 0.001 },
+          firstStep(manifestFor("pr-sitter"), state),
+        ),
+      /timed out after/,
+    )
+    assert.deepEqual(events, ["abort"], "the orphaned turn was aborted exactly once")
+  } finally {
+    clearLoop(sessionID)
+  }
+})
+
 /**
  * Token instrumentation: the assistant message's usage totals (tokens/cost/
  * model) must land in the run metrics — the summary table gains token/cost
