@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import type { RepoInfo, ReposResponse } from "../shared/api.js"
 import { fetchJson } from "./api.js"
+import { useEvents } from "./events.js"
 
 /**
  * Which monitored repo the UI is looking at. The hub can watch several repos
@@ -22,16 +23,26 @@ const RepoContext = createContext<RepoValue>({ repos: [], repoId: null, setRepoI
 export const RepoProvider = ({ children }: { children: ReactNode }) => {
   const [repos, setRepos] = useState<readonly RepoInfo[]>([])
   const [repoId, setRepoIdState] = useState<string | null>(null)
+  const { versions } = useEvents()
 
+  // Re-runs when the server registers a newly loop-enabled repo (SSE `repos`
+  // event); the localStorage check keeps the user's current selection.
   useEffect(() => {
+    let cancelled = false
     fetchJson<ReposResponse>("/api/repos")
       .then((d) => {
+        if (cancelled) return
         setRepos(d.repos)
         const saved = localStorage.getItem(STORAGE_KEY)
         setRepoIdState(d.repos.some((r) => r.id === saved) ? saved : (d.repos[0]?.id ?? null))
       })
-      .catch(() => setRepoIdState(null))
-  }, [])
+      .catch(() => {
+        if (!cancelled) setRepoIdState(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [versions.repos])
 
   const setRepoId = (id: string): void => {
     localStorage.setItem(STORAGE_KEY, id)

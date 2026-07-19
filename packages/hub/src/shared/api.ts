@@ -507,6 +507,8 @@ export type HubEventBase =
   | { readonly type: "gate"; readonly taskId: string; readonly toStatus: string }
   /** `.agentic-loop.json` changed — the server has already reloaded by the time this arrives. */
   | { readonly type: "config" }
+  /** The monitored-repo set grew (a repo became loop-enabled) — refetch /api/repos. Tagged with the new repo's id. */
+  | { readonly type: "repos" }
 
 /** One live-update event on the `/api/events` SSE stream. */
 export type HubEvent = HubEventBase & { readonly repo: string }

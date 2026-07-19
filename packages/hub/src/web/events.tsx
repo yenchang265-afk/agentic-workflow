@@ -15,6 +15,8 @@ export interface EventVersions {
   readonly gate: number
   /** `.agentic-loop.json` changed — from the hub's own save or a hand-edit. */
   readonly config: number
+  /** The monitored-repo set grew — RepoProvider refetches /api/repos. */
+  readonly repos: number
 }
 
 interface EventsValue {
@@ -24,7 +26,7 @@ interface EventsValue {
   readonly requestNotifications: () => void
 }
 
-const initial: EventVersions = { backlog: 0, run: 0, active: 0, tokens: 0, gate: 0, config: 0 }
+const initial: EventVersions = { backlog: 0, run: 0, active: 0, tokens: 0, gate: 0, config: 0, repos: 0 }
 
 const EventsContext = createContext<EventsValue>({
   versions: initial,
