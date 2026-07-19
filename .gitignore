@@ -21,3 +21,17 @@ plugins/claude/mcp-server/dist/
 
 # Hub build output (bundled locally by packages/hub/scripts/build-web.mjs)
 packages/hub/dist/
+
+# Per-editor rule/skill mirrors sprayed by the code-review-graph installer.
+# All duplicate the same MCP blurb into whichever AI editors it detects; this
+# repo's real guidance lives in AGENTS.md (CLAUDE.md symlinks to it).
+.cursorrules
+.windsurfrules
+CODEBUDDY.md
+GEMINI.md
+QODER.md
+.codebuddy/
+.gemini/
+.kiro/
+.qoder/
+.github/code-review-graph.instruction.md
