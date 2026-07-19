@@ -6,6 +6,7 @@ import type { HubDeps } from "./deps.js"
 import { makeEventHub } from "./events.js"
 import { badRequest, makeListener, ok, type JsonResponse, type ParsedRequest, type RawRoute, type Route } from "./http.js"
 import { loadHubSettings } from "./config.js"
+import { makeRepoRegistry } from "./registry.js"
 import { makeRepo, watchShape, type Repo } from "./repo.js"
 import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
@@ -27,7 +28,9 @@ import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
  * (`{ "hub": { "repos": [...], "port"?: n } }` — see config.ts; a repo-level
  * `hub` key is ignored). With neither the hub exits — it never watches a repo
  * you didn't name. `--port <n>` overrides the port. Repo-scoped routes take
- * `?repo=<id>` (default: the first repo).
+ * `?repo=<id>` (default: the first repo). Patterns are re-evaluated on a timer
+ * while the hub runs, so a directory that becomes loop-enabled later joins
+ * without a restart (see registry.ts).
  */
 
 const argValues = (flag: string): string[] => {
@@ -92,17 +95,29 @@ const restartWatcher = (repo: Repo): void => {
   )
 }
 
-const repos: Repo[] = []
-for (const { id, directory } of resolved) repos.push(await makeRepo(id, directory, log, restartWatcher))
+const initialRepos: Repo[] = []
+for (const { id, directory } of resolved) initialRepos.push(await makeRepo(id, directory, log, restartWatcher))
 
-const byId = new Map(repos.map((r) => [r.id, r]))
-const defaultRepo = repos[0] as Repo
+const registry = makeRepoRegistry({
+  patterns,
+  cwd,
+  initial: initialRepos,
+  create: (id, directory) => makeRepo(id, directory, log, restartWatcher),
+  onAdded: (repo) => {
+    restartWatcher(repo)
+    events.broadcast([{ type: "repos", repo: repo.id }])
+    log("info", `now watching ${repo.id} (${repo.directory})`)
+  },
+  log,
+})
+
+const defaultRepo = registry.repos[0] as Repo
 
 /** Resolve the repo a request targets (`?repo=<id>`, default first). */
 const pickRepo = (req: ParsedRequest): Repo | null => {
   const id = req.query.get("repo")
   if (id === null) return defaultRepo
-  return byId.get(id) ?? null
+  return registry.byId.get(id) ?? null
 }
 
 type RepoHandler = (deps: HubDeps, req: ParsedRequest) => Promise<JsonResponse>
@@ -115,10 +130,6 @@ const scoped =
     return handler(repo.deps, req)
   }
 
-const reposResponse: ReposResponse = {
-  repos: repos.map((r) => ({ id: r.id, directory: r.deps.directory })),
-}
-
 /**
  * The loop-kind manifests themselves live in the core package and are shared by
  * every repo, but these handlers read the *repo* around them — saveKind's
@@ -127,7 +138,14 @@ const reposResponse: ReposResponse = {
  * repo whatever `?repo=` asked for, so they are scoped like everything else.
  */
 const routes: Route[] = [
-  { method: "GET", pattern: "/api/repos", handler: async () => ok(reposResponse) },
+  {
+    method: "GET",
+    pattern: "/api/repos",
+    handler: async () =>
+      ok({
+        repos: registry.repos.map((r) => ({ id: r.id, directory: r.deps.directory })),
+      } satisfies ReposResponse),
+  },
   { method: "GET", pattern: "/api/monitor/kinds", handler: scoped(async (deps) => ok({ kinds: deps.boards })) },
   { method: "GET", pattern: "/api/backlog", handler: scoped(getBacklog) },
   { method: "GET", pattern: "/api/tasks/:status/:id", handler: scoped(getTaskDetail) },
@@ -156,7 +174,9 @@ const routes: Route[] = [
   { method: "POST", pattern: "/api/doctor/fix", handler: scoped((deps) => postDoctorFix(deps)), mutating: true },
 ]
 
-for (const repo of repos) restartWatcher(repo)
+for (const repo of registry.repos) restartWatcher(repo)
+
+const repoScan = setInterval(() => void registry.rescan(), 10_000)
 
 const rawRoutes: RawRoute[] = [
   { method: "GET", pattern: "/api/events", handle: (req, res) => events.handle(req, res) },
@@ -166,13 +186,14 @@ const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..",
 const server = http.createServer(makeListener(routes, webRoot, rawRoutes))
 server.listen(port, "127.0.0.1", () => {
   const watched =
-    repos.length === 1
+    registry.repos.length === 1
       ? defaultRepo.deps.directory
-      : `${repos.length} repos: ${repos.map((r) => r.id).join(", ")}`
+      : `${registry.repos.length} repos: ${registry.repos.map((r) => r.id).join(", ")}`
   console.log(`agentic-loop hub: http://127.0.0.1:${port} (watching ${watched})`)
 })
 
 const shutdown = (): void => {
+  clearInterval(repoScan)
   for (const stop of watcherStops.values()) stop()
   events.close()
   server.close(() => process.exit(0))

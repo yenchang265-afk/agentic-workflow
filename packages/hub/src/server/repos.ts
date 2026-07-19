@@ -91,8 +91,7 @@ const assignId = (directory: string, taken: Set<string>): string => {
   return id
 }
 
-/** Resolve `--dir` / config patterns into monitored repos + skip notes. */
-export const resolveRepos = (patterns: readonly string[], cwd: string): RepoResolution => {
+const collectDirs = (patterns: readonly string[], cwd: string): { dirs: string[]; notes: string[] } => {
   const dirs: string[] = []
   const notes: string[] = []
   for (const pattern of patterns) {
@@ -111,7 +110,33 @@ export const resolveRepos = (patterns: readonly string[], cwd: string): RepoReso
     }
     dirs.push(...repos)
   }
+  return { dirs, notes }
+}
+
+/** Resolve `--dir` / config patterns into monitored repos + skip notes. */
+export const resolveRepos = (patterns: readonly string[], cwd: string): RepoResolution => {
+  const { dirs, notes } = collectDirs(patterns, cwd)
   const taken = new Set<string>()
   const repos = [...new Set(dirs)].map((directory) => ({ id: assignId(directory, taken), directory }))
   return { repos, notes }
+}
+
+/**
+ * Re-resolve patterns and return only directories not yet registered. Ids are
+ * assigned around `takenIds` so existing directory→id mappings never move — a
+ * wholesale re-resolve would let a new colliding basename that sorts first
+ * steal an existing repo's id, breaking every client's `?repo=` and saved
+ * selection. Notes are discarded: this runs on a timer, not at startup.
+ */
+export const resolveNewRepos = (
+  patterns: readonly string[],
+  cwd: string,
+  knownDirs: ReadonlySet<string>,
+  takenIds: ReadonlySet<string>,
+): ResolvedRepo[] => {
+  const { dirs } = collectDirs(patterns, cwd)
+  const taken = new Set(takenIds)
+  return [...new Set(dirs)]
+    .filter((directory) => !knownDirs.has(directory))
+    .map((directory) => ({ id: assignId(directory, taken), directory }))
 }

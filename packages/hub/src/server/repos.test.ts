@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { resolveRepos } from "./repos.js"
+import { resolveNewRepos, resolveRepos } from "./repos.js"
 
 /** Build a directory tree under a fresh tmp root; entries ending in "/" are dirs, else files. */
 const fixture = (entries: readonly string[]): string => {
@@ -81,4 +81,48 @@ test("resolveRepos sanitizes ids to url-safe slugs", () => {
   const root = fixture(["Claude Code/docs/tasks/"])
   const { repos } = resolveRepos([path.join(root, "Claude Code")], root)
   assert.equal(repos[0]?.id, "claude-code")
+})
+
+test("resolveNewRepos returns only directories absent from knownDirs", () => {
+  const root = fixture(["one/.agentic-loop.json", "two/docs/tasks/"])
+  const known = new Set([path.join(root, "one")])
+  const fresh = resolveNewRepos([path.join(root, "*")], root, known, new Set(["one"]))
+  assert.deepEqual(
+    fresh.map((r) => ({ id: r.id, directory: r.directory })),
+    [{ id: "two", directory: path.join(root, "two") }],
+  )
+})
+
+test("resolveNewRepos keeps existing ids stable under basename collision", () => {
+  // Existing repo x/app holds the id "app". A new a/app sorts first, so a
+  // wholesale re-resolve would steal "app" from it — the taken-set must not.
+  const root = fixture(["x/app/docs/tasks/", "a/app/docs/tasks/"])
+  const known = new Set([path.join(root, "x", "app")])
+  const fresh = resolveNewRepos([path.join(root, "*", "app")], root, known, new Set(["app"]))
+  assert.deepEqual(
+    fresh.map((r) => ({ id: r.id, directory: r.directory })),
+    [{ id: "app-2", directory: path.join(root, "a", "app") }],
+  )
+})
+
+test("resolveNewRepos picks up a wildcard match once it gains a loop marker", () => {
+  const root = fixture(["plain/"])
+  const pattern = path.join(root, "*")
+  assert.deepEqual(resolveNewRepos([pattern], root, new Set(), new Set()), [])
+  fs.writeFileSync(path.join(root, "plain", ".agentic-loop.json"), "{}")
+  assert.deepEqual(
+    resolveNewRepos([pattern], root, new Set(), new Set()).map((r) => r.directory),
+    [path.join(root, "plain")],
+  )
+})
+
+test("resolveNewRepos picks up an explicit path once its directory exists", () => {
+  const root = fixture([])
+  const dir = path.join(root, "later")
+  assert.deepEqual(resolveNewRepos([dir], root, new Set(), new Set()), [])
+  fs.mkdirSync(dir)
+  assert.deepEqual(
+    resolveNewRepos([dir], root, new Set(), new Set()).map((r) => r.directory),
+    [dir],
+  )
 })
