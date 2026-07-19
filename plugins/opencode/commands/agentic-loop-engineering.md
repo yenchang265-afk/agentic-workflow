@@ -1,7 +1,7 @@
 ---
 name: agentic-loop:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | delete <id> [force] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -168,6 +168,16 @@ a rebuild from an unmoved file on an execution verb.
   markers. Duplicates are always left for you. Never repair the backlog by
   hand — the folder a task lives in IS its state, and the plugin blocks raw
   `mv`/`mkdir`/`rm`/writes against `docs/tasks/`.
+- **`delete <id> [force]`** — **irreversible**: hard-deletes the task file
+  (`git rm` + commit), its worktree, and its `feature/<id>` branch, together.
+  Refuses when that would discard work — a dirty worktree, or branch commits
+  that exist nowhere else — and always refuses a task a live loop is driving.
+  `force` overrides the first; nothing overrides the second (stop the loop).
+  A tracking epic never deletes on the first call: it reports the child slices
+  it would take with it, and only `force` runs the cascade. The id is
+  required — unlike `approve`/`replan`, this verb never auto-targets a task.
+  A pushed `origin/` branch is left alone. To retire a task *without*
+  destroying it, move it to `abandoned/` instead.
 
 ## The pipeline
 

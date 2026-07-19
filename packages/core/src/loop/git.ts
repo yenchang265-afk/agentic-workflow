@@ -61,6 +61,28 @@ export const commitPaths = async ($: Shell, cwd: string, paths: readonly string[
 }
 
 /**
+ * Commit deletions that `git rm` has ALREADY staged, scoped to exactly those
+ * paths. Separate from `commitPaths` because that one runs `git add -- <paths>`
+ * first, and `git add` on a path whose file is gone fails outright
+ * (`pathspec … did not match any files`) — which would leave the removal
+ * staged-but-never-committed.
+ *
+ * For the same reason the pathspec must name the FILES, not their directory:
+ * `git rm` prunes a directory that just became empty, so a directory pathspec
+ * would match nothing either. Returns false when there was nothing to commit
+ * (e.g. the file was untracked), which callers treat as "no commit needed".
+ */
+export const commitRemovals = async (
+  $: Shell,
+  cwd: string,
+  paths: readonly string[],
+  message: string,
+): Promise<boolean> => {
+  if (paths.length === 0) return false
+  return (await run($, cwd, ["commit", "-m", message, "--", ...paths])).ok
+}
+
+/**
  * Push `branch` to `origin`, setting the upstream (`-u`) so a later plain
  * `git push` from a human continues it. Used only by the ship gate. Returns
  * false on failure (no remote, no auth, rejected, etc.) — callers treat this
@@ -108,13 +130,80 @@ export const addWorktree = async (
 }
 
 /**
- * Remove the worktree at `wtPath`. Deliberately no `--force`: a dirty worktree
+ * Remove the worktree at `wtPath`. Defaults to no `--force`: a dirty worktree
  * (a checkpoint commit that failed) must survive for human inspection rather
- * than be silently discarded. The branch is never touched. Returns false when
- * the worktree was dirty/locked and thus left in place.
+ * than be silently discarded — that is `teardownIsolation`/`releaseWorktree`'s
+ * contract, and they call this with no options.
+ *
+ * `{ force: true }` exists for the explicit `delete <id> force` verb, where the
+ * human has already been shown exactly what would be discarded and asked for it
+ * anyway. A single `--force`, never `-f -f`: doubling it also removes *locked*
+ * worktrees, and a lock is a deliberate human act that should still block.
+ *
+ * The branch is never touched either way. Returns false when the worktree was
+ * dirty/locked and thus left in place.
  */
-export const removeWorktree = async ($: Shell, cwd: string, wtPath: string): Promise<boolean> =>
-  (await run($, cwd, ["worktree", "remove", wtPath])).ok
+export const removeWorktree = async (
+  $: Shell,
+  cwd: string,
+  wtPath: string,
+  opts: { readonly force?: boolean } = {},
+): Promise<boolean> =>
+  (await run($, cwd, ["worktree", "remove", ...(opts.force ? ["--force"] : []), wtPath])).ok
+
+/**
+ * Delete a local branch. Without `force` git uses `-d`, which refuses a branch
+ * whose commits aren't merged anywhere — an independent second safety net
+ * behind `unmergedCommitCount`. `-D` deletes regardless.
+ *
+ * Git refuses BOTH forms for a branch checked out in any worktree (including
+ * the main tree), so callers need no separate checked-out guard. Returns false
+ * on any refusal; the surviving branch is always the safe outcome.
+ */
+export const deleteBranch = async (
+  $: Shell,
+  cwd: string,
+  branch: string,
+  opts: { readonly force?: boolean } = {},
+): Promise<boolean> => (await run($, cwd, ["branch", opts.force ? "-D" : "-d", branch])).ok
+
+/**
+ * How many commits on `branch` are reachable from no OTHER local branch or
+ * remote-tracking ref — exactly what deleting it would destroy. `0` ⇒ every
+ * commit survives elsewhere (merged, or already pushed to a remote). `null` ⇒
+ * could not determine, which callers must treat as "work would be discarded".
+ *
+ * Deliberately **base-free**: `git branch --merged <base>` and `git cherry
+ * <base>` both need a base branch, and at delete time nothing reliably knows
+ * one — the loop state carrying `base` is long gone, and the main tree may sit
+ * on an unrelated branch. Asking "do these commits exist anywhere else?"
+ * needs no base.
+ *
+ * Known trade-off: a commit also present on some unrelated stale local branch
+ * reads as safe. That is accepted — it *is* still reachable — and the non-force
+ * path additionally runs `git branch -d`, which applies git's own merge check.
+ */
+export const unmergedCommitCount = async ($: Shell, cwd: string, branch: string): Promise<number | null> => {
+  const { ok, stdout } = await run($, cwd, [
+    "rev-list",
+    "--count",
+    branch,
+    "--not",
+    // `--exclude` globs are matched WITHOUT the `refs/heads/` prefix and apply
+    // only to the next ref-glob (`--branches`). Passing the fully-qualified ref
+    // here silently matches nothing, so `--branches` re-includes this branch,
+    // it subtracts itself, and EVERY branch reports 0 unmerged — turning the
+    // safety check into a rubber stamp. Covered by delete.git.test.ts.
+    `--exclude=${branch}`,
+    "--branches",
+    // `--remotes` is deliberately NOT excluded: a branch already pushed to a
+    // remote is reachable there, so dropping it locally discards nothing.
+    "--remotes",
+  ])
+  if (!ok) return null
+  const n = Number.parseInt(stdout, 10)
+  return Number.isFinite(n) ? n : null
+}
 
 /** Drop registrations for worktrees whose directories have vanished. Safe/no-op otherwise. */
 export const pruneWorktrees = async ($: Shell, cwd: string): Promise<void> => {

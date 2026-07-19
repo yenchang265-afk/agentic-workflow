@@ -1247,3 +1247,61 @@ test("lenses: a stop mid-pass returns quietly — no ERROR, no retry, no warn", 
   assert.equal(calls(), 1, "no retry and no further lens passes after a stop")
   assert.ok(!warns.some((w) => /stopping with ERROR/.test(w)), `unexpected warn: ${warns.join(" | ")}`)
 })
+
+// --- delete <id> [force] ---
+// The deep behavior (blockers, force, cascade, git ordering) is covered in
+// core's delete.test.ts / delete.git.test.ts. These cover what THIS host owns:
+// argument parsing, the required id, and refusal→toast-variant mapping.
+
+test("delete with no id explains itself instead of guessing a target", async () => {
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "delete", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Usage:.*delete <id>/)
+  assert.ok(!log.some((cmd) => cmd.includes("rm")), "a usage message must touch nothing")
+})
+
+test("delete refuses when the branch holds commits that exist nowhere else", async () => {
+  const task = serializeTask({ title: "Do the thing", body: "Some context." })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/in-progress/my-task.md": task }, log, [
+      { cmd: "git -C /repo rev-list --count", result: { exitCode: 0, stdout: "2" } },
+    ]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess", "delete my-task", testConfig)
+
+  // A blocked delete is the designed outcome, so it is a warning — never an error.
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /exist nowhere else/)
+  assert.ok(!log.some((cmd) => cmd.includes(" rm ")), "a refusal must not remove the file")
+})
+
+test("delete <id> force removes the task file and reports success", async () => {
+  const task = serializeTask({ title: "Do the thing", body: "Some context." })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/in-progress/my-task.md": task }, log, [
+      { cmd: "git -C /repo rev-list --count", result: { exitCode: 0, stdout: "2" } },
+      { cmd: "test -e", result: { exitCode: 1 } }, // the file is gone after `git rm`
+    ]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess", "delete my-task force", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success", toasts[0]?.message ?? "no toast")
+  assert.ok(log.some((cmd) => cmd.includes("rm") && cmd.includes("my-task.md")), "the file was removed")
+})

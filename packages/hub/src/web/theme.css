@@ -1089,6 +1089,27 @@ body {
   margin-bottom: var(--sp-1);
 }
 
+/* A checkbox and its label read as one line, not a stacked field — used by the
+   delete dialog's "yes, discard the work" escalation. */
+.form-field--inline {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+}
+.form-field--inline span {
+  margin-bottom: 0;
+}
+
+/* What a delete would destroy, inside the confirm dialog. */
+.delete-blockers {
+  margin: var(--sp-1) 0 0;
+  padding-left: var(--sp-4);
+  color: var(--warn);
+}
+.delete-blockers li {
+  margin-bottom: var(--sp-1);
+}
+
 .form-field input[type="text"],
 .form-field input:not([type]),
 .form-field input[type="number"],

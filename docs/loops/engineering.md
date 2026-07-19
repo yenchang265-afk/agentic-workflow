@@ -21,13 +21,13 @@ No configuration needed — the engineering loop runs by default. To disable it:
 **OpenCode**
 
 ```
-/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | delete <id> [force] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | delete <id> [force] | stop | status
 ```
 
 (Claude Code has no standing watcher; `claim` is the one-shot pull verb.)
@@ -156,6 +156,15 @@ backlog (threat model T3/T3b):
   unambiguous repairs — rescue strays back to `draft/` (audited + committed),
   remove emptied stray folders, release stale orphaned claim markers.
   Duplicates are always a human call.
+- **Delete** (`loop_delete` / `/agentic-loop:engineering delete <id> [force]`):
+  the one destructive verb — hard-removes the task file (`git rm` + commit),
+  its worktree, and its `feature/<id>` branch together. Refuses when that would
+  discard work (a dirty worktree, or branch commits reachable from no other
+  local branch or remote), and always refuses a task a live loop is driving —
+  `force` overrides the former, never the latter. A tracking epic returns the
+  roster of child slices it would cascade to and deletes nothing until
+  `force`. The id is always explicit; a pushed `origin/` branch is untouched.
+  To retire a task without destroying it, move it to `abandoned/` instead.
 
 The watch lease (one watch-mode process per clone, across every kind) is
 documented once, framework-level, in

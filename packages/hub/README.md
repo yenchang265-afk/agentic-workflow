@@ -91,6 +91,13 @@ creator tab is unaffected.
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
 
+  Cards also carry **delete** — the one irreversible action, which removes the
+  task file, its worktree, and its `feature/<id>` branch together. Its confirm
+  is preview-driven: before you commit to it, the dialog names what would be
+  destroyed, including how many commits exist nowhere else and (for a tracking
+  epic) every child slice that goes with it. The force escalation appears only
+  when something actually blocks.
+
   ```mermaid
   sequenceDiagram
       actor Human
@@ -174,6 +181,7 @@ The hub's writes, none of which drive a loop:
 | Scaffold an asset stub (creator) | `prompts/agents/<name>/`, `plugins/opencode/commands/<name>.md`, or `skills/<name>/` — one-shot TODO stubs | `X-Hub-Client`; slug + prefix check; 409 if the target exists (never overwrites); agent-referenced skills must already exist |
 | Run the persona generator (creator checklist) | regenerates the checked-in `plugins/opencode/agents/*` + `plugins/claude/agents/*` files and normalizes opencode command `agent:` frontmatter — exactly what `npm run gen:prompts` does in a terminal | `X-Hub-Client`; a confirm naming the effect; failure is reported with the generator's output, never half-applied routes |
 | A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a draft pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
+| Delete a task | the task file under `tasksDir` (`git rm` + commit), its worktree, and its `feature/<id>` branch — **irreversible** | `X-Hub-Client`; `expectStatus` (a stale board 409s); refused while a loop is driving the task, force or not; refuses a dirty worktree or commits that exist nowhere else unless forced; a preview-driven confirm naming exactly what would be destroyed |
 | Save config | one layer of `.agentic-loop.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
 | Backlog doctor fix | task files under `tasksDir` (rescue strays, remove empty stray folders, release **stale, undriven** claim markers), plus a git commit | `X-Hub-Client`; releases a claim only when stale and not driven; skips claim release entirely while a watch lease is live; never resolves duplicate ids |
 

@@ -635,6 +635,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
             <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>
             <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the loop kinds &amp; enabled state; diagnose/repair backlog damage.</td></tr>
+            <tr><td><code>delete &lt;id&gt; [force]</code></td><td>Irreversible: hard-delete a task with its worktree &amp; branch. Refuses if it would discard work; an epic cascades to its slices only under <code>force</code>.</td></tr>
             <tr><td><code>stop</code> · <code>status</code></td><td>Deliberate end (drops the snapshot — nothing to recover, unlike <kbd>Esc</kbd>); loop + backlog roll-up (bare command = status).</td></tr>
           </tbody></table></div>
         </div>

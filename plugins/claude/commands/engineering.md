@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | delete <id> [force] | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
@@ -168,6 +168,15 @@ never claim the approval happened.
   the backlog for structural damage (stray folders, task files outside every
   status folder, duplicate ids, held claim markers); with `fix` it applies
   the unambiguous repairs. Never repair the backlog by hand.
+- **`delete <id> [force]`** — call `mcp__agentic-loop__loop_delete({id, force})`.
+  **Irreversible**: hard-deletes the task file (`git rm` + commit), its
+  worktree, and its `feature/<id>` branch. Refuses when that would discard
+  work (dirty worktree, or branch commits that exist nowhere else) and always
+  refuses a task a live loop is driving — `force` overrides the first, never
+  the second. A tracking epic never deletes on the first call: it reports the
+  child slices it would take with it, and only `force` runs the cascade. The
+  id is required — this verb never auto-targets. To retire a task *without*
+  destroying it, `loop_move` it to `abandoned/` instead.
 - **anything else** (including a free-text goal) — do not run it. Show this
   usage instead.
 

@@ -38,6 +38,7 @@ import {
   type GateCtx,
   type GateResult,
 } from "@agentic-loop/core/loop/gate"
+import { deleteTask as coreDeleteTask } from "@agentic-loop/core/loop/delete"
 import { runTerminal as coreRunTerminal, type TerminalCtx } from "@agentic-loop/core/loop/terminal"
 import { loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { type Task } from "@agentic-loop/core/task/schema"
@@ -993,6 +994,9 @@ const replanTask = (id: string, reason: string | undefined, liveTaskId: string |
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> =>
   coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
+/** delete is not a gate move, but shares the same ctx + explicit-liveness plumbing. */
+const deleteTask = (id: string, force: boolean, liveTaskId: string | null): Promise<GateResult> =>
+  coreDeleteTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, { force })
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
@@ -1076,6 +1080,26 @@ server.registerTool(
     if (!found) return fail(`No task "${id}".`)
     const newPath = await moveTask(sh, { id, path: found.path }, status)
     return ok({ moved: newPath })
+  },
+)
+
+server.registerTool(
+  "loop_delete",
+  {
+    description:
+      "IRREVERSIBLE. /agentic-loop:engineering delete <id> [force] — hard-delete a task: removes its .md file (git rm + commit), its git worktree, and its feature/<id> branch. " +
+      "Refuses by default when that would discard work (a dirty worktree, or branch commits that exist nowhere else) and ALWAYS refuses a task a live loop is driving, force or not. " +
+      "A tracking epic never deletes on the first call: it returns the roster of child slices it would also delete, and only force executes the cascade. " +
+      "To retire a task WITHOUT destroying it, use loop_move to abandoned/ instead. Pass force:true only after a human has seen what would be lost and asked for it anyway.",
+    inputSchema: {
+      id: z.string().min(1),
+      force: z.boolean().optional().describe("Discard a dirty worktree and unmerged commits; execute an epic cascade."),
+    },
+  },
+  async ({ id, force }) => {
+    await loadCfg()
+    const r = await deleteTask(id, force ?? false, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
   },
 )
 

@@ -417,6 +417,40 @@ export interface GateRequest {
 }
 
 /**
+ * Deleting a task — the hub's only destructive action. Two steps by design: the
+ * client fetches a `DeletePreview` to show what would be destroyed, then POSTs a
+ * `DeleteRequest`. `force` is offered only once the preview reports blockers.
+ */
+export interface DeleteRequest {
+  readonly id: string
+  /** Same stale-board guard as `GateRequest` — a 409 beats destroying the wrong task. */
+  readonly expectStatus: TaskStatus
+  /** Discard a dirty worktree / unmerged commits, and execute an epic's cascade. */
+  readonly force?: boolean
+}
+
+/** What deleting a task would destroy. Read-only; mutates nothing. */
+export interface DeletePreview {
+  readonly id: string
+  readonly title: string
+  readonly status: TaskStatus
+  /** This task's worktree directory, or null when it has none. */
+  readonly worktree: string | null
+  readonly worktreeDirty: boolean
+  readonly branch: string
+  readonly branchExists: boolean
+  /** Commits reachable from nowhere else; `null` = undeterminable, treated as unsafe. */
+  readonly unmergedCommits: number | null
+  readonly isEpic: boolean
+  /** Child slices a tracking epic would take with it. */
+  readonly children: readonly { readonly id: string; readonly title: string; readonly status: TaskStatus }[]
+  /** Non-empty ⇒ deleting needs `force`. */
+  readonly blockers: readonly string[]
+  /** A live loop is driving it — refused regardless of `force`. */
+  readonly isDriving: boolean
+}
+
+/**
  * Which optional pieces of loop state the previewed prompt renders against.
  * These are the switches that make conditional blocks (`{{#task.id}}`,
  * `{{#worktree}}`, `{{#platform.ado}}`) fire or vanish — the point of the

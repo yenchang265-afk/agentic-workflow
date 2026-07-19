@@ -1,6 +1,16 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { addWorktree, branchExists, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
+import {
+  addWorktree,
+  branchExists,
+  commitRemovals,
+  deleteBranch,
+  listWorktrees,
+  pushBranch,
+  removeWorktree,
+  unmergedCommitCount,
+  worktreeForBranch,
+} from "./git.js"
 
 /**
  * git.ts shells out via Bun's `$` (redirections, quoting) which the node+tsx
@@ -125,4 +135,82 @@ test("pushBranch pushes to origin with -u", async () => {
 test("pushBranch returns false when the push fails", async () => {
   const $ = makeShell(() => ({ exitCode: 1, stderr: "rejected" }))
   assert.equal(await pushBranch($, "/repo", "feature/add-foo"), false)
+})
+
+// --- delete-verb helpers ---
+
+test("removeWorktree omits --force by default and adds it only when asked", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  assert.equal(await removeWorktree($, "/repo", "/wt/add-foo"), true)
+  assert.ok(log.some((c) => c.includes("worktree remove /wt/add-foo")))
+  assert.ok(!log.some((c) => c.includes("--force")), "the default must never force")
+
+  log.length = 0
+  assert.equal(await removeWorktree($, "/repo", "/wt/add-foo", { force: true }), true)
+  assert.ok(log.some((c) => c.includes("worktree remove --force /wt/add-foo")))
+  // Doubling -f would also remove LOCKED worktrees; a lock is a deliberate human act.
+  assert.ok(!log.some((c) => c.includes("--force --force")), "single --force only")
+})
+
+test("removeWorktree reports failure (dirty or locked) rather than throwing", async () => {
+  const $ = makeShell(() => ({ exitCode: 1, stderr: "contains modified files" }))
+  assert.equal(await removeWorktree($, "/repo", "/wt/add-foo"), false)
+})
+
+test("deleteBranch uses -d by default and -D under force", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  assert.equal(await deleteBranch($, "/repo", "feature/add-foo"), true)
+  assert.ok(log.some((c) => c.includes("branch -d feature/add-foo")))
+
+  log.length = 0
+  assert.equal(await deleteBranch($, "/repo", "feature/add-foo", { force: true }), true)
+  assert.ok(log.some((c) => c.includes("branch -D feature/add-foo")))
+})
+
+test("deleteBranch returns false when git refuses (unmerged, or checked out)", async () => {
+  const $ = makeShell(() => ({ exitCode: 1, stderr: "error: the branch is not fully merged" }))
+  assert.equal(await deleteBranch($, "/repo", "feature/add-foo"), false)
+})
+
+/**
+ * The exclude glob must be the BARE branch name: `--exclude` matches refs
+ * without the `refs/heads/` prefix, so a fully-qualified ref matches nothing,
+ * `--branches` re-includes the branch, it subtracts itself, and every branch
+ * reports 0 unmerged — silently disarming the delete guard.
+ */
+test("unmergedCommitCount excludes the branch by bare name, keeps remotes in scope", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0, stdout: "3" }), log)
+  assert.equal(await unmergedCommitCount($, "/repo", "feature/add-foo"), 3)
+  const cmd = log.find((c) => c.includes("rev-list"))!
+  assert.ok(cmd.includes("--exclude=feature/add-foo"), "bare name, not refs/heads/…")
+  assert.ok(!cmd.includes("--exclude=refs/heads/"), "a qualified ref would match nothing")
+  assert.ok(cmd.includes("--branches") && cmd.includes("--remotes"), "a pushed branch counts as safe")
+})
+
+test("unmergedCommitCount returns null when it cannot determine the answer", async () => {
+  assert.equal(await unmergedCommitCount(makeShell(() => ({ exitCode: 1 })), "/repo", "nope"), null)
+  assert.equal(await unmergedCommitCount(makeShell(() => ({ exitCode: 0, stdout: "" })), "/repo", "x"), null)
+  assert.equal(await unmergedCommitCount(makeShell(() => ({ exitCode: 0, stdout: "garbage" })), "/repo", "x"), null)
+})
+
+/**
+ * `commitRemovals` must NOT run `git add` first (it fails on a path whose file
+ * is gone) and must name the files, not their directory (`git rm` prunes a
+ * directory that just became empty).
+ */
+test("commitRemovals commits staged deletions by file path, with no add step", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  assert.equal(await commitRemovals($, "/repo", ["docs/tasks/draft/a.md"], "loop: deleted a"), true)
+  assert.ok(!log.some((c) => c.includes(" add ")), "an add would fail on a deleted path")
+  assert.ok(log.some((c) => c.includes("commit -m loop: deleted a -- docs/tasks/draft/a.md")))
+})
+
+test("commitRemovals is a no-op for an empty path list", async () => {
+  const log: string[] = []
+  assert.equal(await commitRemovals(makeShell(() => ({ exitCode: 0 }), log), "/repo", [], "m"), false)
+  assert.deepEqual(log, [])
 })

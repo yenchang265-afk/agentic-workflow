@@ -89,7 +89,7 @@ const unparseableAt = async (ctx: GateCtx, id: string): Promise<string | null> =
  * surface, or `null` when nothing matched (callers keep their own "no task found"
  * messaging). An empty query passes straight through (the folder-driven auto-gate).
  */
-const resolveGateId = async (ctx: GateCtx, query: string): Promise<{ id: string } | { error: GateResult } | null> => {
+export const resolveGateId = async (ctx: GateCtx, query: string): Promise<{ id: string } | { error: GateResult } | null> => {
   if (!query) return { id: query }
   const { $, directory, config, log } = ctx
   const r = await resolveTaskIdAnywhere($, directory, config.tasksDir, query, log)

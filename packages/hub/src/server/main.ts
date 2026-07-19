@@ -14,6 +14,7 @@ import { getActive } from "./routes/active.js"
 import { getBacklog, getTaskDetail } from "./routes/backlog.js"
 import { getConfig, saveConfig } from "./routes/config.js"
 import { getDoctor, postDoctorFix } from "./routes/doctor.js"
+import { getDeletePreview, postDelete } from "./routes/delete.js"
 import { postGate } from "./routes/gate.js"
 import { getAssets, postGenPrompts, scaffoldAgent, scaffoldCommand, scaffoldSkill } from "./routes/assets.js"
 import { checklistKind, getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
@@ -168,6 +169,10 @@ const routes: Route[] = [
   { method: "POST", pattern: "/api/assets/skill", handler: scoped(scaffoldSkill), mutating: true },
   { method: "POST", pattern: "/api/gen-prompts", handler: scoped((deps) => postGenPrompts(deps)), mutating: true },
   { method: "POST", pattern: "/api/gate/:action", handler: scoped(postGate), mutating: true },
+  // Deliberately not under /api/gate/: deleting is not a lifecycle move, so it
+  // must not inherit the gate's from-status table.
+  { method: "GET", pattern: "/api/tasks/:id/delete-preview", handler: scoped(getDeletePreview) },
+  { method: "POST", pattern: "/api/tasks/:id/delete", handler: scoped(postDelete), mutating: true },
   { method: "GET", pattern: "/api/config", handler: scoped(getConfig) },
   { method: "POST", pattern: "/api/config", handler: scoped(saveConfig), mutating: true },
   { method: "GET", pattern: "/api/doctor", handler: scoped((deps) => getDoctor(deps)) },

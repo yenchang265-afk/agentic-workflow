@@ -198,6 +198,32 @@ export const teardownIsolation = async ($: Shell, log: Log, directory: string, s
 }
 
 /**
+ * The worktree directory belonging to task `id`, or null when worktree mode is
+ * off. Prefers the worktree git has actually **registered** for `feature/<id>`
+ * (a run may have adopted one at a non-conventional path — `ensureIsolation`
+ * deliberately reuses those) and falls back to the conventional
+ * `worktreePathFor` location.
+ *
+ * Never returns the main tree: `git worktree list` includes it as its first
+ * entry, and handing that back would point cleanup at the human's own checkout
+ * — the one outcome every caller must avoid. Shared by the ship gate
+ * (`releaseWorktree`) and the `delete` verb so both agree on what "this task's
+ * worktree" means. Pure lookup: touches nothing.
+ */
+export const taskWorktreePath = async (
+  $: Shell,
+  directory: string,
+  config: Config,
+  id: string,
+): Promise<string | null> => {
+  if (!config.worktreesDir) return null
+  const registered = await worktreeForBranch($, directory, `feature/${id}`)
+  return registered && path.resolve(registered) !== path.resolve(directory)
+    ? registered
+    : worktreePathFor(directory, config.worktreesDir, id)
+}
+
+/**
  * Remove a shipped task's worktree — the one point in the lifecycle where the
  * task is finished and the directory is genuinely disposable. Called by the
  * ship gate after the task reached `completed/`; the `feature/<id>` branch is
@@ -217,13 +243,8 @@ export const releaseWorktree = async (
   if (!config.worktreesDir) return
   try {
     const branch = `feature/${id}`
-    // `git worktree list` includes the MAIN tree — removing that is the one
-    // outcome this must never produce (same guard as `ensureIsolation`).
-    const registered = await worktreeForBranch($, directory, branch)
-    const wtPath =
-      registered && path.resolve(registered) !== path.resolve(directory)
-        ? registered
-        : worktreePathFor(directory, config.worktreesDir, id)
+    const wtPath = await taskWorktreePath($, directory, config, id)
+    if (!wtPath) return
     if (!(await isGitRepo($, wtPath))) {
       await pruneWorktrees($, directory)
       return

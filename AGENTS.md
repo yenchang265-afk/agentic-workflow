@@ -29,7 +29,9 @@ sections below cover each.
    interrupt); `stop`/`abort` ends a run outright; `status` reports the
    current loop plus a backlog roll-up; `kinds` lists which loop kinds this
    repo has enabled; `doctor [fix]` audits (and optionally repairs) backlog
-   structural damage. Use this
+   structural damage; `delete <id> [force]` hard-deletes a task together with
+   its worktree and `feature/<id>` branch, refusing by default when that would
+   discard work. Use this
    when a goal should run the whole lifecycle largely unattended. See the
    `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
    and `task-backlog-management` for driving it from

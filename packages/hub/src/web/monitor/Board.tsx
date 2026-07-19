@@ -1,4 +1,4 @@
-import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard } from "../../shared/api.js"
+import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard, TaskStatus } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
@@ -6,6 +6,7 @@ import { useState } from "react"
 import { Badge } from "../ui/Badge.js"
 import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
+import { DeleteAction } from "./DeleteAction.js"
 import { DoctorPanel } from "./DoctorPanel.js"
 import { GateActions } from "./GateActions.js"
 
@@ -53,6 +54,11 @@ const TaskCardView = ({
     {/* An epic only orders its child slices — approving it would have the loop
         plan the tracking file itself, which core refuses. Don't offer it. */}
     {task.type !== "epic" && <GateActions task={task} status={status} kind={kind} claimed={claimed} />}
+    {/* Delete IS offered on an epic: it's the one action that makes sense there,
+        and it cascades to the child slices (behind an explicit confirmation). */}
+    <div className="gate-actions">
+      <DeleteAction task={task} status={status as TaskStatus} claimed={claimed} />
+    </div>
   </Card>
 )
 

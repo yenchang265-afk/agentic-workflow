@@ -91,6 +91,11 @@ The loop (`/agentic-loop:engineering`):
   duplicate ids, and held claim markers; `fix` applies the unambiguous
   repairs (rescue strays to `draft/`, drop emptied folders, release stale
   markers)
+- `/agentic-loop:engineering delete <id> [force]` — irreversible: hard-deletes the task
+  file, its worktree, and its `feature/<id>` branch. Refuses when that would
+  discard work (dirty worktree, or commits that exist nowhere else) and always
+  refuses a task a live loop is driving; an epic reports its child slices and
+  cascades only under `force`
 - `/agentic-loop:engineering recover <id>` — resume an in-progress task whose run stopped
   early — a crash/restart, or a user **interrupt (ESC)** — from its state
   snapshot (or its persisted plan), at the exact stage it reached

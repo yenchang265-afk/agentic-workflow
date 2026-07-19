@@ -153,7 +153,8 @@ local state a running loop leaves behind:
 - `/agentic-loop:engineering replan [id] [reason]` — the rejection verb: a parked plan (or
   a cap-tripped task, by id) back to `queued/` for re-planning
 - `/agentic-loop:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·
-  `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
+  `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ·
+  `delete <id> [force]` —
   `plan` runs PLAN on one queued task and parks it (the only PLAN entry);
   `claim` pulls the next build-ready `in-progress/` task; `watch` is a
   standing worker scoped to the engineering kind

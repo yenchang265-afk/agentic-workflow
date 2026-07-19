@@ -22,13 +22,13 @@ REVIEW，作用於 docs/tasks 待辦（backlog）。
 **OpenCode**
 
 ```
-/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | delete <id> [force] | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+/agentic-loop:engineering new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | delete <id> [force] | stop | status
 ```
 
 （Claude Code 沒有常駐的 watcher；`claim` 就是一次性的拉取動詞。）
@@ -152,6 +152,14 @@ T3/T3b）：
   回報巡查結果加上被持有的認領標記；帶上 `fix` 時只會套用明確無歧義的
   修復——把迷途項目救回 `draft/`（稽核 + 提交）、移除清空後的迷途資料夾、
   釋放過期的孤兒認領標記。重複項目永遠是人類的決定。
+- **Delete**（`loop_delete` / `/agentic-loop:engineering delete <id> [force]`）：
+  唯一具破壞性的動詞——將任務檔案（`git rm` + 提交）、其 worktree，以及
+  `feature/<id>` 分支一併硬刪除。當這會丟棄工作時會拒絕（worktree 有未提交
+  變更，或分支上的 commit 在其他本地分支與遠端都不存在），而且永遠拒絕正在
+  被執行中迴圈驅動的任務——`force` 只能覆寫前者，永遠不能覆寫後者。追蹤用的
+  epic 會先回報它將連帶刪除的子切片清單，在 `force` 之前不刪除任何東西。id
+  一律必須明確指定；已推送的 `origin/` 分支不會被動到。若只是要退役任務而不
+  摧毀它，請改為移動到 `abandoned/`。
 
 watch 租約（每個 clone 一個 watch 模式的行程，橫跨所有類型）只在框架層級
 的 [`docs/architecture.md`](../architecture.md#watch-lease) 中記載一次。

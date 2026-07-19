@@ -102,6 +102,10 @@ The loop (`/agentic-loop:engineering`):
 - `/agentic-loop:engineering doctor [fix]` — audit the backlog for structural damage (stray
   folders, task files outside every status folder, duplicate ids, held claim
   markers); with `fix` it applies the unambiguous repairs.
+- `/agentic-loop:engineering delete <id> [force]` — irreversible: hard-deletes the task
+  file, its worktree, and its `feature/<id>` branch together. Refuses when that
+  would discard work, and always refuses a task a live loop is driving. An epic
+  cascades to its child slices, and only under `force`.
 - `/agentic-loop:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 

@@ -68,6 +68,7 @@ import {
 } from "@agentic-loop/core/loop/git"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
 import { approveAny, rejectAny, type GateCtx } from "@agentic-loop/core/loop/gate"
+import { deleteTask, parseDeleteArgs } from "@agentic-loop/core/loop/delete"
 import { runTerminal, type TerminalCtx } from "@agentic-loop/core/loop/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens } from "@agentic-loop/core/loop/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
@@ -1350,6 +1351,28 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
 }
 
 /**
+ * Handle `delete <id> [force]` — the one destructive verb: hard-removes the
+ * task file, its worktree, and its `feature/<id>` branch together.
+ *
+ * The id is **required**, deliberately unlike `approve`/`replan`: a folder-driven
+ * auto-target guesses, and a destructive verb must never guess. Refusals (a
+ * dirty worktree, unmerged commits, a live loop, an unforced epic) come back as
+ * `ok: false` and are toasted as warnings, not errors — they are the designed
+ * outcome, not a fault.
+ */
+export const handleDelete = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const { id, force } = parseDeleteArgs(args)
+  if (!id) return void (await toast(client, `Usage: ${ECMD} delete <id> [force].`, "warning"))
+  try {
+    const r = await deleteTask(gateCtx(deps, config), id, { force })
+    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+  } catch (err) {
+    await toast(client, `Delete failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
  * Plan one approved task now (`plan <id>`): claims a `queued/` task and runs
  * the PLAN stage (writes the plan, parks in `plan-review/`, exits). Building
  * is deliberately NOT reachable from here — `claim`/`watch` drive builds — so
@@ -1401,7 +1424,7 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
  *  kind gets the minimal watcher verb set. */
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] · replan [id] [reason] · plan <id> · ` +
-  "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
+  "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · delete <id> [force] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-loop:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /** Split a command argument into its verb (lowercased) and the remainder. Pure. */
@@ -1440,6 +1463,9 @@ export const handleCommand = async (
     // replan (the sole rejection verb). Both parse the post-verb remainder.
     if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
     if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
+
+    // The one destructive verb. Always takes an explicit id — never folder-driven.
+    if (verb === "delete") return handleDelete(deps, sessionID, rest, config)
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {
