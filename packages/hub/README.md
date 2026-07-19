@@ -77,8 +77,11 @@ creator tab is unaffected.
   park/done targets (not hardcoded), PR-shaped kinds get a ledger panel — plus
   the live-activity strip (`.stage.json` marker, watch-lease liveness,
   resumable snapshots), run history parsed from `runs/<id>.md`, and per-stage
-  token usage. Live updates via `fs.watch` + a polling reconciler (DrvFs-safe)
-  → SSE; arm the 🔔 to get a browser notification when a task parks at a gate.
+  token usage. Live updates via `fs.watch` + a polling reconciler
+  (DrvFs-safe — DrvFs is WSL's `/mnt/c` Windows-drive filesystem, whose native
+  file-watch events are unreliable, hence the polling fallback) → SSE
+  (Server-Sent Events); arm the 🔔 to get a browser notification when a task
+  parks at a gate.
 
   Task cards carry the **human gate moves** for their column — approve a draft
   or a parked plan, replan, ship — performed through the same
@@ -87,6 +90,29 @@ creator tab is unaffected.
   behind a confirm naming its real effect; **ship also opens a pull request**.
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
+
+  ```mermaid
+  sequenceDiagram
+      actor Human
+      participant UI as Hub SPA (browser)
+      participant API as Hub server (/api/*)
+      participant Core as @agentic-loop/core entry point
+      participant Git as Task backlog (git)
+
+      Human->>UI: click gate move (approve / replan / ship)
+      UI->>UI: confirm dialog names the real effect
+      UI->>API: request (X-Hub-Client: 1, expectStatus)
+      alt task is being driven by a live loop
+          API-->>UI: 409 refused (loop is driving)
+      else board is stale (expectStatus mismatch)
+          API-->>UI: 409 stale board
+      else clear to move
+          API->>Core: same entry point the CLI / slash commands call
+          Core->>Git: move task file + audited commit
+          Core-->>API: ok (ship: also opens a draft PR)
+          API-->>UI: 200, board updates via SSE
+      end
+  ```
 
   When the backlog has structural damage (a stray file, an invented folder, a
   claim marker a crashed loop left behind), the anomaly chip opens the

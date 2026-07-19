@@ -68,12 +68,19 @@ the loop (the /agentic-loop:engineering command, unattended — never blocks on 
   /agentic-loop:engineering plan <id>  — run PLAN on one queued task now (parks, exits — the only PLAN entry)
   /agentic-loop:engineering claim      — one-shot pull of the next build-ready task (never auto-plans queued/)
   /agentic-loop:engineering watch [interval] — claim build work as it appears (idle events + polling timer)
+```
 
-  queued task:      plan <id> ─▶ PLAN ─▶ park (task → plan-review/, loop exits)
-  in-progress task: claim ─▶ BUILD ─▶ VERIFY ─▶ REVIEW ─▶ done (task → in-review/)
-                              ▲        │FAIL              │FAIL
-                              └────────┴──────────────────┘
-                              (re-build, iteration++, inline)
+```mermaid
+flowchart LR
+    Q["queued task"] -->|"plan &lt;id&gt;"| PLAN["PLAN"]
+    PLAN -->|park| PR["plan-review/<br/>(loop exits)"]
+
+    IP["in-progress task"] -->|claim| BUILD["BUILD"]
+    BUILD --> VERIFY["VERIFY"]
+    VERIFY -->|PASS| REVIEW["REVIEW"]
+    VERIFY -->|"FAIL (iteration++)"| BUILD
+    REVIEW -->|"FAIL (iteration++)"| BUILD
+    REVIEW -->|PASS| DONE["in-review/<br/>(done)"]
 ```
 
 | Stage | Writes code? | Role |
@@ -224,10 +231,13 @@ enabled kind gets its own `/agentic-loop:<kind>` command.
 `packages/core/loops/pr-sitter/` sits on open pull requests matching a configured `gh`
 query and keeps them green until a human merges:
 
-```
-triage (check) ─▶ fix (work) ─▶ verify (check) ─▶ publish (work) ─▶ done
-                   ▲               │FAIL (re-fires fix, cap 3)
-                   └───────────────┘
+```mermaid
+flowchart LR
+    T["triage (check)"] --> F["fix (work)"]
+    F --> V["verify (check)"]
+    V -->|PASS| P["publish (work)"]
+    V -->|"FAIL (re-fires fix, cap 3)"| F
+    P --> D["done"]
 ```
 
 - **triage** — read-only `gh` inspection of a PR needing attention (failing
@@ -294,6 +304,19 @@ never flip control flow):
 PASS     # verify: every criterion met, tests green → review; review: no Critical/Important findings → done
 FAIL     # otherwise → re-build with the failure fed back, if iteration budget remains
 ERROR    # the check itself could not run (broken environment) → stop for a human, no iteration burned
+```
+
+```mermaid
+stateDiagram-v2
+    state "check stage (VERIFY / REVIEW / any manifest check)" as Check
+    [*] --> Check
+    Check --> NextStage: PASS (verify → review, review → done)
+    Check --> Rebuild: FAIL, iteration budget remains
+    Check --> StopHuman: FAIL, cap reached
+    Check --> StopHuman: ERROR (no iteration burned)
+    Rebuild --> Check: re-build with feedback, iteration++
+    NextStage --> [*]
+    StopHuman --> [*]: human required (replan / recover)
 ```
 
 No tool call at all is treated as FAIL, not as a stall — the loop still

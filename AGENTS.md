@@ -7,7 +7,10 @@ Guidance for AI coding agents working in this repository.
 `agentic-loop` is a multi-kind agentic-loop framework (shared engine in
 `@agentic-loop/core`, shipping both an OpenCode and a Claude Code plugin); this
 guide covers the OpenCode plugin — see `plugins/claude/README.md` for the
-Claude Code equivalent. It provides:
+Claude Code equivalent. It has two ways to work: an **automatic loop** that
+drives a backlog task through its whole lifecycle unattended, and **ad-hoc,
+skill-driven execution** for a single request that doesn't need a loop. The
+sections below cover each.
 
 1. **The automatic agentic loop** (`/agentic-loop:engineering`) — a real plugin
    (`plugins/opencode/src/`, agents/commands under `plugins/opencode/`) that
@@ -53,6 +56,31 @@ Claude Code equivalent. It provides:
    warrant starting a loop, OpenCode still has a **skill-driven execution
    model** powered by the `skill` tool and the `skills/` directory bundled
    with this plugin. The rules below govern that mode.
+
+### Gate lifecycle
+
+A task moves through exactly one folder at a time under `docs/tasks/`. The
+same `approve` verb drives every forward move (which one depends on which
+folder the task is currently in); `replan` is the sole rejection verb, always
+back to `queued/`. Full protocol: `loop-orchestration` skill.
+
+```mermaid
+stateDiagram-v2
+    [*] --> draft: new &lt;idea&gt; (interview)
+    draft --> queued: approve &lt;id&gt; (task gate)
+    queued --> plan_review: plan &lt;id&gt; (writes plan, parks)
+    plan_review --> in_progress: approve &lt;id&gt; (plan gate)
+    plan_review --> queued: replan &lt;id&gt; (reject plan)
+    in_progress --> in_progress: VERIFY/REVIEW FAIL (re-build, iteration++)
+    in_progress --> in_review: REVIEW PASS
+    in_progress --> queued: replan &lt;id&gt; (iteration cap tripped)
+    in_review --> completed: approve &lt;id&gt; (ship — after you review the diff)
+    completed --> [*]
+
+    state "plan-review/" as plan_review
+    state "in-progress/ (BUILD→VERIFY→REVIEW)" as in_progress
+    state "in-review/" as in_review
+```
 
 ### Core Rules (ad-hoc mode)
 
@@ -104,8 +132,30 @@ Correct behavior: always check for and use skills first.
 
 ## Plugin Structure
 
+The shared `@agentic-loop/core` engine and its declarative loop-kind
+manifests are consumed by three different hosts — the OpenCode plugin, the
+Claude Code plugin (via an MCP — Model Context Protocol — server), and the
+admin hub:
+
+```mermaid
+flowchart TD
+    subgraph Core["packages/core — @agentic-loop/core engine"]
+        Engine["manifest interpreter, scheduler, work sources"]
+        Loops["packages/core/loops/&lt;kind&gt;/<br/>loop.json manifest + stage prompts<br/>(engineering, pr-sitter, review-sitter, dep-sitter, main-sitter)"]
+        Engine --- Loops
+    end
+
+    OpenCode["plugins/opencode<br/>OpenCode plugin (state machine + driver)"]
+    Claude["plugins/claude<br/>Claude Code plugin (MCP server drives the state machine)"]
+    Hub["packages/hub<br/>admin hub (beta) — monitor + visual creator, never drives a stage"]
+
+    Core --> OpenCode
+    Core --> Claude
+    Core --> Hub
+```
+
 - `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
-- `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP server
+- `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
 - `packages/core/loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
 - `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship) and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-loop/core` entry points the hosts call, a Config tab that edits `.agentic-loop.json` one layer at a time, and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
 - `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*`, pr-sitter's `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`, review-sitter's `loop-review-fetch`/`loop-review-assess`/`loop-review-publish`, dep-sitter's `loop-dep-scan`/`loop-dep-upgrade`/`loop-dep-publish`, and main-sitter's `loop-main-diagnose`/`loop-main-remedy`/`loop-main-publish`, with the shared `loop-verify` reused as the VERIFY stage across several kinds)

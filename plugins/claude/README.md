@@ -14,9 +14,10 @@ never blocks on you.
 This is the Claude Code port of the OpenCode `agentic-loop` plugin. Because
 Claude Code has no autonomous background-driver primitive, the loop is
 **driven by the main agent**: `/agentic-loop:engineering plan <id>` / `claim` make the agent spawn each
-stage as a subagent (via the Task tool) while a bundled **MCP server** owns
-the state machine, git isolation, verdicts, backlog moves, snapshots, and
-metrics. See `skills/loop-orchestration/SKILL.md` for the exact protocol.
+stage as a subagent (via the Task tool) while a bundled **MCP (Model Context
+Protocol) server** owns the state machine, git isolation, verdicts, backlog
+moves, snapshots, and metrics. See `skills/loop-orchestration/SKILL.md` for
+the exact protocol.
 
 ## Install
 
@@ -67,15 +68,16 @@ Authoring + gates (`/agentic-loop:engineering`):
   approve it: the main agent re-interviews you (seeded by the optional note)
   and rewrites the same draft in place — same id, no plan. Drafts only.
 - `/agentic-loop:engineering approve [id]` — THE gate verb, unified and folder-driven
-  (handled deterministically by a hook before the agent's turn). With an
-  explicit `<id>`: a reviewed `draft/` → `queued/` (the task gate — no plan
-  yet, by design), a parked `plan-review/` plan → `in-progress/` (the plan
-  gate, `## Implementation Plan` required), or a finished `in-review/` task →
-  `completed/` (ship — only after you review the branch diff). Each move is
-  audited + committed; a task lives in exactly one folder, so the gate is
-  never ambiguous. Without an id it advances the single task at a loop
-  wait-gate (`plan-review/` or `in-review/`) — drafts always need the
-  explicit id. (Also exposed as the `loop_approve` MCP tool.)
+  (handled deterministically by a hook before the agent's turn). Which move
+  happens depends on which folder the task is in (draft → queued, plan-review
+  → in-progress, in-review → completed) — see the gate lifecycle diagram in
+  the root [`AGENTS.md`](../../AGENTS.md#gate-lifecycle) for the full state
+  machine, including the `replan` rejection edges. `in-review/` → `completed/`
+  (ship) only after you review the branch diff. Each move is audited +
+  committed; a task lives in exactly one folder, so the gate is never
+  ambiguous. Without an id it advances the single task at a loop wait-gate
+  (`plan-review/` or `in-review/`) — drafts always need the explicit id.
+  (Also exposed as the `loop_approve` MCP tool.)
 - `/agentic-loop:engineering replan [id] [reason]` — the sole rejection verb: send a
   parked plan (or a cap-tripped `in-progress/` task, by id) back to
   `queued/`, with the reason audited. (Also exposed as the `loop_reject` MCP
