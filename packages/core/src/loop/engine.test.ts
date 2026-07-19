@@ -478,6 +478,31 @@ test("review-sitter holds strictly less authority than pr-sitter: comment-only p
   }
 })
 
+test("pr-sitter and review-sitter allowlists carry no open gh api glob — comments endpoint only", () => {
+  // "gh api *" permits arbitrary authenticated GitHub mutations (merge, approve,
+  // ref deletion) from stages whose input is untrusted third-party PR text. The
+  // only gh api need is review-thread comments (read + per-thread replies), so
+  // only that endpoint's glob may appear.
+  const prSitter = loadManifest(LOOPS_DIR, "pr-sitter")
+  for (const manifest of [prSitter, reviewer]) {
+    for (const stage of manifest.manifest.stages) {
+      const allow = effectiveAllowlist(stage, "github")
+      assert.ok(!allow.includes("gh api *"), `${manifest.manifest.kind}/${stage.name} must not allowlist "gh api *"`)
+      for (const g of allow) {
+        if (g.startsWith("gh api")) {
+          assert.equal(g, "gh api repos/*/pulls/*/comments*", `${manifest.manifest.kind}/${stage.name}: unexpected gh api glob "${g}"`)
+        }
+      }
+    }
+  }
+  // The pr-sitter publish ADO globs are thread-scoped, mirroring the agent
+  // frontmatter's long-standing promise (comment replies only).
+  const publish = prSitter.manifest.stages.find((s) => s.name === "publish")
+  assert.ok(publish)
+  const adoAllow = effectiveAllowlist(publish, "ado")
+  assert.ok(adoAllow.every((g) => !g.startsWith("curl") || g.includes("/threads")), `publish ADO curl must be /threads-scoped: ${adoAllow.join(", ")}`)
+})
+
 // --- the dep-sitter manifest walks end-to-end through the same engine ---
 
 const depSitter = loadManifest(LOOPS_DIR, "dep-sitter")

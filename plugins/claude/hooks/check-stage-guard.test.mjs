@@ -134,6 +134,10 @@ test("isGithubPrMutation flags a review submission even though it is a POST", ()
   assert.equal(isGithubPrMutation("gh api -X POST repos/o/r/pulls/7/reviews -f event=APPROVE"), true)
   assert.equal(isGithubPrMutation("gh api --method POST repos/o/r/pulls/7/reviews -f event=REQUEST_CHANGES"), true)
   assert.equal(isGithubPrMutation("gh api -X PUT repos/o/r/pulls/7/requested_reviewers"), true)
+  // No -X at all: a body flag (-f/-F/--field/--raw-field/--input) makes gh send
+  // POST — the implicit-POST hole must not read as GET.
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/7/reviews -f event=APPROVE"), true)
+  assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/7/requested_reviewers -F 'reviewers[]=x'"), true)
   // A GET read of the reviews list stays allowed (reads are the fetch stage's job).
   assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/7/reviews"), false)
   // An ordinary issue-comment reply stays allowed.
@@ -172,6 +176,14 @@ test("isGitPushViolation blocks a refspec onto a different branch, force, and de
   assert.equal(isGitPushViolation("git push origin +feature/x"), true)
   assert.equal(isGitPushViolation("git push origin :feature/x"), true) // delete
   assert.equal(isGitPushViolation("git push origin --delete feature/x"), true)
+  // Fast-forward pushes of the default branch: no force flag, no mismatched
+  // refspec — the rules above wave them through, so they need their own rule.
+  assert.equal(isGitPushViolation("git push origin main"), true)
+  assert.equal(isGitPushViolation("git push origin master"), true)
+  assert.equal(isGitPushViolation("git push origin refs/heads/main"), true)
+  assert.equal(isGitPushViolation("git push origin main:main"), true)
+  assert.equal(isGitPushViolation("git push origin HEAD"), true) // statically unresolvable
+  assert.equal(isGitPushViolation("git -C /repo push origin main"), true)
 })
 
 test("isGitPushViolation allows a plain fast-forward push of the loop's own head", () => {

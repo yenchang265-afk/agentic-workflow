@@ -170,7 +170,8 @@ var isGithubPrMutation = (cmd) => {
   if (/^gh\s+(?:-\S+\s+)*api\b/.test(c)) {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true;
     const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c);
-    const method = m ? m[1].toUpperCase() : "GET";
+    const impliesBody = /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:[=\s]|$)/.test(c);
+    const method = m ? m[1].toUpperCase() : impliesBody ? "POST" : "GET";
     if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true;
     return !(method === "GET" || method === "POST");
   }
@@ -195,16 +196,24 @@ var isGitPushViolation = (cmd) => {
   if (/(?:^|\s)(?:-f|--force|--force-with-lease)(?:[=\s]|$)/.test(c)) return true;
   if (/(?:^|\s)--delete(?:\s|$)/.test(c)) return true;
   const bare = (ref) => ref.replace(/^refs\/heads\//, "");
-  for (const t of c.split(/\s+/)) {
+  const protectedRef = (ref) => ["main", "master", "HEAD"].includes(bare(ref));
+  const tokens = c.split(/\s+/);
+  let refspecs = 0;
+  for (let i = tokens.indexOf("push") + 1; i < tokens.length; i++) {
+    const t = tokens[i];
     if (t.startsWith("-")) continue;
     if (t.startsWith("+")) return true;
+    if (++refspecs === 1) continue;
     const ci = t.indexOf(":");
-    if (ci !== -1) {
-      const src = t.slice(0, ci);
-      const dst = t.slice(ci + 1);
-      if (src === "") return true;
-      if (dst && bare(dst) !== bare(src)) return true;
+    if (ci === -1) {
+      if (protectedRef(t)) return true;
+      continue;
     }
+    const src = t.slice(0, ci);
+    const dst = t.slice(ci + 1);
+    if (src === "") return true;
+    if (dst && bare(dst) !== bare(src)) return true;
+    if (dst && protectedRef(dst)) return true;
   }
   return false;
 };

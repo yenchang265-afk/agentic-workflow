@@ -7,6 +7,11 @@
  * The entry imports these; esbuild inlines them into the bundled
  * ../check-stage-guard.mjs. Keep this file dependency-free (no @agentic-loop/core,
  * no node built-ins) so a test can import it under bare `node --test`.
+ *
+ * TWIN FILE: `packages/core/src/task/write-backstop.ts` carries the same
+ * segment-aware write backstops for the OpenCode host's tool.execute.before hook.
+ * Any semantic change to the classifiers here MUST be mirrored there — the two
+ * test suites share their vectors so the twins can't drift silently.
  */
 
 // Built-in fallback lists (ported from loop-verify.md / loop-review.md
@@ -128,7 +133,10 @@ export const isGithubPrMutation = (cmd) => {
   if (/^gh\s+(?:-\S+\s+)*api\b/.test(c)) {
     if (/\/merge(?:\b|\/|\?|$)/.test(c)) return true
     const m = /(?:-X|--method)[ =]+([A-Za-z]+)/.exec(c)
-    const method = m ? m[1].toUpperCase() : "GET"
+    // No explicit -X but a body flag (-f/-F/--field/--raw-field/--input) makes
+    // gh send POST — `gh api …/reviews -f event=APPROVE` must not read as GET.
+    const impliesBody = /(?:^|\s)(?:-f|-F|--field|--raw-field|--input)(?:[=\s]|$)/.test(c)
+    const method = m ? m[1].toUpperCase() : impliesBody ? "POST" : "GET"
     // Submitting a review or changing reviewers mutates PR state even via POST.
     if (method !== "GET" && /\/(?:reviews|requested_reviewers)(?:\b|\/|\?|$)/.test(c)) return true
     return !(method === "GET" || method === "POST")
@@ -179,7 +187,12 @@ export const isAdoWriteBackstopViolation = (cmd) => {
  *  - any force (`-f`, `--force`, `--force-with-lease`) or a delete (`--delete`, `:dst` with empty src);
  *  - a `+`-prefixed refspec (a forced ref update);
  *  - a `src:dst` refspec whose destination differs from its source (pushing onto a
- *    DIFFERENT branch — the `x:main` / `x:refs/heads/main` escape).
+ *    DIFFERENT branch — the `x:main` / `x:refs/heads/main` escape);
+ *  - any refspec naming the default branch (`main`/`master`, bare or as `:dst`) or a
+ *    bare `HEAD` — a fast-forward `git push origin main` has no force flag and no
+ *    mismatched refspec, so the rules above wave it through, and `HEAD` is statically
+ *    unresolvable (it IS the default branch whenever that's checked out). Residual:
+ *    a PR whose head branch is literally named main/master parks — fail-safe.
  * The `refs/heads/` prefix is normalized so `x:refs/heads/x` (same branch) still passes.
  * Gated on an active loop marker by the caller, so a human's manual push is untouched.
  */
@@ -189,16 +202,24 @@ export const isGitPushViolation = (cmd) => {
   if (/(?:^|\s)(?:-f|--force|--force-with-lease)(?:[=\s]|$)/.test(c)) return true
   if (/(?:^|\s)--delete(?:\s|$)/.test(c)) return true
   const bare = (ref) => ref.replace(/^refs\/heads\//, "")
-  for (const t of c.split(/\s+/)) {
+  const protectedRef = (ref) => ["main", "master", "HEAD"].includes(bare(ref))
+  const tokens = c.split(/\s+/)
+  let refspecs = 0
+  for (let i = tokens.indexOf("push") + 1; i < tokens.length; i++) {
+    const t = tokens[i]
     if (t.startsWith("-")) continue // flag/option, not a refspec
     if (t.startsWith("+")) return true // forced ref update (+src:dst or +ref)
+    if (++refspecs === 1) continue // the first non-flag argument is the remote, not a refspec
     const ci = t.indexOf(":")
-    if (ci !== -1) {
-      const src = t.slice(0, ci)
-      const dst = t.slice(ci + 1)
-      if (src === "") return true // delete form (:dst)
-      if (dst && bare(dst) !== bare(src)) return true // pushing onto a different-named branch
+    if (ci === -1) {
+      if (protectedRef(t)) return true // fast-forward push of the default branch (or HEAD)
+      continue
     }
+    const src = t.slice(0, ci)
+    const dst = t.slice(ci + 1)
+    if (src === "") return true // delete form (:dst)
+    if (dst && bare(dst) !== bare(src)) return true // pushing onto a different-named branch
+    if (dst && protectedRef(dst)) return true // main:main etc. — still the default branch
   }
   return false
 }

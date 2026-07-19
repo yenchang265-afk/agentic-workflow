@@ -8,28 +8,4 @@ permission:
     # Both platforms are allowed here (static frontmatter can't switch); config
     # codePlatform decides which the stage prompt actually uses. ADO is the REST
     # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
-    "gh pr view*": allow
-    "gh pr checks*": allow
-    "gh pr diff*": allow
-    "gh api *": allow
-    "gh run view*": allow
-    "gh run list*": allow
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git fetch*": allow
-    "git -C * status*": allow
-    "git -C * diff*": allow
-    "git -C * log*": allow
-    "git -C * show*": allow
-    "git -C * fetch*": allow
-    "ls*": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "grep *": allow
-    "find *": allow
-    "wc *": allow
+    # {{allowlist}} — globs generated from the stage's allowlists in loops/*/loop.json; edit the manifest, not here

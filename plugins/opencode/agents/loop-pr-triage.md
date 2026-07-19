@@ -9,14 +9,6 @@ permission:
     # Both platforms are allowed here (static frontmatter can't switch); config
     # codePlatform decides which the stage prompt actually uses. ADO is the REST
     # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
-    "gh pr view*": allow
-    "gh pr checks*": allow
-    "gh pr diff*": allow
-    "gh api *": allow
-    "gh run view*": allow
-    "gh run list*": allow
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -34,6 +26,14 @@ permission:
     "grep *": allow
     "find *": allow
     "wc *": allow
+    "gh pr view*": allow
+    "gh pr checks*": allow
+    "gh pr diff*": allow
+    "gh api repos/*/pulls/*/comments*": allow
+    "gh run view*": allow
+    "gh run list*": allow
+    "curl -sS -u :* https://dev.azure.com/*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*": allow
 ---
 
 You are the **loop-pr-triage** subagent — the TRIAGE stage of the PR-sitter

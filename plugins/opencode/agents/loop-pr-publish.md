@@ -6,19 +6,15 @@ permission:
   webfetch: deny
   bash:
     "*": deny
+    # Both platforms are allowed here (static frontmatter can't switch); config
+    # codePlatform decides which the stage prompt actually uses. GitHub replies go
+    # through `gh pr comment` / `gh api repos/*/pulls/*/comments*` (per-thread
+    # replies only — no other endpoint matches); ADO writes go to the REST API via
+    # curl+PAT, scoped to `/threads*` so this stage can only post comment replies —
+    # never complete/abandon/approve/reviewer a PR (those hit `/pullrequests/<id>`
+    # or `/reviewers`, which don't match the glob).
     "git push origin *": allow
     "git -C * push origin *": allow
-    # Both platforms are allowed here (static frontmatter can't switch); config
-    # codePlatform decides which the stage prompt actually uses. ADO writes go to
-    # the REST API via curl+PAT, scoped to `/threads*` so this stage can only post
-    # comment replies — never complete/abandon/approve/reviewer a PR (those hit
-    # `/pullrequests/<id>` or `/reviewers`, which don't match the glob).
-    "gh pr comment *": allow
-    "gh pr view*": allow
-    "gh pr checks*": allow
-    "gh api *": allow
-    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -33,6 +29,12 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
+    "gh pr comment *": allow
+    "gh pr view*": allow
+    "gh pr checks*": allow
+    "gh api repos/*/pulls/*/comments*": allow
+    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
 ---
 
 You are the **loop-pr-publish** subagent — the PUBLISH stage of the PR-sitter
@@ -48,7 +50,9 @@ The goal (which PR), triage's findings, fix's summary, and verify's result.
 1. `git push origin <branch>` (never `--force`; if the push is rejected,
    report it — a human moved the branch).
 2. Reply on the PR: one comment per addressed finding — what changed, where,
-   and the commit. GitHub: `gh pr comment` (or a per-thread reply via `gh api`);
+   and the commit. GitHub: `gh pr comment` (or a per-thread reply via
+   `gh api repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies -f body=…`
+   — path first; no other `gh api` endpoint is allowlisted);
    Azure DevOps (`ado`): a thread reply via the REST API,
    `curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" -X POST -H "Content-Type: application/json"
    -d '{"content":"…","commentType":"text"}'

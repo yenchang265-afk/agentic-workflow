@@ -16,6 +16,7 @@ import {
   onInterrupt,
   parseWatchArgs,
   recordVerdict,
+  findDrivingLoop,
   resolveDrivingSession,
   runStageWithLenses,
   type Deps,
@@ -1098,6 +1099,32 @@ test("resolveDrivingSession walks the parentID chain to the driving session", as
     assert.equal(await resolveDrivingSession(client, "stranger"), "stranger", "an unrelated session falls back to itself")
   } finally {
     clearLoop("parent-sess")
+  }
+})
+
+test("findDrivingLoop returns the driving ancestor's state, null at root, and throws on API failure", async () => {
+  const { setLoop, clearLoop } = await import("@agentic-loop/core/loop/state")
+  const state: LoopState = { goal: "g", stage: "build", iteration: 0, artifacts: {} }
+  setLoop("drv", state)
+  const client = {
+    session: {
+      get: async ({ path: { id } }: { path: { id: string } }) => {
+        if (id === "kid") return { data: { parentID: "drv" } }
+        if (id === "broken") throw new Error("session API down")
+        return { data: {} }
+      },
+    },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any
+  try {
+    assert.deepEqual(await findDrivingLoop(client, "kid"), { sessionID: "drv", state }, "child resolves to its driving ancestor")
+    assert.equal(await findDrivingLoop(client, "stranger"), null, "a chain ending with no loop resolves to null")
+    // The strict core THROWS on a session-API failure so the worktree guard can
+    // fail closed — the lenient resolveDrivingSession wrapper keeps falling back.
+    await assert.rejects(() => findDrivingLoop(client, "broken"), /session API down/)
+    assert.equal(await resolveDrivingSession(client, "broken"), "broken", "lenient wrapper falls back to the input id")
+  } finally {
+    clearLoop("drv")
   }
 })
 

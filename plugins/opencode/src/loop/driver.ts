@@ -388,16 +388,29 @@ const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord 
  * Depth-capped; falls back to the given id so `recordVerdict` still reports
  * "no active loop" when nothing in the chain is driving.
  */
-export const resolveDrivingSession = async (client: Client, sessionID: string): Promise<string> => {
+export const resolveDrivingSession = async (client: Client, sessionID: string): Promise<string> =>
+  (await findDrivingLoop(client, sessionID).catch(() => null))?.sessionID ?? sessionID
+
+/**
+ * Strict core of `resolveDrivingSession`: resolve the loop driving `sessionID`
+ * (itself or an ancestor, ≤5 hops). Returns null when the chain provably ends
+ * with no loop, but THROWS on a session-API failure — the worktree-pinning
+ * guard must fail CLOSED on "can't tell", not silently skip enforcement.
+ */
+export const findDrivingLoop = async (
+  client: Client,
+  sessionID: string,
+): Promise<{ readonly sessionID: string; readonly state: LoopState } | null> => {
   let id = sessionID
   for (let depth = 0; depth < 5; depth++) {
-    if (getLoop(id)) return id
-    const res = await client.session.get({ path: { id } }).catch(() => null)
+    const state = getLoop(id)
+    if (state) return { sessionID: id, state }
+    const res = await client.session.get({ path: { id } })
     const parent = res?.data?.parentID
-    if (!parent) return sessionID
+    if (!parent) return null
     id = parent
   }
-  return sessionID
+  return null
 }
 
 const toast = (client: Client, message: string, variant: "info" | "success" | "warning" | "error") =>

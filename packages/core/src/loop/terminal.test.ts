@@ -191,6 +191,56 @@ test("stop annotates the task and leaves it in place (no move)", async () => {
   assert.deepEqual(metrics, [{ outcome: "stopped", detail: "Loop stopped at build." }])
 })
 
+test("stop with the task gone from in-progress/ skips the note and creates no ghost file", async () => {
+  // The resurrection regression: appendNote's `>>` creates the file if absent, so a
+  // stop after a human moved/deleted the task must never write to the stale path.
+  const state: LoopState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  const { ctx, log, metrics, commits, fs } = makeCtx({}, state)
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.ok(!log.some((c) => c.includes(">>")), `no append to a missing task: ${log.join(" | ")}`)
+  assert.equal(commits.length, 0, "nothing written → nothing to commit")
+  assert.ok(!("/repo/docs/tasks/in-progress/t.md" in fs), "no ghost file resurrected")
+  assert.deepEqual(metrics, [{ outcome: "stopped", detail: "Loop stopped at build." }])
+})
+
+test("stop appends to the re-resolved path, not the stale claim-time path", async () => {
+  // Claim-time ref points at queued/, but the file has since moved to in-progress/ —
+  // the note must land on the real current path.
+  const state: LoopState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "queued") }
+  const { ctx, log, commits } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  const append = log.find((c) => c.includes(">>"))
+  assert.ok(append?.includes("in-progress/t.md"), `append must target the re-resolved path: ${append}`)
+  assert.equal(commits.length, 1)
+})
+
+test("stop mid-plan releases the queued claim marker and appends in queued/", async () => {
+  const { ctx, log, commits } = makeCtx({ "queued/t.md": body(false) }, planState())
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  const append = log.find((c) => c.includes(">>"))
+  assert.ok(append?.includes("queued/t.md"), `append must target queued/: ${append}`)
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes("queued/.claims/t")),
+    `queued claim marker must be released: ${log.join(" | ")}`,
+  )
+  assert.equal(commits.length, 1)
+})
+
+test("stop mid-plan with the task gone still releases the claim-time marker, no append", async () => {
+  const { ctx, log, commits } = makeCtx({}, planState())
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.ok(!log.some((c) => c.includes(">>")), "no append to a missing task")
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes("queued/.claims/t")),
+    `claim marker released via the claim-time ref: ${log.join(" | ")}`,
+  )
+  assert.equal(commits.length, 0)
+})
+
 test("a source-pre-set git that never isolated leaves the main tree untouched (B5)", async () => {
   // pr-sitter triage → done "nothing actionable": git names the branch to isolate ONTO
   // but `isolated` is false, so no checkpoint/teardown may touch the human's main tree.

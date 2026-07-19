@@ -23,7 +23,7 @@
       ],
       "platformAllowlist": {
         "github": [
-          "gh pr view*", "gh pr diff*", "gh pr checks*", "gh api *"
+          "gh pr view*", "gh pr diff*", "gh pr checks*"
         ],
         "ado": [
           "curl -sS -u :* https://dev.azure.com/*",

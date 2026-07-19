@@ -7,9 +7,10 @@ import type { Config } from "./config.ts"
 import * as driver from "./loop/driver.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
 import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
-import { findSessionDriving, getLoop, hasLoop, planStageTaskId } from "@agentic-loop/core/loop/state"
+import { anyLoopActive, anyWorktreeLoopActive, findSessionDriving, getLoop, hasLoop, planStageTaskId } from "@agentic-loop/core/loop/state"
 import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
 import { classifyBash, classifyEdit } from "@agentic-loop/core/task/guard"
+import { chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-loop/core/task/write-backstop"
 import { isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
@@ -224,16 +225,49 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       // default-deny anything but reads, with carve-outs for authoring
       // draft/*.md and the live PLAN stage writing its own queued/ task.
       const config = await getConfig()
-      const loop = getLoop(input.sessionID)
-      // Fall back to the store scan so a PLAN subagent (own sessionID, absent from
-      // the store) still resolves the carve-out for its driving loop's queued/ task.
-      const planTaskId = (loop?.stage === "plan" ? (loop.task?.id ?? null) : null) ?? planStageTaskId()
+      // Stage commands run as subtasks, so tool calls arrive with the CHILD
+      // session's id — getLoop misses and every per-loop guard below would be
+      // silently skipped (the worktree pinning was dead code for stage
+      // subagents). Walk the parentID chain to the driving loop, like
+      // loop_verdict does; the walk only runs while some loop is live.
+      let loop = getLoop(input.sessionID)
+      let resolutionFailed = false
+      if (!loop && anyLoopActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool))) {
+        try {
+          loop = (await driver.findDrivingLoop(client, input.sessionID))?.state
+        } catch (err) {
+          resolutionFailed = true
+          await log("warn", `could not resolve driving session for ${input.sessionID}: ${(err as Error).message}`)
+        }
+      }
+      // Per-loop precise carve-out when the session resolved to a loop; the store
+      // scan only backstops sessions that could not be attributed to any loop.
+      const planTaskId = loop ? (loop.stage === "plan" ? (loop.task?.id ?? null) : null) : planStageTaskId()
       const guardCtx = { tasksDir: config.tasksDir, planTaskId }
       if (input.tool === "bash") {
         const cmd: unknown = output.args?.command
         if (typeof cmd === "string") {
           const verdict = classifyBash(cmd, guardCtx)
           if (!verdict.allow) throw new Error(verdict.reason)
+          // Write backstops (segment-aware — allowlist globs compile with dotAll
+          // `*` so they can never exclude trailing flags like `-X DELETE`). The
+          // Claude host enforces these in its PreToolUse hook; without this the
+          // OpenCode host had no backstop at all. ADO is always on (the PAT must
+          // never make a write beyond thread replies / PR creation); the gh/push
+          // rules apply only while a loop drives this session, so a human's
+          // manual `gh pr merge` in a non-loop session is untouched.
+          if (chainedAdoWriteBackstopViolation(cmd)) {
+            throw new Error(
+              "agentic-loop: blocked an Azure DevOps write — loops may only GET, reply to a comment thread " +
+                "(POST …/threads…), or create a PR (POST …/pullrequests); completing/abandoning/approving stays a human call.",
+            )
+          }
+          if (loop && (chainedGithubPrMutation(cmd) || chainedGitPushViolation(cmd))) {
+            throw new Error(
+              "agentic-loop: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
+                "approves, force-pushes, or pushes the default branch; those stay a human call.",
+            )
+          }
         }
       } else if (EDIT_TOOLS.has(input.tool)) {
         const fp: unknown = output.args?.filePath ?? output.args?.path
@@ -246,6 +280,15 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       // session, a file-writing tool must not touch anything outside the worktree.
       // Non-edit tools pass through (bash pinning stays prompt-enforced — a
       // documented residual).
+      if (resolutionFailed && EDIT_TOOLS.has(input.tool) && anyWorktreeLoopActive()) {
+        // Fail CLOSED on "can't tell": a worktree-isolated loop is live but this
+        // session couldn't be attributed to (or cleared of) it — refusing the edit
+        // beats risking a silent write to the human's main tree.
+        throw new Error(
+          "agentic-loop: a worktree-isolated loop is active but this session could not be attributed " +
+            "(session lookup failed) — refusing the edit rather than risking a write outside the worktree.",
+        )
+      }
       const wt = loop?.git?.worktree
       if (!wt || !EDIT_TOOLS.has(input.tool)) return
       const filePath: unknown = output.args?.filePath ?? output.args?.path

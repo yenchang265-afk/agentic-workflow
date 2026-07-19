@@ -255,6 +255,14 @@ export const planStageTaskId = (): string | null => {
   for (const state of store.values()) if (state.stage === "plan" && state.task?.id) return state.task.id
   return null
 }
+/** Whether any loop is live in this instance — cheap pre-check before a parent-chain walk. */
+export const anyLoopActive = (): boolean => store.size > 0
+/** Whether any live loop runs in worktree isolation — drives fail-closed edit handling
+ *  when a tool call's session can't be attributed to (or cleared of) a driving loop. */
+export const anyWorktreeLoopActive = (): boolean => {
+  for (const state of store.values()) if (state.git?.worktree) return true
+  return false
+}
 export const setLoop = (sessionID: string, state: LoopState): void => void store.set(sessionID, state)
 export const clearLoop = (sessionID: string): boolean => store.delete(sessionID)
 export const hasLoop = (sessionID: string): boolean => store.has(sessionID)

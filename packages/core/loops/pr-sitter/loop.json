@@ -45,7 +45,7 @@
           "gh pr view*",
           "gh pr checks*",
           "gh pr diff*",
-          "gh api *",
+          "gh api repos/*/pulls/*/comments*",
           "gh run view*",
           "gh run list*"
         ],
@@ -191,11 +191,11 @@
           "gh pr comment *",
           "gh pr view*",
           "gh pr checks*",
-          "gh api *"
+          "gh api repos/*/pulls/*/comments*"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
+          "curl -sS -u :* https://dev.azure.com/*/threads*",
+          "curl -sS -u :* https://*.visualstudio.com/*/threads*"
         ]
       }
     }
