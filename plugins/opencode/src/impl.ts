@@ -11,7 +11,7 @@ import { anyLoopActive, anyWorktreeLoopActive, findSessionDriving, getLoop, hasL
 import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
 import { classifyBash, classifyEdit } from "@agentic-loop/core/task/guard"
 import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-loop/core/task/write-backstop"
-import { isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
+import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
@@ -144,19 +144,29 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
     }
 
-    // Worktree reconciliation: prune vanished registrations, then surface any
-    // surviving loop worktrees (a crashed run's) so a human knows they exist —
-    // never auto-delete (another process may own it; a crashed diff is evidence).
+    // Worktree reconciliation: prune vanished registrations, then surface the
+    // surviving loop worktrees. A worktree whose task is still in-progress or
+    // in-review is the NORMAL post-run state (kept until the ship gate releases
+    // it) — only one with no such task is worth a warning. Never auto-delete
+    // (another process may own it; a crashed diff is evidence).
     if (config.worktreesDir) {
       try {
         await pruneWorktrees($, directory)
         const root = path.resolve(directory, config.worktreesDir)
-        const stale = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
-        for (const w of stale) {
-          await log(
-            "warn",
-            `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — /agentic-loop:engineering recover will reuse it, or 'git worktree remove' it`,
-          )
+        const kept = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
+        for (const w of kept) {
+          const id = path.basename(w.path)
+          const active =
+            (await findByIdIn($, directory, config.tasksDir, "in-progress", id)) ??
+            (await findByIdIn($, directory, config.tasksDir, "in-review", id))
+          if (active) {
+            await log("info", `loop worktree ${w.path} (branch ${w.branch ?? "?"}) kept for task ${id} — released when it ships`)
+          } else {
+            await log(
+              "warn",
+              `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — no in-progress/in-review task ${id}; /agentic-loop:engineering recover will reuse it, or 'git worktree remove' it`,
+            )
+          }
         }
       } catch (err) {
         await log("warn", `worktree reconciliation failed: ${(err as Error).message}`)

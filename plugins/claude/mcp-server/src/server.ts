@@ -1194,11 +1194,21 @@ async function runGate(argv: string[]): Promise<number> {
 
 async function main() {
   await loadCfg()
-  // Boot reconciliation: prune vanished worktrees, surface survivors (never auto-delete).
+  // Boot reconciliation: prune vanished worktrees, surface survivors (never
+  // auto-delete). A worktree whose task is still in-progress or in-review is the
+  // NORMAL post-run state (kept until the ship gate releases it) — only one with
+  // no such task is genuinely leftover.
   if (config.worktreesDir) {
     await pruneWorktrees(sh, directory)
     const worktrees = (await listWorktrees(sh, directory)).filter((w) => w.branch?.startsWith("feature/"))
-    for (const w of worktrees) await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — /agentic-loop:engineering recover its task or remove it`)
+    for (const w of worktrees) {
+      const id = w.branch!.slice("feature/".length)
+      const active =
+        (await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)) ??
+        (await findByIdIn(sh, directory, config.tasksDir, "in-review", id))
+      if (active) await log("info", `loop worktree ${w.path} (${w.branch}) kept for task ${id} — released when it ships`)
+      else await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — no in-progress/in-review task ${id}; /agentic-loop:engineering recover its task or remove it`)
+    }
   }
   await log("info", `agentic-loop MCP server ready (directory=${directory})`)
   const transport = new StdioServerTransport()

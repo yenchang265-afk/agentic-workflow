@@ -63,7 +63,6 @@ import {
   isDirty,
   isGitRepo,
   pruneWorktrees,
-  removeWorktree,
   worktreeForBranch,
 } from "@agentic-loop/core/loop/git"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
