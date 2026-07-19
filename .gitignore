@@ -35,3 +35,9 @@ QODER.md
 .kiro/
 .qoder/
 .github/code-review-graph.instruction.md
+
+# Machine-local MCP wiring the same installer writes at the repo root — holds
+# absolute paths to a local pipx venv, so it is never portable. Root-anchored:
+# plugins/claude/.mcp.json is a real tracked file and must stay committed.
+/.mcp.json
+/opencode.jsonc
