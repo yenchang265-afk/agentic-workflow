@@ -36,6 +36,7 @@ const StageMarkerSchema = z.object({
   taskId: z.string().nullable().optional(),
   worktree: z.string().nullable().optional(),
   deadline: z.number().nullable().optional(),
+  iteration: z.number().nullable().optional(),
 })
 
 /**

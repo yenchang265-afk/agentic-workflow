@@ -135,6 +135,8 @@ export interface StageMarker {
   readonly taskId?: string | null
   readonly worktree?: string | null
   readonly deadline?: number | null
+  /** BUILD/VERIFY/REVIEW retry count for the current task; absent on older markers. */
+  readonly iteration?: number | null
 }
 
 export interface LeaseView {

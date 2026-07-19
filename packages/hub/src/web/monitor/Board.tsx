@@ -1,4 +1,4 @@
-import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.js"
+import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
@@ -22,12 +22,15 @@ const TaskCardView = ({
   claimed,
   status,
   kind,
+  stage,
 }: {
   task: TaskCard
   gated: boolean
   claimed: boolean
   status: string
   kind: string
+  /** The live stage marker, already confirmed to belong to this task. */
+  stage: StageMarker | null
 }) => (
   <Card gated={gated} title={task.acceptance.join("\n")}>
     <div className="card-title">{task.title}</div>
@@ -37,6 +40,12 @@ const TaskCardView = ({
       {task.hasPlan && <Badge tone="ok">plan</Badge>}
       {claimed && <Badge tone="gate">claimed</Badge>}
       {gated && <Badge tone="gate">awaiting you</Badge>}
+      {stage && (
+        <Badge tone="live" title="current sub-stage — retries on VERIFY/REVIEW fail re-run BUILD">
+          {stage.stage}
+          {stage.iteration != null ? ` · iter ${stage.iteration}` : ""}
+        </Badge>
+      )}
       {task.labels.map((l) => (
         <Badge key={l}>{l}</Badge>
       ))}
@@ -55,6 +64,10 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
     repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId),
     [versions.backlog, versions.gate, repoId, info.kind],
   )
+  const { data: active } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+  // Only the Claude host writes this marker (see StageMarker), and only one loop
+  // runs at a time, so at most one card across every board can match it.
+  const liveStage = active?.stage && active.stage.kind === info.kind ? active.stage : null
 
   if (error) return <div className="error-banner">Could not load backlog: {error}</div>
   if (!data) return <div className="placeholder">Loading backlog…</div>
@@ -106,6 +119,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                   claimed={claimed.has(t.id)}
                   status={status}
                   kind={info.kind}
+                  stage={liveStage?.taskId === t.id ? liveStage : null}
                 />
               ))}
             </div>

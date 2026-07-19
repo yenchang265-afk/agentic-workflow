@@ -111,6 +111,14 @@ test("a stage marker with no taskId drives no task (a sitter stage runs on a PR,
   cleanup(dir)
 })
 
+test("a stage marker's iteration passes through — the board badge needs it to show retry count", async () => {
+  const dir = makeFixture()
+  writeMarker(dir, { kind: "engineering", stage: "build", taskId: "f7k3-add-rate-limit", iteration: 2 })
+  const marker = await readStageMarker(depsFor(dir))
+  assert.equal(marker?.iteration, 2)
+  cleanup(dir)
+})
+
 test("a garbled stage marker reads as absent rather than throwing", async () => {
   const dir = makeFixture()
   writeMarker(dir, "{ not json")

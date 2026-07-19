@@ -246,6 +246,8 @@ const writeStageMarker = (stage: string | null) => {
           taskId: active?.task?.id ?? null,
           worktree: active?.git?.worktree ?? null,
           deadline: stageDeadline,
+          // 1-indexed to match the "BUILD started (iteration N)" audit notes.
+          iteration: active ? active.iteration + 1 : null,
           ...(allowlist.length ? { bashAllowlist: allowlist } : {}),
         }),
       )
