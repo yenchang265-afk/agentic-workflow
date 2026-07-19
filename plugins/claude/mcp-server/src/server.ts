@@ -304,7 +304,10 @@ const terminalCtx = (state: LoopState, actor: string | null): TerminalCtx => ({
   manifest: manifestFor(state.kind ?? "engineering"),
   actor,
   commitBacklog: async (message) => void (await commitPaths(sh, directory, [config.tasksDir], message)),
-  checkpoint: async (message) => void (await commitAll(sh, loopWorkTree(directory, state), message)),
+  // Worktree checkpoints exclude the backlog dir — the frozen `<tasksDir>` copy
+  // must never ride feature/<id> (task-file lifecycle lives on the main tree).
+  checkpoint: async (message) =>
+    void (await commitAll(sh, loopWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
   writeMetrics: async (outcome, detail) => {
     const stamp = new Date().toISOString()
     const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
@@ -614,6 +617,17 @@ server.registerTool(
     if (stage === "build" && active.task) {
       const actor = await gitActor(sh, directory)
       await appendNote(sh, active.task, auditNote(`BUILD started (iteration ${active.iteration + 1})`, new Date(), actor), log)
+      // A degraded isolation (detached HEAD, checkout failure) must be visible
+      // in the task's audit trail, not just a console warn — the run otherwise
+      // looks identical to an isolated one while writing into the main tree.
+      if (active.isolationWarning) {
+        await appendNote(
+          sh,
+          active.task,
+          auditNote(`WARNING: BUILD running WITHOUT isolation — ${active.isolationWarning}`, new Date(), actor),
+          log,
+        )
+      }
     }
     const def = stageDef(activeManifest().manifest, stage)
     const model = stageModel(activeManifest().manifest.kind, def)
@@ -622,6 +636,7 @@ server.registerTool(
       agent: agentRef(def.agent),
       ...(model ? { model } : {}),
       worktree: active.git?.worktree ?? null,
+      ...(active.isolationWarning ? { isolationWarning: active.isolationWarning } : {}),
       deadlineMinutes: config.stageTimeoutMinutes,
       ...(def.kind === "check"
         ? {
@@ -714,7 +729,12 @@ server.registerTool(
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
-      await commitAll(sh, workTree(), `loop(${loopId(active)}): build checkpoint (iteration ${active.iteration + 1})`)
+      await commitAll(
+        sh,
+        workTree(),
+        `loop(${loopId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
+        active.git?.worktree ? [config.tasksDir] : undefined,
+      )
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
       const failed = pending?.criteria?.filter((c) => !c.pass).length ?? 0
@@ -865,7 +885,7 @@ server.registerTool(
   { description: "Commit the current build state as a checkpoint on the loop branch/worktree.", inputSchema: { message: z.string() } },
   async ({ message }) => {
     if (!active?.git) return ok({ committed: false, note: "no isolation active" })
-    const done = await commitAll(sh, workTree(), message)
+    const done = await commitAll(sh, workTree(), message, active.git.worktree ? [config.tasksDir] : undefined)
     return ok({ committed: done })
   },
 )

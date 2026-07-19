@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { addWorktree, branchExists, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
+import { addWorktree, branchExists, commitAll, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
 
 /**
  * git.ts shells out via Bun's `$` (redirections, quoting) which the node+tsx
@@ -56,6 +56,21 @@ const PORCELAIN = [
   "detached",
   "",
 ].join("\n")
+
+test("commitAll stages everything by default and applies :(exclude) pathspecs when given", async () => {
+  const plain: string[] = []
+  await commitAll(makeShell(() => ({ exitCode: 0 }), plain), "/wt", "msg")
+  assert.equal(plain[0], "git -C /wt add -A")
+
+  const excluded: string[] = []
+  await commitAll(makeShell(() => ({ exitCode: 0 }), excluded), "/wt", "msg", ["docs/tasks"])
+  assert.equal(excluded[0], "git -C /wt add -A -- . :(exclude)docs/tasks")
+  assert.equal(excluded[1], "git -C /wt commit -m msg")
+
+  const empty: string[] = []
+  await commitAll(makeShell(() => ({ exitCode: 0 }), empty), "/wt", "msg", [])
+  assert.equal(empty[0], "git -C /wt add -A")
+})
 
 test("branchExists maps a zero exit code to true", async () => {
   const yes = makeShell(() => ({ exitCode: 0 }))

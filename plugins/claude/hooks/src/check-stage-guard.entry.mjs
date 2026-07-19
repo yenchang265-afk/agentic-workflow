@@ -20,7 +20,13 @@
  *     active stage is read from the marker the MCP server writes
  *     (<tasksDir>/runs/.stage.json via loop_stage/loop_advance).
  *  2. Worktree pinning — while a worktree-isolated loop is active, edit/write
- *     tools may not touch absolute paths outside the worktree.
+ *     tools may not touch anything outside the worktree (fail closed:
+ *     relative and unreadable paths are refused, and the worktree's frozen
+ *     copy of the backlog is off-limits — task files are driver-owned on the
+ *     main tree), and (2b) Bash is pinned too: the agent session's real cwd
+ *     is the MAIN tree, so a command without the `cd <wt> && ` prefix is
+ *     blocked unless it is read-only or a `git -C <wt> …`
+ *     (@agentic-loop/core/loop/worktree-guard).
  *  3. Azure DevOps write backstop — ALWAYS ON: a sitter kind reaches ADO over
  *     REST (curl + PAT, `ado.access: "rest"`) or the az CLI (`"az"`) and may only
  *     read, POST a thread-comment reply, or create a brand-new DRAFT pull request
@@ -38,6 +44,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { classifyMutation } from "@agentic-loop/core/task/guard"
+import { classifyWorktreeBash, isUnderTasksDir } from "@agentic-loop/core/loop/worktree-guard"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
 
 const read = () =>
@@ -200,14 +207,43 @@ const main = async () => {
     }
   }
 
-  // (2) worktree pinning for edit/write tools
-  if (marker.worktree && ["Edit", "Write", "MultiEdit"].includes(tool)) {
-    const fp = ti.file_path ?? ti.path
-    if (typeof fp === "string" && path.isAbsolute(fp)) {
-      const rel = path.relative(marker.worktree, path.resolve(fp))
-      if (rel === "" || rel.startsWith("..")) {
-        return block(`agentic-loop: this loop is isolated to its worktree ${marker.worktree} — editing ${fp} is outside it. Use a path under the worktree.`)
-      }
+  // (2b) worktree bash pin — the agent session's real cwd is the MAIN tree
+  // (the engine only conveys the worktree as prompt text), so a command
+  // without the `cd <wt> && ` prefix would silently run outside the isolation.
+  // Runs after the check-stage allowlist so its teaching message fires first
+  // for verify/review; this catches allowlisted-but-unpinned runners too
+  // (a bare `npm test` in VERIFY).
+  if (tool === "Bash" && marker.worktree) {
+    const pinVerdict = classifyWorktreeBash(String(ti.command ?? ""), marker.worktree)
+    if (!pinVerdict.allow) return block(pinVerdict.reason)
+  }
+
+  // (2) worktree pinning for edit/write tools. Fail CLOSED (same contract as
+  // the OpenCode host): a relative path resolves against the session's cwd —
+  // the MAIN tree — and a path we can't read is unguardable; both are refused.
+  if (marker.worktree && ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
+    const fp = ti.file_path ?? ti.path ?? ti.notebook_path
+    if (typeof fp !== "string") {
+      return block(
+        `agentic-loop: this loop is isolated to its worktree ${marker.worktree}, but ${tool}'s target path could not be determined — pass an absolute path under the worktree.`,
+      )
+    }
+    if (!path.isAbsolute(fp)) {
+      return block(
+        `agentic-loop: this loop is isolated to its worktree ${marker.worktree} — "${fp}" is a relative path that resolves against the main tree. Use an absolute path under the worktree.`,
+      )
+    }
+    const rel = path.relative(marker.worktree, path.resolve(fp))
+    if (rel === "" || rel.startsWith("..")) {
+      return block(`agentic-loop: this loop is isolated to its worktree ${marker.worktree} — editing ${fp} is outside it. Use a path under the worktree.`)
+    }
+    // The worktree carries a checkout-time frozen copy of the backlog; an edit
+    // there rides the feature branch and resurrects the task file in the wrong
+    // status folder on merge.
+    if (isUnderTasksDir(fp, marker.worktree, tasksDir)) {
+      return block(
+        `agentic-loop: task files are driver-owned and live on the main tree — the loop records notes and moves itself; do not edit the worktree's frozen ${tasksDir} copy.`,
+      )
     }
   }
 

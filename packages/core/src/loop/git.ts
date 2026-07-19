@@ -43,9 +43,16 @@ export const checkoutBranch = async ($: Shell, cwd: string, branch: string): Pro
 /**
  * Stage everything and commit. Returns false when there was nothing to commit
  * or the commit failed — callers treat both as "no checkpoint taken".
+ *
+ * `excludes` (repo-relative paths) are kept OUT of the checkpoint via git's
+ * `:(exclude)` pathspec — hosts pass the backlog dir when checkpointing a
+ * worktree, so its checkout-time frozen copy of `docs/tasks` never rides the
+ * feature branch (task-file lifecycle lives on the main tree).
  */
-export const commitAll = async ($: Shell, cwd: string, message: string): Promise<boolean> => {
-  if (!(await run($, cwd, ["add", "-A"])).ok) return false
+export const commitAll = async ($: Shell, cwd: string, message: string, excludes?: readonly string[]): Promise<boolean> => {
+  const addArgs =
+    excludes && excludes.length > 0 ? ["add", "-A", "--", ".", ...excludes.map((e) => `:(exclude)${e}`)] : ["add", "-A"]
+  if (!(await run($, cwd, addArgs)).ok) return false
   return (await run($, cwd, ["commit", "-m", message])).ok
 }
 
