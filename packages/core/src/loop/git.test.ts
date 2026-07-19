@@ -88,18 +88,30 @@ test("worktreeForBranch finds the matching worktree path", async () => {
 test("addWorktree creates a new branch with -b when the branch is absent", async () => {
   const log: string[] = []
   const $ = makeShell((cmd) => (cmd.includes("rev-parse --verify") ? { exitCode: 1 } : { exitCode: 0 }), log)
-  const ok = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
-  assert.equal(ok, true)
+  const added = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
+  assert.deepEqual(added, { ok: true, error: "" })
   assert.ok(log.some((c) => c.includes("worktree add -b feature/add-foo /wt/add-foo main")))
 })
 
 test("addWorktree reuses an existing branch without -b (never resets it)", async () => {
   const log: string[] = []
   const $ = makeShell((cmd) => (cmd.includes("rev-parse --verify") ? { exitCode: 0 } : { exitCode: 0 }), log)
-  const ok = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
-  assert.equal(ok, true)
+  const added = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
+  assert.equal(added.ok, true)
   assert.ok(log.some((c) => c.includes("worktree add /wt/add-foo feature/add-foo")))
   assert.ok(!log.some((c) => c.includes("worktree add -b")))
+})
+
+// The reason a worktree add failed is the only actionable part of the error the
+// caller throws — it used to be dropped, leaving "could not create worktree X" alone.
+test("addWorktree surfaces git's stderr on failure", async () => {
+  const $ = makeShell((cmd) =>
+    cmd.includes("rev-parse --verify")
+      ? { exitCode: 0 }
+      : { exitCode: 128, stderr: "fatal: '/wt/add-foo' already exists\n" },
+  )
+  const added = await addWorktree($, "/repo", "/wt/add-foo", "feature/add-foo", "main")
+  assert.deepEqual(added, { ok: false, error: "fatal: '/wt/add-foo' already exists" })
 })
 
 test("pushBranch pushes to origin with -u", async () => {

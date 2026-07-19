@@ -9,9 +9,9 @@ import type { Shell } from "../host.js"
  * before opening its PR.
  */
 
-const run = async ($: Shell, cwd: string, args: string[]): Promise<{ ok: boolean; stdout: string }> => {
+const run = async ($: Shell, cwd: string, args: string[]): Promise<{ ok: boolean; stdout: string; stderr: string }> => {
   const out = await $`git -C ${cwd} ${args}`.quiet().nothrow()
-  return { ok: out.exitCode === 0, stdout: out.stdout.toString().trim() }
+  return { ok: out.exitCode === 0, stdout: out.stdout.toString().trim(), stderr: out.stderr.toString().trim() }
 }
 
 /** Whether `cwd` is inside a git work tree. */
@@ -86,7 +86,11 @@ export const branchExists = async ($: Shell, cwd: string, branch: string): Promi
 /**
  * Create a worktree at `wtPath` checked out to `branch`, cut from `base` (or
  * HEAD) when the branch doesn't exist yet. An existing branch is reused as-is,
- * never reset — same contract as `checkoutBranch`. Returns false on failure.
+ * never reset — same contract as `checkoutBranch`.
+ *
+ * Returns git's own stderr alongside `ok`: a failure here aborts the run, and
+ * the reason ("already exists", "already checked out", …) is the only thing
+ * that makes it actionable — swallowing it left the caller's throw unusable.
  */
 export const addWorktree = async (
   $: Shell,
@@ -94,12 +98,13 @@ export const addWorktree = async (
   wtPath: string,
   branch: string,
   base?: string,
-): Promise<boolean> => {
+): Promise<{ ok: boolean; error: string }> => {
   const exists = await branchExists($, cwd, branch)
   const args = exists
     ? ["worktree", "add", wtPath, branch]
     : ["worktree", "add", "-b", branch, wtPath, base ?? "HEAD"]
-  return (await run($, cwd, args)).ok
+  const { ok, stderr } = await run($, cwd, args)
+  return { ok, error: stderr }
 }
 
 /**

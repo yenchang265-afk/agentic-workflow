@@ -11,7 +11,10 @@ import { approvePlan, approveTask, rejectAny, replanTask, shipTask, type GateCtx
  * commands report "no branch/actor" so ship attempts no PR. The no-id
  * `resolveGateTask` path is covered end-to-end by the OpenCode driver tests.
  */
-const makeCtx = (files: Record<string, string>, opts: { driving?: string } = {}) => {
+const makeCtx = (
+  files: Record<string, string>,
+  opts: { driving?: string; git?: (cmd: string) => { exitCode: number; stdout: string } | undefined } = {},
+) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
   const log: string[] = []
@@ -39,7 +42,7 @@ const makeCtx = (files: Record<string, string>, opts: { driving?: string } = {})
         .filter((p) => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes("/"))
         .map((p) => p.slice(dir.length + 1))
       out = { exitCode: 0, stdout: names.join("\n") }
-    } else if (parts[0] === "git") out = { exitCode: 1, stdout: "" } // no actor, no branch → no PR
+    } else if (parts[0] === "git") out = opts.git?.(norm) ?? { exitCode: 1, stdout: "" } // default: no actor, no branch → no PR
     const chain = {
       quiet: () => chain,
       nothrow: () => chain,
@@ -166,6 +169,26 @@ test("shipTask moves an in-review task to completed (no branch → no PR)", asyn
   assert.ok(r.ok && typeof r.data.completed === "string")
   assert.ok(!("pr" in (r.ok ? r.data : {})), "no PR attempted without a feature branch")
   assert.ok("/repo/docs/tasks/completed/t.md" in fs)
+})
+
+// Ship is the ONLY point that removes a task's worktree: it is kept across every
+// earlier run so retries and recoveries build on prior iterations.
+test("shipTask releases the task's worktree once the task is completed", async () => {
+  const wt = "/repo/.loop-worktrees/t"
+  const { ctx, log } = makeCtx(
+    { "in-review/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("worktree list")) return { exitCode: 0, stdout: `worktree ${wt}\nHEAD abc\nbranch refs/heads/feature/t\n` }
+        if (cmd.includes("is-inside-work-tree")) return { exitCode: 0, stdout: "true" }
+        if (cmd.includes("worktree remove")) return { exitCode: 0, stdout: "" }
+        return undefined // everything else keeps the default "no actor, no branch"
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.ok(r.ok)
+  assert.ok(log.some((c) => c.includes(`worktree remove ${wt}`)), log.join(" | "))
 })
 
 // --- id resolution: approve by short-hash prefix, ambiguity, legacy back-compat ---
