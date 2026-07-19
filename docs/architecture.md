@@ -28,9 +28,9 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts<br/>gh pr list + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO (az·REST·MCP) + dedup ledger<br/>(pr-sitter, review-sitter)"]
             depscan["dependency-scan.ts<br/>advisory reports"]
-            ciruns["ci-runs.ts<br/>watched-branch CI heads"]
+            ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
         engine["loop/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
         manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
@@ -84,6 +84,10 @@ flowchart TB
   (`packages/core/src/source/types.ts`) knows how to find, atomically claim,
   and release units of work for one kind; a claimed `WorkItem` carries a
   fully-constructed entry `LoopState`, so drivers stay source-agnostic.
+  The PR and CI sources have Azure DevOps twins (`ado-pr.ts`,
+  `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
+  `"ado"`; how they talk to ADO — `az` CLI (default), REST, or MCP —
+  follows `ado.access`.
   `pollOnce(sources)` walks the given sources in claim-priority order
   (engineering first unless disabled, then opted-in kinds in config order —
   `enabledLoopKinds` in core config); the first successful claim wins, and
@@ -95,7 +99,7 @@ flowchart TB
 - **Per-kind status semantics** — the `docs/tasks/` status folders are the
   *engineering* kind's state model, not the framework's: its manifest binds a
   `backlog` work source with named statuses and claim pools. The PR sitter has
-  no folders at all — GitHub itself is the status (checks, review decision,
+  no folders at all — the platform (GitHub or ADO) itself is the status (checks, review decision,
   comments, mergeability) and a local per-PR ledger
   (`<tasksDir>/runs/pr-sitter/pr-<n>.json`) records what has already been
   handled. Other kinds pick whichever source fits.

@@ -27,9 +27,9 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts<br/>gh pr list + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO (az·REST·MCP) + dedup ledger<br/>(pr-sitter, review-sitter)"]
             depscan["dependency-scan.ts<br/>advisory reports"]
-            ciruns["ci-runs.ts<br/>watched-branch CI heads"]
+            ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
         engine["loop/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
         manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
@@ -82,6 +82,10 @@ flowchart TB
   （`packages/core/src/source/types.ts`）知道如何為某一種類型尋找、
   原子性地認領，以及釋放工作單元；一個已認領的 `WorkItem` 帶著一份
   完整建構好的入口 `LoopState`，因此驅動程式不需要知道工作來源的細節。
+  PR 與 CI 工作來源各有 Azure DevOps 對應版本（`ado-pr.ts`、
+  `ado-ci-runs.ts`），當 `codePlatform` 為 `"ado"` 時在接線階段換入；
+  它們與 ADO 溝通的方式——`az` CLI（預設）、REST 或 MCP——則依
+  `ado.access` 而定。
   `pollOnce(sources)` 依認領優先順序走訪指定的工作來源（除非停用，
   否則 engineering 優先，接著是設定中依序排列的已啟用類型——核心設定
   中的 `enabledLoopKinds`）；第一次成功的認領勝出，且每種類型的指令
@@ -92,8 +96,8 @@ flowchart TB
   不需要它。
 - **各類型的狀態語意**——`docs/tasks/` 的狀態資料夾是*engineering*
   這個類型的狀態模型，不是框架本身的：它的清單綁定了一個帶有具名狀態
-  和認領池的 `backlog` 工作來源。PR sitter 完全沒有資料夾——GitHub
-  本身就是狀態（檢查、審查裁定、留言、可合併性），外加一份本機的
+  和認領池的 `backlog` 工作來源。PR sitter 完全沒有資料夾——平台
+  （GitHub 或 ADO）本身就是狀態（檢查、審查裁定、留言、可合併性），外加一份本機的
   逐 PR 帳本（`<tasksDir>/runs/pr-sitter/pr-<n>.json`）記錄已經處理
   過什麼。其他類型則挑選最適合的來源。
 
