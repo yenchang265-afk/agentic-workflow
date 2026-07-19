@@ -7,7 +7,7 @@ import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
 import type { SaveKindResponse, ValidateResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
-import { saveKind, validateKind } from "./kinds.js"
+import { checklistKind, saveKind, validateKind } from "./kinds.js"
 
 const MANIFEST = {
   kind: "triage-bot",
@@ -96,6 +96,36 @@ test("saveKind refuses an existing kind without overwrite, and preserves prompts
   const updated = await saveKind(deps, req("triage-bot", { manifest: MANIFEST, overwrite: true }))
   assert.equal(updated.status, 200)
   assert.equal(fs.readFileSync(path.join(loops, "triage-bot", "stages", "scan.md"), "utf8"), "HAND-TUNED\n")
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+test("checklistKind recomputes the checklist and tags the gen:prompts item", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hub-save-"))
+  const deps = depsFor(repo, path.join(repo, "loops"))
+
+  const res = await checklistKind(deps, req("triage-bot", { manifest: MANIFEST }))
+  assert.equal(res.status, 200)
+  const before = (res.body as { checklist: { done: boolean; label: string; action?: string }[] }).checklist
+  const gen = before.find((c) => c.action === "gen-prompts")
+  assert.ok(gen, "gen:prompts item carries the action tag")
+  assert.equal(gen?.done, false)
+  assert.equal(before.find((c) => c.label.includes("prompts/agents/loop-scan/"))?.done, false)
+
+  // scaffolding the personas on disk flips their items (and gen:prompts) to done
+  for (const agent of ["loop-scan", "loop-check"]) fs.mkdirSync(path.join(repo, "prompts", "agents", agent), { recursive: true })
+  const after = ((await checklistKind(deps, req("triage-bot", { manifest: MANIFEST }))).body as { checklist: { done: boolean; label: string; action?: string }[] }).checklist
+  assert.equal(after.find((c) => c.label.includes("prompts/agents/loop-scan/"))?.done, true)
+  assert.equal(after.find((c) => c.action === "gen-prompts")?.done, true)
+
+  assert.equal((await checklistKind(deps, req("triage-bot", { manifest: { kind: "x" } }))).status, 400)
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
+test("saveKind refuses the reserved kind name \"checklist\"", async () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hub-save-"))
+  const deps = depsFor(repo, path.join(repo, "loops"))
+  const res = await saveKind(deps, req("checklist", { manifest: { ...MANIFEST, kind: "checklist" } }))
+  assert.equal(res.status, 400)
   fs.rmSync(repo, { recursive: true, force: true })
 })
 

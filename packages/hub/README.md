@@ -140,14 +140,19 @@ failing preflight). Task ids are slug-screened before they reach the
 filesystem; loop-kind writes are confined to `packages/core/loops/<kind>/`,
 slug-validated and prefix-checked.
 
-The hub can write in exactly two ways, and neither drives a loop:
+The hub's writes, none of which drive a loop:
 
 | Write | What it touches | Guard |
 |---|---|---|
 | Save a loop kind (creator) | `packages/core/loops/<kind>/` | slug + prefix check; 409 without `overwrite` |
+| Scaffold an asset stub (creator) | `prompts/agents/<name>/`, `plugins/opencode/commands/<name>.md`, or `skills/<name>/` — one-shot TODO stubs | `X-Hub-Client`; slug + prefix check; 409 if the target exists (never overwrites); agent-referenced skills must already exist |
+| Run the persona generator (creator checklist) | regenerates the checked-in `plugins/opencode/agents/*` + `plugins/claude/agents/*` files and normalizes opencode command `agent:` frontmatter — exactly what `npm run gen:prompts` does in a terminal | `X-Hub-Client`; a confirm naming the effect; failure is reported with the generator's output, never half-applied routes |
 | A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a draft pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
 | Save config | one layer of `.agentic-loop.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
 | Backlog doctor fix | task files under `tasksDir` (rescue strays, remove empty stray folders, release **stale, undriven** claim markers), plus a git commit | `X-Hub-Client`; releases a claim only when stale and not driven; skips claim release entirely while a watch lease is live; never resolves duplicate ids |
+
+Creator write authority thus extends beyond `loops/<kind>/` to the three asset
+roots above — always as never-overwriting stubs the user finishes in an editor.
 
 It never claims work, never runs a stage, and never merges anything. Full
 analysis in [docs/design/threat-model.md](../../docs/design/threat-model.md)

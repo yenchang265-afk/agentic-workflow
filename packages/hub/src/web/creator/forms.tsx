@@ -1,5 +1,9 @@
+import { useState } from "react"
 import type { LoopManifest, StageDef } from "@agentic-loop/core/manifest/schema"
-import type { GraphMeta } from "./graphmodel.js"
+import type { AssetsResponse } from "../../shared/api.js"
+import { isUnknownAsset, knownNames } from "./assets.js"
+import { AgentScaffoldForm, CommandScaffoldForm } from "./assetforms.js"
+import { terminalStatusOptions, type GraphMeta } from "./graphmodel.js"
 import { PromptPreview } from "./PromptPreview.js"
 import { Button } from "../ui/Button.js"
 
@@ -27,6 +31,8 @@ export const StageForm = ({
   prompt,
   manifest,
   prompts,
+  assets,
+  onScaffolded,
   onChange,
   onPromptChange,
   onDelete,
@@ -36,11 +42,17 @@ export const StageForm = ({
   /** The live graph as a manifest, for the preview. Null while it doesn't validate. */
   manifest: LoopManifest | null
   prompts: Readonly<Record<string, string>>
+  /** Repo asset inventory for the command/agent pickers. Null while loading. */
+  assets: AssetsResponse | null
+  /** A scaffold wrote files — the parent refetches the inventory (and checklist). */
+  onScaffolded: () => void
   onChange: (next: StageDef) => void
   onPromptChange: (text: string) => void
   onDelete: () => void
 }) => {
   const set = (patch: Partial<StageDef>): void => onChange({ ...stage, ...patch } as StageDef)
+  const [scaffold, setScaffold] = useState<"agent" | "command" | null>(null)
+  const [notes, setNotes] = useState<readonly string[]>([])
   return (
     <div className="panel-form">
       <h3>Stage: {stage.name}</h3>
@@ -60,11 +72,69 @@ export const StageForm = ({
         </select>
       </Field>
       <Field label="command (host slash command)">
-        <input value={stage.command} onChange={(e) => set({ command: e.target.value })} />
+        <input list="asset-commands" value={stage.command} onChange={(e) => set({ command: e.target.value })} />
+        <datalist id="asset-commands">
+          {assets?.commands.map((c) => (
+            <option key={c.name} value={c.name}>
+              {c.description}
+            </option>
+          ))}
+        </datalist>
       </Field>
+      <div className="asset-hint">
+        {isUnknownAsset(knownNames(assets?.commands), stage.command) && (
+          <span>not in this repo yet — it will appear on the post-save checklist</span>
+        )}
+        <Button onClick={() => setScaffold((s) => (s === "command" ? null : "command"))}>+ new command</Button>
+      </div>
+      {scaffold === "command" && (
+        <CommandScaffoldForm
+          initialName={stage.command}
+          initialAgent={stage.agent}
+          onCreated={(name) => {
+            set({ command: name })
+            setScaffold(null)
+            onScaffolded()
+          }}
+          onCancel={() => setScaffold(null)}
+        />
+      )}
       <Field label="agent (persona)">
-        <input value={stage.agent} onChange={(e) => set({ agent: e.target.value })} />
+        <input list="asset-agents" value={stage.agent} onChange={(e) => set({ agent: e.target.value })} />
+        <datalist id="asset-agents">
+          {assets?.agents.map((a) => (
+            <option key={a.name} value={a.name}>
+              {a.description}
+            </option>
+          ))}
+        </datalist>
       </Field>
+      <div className="asset-hint">
+        {isUnknownAsset(knownNames(assets?.agents), stage.agent) && (
+          <span>not in this repo yet — it will appear on the post-save checklist</span>
+        )}
+        <Button onClick={() => setScaffold((s) => (s === "agent" ? null : "agent"))}>+ new agent</Button>
+      </div>
+      {scaffold === "agent" && (
+        <AgentScaffoldForm
+          initialName={stage.agent}
+          defaultPreset={stage.kind === "check" ? "checker" : "builder"}
+          skills={assets?.skills ?? []}
+          onCreated={(name, createdNotes) => {
+            set({ agent: name })
+            setNotes(createdNotes ?? [])
+            setScaffold(null)
+            onScaffolded()
+          }}
+          onSkillCreated={onScaffolded}
+          onCancel={() => setScaffold(null)}
+        />
+      )}
+      {notes.map((n, k) => (
+        <div key={k} className="muted asset-note">
+          {n}
+        </div>
+      ))}
       <Field label="isolation">
         <select value={stage.isolation} onChange={(e) => set({ isolation: e.target.value as StageDef["isolation"] })}>
           <option value="worktree">worktree (isolated)</option>
@@ -107,6 +177,60 @@ export const StageForm = ({
       <Button variant="danger" onClick={onDelete}>
         Delete stage
       </Button>
+    </div>
+  )
+}
+
+const CUSTOM_STATUS = "__custom__"
+
+/** Inline popover form for adding a park/done terminal (stop never asks — it has no status). */
+export const TerminalAddForm = ({
+  outcome,
+  workSource,
+  onAdd,
+  onCancel,
+}: {
+  outcome: "park" | "done"
+  workSource: LoopManifest["workSource"]
+  onAdd: (toStatus?: string) => void
+  onCancel: () => void
+}) => {
+  const options = terminalStatusOptions(workSource)
+  const [choice, setChoice] = useState("")
+  const [custom, setCustom] = useState("")
+  const freeText = options.length === 0 || choice === CUSTOM_STATUS
+  const submit = (): void => {
+    // trim + drop empties: toStatus is optional but must be non-empty when present
+    const status = (freeText ? custom : choice).trim()
+    onAdd(status || undefined)
+  }
+  return (
+    <div className="panel-form">
+      <h3>Add {outcome} terminal</h3>
+      {options.length > 0 && (
+        <Field label="move the task to (backlog status)">
+          <select value={choice} onChange={(e) => setChoice(e.target.value)}>
+            <option value="">(no status move)</option>
+            {options.map((s) => (
+              <option key={s} value={s}>
+                {s}/
+              </option>
+            ))}
+            <option value={CUSTOM_STATUS}>custom…</option>
+          </select>
+        </Field>
+      )}
+      {freeText && (
+        <Field label="status folder (optional)">
+          <input value={custom} onChange={(e) => setCustom(e.target.value)} placeholder="e.g. plan-review" />
+        </Field>
+      )}
+      <div className="terminal-popover__actions">
+        <Button onClick={onCancel}>Cancel</Button>
+        <Button variant="primary" onClick={submit}>
+          Add
+        </Button>
+      </div>
     </div>
   )
 }

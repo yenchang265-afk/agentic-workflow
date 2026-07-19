@@ -14,11 +14,23 @@ import {
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
 import { LoopManifestSchema, type Effect, type LoopManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
-import type { ChecklistItem, KindDetailResponse, KindsResponse, ManifestIssue, SaveKindResponse } from "../../shared/api.js"
+import type {
+  AssetsResponse,
+  ChecklistItem,
+  ChecklistResponse,
+  GenPromptsResponse,
+  KindDetailResponse,
+  KindsResponse,
+  ManifestIssue,
+  SaveKindResponse,
+} from "../../shared/api.js"
 import { fetchJson, postJson } from "../api.js"
-import { EdgeForm, MetaForm, StageForm, type EdgeFormValue } from "./forms.js"
-import { manifestToGraph, type GraphMeta, type TransitionSlot } from "./graphmodel.js"
+import { useJson } from "../useJson.js"
+import { Confirm } from "../ui/Confirm.js"
+import { EdgeForm, MetaForm, StageForm, TerminalAddForm, type EdgeFormValue } from "./forms.js"
+import { manifestToGraph, sameTerminalSpec, type GraphMeta, type TerminalSpec, type TransitionSlot } from "./graphmodel.js"
 import { layoutGraph } from "./layout.js"
+import { stageChain, TEMPLATES } from "./templates.js"
 import { Button } from "../ui/Button.js"
 import { CheckIcon, CircleIcon } from "../ui/icons.js"
 import { nodeTypes, type StageNodeData, type TerminalNodeData } from "./nodes.js"
@@ -40,25 +52,6 @@ const edgeLabel = (slot: TransitionSlot, data: EdgeFormValue): string => {
   const verb = slot.replace(/^on/, "").toLowerCase()
   return data.countIteration ? `${verb} (counted)` : verb
 }
-
-const NEW_MANIFEST: LoopManifest = LoopManifestSchema.parse({
-  kind: "my-loop",
-  version: 1,
-  description: "Describe what this loop drives.",
-  workSource: { type: "backlog", statuses: ["queued", "in-progress", "completed"], pools: [{ status: "queued", entryStage: "work" }] },
-  stages: [
-    { name: "work", kind: "work", command: "work", agent: "loop-work", prompt: "stages/work.md" },
-    { name: "verify", kind: "check", command: "verify-work", agent: "loop-verify-work", prompt: "stages/verify.md" },
-  ],
-  transitions: {
-    work: { onDone: { kind: "fire", stage: "verify" } },
-    verify: {
-      onPass: { kind: "done", message: "Work verified." },
-      onFail: { kind: "fire", stage: "work", countIteration: true, capMessage: "Gave up after {maxIterations} iterations." },
-      onError: { kind: "stop", message: "Verification errored — investigate manually." },
-    },
-  },
-})
 
 const toFlow = (manifest: LoopManifest): { nodes: Node[]; edges: Edge[]; meta: GraphMeta } => {
   const graph = manifestToGraph(manifest)
@@ -147,6 +140,12 @@ export const Creator = () => {
   const [issues, setIssues] = useState<ManifestIssue[] | null>(null)
   const [saved, setSaved] = useState<SaveKindResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // which add-terminal popover is open (stop never asks — it has no status)
+  const [terminalDraft, setTerminalDraft] = useState<"park" | "done" | null>(null)
+  // repo asset inventory for the stage form's pickers; bumped after any scaffold
+  const [assetsVersion, setAssetsVersion] = useState(0)
+  const { data: assets } = useJson<AssetsResponse>("/api/assets", [assetsVersion])
+  const [genResult, setGenResult] = useState<GenPromptsResponse | null>(null)
 
   useEffect(() => {
     fetchJson<KindsResponse>("/api/kinds")
@@ -164,6 +163,7 @@ export const Creator = () => {
     setSelected(null)
     setIssues(null)
     setSaved(null)
+    setGenResult(null)
   }
 
   // Bumped on every open so a slow response for a kind the user has since
@@ -234,17 +234,18 @@ export const Creator = () => {
     setNodes((ns) => [...ns, { id: `node-${Date.now()}`, type: "stage", position: { x: 40, y: 40 }, data: { stage } }])
   }
 
-  const addTerminal = (outcome: "park" | "done" | "stop"): void => {
-    const toStatus = outcome === "stop" ? undefined : window.prompt(`${outcome}: target status folder (blank = none)`) || undefined
-    setNodes((ns) => [
-      ...ns,
-      {
-        id: `terminal-${outcome}-${Date.now()}`,
-        type: "terminal",
-        position: { x: 120, y: 260 },
-        data: { outcome, ...(toStatus ? { toStatus } : {}) },
-      },
-    ])
+  const addTerminal = (outcome: "park" | "done" | "stop", toStatus?: string): void => {
+    const spec: TerminalSpec = { outcome, ...(toStatus ? { toStatus } : {}) }
+    setTerminalDraft(null)
+    // terminals dedupe by outcome+status (messages ride on edges) — re-adding selects
+    const existing = nodes.find((n) => n.type === "terminal" && sameTerminalSpec(n.data as TerminalNodeData, spec))
+    if (existing) {
+      setSelected({ kind: "node", id: existing.id })
+      return
+    }
+    const id = `terminal-${outcome}-${Date.now()}`
+    setNodes((ns) => [...ns, { id, type: "terminal", position: { x: 120, y: 260 }, data: { ...spec } }])
+    setSelected({ kind: "node", id })
   }
 
   const updateStage = (nodeId: string, stage: StageDef): void =>
@@ -292,6 +293,32 @@ export const Creator = () => {
     }
   }
 
+  /** Scaffolds and gen:prompts change what's on disk — recompute without re-saving. */
+  const refreshChecklist = async (): Promise<void> => {
+    if (!saved || !currentManifest) return
+    try {
+      const res = await postJson<ChecklistResponse>("/api/kinds/checklist", { manifest: currentManifest })
+      setSaved((s) => s && { ...s, checklist: res.checklist })
+    } catch {
+      // non-fatal: the stale checklist corrects on the next save
+    }
+  }
+
+  const onScaffolded = (): void => {
+    setAssetsVersion((v) => v + 1)
+    void refreshChecklist()
+  }
+
+  const runGenPrompts = async (): Promise<void> => {
+    try {
+      const res = await postJson<GenPromptsResponse>("/api/gen-prompts", {})
+      setGenResult(res)
+      await refreshChecklist()
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+
   const selectedNode = selected?.kind === "node" ? nodes.find((n) => n.id === selected.id) : undefined
   const selectedEdge = selected?.kind === "edge" ? edges.find((e) => e.id === selected.id) : undefined
   const targetLabelOf = (edge: Edge): string => {
@@ -312,11 +339,24 @@ export const Creator = () => {
                 {k}
               </Button>
             ))}
-            <Button onClick={() => load(NEW_MANIFEST, {}, true)}>+ new kind</Button>
+          </div>
+          <h2 className="section-title">Start a new kind</h2>
+          <div className="template-grid">
+            {TEMPLATES.map((t) => {
+              const m = t.manifest()
+              return (
+                <button key={t.id} type="button" className="template-card" onClick={() => load(t.manifest(), {}, true)}>
+                  <div className="template-card__label">{t.label}</div>
+                  <div className="template-card__source">{t.id}</div>
+                  <div className="template-card__flow">{stageChain(m)}</div>
+                  <div className="template-card__desc">{t.description}</div>
+                </button>
+              )
+            })}
           </div>
           <p className="muted">
             A loop kind is a declarative state machine: stages (work/check nodes) wired by transitions
-            (fire/park/done/stop edges) over a work source. Open a shipped kind to see the shape, or start a new one.
+            (fire/park/done/stop edges) over a work source. Open a shipped kind to see the shape, or start from a template.
           </p>
         </div>
       </div>
@@ -331,9 +371,20 @@ export const Creator = () => {
       <div className="creator-toolbar">
         <Button onClick={() => setMeta(null)}>← kinds</Button>
         <Button onClick={addStage}>+ stage</Button>
-        <Button onClick={() => addTerminal("park")}>+ park</Button>
-        <Button onClick={() => addTerminal("done")}>+ done</Button>
+        <Button onClick={() => setTerminalDraft((d) => (d === "park" ? null : "park"))}>+ park</Button>
+        <Button onClick={() => setTerminalDraft((d) => (d === "done" ? null : "done"))}>+ done</Button>
         <Button onClick={() => addTerminal("stop")}>+ stop</Button>
+        {terminalDraft && (
+          <div className="terminal-popover">
+            <TerminalAddForm
+              key={terminalDraft}
+              outcome={terminalDraft}
+              workSource={meta.workSource}
+              onAdd={(toStatus) => addTerminal(terminalDraft, toStatus)}
+              onCancel={() => setTerminalDraft(null)}
+            />
+          </div>
+        )}
         <span className="spacer" />
         <span className={`badge ${allIssues.length ? "gate" : "ok"}`}>
           {allIssues.length ? `${allIssues.length} issue${allIssues.length > 1 ? "s" : ""}` : "valid"}
@@ -369,6 +420,8 @@ export const Creator = () => {
               prompt={prompts[(selectedNode.data as StageNodeData).stage.name] ?? ""}
               manifest={currentManifest}
               prompts={prompts}
+              assets={assets}
+              onScaffolded={onScaffolded}
               onChange={(next) => {
                 const prev = (selectedNode.data as StageNodeData).stage.name
                 if (prev !== next.name && prompts[prev] !== undefined) {
@@ -425,8 +478,23 @@ export const Creator = () => {
               {saved.checklist.map((c: ChecklistItem, k: number) => (
                 <div key={k} className={`check-item${c.done ? " done" : ""}`}>
                   {c.done ? <CheckIcon /> : <CircleIcon />} {c.label}
+                  {c.action === "gen-prompts" && (
+                    <Confirm
+                      title="Run gen:prompts?"
+                      detail="Runs node scripts/gen-prompts.mjs in the repo — regenerates the checked-in plugins/opencode/agents/ and plugins/claude/agents/ files and normalizes command agent bindings."
+                      confirmLabel="Run generator"
+                      onConfirm={runGenPrompts}
+                      trigger={<Button>run now</Button>}
+                    />
+                  )}
                 </div>
               ))}
+              {genResult &&
+                (genResult.ok ? (
+                  <div className="muted">gen:prompts succeeded</div>
+                ) : (
+                  <pre className="gen-output">{genResult.output || "gen:prompts failed with no output"}</pre>
+                ))}
             </div>
           )}
         </div>

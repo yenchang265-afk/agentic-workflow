@@ -59,6 +59,20 @@ export const SLOTS: readonly TransitionSlot[] = ["onDone", "onPass", "onFail", "
 export const terminalId = (effect: Effect): string =>
   effect.kind === "stop" ? "terminal:stop" : `terminal:${effect.kind}:${("toStatus" in effect ? effect.toStatus : undefined) ?? ""}`
 
+/** What the add-terminal UI proposes; the shape terminal nodes dedupe on. */
+export interface TerminalSpec {
+  readonly outcome: "park" | "done" | "stop"
+  readonly toStatus?: string
+}
+
+/** Same dedup key `terminalId` uses: outcome + status, with stop ignoring status. Pure. */
+export const sameTerminalSpec = (a: TerminalSpec, b: TerminalSpec): boolean =>
+  a.outcome === b.outcome && (a.outcome === "stop" || (a.toStatus ?? "") === (b.toStatus ?? ""))
+
+/** Status choices for the terminal picker: backlog exposes its lifecycle statuses, other sources have none. Pure. */
+export const terminalStatusOptions = (ws: LoopManifest["workSource"]): readonly string[] =>
+  ws.type === "backlog" ? ws.statuses : []
+
 const effectTarget = (effect: Effect): string => (effect.kind === "fire" ? effect.stage : terminalId(effect))
 
 export const manifestToGraph = (manifest: LoopManifest): LoopGraph => {

@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
 import { loadManifest, listLoopKinds } from "@agentic-loop/core/manifest/load"
 import { parseManifest } from "@agentic-loop/core/manifest/schema"
-import { graphToManifest, manifestToGraph, terminalId } from "./graphmodel.js"
+import { graphToManifest, manifestToGraph, sameTerminalSpec, terminalId, terminalStatusOptions } from "./graphmodel.js"
 import { layoutGraph } from "./layout.js"
 
 test("graph round-trips every shipped manifest exactly", () => {
@@ -39,6 +39,44 @@ test("terminals dedupe by outcome+status while messages stay on edges", () => {
       assert.ok("message" in edge.effect, "non-fire effects carry their message on the edge")
     }
   }
+})
+
+test("sameTerminalSpec matches terminalId's dedup semantics", () => {
+  // stop ignores status entirely
+  assert.ok(sameTerminalSpec({ outcome: "stop" }, { outcome: "stop", toStatus: "x" }))
+  // park/done match only on equal status, undefined ≡ absent
+  assert.ok(sameTerminalSpec({ outcome: "done", toStatus: "completed" }, { outcome: "done", toStatus: "completed" }))
+  assert.ok(sameTerminalSpec({ outcome: "park" }, { outcome: "park" }))
+  assert.ok(!sameTerminalSpec({ outcome: "done", toStatus: "completed" }, { outcome: "done" }))
+  assert.ok(!sameTerminalSpec({ outcome: "done", toStatus: "a" }, { outcome: "done", toStatus: "b" }))
+  // outcome always distinguishes
+  assert.ok(!sameTerminalSpec({ outcome: "park", toStatus: "completed" }, { outcome: "done", toStatus: "completed" }))
+  // consistency with terminalId: equal ids ⇒ matching specs, and vice versa
+  const effects = [
+    { kind: "done", message: "" },
+    { kind: "done", toStatus: "completed", message: "" },
+    { kind: "park", toStatus: "plan-review", message: "" },
+    { kind: "stop", message: "" },
+  ] as const
+  for (const a of effects) {
+    for (const b of effects) {
+      const specOf = (e: (typeof effects)[number]) => ({ outcome: e.kind, ...("toStatus" in e ? { toStatus: e.toStatus } : {}) })
+      assert.equal(terminalId(a) === terminalId(b), sameTerminalSpec(specOf(a), specOf(b)))
+    }
+  }
+})
+
+test("terminalStatusOptions exposes backlog statuses and nothing for other sources", () => {
+  assert.deepEqual(
+    terminalStatusOptions({ type: "backlog", statuses: ["queued", "in-progress", "completed"], pools: [] }),
+    ["queued", "in-progress", "completed"],
+  )
+  const { manifest } = loadManifest(defaultLoopsDir(), "pr-sitter")
+  assert.deepEqual(terminalStatusOptions(manifest.workSource), [])
+  const dep = loadManifest(defaultLoopsDir(), "dep-sitter").manifest
+  assert.deepEqual(terminalStatusOptions(dep.workSource), [])
+  const ci = loadManifest(defaultLoopsDir(), "main-sitter").manifest
+  assert.deepEqual(terminalStatusOptions(ci.workSource), [])
 })
 
 test("stage order is preserved through the round-trip", () => {
