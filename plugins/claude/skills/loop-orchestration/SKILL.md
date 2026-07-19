@@ -47,7 +47,10 @@ the loop (/agentic-loop:engineering plan <id> or /agentic-loop:engineering claim
 Each `loop_advance` returns the next **action**: `{kind:"fire", stage, prompt,
 agent}` (run that stage) or `{kind:"park"|"done"|"stop", message}` (terminal —
 the MCP server has already moved the task and written the run summary; just
-report it). `park` is PLAN's only exit: the task moves to `plan-review/` for the
+report it). `loop_stage` only accepts the stage the machine is currently at
+(the last fire action's stage) — a rejection saying the loop is at a different
+stage means you skipped a `loop_advance`; call it with the finished stage's
+output before firing anything else. `park` is PLAN's only exit: the task moves to `plan-review/` for the
 human gate and the loop ends there — an unapproved plan cannot reach BUILD.
 
 **Which subagent to spawn is data, not memorized.** Every `loop_start`,

@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
+import { stageOrderError } from "./stage-guard.js"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-loop/core/config"
 import { type Action, type Config, type LoopState, type TaskRef } from "@agentic-loop/core/loop/state"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
@@ -592,7 +593,7 @@ server.registerTool(
   "loop_stage",
   {
     description:
-      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
+      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. The stage must be the one the state machine is at (the stage the last fire action named) — a mismatch means loop_advance was skipped and the call is rejected. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
     inputSchema: { stage: z.string().min(1) },
   },
   async ({ stage }) => {
@@ -600,6 +601,8 @@ server.registerTool(
     if (!activeManifest().manifest.stages.some((d) => d.name === stage)) {
       return fail(`Unknown stage "${stage}" for loop kind "${activeManifest().manifest.kind}".`)
     }
+    const outOfOrder = stageOrderError(active.stage, stage)
+    if (outOfOrder) return fail(outOfOrder)
     if (stageDef(activeManifest().manifest, stage).isolation !== "none") {
       // A no-isolation stage (engineering's PLAN) runs in the main tree — no branch, no worktree to reconcile.
       try {
