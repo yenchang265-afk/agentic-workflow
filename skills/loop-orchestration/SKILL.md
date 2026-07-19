@@ -401,7 +401,12 @@ per-directory serialization lock is dropped in this mode). Stage prompts carry
 a `Worktree:` line pinning all reads/edits/tests there; VERIFY/REVIEW
 allowlists accept `cd <worktree> && <runner>` and `git -C <worktree> …`. The
 task backlog stays canonical in the main tree — audit notes and moves are
-committed there per terminal event. Off by default. See
+committed there per terminal event. A task's worktree is created on its first
+BUILD and removed only when the task **ships** — a run ending (iteration cap,
+ESC, crash, or even `done`) keeps it, so a retry, a `recover`, or a `replan`
+bounce out of `in-review/` resumes in the same directory on top of the previous
+iteration's work and its `worktreeSetup` output. On by default
+(`worktreesDir: ".loop-worktrees"`; set `false` for shared-tree mode). See
 `docs/design/improvements/01`.
 
 **Multi-lens review** (`reviewLenses`): REVIEW runs once per lens, each pass

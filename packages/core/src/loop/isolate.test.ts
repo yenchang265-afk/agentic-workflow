@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
-import { ensureIsolation } from "./isolate.js"
+import { ensureIsolation, releaseWorktree, teardownIsolation } from "./isolate.js"
 import type { LoopState } from "./state.js"
 
 /**
@@ -167,4 +167,85 @@ test("pre-set git already isolated (shared reconcile) does not rebuild a worktre
   const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, { ...prState, isolated: true })
   assert.equal(next.isolated, true)
   assert.ok(!log.some((c) => c.includes("worktree add")))
+})
+
+test("a failed worktree add throws with git's own reason attached", async () => {
+  const failing = (cmd: string): FakeResult => {
+    if (cmd.includes("worktree add")) return { exitCode: 128, stderr: `fatal: '${WT}' already exists` }
+    return gitHandler("main")(cmd)
+  }
+  const $ = makeShell(failing)
+  await assert.rejects(
+    () => ensureIsolation($, noopLog, "/repo", config, state),
+    (err: Error) => err.message.includes("already exists"),
+  )
+})
+
+/**
+ * A run ending is not the task ending. Teardown used to `worktree remove`, so the
+ * next run (cap retry, `recover`, a `replan` bounce) had to re-add the worktree and
+ * re-run `worktreeSetup` — slow on /mnt/c and intermittently fatal. The worktree now
+ * survives until the ship gate calls `releaseWorktree`.
+ */
+test("teardown keeps the worktree so the next run resumes in it", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await teardownIsolation($, noopLog, "/repo", {
+    ...state,
+    git: { base: "main", branch: "feature/add-foo", worktree: WT },
+    isolated: true,
+  })
+  assert.ok(!log.some((c) => c.includes("worktree remove")), log.join(" | "))
+})
+
+test("shared-tree teardown still returns the main tree to its base branch", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await teardownIsolation($, noopLog, "/repo", {
+    ...state,
+    git: { base: "main", branch: "feature/add-foo" },
+    isolated: true,
+  })
+  assert.ok(log.some((c) => c.includes("checkout main")), log.join(" | "))
+})
+
+test("releaseWorktree removes the shipped task's worktree and prunes", async () => {
+  const log: string[] = []
+  const $ = makeShell((cmd) => {
+    if (cmd.includes("worktree list")) return { exitCode: 0, stdout: `worktree ${WT}\nHEAD abc\nbranch refs/heads/feature/add-foo\n` }
+    return { exitCode: 0 }
+  }, log)
+  await releaseWorktree($, noopLog, "/repo", config, "add-foo")
+  assert.ok(log.some((c) => c.includes(`worktree remove ${WT}`)), log.join(" | "))
+  assert.ok(log.some((c) => c.includes("worktree prune")))
+})
+
+test("releaseWorktree never removes the main tree, even when it sits on the branch", async () => {
+  const log: string[] = []
+  const $ = makeShell((cmd) => {
+    if (cmd.includes("worktree list")) return { exitCode: 0, stdout: "worktree /repo\nHEAD abc\nbranch refs/heads/feature/add-foo\n" }
+    // The computed fallback path holds no worktree — nothing to remove.
+    if (cmd.includes("is-inside-work-tree")) return { exitCode: 1 }
+    return { exitCode: 0 }
+  }, log)
+  await releaseWorktree($, noopLog, "/repo", config, "add-foo")
+  assert.ok(!log.some((c) => c.includes("worktree remove")), log.join(" | "))
+})
+
+test("releaseWorktree is a no-op in shared-tree mode", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await releaseWorktree($, noopLog, "/repo", { ...config, worktreesDir: false }, "add-foo")
+  assert.equal(log.length, 0)
+})
+
+test("releaseWorktree leaves a dirty worktree in place rather than forcing it", async () => {
+  const log: string[] = []
+  const $ = makeShell((cmd) => {
+    if (cmd.includes("worktree list")) return { exitCode: 0, stdout: `worktree ${WT}\nHEAD abc\nbranch refs/heads/feature/add-foo\n` }
+    if (cmd.includes("worktree remove")) return { exitCode: 1, stderr: "fatal: contains modified or untracked files" }
+    return { exitCode: 0 }
+  }, log)
+  await releaseWorktree($, noopLog, "/repo", config, "add-foo")
+  assert.ok(!log.some((c) => c.includes("--force")), log.join(" | "))
 })

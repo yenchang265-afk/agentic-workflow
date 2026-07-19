@@ -128,7 +128,8 @@ config `loops.<kind>.stageModels`). When present, pass it as the Task tool's
      once per lens, each focused on that lens; each pass calls `loop_verdict`.
      The MCP server combines them worst-wins. Then a single `loop_advance`.
 6. **Terminate.** On `{done}` the server has moved the task to `in-review/`,
-   torn down the worktree, and written the `## Run summary` — and returned a
+   kept the worktree (it is released only when the task ships, so a `replan`
+   bounce resumes in it), and written the `## Run summary` — and returned a
    `gate: {kind:"ship"}` field. **The ship gate is now live.** Show the user a
    short summary of the loop branch's diff, then ask with **AskUserQuestion**:
    - **Ship** → `loop_ship({id})` — the task completes.

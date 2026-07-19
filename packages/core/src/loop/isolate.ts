@@ -43,7 +43,12 @@ const runWorktreeSetup = async ($: Shell, log: Log, config: Config, wtPath: stri
  *   `git worktree` on `feature/<id>`, cut from `base`. The human's checkout is
  *   never touched and concurrent drives are safe. If the worktree can't be
  *   created it **throws** — never falls back to shared-tree branch switching,
- *   which could clobber a concurrent drive's checked-out branch.
+ *   which could clobber a concurrent drive's checked-out branch. The worktree
+ *   outlives the run: it is created on a task's first BUILD and removed only
+ *   when the task ships (`releaseWorktree`), so every later run — a retry after
+ *   the iteration cap, a `recover` after ESC, a `replan` bounce out of
+ *   `in-review/` — resumes in the same directory on top of the previous
+ *   iteration's work and its `worktreeSetup` output.
  * - **Shared-tree mode** (default): checks out `feature/<id>` in the main tree.
  *   Degrades to no isolation (with a warning) outside a git repo, on a
  *   detached HEAD, or when checkout fails.
@@ -67,8 +72,9 @@ export const ensureIsolation = async (
       // Worktree mode — never touch the shared tree. Recreate a vanished worktree.
       if (!(await isGitRepo($, state.git.worktree))) {
         await pruneWorktrees($, directory)
-        if (!(await addWorktree($, directory, state.git.worktree, state.git.branch, state.git.base))) {
-          throw new Error(`could not recreate worktree ${state.git.worktree} for ${state.git.branch}`)
+        const added = await addWorktree($, directory, state.git.worktree, state.git.branch, state.git.base)
+        if (!added.ok) {
+          throw new Error(`could not recreate worktree ${state.git.worktree} for ${state.git.branch}${added.error ? ` — ${added.error}` : ""}`)
         }
         await runWorktreeSetup($, log, config, state.git.worktree)
       }
@@ -97,8 +103,11 @@ export const ensureIsolation = async (
       }
       if (await isGitRepo($, wtPath)) await pruneWorktrees($, directory)
       // `addWorktree` reuses the (already-fetched) head branch as-is — no `-b`.
-      if (!(await addWorktree($, directory, wtPath, state.git.branch, state.git.base))) {
-        throw new Error(`could not create worktree ${wtPath} for ${state.git.branch} — resolve it, then /agentic-loop:engineering recover`)
+      const added = await addWorktree($, directory, wtPath, state.git.branch, state.git.base)
+      if (!added.ok) {
+        throw new Error(
+          `could not create worktree ${wtPath} for ${state.git.branch}${added.error ? ` — ${added.error}` : ""} — resolve it, then /agentic-loop:engineering recover`,
+        )
       }
       await runWorktreeSetup($, log, config, wtPath)
       return { ...state, git: { ...state.git, worktree: wtPath }, isolated: true }
@@ -139,8 +148,11 @@ export const ensureIsolation = async (
     }
     // A leftover directory with no registration — prune, then let add try.
     if (await isGitRepo($, wtPath)) await pruneWorktrees($, directory)
-    if (!(await addWorktree($, directory, wtPath, branch, base))) {
-      throw new Error(`could not create worktree ${wtPath} for ${branch} — resolve it, then /agentic-loop:engineering recover`)
+    const added = await addWorktree($, directory, wtPath, branch, base)
+    if (!added.ok) {
+      throw new Error(
+        `could not create worktree ${wtPath} for ${branch}${added.error ? ` — ${added.error}` : ""} — resolve it, then /agentic-loop:engineering recover`,
+      )
     }
     await runWorktreeSetup($, log, config, wtPath)
     return { ...state, git: { base, branch, worktree: wtPath }, isolated: true }
@@ -160,23 +172,68 @@ export const ensureIsolation = async (
 }
 
 /**
- * Tear down this loop's isolation. Worktree mode: remove the worktree if it's
- * clean (the branch is kept for human review); a dirty worktree or a failed
- * removal is left in place with a warning. Shared mode: return the main tree to
- * the branch it was on before the loop branched off.
+ * Tear down this loop's isolation at the end of a run.
+ *
+ * Worktree mode: the worktree is **kept**. A run ending is not the task ending
+ * — a stop at the iteration cap, an ESC interrupt, or a crash all expect a
+ * later run to continue the same work, and tearing the directory down forced
+ * every one of those to re-`worktree add` and re-run `worktreeSetup`. That
+ * round-trip is slow on `/mnt/c` and intermittently fails outright, which
+ * killed the loop instead of resuming it. The caller has already checkpointed,
+ * so the retained worktree is clean and `ensureIsolation` adopts it as-is next
+ * run. Removal belongs to the ship gate — see `releaseWorktree`.
+ *
+ * Shared mode is unchanged: return the main tree to the branch it was on before
+ * the loop branched off, or the human is left stranded on `feature/<id>`.
  */
 export const teardownIsolation = async ($: Shell, log: Log, directory: string, state: LoopState): Promise<void> => {
   if (!state.git) return
   if (state.git.worktree) {
-    if (!(await removeWorktree($, directory, state.git.worktree))) {
-      await log(
-        "info",
-        `loop: worktree ${state.git.worktree} left in place (dirty or locked) — branch ${state.git.branch} holds the committed work`,
-      )
-    }
+    await log("info", `loop: worktree ${state.git.worktree} kept on ${state.git.branch} — the next run resumes in it`)
     return
   }
   if (!(await checkoutBranch($, directory, state.git.base))) {
     await log("warn", `loop: could not return to ${state.git.base} — still on ${state.git.branch}`)
+  }
+}
+
+/**
+ * Remove a shipped task's worktree — the one point in the lifecycle where the
+ * task is finished and the directory is genuinely disposable. Called by the
+ * ship gate after the task reached `completed/`; the `feature/<id>` branch is
+ * never touched, so the PR and the human's review keep working.
+ *
+ * Best-effort and never throws: a dirty or locked worktree (`removeWorktree`
+ * deliberately omits `--force`) is left in place with an info log rather than
+ * silently discarding work, and a ship must never fail because of cleanup.
+ */
+export const releaseWorktree = async (
+  $: Shell,
+  log: Log,
+  directory: string,
+  config: Config,
+  id: string,
+): Promise<void> => {
+  if (!config.worktreesDir) return
+  try {
+    const branch = `feature/${id}`
+    // `git worktree list` includes the MAIN tree — removing that is the one
+    // outcome this must never produce (same guard as `ensureIsolation`).
+    const registered = await worktreeForBranch($, directory, branch)
+    const wtPath =
+      registered && path.resolve(registered) !== path.resolve(directory)
+        ? registered
+        : worktreePathFor(directory, config.worktreesDir, id)
+    if (!(await isGitRepo($, wtPath))) {
+      await pruneWorktrees($, directory)
+      return
+    }
+    if (!(await removeWorktree($, directory, wtPath))) {
+      await log("info", `loop: worktree ${wtPath} left in place (dirty or locked) — branch ${branch} holds the shipped work`)
+      return
+    }
+    await pruneWorktrees($, directory)
+  } catch (err) {
+    await log("info", `loop: worktree cleanup for ${id} skipped — ${(err as Error).message}`)
   }
 }

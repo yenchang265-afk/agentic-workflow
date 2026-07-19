@@ -5,6 +5,7 @@ import { parseTask, type Task } from "../task/schema.js"
 import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, gitActor } from "./git.js"
+import { releaseWorktree } from "./isolate.js"
 import { shipPr } from "./ship-pr.js"
 
 /**
@@ -266,6 +267,10 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
     await appendNote($, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
     await commitPaths($, directory, [config.tasksDir], `loop(${id}): PR not opened`)
   }
+  // The task is done: its worktree — kept across every earlier run so retries
+  // and recoveries build on prior iterations — is finally disposable. The
+  // branch survives, so the PR opened just above is unaffected.
+  await releaseWorktree($, log, directory, config, id)
   return { ok: true, message: `"${t.title}" completed.${pr.url ? ` PR: ${pr.url}` : ""}`, path: newPath, data }
 }
 
