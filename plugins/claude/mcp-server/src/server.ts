@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
+import { stageOrderError } from "./stage-guard.js"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-loop/core/config"
 import { type Action, type Config, type LoopState, type TaskRef } from "@agentic-loop/core/loop/state"
 import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
@@ -22,7 +23,15 @@ import {
 import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-loop/core/source/types"
 import { adoAccessFor, bareModel, enabledLoopKinds, modelFor, platformFor } from "@agentic-loop/core/config"
-import { failedCriteriaBlock, parseVerdict, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
+import {
+  failedCriteriaBlock,
+  parseVerdict,
+  stageDriftNote,
+  worstOf,
+  type CriterionResult,
+  type Verdict,
+  type VerdictRecord,
+} from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
@@ -119,6 +128,7 @@ let active: LoopState | null = null
 let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when loop_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
 let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
+let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
@@ -210,6 +220,7 @@ const writeStageMarker = (stage: string | null) => {
   try {
     fs.mkdirSync(dir, { recursive: true })
     fs.rmSync(verdictNagPath(), { force: true }) // the nag sentinel belongs to one stage attempt only
+    driftNoted = false // likewise the drift note: one per stage attempt, not one per run
     if (stage === null) {
       stageDeadline = null
       fs.rmSync(stageMarkerPath(), { force: true })
@@ -305,7 +316,10 @@ const terminalCtx = (state: LoopState, actor: string | null): TerminalCtx => ({
   manifest: manifestFor(state.kind ?? "engineering"),
   actor,
   commitBacklog: async (message) => void (await commitPaths(sh, directory, [config.tasksDir], message)),
-  checkpoint: async (message) => void (await commitAll(sh, loopWorkTree(directory, state), message)),
+  // Worktree checkpoints exclude the backlog dir — the frozen `<tasksDir>` copy
+  // must never ride feature/<id> (task-file lifecycle lives on the main tree).
+  checkpoint: async (message) =>
+    void (await commitAll(sh, loopWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
   writeMetrics: async (outcome, detail) => {
     const stamp = new Date().toISOString()
     const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
@@ -558,7 +572,16 @@ server.registerTool(
   },
   async ({ stage, verdict, reason, criteria }) => {
     if (!active) return fail("No active loop — verdict ignored.")
-    if (active.stage !== stage) return fail(`The loop is at ${active.stage}, not ${stage} — verdict ignored.`)
+    if (active.stage !== stage) {
+      // The rejection alone reaches only the calling agent. Audit it on the task
+      // so a work stage that ran a later stage's work inside its own turn is
+      // visible in the trail, not just as odd behavior one stage later.
+      if (!driftNoted && active.task) {
+        driftNoted = true
+        await appendNote(sh, active.task, auditNote(stageDriftNote(active.stage, stage, verdict), new Date(), await gitActor(sh, directory)), log)
+      }
+      return fail(`The loop is at ${active.stage}, not ${stage} — verdict ignored.`)
+    }
     if (activeManifest().manifest.stages.find((d) => d.name === stage)?.kind !== "check") {
       return fail(`Stage ${stage} is not a check stage — verdict ignored.`)
     }
@@ -598,7 +621,7 @@ server.registerTool(
   "loop_stage",
   {
     description:
-      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
+      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. The stage must be the one the state machine is at (the stage the last fire action named) — a mismatch means loop_advance was skipped and the call is rejected. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
     inputSchema: { stage: z.string().min(1) },
   },
   async ({ stage }) => {
@@ -606,6 +629,8 @@ server.registerTool(
     if (!activeManifest().manifest.stages.some((d) => d.name === stage)) {
       return fail(`Unknown stage "${stage}" for loop kind "${activeManifest().manifest.kind}".`)
     }
+    const outOfOrder = stageOrderError(active.stage, stage)
+    if (outOfOrder) return fail(outOfOrder)
     if (stageDef(activeManifest().manifest, stage).isolation !== "none") {
       // A no-isolation stage (engineering's PLAN) runs in the main tree — no branch, no worktree to reconcile.
       try {
@@ -620,6 +645,17 @@ server.registerTool(
     if (stage === "build" && active.task) {
       const actor = await gitActor(sh, directory)
       await appendNote(sh, active.task, auditNote(`BUILD started (iteration ${active.iteration + 1})`, new Date(), actor), log)
+      // A degraded isolation (detached HEAD, checkout failure) must be visible
+      // in the task's audit trail, not just a console warn — the run otherwise
+      // looks identical to an isolated one while writing into the main tree.
+      if (active.isolationWarning) {
+        await appendNote(
+          sh,
+          active.task,
+          auditNote(`WARNING: BUILD running WITHOUT isolation — ${active.isolationWarning}`, new Date(), actor),
+          log,
+        )
+      }
     }
     const def = stageDef(activeManifest().manifest, stage)
     const model = stageModel(activeManifest().manifest.kind, def)
@@ -628,6 +664,7 @@ server.registerTool(
       agent: agentRef(def.agent),
       ...(model ? { model } : {}),
       worktree: active.git?.worktree ?? null,
+      ...(active.isolationWarning ? { isolationWarning: active.isolationWarning } : {}),
       deadlineMinutes: config.stageTimeoutMinutes,
       ...(def.kind === "check"
         ? {
@@ -720,7 +757,12 @@ server.registerTool(
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
-      await commitAll(sh, workTree(), `loop(${loopId(active)}): build checkpoint (iteration ${active.iteration + 1})`)
+      await commitAll(
+        sh,
+        workTree(),
+        `loop(${loopId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
+        active.git?.worktree ? [config.tasksDir] : undefined,
+      )
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
       const failed = pending?.criteria?.filter((c) => !c.pass).length ?? 0
@@ -871,7 +913,7 @@ server.registerTool(
   { description: "Commit the current build state as a checkpoint on the loop branch/worktree.", inputSchema: { message: z.string() } },
   async ({ message }) => {
     if (!active?.git) return ok({ committed: false, note: "no isolation active" })
-    const done = await commitAll(sh, workTree(), message)
+    const done = await commitAll(sh, workTree(), message, active.git.worktree ? [config.tasksDir] : undefined)
     return ok({ committed: done })
   },
 )

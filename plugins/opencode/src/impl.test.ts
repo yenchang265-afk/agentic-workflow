@@ -85,6 +85,83 @@ test("session-API failure while a worktree loop is live fails CLOSED for edit to
   }
 })
 
+test("bash is pinned to the worktree while a worktree loop drives (the sometimes-builds-in-main-tree bug)", async () => {
+  setLoop("drv", worktreeLoop())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    // Unpinned mutating command → would run in the main tree → refused.
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "bash", callID: "c1" }, { args: { command: "npm test" } }),
+      /would run in the main tree/,
+    )
+    // cd-pinned chain → allowed.
+    await hooks["tool.execute.before"](
+      { sessionID: "child", tool: "bash", callID: "c2" },
+      { args: { command: "cd /repo/.worktrees/t && npm test" } },
+    )
+    // Read-only inspection stays allowed unpinned.
+    await hooks["tool.execute.before"]({ sessionID: "child", tool: "bash", callID: "c3" }, { args: { command: "git status" } })
+    // Escaping cd → refused.
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "bash", callID: "c4" }, { args: { command: "cd /repo/.worktrees/t && cd .. && rm -rf x" } }),
+      /leaves it/,
+    )
+  } finally {
+    clearLoop("drv")
+  }
+})
+
+test("bash in a session with no loop ancestor is untouched while a worktree loop runs elsewhere", async () => {
+  setLoop("drv", worktreeLoop())
+  try {
+    const hooks = await makeHooks({ stranger: undefined })
+    await hooks["tool.execute.before"]({ sessionID: "stranger", tool: "bash", callID: "c1" }, { args: { command: "npm test" } })
+  } finally {
+    clearLoop("drv")
+  }
+})
+
+test("session-API failure while a worktree loop is live fails CLOSED for bash too", async () => {
+  setLoop("drv", worktreeLoop())
+  try {
+    const hooks = await makeHooks({}, { failSessionApi: true })
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "bash", callID: "c1" }, { args: { command: "npm test" } }),
+      /could not be attributed/,
+    )
+  } finally {
+    clearLoop("drv")
+  }
+})
+
+test("edits to the worktree's frozen backlog copy are refused (task files are driver-owned)", async () => {
+  setLoop("drv", worktreeLoop())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    // Status-folder copy: already denied by the always-on backlog guard.
+    await assert.rejects(
+      () =>
+        hooks["tool.execute.before"](
+          { sessionID: "child", tool: "edit", callID: "c1" },
+          { args: { filePath: "/repo/.worktrees/t/docs/tasks/in-progress/t.md" } },
+        ),
+      /direct edits under docs\/tasks/,
+    )
+    // The backlog guard's draft carve-out must NOT extend to the worktree's
+    // frozen copy — a draft written there rides the feature branch.
+    await assert.rejects(
+      () =>
+        hooks["tool.execute.before"](
+          { sessionID: "child", tool: "write", callID: "c2" },
+          { args: { filePath: "/repo/.worktrees/t/docs/tasks/draft/new-idea.md" } },
+        ),
+      /driver-owned/,
+    )
+  } finally {
+    clearLoop("drv")
+  }
+})
+
 test("no live loop → no session walk, edits pass through", async () => {
   const hooks = await makeHooks({}, { failSessionApi: true }) // API failure must not matter when nothing is live
   await hooks["tool.execute.before"]({ sessionID: "any", tool: "write", callID: "c1" }, { args: { filePath: "/anywhere/x.ts" } })

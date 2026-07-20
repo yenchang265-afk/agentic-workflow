@@ -86,6 +86,15 @@ export interface LoopState {
    * tree untouched.
    */
   readonly isolated?: boolean
+  /**
+   * Why an isolation-requiring stage is running WITHOUT isolation (detached
+   * HEAD, shared-tree checkout failure). Set by `ensureIsolation` on its
+   * degrade paths so hosts can surface the condition in the task's audit trail
+   * instead of only a console warn — a degraded run otherwise looks identical
+   * to an isolated one. Absent when isolation was established (or when running
+   * outside a git repo, which is a legitimate mode, not a degrade).
+   */
+  readonly isolationWarning?: string
   /** The code platform the claiming work source talks to; absent ⇒ `github`. */
   readonly platform?: CodePlatform
   /**

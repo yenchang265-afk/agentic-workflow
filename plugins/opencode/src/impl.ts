@@ -10,6 +10,7 @@ import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
 import { anyLoopActive, anyWorktreeLoopActive, findSessionDriving, getLoop, hasLoop, planStageTaskId } from "@agentic-loop/core/loop/state"
 import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
 import { classifyBash, classifyEdit } from "@agentic-loop/core/task/guard"
+import { classifyWorktreeBash, isUnderTasksDir } from "@agentic-loop/core/loop/worktree-guard"
 import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-loop/core/task/write-backstop"
 import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
 
@@ -280,6 +281,15 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
                 "approves, force-pushes, or pushes the default branch; those stay a human call.",
             )
           }
+          // Worktree bash pin: the session's real cwd is the MAIN tree (the
+          // engine only conveys the worktree as prompt text), so a command
+          // without the `cd <wt> && ` prefix silently runs outside the
+          // isolation. Same fail-closed contract as the edit pin below.
+          const bashWt = loop?.git?.worktree
+          if (bashWt) {
+            const pinVerdict = classifyWorktreeBash(cmd, bashWt)
+            if (!pinVerdict.allow) throw new Error(pinVerdict.reason)
+          }
         }
       } else if (EDIT_TOOLS.has(input.tool)) {
         const fp: unknown = output.args?.filePath ?? output.args?.path
@@ -289,10 +299,10 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
         }
       }
       // Worktree pinning enforcement: while a worktree-mode loop drives this
-      // session, a file-writing tool must not touch anything outside the worktree.
-      // Non-edit tools pass through (bash pinning stays prompt-enforced — a
-      // documented residual).
-      if (resolutionFailed && EDIT_TOOLS.has(input.tool) && anyWorktreeLoopActive()) {
+      // session, a file-writing tool must not touch anything outside the
+      // worktree, and bash is pinned by classifyWorktreeBash above — the same
+      // fail-closed stance for both tool shapes.
+      if (resolutionFailed && (EDIT_TOOLS.has(input.tool) || input.tool === "bash") && anyWorktreeLoopActive()) {
         // Fail CLOSED on "can't tell": a worktree-isolated loop is live but this
         // session couldn't be attributed to (or cleared of) it — refusing the edit
         // beats risking a silent write to the human's main tree.
@@ -326,6 +336,15 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
         throw new Error(
           `agentic-loop: this loop is isolated to its worktree ${wt} — edit ${filePath} is outside it. ` +
             `Use an absolute path under the worktree.`,
+        )
+      }
+      // The worktree carries a checkout-time frozen copy of the backlog; an
+      // edit there rides the feature branch and resurrects the task file in
+      // the wrong status folder on merge.
+      if (isUnderTasksDir(filePath, wt, config.tasksDir)) {
+        throw new Error(
+          `agentic-loop: task files are driver-owned and live on the main tree — the loop records notes and ` +
+            `moves itself; do not edit the worktree's frozen ${config.tasksDir} copy.`,
         )
       }
     },
@@ -367,11 +386,17 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
           // id, so resolve the driving session up the parent chain first — a
           // verdict recorded under the child id would be invisible to the drive.
           const drivingID = await driver.resolveDrivingSession(client, ctx.sessionID)
-          return driver.recordVerdict(drivingID, args.stage, {
-            verdict: args.verdict,
-            ...(args.reason !== undefined ? { reason: args.reason } : {}),
-            ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
-          })
+          return driver.recordVerdict(
+            drivingID,
+            args.stage,
+            {
+              verdict: args.verdict,
+              ...(args.reason !== undefined ? { reason: args.reason } : {}),
+              ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
+            },
+            // deps only so an out-of-stage verdict can be audited on the task file
+            deps,
+          )
         },
       }),
     },

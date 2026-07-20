@@ -102,6 +102,28 @@ test("fresh engineering isolation marks the state isolated", async () => {
   const $ = makeShell(gitHandler("main"))
   const next = await ensureIsolation($, noopLog, "/repo", config, state)
   assert.equal(next.isolated, true)
+  assert.equal(next.isolationWarning, undefined)
+})
+
+test("detached HEAD records an isolationWarning on the returned state", async () => {
+  const $ = makeShell(gitHandler("HEAD"))
+  const next = await ensureIsolation($, noopLog, "/repo", config, state)
+  assert.equal(next.isolated, undefined)
+  assert.match(next.isolationWarning ?? "", /detached HEAD/)
+})
+
+test("shared-tree checkout failure records an isolationWarning", async () => {
+  const sharedConfig = { ...DEFAULT_CONFIG, worktreesDir: false as const }
+  const $ = makeShell((cmd: string): FakeResult => {
+    if (cmd.includes("abbrev-ref HEAD")) return { exitCode: 0, stdout: "main" }
+    if (cmd.includes("status --porcelain")) return { exitCode: 0, stdout: "" }
+    if (cmd.includes("rev-parse --verify")) return { exitCode: 1 } // branch absent
+    if (cmd.includes("checkout")) return { exitCode: 1 } // checkout -b fails
+    return { exitCode: 0 }
+  })
+  const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, state)
+  assert.equal(next.isolated, undefined)
+  assert.match(next.isolationWarning ?? "", /could not check out feature\/add-foo/)
 })
 
 /**

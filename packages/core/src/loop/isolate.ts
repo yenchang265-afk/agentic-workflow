@@ -128,7 +128,7 @@ export const ensureIsolation = async (
   const base = baseBranch ?? (await currentBranch($, directory))
   if (!base) {
     await log("warn", "loop: detached HEAD — building without branch isolation")
-    return state
+    return { ...state, isolationWarning: "detached HEAD — building without branch isolation" }
   }
   const branch = `feature/${loopId(state)}`
 
@@ -166,7 +166,7 @@ export const ensureIsolation = async (
   }
   if (!(await checkoutBranch($, directory, branch))) {
     await log("warn", `loop: could not check out ${branch} — building without branch isolation`)
-    return state
+    return { ...state, isolationWarning: `could not check out ${branch} — building without branch isolation` }
   }
   return { ...state, git: { base, branch }, isolated: true }
 }

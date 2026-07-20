@@ -90,6 +90,42 @@ export const verdictContractBlock = (stage: string): string =>
     "If the loop_verdict tool is not in your tool list, state that explicitly in your final message and finish.",
   ].join(" ")
 
+/**
+ * The scope fence appended to every WORK stage's composed prompt, the
+ * counterpart to `verdictContractBlock` (see engine.ts `composePrompt`).
+ *
+ * The state machine only advances when a stage's turn ENDS, so a work stage
+ * that keeps going — building, then verifying and reviewing its own output in
+ * the same turn — does that work while the loop still sits at its own stage.
+ * Its `loop_verdict` calls are rejected ("the loop is at build, not verify"),
+ * the real check stage then re-runs everything, and the turn's final message
+ * claims a PASS and a folder move that never happened. Naming the boundary in
+ * the prompt is the only fence that survives every dispatch path, on both
+ * hosts. Pure.
+ */
+export const workScopeBlock = (stage: string): string =>
+  [
+    `STAGE SCOPE: you are running the ${stage} stage only.`,
+    `Finish your turn as soon as ${stage}'s own work is done and summarize what you did —`,
+    "what happens next is the loop's decision, taken after your turn ends: it fires the next stage, parks for a human, or finishes.",
+    "Do not run a later stage's work (verification, review, shipping) inside this turn:",
+    "it is redone anyway, and it runs while the loop is still recorded at this stage.",
+    "Never call the `loop_verdict` tool — it is rejected outside its own check stage and the rejection is audited as stage drift.",
+    "Never state that the task moved, that a check passed, or that the loop finished — only the loop moves work.",
+  ].join(" ")
+
+/**
+ * The audit note appended to the task file when `loop_verdict` arrives from a
+ * stage the loop is not at. The rejection itself is returned only to the
+ * calling agent, so without this note the drift is invisible until a later
+ * stage behaves oddly (a re-run check, a fabricated PASS). Pure. Hosts append
+ * it at most once per stage attempt — a drifting agent may call repeatedly.
+ */
+export const stageDriftNote = (activeStage: string, requested: string, verdict: Verdict | null): string =>
+  `Stage drift: a ${requested.toUpperCase()} verdict${verdict ? ` (${verdict})` : ""} was recorded while the loop was at ` +
+  `${activeStage.toUpperCase()} — ignored. The ${activeStage.toUpperCase()} stage ran a later stage's work inside its own turn; ` +
+  `its claims about that work are unverified and the loop re-ran the real stage.`
+
 export const parseVerdict = (text: string, tag: string): Verdict | null => {
   if (!text) return null
   const re = new RegExp(`${tag}:\\s*(PASS|FAIL|ERROR)`, "gi")

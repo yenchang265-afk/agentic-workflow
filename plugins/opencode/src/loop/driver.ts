@@ -75,6 +75,7 @@ import {
   LOOP_REVIEW_TAG,
   LOOP_VERIFY_TAG,
   parseVerdict,
+  stageDriftNote,
   type Verdict,
   type VerdictRecord,
   worstOf,
@@ -342,6 +343,14 @@ type CheckStage = string
  */
 const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly record: VerdictRecord }>()
 
+/**
+ * The stage a session has already audited an out-of-stage verdict for. A
+ * drifting work stage typically calls `loop_verdict` more than once (verify,
+ * then review, inside the same build turn); the task file gets one note per
+ * drifting stage, not one per call.
+ */
+const driftNoted = new Map<string, string>()
+
 /** Usage observed for one stage pass — the assistant message's totals. */
 interface StageUsage {
   readonly tokens: StageTokens
@@ -365,11 +374,35 @@ const addSample = (sessionID: string, sample: StageSample): void => {
  * anything else (no loop, wrong stage, e.g. a build agent trying to
  * pre-empt its own verification) is ignored with an explanatory result.
  * The optional `reason`/`criteria` steer the next iteration's prompt only.
+ *
+ * `deps` is needed only to audit an out-of-stage verdict on the task file, so
+ * it stays optional: the rejection itself is a pure decision, and tests that
+ * assert it need no host. A caller that omits it still rejects correctly —
+ * it just leaves the drift out of the audit trail.
  */
-export const recordVerdict = (sessionID: string, stage: CheckStage, record: VerdictRecord): string => {
+export const recordVerdict = (sessionID: string, stage: CheckStage, record: VerdictRecord, deps?: Deps): string => {
   const state = getLoop(sessionID)
   if (!state) return "No active loop in this session — verdict ignored."
   if (state.stage !== stage) {
+    // The rejection alone reaches only the calling agent. Audit it on the task
+    // so a work stage that ran a later stage's work inside its own turn is
+    // visible in the trail, not just as odd behavior one stage later. Appended
+    // at most once per stage attempt — a drifting agent may call repeatedly —
+    // and fire-and-forget: the note must never delay or fail the tool result.
+    if (deps && state.task && driftNoted.get(sessionID) !== state.stage) {
+      driftNoted.set(sessionID, state.stage)
+      const task = state.task
+      void (async () => {
+        await appendNote(
+          deps.$,
+          task,
+          auditNote(stageDriftNote(state.stage, stage, record.verdict), new Date(), await gitActor(deps.$, deps.directory)),
+          deps.log,
+        )
+      })().catch(() => {
+        /* best-effort audit — never break the tool call */
+      })
+    }
     return `The loop is at ${state.stage}, not ${stage} — verdict ignored. Only the running check stage may record its own verdict.`
   }
   const def = manifestFor(state.kind ?? "engineering").manifest.stages.find((d) => d.name === stage)
@@ -463,13 +496,18 @@ const withCommitLock = <T>(treePath: string, fn: () => Promise<T>): Promise<T> =
 }
 
 /** Commit everything as a checkpoint on the loop branch/worktree. No-op until isolation ran. */
-const checkpoint = async (deps: Deps, state: LoopState, message: string): Promise<void> => {
+const checkpoint = async (deps: Deps, config: Config, state: LoopState, message: string): Promise<void> => {
   // `isolated` (not `git`): don't `git add -A && commit` the human's main tree for a
   // loop whose pre-set `git` never became real isolation — that would sweep their WIP
   // into a bogus loop commit (pr-sitter `triage` → done on a dirty tree).
   if (!state.isolated) return
   const tree = workTree(deps, state)
-  await withCommitLock(tree, () => commitAll(deps.$, tree, message))
+  // Worktree checkpoints exclude the backlog dir: the worktree carries a frozen
+  // checkout-time copy of `<tasksDir>` whose sweep onto feature/<id> resurrects
+  // task files in the wrong status folder on merge. Shared-tree mode keeps
+  // committing it — there the backlog deliberately rides the checkpoints.
+  const excludes = state.git?.worktree ? [config.tasksDir] : undefined
+  await withCommitLock(tree, () => commitAll(deps.$, tree, message, excludes))
 }
 
 /** Commit backlog path changes on the MAIN tree, serialized against other commits there. */
@@ -651,6 +689,7 @@ export const runStageWithLenses = async (
           : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the loop_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
+      driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage } = await runStage(
         client,
@@ -781,6 +820,7 @@ const renderMetrics = async (
 ): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   runSamples.delete(sessionID)
+  driftNoted.delete(sessionID) // the run is over — nothing left to dedupe against
   // Report against the EFFECTIVE cap the engine enforced — a kind's manifest may
   // override `config.maxIterations` (pr-sitter caps at 3), so `config.maxIterations`
   // alone would mislabel the footer (e.g. "iterations used: 3/1").
@@ -837,6 +877,17 @@ export const drive = async (
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
+    // A degraded isolation (detached HEAD, checkout failure) must be visible in
+    // the task's audit trail, not just a console warn — the run otherwise looks
+    // identical to an isolated one while writing into the main tree.
+    if (trackBuild && isolated && step.state.isolationWarning) {
+      await appendNote(
+        deps.$,
+        task,
+        auditNote(`WARNING: ${stage.toUpperCase()} running WITHOUT isolation — ${step.state.isolationWarning}`, new Date(), actor),
+        deps.log,
+      )
+    }
     const { output, verdict, record } = await runStageWithLenses(
       deps,
       sessionID,
@@ -857,7 +908,7 @@ export const drive = async (
     if (!getLoop(sessionID) || wasInterrupted) {
       const how = wasInterrupted ? "interrupted" : "stopped"
       await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`)
-      await checkpoint(deps, step.state, `loop(${loopId(step.state)}): incomplete — ${how} during ${stage}`)
+      await checkpoint(deps, config, step.state, `loop(${loopId(step.state)}): incomplete — ${how} during ${stage}`)
       await teardownIsolation(deps, step.state)
       // A deliberate stop ends the run — drop the snapshot so recover can't
       // resurrect stale state. An ESC interrupt is a pause: KEEP the snapshot so
@@ -875,7 +926,7 @@ export const drive = async (
     // engineering `build` — pr-sitter's `fix` stage writes code too and otherwise
     // gets no driver-side commit backstop if its agent forgets to commit.
     if (stageDef(loaded.manifest, stage).kind === "work" && isolated) {
-      await checkpoint(deps, step.state, `loop(${loopId(step.state)}): ${stage} iteration ${iteration + 1}`)
+      await checkpoint(deps, config, step.state, `loop(${loopId(step.state)}): ${stage} iteration ${iteration + 1}`)
     }
     if (stageDef(loaded.manifest, stage).kind === "check" && task) {
       const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0
@@ -923,7 +974,7 @@ export const drive = async (
     // checkpoint won't fold the move in).
     commitBacklog: async (message) => void (await commitTasks(deps, config, message)),
     // Commit-all checkpoint on the work tree; core calls it only when state.isolated.
-    checkpoint: (message) => checkpoint(deps, state, message),
+    checkpoint: (message) => checkpoint(deps, config, state, message),
     writeMetrics: (outcome, detail) => renderMetrics(deps, sessionID, config, state, outcome, detail),
   }
   const report = await runTerminal(ctx, action)
@@ -1191,7 +1242,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     if (state) {
       await renderMetrics(deps, sessionID, config, state, "error", message)
       if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
-      await checkpoint(deps, state, `loop(${loopId(state)}): incomplete — loop error`)
+      await checkpoint(deps, config, state, `loop(${loopId(state)}): incomplete — loop error`)
       await teardownIsolation(deps, state)
     } else {
       runSamples.delete(sessionID)

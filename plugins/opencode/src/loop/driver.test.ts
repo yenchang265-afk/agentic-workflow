@@ -1141,6 +1141,49 @@ test("recordVerdict accepts the verdict once the child session is resolved to th
   }
 })
 
+// --- stage drift: an out-of-stage verdict is rejected AND audited on the task ---
+
+test("recordVerdict audits an out-of-stage verdict on the task file, once per stage attempt", async () => {
+  const { setLoop, clearLoop } = await import("@agentic-loop/core/loop/state")
+  const shellLog: string[] = []
+  const task = { id: "drift-task", path: "/repo/docs/tasks/in-progress/drift-task.md", acceptance: [] }
+  const deps: Deps = { client: makeClient().client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  setLoop("drv-drift", { goal: "g", stage: "build", iteration: 0, artifacts: {}, task })
+  try {
+    // A build stage that verified its own work: rejected, as before.
+    assert.match(recordVerdict("drv-drift", "verify", { verdict: "PASS" }, deps), /loop is at build, not verify/)
+    // ...and now audited, so the drift is visible in the trail rather than
+    // surfacing one stage later as a re-run check or a fabricated PASS.
+    await new Promise((r) => setTimeout(r, 20)) // the note is appended fire-and-forget
+    const noted = shellLog.filter((cmd) => cmd.includes("Stage drift"))
+    assert.equal(noted.length, 1, "the drift is audited")
+    assert.match(noted[0]!, /VERIFY/)
+    assert.match(noted[0]!, /BUILD/)
+    // A drifting stage usually calls more than once (verify, then review) —
+    // the task file must not collect a note per call.
+    recordVerdict("drv-drift", "review", { verdict: "PASS" }, deps)
+    await new Promise((r) => setTimeout(r, 20))
+    assert.equal(shellLog.filter((cmd) => cmd.includes("Stage drift")).length, 1, "one note per stage attempt")
+  } finally {
+    clearLoop("drv-drift")
+  }
+})
+
+test("recordVerdict still records a verdict from the stage the loop is actually at", async () => {
+  const { setLoop, clearLoop } = await import("@agentic-loop/core/loop/state")
+  const shellLog: string[] = []
+  const deps: Deps = { client: makeClient().client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  const task = { id: "ok-task", path: "/repo/docs/tasks/in-progress/ok-task.md", acceptance: [] }
+  setLoop("drv-ok", { goal: "g", stage: "verify", iteration: 0, artifacts: {}, task })
+  try {
+    assert.match(recordVerdict("drv-ok", "verify", { verdict: "PASS" }, deps), /Recorded verify verdict: PASS/)
+    await new Promise((r) => setTimeout(r, 20))
+    assert.equal(shellLog.filter((cmd) => cmd.includes("Stage drift")).length, 0, "no drift note on the happy path")
+  } finally {
+    clearLoop("drv-ok")
+  }
+})
+
 // --- runStageWithLenses: a missing lens verdict is a broken channel, not a FAIL ---
 // Regression guard for the spurious-second-iteration bug: with reviewLenses
 // configured, a lens whose loop_verdict call never lands used to combine as
