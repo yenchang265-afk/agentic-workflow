@@ -386,11 +386,17 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
           // id, so resolve the driving session up the parent chain first — a
           // verdict recorded under the child id would be invisible to the drive.
           const drivingID = await driver.resolveDrivingSession(client, ctx.sessionID)
-          return driver.recordVerdict(drivingID, args.stage, {
-            verdict: args.verdict,
-            ...(args.reason !== undefined ? { reason: args.reason } : {}),
-            ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
-          })
+          return driver.recordVerdict(
+            drivingID,
+            args.stage,
+            {
+              verdict: args.verdict,
+              ...(args.reason !== undefined ? { reason: args.reason } : {}),
+              ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
+            },
+            // deps only so an out-of-stage verdict can be audited on the task file
+            deps,
+          )
         },
       }),
     },

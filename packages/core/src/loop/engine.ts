@@ -3,7 +3,7 @@ import { stageDef } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, Config, LoopState } from "./state.js"
-import { verdictContractBlock, type Verdict } from "./verdict.js"
+import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
  * The manifest-interpreted state machine: given a loop kind's manifest, the
@@ -81,9 +81,11 @@ export const composePrompt = (loaded: LoadedManifest, state: LoopState, target: 
   const hookRef = loaded.manifest.hooks.compose[def.name]
   const ctx = hookRef ? resolveComposeHook(hookRef)(promptContext(state), state) : promptContext(state)
   const rendered = renderPrompt(tpl, ctx)
-  // Check stages carry the verdict contract in the prompt itself, so it
-  // survives a mis-bound subagent or a stripped tool allowlist (see verdict.ts).
-  return def.kind === "check" ? `${rendered}\n\n${verdictContractBlock(def.name)}` : rendered
+  // Every stage carries its contract in the prompt itself, so it survives a
+  // mis-bound subagent or a stripped tool allowlist (see verdict.ts): check
+  // stages the mandatory verdict contract, work stages the scope fence that
+  // keeps them from running later stages inside their own turn.
+  return def.kind === "check" ? `${rendered}\n\n${verdictContractBlock(def.name)}` : `${rendered}\n\n${workScopeBlock(def.name)}`
 }
 
 const fireAt = (loaded: LoadedManifest, state: LoopState, target: string): { state: LoopState; action: Action } => {

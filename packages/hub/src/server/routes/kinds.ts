@@ -2,7 +2,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { promptContext } from "@agentic-loop/core/loop/engine"
 import type { LoopState } from "@agentic-loop/core/loop/state"
-import { verdictContractBlock } from "@agentic-loop/core/loop/verdict"
+import { verdictContractBlock, workScopeBlock } from "@agentic-loop/core/loop/verdict"
 import { listLoopKinds, loadManifest } from "@agentic-loop/core/manifest/load"
 import { LoopManifestSchema, type LoopManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
 import { renderPrompt } from "@agentic-loop/core/manifest/template"
@@ -137,8 +137,9 @@ export const previewKind = async (_deps: HubDeps, req: ParsedRequest): Promise<J
 
   const sample: PreviewSample = { ...DEFAULT_SAMPLE, ...body.sample }
   const rendered = renderPrompt(tpl, promptContext(sampleState(manifest, def.name, sample)))
-  // Check stages carry the verdict contract in the prompt itself (see verdict.ts).
-  const full = def.kind === "check" ? `${rendered}\n\n${verdictContractBlock(def.name)}` : rendered
+  // Every stage carries its contract in the prompt itself (see verdict.ts):
+  // the verdict contract for check stages, the scope fence for work stages.
+  const full = def.kind === "check" ? `${rendered}\n\n${verdictContractBlock(def.name)}` : `${rendered}\n\n${workScopeBlock(def.name)}`
 
   const hookRef = manifest.hooks.compose?.[def.name]
   const response: PreviewResponse = {

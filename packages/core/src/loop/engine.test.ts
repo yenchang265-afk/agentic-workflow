@@ -7,7 +7,7 @@ import { effectiveAllowlist } from "../manifest/schema.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
 import type { Action, Config, LoopState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { verdictContractBlock, type Verdict } from "./verdict.js"
+import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -90,12 +90,15 @@ const withoutArtifact = (state: LoopState, stage: string): LoopState => {
   return { ...state, artifacts: rest }
 }
 
-// Additive semantics on top of the frozen oracle: check stages now carry the
-// mandatory verdict-contract paragraph in the prompt itself (see verdict.ts) —
-// appended here rather than "fixed" inside the frozen composeArgs.
+// Additive semantics on top of the frozen oracle: every stage now carries a
+// prompt-level contract paragraph (see verdict.ts) — check stages the mandatory
+// verdict contract, work stages the scope fence. Appended here rather than
+// "fixed" inside the frozen composeArgs.
 const oracleCompose = (state: LoopState, stage: string): string => {
   const base = oracleComposeArgs(state, stage)
-  return stage === "verify" || stage === "review" ? `${base}\n\n${verdictContractBlock(stage)}` : base
+  return stage === "verify" || stage === "review"
+    ? `${base}\n\n${verdictContractBlock(stage)}`
+    : `${base}\n\n${workScopeBlock(stage)}`
 }
 
 const oracleFire = (state: LoopState, stage: string): { state: LoopState; action: Action } => ({
@@ -222,6 +225,23 @@ test("composePrompt appends the verdict contract to check stages only", () => {
   }
 })
 
+test("composePrompt fences work stages to their own stage", () => {
+  const state = resumeAtBuild("add foo", task, "PLAN BODY")
+  for (const stage of ["plan", "build"]) {
+    const prompt = composePrompt(eng, { ...state, stage }, stage)
+    assert.ok(prompt.endsWith(workScopeBlock(stage)), `${stage} carries the scope fence`)
+  }
+  // A check stage's own contract is the verdict one — never both.
+  for (const stage of ["verify", "review"]) {
+    assert.doesNotMatch(composePrompt(eng, { ...state, stage }, stage), /STAGE SCOPE/, `${stage} has no scope fence`)
+  }
+})
+
+test("the scope fence reaches every kind's work stages, not just engineering", () => {
+  const prompt = composePrompt(sitter, prState("fix"), "fix")
+  assert.ok(prompt.endsWith(workScopeBlock("fix")), "pr-sitter fix carries the scope fence")
+})
+
 // --- golden parity: advance ≡ the frozen advanceOnIdle across the transition table ---
 
 const strip = <T extends object>(o: T): Record<string, unknown> => {
@@ -289,7 +309,7 @@ test("firstStep fires the state's own stage with its composed prompt", () => {
   assert.equal(action.kind, "fire")
   if (action.kind === "fire") {
     assert.equal(action.stage, "build")
-    assert.equal(action.arguments, oracleComposeArgs(s, "build"))
+    assert.equal(action.arguments, oracleCompose(s, "build"))
   }
 })
 
