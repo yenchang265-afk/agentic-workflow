@@ -549,3 +549,57 @@ test("access az: a failed az call surfaces as an actionable skip carrying the CL
   assert.match(skip?.message ?? "", /az CLI.*ERROR: Please run 'az login'/s) // the CLI's own stderr, verbatim
   assert.equal(skip?.actionable, true)
 })
+
+// --- paging: $top=100 with no $skip silently dropped every PR past the first page ---
+
+/** Build a source whose PR-list transport pages by `$skip`, serving `total` draft PRs. */
+const pagedSource = (total: number, warnings: string[] = [], httpLog: string[] = []) =>
+  makeAdoPrSource({
+    $: scriptedShell([]),
+    http: async (url) => {
+      httpLog.push(url)
+      let body = ""
+      if (url.includes("/pullrequests?searchCriteria")) {
+        const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? "0")
+        const top = Number(/\$top=(\d+)/.exec(url)?.[1] ?? "100")
+        const page = Array.from({ length: Math.max(0, Math.min(top, total - skip)) }, (_, i) =>
+          pr({ pullRequestId: skip + i + 1, isDraft: true }),
+        )
+        body = JSON.stringify({ value: page })
+      }
+      return { ok: true, status: 200, statusText: "ok", text: async () => body }
+    },
+    client: ledgerClient({}),
+    directory: "/r",
+    tasksDir: "docs/tasks",
+    log: (_l, m) => void warnings.push(m),
+    loaded: sitter,
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+    pat: "test-pat",
+    now: () => "2026-07-05T00:00:00Z",
+  })
+
+test("the ADO PR list pages past the first 100 instead of truncating", async () => {
+  // ADO has no server-side search, so role filtering happens client-side over the
+  // WHOLE set — a PR at position 140 that needs attention was simply invisible.
+  const httpLog: string[] = []
+  const { skip } = await pagedSource(150, [], httpLog).claimNext()
+  const listCalls = httpLog.filter((u) => u.includes("/pullrequests?searchCriteria"))
+  assert.ok(listCalls.length >= 2, `expected paging, got ${listCalls.length} list call(s)`)
+  assert.ok(listCalls.some((u) => /\$skip=100/.test(u)), "second page never requested")
+  // The skip line must report the true total, not the first page's size.
+  assert.match(skip?.message ?? "", /150/)
+})
+
+test("a single short page issues no extra request", async () => {
+  const httpLog: string[] = []
+  const { skip } = await pagedSource(3, [], httpLog).claimNext()
+  assert.equal(httpLog.filter((u) => u.includes("/pullrequests?searchCriteria")).length, 1)
+  assert.match(skip?.message ?? "", /3 active/)
+})
+
+test("hitting the page ceiling warns instead of silently truncating", async () => {
+  const warnings: string[] = []
+  await pagedSource(5000, warnings).claimNext()
+  assert.match(warnings.join("\n"), /truncat/i)
+})

@@ -61,6 +61,31 @@ var splitSegments = (cmd) => {
   segments.push(cur);
   return segments.map((s) => s.trim()).filter(Boolean);
 };
+var hasShellExpansion = (seg) => {
+  let quote = null;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (quote === "'") {
+      if (c === "'")
+        quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"')
+        quote = null;
+      else if (c === "`" || c === "$" && seg[i + 1] === "(")
+        return true;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "`" || c === "$" && seg[i + 1] === "(" || c === ">" || c === "<")
+      return true;
+  }
+  return false;
+};
 
 // packages/core/dist/task/guard.js
 var ALLOW = { allow: true };
@@ -139,6 +164,9 @@ var classifyBash = (command, ctx) => {
   if (MUTATING_TOKENS.some((t) => command.includes(t))) {
     return block(`agentic-loop: this command can mutate ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
   }
+  if (splitSegments(command).some(hasShellExpansion)) {
+    return block(`agentic-loop: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked \u2014 ${HOW_TO_MUTATE}`);
+  }
   const segments = splitSegments(command);
   if (segments.every((s) => matchesAny(s, READ_ONLY) || isCanonicalMkdir(s, ctx.tasksDir)))
     return ALLOW;
@@ -206,8 +234,30 @@ var splitSegments2 = (cmd) => {
   segments.push(cur);
   return segments.map((s) => s.trim()).filter(Boolean);
 };
+var hasShellExpansion2 = (seg) => {
+  let quote = null;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"') quote = null;
+      else if (c === "`" || c === "$" && seg[i + 1] === "(") return true;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "`" || c === "$" && seg[i + 1] === "(" || c === ">" || c === "<") return true;
+  }
+  return false;
+};
 var commandAllowed = (cmd, globs) => {
   const segments = splitSegments2(cmd);
+  if (segments.some(hasShellExpansion2)) return false;
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny2(s, globs));
 };
 var isGithubPrMutation = (cmd) => {

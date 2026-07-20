@@ -138,6 +138,22 @@ test("classifyBash blocks a mutation chained after a LONE & (background operator
   assert.equal(classifyBash("ls docs/tasks/queued &", ctx).allow, true)
 })
 
+test("classifyBash blocks command substitution referencing the backlog", () => {
+  // The read-only globs end in `*` and compile with dotAll, so `^cat .*$` matches
+  // the whole of `cat docs/tasks/queued/a.md $(rm -rf docs/tasks/in-progress)` —
+  // no `>` and no -exec token, so nothing else caught it either.
+  assert.equal(classifyBash("cat docs/tasks/queued/a.md $(rm -rf docs/tasks/in-progress)", ctx).allow, false)
+  assert.equal(classifyBash("ls $(rm -rf docs/tasks/queued)", ctx).allow, false)
+  assert.equal(classifyBash("grep -r x docs/tasks `rm -rf docs/tasks/runs`", ctx).allow, false)
+  // Expanded inside double quotes too — only single quotes are inert to bash.
+  assert.equal(classifyBash('grep "$(cat docs/tasks/queued/a.md)" src', ctx).allow, false)
+})
+
+test("classifyBash still allows a literal $ or parenthesis in a quoted search term", () => {
+  assert.equal(classifyBash("grep 'costs $5' docs/tasks", ctx).allow, true)
+  assert.equal(classifyBash("grep '$(literal)' docs/tasks", ctx).allow, true)
+})
+
 test("classifyBash does not split on & inside a quoted argument", () => {
   // The shared splitter is quote-aware; a literal ampersand in a search term must
   // not fragment the command into bogus segments and cause a false block.

@@ -1,5 +1,5 @@
 import { STATUSES } from "./statuses.js"
-import { splitSegments } from "./write-backstop.js"
+import { hasShellExpansion, splitSegments } from "./write-backstop.js"
 
 /**
  * Backlog-mutation guard: classifies a tool call an *agent* is about to make
@@ -160,6 +160,15 @@ export const classifyBash = (command: string, ctx: GuardContext): GuardVerdict =
   if (MUTATING_TOKENS.some((t) => command.includes(t))) {
     return block(`agentic-loop: this command can mutate ${ctx.tasksDir}/ — ${HOW_TO_MUTATE}`)
   }
+  // Command substitution runs a second command the read-only globs never see:
+  // `^cat .*$` matches the whole of `cat docs/tasks/queued/a.md $(rm -rf …)`.
+  // Checked per segment so a literal `$(`/backtick inside single quotes (a search
+  // term) stays allowed, and so `"…$( )…"` — which bash DOES expand — does not.
+  if (splitSegments(command).some(hasShellExpansion)) {
+    return block(
+      `agentic-loop: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked — ${HOW_TO_MUTATE}`,
+    )
+  }
   // Split on every shell chaining operator INCLUDING a lone `&` and newlines: a
   // bare `\n` or `&` chains two commands just like `;`, and the read-only globs
   // compile with the dotAll (`s`) flag, so without this a read-only first command
@@ -168,8 +177,8 @@ export const classifyBash = (command: string, ctx: GuardContext): GuardVerdict =
   // write-backstop's quote-aware splitter so a literal `&`/`|` inside a quoted
   // argument doesn't fragment the command (and so the two guards can't drift).
   // (Residuals — heuristic defense-in-depth, not a sandbox: a deep
-  // `cd docs/tasks/queued && cp x .` then bare relative op, `$(rm …)` command
-  // substitution, and a dir name assembled from shell vars (`ta${x}sks`) still evade;
+  // `cd docs/tasks/queued && cp x .` then bare relative op, a dir name assembled
+  // from shell vars (`ta${x}sks`), and backslash-escaped quotes still evade;
   // conversely a genuine unrelated `<base>/<status>/` path can produce a rare false block.)
   const segments = splitSegments(command)
   if (segments.every((s) => matchesAny(s, READ_ONLY) || isCanonicalMkdir(s, ctx.tasksDir))) return ALLOW

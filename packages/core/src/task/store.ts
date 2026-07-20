@@ -715,6 +715,15 @@ export const writeTask = async (
   const destDir = path.join(loc.directory, rel)
   const dest = path.join(destDir, filename)
   await $`mkdir -p ${destDir}`.quiet().nothrow()
+  // Refuse to clobber an existing file. `taken` comes from the client index,
+  // which can lag the real FS (see findByIdIn's note) — when it does,
+  // `buildTaskFile` re-mints an id that is already on disk and
+  // `writeFileAtomic`'s `mv` would silently destroy that task's file and audit
+  // trail. Mirrors the guards in `moveTask` and `rescueStray`.
+  const exists = await $`test -e ${dest}`.quiet().nothrow()
+  if (exists.exitCode === 0) {
+    throw new Error(`cannot write task ${filename}: ${rel}/${filename} already exists — resolve the duplicate manually`)
+  }
   const out = await writeFileAtomic($, dest, content)
   if (out.exitCode !== 0) {
     throw new Error(`could not write task ${filename}: ${out.stderr.toString().trim()}`)

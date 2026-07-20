@@ -66,6 +66,45 @@ export const splitSegments = (cmd: string): string[] => {
 }
 
 /**
+ * Shell constructs that run a command (or write a file) a glob allowlist can
+ * never see through, because the globs end in `*` and compile with dotAll — so
+ * `^cat .*$` matches the whole of `cat $(rm -rf docs/tasks)`.
+ *
+ * Quote rules follow bash, not intuition: `$( )` and backticks are STILL
+ * expanded inside double quotes, so only single quotes make them inert.
+ * Redirections are literal inside either kind of quote. Both `<` and `>` are
+ * rejected — `>`/`>>` write, and `<(…)` is process substitution.
+ *
+ * Residual (shared with `splitSegments`): backslash-escaped quotes are not
+ * resolved, so this is defense-in-depth, not a shell sandbox.
+ *
+ * TWIN: `plugins/claude/hooks/src/allowlist.mjs` carries the identical scanner
+ * for the Claude host's PreToolUse hook. Keep the two in step.
+ */
+export const hasShellExpansion = (seg: string): boolean => {
+  let quote: string | null = null
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i]!
+    if (quote === "'") {
+      if (c === "'") quote = null
+      continue
+    }
+    if (quote === '"') {
+      if (c === '"') quote = null
+      // bash expands these inside double quotes
+      else if (c === "`" || (c === "$" && seg[i + 1] === "(")) return true
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if (c === "`" || (c === "$" && seg[i + 1] === "(") || c === ">" || c === "<") return true
+  }
+  return false
+}
+
+/**
  * A `gh` command that mutates a pull request. The loop must NEVER merge, close,
  * approve, or otherwise change PR state:
  *

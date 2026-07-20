@@ -24,6 +24,7 @@ import {
   selectOrder,
   statusOf,
   STATUSES,
+  writeTask,
   summarizeBacklog,
   type TaskStatus,
   wasInterrupted,
@@ -759,4 +760,38 @@ test("summarizeBacklog without claimedIds reports every body-claimable task as r
   const s = summarizeBacklog(byStatus)
   assert.deepEqual(s.claimable, ["free"])
   assert.deepEqual(s.claimHeld, [])
+})
+
+// --- writeTask must never clobber an existing task file ---
+
+/** A client whose file.list reports `ids` for every status folder. */
+const idsClient = (ids: string[]) =>
+  ({
+    file: {
+      list: async () => ({ data: ids.map((id) => ({ name: `${id}.md`, type: "file" })) }),
+    },
+  }) as unknown as Parameters<typeof writeTask>[1]
+
+test("writeTask refuses to overwrite a file already at the destination", async () => {
+  // Uniqueness comes only from `taken`, gathered via the client index — which
+  // findByIdIn's own doc comment says can lag the real FS. When it does,
+  // buildTaskFile re-mints the same id and writeFileAtomic's `mv` clobbers the
+  // other task's file and audit trail with no error. Every sibling write path
+  // (moveTask, rescueStray) guards first; this one did not.
+  const cmds: string[] = []
+  // Index reports nothing taken, but the destination exists on the real FS.
+  const $ = makeShell((cmd) => (cmd.startsWith("test -e") ? { exitCode: 0 } : {}), cmds)
+  await assert.rejects(
+    () => writeTask($, idsClient([]), { directory: "/r" }, { title: "Add rate limiting", priority: 2 }),
+    /already exists/,
+  )
+  assert.ok(!cmds.some((c) => c.startsWith("mv ")), "no write attempted after the collision check")
+})
+
+test("writeTask writes when the destination is free", async () => {
+  const cmds: string[] = []
+  const $ = makeShell((cmd) => (cmd.startsWith("test -e") ? { exitCode: 1 } : {}), cmds)
+  const out = await writeTask($, idsClient([]), { directory: "/r" }, { title: "Add rate limiting", priority: 2 })
+  assert.match(out.path, /\/r\/docs\/tasks\/draft\/.*\.md$/)
+  assert.ok(out.id)
 })

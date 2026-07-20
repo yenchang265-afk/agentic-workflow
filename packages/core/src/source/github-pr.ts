@@ -47,6 +47,14 @@ const FreshHeadSchema = z.object({
 
 const FAILING = new Set(["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED"])
 
+/**
+ * Ceiling for `gh pr list`. gh's own default is 30, which silently hides work
+ * from a sweep that scans every PR for one needing attention. High enough that
+ * real repos fit; hitting it is warned about rather than passed off as the full
+ * set.
+ */
+const PR_LIST_LIMIT = 200
+
 interface GithubPrDeps {
   readonly $: Shell
   readonly client: Client
@@ -86,7 +94,15 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
     async claimNext() {
       const fields =
         "number,title,headRefName,baseRefName,headRefOid,isDraft,mergeable,reviewDecision,isCrossRepository,statusCheckRollup,comments"
-      const out = await $`gh pr list --search ${query} --json ${fields}`.cwd(directory).quiet().nothrow()
+      // `gh pr list` defaults to 30. This source iterates the FULL set looking
+      // for one that needs attention, so anything past the window would never be
+      // claimed — silently, with no error. Ask for a high explicit ceiling and
+      // warn if we still hit it, so truncation is never mistaken for "all of
+      // them". (`ci-runs`' 30 is fine by contrast: it judges only the newest head.)
+      const out = await $`gh pr list --search ${query} --json ${fields} --limit ${String(PR_LIST_LIMIT)}`
+        .cwd(directory)
+        .quiet()
+        .nothrow()
       if (out.exitCode !== 0) {
         return {
           item: null,
@@ -104,6 +120,14 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
           item: null,
           skip: { message: `${kind}: could not parse gh output — ${(err as Error).message}`, actionable: true },
         }
+      }
+      const truncated = prs.length >= PR_LIST_LIMIT
+      if (truncated) {
+        await log(
+          "warn",
+          `${kind}: the PR list hit the ${PR_LIST_LIMIT}-PR ceiling — results are TRUNCATED and a PR needing ` +
+            `attention may be invisible to this sitter. Narrow the kind's \`query\` so the set fits.`,
+        )
       }
       const login = await viewer()
       const heldIds: string[] = []
@@ -152,7 +176,10 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
       }
       return {
         item: null,
-        skip: { message: `${kind}: no PRs need attention (${prs.length} matched the query)`, actionable: false },
+        skip: {
+          message: `${kind}: no PRs need attention (${prs.length}${truncated ? "+ (truncated)" : ""} matched the query)`,
+          actionable: false,
+        },
       }
     },
 

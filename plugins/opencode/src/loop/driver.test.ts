@@ -1149,8 +1149,8 @@ test("recordVerdict accepts the verdict once the child session is resolved to th
 
 const lensConfig: Config = { ...testConfig, reviewLenses: ["correctness", "security"] }
 
-/** Run the review stage with two lenses; `onCall(n)` runs before the nth stage command returns. */
-const runLensReview = async (sessionID: string, onCall: (call: number) => void, warns: string[] = []) => {
+/** Run the review stage with two lenses; `onCall(n, deps)` runs before the nth stage command returns. */
+const runLensReview = async (sessionID: string, onCall: (call: number, deps: Deps) => void, warns: string[] = []) => {
   const { setLoop, clearLoop } = await import("@agentic-loop/core/loop/state")
   setLoop(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
   let calls = 0
@@ -1159,7 +1159,7 @@ const runLensReview = async (sessionID: string, onCall: (call: number) => void, 
     session: {
       command: async () => {
         calls++
-        onCall(calls)
+        onCall(calls, deps)
         return { data: { parts: [{ type: "text", text: `review pass ${calls}` }] } }
       },
     },
@@ -1196,6 +1196,24 @@ test("lenses: both PASS combines to PASS", async () => {
   })
   assert.equal(result.verdict, "PASS")
   assert.equal(calls(), 2)
+})
+
+test("lenses: an ESC interrupt during lens 1 fires no further lens and no verdict retry", async () => {
+  // `onInterrupt` deliberately KEEPS getLoop set (onIdle's catch needs it on a
+  // reject-on-abort) and signals through the separate `interrupted` set. Both
+  // halt checks here tested only getLoop, so after the user pressed ESC the
+  // driver still fired the verdict retry for lens 1 AND both passes of lens 2 —
+  // up to 3 more agent turns the user had just asked to stop.
+  const sessionID = "sess-lens-interrupt"
+  const { result, calls } = await runLensReview(sessionID, (call, deps) => {
+    // Record no verdict: without the interrupt this pass alone would retry.
+    if (call === 1) void onInterrupt(deps, sessionID)
+  })
+  assert.equal(calls(), 1, "no further agent turns after ESC")
+  // A halted run returns quietly — never through the ERROR path, which would
+  // report an unreachable verdict channel for a stage the user simply stopped.
+  assert.equal(result.verdict, null)
+  assert.equal(result.record, null)
 })
 
 test("lenses: one lens never records a verdict → ERROR naming the lens, never FAIL", async () => {
