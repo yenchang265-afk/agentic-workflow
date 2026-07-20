@@ -126,6 +126,40 @@ test("classifyBash blocks redirects and compound-command escapes referencing the
   assert.equal(classifyBash("find docs/tasks -name '*.md' -delete", ctx).allow, false)
 })
 
+test("classifyBash blocks a mutation chained after a LONE & (background operator)", () => {
+  // `&&` was a split point but a single `&` was not, so the read-only globs —
+  // compiled with the dotAll flag and ending in `.*` — swallowed everything after
+  // it. `ls docs/tasks/queued & rm -rf docs/tasks/queued` matched `^ls.*$` and was
+  // ALLOWED, deleting the user's tasks and their audit trail.
+  assert.equal(classifyBash("ls docs/tasks/queued & rm -rf docs/tasks/queued", ctx).allow, false)
+  assert.equal(classifyBash("cat docs/tasks/queued/a.md & mv b.md docs/tasks/completed/", ctx).allow, false)
+  assert.equal(classifyBash("grep -r x docs/tasks & rm docs/tasks/runs/x.json", ctx).allow, false)
+  // A trailing `&` on a genuinely read-only command is still fine.
+  assert.equal(classifyBash("ls docs/tasks/queued &", ctx).allow, true)
+})
+
+test("classifyBash blocks command substitution referencing the backlog", () => {
+  // The read-only globs end in `*` and compile with dotAll, so `^cat .*$` matches
+  // the whole of `cat docs/tasks/queued/a.md $(rm -rf docs/tasks/in-progress)` —
+  // no `>` and no -exec token, so nothing else caught it either.
+  assert.equal(classifyBash("cat docs/tasks/queued/a.md $(rm -rf docs/tasks/in-progress)", ctx).allow, false)
+  assert.equal(classifyBash("ls $(rm -rf docs/tasks/queued)", ctx).allow, false)
+  assert.equal(classifyBash("grep -r x docs/tasks `rm -rf docs/tasks/runs`", ctx).allow, false)
+  // Expanded inside double quotes too — only single quotes are inert to bash.
+  assert.equal(classifyBash('grep "$(cat docs/tasks/queued/a.md)" src', ctx).allow, false)
+})
+
+test("classifyBash still allows a literal $ or parenthesis in a quoted search term", () => {
+  assert.equal(classifyBash("grep 'costs $5' docs/tasks", ctx).allow, true)
+  assert.equal(classifyBash("grep '$(literal)' docs/tasks", ctx).allow, true)
+})
+
+test("classifyBash does not split on & inside a quoted argument", () => {
+  // The shared splitter is quote-aware; a literal ampersand in a search term must
+  // not fragment the command into bogus segments and cause a false block.
+  assert.equal(classifyBash("grep -r 'a & b' docs/tasks", ctx).allow, true)
+})
+
 test("classifyBash blocks a mutation on a later LINE, even after a read-only first line", () => {
   // A newline is not a segment separator to the shell's `;`/`&&` matcher, and the
   // read-only globs compile with the dotAll flag — so a leading `ls`/`cat` line must

@@ -8,6 +8,7 @@ import {
   extractPlan,
   findByIdIn,
   isRecoverable,
+  isReleasableClaim,
   listByStatus,
   releaseClaim,
   selectOrder,
@@ -185,11 +186,18 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       const { pool, task } = work.ref as { pool: Pool; task: Task }
       const fresh = await findByIdIn($, directory, tasksDir, pool.status, task.id)
       if (!fresh) return
-      const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null
-      // A predicate pool's claim is only ours to release while the body is
-      // still claimable — a drive that got as far as durable work (e.g. a
-      // "BUILD started" audit note) must keep its marker for recovery.
-      if (predicate && !predicate(fresh)) return
+      // A predicate pool's claim is ours to hand back only while the run did no
+      // durable work — a drive that reached a "BUILD started" audit note must
+      // keep its marker for `recover <id>`.
+      //
+      // Gated on `isReleasableClaim`, NOT the pool's claim predicate: the caller
+      // appends the CLAIMED note before establishing isolation and releases when
+      // isolation throws, and `engineering.isClaimable` is false the moment that
+      // note exists — so the predicate could never pass and every release was a
+      // silent no-op, wedging the marker until a human ran `recover <id>`.
+      // Planless pools (queued/PLAN) have no predicate and write no BUILD note,
+      // so they keep releasing unconditionally.
+      if (pool.claimPredicate && !isReleasableClaim(fresh)) return
       await releaseClaim($, fresh)
     },
   }

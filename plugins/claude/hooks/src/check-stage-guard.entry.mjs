@@ -180,7 +180,7 @@ const main = async () => {
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
   // tools so it returns control; loop_advance then stops the loop.
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
-    if (["Bash", "Edit", "Write", "MultiEdit"].includes(tool)) {
+    if (["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
       return block(
         `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
           `stop working, summarize what you have, and return control so the loop can stop cleanly.`,

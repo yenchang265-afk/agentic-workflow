@@ -169,7 +169,22 @@ export const heartbeatLease = async (
   return true
 }
 
-/** Drop the lease. Best-effort — callers release on unwatch/stop/dispose. */
-export const releaseLease = async ($: Shell, directory: string, tasksDir: string): Promise<void> => {
+/**
+ * Drop the lease. Best-effort — callers release on unwatch/stop/dispose.
+ * Deletes ONLY while this process still owns it, the same guard `heartbeatLease`
+ * applies and for the same reason (T3): a watcher judged stale and taken over
+ * still runs its unwatch/dispose path, and an unconditional `rm -rf` there would
+ * delete the NEW owner's lease — a third watcher then acquires cleanly and two
+ * watchers drive one clone. Returns whether the lease was dropped.
+ */
+export const releaseLease = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  owner: { readonly pid: number; readonly host: string },
+): Promise<boolean> => {
+  const current = await readLeaseOwner($, directory, tasksDir)
+  if (current && (current.pid !== owner.pid || current.host !== owner.host)) return false
   await $`rm -rf ${leaseDir(directory, tasksDir)}`.quiet().nothrow()
+  return true
 }

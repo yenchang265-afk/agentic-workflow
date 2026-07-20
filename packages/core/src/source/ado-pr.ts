@@ -57,6 +57,16 @@ export type AdoHttp = (
 
 /** The env var holding the Azure DevOps PAT — the same name the `az` extension used, for continuity. */
 const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
+
+/**
+ * Active-PR list paging. ADO caps `$top` at 100 and offers no server-side
+ * search, so the identity/role filter runs client-side over the whole set —
+ * every page must be fetched or work goes silently unseen. `PR_MAX_PAGES` is a
+ * runaway guard, not a policy: hitting it is warned about, never passed off as
+ * the complete set.
+ */
+const PR_PAGE_SIZE = 100
+const PR_MAX_PAGES = 10
 const API_VERSION = "api-version=7.1"
 
 interface AdoPrDeps {
@@ -119,8 +129,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
     }
   }
 
-  /** The active-PR list, over whichever transport the access method selects. */
-  const listPrs = (): Promise<{ ok: boolean; status: number; statusText: string; body: string }> =>
+  /** One page of the active-PR list, over whichever transport the access method selects. */
+  const listPrsPage = (skip: number): Promise<{ ok: boolean; status: number; statusText: string; body: string }> =>
     useAz
       ? az(
           azInvokeArgs({
@@ -131,13 +141,13 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
               project: ado.project,
               ...(ado.repository ? { repositoryId: ado.repository } : {}),
             },
-            queryParameters: { "searchCriteria.status": "active", $top: "100" },
+            queryParameters: { "searchCriteria.status": "active", $top: String(PR_PAGE_SIZE), $skip: String(skip) },
           }),
         ).then(azToHttp)
       : get(
           ado.repository
-            ? `${org}/${project}/_apis/git/repositories/${encodeURIComponent(ado.repository)}/pullrequests?searchCriteria.status=active&$top=100&${API_VERSION}`
-            : `${org}/${project}/_apis/git/pullrequests?searchCriteria.status=active&$top=100&${API_VERSION}`,
+            ? `${org}/${project}/_apis/git/repositories/${encodeURIComponent(ado.repository)}/pullrequests?searchCriteria.status=active&$top=${PR_PAGE_SIZE}&$skip=${skip}&${API_VERSION}`
+            : `${org}/${project}/_apis/git/pullrequests?searchCriteria.status=active&$top=${PR_PAGE_SIZE}&$skip=${skip}&${API_VERSION}`,
         )
 
   /** Names of blocking policies currently failing on the PR (ADO's nearest equivalent of failing checks). */
@@ -222,29 +232,49 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           } satisfies ClaimSkipReason,
         }
       }
-      const out = await listPrs()
-      if (!out.ok) {
-        return {
-          item: null,
-          skip: {
-            message: useAz
-              ? `${kind}: Azure DevOps pull-request list failed (az CLI) — ${out.statusText}. ` +
-                `Are ado.organization/project correct?`
-              : `${kind}: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
-                `Is ${PAT_ENV} a valid token with Code (read) scope, and are ado.organization/project correct?`,
-            actionable: true,
-          } satisfies ClaimSkipReason,
+      // Page with `$skip` until a short page arrives. ADO has no server-side
+      // search, so the `role` identity filter runs client-side over the WHOLE
+      // set — stopping at the first 100 made a PR at position 140 that needed
+      // attention permanently invisible, with no error and no warning.
+      const prs: z.infer<typeof AdoPrListSchema> = []
+      let truncated = false
+      for (let page = 0; page < PR_MAX_PAGES; page++) {
+        const out = await listPrsPage(page * PR_PAGE_SIZE)
+        if (!out.ok) {
+          return {
+            item: null,
+            skip: {
+              message: useAz
+                ? `${kind}: Azure DevOps pull-request list failed (az CLI) — ${out.statusText}. ` +
+                  `Are ado.organization/project correct?`
+                : `${kind}: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
+                  `Is ${PAT_ENV} a valid token with Code (read) scope, and are ado.organization/project correct?`,
+              actionable: true,
+            } satisfies ClaimSkipReason,
+          }
         }
+        let batch: z.infer<typeof AdoPrListSchema>
+        try {
+          const json = JSON.parse(out.body || "{}") as { value?: unknown }
+          batch = AdoPrListSchema.parse(json.value ?? [])
+        } catch (err) {
+          return {
+            item: null,
+            skip: { message: `${kind}: could not parse the ADO response — ${(err as Error).message}`, actionable: true },
+          }
+        }
+        prs.push(...batch)
+        if (batch.length < PR_PAGE_SIZE) break
+        // A full last page means there may be more behind it.
+        if (page === PR_MAX_PAGES - 1) truncated = true
       }
-      let prs: z.infer<typeof AdoPrListSchema>
-      try {
-        const json = JSON.parse(out.body || "{}") as { value?: unknown }
-        prs = AdoPrListSchema.parse(json.value ?? [])
-      } catch (err) {
-        return {
-          item: null,
-          skip: { message: `${kind}: could not parse the ADO response — ${(err as Error).message}`, actionable: true },
-        }
+      if (truncated) {
+        await log(
+          "warn",
+          `${kind}: the active-PR list hit the ${PR_MAX_PAGES * PR_PAGE_SIZE}-PR ceiling — results are TRUNCATED ` +
+            `and a PR needing attention may be invisible to this sitter. Scope the sitter to a single repository ` +
+            `(ado.repository) so the set fits.`,
+        )
       }
       const heldIds: string[] = []
       for (const pr of prs.sort((a, b) => a.pullRequestId - b.pullRequestId)) {

@@ -16,6 +16,77 @@ var STATUSES = [
   "abandoned"
 ];
 
+// packages/core/dist/task/write-backstop.js
+var splitSegments = (cmd) => {
+  const segments = [];
+  let cur = "";
+  let quote = null;
+  for (let i = 0; i < cmd.length; i++) {
+    const c = cmd[i];
+    if (quote) {
+      cur += c;
+      if (c === quote)
+        quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      cur += c;
+      continue;
+    }
+    if (c === "\n" || c === "\r" || c === ";") {
+      segments.push(cur);
+      cur = "";
+      continue;
+    }
+    if (c === "&" && cmd[i + 1] === "&") {
+      segments.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    if (c === "|" && cmd[i + 1] === "|") {
+      segments.push(cur);
+      cur = "";
+      i++;
+      continue;
+    }
+    if (c === "|" || c === "&") {
+      segments.push(cur);
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  segments.push(cur);
+  return segments.map((s) => s.trim()).filter(Boolean);
+};
+var hasShellExpansion = (seg) => {
+  let quote = null;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (quote === "'") {
+      if (c === "'")
+        quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"')
+        quote = null;
+      else if (c === "`" || c === "$" && seg[i + 1] === "(")
+        return true;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "`" || c === "$" && seg[i + 1] === "(" || c === ">" || c === "<")
+      return true;
+  }
+  return false;
+};
+
 // packages/core/dist/task/guard.js
 var ALLOW = { allow: true };
 var block = (reason) => ({ allow: false, reason });
@@ -93,7 +164,10 @@ var classifyBash = (command, ctx) => {
   if (MUTATING_TOKENS.some((t) => command.includes(t))) {
     return block(`agentic-loop: this command can mutate ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
   }
-  const segments = command.split(/&&|\|\||;|\||\n|\r/).map((s) => s.trim()).filter(Boolean);
+  if (splitSegments(command).some(hasShellExpansion)) {
+    return block(`agentic-loop: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked \u2014 ${HOW_TO_MUTATE}`);
+  }
+  const segments = splitSegments(command);
   if (segments.every((s) => matchesAny(s, READ_ONLY) || isCanonicalMkdir(s, ctx.tasksDir)))
     return ALLOW;
   return block(`agentic-loop: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) and canonical-status mkdir may reference ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
@@ -110,54 +184,6 @@ var classifyMutation = (tool, args, ctx) => {
 
 // packages/core/dist/loop/worktree-guard.js
 import path from "node:path";
-
-// packages/core/dist/task/write-backstop.js
-var splitSegments = (cmd) => {
-  const segments = [];
-  let cur = "";
-  let quote = null;
-  for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i];
-    if (quote) {
-      cur += c;
-      if (c === quote)
-        quote = null;
-      continue;
-    }
-    if (c === "'" || c === '"') {
-      quote = c;
-      cur += c;
-      continue;
-    }
-    if (c === "\n" || c === "\r" || c === ";") {
-      segments.push(cur);
-      cur = "";
-      continue;
-    }
-    if (c === "&" && cmd[i + 1] === "&") {
-      segments.push(cur);
-      cur = "";
-      i++;
-      continue;
-    }
-    if (c === "|" && cmd[i + 1] === "|") {
-      segments.push(cur);
-      cur = "";
-      i++;
-      continue;
-    }
-    if (c === "|" || c === "&") {
-      segments.push(cur);
-      cur = "";
-      continue;
-    }
-    cur += c;
-  }
-  segments.push(cur);
-  return segments.map((s) => s.trim()).filter(Boolean);
-};
-
-// packages/core/dist/loop/worktree-guard.js
 var ALLOW2 = { allow: true };
 var block2 = (reason) => ({ allow: false, reason });
 var READ_ONLY2 = [
@@ -282,8 +308,30 @@ var splitSegments2 = (cmd) => {
   segments.push(cur);
   return segments.map((s) => s.trim()).filter(Boolean);
 };
+var hasShellExpansion2 = (seg) => {
+  let quote = null;
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      continue;
+    }
+    if (quote === '"') {
+      if (c === '"') quote = null;
+      else if (c === "`" || c === "$" && seg[i + 1] === "(") return true;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    if (c === "`" || c === "$" && seg[i + 1] === "(" || c === ">" || c === "<") return true;
+  }
+  return false;
+};
 var commandAllowed = (cmd, globs) => {
   const segments = splitSegments2(cmd);
+  if (segments.some(hasShellExpansion2)) return false;
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny3(s, globs));
 };
 var isGithubPrMutation = (cmd) => {
@@ -446,7 +494,7 @@ var main = async () => {
     );
   }
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
-    if (["Bash", "Edit", "Write", "MultiEdit"].includes(tool)) {
+    if (["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
       return block3(
         `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline \u2014 stop working, summarize what you have, and return control so the loop can stop cleanly.`
       );

@@ -304,3 +304,39 @@ test("review-sitter onTerminal: a retryable (onError fetch) stop leaves the head
   )
   assert.ok(log.some((c) => c.includes("runs/review-sitter/.claims/pr-7")), "claim marker still released")
 })
+
+// --- paging: gh pr list defaults to 30, silently dropping the rest ---
+
+test("gh pr list is invoked with an explicit --limit", async () => {
+  // Without --limit, gh returns only the newest 30. This source iterates the FULL
+  // set looking for one that needs attention, so a PR beyond the window is never
+  // claimed — no error, no warning. (ci-runs' 30 is fine: it judges only the
+  // newest head. A PR sweep is not.)
+  const log: string[] = []
+  await source([pr()], { log }).claimNext()
+  const list = log.find((c) => c.startsWith("gh pr list"))
+  assert.ok(list, "no gh pr list invocation")
+  assert.match(list, /--limit \d+/)
+})
+
+test("a truncated PR page is reported, not silently dropped", async () => {
+  // When the returned count equals the limit there may be more behind it; the
+  // skip must not claim the number it saw is the number that exist.
+  const warnings: string[] = []
+  const many = Array.from({ length: 200 }, (_, i) => pr({ number: i + 1, isDraft: true }))
+  const src = makeGithubPrSource({
+    $: scriptedShell([
+      { cmd: "gh api user", result: { stdout: "sitter-bot\n" } },
+      { cmd: "gh pr list", result: { stdout: JSON.stringify(many) } },
+    ]),
+    client: ledgerClient({}),
+    directory: "/r",
+    tasksDir: "docs/tasks",
+    log: (_l, m) => void warnings.push(m),
+    loaded: sitter,
+    now: () => "2026-07-05T00:00:00Z",
+  })
+  const { skip } = await src.claimNext()
+  assert.equal(skip?.actionable, false)
+  assert.match(warnings.join("\n"), /truncat/i)
+})

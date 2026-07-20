@@ -204,6 +204,13 @@ const watching = new Set<string>()
  *  `getLoop` (which `onIdle`'s catch still needs on a reject-on-abort). Cleared
  *  when the drive unwinds. */
 const interrupted = new Set<string>()
+/**
+ * Should this session stop firing agent turns? Either a `stop` cleared the loop,
+ * or the user pressed ESC. Both must be tested: `onInterrupt` deliberately keeps
+ * `getLoop` set, so a `getLoop`-only check silently keeps working after an
+ * interrupt (firing the remaining review lenses and the verdict retry).
+ */
+const halted = (sessionID: string): boolean => !getLoop(sessionID) || interrupted.has(sessionID)
 /** Per-watching-session trigger timers (poll/cron/idle strategies) and modes. */
 const watchTimers = new Map<string, WatchTimerHandle>()
 const watchTriggerMode = new Map<string, TriggerMode>()
@@ -304,7 +311,10 @@ const releaseWatchLease = async (deps: Deps): Promise<void> => {
   if (entry.count > 0) return
   watchLeases.delete(deps.directory)
   clearInterval(entry.heartbeat)
-  await releaseLease(deps.$, deps.directory, entry.tasksDir)
+  // `leaseOwner()` is this process's identity — the same one that acquired and
+  // heartbeats the lease. Passing it lets releaseLease refuse when we were taken
+  // over while stalled, instead of deleting the new owner's lease (T3).
+  await releaseLease(deps.$, deps.directory, entry.tasksDir, leaseOwner())
 }
 /**
  * Last no-claim reason toasted per watch session. Every tick logs its reason,
@@ -710,21 +720,22 @@ export const runStageWithLenses = async (
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
       // terminal event finalizes the sidecar).
       await flushMetrics(deps, sessionID, config, state)
-      if (!isCheck || passRecord || !getLoop(sessionID)) break
+      if (!isCheck || passRecord || halted(sessionID)) break
       if (attempt === 0) {
         await deps.log("warn", `${stage}${lens ? ` (${lens})` : ""} recorded no verdict via loop_verdict — re-running the pass once`)
       }
     }
     records.push(passRecord)
-    if (!getLoop(sessionID)) break // stop mid-pass — don't fire the rest
+    if (halted(sessionID)) break // stop or ESC mid-pass — don't fire the rest
   }
 
   if (!isCheck) return { output: outputs[0] ?? "", verdict: null, record: null }
 
-  // A deliberate stop mid-pass: records may be short and/or end in null. The
-  // caller discards the result once the loop is cleared — return quietly, never
-  // routing a stop through the ERROR path below.
-  if (!getLoop(sessionID)) return { output: outputs.join("\n\n"), verdict: null, record: null }
+  // A deliberate stop or an ESC interrupt mid-pass: records may be short and/or
+  // end in null. The caller discards the result once halted — return quietly,
+  // never routing it through the ERROR path below, which would report an
+  // unreachable verdict channel for a stage the user simply stopped.
+  if (halted(sessionID)) return { output: outputs.join("\n\n"), verdict: null, record: null }
 
   // Lenses that FIRED but recorded nothing even after their retry. A missing
   // lens verdict is a broken channel, not a FAIL: worst-wins combining would
@@ -1318,7 +1329,7 @@ export const disposeWatch = (): void => {
   for (const [dir, entry] of watchLeases) {
     watchLeases.delete(dir)
     clearInterval(entry.heartbeat)
-    void releaseLease(entry.deps.$, dir, entry.tasksDir)
+    void releaseLease(entry.deps.$, dir, entry.tasksDir, leaseOwner())
   }
 }
 

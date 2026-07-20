@@ -216,7 +216,11 @@ export type LoopTrigger =
 
 /** Per-loop-kind settings under the config's `loops.<kind>` section. */
 export interface LoopKindConfig {
-  readonly enabled: boolean
+  /**
+   * Absent means "not opted in" for every kind but engineering (which reads it
+   * as `!== false`). Never defaulted — see the schema note in config.ts.
+   */
+  readonly enabled?: boolean
   /** Per-kind override of the global `codePlatform`. */
   readonly codePlatform?: CodePlatform
   /** How a watching host schedules claims for this kind (default: poll). */

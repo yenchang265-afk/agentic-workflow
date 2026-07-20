@@ -255,7 +255,26 @@ test("heartbeatLease refuses when the lease is gone (released or renamed aside)"
 test("releaseLease frees the clone for the next acquirer", async () => {
   const { $ } = makeLeaseFs()
   await acquireLease($, "/r", "docs/tasks", me, now)
-  await releaseLease($, "/r", "docs/tasks")
+  await releaseLease($, "/r", "docs/tasks", me)
   const res = await acquireLease($, "/r", "docs/tasks", { ...me, pid: 300 }, now)
   assert.deepEqual(res, { ok: true })
+})
+
+test("releaseLease refuses to drop a lease it no longer owns (post-takeover, T3)", async () => {
+  // Mirror of the heartbeatLease guard above. A watcher judged stale and taken
+  // over may still run its unwatch/dispose path; without an ownership check its
+  // `rm -rf` deletes the NEW owner's lease, a third watcher then acquires
+  // cleanly, and two watchers drive one clone — the exact race the lease exists
+  // to prevent.
+  const { $, seedLease } = makeLeaseFs()
+  seedLease(JSON.stringify(liveOwner("2026-07-06T11:59:00.000Z")))
+  await releaseLease($, "/r", "docs/tasks", me)
+  const owner = await readLeaseOwner($, "/r", "docs/tasks")
+  assert.equal(owner?.pid, 200, "the new owner's lease survives")
+})
+
+test("releaseLease is a no-op when the lease is already gone", async () => {
+  const { $ } = makeLeaseFs()
+  await releaseLease($, "/r", "docs/tasks", me)
+  assert.equal(await readLeaseOwner($, "/r", "docs/tasks"), null)
 })

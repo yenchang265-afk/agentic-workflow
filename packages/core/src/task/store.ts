@@ -74,10 +74,24 @@ const lifecycleWindow = (body: string): string => {
  * and needs manual recovery — a watch session must never silently reclaim
  * either case. Pure.
  */
-export const isClaimable = (task: Task): boolean => {
-  const window = lifecycleWindow(task.body)
-  return hasPlan(task) && !window.includes("> BUILD started") && !window.includes(CLAIMED_MARKER)
-}
+export const isClaimable = (task: Task): boolean =>
+  isReleasableClaim(task) && !lifecycleWindow(task.body).includes(CLAIMED_MARKER)
+
+/**
+ * The claim on this task may be handed back by the claimer that took it: the
+ * current lifecycle never recorded a `> BUILD started` note, so no durable work
+ * happened and dropping the marker cannot strand a partial build.
+ *
+ * Deliberately does NOT test for the CLAIMED note the way `isClaimable` does.
+ * A claimer appends CLAIMED itself before it establishes isolation, so gating
+ * its own release on `isClaimable` would make every release a no-op and wedge
+ * the marker forever. This is only for a claimer releasing ITS OWN claim —
+ * the orphan sweep stays gated on `isClaimable` on purpose (see
+ * `isOrphanedClaim`), so it can never yank the marker out from under a live
+ * run; that case is recovered by hand via `recover <id>`. Pure.
+ */
+export const isReleasableClaim = (task: Task): boolean =>
+  hasPlan(task) && !lifecycleWindow(task.body).includes("> BUILD started")
 
 /** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
 export const extractPlan = (task: Task): string | undefined => {
@@ -701,6 +715,15 @@ export const writeTask = async (
   const destDir = path.join(loc.directory, rel)
   const dest = path.join(destDir, filename)
   await $`mkdir -p ${destDir}`.quiet().nothrow()
+  // Refuse to clobber an existing file. `taken` comes from the client index,
+  // which can lag the real FS (see findByIdIn's note) — when it does,
+  // `buildTaskFile` re-mints an id that is already on disk and
+  // `writeFileAtomic`'s `mv` would silently destroy that task's file and audit
+  // trail. Mirrors the guards in `moveTask` and `rescueStray`.
+  const exists = await $`test -e ${dest}`.quiet().nothrow()
+  if (exists.exitCode === 0) {
+    throw new Error(`cannot write task ${filename}: ${rel}/${filename} already exists — resolve the duplicate manually`)
+  }
   const out = await writeFileAtomic($, dest, content)
   if (out.exitCode !== 0) {
     throw new Error(`could not write task ${filename}: ${out.stderr.toString().trim()}`)

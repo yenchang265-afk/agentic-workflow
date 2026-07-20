@@ -93,7 +93,13 @@ const BaseConfigSchema = z.object({
     .record(
       z.string(),
       z.looseObject({
-        enabled: z.boolean().default(true),
+        /**
+         * Deliberately NOT defaulted: `enabledLoopKinds` discriminates on
+         * `=== true` for non-engineering kinds, so a default would make every
+         * mentioned kind opt-OUT and a knob-only section would silently start a
+         * loop. Engineering reads it as `!== false`, so undefined keeps it on.
+         */
+        enabled: z.boolean().optional(),
         /** Per-kind override of the global `codePlatform`. */
         codePlatform: CodePlatformSchema.optional(),
         /** How a watching host schedules claims for this kind (default: poll). */

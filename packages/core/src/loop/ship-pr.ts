@@ -56,7 +56,9 @@ const shipGithub = async ($: Shell, log: Log, directory: string, branch: string,
   const existing = await ghExistingPrUrl($, directory, branch)
   if (existing) return { attempted: true, created: false, url: existing }
   const base = (await ghDefaultBranch($, directory)) ?? (await currentBranch($, directory)) ?? "main"
-  const out = await $`gh pr create --draft --head ${branch} --base ${base} --title ${title} --body ${""} --json url -q .url`
+  // No `--json`/`-q` here: those are `gh pr view`/`gh pr list` flags. `gh pr create`
+  // rejects them ("unknown flag: --json") and prints the new PR's URL on stdout.
+  const out = await $`gh pr create --draft --head ${branch} --base ${base} --title ${title} --body ${""}`
     .cwd(directory)
     .quiet()
     .nothrow()

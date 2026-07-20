@@ -92,14 +92,57 @@ export const splitSegments = (cmd) => {
 }
 
 /**
+ * Shell constructs that run a command (or write a file) the allowlist glob can
+ * never see, because every glob ends in `*` compiled with dotAll — so `^cat .*$`
+ * happily matches the whole of `cat $(rm -rf build)` and the read-only stage
+ * executes the substitution.
+ *
+ * Quote rules follow bash, not intuition: `$( )` and backticks are STILL expanded
+ * inside double quotes, so only single quotes make them inert. Redirections are
+ * literal inside either kind of quote. `isBareCd` already rejects these same
+ * characters in its argument; this extends the rule to every segment.
+ *
+ * Both `<` and `>` are rejected: `>`/`>>` write, and `<(…)` is process
+ * substitution (a command). Plain `< file` input redirection is collateral — no
+ * allowlisted read/test command needs it.
+ *
+ * Residual (shared with `splitSegments`): backslash-escaped quotes are not
+ * resolved, so this is defense-in-depth, not a shell sandbox.
+ */
+export const hasShellExpansion = (seg) => {
+  let quote = null
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i]
+    if (quote === "'") {
+      if (c === "'") quote = null
+      continue
+    }
+    if (quote === '"') {
+      if (c === '"') quote = null
+      // bash expands these inside double quotes
+      else if (c === "`" || (c === "$" && seg[i + 1] === "(")) return true
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if (c === "`" || (c === "$" && seg[i + 1] === "(") || c === ">" || c === "<") return true
+  }
+  return false
+}
+
+/**
  * Whether EVERY chained/piped segment of `cmd` is on the allowlist (a bare `cd`
  * counts as allowed). A command with no runnable segment is rejected. This is the
  * check-stage read-only guarantee (threat-model T2) and the pr-sitter publish
  * "never merge" backstop (T1/T8) — both hinge on splitting before matching, since
- * the globs compile with dotAll so a whole-command match is chain-bypassable.
+ * the globs compile with dotAll so a whole-command match is chain-bypassable, and
+ * on rejecting substitution/redirection for the same reason.
  */
 export const commandAllowed = (cmd, globs) => {
   const segments = splitSegments(cmd)
+  if (segments.some(hasShellExpansion)) return false
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny(s, globs))
 }
 
