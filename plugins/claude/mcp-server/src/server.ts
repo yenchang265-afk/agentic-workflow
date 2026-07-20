@@ -23,7 +23,15 @@ import {
 import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-loop/core/source/types"
 import { adoAccessFor, bareModel, enabledLoopKinds, modelFor, platformFor } from "@agentic-loop/core/config"
-import { failedCriteriaBlock, parseVerdict, worstOf, type CriterionResult, type Verdict, type VerdictRecord } from "@agentic-loop/core/loop/verdict"
+import {
+  failedCriteriaBlock,
+  parseVerdict,
+  stageDriftNote,
+  worstOf,
+  type CriterionResult,
+  type Verdict,
+  type VerdictRecord,
+} from "@agentic-loop/core/loop/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
@@ -119,6 +127,7 @@ let active: LoopState | null = null
 let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when loop_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
 let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
+let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
@@ -210,6 +219,7 @@ const writeStageMarker = (stage: string | null) => {
   try {
     fs.mkdirSync(dir, { recursive: true })
     fs.rmSync(verdictNagPath(), { force: true }) // the nag sentinel belongs to one stage attempt only
+    driftNoted = false // likewise the drift note: one per stage attempt, not one per run
     if (stage === null) {
       stageDeadline = null
       fs.rmSync(stageMarkerPath(), { force: true })
@@ -556,7 +566,16 @@ server.registerTool(
   },
   async ({ stage, verdict, reason, criteria }) => {
     if (!active) return fail("No active loop — verdict ignored.")
-    if (active.stage !== stage) return fail(`The loop is at ${active.stage}, not ${stage} — verdict ignored.`)
+    if (active.stage !== stage) {
+      // The rejection alone reaches only the calling agent. Audit it on the task
+      // so a work stage that ran a later stage's work inside its own turn is
+      // visible in the trail, not just as odd behavior one stage later.
+      if (!driftNoted && active.task) {
+        driftNoted = true
+        await appendNote(sh, active.task, auditNote(stageDriftNote(active.stage, stage, verdict), new Date(), await gitActor(sh, directory)), log)
+      }
+      return fail(`The loop is at ${active.stage}, not ${stage} — verdict ignored.`)
+    }
     if (activeManifest().manifest.stages.find((d) => d.name === stage)?.kind !== "check") {
       return fail(`Stage ${stage} is not a check stage — verdict ignored.`)
     }

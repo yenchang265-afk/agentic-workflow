@@ -1,6 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { failedCriteriaBlock, LOOP_REVIEW_TAG, LOOP_VERIFY_TAG, parseVerdict, verdictContractBlock, worstOf } from "./verdict.js"
+import {
+  failedCriteriaBlock,
+  LOOP_REVIEW_TAG,
+  LOOP_VERIFY_TAG,
+  parseVerdict,
+  stageDriftNote,
+  verdictContractBlock,
+  workScopeBlock,
+  worstOf,
+} from "./verdict.js"
 
 test("parses a PASS verdict", () => {
   assert.equal(parseVerdict("checks ran\nLOOP_VERIFY: PASS", LOOP_VERIFY_TAG), "PASS")
@@ -45,6 +54,43 @@ test("verdictContractBlock names the stage, the tool, and both registered tool n
 
 test("verdictContractBlock warns that prose verdicts are ignored", () => {
   assert.match(verdictContractBlock("review"), /prose is IGNORED/i)
+})
+
+// --- workScopeBlock (the prompt-carried scope fence for work stages) ---
+
+test("workScopeBlock names the stage and confines the turn to it", () => {
+  const block = workScopeBlock("build")
+  assert.match(block, /STAGE SCOPE/)
+  assert.match(block, /build/)
+  // What comes next is the loop's call — worded to stay true for the stages that
+  // park (engineering plan) or end the run (the sitters' publish), not just those
+  // that fire a successor.
+  assert.match(block, /after your turn ends/i)
+})
+
+test("workScopeBlock forbids calling loop_verdict and claiming the loop finished", () => {
+  const block = workScopeBlock("build")
+  assert.match(block, /never call .*loop_verdict/i)
+  assert.match(block, /never (state|claim)/i)
+})
+
+test("workScopeBlock does not carry the check stages' MANDATORY VERDICT wording", () => {
+  assert.doesNotMatch(workScopeBlock("build"), /MANDATORY VERDICT/)
+})
+
+// --- stageDriftNote (the audit trail for a verdict recorded from the wrong stage) ---
+
+test("stageDriftNote records both stages, the dropped verdict, and names the drift", () => {
+  const note = stageDriftNote("build", "verify", "PASS")
+  assert.match(note, /build/i)
+  assert.match(note, /verify/i)
+  assert.match(note, /PASS/)
+  assert.match(note, /drift/i)
+  assert.match(note, /ignored/i)
+})
+
+test("stageDriftNote works without a verdict value", () => {
+  assert.match(stageDriftNote("build", "review", null), /review/i)
 })
 
 // --- worstOf (multi-lens review combination) ---

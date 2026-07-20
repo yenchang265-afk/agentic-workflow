@@ -75,6 +75,7 @@ import {
   LOOP_REVIEW_TAG,
   LOOP_VERIFY_TAG,
   parseVerdict,
+  stageDriftNote,
   type Verdict,
   type VerdictRecord,
   worstOf,
@@ -332,6 +333,14 @@ type CheckStage = string
  */
 const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly record: VerdictRecord }>()
 
+/**
+ * The stage a session has already audited an out-of-stage verdict for. A
+ * drifting work stage typically calls `loop_verdict` more than once (verify,
+ * then review, inside the same build turn); the task file gets one note per
+ * drifting stage, not one per call.
+ */
+const driftNoted = new Map<string, string>()
+
 /** Usage observed for one stage pass — the assistant message's totals. */
 interface StageUsage {
   readonly tokens: StageTokens
@@ -355,11 +364,35 @@ const addSample = (sessionID: string, sample: StageSample): void => {
  * anything else (no loop, wrong stage, e.g. a build agent trying to
  * pre-empt its own verification) is ignored with an explanatory result.
  * The optional `reason`/`criteria` steer the next iteration's prompt only.
+ *
+ * `deps` is needed only to audit an out-of-stage verdict on the task file, so
+ * it stays optional: the rejection itself is a pure decision, and tests that
+ * assert it need no host. A caller that omits it still rejects correctly —
+ * it just leaves the drift out of the audit trail.
  */
-export const recordVerdict = (sessionID: string, stage: CheckStage, record: VerdictRecord): string => {
+export const recordVerdict = (sessionID: string, stage: CheckStage, record: VerdictRecord, deps?: Deps): string => {
   const state = getLoop(sessionID)
   if (!state) return "No active loop in this session — verdict ignored."
   if (state.stage !== stage) {
+    // The rejection alone reaches only the calling agent. Audit it on the task
+    // so a work stage that ran a later stage's work inside its own turn is
+    // visible in the trail, not just as odd behavior one stage later. Appended
+    // at most once per stage attempt — a drifting agent may call repeatedly —
+    // and fire-and-forget: the note must never delay or fail the tool result.
+    if (deps && state.task && driftNoted.get(sessionID) !== state.stage) {
+      driftNoted.set(sessionID, state.stage)
+      const task = state.task
+      void (async () => {
+        await appendNote(
+          deps.$,
+          task,
+          auditNote(stageDriftNote(state.stage, stage, record.verdict), new Date(), await gitActor(deps.$, deps.directory)),
+          deps.log,
+        )
+      })().catch(() => {
+        /* best-effort audit — never break the tool call */
+      })
+    }
     return `The loop is at ${state.stage}, not ${stage} — verdict ignored. Only the running check stage may record its own verdict.`
   }
   const def = manifestFor(state.kind ?? "engineering").manifest.stages.find((d) => d.name === stage)
@@ -646,6 +679,7 @@ export const runStageWithLenses = async (
           : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the loop_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
+      driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage } = await runStage(
         client,
@@ -775,6 +809,7 @@ const renderMetrics = async (
 ): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   runSamples.delete(sessionID)
+  driftNoted.delete(sessionID) // the run is over — nothing left to dedupe against
   // Report against the EFFECTIVE cap the engine enforced — a kind's manifest may
   // override `config.maxIterations` (pr-sitter caps at 3), so `config.maxIterations`
   // alone would mislabel the footer (e.g. "iterations used: 3/1").
