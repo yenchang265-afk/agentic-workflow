@@ -370,7 +370,7 @@ var main = async () => {
     );
   }
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
-    if (["Bash", "Edit", "Write", "MultiEdit"].includes(tool)) {
+    if (["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
       return block2(
         `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline \u2014 stop working, summarize what you have, and return control so the loop can stop cleanly.`
       );
@@ -386,8 +386,8 @@ var main = async () => {
       );
     }
   }
-  if (marker.worktree && ["Edit", "Write", "MultiEdit"].includes(tool)) {
-    const fp = ti.file_path ?? ti.path;
+  if (marker.worktree && ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
+    const fp = ti.file_path ?? ti.path ?? ti.notebook_path;
     if (typeof fp === "string" && path.isAbsolute(fp)) {
       const rel = path.relative(marker.worktree, path.resolve(fp));
       if (rel === "" || rel.startsWith("..")) {

@@ -173,7 +173,7 @@ const main = async () => {
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
   // tools so it returns control; loop_advance then stops the loop.
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
-    if (["Bash", "Edit", "Write", "MultiEdit"].includes(tool)) {
+    if (["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
       return block(
         `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
           `stop working, summarize what you have, and return control so the loop can stop cleanly.`,
@@ -200,9 +200,11 @@ const main = async () => {
     }
   }
 
-  // (2) worktree pinning for edit/write tools
-  if (marker.worktree && ["Edit", "Write", "MultiEdit"].includes(tool)) {
-    const fp = ti.file_path ?? ti.path
+  // (2) worktree pinning for edit/write tools. NotebookEdit belongs here for the
+  // same reason as Edit/Write — it writes a file, and an unpinned one lands in
+  // the human's main tree while the loop believes it is isolated.
+  if (marker.worktree && ["Edit", "Write", "MultiEdit", "NotebookEdit"].includes(tool)) {
+    const fp = ti.file_path ?? ti.path ?? ti.notebook_path
     if (typeof fp === "string" && path.isAbsolute(fp)) {
       const rel = path.relative(marker.worktree, path.resolve(fp))
       if (rel === "" || rel.startsWith("..")) {

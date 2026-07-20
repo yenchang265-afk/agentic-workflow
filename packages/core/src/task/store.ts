@@ -74,10 +74,24 @@ const lifecycleWindow = (body: string): string => {
  * and needs manual recovery — a watch session must never silently reclaim
  * either case. Pure.
  */
-export const isClaimable = (task: Task): boolean => {
-  const window = lifecycleWindow(task.body)
-  return hasPlan(task) && !window.includes("> BUILD started") && !window.includes(CLAIMED_MARKER)
-}
+export const isClaimable = (task: Task): boolean =>
+  isReleasableClaim(task) && !lifecycleWindow(task.body).includes(CLAIMED_MARKER)
+
+/**
+ * The claim on this task may be handed back by the claimer that took it: the
+ * current lifecycle never recorded a `> BUILD started` note, so no durable work
+ * happened and dropping the marker cannot strand a partial build.
+ *
+ * Deliberately does NOT test for the CLAIMED note the way `isClaimable` does.
+ * A claimer appends CLAIMED itself before it establishes isolation, so gating
+ * its own release on `isClaimable` would make every release a no-op and wedge
+ * the marker forever. This is only for a claimer releasing ITS OWN claim —
+ * the orphan sweep stays gated on `isClaimable` on purpose (see
+ * `isOrphanedClaim`), so it can never yank the marker out from under a live
+ * run; that case is recovered by hand via `recover <id>`. Pure.
+ */
+export const isReleasableClaim = (task: Task): boolean =>
+  hasPlan(task) && !lifecycleWindow(task.body).includes("> BUILD started")
 
 /** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
 export const extractPlan = (task: Task): string | undefined => {

@@ -195,6 +195,43 @@ test("release frees a still-claimable build claim but keeps a started one", asyn
   assert.equal(again.item, null) // held + no longer claimable
 })
 
+test("release frees a claim whose body already carries the CLAIMED note", async () => {
+  // The driver appends "> CLAIMED" BEFORE establishing isolation, then releases
+  // if isolation throws. Gating that release on `isClaimable` (which the CLAIMED
+  // note itself falsifies) made every such release a silent no-op, wedging the
+  // marker forever: the 15m orphan sweep and `doctor fix` key off the same
+  // predicate, so neither could free it either. Only durable work — a
+  // "> BUILD started" note — may keep the marker for recovery.
+  const folders = { "in-progress": [file("t", { plan: true })], queued: [] }
+  const shellLog: string[] = []
+  const src = source(folders, new Set<string>(), { shellLog })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  // markClaimedOnHumanBranch ran; then ensureIsolation threw.
+  folders["in-progress"] = [file("t", { plan: true, claimed: true })]
+  shellLog.length = 0
+  await src.release(item)
+  assert.ok(
+    shellLog.some((c) => c.startsWith("rmdir") && c.includes("/t")),
+    `marker not released so watch can never re-claim: ${shellLog.join(" | ")}`,
+  )
+})
+
+test("release keeps a claim whose body reached BUILD started, even with a CLAIMED note", async () => {
+  const folders = { "in-progress": [file("t", { plan: true })], queued: [] }
+  const shellLog: string[] = []
+  const src = source(folders, new Set<string>(), { shellLog })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  folders["in-progress"] = [file("t", { plan: true, claimed: true, started: true })]
+  shellLog.length = 0
+  await src.release(item)
+  assert.ok(
+    !shellLog.some((c) => c.startsWith("rmdir")),
+    "durable work must keep the marker for recover <id>",
+  )
+})
+
 test("a CLAIMED note (durable claim evidence on the human branch) blocks re-claiming and points at recover", async () => {
   // The theater-booking-0 bug: isolation committed every BUILD note onto
   // feature/<id>, the human branch's task file looked untouched, and the

@@ -251,11 +251,31 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
 
   const collectNpm = async (): Promise<Collected> => {
     // npm audit exits non-zero when vulnerabilities exist — the report is on
-    // stdout either way, so only an unparsable/empty report is an error.
+    // stdout either way, so a non-zero exit is NOT itself an error. What is an
+    // error is a report we cannot read: empty stdout, or a body with no
+    // `vulnerabilities` key (npm writes `{"error":{...}}` for EUSAGE — no
+    // lockfile, unreachable registry, npm missing). Both must surface as an
+    // actionable skip, because `AuditSchema` defaults `vulnerabilities` to `{}`
+    // and would otherwise turn a failed scan into a confident "0 candidates" —
+    // a dep-sitter reporting healthy forever while never actually scanning.
     const auditOut = await $`npm audit --json`.cwd(directory).quiet().nothrow()
+    const auditRaw = auditOut.stdout.toString().trim()
+    const failedScan = (detail: string): Collected => ({
+      skip: {
+        message:
+          `${kind}: npm audit did not produce a report (${detail}) — no vulnerabilities could be assessed. ` +
+          `Check that this project has a lockfile and that npm can reach the registry.`,
+        actionable: true,
+      },
+    })
+    if (!auditRaw) return failedScan(auditOut.stderr.toString().trim() || `exit ${auditOut.exitCode}`)
     let audit: z.infer<typeof AuditSchema>
     try {
-      audit = AuditSchema.parse(JSON.parse(auditOut.stdout.toString() || "{}"))
+      const parsed: unknown = JSON.parse(auditRaw)
+      if (typeof parsed !== "object" || parsed === null || !("vulnerabilities" in parsed)) {
+        return failedScan(auditOut.stderr.toString().trim() || "no `vulnerabilities` in the report")
+      }
+      audit = AuditSchema.parse(parsed)
     } catch (err) {
       return { skip: { message: `${kind}: could not parse npm audit output — ${(err as Error).message}`, actionable: true } }
     }

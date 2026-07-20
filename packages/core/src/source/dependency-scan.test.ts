@@ -475,3 +475,30 @@ test("an explicitly configured maven ecosystem with no pom.xml is an actionable 
   assert.match(skip?.message ?? "", /no pom\.xml was found/)
   assert.equal(skip?.actionable, true)
 })
+
+// --- a failed npm audit must never read as "no vulnerabilities" ---
+
+test("empty npm audit stdout is an actionable skip, not a clean scan", async () => {
+  // `AuditSchema` defaults `vulnerabilities` to {} and the old code coerced empty
+  // stdout with `|| "{}"`, so a repo with no lockfile (or an unreachable registry,
+  // or npm missing) parsed into a valid EMPTY audit — the dep-sitter reported
+  // "no auto-fixable upgrades" forever while never actually scanning anything.
+  const { item, skip } = await source({ auditJson: "" }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /npm audit did not produce a report/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("an npm audit error body is an actionable skip, not a clean scan", async () => {
+  const { item, skip } = await source({ auditJson: JSON.stringify({ error: { code: "EUSAGE", summary: "no lockfile" } }) }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /npm audit did not produce a report/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("a genuinely clean audit still reports no candidates, not a scan failure", async () => {
+  const { item, skip } = await source({ auditJson: JSON.stringify({ vulnerabilities: {} }) }).claimNext()
+  assert.equal(item, null)
+  assert.doesNotMatch(skip?.message ?? "", /did not produce a report/)
+  assert.match(skip?.message ?? "", /no auto-fixable upgrades/)
+})

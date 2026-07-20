@@ -1,4 +1,7 @@
 import assert from "node:assert/strict"
+import fs from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { test } from "node:test"
 import {
   VERIFY_ALLOW,
@@ -266,4 +269,37 @@ test("isAdoMcpMutationTool blocks mutating ADO tool names and passes reads/creat
   // Other servers' tools are none of this guard's business.
   assert.equal(isAdoMcpMutationTool("mcp__github__merge_pull_request"), false)
   assert.equal(isAdoMcpMutationTool("Bash"), false)
+})
+
+// --- hook wiring: the guard only runs for tools the PreToolUse matcher selects ---
+
+const hooksJson = JSON.parse(
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "hooks.json"), "utf8"),
+)
+const preToolUseMatcher = () => {
+  const entries = hooksJson.hooks.PreToolUse
+  const entry = entries.find((e) => (e.hooks ?? []).some((h) => String(h.command).includes("check-stage-guard.mjs")))
+  assert.ok(entry, "no PreToolUse entry runs check-stage-guard.mjs")
+  return new RegExp(`^(?:${entry.matcher})$`)
+}
+
+test("the PreToolUse matcher selects every tool the guard is written to handle", () => {
+  // The guard's own code branches on NotebookEdit (classifyMutation, the deadline
+  // list, worktree pinning) and on `mcp__<server>__<tool>` names
+  // (isAdoMcpMutationTool). None of that runs unless hooks.json ROUTES those tool
+  // names to the hook — a matcher of "Bash|Edit|Write|MultiEdit" made the ADO MCP
+  // write backstop unreachable dead code and let NotebookEdit write the human's
+  // main tree during an isolated loop.
+  const re = preToolUseMatcher()
+  for (const tool of ["Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"]) {
+    assert.ok(re.test(tool), `${tool} is not routed to check-stage-guard`)
+  }
+  for (const tool of [
+    "mcp__azure-devops__repo_complete_pull_request",
+    "mcp__azure_devops__repo_update_pull_request",
+    "mcp__ado__pr_set_vote",
+  ]) {
+    assert.ok(re.test(tool), `${tool} is not routed to check-stage-guard`)
+    assert.equal(isAdoMcpMutationTool(tool), true, `${tool} should be judged a mutation once routed`)
+  }
 })

@@ -55,6 +55,7 @@ import {
   markClaimed,
   moveTask,
   pairingCoverage,
+  releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
   resolveTaskIdAnywhere,
@@ -344,6 +345,11 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: LoopStat
   try {
     state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
   } catch (err) {
+    // Died before any durable work (only the CLAIMED note exists — no BUILD
+    // note yet), and the claim above is ours, so hand it back. Without this the
+    // marker is wedged: the orphan sweep and loop_doctor both refuse a body
+    // carrying CLAIMED on purpose, so only a manual loop_recover would free it.
+    await releaseClaim(sh, t)
     return { error: (err as Error).message }
   }
   active = state
@@ -1109,7 +1115,9 @@ server.registerTool(
     if (!t) return fail(`No in-progress task "${id}".`)
     if (isClaimable(t)) return fail(`Task "${id}" never started — start it with loop_start or loop_claim.`)
     if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — send it back to planning with loop_replan.`)
-    await claimTask(sh, t) // re-mark; the dead run's claim marker may linger
+    // Re-mark; the dead run's claim marker may linger (then this is a no-op and
+    // `tookClaim` is false — the marker isn't ours to hand back on failure).
+    const tookClaim = await claimTask(sh, t)
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     samples = []
     pending = null
@@ -1121,6 +1129,7 @@ server.registerTool(
         active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
       } catch (err) {
         active = null
+        if (tookClaim) await releaseClaim(sh, t)
         return fail((err as Error).message)
       }
       await appendNote(sh, active.task as TaskRef, auditNote(`Recovered from snapshot at ${active.stage}`, new Date(), actor), log)
@@ -1132,6 +1141,7 @@ server.registerTool(
       active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
     } catch (err) {
       active = null
+      if (tookClaim) await releaseClaim(sh, t)
       return fail((err as Error).message)
     }
     await appendNote(sh, active.task as TaskRef, auditNote("Recovered from persisted plan — re-entering at BUILD", new Date(), actor), log)
