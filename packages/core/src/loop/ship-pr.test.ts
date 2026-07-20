@@ -14,7 +14,7 @@ import { shipPr, type ShipHttp } from "./ship-pr.js"
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
 
-const scriptedShell = (script: Cmd[]): Shell => {
+const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -25,6 +25,7 @@ const scriptedShell = (script: Cmd[]): Shell => {
       }
     })
     cmd = cmd.trim().replace(/\s+/g, " ")
+    log.push(cmd)
     const hit = script.find((c) => cmd.startsWith(c.cmd))
     const r = hit?.result ?? { exitCode: 0, stdout: "" }
     const chain = {
@@ -102,6 +103,31 @@ test("shipPr (github) opens a new draft PR when none exists", async () => {
   ])
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
   assert.deepEqual(result, { attempted: true, created: true, url: "https://github.com/acme/widgets/pull/10" })
+})
+
+test("shipPr (github) invokes gh pr create with only flags gh accepts", async () => {
+  // `gh pr create` has no `--json`/`-q` (those are `gh pr view`/`list` flags); it
+  // prints the PR URL on stdout. Passing them makes every ship exit non-zero with
+  // "unknown flag: --json" while the branch is already pushed and the task already
+  // completed — a silent no-PR ship. Assert on the real argv, not a prefix match.
+  const ghLog: string[] = []
+  const $ = scriptedShell(
+    [
+      BRANCH_EXISTS,
+      PUSH_OK,
+      { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+      { cmd: "gh repo view", result: { exitCode: 0, stdout: "main\n" } },
+      { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/10\n" } },
+    ],
+    ghLog,
+  )
+  await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
+  const create = ghLog.find((c) => c.startsWith("gh pr create"))
+  assert.ok(create, "expected a gh pr create invocation")
+  assert.doesNotMatch(create, /--json/)
+  assert.doesNotMatch(create, /\s-q\s/)
+  assert.match(create, /--draft/)
+  assert.match(create, /--head feature\/task-1 --base main/)
 })
 
 test("shipPr (github) falls back to currentBranch when gh repo view fails, and reports create failure", async () => {

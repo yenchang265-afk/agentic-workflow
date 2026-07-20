@@ -201,6 +201,33 @@ test("onTerminal(done) marks the head handled under runs/main-sitter/; stop reco
   assert.ok(shellLog.some((c) => c.startsWith("rmdir") && c.includes(`head-${shortSha(SHA)}`)))
 })
 
+test("a retryable stop leaves the ledger untouched so the next poll re-claims the head", async () => {
+  // C2: a transient stop (ERROR verdict, interrupt) must not burn the head's one
+  // shot. Recording a failedAttempt here parks a red default branch forever —
+  // claimNext refuses any head with failedAttempts until someone pushes again.
+  const shellLog: string[] = []
+  const src = source([build()], { shellLog })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  await src.onTerminal?.(item, { kind: "stop", message: "stage errored", retryable: true })
+  assert.ok(
+    !shellLog.some((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`)),
+    "no ledger write on a retryable stop",
+  )
+  assert.ok(shellLog.some((c) => c.startsWith("rmdir") && c.includes(`head-${shortSha(SHA)}`)))
+})
+
+test("a non-retryable stop records a failed attempt", async () => {
+  const shellLog: string[] = []
+  const src = source([build()], { shellLog })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  await src.onTerminal?.(item, { kind: "stop", message: "iteration cap", retryable: false })
+  const write = shellLog.find((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`))
+  assert.ok(write, "ledger written")
+  assert.match(write ?? "", /failedAttempts/)
+})
+
 test("a configured branch override skips default-branch detection", async () => {
   const shellLog: string[] = []
   const httpLog: string[] = []

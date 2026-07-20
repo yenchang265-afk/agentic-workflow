@@ -78,8 +78,17 @@ test("loops section defaults to empty and enabledLoopKinds keeps engineering on"
 test("other loop kinds are opt-in; engineering can be disabled", () => {
   const c = parseConfig({ loops: { "pr-sitter": { enabled: true, query: "author:@me" } } })
   assert.deepEqual(enabledLoopKinds(c), ["engineering", "pr-sitter"])
+  // A section with no explicit `enabled` must NOT activate the kind — otherwise
+  // merely tuning a knob silently starts a loop that opens PRs on the user's repo.
   const offByDefault = parseConfig({ loops: { "pr-sitter": {} } })
-  assert.deepEqual(enabledLoopKinds(offByDefault), ["engineering", "pr-sitter"])
+  assert.deepEqual(enabledLoopKinds(offByDefault), ["engineering"])
+  const knobOnly = parseConfig({ loops: { "dep-sitter": { severityFloor: "critical" } } })
+  assert.deepEqual(enabledLoopKinds(knobOnly), ["engineering"])
+  const explicitlyOff = parseConfig({ loops: { "pr-sitter": { enabled: false } } })
+  assert.deepEqual(enabledLoopKinds(explicitlyOff), ["engineering"])
+  // Engineering keeps the opposite default: on unless explicitly disabled.
+  const engImplicit = parseConfig({ loops: { engineering: {} } })
+  assert.deepEqual(enabledLoopKinds(engImplicit), ["engineering"])
   const disabled = parseConfig({ loops: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } })
   assert.deepEqual(enabledLoopKinds(disabled), ["pr-sitter"])
 })

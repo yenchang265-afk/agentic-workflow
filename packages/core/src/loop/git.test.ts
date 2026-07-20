@@ -57,6 +57,19 @@ const PORCELAIN = [
   "",
 ].join("\n")
 
+/** A worktree whose directory was deleted: git keeps the registration and marks it prunable. */
+const PORCELAIN_PRUNABLE = [
+  "worktree /repo",
+  "HEAD abc123",
+  "branch refs/heads/main",
+  "",
+  "worktree /repo/.loop-worktrees/gone",
+  "HEAD def456",
+  "branch refs/heads/feature/gone",
+  "prunable gitdir file points to non-existent location",
+  "",
+].join("\n")
+
 test("branchExists maps a zero exit code to true", async () => {
   const yes = makeShell(() => ({ exitCode: 0 }))
   const no = makeShell(() => ({ exitCode: 1 }))
@@ -68,10 +81,26 @@ test("listWorktrees parses porcelain stanzas, including a detached entry", async
   const $ = makeShell(() => ({ exitCode: 0, stdout: PORCELAIN }))
   const entries = await listWorktrees($, "/repo")
   assert.deepEqual(entries, [
-    { path: "/repo", branch: "main" },
-    { path: "/repo/.loop-worktrees/add-foo", branch: "feature/add-foo" },
-    { path: "/repo/detached", branch: null },
+    { path: "/repo", branch: "main", prunable: false },
+    { path: "/repo/.loop-worktrees/add-foo", branch: "feature/add-foo", prunable: false },
+    { path: "/repo/detached", branch: null, prunable: false },
   ])
+})
+
+test("listWorktrees flags a prunable (vanished) worktree", async () => {
+  const $ = makeShell(() => ({ exitCode: 0, stdout: PORCELAIN_PRUNABLE }))
+  assert.deepEqual(await listWorktrees($, "/repo"), [
+    { path: "/repo", branch: "main", prunable: false },
+    { path: "/repo/.loop-worktrees/gone", branch: "feature/gone", prunable: true },
+  ])
+})
+
+test("worktreeForBranch ignores a prunable registration", async () => {
+  // Adopting a vanished worktree as live isolation pins the whole stage to a cwd
+  // that no longer exists — every command and the closing `git add -A` checkpoint
+  // run in a missing directory. Returning null lets ensureIsolation recreate it.
+  const $ = makeShell(() => ({ exitCode: 0, stdout: PORCELAIN_PRUNABLE }))
+  assert.equal(await worktreeForBranch($, "/repo", "feature/gone"), null)
 })
 
 test("listWorktrees returns [] when the command fails", async () => {

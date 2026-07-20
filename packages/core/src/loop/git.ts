@@ -121,10 +121,15 @@ export const pruneWorktrees = async ($: Shell, cwd: string): Promise<void> => {
   await run($, cwd, ["worktree", "prune"])
 }
 
-/** One registered worktree: its absolute path and checked-out branch (if any). */
+/**
+ * One registered worktree: its absolute path, checked-out branch (if any), and
+ * whether git considers it prunable — the registration survives after the
+ * directory is deleted, so a prunable entry names a path that isn't there.
+ */
 export interface WorktreeEntry {
   readonly path: string
   readonly branch: string | null
+  readonly prunable: boolean
 }
 
 /** Every registered worktree in the repo (including the main one). Empty on failure. */
@@ -133,13 +138,16 @@ export const listWorktrees = async ($: Shell, cwd: string): Promise<WorktreeEntr
   if (!ok) return []
   // Porcelain output is stanzas separated by blank lines:
   //   worktree <path>\nHEAD <sha>\nbranch refs/heads/<name>\n\n
+  // A worktree whose directory vanished carries a trailing `prunable <reason>`.
   const entries: WorktreeEntry[] = []
   let curPath: string | null = null
   let curBranch: string | null = null
+  let curPrunable = false
   const flush = () => {
-    if (curPath) entries.push({ path: curPath, branch: curBranch })
+    if (curPath) entries.push({ path: curPath, branch: curBranch, prunable: curPrunable })
     curPath = null
     curBranch = null
+    curPrunable = false
   }
   for (const line of stdout.split("\n")) {
     if (line.startsWith("worktree ")) {
@@ -147,15 +155,21 @@ export const listWorktrees = async ($: Shell, cwd: string): Promise<WorktreeEntr
       curPath = line.slice("worktree ".length).trim()
     } else if (line.startsWith("branch refs/heads/")) {
       curBranch = line.slice("branch refs/heads/".length).trim()
+    } else if (line === "prunable" || line.startsWith("prunable ")) {
+      curPrunable = true
     }
   }
   flush()
   return entries
 }
 
-/** The absolute path of the worktree checked out to `branch`, or null if none. */
+/**
+ * The absolute path of the LIVE worktree checked out to `branch`, or null if none.
+ * Prunable entries are skipped: adopting one as isolation pins the stage to a
+ * directory that no longer exists, so callers must recreate it instead.
+ */
 export const worktreeForBranch = async ($: Shell, cwd: string, branch: string): Promise<string | null> => {
-  const found = (await listWorktrees($, cwd)).find((w) => w.branch === branch)
+  const found = (await listWorktrees($, cwd)).find((w) => w.branch === branch && !w.prunable)
   return found?.path ?? null
 }
 
