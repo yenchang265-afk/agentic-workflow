@@ -57,7 +57,8 @@ unattended (a feature, a refactor with tests, anything worth a task file):
 `approve` is the same verb at every gate — the folder the task sits in picks
 the move, so it is never ambiguous. Id-less **`/agentic-loop:engineering approve`** advances
 the one task waiting at a loop gate (a parked plan or a finished review —
-never a draft; pass the id when more than one waits), and
+falling back to a lone draft when neither waits; pass the id when more than
+one waits), and
 **`/agentic-loop:engineering replan`** bounces a parked plan back.
 
 **Stay ad-hoc** for a single bounded request (rename, small fix, question):

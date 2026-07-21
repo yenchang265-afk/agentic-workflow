@@ -68,7 +68,7 @@ test("sameTerminalSpec matches terminalId's dedup semantics", () => {
 
 test("terminalStatusOptions exposes backlog statuses and nothing for other sources", () => {
   assert.deepEqual(
-    terminalStatusOptions({ type: "backlog", statuses: ["queued", "in-progress", "completed"], pools: [] }),
+    terminalStatusOptions({ type: "backlog", statuses: ["queued", "in-progress", "completed"], humanGates: [], pools: [] }),
     ["queued", "in-progress", "completed"],
   )
   const { manifest } = loadManifest(defaultLoopsDir(), "pr-sitter")

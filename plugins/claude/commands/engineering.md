@@ -79,13 +79,16 @@ Dispatch:
     ask the user for the Jira issue key / ADO work item id to put in
     `tracker.key`. Pairing is optional — if they don't have one, leave
     `tracker` off; the task queues and runs unpaired.
-- **`retask <id> [note]`** — reshape a `draft/` task before it's approved,
-  when the drafted goal or acceptance came out wrong. YOU (the main agent) run
-  the interview, same as `new`:
-  1. Resolve `<id>` in `docs/tasks/draft/` **only**. If it isn't there (it's
-     already queued/planned, or missing), refuse: "only drafts can be
-     re-tasked — a parked plan uses `/agentic-loop:engineering replan <id>`"
-     and stop.
+- **`retask <id> [note]`** — reshape a planless task when the drafted goal or
+  acceptance came out wrong: one still in `draft/`, or one already approved
+  into `queued/` but not yet planned. YOU (the main agent) run the interview,
+  same as `new`:
+  1. The plugin has already run the deterministic half before your turn: a
+     `queued/` task was moved **back to `draft/`** (its approval withdrawn — the
+     reshaped goal has to be re-approved), and a task from `plan-review/` onward
+     was refused outright. So resolve `<id>` in `docs/tasks/draft/` **only**. If
+     it isn't there, the id is wrong — say so and stop. (Fallback when the hook
+     didn't run: `mcp__agentic-loop__loop_retask({id})` first.)
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
@@ -109,7 +112,8 @@ Dispatch:
   task → `completed/` (ship — only after the human reviewed the branch
   diff). A task lives in exactly one folder, so the gate is never ambiguous.
   Without an id it advances the single task at a loop wait-gate
-  (`plan-review/` or `in-review/`); drafts always need the explicit id.
+  (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only
+  when neither has anything waiting (tracking epics are never candidates).
   **Spawn nothing** — report the outcome. (Fallback:
   `mcp__agentic-loop__loop_approve({id})`, id optional.) Within an
   interactive `new`/`retask` turn, call `mcp__agentic-loop__loop_approve({id})`

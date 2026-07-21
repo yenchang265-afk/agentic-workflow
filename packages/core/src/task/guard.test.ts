@@ -50,6 +50,13 @@ test("classifyEdit allows the live PLAN stage to write its own queued task only"
   assert.equal(classifyEdit("/repo/docs/tasks/queued/my-task.md", ctx).allow, false)
 })
 
+// retask reaches queued/ tasks, but it does so by MOVING them to draft/ first —
+// deliberately, so the guard never has to widen. Pinned: an agent still cannot
+// write into queued/ without a live PLAN stage.
+test("classifyEdit keeps queued/ closed to authoring — retask moves, it does not carve out", () => {
+  assert.equal(classifyEdit("/repo/docs/tasks/queued/anything.md", ctx).allow, false)
+})
+
 // --- classifyBash ---
 
 test("classifyBash allows commands that never reference the backlog", () => {

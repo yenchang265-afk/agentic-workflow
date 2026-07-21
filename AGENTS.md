@@ -16,7 +16,8 @@ sections below cover each.
    (`plugins/opencode/src/`, agents/commands under `plugins/opencode/`) that
    drives the whole lifecycle from one command: `/agentic-loop:engineering new` interviews you
    into a planless draft task (`new <idea>` — always), `retask <id>` reshapes
-   a draft in place, `approve [id]` is the one folder-driven gate (draft →
+   a planless task in place (a draft, or a `queued/` task sent back to `draft/`
+   first), `approve [id]` is the one folder-driven gate (draft →
    queued, parked plan → in-progress, finished review parked in `in-review/`
    → completed), and
    `replan [id]` sends a parked plan back;
@@ -98,7 +99,7 @@ stateDiagram-v2
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/agentic-loop:engineering new <idea>` then `/agentic-loop:engineering approve <id>` then `/agentic-loop:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-loop:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, never a draft. See `loop-orchestration`, not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agentic-loop:engineering new <idea>` then `/agentic-loop:engineering approve <id>` then `/agentic-loop:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-loop:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, falling back to a lone draft only when no loop gate is waiting. See `loop-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
 

@@ -23,16 +23,24 @@ const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.
 
 // The two gate verbs of /agentic-loop:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
-// on both: a bare `approve` auto-resolves the single awaiting task (draft
-// approval always needs the explicit id — the CLI's approve-any enforces that).
+// on both: a bare `approve` auto-resolves the single awaiting task (loop gates
+// first, a lone draft as fallback — the CLI's approve-any owns that priority).
 const CMD = "\\/(?:agentic-loop:)?engineering"
 const APPROVE = new RegExp(`(?:^|\\s)${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)$`, "im")
 const REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im")
+// retask is the one HYBRID verb: its move is deterministic (queued/ → draft/, or
+// a refusal) but the reshape that follows is an interview only the model can
+// run. So it dispatches like a gate verb and then, on success, hands the turn
+// back instead of blocking it — see `continueTurn` below.
+const RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im")
 
 /**
  * Build the `gate` CLI argv from the prompt, or null when it is not a gate
  * command. The sentinel form requires an id (a bare one is malformed —
  * passed through so the model reports usage); the folder-driven verbs do not.
+ *
+ * `continueTurn` marks a dispatch whose success must NOT block the model: the
+ * CLI did the deterministic part, and the model still has work to do.
  */
 export const gateArgsFor = (prompt) => {
   const sentinel = prompt.match(SENTINEL)
@@ -52,6 +60,14 @@ export const gateArgsFor = (prompt) => {
   if (replan) {
     const words = (replan[1] || "").trim().split(/\s+/).filter(Boolean)
     return { argv: ["gate", "reject-any", ...words] }
+  }
+  const retask = prompt.match(RETASK)
+  if (retask) {
+    // retask always names its target; a bare one is malformed — let the model
+    // report the usage error rather than guessing which task to un-approve.
+    const id = (retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
+    if (!id) return { passThrough: true }
+    return { argv: ["gate", "retask", id], continueTurn: true }
   }
   return null
 }

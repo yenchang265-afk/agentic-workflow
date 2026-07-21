@@ -9,8 +9,9 @@ description: Explains the automatic agentic loop driven by the OpenCode `/agenti
 
 One command carries the whole engineering lifecycle. The **authoring verbs**
 are the authoring-and-gates side: its agent interviews you into a planless
-draft (`new <idea>`), `retask <id>` re-interviews and reshapes a draft in
-place, `approve [id]` is the one folder-driven gate — a reviewed draft to
+draft (`new <idea>`), `retask <id>` re-interviews and reshapes a planless task
+in place (a `draft/` one, or a `queued/` one sent back to `draft/` first),
+`approve [id]` is the one folder-driven gate — a reviewed draft to
 `queued/` (task gate), a parked plan to `in-progress/` (plan gate), a
 finished review to `completed/` (ship) — and `replan [id]` is the sole
 rejection verb. **`/agentic-loop:engineering`** is
@@ -57,7 +58,8 @@ directly — ship the diff yourself.)
 ```
 authoring + gates (interactive /agentic-loop:engineering verbs):
   /agentic-loop:engineering new <idea>      ──▶ interview ──▶ planless draft in draft/
-  /agentic-loop:engineering retask <id> [note] ▶ re-interview ──▶ draft rewritten in place (same id)
+  /agentic-loop:engineering retask <id> [note] ▶ re-interview ──▶ rewritten in place in draft/ (same id)
+                                        queued/ → draft/            ← approval withdrawn, re-approve after
   /agentic-loop:engineering approve [id]    ──▶ the one folder-driven gate:
                                         draft/ → queued/            ← the task gate
                                         plan-review/ → in-progress/ ← the plan gate
@@ -157,9 +159,11 @@ flowchart LR
   validates the `## Implementation Plan` heading at the plan gate. There is
   no way to build an ungated task: BUILD only ever claims from `in-progress/`.
   Id-less `/agentic-loop:engineering approve` resolves the single task waiting at a loop
-  wait-gate (parked plan, or finished review) and never touches drafts — the
-  task gate always takes the explicit id. `/agentic-loop:engineering replan [id]` is the
-  matching rejection verb.
+  wait-gate (parked plan, or finished review); only when neither has anything
+  waiting does it fall back to a lone `draft/` task. Loop gates always outrank
+  the authoring gate, so a pile of drafts never shadows a parked plan, and
+  never-approved epic tracking drafts are skipped entirely.
+  `/agentic-loop:engineering replan [id]` is the matching rejection verb.
 - **Park, don't block.** The PLAN stage ends its loop by parking the task in
   `plan-review/`. A watcher can plan an entire queue overnight and exit each
   time; you batch-review the plans whenever suits and approve or replan each

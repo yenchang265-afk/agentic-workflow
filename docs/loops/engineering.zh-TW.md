@@ -118,7 +118,7 @@ flowchart TB
 | 指令 | 由誰處理 | 子 agent | 寫入權限 | 載入的 skill | 產出 |
 |---------|-----------|----------|--------------|---------------|----------|
 | `/agentic-loop:engineering new <idea>` | 外掛 → agent | `loop-plan-author` | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | `draft/` 中的無計畫草稿 |
-| `/agentic-loop:engineering retask <id> [note]` | 外掛 → agent | `loop-plan-author`（retask 模式） | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | 草稿**就地**在 `draft/` 中被重寫（相同 id，不移動資料夾） |
+| `/agentic-loop:engineering retask <id> [note]` | 外掛（安置任務）→ agent（重塑） | `loop-plan-author`（retask 模式） | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | **就地**在 `draft/` 中被重寫（相同 id）；`queued/` 的任務會先被移回 `draft/`，核准撤銷；`plan-review/` 之後拒絕（改用 `replan`） |
 | `/agentic-loop:engineering approve [id]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 由資料夾驅動的把關點：draft → `queued/`、plan-review → `in-progress/`、in-review → `completed/` |
 | `/agentic-loop:engineering replan [id] [why]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 任務重新排入 `queued/`，拒絕會被稽核 |
 | PLAN（在迴圈中，作用於 `queued/` 中的任務） | driver → agent | `loop-plan-author`（任務模式） | 僅限任務檔案 | `planning-and-task-breakdown`（相關時 + `api-and-interface-design`、`deprecation-and-migration`、`documentation-and-adrs`） | 就地寫入 `## Implementation Plan` → 任務暫存進 `plan-review/` |

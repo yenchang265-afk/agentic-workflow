@@ -53,7 +53,7 @@ const ENGINEERING_BOARD: KindBoardInfo = {
   description: "engineering",
   sourceType: "backlog",
   statuses: ["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"],
-  gateStatuses: ["plan-review", "in-review"],
+  gateStatuses: ["draft", "plan-review", "in-review"],
   pools: ["in-progress", "queued"],
 }
 

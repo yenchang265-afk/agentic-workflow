@@ -8,7 +8,9 @@ The engineering agentic loop — one command for authoring, the human gates,
 and execution, scoped to the engineering kind. The plugin intercepts this
 command; `$ARGUMENTS` selects the verb. Everything except `new` and `retask`
 is deterministic plugin work: **invoke nothing, write nothing** on those
-verbs — report the toast's outcome and stop. (The PR sitter has its own
+verbs — report the toast's outcome and stop. `new` is entirely yours;
+`retask` is split — the plugin has already placed the task (or refused) before
+your turn, and the interview + rewrite are yours. (The PR sitter has its own
 command: `/agentic-loop:pr-sitter`.)
 
 **$ARGUMENTS**
@@ -54,13 +56,16 @@ Dispatch:
        un-approved draft is inert, so the loop never claims it. Close it by
        hand with the loop move tool (to `abandoned/` or `completed/`) once
        every child has shipped.
-- **`retask <id> [note]`** — reshape a `draft/` task before you approve it,
-  when the drafted goal or acceptance came out wrong. YOU (the current agent)
-  run the interview, same as `new`:
-  1. Resolve `<id>` in `docs/tasks/draft/` **only**. If it isn't there (it's
-     already queued/planned, or missing), refuse: "only drafts can be
-     re-tasked — a parked plan uses `/agentic-loop:engineering replan <id>`"
-     and stop.
+- **`retask <id> [note]`** — reshape a planless task when the drafted goal or
+  acceptance came out wrong: one still in `draft/`, or one already approved
+  into `queued/` but not yet planned. YOU (the current agent) run the
+  interview, same as `new`:
+  1. The plugin has already run the deterministic half before your turn: a
+     `queued/` task was moved **back to `draft/`** (its approval withdrawn — the
+     reshaped goal has to be re-approved, and the toast says so), and a task
+     from `plan-review/` onward was refused with a pointer at `replan`. So
+     resolve `<id>` in `docs/tasks/draft/` **only**; if it isn't there, the
+     plugin refused or the id is wrong — report that and stop.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
@@ -70,7 +75,8 @@ Dispatch:
      id and the confirmed title/priority/acceptance/body (carry forward the
      `tracker` block if the draft had one) to rewrite `docs/tasks/draft/<id>.md`
      **in place** — the id/filename never changes. Still no plan. The next step
-     is unchanged: `/agentic-loop:engineering approve <id>`.
+     is unchanged: `/agentic-loop:engineering approve <id>` (required again if
+     the task came back from `queued/`).
 
 ## Human gates (deterministic — the plugin moves the file before your turn)
 
@@ -84,9 +90,10 @@ Dispatch:
     reviewing the branch diff).
   A task lives in exactly one folder, so the gate is never ambiguous; the
   toast names which move happened. Without an id it advances the single task
-  at a loop wait-gate (`plan-review/` or `in-review/`); drafts always need
-  the explicit id (they accumulate — including never-approved epic tracking
-  drafts — so the loop never guesses one).
+  at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
+  `draft/` task only when neither has anything waiting — loop gates outrank the
+  authoring gate, and never-approved epic tracking drafts are skipped, so the
+  loop never guesses.
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning; the reason is recorded in the audit note and the next PLAN

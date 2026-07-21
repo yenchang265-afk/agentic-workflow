@@ -35,7 +35,9 @@ it exactly rather than improvising.
   which **must already exist**, keeping the same filename/id even if the title
   changed — same schema as `new`, still **no `## Implementation Plan`**. If the
   file is absent, return an error naming it rather than creating a new one
-  (that would duplicate the id — use `new` for a fresh draft).
+  (that would duplicate the id — use `new` for a fresh draft). A task that was
+  already approved into `queued/` has been moved back to `draft/` by the plugin
+  before you run, so it is always `draft/<id>.md` you overwrite.
 - **`task`** — the loop's PLAN stage. Your prompt carries a `Task file:`
   line naming the claimed `queued/` task's path (fall back to looking in
   `docs/tasks/queued/` if it's ever missing). Read the task, read the
@@ -174,7 +176,9 @@ Mode `retask`:
 
 1. Take the id and the confirmed title, priority, acceptance, and body (and any
    `tracker` block) from your prompt.
-2. Confirm `docs/tasks/draft/<id>.md` exists; if not, return an error naming it.
+2. Confirm `docs/tasks/draft/<id>.md` exists; if not, return an error naming it
+   (the plugin has already moved a previously-approved `queued/` task back here,
+   so an absent file means the id is wrong, not that it sits elsewhere).
 3. Overwrite that file in place — frontmatter + body only, exactly in the schema
    above, keeping the filename/id — and stop. No plan section.
 

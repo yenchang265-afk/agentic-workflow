@@ -76,7 +76,8 @@ Authoring + gates (`/agentic-loop:engineering`):
   (ship) only after you review the branch diff. Each move is audited +
   committed; a task lives in exactly one folder, so the gate is never
   ambiguous. Without an id it advances the single task at a loop wait-gate
-  (`plan-review/` or `in-review/`) — drafts always need the explicit id.
+  (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only
+  when neither has anything waiting.
   (Also exposed as the `loop_approve` MCP tool.)
 - `/agentic-loop:engineering replan [id] [reason]` — the sole rejection verb: send a
   parked plan (or a cap-tripped `in-progress/` task, by id) back to

@@ -43,6 +43,7 @@ import {
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
   replanTask as coreReplanTask,
+  retaskTask as coreRetaskTask,
   shipAny as coreShipAny,
   type GateCtx,
   type GateResult,
@@ -1076,6 +1077,8 @@ const replanTask = (id: string, reason: string | undefined, liveTaskId: string |
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> =>
   coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
+const retaskTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
+  coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
@@ -1121,10 +1124,24 @@ server.registerTool(
 )
 
 server.registerTool(
+  "loop_retask",
+  {
+    description:
+      "Deterministic half of /agentic-loop:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via loop_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
+    inputSchema: { id: z.string().min(1) },
+  },
+  async ({ id }) => {
+    await loadCfg()
+    const r = await retaskTask(id, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
   "loop_approve",
   {
     description:
-      "/agentic-loop:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/; drafts always need the explicit id). Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
+      "/agentic-loop:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved. Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
     inputSchema: { id: z.string().optional() },
   },
   async ({ id }) => {
@@ -1283,13 +1300,14 @@ async function runGate(argv: string[]): Promise<number> {
     const [id, ...reasonParts] = rest
     const reason = reasonParts.join(" ").trim() || undefined
     if (!id) {
-      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan> <id> [reason]" })
+      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask> <id> [reason]" })
       return 1
     }
     if (verb === "approve") result = await approveTask(id)
     else if (verb === "approve-plan") result = await approvePlan(id)
     else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
-    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, or replan.` }
+    else if (verb === "retask") result = await retaskTask(id, readStageTaskId())
+    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, or retask.` }
   }
   emit(result)
   return result.ok ? 0 : 1

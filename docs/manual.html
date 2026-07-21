@@ -533,7 +533,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve</b><code>/agentic-loop:engineering approve [id]</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan [id] [reason]</code>.</span></div>
         <div class="gate"><span class="n">Gate 3 · ship</span><b>approve</b><code>/agentic-loop:engineering approve [id]</code><span>You accept the reviewed diff. in-review → completed.</span></div>
       </div>
-      <p style="margin:8px 0 0;font-size:14px;color:var(--muted-txt)">Id-less <code>approve</code> advances the single task the loop is waiting on you for (a parked plan → build, or a reviewed diff → completed) — it never touches drafts, which always need the explicit <code>&lt;id&gt;</code>. <code>replan</code> is the sole rejection verb: it sends a parked plan (or a cap-tripped task, by id) back to <code>queued/</code> for a fresh PLAN pass.</p>
+      <p style="margin:8px 0 0;font-size:14px;color:var(--muted-txt)">Id-less <code>approve</code> advances the single task the loop is waiting on you for (a parked plan → build, or a reviewed diff → completed), falling back to a lone <code>draft/</code> task only when neither gate has anything waiting. <code>replan</code> is the sole rejection verb: it sends a parked plan (or a cap-tripped task, by id) back to <code>queued/</code> for a fresh PLAN pass.</p>
 
       <h3>Folder-as-status lifecycle</h3>
       <div class="flow">
@@ -626,8 +626,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <h4 style="margin-top:0">/agentic-loop:engineering <span style="text-transform:none;color:var(--ink-2)">— the backlog lifecycle</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>new &lt;idea&gt;</code></td><td>Interview you into a planless draft (splits heavy ideas into sibling drafts).</td></tr>
-            <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a draft in place. Draft-only.</td></tr>
-            <tr><td><code>approve [id]</code></td><td>THE gate verb, folder-driven: draft → queued (id required) · plan-review → in-progress · in-review → completed. Id-less form advances the one task at a loop wait-gate, never a draft.</td></tr>
+            <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a planless task in place. Works on <code>draft/</code>, and on <code>queued/</code> — that one is sent back to <code>draft/</code> first, so re-approve it. From <code>plan-review/</code> on, use <code>replan</code>.</td></tr>
+            <tr><td><code>approve [id]</code></td><td>THE gate verb, folder-driven: draft → queued · plan-review → in-progress · in-review → completed. Id-less form advances the one task at a loop wait-gate, falling back to a lone draft.</td></tr>
             <tr><td><code>replan [id] [reason]</code></td><td>The sole rejection verb: a parked plan (or a cap-tripped task, by id) → back to queued.</td></tr>
             <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review — the only PLAN entry. Building stays with <code>claim</code>/<code>watch</code>.</td></tr>
             <tr><td><code>claim</code></td><td>Pull &amp; drive the next build-ready in-progress/ task; queued tasks are never auto-planned (use <code>plan &lt;id&gt;</code>).</td></tr>

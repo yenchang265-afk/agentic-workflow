@@ -321,7 +321,7 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
               ...meta,
               workSource:
                 e.target.value === "backlog"
-                  ? { type: "backlog", statuses: ["queued", "in-progress", "completed"], pools: [] }
+                  ? { type: "backlog", statuses: ["queued", "in-progress", "completed"], humanGates: [], pools: [] }
                   : e.target.value === "dependency-scan"
                     ? { type: "dependency-scan", autoFix: ["patch", "minor"], severityFloor: "high", includeOutdated: false, ecosystem: "auto" }
                     : e.target.value === "ci-runs"
@@ -342,6 +342,12 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
             <input
               value={csv(ws.statuses)}
               onChange={(e) => onChange({ ...meta, workSource: { ...ws, statuses: fromCsv(e.target.value) } })}
+            />
+          </Field>
+          <Field label="human gates (comma-separated) — statuses a human hands work to that no stage parks into (e.g. draft); gate columns, never claimable">
+            <input
+              value={csv(ws.humanGates)}
+              onChange={(e) => onChange({ ...meta, workSource: { ...ws, humanGates: fromCsv(e.target.value) } })}
             />
           </Field>
           <Field label="pools (status:entryStage[:claimPredicate][:manual], one per line, priority order)">

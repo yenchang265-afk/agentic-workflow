@@ -36,7 +36,6 @@ test("the GATE-DISPATCH sentinel routes its verb and requires an id", () => {
 test("non-gate verbs and prose pass through as null", () => {
   for (const prompt of [
     "/agentic-loop:engineering new add rate limiting",
-    "/agentic-loop:engineering retask my-task tighten acceptance",
     "/agentic-loop:engineering plan my-task",
     "/agentic-loop:engineering claim",
     "/agentic-loop:engineering status",
@@ -46,6 +45,16 @@ test("non-gate verbs and prose pass through as null", () => {
   ]) {
     assert.equal(gateArgsFor(prompt), null, `expected null for ${JSON.stringify(prompt)}`)
   }
+})
+
+test("retask dispatches with continueTurn — the move is deterministic, the reshape is not", () => {
+  const d = gateArgsFor("/agentic-loop:engineering retask my-task tighten acceptance")
+  assert.deepEqual(d.argv, ["gate", "retask", "my-task"])
+  assert.equal(d.continueTurn, true, "the model must still run the interview")
+})
+
+test("a bare retask is malformed — passed through so the model reports usage", () => {
+  assert.deepEqual(gateArgsFor("/agentic-loop:engineering retask"), { passThrough: true })
 })
 
 test("prose containing the plain word 'engineering' never fires a gate", () => {

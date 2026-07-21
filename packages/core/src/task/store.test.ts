@@ -286,6 +286,7 @@ test("summarizeBacklog counts every status and empty flag lists", () => {
     completed: 0,
     abandoned: 0,
   })
+  assert.deepEqual(s.awaitingTask, [])
   assert.deepEqual(s.awaitingPlan, [])
   assert.deepEqual(s.gated, [])
   assert.deepEqual(s.claimable, [])
@@ -310,6 +311,14 @@ test("summarizeBacklog flags queued, gated plan-review, and in-progress/in-revie
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])
   assert.deepEqual(s.awaitingReview, ["shipme"])
+})
+
+test("summarizeBacklog flags approvable drafts and excludes the never-approve tracking epic", () => {
+  const byStatus = empty()
+  byStatus["draft"] = [task("real", 0, "an idea"), { ...task("tracker", 0, "slices"), type: "epic" }]
+  const s = summarizeBacklog(byStatus)
+  assert.equal(s.counts["draft"], 2)
+  assert.deepEqual(s.awaitingTask, ["real"])
 })
 
 // --- pairingCoverage (the loop_status pairing view) ---
@@ -354,8 +363,9 @@ test("canTransition rejects any forward skip", () => {
   assert.equal(canTransition("in-progress", "completed"), false)
 })
 
-test("canTransition rejects backward moves except the replan escape", () => {
+test("canTransition rejects backward moves except the replan and retask escapes", () => {
   assert.equal(canTransition("in-progress", "draft"), false)
+  assert.equal(canTransition("plan-review", "draft"), false)
   assert.equal(canTransition("in-review", "plan-review"), false)
   assert.equal(canTransition("in-review", "queued"), false)
   assert.equal(canTransition("completed", "in-review"), false)
@@ -364,6 +374,13 @@ test("canTransition rejects backward moves except the replan escape", () => {
 test("canTransition allows the replan escape back to queued", () => {
   assert.equal(canTransition("plan-review", "queued"), true)
   assert.equal(canTransition("in-progress", "queued"), true)
+})
+
+// Only queued/ may go back — it is the one approved status with no plan yet, so
+// reshaping it costs nothing downstream. From plan-review on, replan is the verb.
+test("canTransition allows the retask escape from queued back to draft", () => {
+  assert.equal(canTransition("queued", "draft"), true)
+  assert.equal(canTransition("draft", "queued"), true, "the forward hop still works")
 })
 
 test("canTransition allows abandoning any active stage", () => {

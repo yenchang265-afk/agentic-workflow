@@ -66,7 +66,7 @@ import {
   worktreeForBranch,
 } from "@agentic-loop/core/loop/git"
 import { clearState, loadState, saveState } from "@agentic-loop/core/loop/persist"
-import { approveAny, rejectAny, type GateCtx } from "@agentic-loop/core/loop/gate"
+import { approveAny, rejectAny, retaskTask, type GateCtx } from "@agentic-loop/core/loop/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-loop/core/loop/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens } from "@agentic-loop/core/loop/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
@@ -1102,13 +1102,14 @@ const backlogSummary = async (deps: Deps, config: Config) => {
 /** Human-readable one-liner of the backlog roll-up. Pure. */
 const formatBacklog = (s: Awaited<ReturnType<typeof backlogSummary>>): string => {
   const c = s.counts
+  const drafts = s.awaitingTask.length > 0 ? `${c.draft} draft (${s.awaitingTask.length} awaiting approve)` : `${c.draft} draft`
   const gate = c["plan-review"] > 0 ? `${c["plan-review"]} plan-review (awaiting approve)` : "0 plan-review"
   const held = s.claimHeld.length ? `, ${s.claimHeld.length} claim-held` : ""
   const progress =
     c["in-progress"] > 0
       ? `${c["in-progress"]} in-progress (${s.claimable.length} ready${held}, ${s.interrupted.length} interrupted)`
       : "0 in-progress"
-  return `backlog: ${c.draft} draft · ${c.queued} queued · ${gate} · ${progress} · ${c["in-review"]} in-review · ${c.completed} completed · ${c.abandoned} abandoned`
+  return `backlog: ${drafts} · ${c.queued} queued · ${gate} · ${progress} · ${c["in-review"]} in-review · ${c.completed} completed · ${c.abandoned} abandoned`
 }
 
 /**
@@ -1392,10 +1393,11 @@ const gateCtx = (deps: Deps, config: Config): GateCtx => ({
  * implies: `draft/` → queued (task gate), `plan-review/` → in-progress
  * (plan gate, plan required), or `in-review/` → completed (ship). Without an
  * id it advances the single task at a loop wait-gate (`plan-review/` or
- * `in-review/`) — `draft/` is deliberately excluded from auto-resolution:
- * drafts accumulate (including the never-approve epic tracking draft), so
- * scanning them id-less caused false "multiple awaiting" and risked queuing
- * the wrong draft. Approving a draft always takes an explicit id.
+ * `in-review/`), falling back to `draft/` only when neither has anything
+ * waiting: the loop's own gates outrank the authoring gate, so a parked plan is
+ * never shadowed by a pile of drafts. The never-approve epic tracking draft is
+ * skipped in the id-less scan — leaving it in was what made drafts produce
+ * false "multiple awaiting" and risk queuing the wrong one.
  */
 export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
@@ -1415,6 +1417,32 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
  * When no leading token names a rejectable task, the whole argument is treated
  * as the reason and the single plan-review task is chosen.
  */
+/**
+ * Handle `retask <id>` — the deterministic half of the authoring verb. The
+ * interview and the rewrite are the agent's work, but WHERE the task must sit
+ * before that is the plugin's: a `queued/` task is moved back to `draft/` (its
+ * approval withdrawn), a `draft/` task is already right, and a planned task is
+ * refused with a pointer at `replan`.
+ *
+ * The turn is NOT blocked either way — the command template's interview has to
+ * run. It doesn't need blocking: after a refusal the file is not in `draft/`, so
+ * the agent's own "resolve in draft/ only" step fails and it refuses too.
+ */
+export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  if (!id) return void (await toast(client, `Usage: ${ECMD} retask <id> [note].`, "warning"))
+  try {
+    const r = await retaskTask(gateCtx(deps, config), id)
+    // Success is silent unless the plugin actually moved something — the agent's
+    // turn reports the reshape, and a toast per retask would double up.
+    if (!r.ok) await toast(client, r.message, r.variant ?? "warning")
+    else if (!r.data?.alreadyDone) await toast(client, r.message, "success")
+  } catch (err) {
+    await toast(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
 export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
   try {
@@ -1508,9 +1536,12 @@ export const handleCommand = async (
   }
 
   if (engineering) {
-    // Authoring verbs are agent work (interview + draft write/rewrite), not
-    // plugin moves — pass through untouched so the command template's turn runs.
-    if (verb === "new" || verb === "retask") return
+    // `new` is pure agent work (interview + draft write) — pass through
+    // untouched so the command template's turn runs. `retask` also needs that
+    // turn, but its deterministic half (queued/ → draft/, or a refusal) is a
+    // plugin move, so it runs first and then still falls through.
+    if (verb === "new") return
+    if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
 
     // The two deterministic gate verbs: the unified folder-driven approve, and
     // replan (the sole rejection verb). Both parse the post-verb remainder.

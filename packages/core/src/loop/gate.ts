@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, moveTask, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
@@ -147,6 +147,67 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
   }
 }
 
+/**
+ * retask: prepare a task for re-shaping by the authoring interview.
+ *
+ * A `draft/` task is already in the right place, so this is a no-op that reports
+ * success. An approved `queued/` task is sent BACK to `draft/` first: it is
+ * planless, so nothing downstream breaks, but reshaping the goal invalidates the
+ * task-gate approval, which must be re-taken. Moving it also keeps the authoring
+ * agent honest — it only ever writes `draft/*.md`, so by the time it looks, the
+ * file is where it expects, and it can never author a second copy under a live
+ * task's id (the duplicate this used to risk).
+ *
+ * From `plan-review/` onward a plan exists, so `replan` is the right verb and
+ * this refuses.
+ */
+export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+  const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
+  if (ctx.isDriving?.(id)) {
+    return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agentic-loop:engineering stop).`, variant: "warning" }
+  }
+  const draft = await findByIdIn($, directory, config.tasksDir, "draft", id)
+  if (draft) {
+    return {
+      ok: true,
+      message: `"${draft.title}" is a draft — reshape it.`,
+      path: draft.path,
+      data: { retask: true, alreadyDone: true, path: draft.path, id },
+    }
+  }
+  const queued = await findByIdIn($, directory, config.tasksDir, "queued", id)
+  if (!queued) {
+    const elsewhere = await findAnyStatus(ctx, id)
+    const where = elsewhere ? statusFolder(elsewhere) : null
+    return {
+      ok: false,
+      message: where
+        ? `Can't retask "${id}": it's in ${where} — a task with a plan goes back via /agentic-loop:engineering replan ${id}.`
+        : ((await unparseableAt(ctx, id)) ?? `Can't retask "${id}": no task found.`),
+      variant: "warning",
+    }
+  }
+  // A queued task is claimed only by an explicit `plan <id>`, but a crashed run
+  // can leave the marker behind — moving the task would orphan it.
+  const held = await listClaimIds($, directory, config.tasksDir, "queued")
+  if (held.includes(id)) {
+    return { ok: false, message: `Task "${id}" holds a claim marker — release it first (/agentic-loop:engineering doctor fix).`, variant: "warning" }
+  }
+  const actor = await gitActor($, directory)
+  await appendNote($, queued, auditNote("Sent back to draft for re-shaping — approval withdrawn", new Date(), actor), log)
+  const newPath = await moveTask($, queued, "draft")
+  await commitPaths($, directory, [config.tasksDir], `loop(${id}): sent back to draft for re-shaping`)
+  return {
+    ok: true,
+    message: `"${queued.title}" sent back to ${config.tasksDir}/draft/ — reshape it, then approve it again.`,
+    path: newPath,
+    data: { retask: true, path: newPath, id, next: `/agentic-loop:engineering approve ${id} re-queues it once reshaped` },
+  }
+}
+
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
@@ -288,17 +349,31 @@ export type GatePick =
 const FORWARD_STATUSES: readonly TaskStatus[] = ["queued", "in-progress", "completed"]
 
 /**
- * Resolve the single task a shortcut should act on, searching `folders` in order.
- * With `id`: the task must be in one of `folders`. Without `id`: exactly one
- * candidate advances; zero → `none`; two+ → an ambiguity message (never guesses).
+ * Resolve the single task a shortcut should act on.
+ *
+ * `tiers` are searched in priority order. With `id`: the task must be in some
+ * folder across all tiers (flattened — priority is irrelevant, since a task
+ * lives in exactly one folder). Without `id`: the *first tier with any
+ * candidate* decides — exactly one candidate there advances, two+ is an
+ * ambiguity within that tier. So a lower tier never breaks a higher tier's tie,
+ * and a non-empty higher tier is never bypassed. Every tier empty → `none`.
+ * Never guesses.
+ *
+ * `skip` drops candidates from the id-less scan only. An explicit id always
+ * reaches its task, so the specific gate op still reports why it can't advance.
  */
-export const resolveGateTask = async (ctx: GateCtx, id: string, folders: readonly TaskStatus[]): Promise<GatePick> => {
+export const resolveGateTask = async (
+  ctx: GateCtx,
+  id: string,
+  tiers: readonly (readonly TaskStatus[])[],
+  skip?: (task: Task) => boolean,
+): Promise<GatePick> => {
   const { $, client, directory, config, log } = ctx
   if (id) {
     const resolved = await resolveGateId(ctx, id)
     if (resolved && "error" in resolved) return { ok: false, kind: "message", message: resolved.error.message, variant: "warning" }
     if (resolved) id = resolved.id
-    for (const from of folders) {
+    for (const from of tiers.flat()) {
       const t = await findByIdIn($, directory, config.tasksDir, from, id)
       if (t) return { ok: true, id, from }
     }
@@ -309,14 +384,20 @@ export const resolveGateTask = async (ctx: GateCtx, id: string, folders: readonl
     const message = where ? `"${id}" is in ${where} — nothing to do.` : ((await unparseableAt(ctx, id)) ?? `No task "${id}" found.`)
     return { ok: false, kind: "message", message, variant }
   }
-  const found: { id: string; from: TaskStatus }[] = []
-  for (const from of folders) {
-    for (const t of await listByStatus(client, directory, config.tasksDir, from, log)) found.push({ id: t.id, from })
+  for (const tier of tiers) {
+    const found: { id: string; from: TaskStatus }[] = []
+    for (const from of tier) {
+      for (const t of await listByStatus(client, directory, config.tasksDir, from, log)) {
+        if (!skip?.(t)) found.push({ id: t.id, from })
+      }
+    }
+    if (found.length === 1) return { ok: true, ...found[0]! }
+    if (found.length > 1) {
+      const list = found.map((f) => `${f.id} (${f.from})`).join(", ")
+      return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id.`, variant: "warning" }
+    }
   }
-  if (found.length === 0) return { ok: false, kind: "none" }
-  if (found.length === 1) return { ok: true, ...found[0]! }
-  const list = found.map((f) => `${f.id} (${f.from})`).join(", ")
-  return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id.`, variant: "warning" }
+  return { ok: false, kind: "none" }
 }
 
 /**
@@ -324,14 +405,17 @@ export const resolveGateTask = async (ctx: GateCtx, id: string, folders: readonl
  * advances that task by the gate its folder implies: draft/ → queued (task gate),
  * plan-review/ → in-progress (plan gate), or in-review/ → completed (ship).
  * Without an id it advances the single task at a loop wait-gate (plan-review/ or
- * in-review/) — draft/ is deliberately excluded from auto-resolution.
+ * in-review/); only when *nothing* waits at either does it fall back to draft/.
+ * The loop's own gates always outrank the authoring gate, so a parked plan is
+ * never shadowed by a pile of drafts. Tracking epics are skipped in the id-less
+ * scan — they are never approvable, so they must not create a false ambiguity.
  */
 export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
-  const folders: readonly TaskStatus[] = id ? ["plan-review", "in-review", "draft"] : ["plan-review", "in-review"]
-  const pick = await resolveGateTask(ctx, id, folders)
+  const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
+  const pick = await resolveGateTask(ctx, id, tiers, (t) => t.type === "epic")
   if (!pick.ok) {
     return pick.kind === "none"
-      ? { ok: false, message: "Nothing awaiting approval at a loop gate. (Approve a draft with /agentic-loop:engineering approve <id>.)", variant: "info" }
+      ? { ok: false, message: "Nothing awaiting approval.", variant: "info" }
       : { ok: false, message: pick.message, variant: pick.variant }
   }
   if (pick.from === "draft") return approveTask(ctx, pick.id)
@@ -342,7 +426,7 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering")
 /** ship shortcut: id optional — ships the single in-review/ task when omitted. */
 export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
   if (id) return shipTask(ctx, id, kind)
-  const pick = await resolveGateTask(ctx, "", ["in-review"])
+  const pick = await resolveGateTask(ctx, "", [["in-review"]])
   if (!pick.ok) {
     return pick.kind === "none" ? { ok: false, message: "Nothing awaiting ship.", variant: "info" } : { ok: false, message: pick.message, variant: pick.variant }
   }
@@ -371,7 +455,7 @@ export const rejectAny = async (ctx: GateCtx, arg: string): Promise<GateResult> 
       }
     }
   }
-  const pick = await resolveGateTask(ctx, "", ["plan-review"])
+  const pick = await resolveGateTask(ctx, "", [["plan-review"]])
   if (!pick.ok) {
     return pick.kind === "none" ? { ok: false, message: "No plan awaiting rejection.", variant: "info" } : { ok: false, message: pick.message, variant: pick.variant }
   }
