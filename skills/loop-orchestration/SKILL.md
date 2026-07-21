@@ -157,9 +157,11 @@ flowchart LR
   validates the `## Implementation Plan` heading at the plan gate. There is
   no way to build an ungated task: BUILD only ever claims from `in-progress/`.
   Id-less `/agentic-loop:engineering approve` resolves the single task waiting at a loop
-  wait-gate (parked plan, or finished review) and never touches drafts — the
-  task gate always takes the explicit id. `/agentic-loop:engineering replan [id]` is the
-  matching rejection verb.
+  wait-gate (parked plan, or finished review); only when neither has anything
+  waiting does it fall back to a lone `draft/` task. Loop gates always outrank
+  the authoring gate, so a pile of drafts never shadows a parked plan, and
+  never-approved epic tracking drafts are skipped entirely.
+  `/agentic-loop:engineering replan [id]` is the matching rejection verb.
 - **Park, don't block.** The PLAN stage ends its loop by parking the task in
   `plan-review/`. A watcher can plan an entire queue overnight and exit each
   time; you batch-review the plans whenever suits and approve or replan each

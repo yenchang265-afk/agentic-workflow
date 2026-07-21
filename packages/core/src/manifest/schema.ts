@@ -95,6 +95,14 @@ const BacklogSourceSchema = z.object({
   type: z.literal("backlog"),
   /** The status-folder set, in forward lifecycle order. */
   statuses: z.array(z.string().min(1)).min(1),
+  /**
+   * Gate statuses no transition ever targets — work arrives there because a
+   * *human* authored it (engineering's `draft/`), not because a stage parked it.
+   * `gateStatuses()` derives the rest from the transition table; these can't be
+   * derived, so a kind declares them. They are gates, not pools: listing a
+   * status here never makes it claimable.
+   */
+  humanGates: z.array(z.string().min(1)).default([]),
   /** Claim pools walked in priority order: a status folder and the stage a claim from it enters at. */
   pools: z
     .array(
@@ -216,6 +224,12 @@ export const LoopManifestSchema = z
           ctx.addIssue({ code: "custom", message: `pool "${pool.status}" enters unknown stage "${pool.entryStage}"` })
         }
       }
+      const statuses = new Set(m.workSource.statuses)
+      for (const gate of m.workSource.humanGates) {
+        if (!statuses.has(gate)) {
+          ctx.addIssue({ code: "custom", message: `humanGates lists "${gate}", which is not one of workSource.statuses` })
+        }
+      }
     }
     for (const stage of m.stages) {
       const t = m.transitions[stage.name]
@@ -255,10 +269,12 @@ export const stageDef = (manifest: LoopManifest, name: string): StageDef => {
 }
 
 /**
- * The statuses a kind parks or lands work into for a human — every `park`/
- * `done` effect's `toStatus` across the transition table. These are the
- * dashboard's gate columns ("the loop wants you"): for the engineering kind
- * this derives exactly ["plan-review", "in-review"]. Pure.
+ * The statuses a kind holds work at for a human: every `park`/`done` effect's
+ * `toStatus` across the transition table, plus a backlog kind's declared
+ * `humanGates` (gates nothing transitions *into* — see that field's doc). These
+ * are the dashboard's gate columns ("the loop wants you"): for the engineering
+ * kind this derives ["plan-review", "in-review"] and adds "draft". Callers
+ * treat the result as a set — the order is not meaningful. Pure.
  */
 export const gateStatuses = (manifest: LoopManifest): string[] => {
   const out = new Set<string>()
@@ -267,6 +283,7 @@ export const gateStatuses = (manifest: LoopManifest): string[] => {
       if ((effect?.kind === "park" || effect?.kind === "done") && effect.toStatus) out.add(effect.toStatus)
     }
   }
+  if (manifest.workSource.type === "backlog") for (const g of manifest.workSource.humanGates) out.add(g)
   return [...out]
 }
 

@@ -33,7 +33,8 @@ the folder the task sits in: it queues a reviewed draft (the task gate),
 releases a parked plan into the build queue (the plan gate), or ships a
 finished review after you've read the diff — a task lives in exactly one
 folder, so the move is never ambiguous, and id-less `approve` advances the
-one task waiting at a loop gate (never a draft). **`replan [id] [reason]`**
+one task waiting at a loop gate (falling back to a lone draft when none is).
+**`replan [id] [reason]`**
 is the sole rejection verb: a parked plan (or a cap-tripped task, by id) goes
 back to `queued/` for re-planning. Planning happens **right before execution,
 on demand** — `plan <id>` plans one queued task now and parks it, so plans
@@ -149,7 +150,8 @@ local state a running loop leaves behind:
 - `/agentic-loop:engineering approve [id]` — the one folder-driven gate: draft → queued
   (task gate), plan-review → in-progress (plan gate), in-review → completed
   (ship, after you review the branch diff). Id-less `approve` advances the
-  single task at a loop wait-gate — never a draft
+  single task at a loop wait-gate, falling back to a lone draft when neither
+  gate has anything waiting
 - `/agentic-loop:engineering replan [id] [reason]` — the rejection verb: a parked plan (or
   a cap-tripped task, by id) back to `queued/` for re-planning
 - `/agentic-loop:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·

@@ -22,6 +22,13 @@ test("diffSnapshots emits backlog on any task change and gate on gate-folder arr
   assert.deepEqual(events, [{ type: "gate", taskId: "a", toStatus: "plan-review" }, { type: "backlog" }])
 })
 
+test("diffSnapshots emits gate for a draft arriving — draft is a gate folder too", () => {
+  const gates = [...GATES, "draft"] as const
+  const prev = snap({ tasks: { draft: {} } })
+  const authored = snap({ tasks: { draft: { "a.md": 1 } } })
+  assert.deepEqual(diffSnapshots(prev, authored, gates), [{ type: "gate", taskId: "a", toStatus: "draft" }, { type: "backlog" }])
+})
+
 test("diffSnapshots does not emit gate for tasks merely edited in a gate folder", () => {
   const prev = snap({ tasks: { "in-review": { "a.md": 1 } } })
   const touched = snap({ tasks: { "in-review": { "a.md": 2 } } })

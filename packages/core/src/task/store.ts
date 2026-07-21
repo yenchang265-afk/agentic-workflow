@@ -129,6 +129,8 @@ export const wasInterrupted = (task: Task): boolean => {
 /** A per-status roll-up of the backlog for `/agentic-loop:engineering status`. Pure. */
 export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
+  /** draft tasks awaiting the human task gate (/agentic-loop:engineering approve) — tracking epics excluded, they are never approved. */
+  readonly awaitingTask: readonly string[]
   /** queued tasks awaiting the loop's PLAN stage (a watcher will claim them once no build work remains). */
   readonly awaitingPlan: readonly string[]
   /** plan-review tasks whose plan is parked for human review (/agentic-loop:engineering approve). */
@@ -159,6 +161,7 @@ export const summarizeBacklog = (
   const held = new Set(claimedIds)
   return {
     counts,
+    awaitingTask: ids((byStatus["draft"] ?? []).filter((t) => t.type !== "epic")),
     awaitingPlan: ids(byStatus["queued"] ?? []),
     gated: ids((byStatus["plan-review"] ?? []).filter(hasPlan)),
     claimable: ids(inProgress.filter((t) => isClaimable(t) && !held.has(t.id))),

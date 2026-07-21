@@ -73,7 +73,12 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
   if (!data) return <div className="placeholder">Loading backlog…</div>
 
   const { summary } = data
-  const gateCount = data.gateStatuses.reduce((n, status) => n + (data.tasks[status]?.length ?? 0), 0)
+  // Tracking epics are never approvable (no GateActions render for them, see
+  // TaskCardView), so they must not inflate "N awaiting your review".
+  const gateCount = data.gateStatuses.reduce(
+    (n, status) => n + (data.tasks[status]?.filter((t) => t.type !== "epic").length ?? 0),
+    0,
+  )
   const claimed = new Set(data.claimedIds)
 
   return (
@@ -115,7 +120,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                 <TaskCardView
                   key={t.id}
                   task={t}
-                  gated={gate}
+                  gated={gate && t.type !== "epic"}
                   claimed={claimed.has(t.id)}
                   status={status}
                   kind={info.kind}

@@ -23,8 +23,8 @@ const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.
 
 // The two gate verbs of /agentic-loop:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
-// on both: a bare `approve` auto-resolves the single awaiting task (draft
-// approval always needs the explicit id — the CLI's approve-any enforces that).
+// on both: a bare `approve` auto-resolves the single awaiting task (loop gates
+// first, a lone draft as fallback — the CLI's approve-any owns that priority).
 const CMD = "\\/(?:agentic-loop:)?engineering"
 const APPROVE = new RegExp(`(?:^|\\s)${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)$`, "im")
 const REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im")

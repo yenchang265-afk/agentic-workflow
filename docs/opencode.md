@@ -59,7 +59,7 @@ Authoring + gates (`/agentic-loop:engineering`):
   audited + committed, and the toast names which move happened; a task lives
   in exactly one folder, so the gate is never ambiguous. Without an id it
   advances the single task at a loop wait-gate (`plan-review/` or
-  `in-review/`) — drafts always need the explicit id
+  `in-review/`), falling back to a lone draft when neither has anything waiting
 - `/agentic-loop:engineering replan [id] [reason]` — the sole rejection verb: send a
   parked plan (or a cap-tripped `in-progress/` task, by id) back to `queued/`
   with the reason audited; the next PLAN pass must address it

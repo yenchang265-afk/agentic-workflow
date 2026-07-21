@@ -286,6 +286,7 @@ test("summarizeBacklog counts every status and empty flag lists", () => {
     completed: 0,
     abandoned: 0,
   })
+  assert.deepEqual(s.awaitingTask, [])
   assert.deepEqual(s.awaitingPlan, [])
   assert.deepEqual(s.gated, [])
   assert.deepEqual(s.claimable, [])
@@ -310,6 +311,14 @@ test("summarizeBacklog flags queued, gated plan-review, and in-progress/in-revie
   assert.deepEqual(s.claimable, ["ready"])
   assert.deepEqual(s.interrupted, ["crashed"])
   assert.deepEqual(s.awaitingReview, ["shipme"])
+})
+
+test("summarizeBacklog flags approvable drafts and excludes the never-approve tracking epic", () => {
+  const byStatus = empty()
+  byStatus["draft"] = [task("real", 0, "an idea"), { ...task("tracker", 0, "slices"), type: "epic" }]
+  const s = summarizeBacklog(byStatus)
+  assert.equal(s.counts["draft"], 2)
+  assert.deepEqual(s.awaitingTask, ["real"])
 })
 
 // --- pairingCoverage (the loop_status pairing view) ---

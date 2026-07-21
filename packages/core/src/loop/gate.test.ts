@@ -3,13 +3,15 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { approvePlan, approveTask, rejectAny, replanTask, shipTask, type GateCtx } from "./gate.js"
+import { approveAny, approvePlan, approveTask, rejectAny, replanTask, shipTask, type GateCtx } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
  * models `cat`/`mv` over a file map (the id-based ops need only those); git
  * commands report "no branch/actor" so ship attempts no PR. The no-id
- * `resolveGateTask` path is covered end-to-end by the OpenCode driver tests.
+ * `resolveGateTask` path — tier priority, the draft fallback, and the epic skip
+ * — is covered end-to-end by the OpenCode driver tests, which back the fake
+ * client's directory listing with a real file map.
  */
 const makeCtx = (
   files: Record<string, string>,
@@ -97,6 +99,16 @@ test("approveTask refuses a tracking epic — it stays in draft/, untouched", as
   assert.match(r.message, /tracking epic/)
   assert.ok("/repo/docs/tasks/draft/epic.md" in fs, "the epic must stay in draft/")
   assert.ok(!log.some((c) => c.startsWith("mv ") || c.startsWith("printf")), "no move, no audit note on a refusal")
+})
+
+test("approveAny with an explicit epic id still reaches the tracking-epic refusal", async () => {
+  // The epic skip is scoped to id-less resolution: naming an epic outright must
+  // reach approveTask and get its specific refusal, not a generic "not found".
+  const { ctx, fs } = makeCtx({ "draft/epic.md": serializeTask({ title: "Big feature", type: "epic", body: "children…" }) })
+  const r = await approveAny(ctx, "epic")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /tracking epic/)
+  assert.ok("/repo/docs/tasks/draft/epic.md" in fs, "the epic must stay in draft/")
 })
 
 test("approvePlan advances a planned plan-review task to in-progress", async () => {

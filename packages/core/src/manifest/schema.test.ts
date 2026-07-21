@@ -180,7 +180,39 @@ test("gateStatuses is empty when no effect targets a status", () => {
 
 test("gateStatuses derives the engineering kind's gates from its shipped manifest", () => {
   const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "loops", "engineering", "loop.json"), "utf8"))
-  assert.deepEqual(gateStatuses(parseManifest(raw)).sort(), ["in-review", "plan-review"])
+  // "draft" comes from workSource.humanGates, not the transition table — nothing
+  // parks into it, a human authors it there.
+  assert.deepEqual(gateStatuses(parseManifest(raw)).sort(), ["draft", "in-review", "plan-review"])
+})
+
+test("humanGates defaults to [] and is unioned into gateStatuses, deduped", () => {
+  const plain = parseManifest(base)
+  assert.deepEqual(plain.workSource.type === "backlog" && plain.workSource.humanGates, [])
+  assert.deepEqual(gateStatuses(plain), [])
+
+  const withGates = parseManifest({
+    ...base,
+    workSource: { ...base.workSource, humanGates: ["queued", "done"] },
+    transitions: {
+      ...base.transitions,
+      check: { ...base.transitions.check, onPass: { kind: "done", toStatus: "done", message: "done" } },
+    },
+  })
+  // "done" is both landed-into and declared; "queued" only declared. Each appears once.
+  assert.deepEqual(gateStatuses(withGates).sort(), ["done", "queued"])
+})
+
+test("a humanGates status is a gate, not a pool — it never becomes claimable", () => {
+  const m = parseManifest({ ...base, workSource: { ...base.workSource, humanGates: ["done"] } })
+  assert.ok(m.workSource.type === "backlog")
+  assert.ok(!m.workSource.pools.some((p) => p.status === "done"))
+})
+
+test("humanGates must name a declared status", () => {
+  assert.throws(
+    () => parseManifest({ ...base, workSource: { ...base.workSource, humanGates: ["nope"] } }),
+    /humanGates lists "nope", which is not one of workSource.statuses/,
+  )
 })
 
 test("github-pr source accepts the review-requested trigger and a reviewer role; role defaults to author", () => {

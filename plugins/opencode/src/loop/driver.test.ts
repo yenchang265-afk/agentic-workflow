@@ -587,7 +587,7 @@ test("ship pushes the branch and opens a draft PR when gh succeeds", async () =>
   assert.ok(log.some((cmd) => cmd.includes("PR opened") && cmd.includes("https://github.com/acme/widgets/pull/11")))
 })
 
-test("id-less approve ignores drafts — a lone draft is not queued (drafts need an explicit id)", async () => {
+test("id-less approve falls back to a lone draft when no loop gate is waiting", async () => {
   const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "no plan yet" }) }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
@@ -595,12 +595,44 @@ test("id-less approve ignores drafts — a lone draft is not queued (drafts need
 
   await handleApprove(deps, "sess", "", testConfig)
 
-  assert.equal(toasts[0]?.variant, "info")
-  assert.match(toasts[0]?.message ?? "", /Nothing awaiting approval/)
-  assert.match(toasts[0]?.message ?? "", /approve <id>/)
-  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "a draft is not approved without an explicit id")
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the lone draft is queued")
 })
 
+test("id-less approve skips the never-approve epic and queues the one real draft", async () => {
+  const files = {
+    "docs/tasks/draft/epic-a.md": serializeTask({ title: "Epic", body: "tracking", type: "epic" }),
+    "docs/tasks/draft/task-b.md": serializeTask({ title: "B", body: "real work" }),
+  }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("task-b") && cmd.includes("queued")))
+  assert.ok(!log.some((cmd) => cmd.includes("epic-a") && cmd.includes("mv")), "the tracking epic is untouched")
+})
+
+test("id-less approve refuses to guess between two drafts", async () => {
+  const files = {
+    "docs/tasks/draft/task-a.md": serializeTask({ title: "A", body: "x" }),
+    "docs/tasks/draft/task-b.md": serializeTask({ title: "B", body: "y" }),
+  }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Multiple tasks awaiting/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when ambiguous")
+})
+
+// The tier-priority regression test: loop gates outrank the authoring gate, so a
+// pile of drafts must never shadow (or make ambiguous) a single parked plan.
 test("id-less approve ignores a draft and advances the single parked plan (not ambiguous)", async () => {
   const files = {
     "docs/tasks/draft/task-a.md": serializeTask({ title: "A", body: "x" }),

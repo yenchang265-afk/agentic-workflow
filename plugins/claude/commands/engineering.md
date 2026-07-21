@@ -109,7 +109,8 @@ Dispatch:
   task → `completed/` (ship — only after the human reviewed the branch
   diff). A task lives in exactly one folder, so the gate is never ambiguous.
   Without an id it advances the single task at a loop wait-gate
-  (`plan-review/` or `in-review/`); drafts always need the explicit id.
+  (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only
+  when neither has anything waiting (tracking epics are never candidates).
   **Spawn nothing** — report the outcome. (Fallback:
   `mcp__agentic-loop__loop_approve({id})`, id optional.) Within an
   interactive `new`/`retask` turn, call `mcp__agentic-loop__loop_approve({id})`

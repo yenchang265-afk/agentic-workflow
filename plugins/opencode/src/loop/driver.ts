@@ -1102,13 +1102,14 @@ const backlogSummary = async (deps: Deps, config: Config) => {
 /** Human-readable one-liner of the backlog roll-up. Pure. */
 const formatBacklog = (s: Awaited<ReturnType<typeof backlogSummary>>): string => {
   const c = s.counts
+  const drafts = s.awaitingTask.length > 0 ? `${c.draft} draft (${s.awaitingTask.length} awaiting approve)` : `${c.draft} draft`
   const gate = c["plan-review"] > 0 ? `${c["plan-review"]} plan-review (awaiting approve)` : "0 plan-review"
   const held = s.claimHeld.length ? `, ${s.claimHeld.length} claim-held` : ""
   const progress =
     c["in-progress"] > 0
       ? `${c["in-progress"]} in-progress (${s.claimable.length} ready${held}, ${s.interrupted.length} interrupted)`
       : "0 in-progress"
-  return `backlog: ${c.draft} draft · ${c.queued} queued · ${gate} · ${progress} · ${c["in-review"]} in-review · ${c.completed} completed · ${c.abandoned} abandoned`
+  return `backlog: ${drafts} · ${c.queued} queued · ${gate} · ${progress} · ${c["in-review"]} in-review · ${c.completed} completed · ${c.abandoned} abandoned`
 }
 
 /**
@@ -1392,10 +1393,11 @@ const gateCtx = (deps: Deps, config: Config): GateCtx => ({
  * implies: `draft/` → queued (task gate), `plan-review/` → in-progress
  * (plan gate, plan required), or `in-review/` → completed (ship). Without an
  * id it advances the single task at a loop wait-gate (`plan-review/` or
- * `in-review/`) — `draft/` is deliberately excluded from auto-resolution:
- * drafts accumulate (including the never-approve epic tracking draft), so
- * scanning them id-less caused false "multiple awaiting" and risked queuing
- * the wrong draft. Approving a draft always takes an explicit id.
+ * `in-review/`), falling back to `draft/` only when neither has anything
+ * waiting: the loop's own gates outrank the authoring gate, so a parked plan is
+ * never shadowed by a pile of drafts. The never-approve epic tracking draft is
+ * skipped in the id-less scan — leaving it in was what made drafts produce
+ * false "multiple awaiting" and risk queuing the wrong one.
  */
 export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps

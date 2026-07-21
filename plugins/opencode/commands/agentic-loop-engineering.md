@@ -84,9 +84,10 @@ Dispatch:
     reviewing the branch diff).
   A task lives in exactly one folder, so the gate is never ambiguous; the
   toast names which move happened. Without an id it advances the single task
-  at a loop wait-gate (`plan-review/` or `in-review/`); drafts always need
-  the explicit id (they accumulate — including never-approved epic tracking
-  drafts — so the loop never guesses one).
+  at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
+  `draft/` task only when neither has anything waiting — loop gates outrank the
+  authoring gate, and never-approved epic tracking drafts are skipped, so the
+  loop never guesses.
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning; the reason is recorded in the audit note and the next PLAN

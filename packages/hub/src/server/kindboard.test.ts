@@ -14,7 +14,9 @@ test("kindBoards derives the engineering board from its manifest", () => {
   assert.equal(eng.kind, "engineering")
   assert.equal(eng.sourceType, "backlog")
   assert.deepEqual(eng.statuses, ["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"])
-  assert.deepEqual([...eng.gateStatuses].sort(), ["in-review", "plan-review"])
+  // draft is a gate column too — declared via the manifest's humanGates, since
+  // nothing transitions into it.
+  assert.deepEqual([...eng.gateStatuses].sort(), ["draft", "in-review", "plan-review"])
   assert.deepEqual(eng.pools, ["in-progress", "queued"])
 })
 

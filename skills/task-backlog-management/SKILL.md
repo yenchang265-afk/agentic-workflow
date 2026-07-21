@@ -177,7 +177,8 @@ scope judgement, not a measured limit.
 The gate verb is one and the same at every stop: **`/agentic-loop:engineering approve [id]`**
 advances a task by the gate its folder implies (parked plan → build, finished
 review → completed), and id-less it resolves the single task waiting at a
-loop wait-gate — it never advances a draft without an explicit id.
+loop wait-gate — falling back to a lone draft only when no loop gate is
+waiting (tracking epics are never candidates).
 **`/agentic-loop:engineering replan [id] [reason]`** is the matching rejection verb.
 
 A failed or stopped task is **left in `in-progress/`** with a note appended, so

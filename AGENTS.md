@@ -98,7 +98,7 @@ stateDiagram-v2
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/agentic-loop:engineering new <idea>` then `/agentic-loop:engineering approve <id>` then `/agentic-loop:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-loop:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, never a draft. See `loop-orchestration`, not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agentic-loop:engineering new <idea>` then `/agentic-loop:engineering approve <id>` then `/agentic-loop:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-loop:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, falling back to a lone draft only when no loop gate is waiting. See `loop-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
 
