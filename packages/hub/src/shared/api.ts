@@ -494,6 +494,8 @@ export interface TokensSummaryResponse {
 export interface RepoInfo {
   readonly id: string
   readonly directory: string
+  /** Present when the repo's config failed to load and it is served degraded on defaults. */
+  readonly configError?: string
 }
 
 export interface ReposResponse {

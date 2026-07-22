@@ -30,6 +30,13 @@ export interface HubDeps {
   readonly sh: Shell
   readonly log: Log
   /**
+   * Set only when this repo's `.agentic-workflow.json` failed to parse/validate
+   * at initial build and the deps fell back to defaults. The board renders on the
+   * default (engineering) shape and the Config tab surfaces the issue so it can
+   * be fixed in place. Cleared on a successful reload. Absent = healthy.
+   */
+  readonly configError?: string
+  /**
    * Re-read this repo's `.agentic-workflow.json` and swap its deps. Config is read
    * once at startup, so a route that writes the config must call this or the
    * server keeps serving the old one until a restart. Optional: test fixtures
