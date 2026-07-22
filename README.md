@@ -21,7 +21,7 @@ terminal call human. See [The sitters](#the-sitters-experimental) below.
 Authoring a new kind is a `workflow.json` + stage prompts away — see
 [`packages/core/workflows/README.md`](packages/core/workflows/README.md).
 
-## The engineering loop
+## The engineering workflow
 
 Authoring, gates, and execution are one command. **`/agentic-workflow:engineering`** interviews
 you into a draft task (`new <idea>` — always, so the goal and testable
