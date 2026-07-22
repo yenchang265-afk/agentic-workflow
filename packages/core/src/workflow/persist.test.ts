@@ -5,7 +5,7 @@ import { mkdtemp, readFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { clearState, loadState, saveState, statePath } from "./persist.js"
-import type { LoopState } from "./state.js"
+import type { WorkflowState } from "./state.js"
 
 /**
  * saveState/clearState shell out via Bun `$`; loadState reads via the opencode
@@ -53,7 +53,7 @@ const fakeClient = (dir: string) =>
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any
 
-const sampleState: LoopState = {
+const sampleState: WorkflowState = {
   goal: "add rate limiting",
   stage: "verify",
   iteration: 1,
@@ -66,8 +66,8 @@ test("statePath is under runs/ with a .state.json suffix", () => {
   assert.equal(statePath("/repo", "docs/tasks", "add-rl"), "/repo/docs/tasks/runs/add-rl.state.json")
 })
 
-test("saveState → loadState round-trips a full LoopState", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+test("saveState → loadState round-trips a full WorkflowState", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   const $ = fakeShell()
   const client = fakeClient(dir)
   await saveState($, dir, "docs/tasks", "add-rl", sampleState)
@@ -76,19 +76,19 @@ test("saveState → loadState round-trips a full LoopState", async () => {
 })
 
 test("loadState returns null for an absent snapshot", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   assert.equal(await loadState(fakeClient(dir), dir, "docs/tasks", "missing"), null)
 })
 
 test("loadState fails closed on invalid JSON", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(path.join(dir, "docs/tasks/runs/bad.state.json"), "{not json")
   assert.equal(await loadState(fakeClient(dir), dir, "docs/tasks", "bad"), null)
 })
 
 test("loadState fails closed on a schema violation (unknown stage)", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(
     path.join(dir, "docs/tasks/runs/bad.state.json"),
@@ -98,7 +98,7 @@ test("loadState fails closed on a schema violation (unknown stage)", async () =>
 })
 
 test("loadState fails closed on a snapshot at the PLAN stage (PLAN never snapshots)", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(
     path.join(dir, "docs/tasks/runs/old.state.json"),
@@ -108,7 +108,7 @@ test("loadState fails closed on a snapshot at the PLAN stage (PLAN never snapsho
 })
 
 test("loadState tolerates a legacy paused flag on an otherwise valid snapshot", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(
     path.join(dir, "docs/tasks/runs/legacy.state.json"),
@@ -119,7 +119,7 @@ test("loadState tolerates a legacy paused flag on an otherwise valid snapshot", 
 })
 
 test("clearState removes the snapshot and is idempotent", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   const $ = fakeShell()
   await saveState($, dir, "docs/tasks", "add-rl", sampleState)
   await clearState($, dir, "docs/tasks", "add-rl")
@@ -128,9 +128,9 @@ test("clearState removes the snapshot and is idempotent", async () => {
 })
 
 test("a platform-stamped snapshot round-trips; a legacy snapshot without it loads platform-less", async () => {
-  const dir = await mkdtemp(path.join(tmpdir(), "loop-persist-"))
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   const $ = fakeShell()
-  const adoState: LoopState = { ...sampleState, platform: "ado" }
+  const adoState: WorkflowState = { ...sampleState, platform: "ado" }
   await saveState($, dir, "docs/tasks", "add-rl", adoState)
   const loaded = await loadState(fakeClient(dir), dir, "docs/tasks", "add-rl")
   assert.equal(loaded?.platform, "ado")

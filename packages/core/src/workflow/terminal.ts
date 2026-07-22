@@ -6,7 +6,7 @@ import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
 import { loopId, releaseWorktreeAt, teardownIsolation } from "./isolate.js"
-import type { Action, Config, LoopState } from "./state.js"
+import type { Action, Config, WorkflowState } from "./state.js"
 import type { Outcome } from "./metrics.js"
 
 /**
@@ -44,7 +44,7 @@ export interface TerminalCtx {
   readonly directory: string
   readonly config: Config
   /** The loop state reaching the terminal event. */
-  readonly state: LoopState
+  readonly state: WorkflowState
   /** The claimed kind's manifest — its `validateBeforeTransition` veto runs here. */
   readonly manifest: LoadedManifest
   /** git identity for audit notes (resolved once by the host; null outside a repo). */

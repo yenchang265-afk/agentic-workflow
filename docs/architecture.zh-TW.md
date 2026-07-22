@@ -45,10 +45,10 @@ flowchart TB
     sched --> ghpr
     sched --> depscan
     sched --> ciruns
-    backlog -->|"WorkItem + entry LoopState"| engine
-    ghpr -->|"WorkItem + entry LoopState"| engine
-    depscan -->|"WorkItem + entry LoopState"| engine
-    ciruns -->|"WorkItem + entry LoopState"| engine
+    backlog -->|"WorkItem + entry WorkflowState"| engine
+    ghpr -->|"WorkItem + entry WorkflowState"| engine
+    depscan -->|"WorkItem + entry WorkflowState"| engine
+    ciruns -->|"WorkItem + entry WorkflowState"| engine
     manifest --> engine
     eng --> manifest
     sitter --> manifest
@@ -80,7 +80,7 @@ flowchart TB
 - **工作來源 + 排程器**——一個 `WorkSource`
   （`packages/core/src/source/types.ts`）知道如何為某一種類型尋找、
   原子性地認領，以及釋放工作單元；一個已認領的 `WorkItem` 帶著一份
-  完整建構好的入口 `LoopState`，因此驅動程式不需要知道工作來源的細節。
+  完整建構好的入口 `WorkflowState`，因此驅動程式不需要知道工作來源的細節。
   PR 與 CI 工作來源各有 Azure DevOps 對應版本（`ado-pr.ts`、
   `ado-ci-runs.ts`），當 `codePlatform` 為 `"ado"` 時在接線階段換入；
   它們與 ADO 溝通的方式——`az` CLI（預設）、REST 或 MCP——則依

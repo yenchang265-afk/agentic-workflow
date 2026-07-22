@@ -5,7 +5,7 @@ import { registerValidateHook } from "../manifest/registry.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import type { Action, LoopState } from "./state.js"
+import type { Action, WorkflowState } from "./state.js"
 import type { Outcome } from "./metrics.js"
 import { runTerminal, type TerminalCtx } from "./terminal.js"
 
@@ -19,7 +19,7 @@ import { runTerminal, type TerminalCtx } from "./terminal.js"
  */
 const makeCtx = (
   files: Record<string, string>,
-  state: LoopState,
+  state: WorkflowState,
   opts: { validate?: string; manifest?: LoadedManifest } = {},
 ) => {
   const fs: Record<string, string> = {}
@@ -91,7 +91,7 @@ const park: Extract<Action, { kind: "park" }> = { kind: "park", message: "Plan c
 const done: Extract<Action, { kind: "done" }> = { kind: "done", message: "Loop complete — review passed." }
 const stop: Extract<Action, { kind: "stop" }> = { kind: "stop", message: "Loop stopped at build." }
 
-const planState = (): LoopState => ({ goal: "Do it", stage: "plan", iteration: 0, artifacts: {}, task: taskRef("t", "queued") })
+const planState = (): WorkflowState => ({ goal: "Do it", stage: "plan", iteration: 0, artifacts: {}, task: taskRef("t", "queued") })
 
 test("park moves a planned queued task to plan-review and reports the path", async () => {
   const { ctx, log, metrics, commits } = makeCtx({ "queued/t.md": body(true) }, planState())
@@ -131,7 +131,7 @@ test("park on a task-less loop reports park-free with no metrics", async () => {
 })
 
 test("done parks the task in in-review and commits the backlog when not isolated", async () => {
-  const state: LoopState = { goal: "Do it", stage: "review", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  const state: WorkflowState = { goal: "Do it", stage: "review", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
   const { ctx, log, metrics, commits, checkpoints } = makeCtx({ "in-progress/t.md": body(true) }, state)
   const report = await runTerminal(ctx, done)
   assert.ok(report.kind === "done" && report.moved === true)
@@ -144,7 +144,7 @@ test("done parks the task in in-review and commits the backlog when not isolated
 test("done on an isolated shared-tree loop checkpoints and tears down BEFORE the backlog move + commit", async () => {
   // The stranding regression: a backlog write made before teardown would be
   // committed onto feature/<id> and vanish from the human branch at checkout.
-  const state: LoopState = {
+  const state: WorkflowState = {
     goal: "Do it",
     stage: "review",
     iteration: 0,
@@ -166,7 +166,7 @@ test("done on an isolated shared-tree loop checkpoints and tears down BEFORE the
 })
 
 test("stop on an isolated shared-tree loop checkpoints and tears down BEFORE the note + backlog commit", async () => {
-  const state: LoopState = {
+  const state: WorkflowState = {
     goal: "Do it",
     stage: "build",
     iteration: 0,
@@ -184,7 +184,7 @@ test("stop on an isolated shared-tree loop checkpoints and tears down BEFORE the
 })
 
 test("stop annotates the task and leaves it in place (no move)", async () => {
-  const state: LoopState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  const state: WorkflowState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
   const { ctx, log, metrics, commits } = makeCtx({ "in-progress/t.md": body(true) }, state)
   const report = await runTerminal(ctx, stop)
   assert.equal(report.kind, "stop")
@@ -196,7 +196,7 @@ test("stop annotates the task and leaves it in place (no move)", async () => {
 test("stop with the task gone from in-progress/ skips the note and creates no ghost file", async () => {
   // The resurrection regression: appendNote's `>>` creates the file if absent, so a
   // stop after a human moved/deleted the task must never write to the stale path.
-  const state: LoopState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  const state: WorkflowState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
   const { ctx, log, metrics, commits, fs } = makeCtx({}, state)
   const report = await runTerminal(ctx, stop)
   assert.equal(report.kind, "stop")
@@ -209,7 +209,7 @@ test("stop with the task gone from in-progress/ skips the note and creates no gh
 test("stop appends to the re-resolved path, not the stale claim-time path", async () => {
   // Claim-time ref points at queued/, but the file has since moved to in-progress/ —
   // the note must land on the real current path.
-  const state: LoopState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "queued") }
+  const state: WorkflowState = { goal: "Do it", stage: "build", iteration: 0, artifacts: {}, task: taskRef("t", "queued") }
   const { ctx, log, commits } = makeCtx({ "in-progress/t.md": body(true) }, state)
   const report = await runTerminal(ctx, stop)
   assert.equal(report.kind, "stop")
@@ -246,7 +246,7 @@ test("stop mid-plan with the task gone still releases the claim-time marker, no 
 test("a source-pre-set git that never isolated leaves the main tree untouched (B5)", async () => {
   // pr-sitter triage → done "nothing actionable": git names the branch to isolate ONTO
   // but `isolated` is false, so no checkpoint/teardown may touch the human's main tree.
-  const state: LoopState = {
+  const state: WorkflowState = {
     goal: "Sit on PR",
     stage: "triage",
     iteration: 0,

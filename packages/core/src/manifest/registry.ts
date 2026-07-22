@@ -1,4 +1,4 @@
-import type { LoopState } from "../workflow/state.js"
+import type { WorkflowState } from "../workflow/state.js"
 import type { Task } from "../task/schema.js"
 import type { TemplateContext } from "./template.js"
 
@@ -11,7 +11,7 @@ import type { TemplateContext } from "./template.js"
  */
 
 /** Augment (or replace) a stage's prompt-template context before rendering. */
-export type ComposeHook = (ctx: TemplateContext, state: LoopState) => TemplateContext
+export type ComposeHook = (ctx: TemplateContext, state: WorkflowState) => TemplateContext
 
 /**
  * Veto a terminal transition (park/done) when its side conditions don't hold —
@@ -19,7 +19,7 @@ export type ComposeHook = (ctx: TemplateContext, state: LoopState) => TemplateCo
  * the task file". Returns an error message to veto, or null to allow. Hosts
  * run these (they need IO); the engine itself stays pure.
  */
-export type ValidateHook = (state: LoopState) => Promise<string | null> | string | null
+export type ValidateHook = (state: WorkflowState) => Promise<string | null> | string | null
 
 /** Whether a backlog task is claimable for a manifest pool (`pools[].claimPredicate`). */
 export type ClaimPredicate = (task: Task) => boolean

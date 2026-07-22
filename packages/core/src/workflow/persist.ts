@@ -2,10 +2,10 @@ import path from "node:path"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import { z } from "zod"
-import { ADO_ACCESS_METHODS, CODE_PLATFORMS, STAGES, type LoopState } from "./state.js"
+import { ADO_ACCESS_METHODS, CODE_PLATFORMS, STAGES, type WorkflowState } from "./state.js"
 
 /**
- * Durable snapshots of a task-driven loop's `LoopState`, so a crash or opencode
+ * Durable snapshots of a task-driven loop's `WorkflowState`, so a crash or opencode
  * restart mid-loop resumes at the exact stage with artifacts intact instead of
  * re-planning from the persisted plan. **Impure** (fs via the client + Bun `$`);
  * `state.ts` stays pure. Snapshots are ephemeral machine state — gitignored,
@@ -38,7 +38,7 @@ const TaskRefSchema = z.object({
 /** The engineering stages a snapshot may resume at — every stage except `plan` (see module doc). */
 export const SNAPSHOT_STAGES: readonly string[] = STAGES.filter((s) => s !== "plan")
 
-const LoopStateSchema = z.object({
+const WorkflowStateSchema = z.object({
   kind: z.string().min(1).optional(),
   goal: z.string(),
   stage: z.string().min(1),
@@ -65,7 +65,7 @@ export const saveState = async (
   directory: string,
   tasksDir: string,
   id: string,
-  state: LoopState,
+  state: WorkflowState,
 ): Promise<void> => {
   const dir = path.join(directory, tasksDir, "runs")
   await $`mkdir -p ${dir}`.quiet().nothrow()
@@ -85,7 +85,7 @@ export const loadState = async (
   tasksDir: string,
   id: string,
   resumableStages: readonly string[] = SNAPSHOT_STAGES,
-): Promise<LoopState | null> => {
+): Promise<WorkflowState | null> => {
   const rel = `${tasksDir}/runs/${id}.state.json`
   const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
   const content = read?.data?.content
@@ -96,9 +96,9 @@ export const loadState = async (
   } catch {
     return null
   }
-  const result = LoopStateSchema.safeParse(raw)
+  const result = WorkflowStateSchema.safeParse(raw)
   if (!result.success || !resumableStages.includes(result.data.stage)) return null
-  return result.data as LoopState
+  return result.data as WorkflowState
 }
 
 /** Remove a task's snapshot. Best-effort; idempotent on an absent file. */

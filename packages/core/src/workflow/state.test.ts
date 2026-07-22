@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { LoopState, TaskRef } from "./state.js"
+import type { WorkflowState, TaskRef } from "./state.js"
 import { clearLoop, findSessionDriving, planStageTaskId, resumeAtBuild, setLoop, startAtPlan } from "./state.js"
 
 // Transition and prompt-composition behavior is covered by the engine parity
 // suite (engine.test.ts); this file covers the constructors and the
 // in-memory session store.
 
-const mk = (goal: string, task?: TaskRef): LoopState => ({
+const mk = (goal: string, task?: TaskRef): WorkflowState => ({
   goal,
   stage: "build",
   iteration: 0,

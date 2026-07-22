@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { clearLoop, setLoop, type LoopState } from "@agentic-workflow/core/workflow/state"
+import { clearLoop, setLoop, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { makeAgenticWorkflow } from "./impl.ts"
 
 /**
@@ -31,7 +31,7 @@ const makeHooks = async (sessions: Record<string, string | undefined>, opts: { f
   return (await makeAgenticWorkflow({ client, directory: "/repo", $, worktree: "/repo" } as never)) as unknown as Hooks
 }
 
-const worktreeLoop = (): LoopState => ({
+const worktreeLoop = (): WorkflowState => ({
   goal: "Do it",
   stage: "build",
   iteration: 0,

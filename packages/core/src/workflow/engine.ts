@@ -2,7 +2,7 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import { stageDef } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
-import type { Action, Config, LoopState } from "./state.js"
+import type { Action, Config, WorkflowState } from "./state.js"
 import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
@@ -13,12 +13,12 @@ import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js
  * and messages coming from the manifest instead of a switch.
  */
 
-const withArtifact = (state: LoopState, stage: string, output: string): LoopState => ({
+const withArtifact = (state: WorkflowState, stage: string, output: string): WorkflowState => ({
   ...state,
   artifacts: { ...state.artifacts, [stage]: output },
 })
 
-const withoutArtifacts = (state: LoopState, stages: readonly string[]): LoopState => {
+const withoutArtifacts = (state: WorkflowState, stages: readonly string[]): WorkflowState => {
   if (stages.length === 0) return state
   const artifacts = Object.fromEntries(Object.entries(state.artifacts).filter(([k]) => !stages.includes(k)))
   return { ...state, artifacts }
@@ -29,7 +29,7 @@ const withoutArtifacts = (state: LoopState, stages: readonly string[]): LoopStat
  * from the state is precomputed here (diff command, worktree pinning
  * paragraph) so ordinary workflow kinds need no compose hooks.
  */
-export const promptContext = (state: LoopState): TemplateContext => {
+export const promptContext = (state: WorkflowState): TemplateContext => {
   const accept = state.task?.acceptance ?? []
   const wt = state.git?.worktree
   const diffCmd = state.git
@@ -74,7 +74,7 @@ export const promptContext = (state: LoopState): TemplateContext => {
 }
 
 /** Render the prompt threaded into `target`'s stage command. */
-export const composePrompt = (loaded: LoadedManifest, state: LoopState, target: string): string => {
+export const composePrompt = (loaded: LoadedManifest, state: WorkflowState, target: string): string => {
   const def = stageDef(loaded.manifest, target)
   const tpl = loaded.prompts[def.name]
   if (tpl === undefined) throw new Error(`workflow kind "${loaded.manifest.kind}" has no prompt loaded for stage "${def.name}"`)
@@ -90,13 +90,13 @@ export const composePrompt = (loaded: LoadedManifest, state: LoopState, target: 
     : `${rendered}\n\n${workScopeBlock(def.name)}`
 }
 
-const fireAt = (loaded: LoadedManifest, state: LoopState, target: string): { state: LoopState; action: Action } => {
+const fireAt = (loaded: LoadedManifest, state: WorkflowState, target: string): { state: WorkflowState; action: Action } => {
   const next = { ...state, stage: target }
   return { state: next, action: { kind: "fire", stage: target, arguments: composePrompt(loaded, next, target) } }
 }
 
 /** The first step to drive for a freshly-constructed state — fires its own stage. */
-export const firstStep = (loaded: LoadedManifest, state: LoopState): { state: LoopState; action: Action } => ({
+export const firstStep = (loaded: LoadedManifest, state: WorkflowState): { state: WorkflowState; action: Action } => ({
   state,
   action: { kind: "fire", stage: state.stage, arguments: composePrompt(loaded, state, state.stage) },
 })
@@ -111,11 +111,11 @@ export const firstStep = (loaded: LoadedManifest, state: LoopState): { state: Lo
  */
 export const advance = (
   loaded: LoadedManifest,
-  state: LoopState,
+  state: WorkflowState,
   config: Config,
   output: string,
   verdict: Verdict | null = null,
-): { state: LoopState; action: Action } => {
+): { state: WorkflowState; action: Action } => {
   const { manifest } = loaded
   const s = withArtifact(state, state.stage, output)
   const def = stageDef(manifest, s.stage)

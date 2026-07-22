@@ -1,7 +1,7 @@
 import path from "node:path"
 import type { Log, Shell } from "../host.js"
 import { slugify } from "../task/schema.js"
-import type { Config, LoopState } from "./state.js"
+import type { Config, WorkflowState } from "./state.js"
 import {
   addWorktree,
   checkoutBranch,
@@ -21,7 +21,7 @@ import {
  * MCP server drive the exact same behavior.
  */
 
-export const loopId = (state: LoopState): string =>
+export const loopId = (state: WorkflowState): string =>
   state.task?.id ?? (slugify(state.goal.split("\n")[0] ?? "") || "goal")
 
 /** Absolute path to a task's dedicated worktree under the configured root. Pure. */
@@ -84,9 +84,9 @@ export const ensureIsolation = async (
   log: Log,
   directory: string,
   config: Config,
-  state: LoopState,
+  state: WorkflowState,
   baseBranch?: string,
-): Promise<LoopState> => {
+): Promise<WorkflowState> => {
   if (state.git) {
     if (state.git.worktree) {
       // Worktree mode — never touch the shared tree. Recreate a vanished worktree.
@@ -210,7 +210,7 @@ export const ensureIsolation = async (
  * Shared mode is unchanged: return the main tree to the branch it was on before
  * the loop branched off, or the human is left stranded on `feature/<id>`.
  */
-export const teardownIsolation = async ($: Shell, log: Log, directory: string, state: LoopState): Promise<void> => {
+export const teardownIsolation = async ($: Shell, log: Log, directory: string, state: WorkflowState): Promise<void> => {
   if (!state.git) return
   if (state.git.worktree) {
     await log("info", `loop: worktree ${state.git.worktree} kept on ${state.git.branch} — the next run resumes in it`)

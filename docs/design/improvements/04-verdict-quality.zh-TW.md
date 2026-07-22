@@ -43,7 +43,7 @@ args: {
   `VERIFY verdict: FAIL — 2/4 criteria unmet: "returns 429 over limit", … (iteration 2)`。
   維持在同一行（依照 `auditNote` 的契約，備註格式是按尾碼做 grep 比對——
   文字在前，時間戳尾碼在後）。
-- 傳遞方式：`LoopState.artifacts` 維持 `string`（讓狀態機保持簡單）。取而
+- 傳遞方式：`WorkflowState.artifacts` 維持 `string`（讓狀態機保持簡單）。取而
   代之的是，driver 會在 `advanceOnIdle` 把檢查階段的輸出存成 artifact
   *之前*，先在前面加上一個結構化區塊：
 

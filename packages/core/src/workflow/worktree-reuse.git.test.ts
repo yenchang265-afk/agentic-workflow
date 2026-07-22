@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG } from "../config.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import type { Action, LoopState } from "./state.js"
+import type { Action, WorkflowState } from "./state.js"
 import { commitAll, commitPaths } from "./git.js"
 import { shipTask, type GateCtx } from "./gate.js"
 import { ensureIsolation } from "./isolate.js"
@@ -74,7 +74,7 @@ const config = { ...DEFAULT_CONFIG, worktreesDir: ".workflow-worktrees" }
 const wtOf = (repo: string): string => path.join(repo, ".workflow-worktrees", "t1")
 
 /** The entry state a fresh claim builds — no `git`, exactly like source/backlog.ts. */
-const entryState = (taskPath: string): LoopState => ({
+const entryState = (taskPath: string): WorkflowState => ({
   goal: "Do it",
   stage: "build",
   iteration: 0,
@@ -96,7 +96,7 @@ const seedRepo = async (): Promise<{ repo: string; taskPath: string }> => {
   return { repo, taskPath }
 }
 
-const terminalCtx = (repo: string, state: LoopState): TerminalCtx => ({
+const terminalCtx = (repo: string, state: WorkflowState): TerminalCtx => ({
   $: sh,
   log: noopLog,
   directory: repo,
@@ -188,7 +188,7 @@ test("re-shipping a completed task releases the worktree a mid-ship crash left b
 })
 
 /** A free-text (task-less) loop's entry state — no `task`, so no ship gate ever runs for it. */
-const freeState = (): LoopState => ({
+const freeState = (): WorkflowState => ({
   goal: "Free-text goal",
   stage: "build",
   iteration: 0,

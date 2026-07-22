@@ -51,7 +51,7 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
   "ci-runs": { branch: { type: "string", site: "orchestrate.ts:132" } },
 }
 
-/** Object-shaped keys validated by core's schema (LoopTriggerSchema; the `stageModels` record) — not positional knobs. */
+/** Object-shaped keys validated by core's schema (WorkflowTriggerSchema; the `stageModels` record) — not positional knobs. */
 const STRUCTURED_KEYS: readonly string[] = ["trigger", "stageModels"]
 
 /** Levenshtein distance, capped: we only care whether it's 1. */

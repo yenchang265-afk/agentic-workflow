@@ -46,7 +46,7 @@ Carry them through:
   `VERIFY verdict: FAIL — 2/4 criteria unmet: "returns 429 over limit", … (iteration 2)`.
   Keep it on one line (the note format is grep-matched by suffix, per
   `auditNote`'s contract — text first, timestamp suffix last).
-- Threading: `LoopState.artifacts` stays `string` (keep the state machine
+- Threading: `WorkflowState.artifacts` stays `string` (keep the state machine
   simple). Instead, the driver prepends a structured block to the check
   stage's output *before* `advanceOnIdle` stores it as the artifact:
 

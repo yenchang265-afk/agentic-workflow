@@ -8,7 +8,7 @@ import type { Log, Shell, ShellOutput } from "../host.js"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import type { LoopState } from "./state.js"
+import type { WorkflowState } from "./state.js"
 import { commitAll } from "./git.js"
 import { ensureIsolation } from "./isolate.js"
 
@@ -67,7 +67,7 @@ const git = async (repo: string, ...args: string[]): Promise<string> => {
 const noopLog: Log = () => {}
 const config = { ...DEFAULT_CONFIG, worktreesDir: ".workflow-worktrees" }
 
-const entryState = (taskPath: string): LoopState => ({
+const entryState = (taskPath: string): WorkflowState => ({
   goal: "Do it",
   stage: "build",
   iteration: 0,

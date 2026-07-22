@@ -5,7 +5,7 @@ import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
 import { effectiveAllowlist, stageDef } from "../manifest/schema.js"
 import { advance, composePrompt, firstStep } from "./engine.js"
-import type { Action, Config, LoopState, TaskRef } from "./state.js"
+import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
@@ -31,7 +31,7 @@ const config: Config = {
 
 // --- the frozen oracle (verbatim from the pre-manifest state.ts) ---
 
-const oracleComposeArgs = (state: LoopState, target: string): string => {
+const oracleComposeArgs = (state: WorkflowState, target: string): string => {
   const a = state.artifacts
   const accept = state.task?.acceptance ?? []
   const acceptBlock = (heading: string): string => `${heading}\n${accept.map((c) => `- ${c}`).join("\n")}`
@@ -80,12 +80,12 @@ const oracleComposeArgs = (state: LoopState, target: string): string => {
   return parts.join("\n\n")
 }
 
-const withArtifact = (state: LoopState, stage: string, output: string): LoopState => ({
+const withArtifact = (state: WorkflowState, stage: string, output: string): WorkflowState => ({
   ...state,
   artifacts: { ...state.artifacts, [stage]: output },
 })
 
-const withoutArtifact = (state: LoopState, stage: string): LoopState => {
+const withoutArtifact = (state: WorkflowState, stage: string): WorkflowState => {
   const { [stage]: _dropped, ...rest } = state.artifacts
   return { ...state, artifacts: rest }
 }
@@ -94,7 +94,7 @@ const withoutArtifact = (state: LoopState, stage: string): LoopState => {
 // prompt-level contract paragraph (see verdict.ts) — check stages the mandatory
 // verdict contract, work stages the scope fence. Appended here rather than
 // "fixed" inside the frozen composeArgs.
-const oracleCompose = (state: LoopState, stage: string): string => {
+const oracleCompose = (state: WorkflowState, stage: string): string => {
   const base = oracleComposeArgs(state, stage)
   const def = stageDef(eng.manifest, stage)
   return def.kind === "check"
@@ -102,17 +102,17 @@ const oracleCompose = (state: LoopState, stage: string): string => {
     : `${base}\n\n${workScopeBlock(stage)}`
 }
 
-const oracleFire = (state: LoopState, stage: string): { state: LoopState; action: Action } => ({
+const oracleFire = (state: WorkflowState, stage: string): { state: WorkflowState; action: Action } => ({
   state: { ...state, stage },
   action: { kind: "fire", stage, arguments: oracleCompose({ ...state, stage }, stage) },
 })
 
 const oracleAdvance = (
-  state: LoopState,
+  state: WorkflowState,
   cfg: Config,
   output: string,
   verdict: Verdict | null = null,
-): { state: LoopState; action: Action } => {
+): { state: WorkflowState; action: Action } => {
   const s = withArtifact(state, state.stage, output)
   switch (s.stage) {
     case "plan":
@@ -182,7 +182,7 @@ const oracleAdvance = (
 
 // --- fixtures ---
 
-const mk = (goal: string, task?: TaskRef): LoopState => ({
+const mk = (goal: string, task?: TaskRef): WorkflowState => ({
   goal,
   stage: "build",
   iteration: 0,
@@ -194,7 +194,7 @@ const task: TaskRef = { id: "add-foo", path: "/r/docs/tasks/in-progress/add-foo.
 
 // --- golden parity: composePrompt ≡ oracle composeArgs, byte for byte ---
 
-const PROMPT_STATES: Record<string, LoopState> = {
+const PROMPT_STATES: Record<string, WorkflowState> = {
   "build entry with plan": resumeAtBuild("add foo", task, "PLAN BODY"),
   "plan entry": startAtPlan("add foo", task),
   "replan with prior plan + acceptance": startAtPlan("g", { id: "t", path: "/p", acceptance: ["Returns 429 over limit"] }, "OLD PLAN"),
@@ -263,7 +263,7 @@ const strip = <T extends object>(o: T): Record<string, unknown> => {
   return rest
 }
 
-const CASES: { label: string; state: LoopState; output: string; verdict?: Verdict | null }[] = [
+const CASES: { label: string; state: WorkflowState; output: string; verdict?: Verdict | null }[] = [
   { label: "plan parks", state: startAtPlan("add foo", task), output: "plan written" },
   { label: "build fires verify", state: resumeAtBuild("add foo", task, "PLAN BODY"), output: "diff summary" },
   { label: "verify PASS", state: { ...mk("g"), stage: "verify" }, output: "all criteria met", verdict: "PASS" },
@@ -337,7 +337,7 @@ test("the engineering manifest names commands, agents, and check-stage allowlist
 // --- the pr-sitter manifest walks end-to-end through the same engine ---
 
 const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
-const prState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): LoopState => ({
+const prState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): WorkflowState => ({
   kind: "pr-sitter",
   goal: 'PR #7 "Add rate limiting" — failing checks: ci/test',
   stage,
@@ -398,7 +398,7 @@ test("pr-sitter: a missing triage verdict reads as FAIL (nothing to do), never a
 
 test("pr-sitter prompts render gh guidance by default and ADO REST guidance when the state is stamped ado", () => {
   const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind: "pr-sitter",
     goal: "PR #7",
     stage: "triage",
@@ -425,7 +425,7 @@ test("pr-sitter prompts render gh guidance by default and ADO REST guidance when
 
 test("pr-sitter ado prompts branch on the platformAccess stamp: az CLI, explicit rest, and mcp", () => {
   const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind: "pr-sitter",
     goal: "PR #7",
     stage: "triage",
@@ -458,7 +458,7 @@ test("pr-sitter ado prompts branch on the platformAccess stamp: az CLI, explicit
 // --- the review-sitter manifest walks end-to-end through the same engine ---
 
 const reviewer = loadManifest(WORKFLOWS_DIR, "review-sitter")
-const reviewState = (stage: string, artifacts: Record<string, string> = {}): LoopState => ({
+const reviewState = (stage: string, artifacts: Record<string, string> = {}): WorkflowState => ({
   kind: "review-sitter",
   goal: 'PR #9 "Add rate limiting" — review the changes and post one structured review comment',
   stage,
@@ -572,7 +572,7 @@ test("pr-sitter and review-sitter allowlists carry no open gh api glob — comme
 // --- the dep-sitter manifest walks end-to-end through the same engine ---
 
 const depSitter = loadManifest(WORKFLOWS_DIR, "dep-sitter")
-const depState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): LoopState => ({
+const depState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): WorkflowState => ({
   kind: "dep-sitter",
   goal: "Upgrade lodash to 4.17.21\n\nCurrently on 4.17.20 — a patch bump closing a high-severity advisory.",
   stage,
@@ -663,7 +663,7 @@ test("dep-sitter publish renders gh guidance by default and ADO PR-creation guid
 // --- the main-sitter manifest walks end-to-end through the same engine ---
 
 const mainSitter = loadManifest(WORKFLOWS_DIR, "main-sitter")
-const mainState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): LoopState => ({
+const mainState = (stage: string, artifacts: Record<string, string> = {}, iteration = 0): WorkflowState => ({
   kind: "main-sitter",
   goal: "Red CI on main at abcdef123456\n\nFailing workflow(s): CI.",
   stage,

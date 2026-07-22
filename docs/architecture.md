@@ -47,10 +47,10 @@ flowchart TB
     sched --> ghpr
     sched --> depscan
     sched --> ciruns
-    backlog -->|"WorkItem + entry LoopState"| engine
-    ghpr -->|"WorkItem + entry LoopState"| engine
-    depscan -->|"WorkItem + entry LoopState"| engine
-    ciruns -->|"WorkItem + entry LoopState"| engine
+    backlog -->|"WorkItem + entry WorkflowState"| engine
+    ghpr -->|"WorkItem + entry WorkflowState"| engine
+    depscan -->|"WorkItem + entry WorkflowState"| engine
+    ciruns -->|"WorkItem + entry WorkflowState"| engine
     manifest --> engine
     eng --> manifest
     sitter --> manifest
@@ -83,7 +83,7 @@ flowchart TB
 - **Work sources + scheduler** — a `WorkSource`
   (`packages/core/src/source/types.ts`) knows how to find, atomically claim,
   and release units of work for one kind; a claimed `WorkItem` carries a
-  fully-constructed entry `LoopState`, so drivers stay source-agnostic.
+  fully-constructed entry `WorkflowState`, so drivers stay source-agnostic.
   The PR and CI sources have Azure DevOps twins (`ado-pr.ts`,
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
   `"ado"`; how they talk to ADO — `az` CLI (default), REST, or MCP —

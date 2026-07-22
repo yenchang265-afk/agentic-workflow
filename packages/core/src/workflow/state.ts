@@ -55,7 +55,7 @@ export interface GitRef {
   readonly worktree?: string
 }
 
-export interface LoopState {
+export interface WorkflowState {
   /** The workflow kind driving this state (a manifest's `kind`); absent ⇒ `engineering`. */
   readonly kind?: string
   /** The goal the loop is driving toward. */
@@ -209,7 +209,7 @@ export interface ProjectManagementConfig {
  * Only hosts with a standing watch mode honor this (the OpenCode plugin); the
  * pull-only Claude host ignores it.
  */
-export type LoopTrigger =
+export type WorkflowTrigger =
   | { readonly type: "poll"; readonly intervalMinutes?: number }
   | { readonly type: "cron"; readonly schedule: string }
   | { readonly type: "idle" }
@@ -224,7 +224,7 @@ export interface WorkflowKindConfig {
   /** Per-kind override of the global `codePlatform`. */
   readonly codePlatform?: CodePlatform
   /** How a watching host schedules claims for this kind (default: poll). */
-  readonly trigger?: LoopTrigger
+  readonly trigger?: WorkflowTrigger
   /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */
   readonly stageModels?: Readonly<Record<string, string>>
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
@@ -255,9 +255,9 @@ export interface Config {
   readonly projectManagement?: ProjectManagementConfig
 }
 
-/** Construct a LoopState entering execution at build, for a claimed
+/** Construct a WorkflowState entering execution at build, for a claimed
  *  in-progress task whose plan was approved via `/agentic-workflow:engineering approve`. */
-export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): LoopState => ({
+export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): WorkflowState => ({
   goal,
   stage: "build",
   iteration: 0,
@@ -265,10 +265,10 @@ export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): LoopSt
   task,
 })
 
-/** Construct a LoopState entering at the PLAN stage, for a claimed `queued/`
+/** Construct a WorkflowState entering at the PLAN stage, for a claimed `queued/`
  *  task. `priorPlan` carries a rejected/capped plan on a replan so the new
  *  plan addresses why the old one failed instead of repeating it. */
-export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string): LoopState => ({
+export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string): WorkflowState => ({
   goal,
   stage: "plan",
   iteration: 0,
@@ -278,9 +278,9 @@ export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string): Lo
 
 // --- In-memory store (lost on opencode restart; see README known limitations) ---
 
-const store = new Map<string, LoopState>()
+const store = new Map<string, WorkflowState>()
 
-export const getLoop = (sessionID: string): LoopState | undefined => store.get(sessionID)
+export const getLoop = (sessionID: string): WorkflowState | undefined => store.get(sessionID)
 /** The session whose live loop is driving the given task id, if any (this plugin instance only). */
 export const findSessionDriving = (taskId: string): string | undefined => {
   for (const [sessionID, state] of store) if (state.task?.id === taskId) return sessionID
@@ -301,6 +301,6 @@ export const anyWorktreeLoopActive = (): boolean => {
   for (const state of store.values()) if (state.git?.worktree) return true
   return false
 }
-export const setLoop = (sessionID: string, state: LoopState): void => void store.set(sessionID, state)
+export const setLoop = (sessionID: string, state: WorkflowState): void => void store.set(sessionID, state)
 export const clearLoop = (sessionID: string): boolean => store.delete(sessionID)
 export const hasLoop = (sessionID: string): boolean => store.has(sessionID)

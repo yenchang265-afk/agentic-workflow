@@ -87,7 +87,7 @@ import {
 import { enabledWorkflowKinds, modelFor, triggerFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
 import type { Config } from "../config.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
-import type { Action, LoopState, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
+import type { Action, WorkflowState, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
 import { clearLoop, findSessionDriving, getLoop, setLoop } from "@agentic-workflow/core/workflow/state"
 
 /**
@@ -167,7 +167,7 @@ type Pending =
   | { readonly kind: "start-task"; readonly task: Task; readonly goal: string }
   | { readonly kind: "start-plan"; readonly task: Task; readonly goal: string }
   | { readonly kind: "recover"; readonly task: Task }
-  | { readonly kind: "recover-state"; readonly state: LoopState }
+  | { readonly kind: "recover-state"; readonly state: WorkflowState }
 
 const pending = new Map<string, Pending>()
 
@@ -470,7 +470,7 @@ export const resolveDrivingSession = async (client: Client, sessionID: string): 
 export const findDrivingLoop = async (
   client: Client,
   sessionID: string,
-): Promise<{ readonly sessionID: string; readonly state: LoopState } | null> => {
+): Promise<{ readonly sessionID: string; readonly state: WorkflowState } | null> => {
   let id = sessionID
   for (let depth = 0; depth < 5; depth++) {
     const state = getLoop(id)
@@ -488,17 +488,17 @@ const toast = (client: Client, message: string, variant: "info" | "success" | "w
 
 /** Git isolation lives in core (`@agentic-workflow/core/workflow/isolate`); these
  *  wrappers thread this plugin's `Deps` into its host-agnostic signatures. */
-const ensureIsolation = (deps: Deps, config: Config, state: LoopState): Promise<LoopState> =>
+const ensureIsolation = (deps: Deps, config: Config, state: WorkflowState): Promise<WorkflowState> =>
   coreEnsureIsolation(deps.$, deps.log, deps.directory, config, state)
 
-const teardownIsolation = (deps: Deps, state: LoopState): Promise<void> =>
+const teardownIsolation = (deps: Deps, state: WorkflowState): Promise<void> =>
   // Gate on `isolated`, not `git`: a PR source pre-sets `git` to name the branch to
   // isolate onto, so a stage that never isolated (pr-sitter `triage` → done) must NOT
   // reach `coreTeardownIsolation`, which would checkout the base branch on the main tree.
   state.isolated ? coreTeardownIsolation(deps.$, deps.log, deps.directory, state) : Promise.resolve()
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. */
-const workTree = (deps: Deps, state: LoopState): string => loopWorkTree(deps.directory, state)
+const workTree = (deps: Deps, state: WorkflowState): string => loopWorkTree(deps.directory, state)
 
 /**
  * Serialize commits per git tree. In worktree mode `serialize` is off, so N in-process
@@ -524,7 +524,7 @@ const withCommitLock = <T>(treePath: string, fn: () => Promise<T>): Promise<T> =
 }
 
 /** Commit everything as a checkpoint on the loop branch/worktree. No-op until isolation ran. */
-const checkpoint = async (deps: Deps, config: Config, state: LoopState, message: string): Promise<void> => {
+const checkpoint = async (deps: Deps, config: Config, state: WorkflowState, message: string): Promise<void> => {
   // `isolated` (not `git`): don't `git add -A && commit` the human's main tree for a
   // loop whose pre-set `git` never became real isolation — that would sweep their WIP
   // into a bogus loop commit (pr-sitter `triage` → done on a dirty tree).
@@ -548,7 +548,7 @@ const commitTasks = (deps: Deps, config: Config, message: string): Promise<boole
  * checkpoints commit the worktree, so terminal-event backlog changes must be
  * committed on the human's branch explicitly. No-op in shared mode.
  */
-const commitBacklog = async (deps: Deps, config: Config, state: LoopState, message: string): Promise<void> => {
+const commitBacklog = async (deps: Deps, config: Config, state: WorkflowState, message: string): Promise<void> => {
   if (!state.git?.worktree) return
   await commitTasks(deps, config, message)
 }
@@ -693,7 +693,7 @@ export const runStageWithLenses = async (
   sessionID: string,
   config: Config,
   loaded: LoadedManifest,
-  state: LoopState,
+  state: WorkflowState,
   stage: Stage,
   baseArgs: string,
   iteration: number,
@@ -821,7 +821,7 @@ export const runStageWithLenses = async (
  * Persist a task-driven loop's state after a transition, so a crash/restart can
  * resume at the exact stage. No-op for free-text loops (no durable id yet).
  */
-const snapshot = async (deps: Deps, config: Config, state: LoopState): Promise<void> => {
+const snapshot = async (deps: Deps, config: Config, state: WorkflowState): Promise<void> => {
   if (!state.task) return
   await saveState(deps.$, deps.directory, config.tasksDir, state.task.id, state)
 }
@@ -834,7 +834,7 @@ const snapshot = async (deps: Deps, config: Config, state: LoopState): Promise<v
  * fail the loop. Must be awaited (see the call site) so no flush write is in
  * flight when `renderMetrics` finalizes.
  */
-const flushMetrics = async (deps: Deps, sessionID: string, config: Config, state: LoopState): Promise<void> => {
+const flushMetrics = async (deps: Deps, sessionID: string, config: Config, state: WorkflowState): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   if (samples.length === 0) return
   const file = metricsPath(deps.directory, config.tasksDir, loopId(state))
@@ -859,7 +859,7 @@ const renderMetrics = async (
   deps: Deps,
   sessionID: string,
   config: Config,
-  state: LoopState,
+  state: WorkflowState,
   outcome: Outcome,
   detail: string,
 ): Promise<void> => {
@@ -896,7 +896,7 @@ export const drive = async (
   deps: Deps,
   sessionID: string,
   config: Config,
-  first: { state: LoopState; action: Action },
+  first: { state: WorkflowState; action: Action },
 ): Promise<TerminalOutcome | null> => {
   const { client } = deps
   const loaded = manifestFor(first.state.kind ?? "engineering")
@@ -1761,7 +1761,7 @@ export const handleCommand = async (
     clearLoop(sessionID)
     if (snap && snap.task?.id === id) {
       // Refresh the task path from disk — the file may have moved since the snapshot.
-      const state: LoopState = { ...snap, task: { ...snap.task, path: task.path } }
+      const state: WorkflowState = { ...snap, task: { ...snap.task, path: task.path } }
       await appendNote(
         deps.$,
         task,

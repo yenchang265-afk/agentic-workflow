@@ -16,7 +16,7 @@
 
 ### 驅動程式本地的累加器（保持 `state.ts` 純粹）
 
-`LoopState` 保持不動——指標是驅動程式層級的非純粹（impure）關注點，就像
+`WorkflowState` 保持不動——指標是驅動程式層級的非純粹（impure）關注點，就像
 `recordedVerdicts` 一樣：
 
 ```ts

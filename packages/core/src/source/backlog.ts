@@ -1,7 +1,7 @@
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveClaimPredicate } from "../manifest/registry.js"
-import type { LoopState } from "../workflow/state.js"
+import type { WorkflowState } from "../workflow/state.js"
 import type { Task } from "../task/schema.js"
 import {
   claimFirst,
@@ -97,8 +97,8 @@ export const claimSkipReason = (
   }
 }
 
-/** The entry LoopState for a task claimed from a pool. Pure. */
-const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): LoopState => {
+/** The entry WorkflowState for a task claimed from a pool. Pure. */
+const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): WorkflowState => {
   const plan = extractPlan(task)
   return {
     kind: loaded.manifest.kind,

@@ -3,7 +3,7 @@ import { z } from "zod"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, LoopState } from "../workflow/state.js"
+import type { AdoAccessMethod, CodePlatform, WorkflowState } from "../workflow/state.js"
 import { slugify } from "../task/schema.js"
 import type { WorkItem } from "./types.js"
 
@@ -87,7 +87,7 @@ export const redHeadWorkItem = (
 ): WorkItem => {
   const kind = loaded.manifest.kind
   const remedyBranch = `${kind}/${shortSha(sha)}`
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind,
     goal: redHeadGoal(branch, sha, failing),
     stage: loaded.manifest.stages[0]?.name ?? "diagnose",

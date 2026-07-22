@@ -9,7 +9,7 @@ import { DEFAULT_CONFIG } from "../config.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import type { Action, LoopState } from "./state.js"
+import type { Action, WorkflowState } from "./state.js"
 import { commitAll, commitPaths } from "./git.js"
 import { runTerminal, type TerminalCtx } from "./terminal.js"
 
@@ -86,7 +86,7 @@ test("shared-tree done lands the in-review move on the base branch, not the loop
     await git(repo, "checkout", "-q", "-b", "feature/t1")
     fs.writeFileSync(path.join(repo, "built.txt"), "work\n")
 
-    const state: LoopState = {
+    const state: WorkflowState = {
       goal: "Do it",
       stage: "review",
       iteration: 0,

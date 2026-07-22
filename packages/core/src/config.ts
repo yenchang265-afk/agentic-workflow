@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
-import { ADO_ACCESS_METHODS, CODE_PLATFORMS, type AdoAccessMethod, type Config, type LoopTrigger } from "./workflow/state.js"
+import { ADO_ACCESS_METHODS, CODE_PLATFORMS, type AdoAccessMethod, type Config, type WorkflowTrigger } from "./workflow/state.js"
 import type { StageDef } from "./manifest/schema.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
@@ -48,16 +48,16 @@ export const ProjectManagementSchema = z.object({
 export type ProjectManagement = z.infer<typeof ProjectManagementSchema>
 
 /**
- * How a watching host schedules claims for a workflow kind — see the `LoopTrigger`
+ * How a watching host schedules claims for a workflow kind — see the `WorkflowTrigger`
  * type in workflow/state.ts for semantics. Core validates shape only; cron
  * `schedule` syntax is validated by the host that honors it (the OpenCode
  * plugin), and the pull-only Claude host ignores the field entirely.
  */
-export const LoopTriggerSchema = z.discriminatedUnion("type", [
+export const WorkflowTriggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("poll"), intervalMinutes: z.number().positive().max(1440).optional() }),
   z.object({ type: z.literal("cron"), schedule: z.string().min(1) }),
   z.object({ type: z.literal("idle") }),
-]) satisfies z.ZodType<LoopTrigger>
+]) satisfies z.ZodType<WorkflowTrigger>
 
 const BaseConfigSchema = z.object({
   /** Max loop iterations before stopping on repeated verify/review failures. */
@@ -113,7 +113,7 @@ const BaseConfigSchema = z.object({
         /** Per-kind override of the global `codePlatform`. */
         codePlatform: CodePlatformSchema.optional(),
         /** How a watching host schedules claims for this kind (default: poll). */
-        trigger: LoopTriggerSchema.optional(),
+        trigger: WorkflowTriggerSchema.optional(),
         /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
         stageModels: z.record(z.string(), z.string().min(1)).optional(),
       }),
@@ -222,7 +222,7 @@ export const platformFor = (config: Config, kind: string): CodePlatform =>
 export const adoAccessFor = (config: Config): AdoAccessMethod => config.ado?.access ?? "az"
 
 /** How a watching host schedules claims for a workflow kind: configured trigger, else poll. Pure. */
-export const triggerFor = (config: Config, kind: string): LoopTrigger =>
+export const triggerFor = (config: Config, kind: string): WorkflowTrigger =>
   config.workflows[kind]?.trigger ?? { type: "poll" }
 
 /**

@@ -70,7 +70,7 @@ const lifecycleWindow = (body: string): string => {
  * Eligible for `/agentic-workflow:engineering watch` to claim: planned, with no
  * "> BUILD started" or CLAIMED note in the current lifecycle window — not just
  * "last pair unmatched" (that's `wasInterrupted`, below). A marker in the
- * window means another live LoopState is driving it right now, or it crashed
+ * window means another live WorkflowState is driving it right now, or it crashed
  * and needs manual recovery — a watch session must never silently reclaim
  * either case. Pure.
  */

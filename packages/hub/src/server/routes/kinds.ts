@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { promptContext } from "@agentic-workflow/core/workflow/engine"
-import type { LoopState } from "@agentic-workflow/core/workflow/state"
+import type { WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { verdictContractBlock, workScopeBlock } from "@agentic-workflow/core/workflow/verdict"
 import { listWorkflowKinds, loadManifest } from "@agentic-workflow/core/manifest/load"
 import { WorkflowManifestSchema, type WorkflowManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
@@ -80,7 +80,7 @@ export const validateKind = async (_deps: HubDeps, req: ParsedRequest): Promise<
 const DEFAULT_SAMPLE: PreviewSample = { task: true, git: true, worktree: true, platform: "github" }
 
 /**
- * A plausible `LoopState` to render a prompt against. Values are visibly sample
+ * A plausible `WorkflowState` to render a prompt against. Values are visibly sample
  * text rather than realistic-looking fakes — an author reading the preview should
  * never wonder whether `f7k3-add-rate-limit` is a real task of theirs.
  *
@@ -88,7 +88,7 @@ const DEFAULT_SAMPLE: PreviewSample = { task: true, git: true, worktree: true, p
  * can only read what ran before it; that makes `{{artifacts.plan}}` and friends
  * render instead of silently vanishing.
  */
-const sampleState = (manifest: WorkflowManifest, stage: string, sample: PreviewSample): LoopState => {
+const sampleState = (manifest: WorkflowManifest, stage: string, sample: PreviewSample): WorkflowState => {
   const artifacts: Record<string, string> = {}
   for (const s of manifest.stages) if (s.name !== stage) artifacts[s.name] = `<sample ${s.name} output>`
   // The approved plan rides in artifacts under its own key, not a stage name.

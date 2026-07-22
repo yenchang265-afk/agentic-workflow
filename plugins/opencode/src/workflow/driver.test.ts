@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-workflow/core/task/store"
 import { serializeTask } from "@agentic-workflow/core/task/schema"
 import { firstStep } from "@agentic-workflow/core/workflow/engine"
-import { clearLoop, setLoop, type LoopState } from "@agentic-workflow/core/workflow/state"
+import { clearLoop, setLoop, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import type { Config } from "../config.ts"
 import {
   abortedSessionID,
@@ -404,7 +404,7 @@ test("plan <id> refuses while this session is already driving a loop (no clearLo
   // clearLoop it unconditionally, silently abandoning A at the next stage
   // boundary. It must refuse with the same busy guard `claim` uses.
   const sessionID = "sess-busy-plan"
-  const busy: LoopState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
+  const busy: WorkflowState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
   setLoop(sessionID, busy)
   try {
     const queued = serializeTask({ title: "Do the thing", body: "Just a body, no plan yet." })
@@ -424,7 +424,7 @@ test("plan <id> refuses while this session is already driving a loop (no clearLo
 
 test("recover <id> refuses while this session is already driving a loop (no clearLoop clobber)", async () => {
   const sessionID = "sess-busy-recover"
-  const busy: LoopState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
+  const busy: WorkflowState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
   setLoop(sessionID, busy)
   try {
     const inProgress = serializeTask({ title: "Other task", body: `${PLAN_HEADING}\n\n1. Step.` })
@@ -964,7 +964,7 @@ test("drive interprets a pr-sitter loop with the pr-sitter manifest, not enginee
   } as unknown as Deps["client"]
   const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
 
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind: "pr-sitter",
     goal: "Sit on PR #1",
     stage: "triage",
@@ -998,7 +998,7 @@ test("drive passes the configured stage model in the command body, and omits it 
       },
     } as unknown as Deps["client"]
     const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
-    const state: LoopState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
+    const state: WorkflowState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
     const outcome = await drive(deps, sessionID, config, firstStep(manifestFor("pr-sitter"), state))
     assert.equal(outcome?.kind, "done")
     return bodies
@@ -1038,7 +1038,7 @@ test("a timed-out stage aborts the orphaned session turn before unwinding", asyn
     },
   } as unknown as Deps["client"]
   const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
-  const state: LoopState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
+  const state: WorkflowState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
   try {
     await assert.rejects(
       () =>
@@ -1085,7 +1085,7 @@ test("drive records stage token usage into the run summary and metrics sidecar",
   } as unknown as Deps["client"]
   const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
 
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind: "pr-sitter",
     goal: "Sit on PR #2",
     stage: "triage",
@@ -1131,7 +1131,7 @@ test("pr-sitter triage-FAIL leaves the human's main tree untouched (no commit / 
   } as unknown as Deps["client"]
   const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
 
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind: "pr-sitter",
     goal: "PR #1 sit",
     stage: "triage",
@@ -1175,7 +1175,7 @@ test("resolveDrivingSession walks the parentID chain to the driving session", as
 
 test("findDrivingLoop returns the driving ancestor's state, null at root, and throws on API failure", async () => {
   const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
-  const state: LoopState = { goal: "g", stage: "build", iteration: 0, artifacts: {} }
+  const state: WorkflowState = { goal: "g", stage: "build", iteration: 0, artifacts: {} }
   setLoop("drv", state)
   const client = {
     session: {

@@ -11,7 +11,7 @@ import { makeGithubPrSource } from "../source/github-pr.js"
 import type { WorkSource } from "../source/types.js"
 import type { Task } from "../task/schema.js"
 import { extractPlan } from "../task/store.js"
-import type { Config, LoopState, TaskRef } from "./state.js"
+import type { Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 
 /**
@@ -33,13 +33,13 @@ export const taskRef = (task: Task, filePath: string): TaskRef => ({
 })
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. Pure. */
-export const loopWorkTree = (directory: string, state: LoopState): string => state.git?.worktree ?? directory
+export const loopWorkTree = (directory: string, state: WorkflowState): string => state.git?.worktree ?? directory
 
 /** BUILD-entry state for an approved in-progress task (plan persisted on the file). Pure. */
-export const buildEntryState = (task: Task): LoopState => resumeAtBuild(taskGoal(task), taskRef(task, task.path), extractPlan(task) ?? "")
+export const buildEntryState = (task: Task): WorkflowState => resumeAtBuild(taskGoal(task), taskRef(task, task.path), extractPlan(task) ?? "")
 
 /** PLAN-entry state for a queued (planless) task. Pure. */
-export const planEntryState = (task: Task): LoopState => startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task))
+export const planEntryState = (task: Task): WorkflowState => startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task))
 
 /**
  * A lazily-loading manifest cache keyed by workflow kind. Eager kinds (usually

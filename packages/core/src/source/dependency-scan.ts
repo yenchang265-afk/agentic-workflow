@@ -3,7 +3,7 @@ import path from "node:path"
 import { z } from "zod"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, LoopState } from "../workflow/state.js"
+import type { AdoAccessMethod, CodePlatform, WorkflowState } from "../workflow/state.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import { osvCandidates, OsvReportSchema } from "./osv.js"
 import { slugify } from "../task/schema.js"
@@ -426,7 +426,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
       `Apply the upgrade (lockfile included), fix any fallout, verify the suite is green, then push the branch ` +
       `and open a DRAFT pull request. Never merge it, and never touch versions this work order doesn't name.` +
       guidance
-    const state: LoopState = {
+    const state: WorkflowState = {
       kind,
       goal,
       stage: loaded.manifest.stages[0]?.name ?? "scan",

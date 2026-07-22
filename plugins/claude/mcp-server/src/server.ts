@@ -7,7 +7,7 @@ import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
-import { type Action, type Config, type LoopState, type TaskRef } from "@agentic-workflow/core/workflow/state"
+import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, firstStep } from "@agentic-workflow/core/workflow/engine"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
@@ -81,7 +81,7 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflo
 
 /**
  * MCP server backing the agentic-workflow Claude Code plugin. It holds the loop's
- * LoopState (the same pure state machine the OpenCode driver uses) and exposes
+ * WorkflowState (the same pure state machine the OpenCode driver uses) and exposes
  * the deterministic/trusted operations as tools the MAIN agent calls while it
  * drives BUILD→VERIFY→REVIEW via the Task tool. The autonomous background
  * driver is gone (no Claude Code equivalent) — the agent is the driver; this
@@ -128,7 +128,7 @@ const log = (level: "info" | "warn" | "error", message: string) =>
 
 // --- shared in-process loop state (one active loop per server/session) ---
 
-let active: LoopState | null = null
+let active: WorkflowState | null = null
 let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when loop_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
 let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
@@ -366,7 +366,7 @@ const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, confi
  * `commitAll` (no per-tree lock: the pull host drives one loop at a time), and
  * metrics render into this host's run log + `host: "claude"` sidecar.
  */
-const terminalCtx = (state: LoopState, actor: string | null): TerminalCtx => ({
+const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx => ({
   $: sh,
   log,
   directory,
@@ -403,7 +403,7 @@ const sourcesFor = (only?: string): WorkSource[] =>
 
 /** Claim an approved in-progress task and construct its build-entry state.
  *  Shared by loop_start and loop_claim. */
-const startTask = async (t: Task): Promise<{ error: string } | { state: LoopState }> => {
+const startTask = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
   pending = null
@@ -435,7 +435,7 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: LoopStat
  *  isolation and no snapshot: PLAN writes only the task file, in the main
  *  tree. A died PLAN leaves a stale marker in queued/.claims/ — release it
  *  with loop_doctor fix, then re-run loop_start on the task. */
-const startPlan = async (t: Task): Promise<{ error: string } | { state: LoopState }> => {
+const startPlan = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
   pending = null
@@ -472,7 +472,7 @@ const claimWarnings = async (): Promise<string[]> => {
 }
 
 /** The fire payload loop_start/loop_claim return for a fresh claim. */
-const firePayload = (state: LoopState, id: string) => {
+const firePayload = (state: WorkflowState, id: string) => {
   const manifest = manifestFor(state.kind ?? "engineering")
   const def = stageDef(manifest.manifest, state.stage)
   const model = stageModel(manifest.manifest.kind, def)

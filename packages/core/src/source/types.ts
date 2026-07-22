@@ -1,4 +1,4 @@
-import type { LoopState } from "../workflow/state.js"
+import type { WorkflowState } from "../workflow/state.js"
 
 /**
  * The work-source abstraction the unified scheduler polls: a source knows how
@@ -6,7 +6,7 @@ import type { LoopState } from "../workflow/state.js"
  * PRs, …), claim them atomically, and release a claim whose drive died before
  * doing real work. The scheduler (`scheduler/scheduler.ts`) walks sources in
  * priority order; the winning item carries a fully-constructed entry
- * `LoopState`, so drivers stay source-agnostic.
+ * `WorkflowState`, so drivers stay source-agnostic.
  */
 
 /** Why a poll claimed nothing — the message, and whether a human can act on it. */
@@ -24,7 +24,7 @@ export interface WorkItem {
   readonly title: string
   readonly entryStage: string
   /** The fully-constructed loop state to enter at. */
-  readonly state: LoopState
+  readonly state: WorkflowState
   /** The toast/log line announcing the claim. */
   readonly claimMessage: string
   /** Source-private handle (e.g. the backlog `Task`). */

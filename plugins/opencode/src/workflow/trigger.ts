@@ -2,7 +2,7 @@ import { Cron } from "croner"
 
 /**
  * Watch-mode trigger strategies — how a watching session schedules claims
- * (see `LoopTrigger` in core's workflow/state.ts for the config surface):
+ * (see `WorkflowTrigger` in core's workflow/state.ts for the config surface):
  *
  * - poll: a standing interval timer (the safety net for missed idle events).
  * - cron: fire only when the schedule fires; plain idle events never claim.

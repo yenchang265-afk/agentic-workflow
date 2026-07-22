@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { ensureIsolation, releaseWorktree, teardownIsolation } from "./isolate.js"
-import type { LoopState } from "./state.js"
+import type { WorkflowState } from "./state.js"
 
 /**
  * `ensureIsolation` shells out through the host `$`; the node+tsx runner can't
@@ -49,7 +49,7 @@ const makeShell = (handler: (cmd: string) => FakeResult, log?: string[]) => {
 
 const WT = "/repo/.wt/add-foo"
 const noopLog = () => {}
-const state: LoopState = {
+const state: WorkflowState = {
   goal: "add foo",
   stage: "build",
   iteration: 0,
@@ -133,7 +133,7 @@ test("shared-tree checkout failure records an isolationWarning", async () => {
  * mark the state isolated.
  */
 const PR_WT = "/repo/.wt/pr-1"
-const prState: LoopState = {
+const prState: WorkflowState = {
   kind: "pr-sitter",
   goal: "pr-1",
   stage: "fix",

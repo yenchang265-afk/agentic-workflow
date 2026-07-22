@@ -27,13 +27,13 @@ const req = (body: unknown) => ({ params: {}, query: new URLSearchParams(), body
 const tempRepo = (): string => fs.mkdtempSync(path.join(os.tmpdir(), "hub-assets-"))
 
 const seedRepo = (repo: string): void => {
-  const agent = path.join(repo, "prompts", "agents", "loop-sample")
+  const agent = path.join(repo, "prompts", "agents", "workflow-sample")
   fs.mkdirSync(agent, { recursive: true })
-  fs.writeFileSync(path.join(agent, "claude.yaml"), "name: loop-sample\ndescription: Sample agent persona.\ntools: Read\n")
+  fs.writeFileSync(path.join(agent, "claude.yaml"), "name: workflow-sample\ndescription: Sample agent persona.\ntools: Read\n")
   fs.writeFileSync(path.join(agent, "opencode.yaml"), "description: fallback\nmode: subagent\n")
   const commands = path.join(repo, "plugins", "opencode", "commands")
   fs.mkdirSync(commands, { recursive: true })
-  fs.writeFileSync(path.join(commands, "sample.md"), "---\ndescription: Sample command.\nagent: loop-sample\nsubtask: true\n---\n\nBody.\n")
+  fs.writeFileSync(path.join(commands, "sample.md"), "---\ndescription: Sample command.\nagent: workflow-sample\nsubtask: true\n---\n\nBody.\n")
   const skill = path.join(repo, "skills", "sample-skill")
   fs.mkdirSync(skill, { recursive: true })
   fs.writeFileSync(path.join(skill, "SKILL.md"), "---\nname: sample-skill\ndescription: A sample skill.\n---\n\n# Sample Skill\n")
@@ -45,8 +45,8 @@ test("getAssets inventories agents, commands, and skills with descriptions", asy
   const res = await getAssets(depsFor(repo))
   assert.equal(res.status, 200)
   const body = res.body as AssetsResponse
-  assert.deepEqual(body.agents, [{ name: "loop-sample", description: "Sample agent persona." }])
-  assert.deepEqual(body.commands, [{ name: "sample", agent: "loop-sample", description: "Sample command." }])
+  assert.deepEqual(body.agents, [{ name: "workflow-sample", description: "Sample agent persona." }])
+  assert.deepEqual(body.commands, [{ name: "sample", agent: "workflow-sample", description: "Sample command." }])
   assert.deepEqual(body.skills, [{ name: "sample-skill", description: "A sample skill." }])
 })
 
@@ -64,7 +64,7 @@ test("getAssets tolerates malformed entries without failing the inventory", asyn
   const body = (await getAssets(depsFor(repo))).body as AssetsResponse
   assert.deepEqual(
     body.agents.map((a) => a.name),
-    ["broken-agent", "loop-sample"],
+    ["broken-agent", "workflow-sample"],
   )
   assert.equal(body.agents.find((a) => a.name === "broken-agent")?.description, undefined)
   assert.deepEqual(
@@ -78,14 +78,14 @@ test("scaffoldAgent writes body.md + both yamls with host blocks and skill prose
   seedRepo(repo)
   const res = await scaffoldAgent(
     depsFor(repo),
-    req({ name: "loop-newbie", description: "Does new things.", preset: "builder", skills: ["sample-skill"] }),
+    req({ name: "workflow-newbie", description: "Does new things.", preset: "builder", skills: ["sample-skill"] }),
   )
   assert.equal(res.status, 200)
   const body = res.body as ScaffoldResponse
   assert.equal(body.written.length, 3)
   assert.equal(body.notes, undefined)
 
-  const dir = path.join(repo, "prompts", "agents", "loop-newbie")
+  const dir = path.join(repo, "prompts", "agents", "workflow-newbie")
   const bodyMd = fs.readFileSync(path.join(dir, "body.md"), "utf8")
   assert.match(bodyMd, /\{\{#host opencode\}\}/)
   assert.match(bodyMd, /\{\{#host claude\}\}/)
@@ -95,19 +95,19 @@ test("scaffoldAgent writes body.md + both yamls with host blocks and skill prose
   assert.match(opencode, /edit: allow/)
   assert.match(opencode, /bash: allow/)
   const claude = fs.readFileSync(path.join(dir, "claude.yaml"), "utf8")
-  assert.match(claude, /name: loop-newbie/)
+  assert.match(claude, /name: workflow-newbie/)
   assert.match(claude, /tools: Read, Edit, Write, Bash, Grep, Glob/)
 })
 
 test("scaffoldAgent checker preset carries the allowlist marker, verdict tools, and the ordering note", async () => {
   const repo = tempRepo()
-  const res = await scaffoldAgent(depsFor(repo), req({ name: "loop-checker", description: "Checks things.", preset: "checker" }))
+  const res = await scaffoldAgent(depsFor(repo), req({ name: "workflow-checker", description: "Checks things.", preset: "checker" }))
   assert.equal(res.status, 200)
   const body = res.body as ScaffoldResponse
   assert.equal(body.notes?.length, 1)
   assert.match(body.notes?.[0] ?? "", /bashAllowlist/)
 
-  const dir = path.join(repo, "prompts", "agents", "loop-checker")
+  const dir = path.join(repo, "prompts", "agents", "workflow-checker")
   const opencode = fs.readFileSync(path.join(dir, "opencode.yaml"), "utf8")
   assert.match(opencode, /"\*": deny/)
   assert.match(opencode, /\{\{allowlist\}\}/)
@@ -120,15 +120,15 @@ test("scaffold handlers reject bad slugs, duplicates, and unknown skills", async
   const deps = depsFor(repo)
 
   assert.equal((await scaffoldAgent(deps, req({ name: "Bad Name", description: "x", preset: "builder" }))).status, 400)
-  assert.equal((await scaffoldAgent(deps, req({ name: "loop-x", description: "", preset: "builder" }))).status, 400)
-  assert.equal((await scaffoldAgent(deps, req({ name: "loop-x", description: "x", preset: "root" }))).status, 400)
+  assert.equal((await scaffoldAgent(deps, req({ name: "workflow-x", description: "", preset: "builder" }))).status, 400)
+  assert.equal((await scaffoldAgent(deps, req({ name: "workflow-x", description: "x", preset: "root" }))).status, 400)
   assert.equal(
-    (await scaffoldAgent(deps, req({ name: "loop-x", description: "x", preset: "builder", skills: ["nope"] }))).status,
+    (await scaffoldAgent(deps, req({ name: "workflow-x", description: "x", preset: "builder", skills: ["nope"] }))).status,
     400,
   )
-  assert.equal((await scaffoldAgent(deps, req({ name: "loop-sample", description: "x", preset: "builder" }))).status, 409)
+  assert.equal((await scaffoldAgent(deps, req({ name: "workflow-sample", description: "x", preset: "builder" }))).status, 409)
 
-  assert.equal((await scaffoldCommand(deps, req({ name: "sample", description: "x", agent: "loop-sample" }))).status, 409)
+  assert.equal((await scaffoldCommand(deps, req({ name: "sample", description: "x", agent: "workflow-sample" }))).status, 409)
   assert.equal((await scaffoldCommand(deps, req({ name: "new-cmd", description: "x", agent: "Bad Agent" }))).status, 400)
 
   assert.equal((await scaffoldSkill(deps, req({ name: "sample-skill", description: "x" }))).status, 409)

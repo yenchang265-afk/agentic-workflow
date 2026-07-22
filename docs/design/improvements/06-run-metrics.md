@@ -17,7 +17,7 @@ VERIFY FAILs outnumber REVIEW FAILs?" — the numbers that would tune
 
 ### Driver-local accumulator (keep `state.ts` pure)
 
-`LoopState` stays untouched — metrics are an impure driver concern, like
+`WorkflowState` stays untouched — metrics are an impure driver concern, like
 `recordedVerdicts`:
 
 ```ts
