@@ -48,10 +48,10 @@ Zod 結構描述會完全鏡射 `WorkflowState`（階段列舉取自 `STAGES`，
 
 ### Driver hooks（`src/loop/driver.ts`）
 
-- 在 `drive()` 的 fire 迴圈中，緊接在 `setLoop(sessionID, step.state)`
-  （第 287 行）之後：`await saveState(..., loopId(step.state), step.state)`。
+- 在 `drive()` 的 fire 迴圈中，緊接在 `setWorkflow(sessionID, step.state)`
+  （第 287 行）之後：`await saveState(..., workflowId(step.state), step.state)`。
   階段後的 `advanceOnIdle` 結果在進入下一輪迴圈前也要做同樣的事。每次狀態
-  轉換一份快照，以 `loopId`（任務 id 或 slug）為鍵。
+  轉換一份快照，以 `workflowId`（任務 id 或 slug）為鍵。
 - 在 `gate`（第 338 行）：同樣要做快照——目前若在暫停於執行中重新規劃
   把關點（iteration > 0）時重啟，會遺失所有東西。
 - 在 `done` / `stop` / `onIdle` 的 catch：在既有的清理動作之後執行

@@ -35,7 +35,7 @@ const runMetrics = new Map<string, StageSample[]>()  // keyed by sessionID
   取得裁定之後才推入，這樣樣本才會帶有裁定）。搭配計畫 04 的多視角
   （multi-lens）審查，每次視角（lens）傳遞會有一筆樣本，並帶有 `lens?`
   欄位。
-- 在 `done`/`stop`/error 時隨著 `clearLoop` 一併清除——在渲染完成之後。
+- 在 `done`/`stop`/error 時隨著 `clearWorkflow` 一併清除——在渲染完成之後。
 
 ### 在終端事件上渲染
 
@@ -79,7 +79,7 @@ iterations used: 2/3 · total: 33m 00s · outcome: done (review passed)
   計畫 02 已經導入，復原後執行的摘要就只涵蓋復原後的樣本，並會這樣註明
   （`outcome: done (recovered run — pre-crash stages not timed)`）。不要
   把指標持久化進狀態快照——不值得為此增加耦合。
-- 沒有任務的自由文字迴圈：`loopId()` 產生的 slug 已經會將執行紀錄檔路由到
+- 沒有任務的自由文字迴圈：`workflowId()` 產生的 slug 已經會將執行紀錄檔路由到
   正確位置——不需改動即可運作。
 
 ## 測試計畫（TDD）

@@ -48,10 +48,10 @@ inject arbitrary state.
 
 ### Driver hooks (`src/loop/driver.ts`)
 
-- In `drive()`'s fire loop, right after `setLoop(sessionID, step.state)`
-  (line 287): `await saveState(..., loopId(step.state), step.state)`. Also
+- In `drive()`'s fire loop, right after `setWorkflow(sessionID, step.state)`
+  (line 287): `await saveState(..., workflowId(step.state), step.state)`. Also
   after the post-stage `advanceOnIdle` result before looping. One snapshot
-  per transition, keyed by `loopId` (task id or slug).
+  per transition, keyed by `workflowId` (task id or slug).
 - On `gate` (line 338): snapshot too — a restart while paused at a
   mid-execution re-plan gate (iteration > 0) currently loses everything.
 - On `done` / `stop` / the `onIdle` catch: `clearState(...)` after the

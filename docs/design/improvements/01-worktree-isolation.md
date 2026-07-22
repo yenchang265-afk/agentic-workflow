@@ -117,7 +117,7 @@ Replace `ensureBranch` with `ensureIsolation(deps, config, state)`:
 2. **Fresh isolation** with `config.worktreesDir` set, `isGitRepo`, and a
    resolvable `currentBranch`:
    - `base = baseBranch ?? currentBranch(directory)`; `branch = feature/<id>`;
-     `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`.
+     `wtPath = path.resolve(deps.directory, config.worktreesDir, workflowId(state))`.
      `baseBranch` is an optional host-resolved override: the Claude Code MCP
      host's `directory` is frozen at the main checkout (usually the default
      branch), so it resolves the base from `AGENTIC_WORKFLOW_BASE_DIR` (the user's
@@ -262,7 +262,7 @@ BUILD's uncommitted diff is evidence. `/agent-loop recover` reuses it via
 ## 10. Optional hardening (small, recommended)
 
 In `index.ts`'s existing `"tool.execute.before"` hook (line 74): when
-`getLoop(sessionID)?.git?.worktree` is set and the tool is the edit/write
+`getWorkflow(sessionID)?.git?.worktree` is set and the tool is the edit/write
 tool, reject a `filePath` outside the worktree (throw with a corrective
 message). Cheap; enforces pinning for the only tool that mutates files
 structurally. Bash remains prompt-enforced — documented residual.

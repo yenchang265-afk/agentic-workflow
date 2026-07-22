@@ -131,7 +131,7 @@ REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自
 
 - 某一輪 lens 逾時 → 該輪拋出例外，迴圈進入錯誤狀態（和現行的審查逾時
   行為相同）。這比部分 lens 裁定要來得簡單也更安全。
-- 在各輪之間執行 `/agent-loop stop` → 現有的 `!getLoop(sessionID)` 檢查
+- 在各輪之間執行 `/agent-loop stop` → 現有的 `!getWorkflow(sessionID)` 檢查
   （`driver.ts:304`）會逐輪執行；把它加進 lens 迴圈中。
 - 設定了 `reviewLenses` 但達到了 `maxIterations` —— 互動方式不變；lens
   改變的是裁定品質，不是疊代計數方式。

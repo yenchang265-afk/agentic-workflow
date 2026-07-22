@@ -117,7 +117,7 @@ export const ensureExcluded = ($: Shell, cwd: string, rel: string): Promise<void
    的 `currentBranch` 時：
    - `base = baseBranch ?? currentBranch(directory)`；
      `branch = feature/<id>`；
-     `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`。
+     `wtPath = path.resolve(deps.directory, config.worktreesDir, workflowId(state))`。
      `baseBranch` 是一個可選的、由 host 端解析出的覆寫值：Claude Code MCP
      host 的 `directory` 被凍結在主要 checkout（通常是預設分支）上，因此
      它會改從 `AGENTIC_WORKFLOW_BASE_DIR`（使用者真正在用的工作樹）解析
@@ -259,7 +259,7 @@ export const ensureExcluded = ($: Shell, cwd: string, rel: string): Promise<void
 ## 10. 選用的強化措施（成本小，建議採用）
 
 在 `index.ts` 既有的 `"tool.execute.before"` 掛鉤中（第 74 行）：當
-`getLoop(sessionID)?.git?.worktree` 有設定，且該工具是編輯／寫入工具時，
+`getWorkflow(sessionID)?.git?.worktree` 有設定，且該工具是編輯／寫入工具時，
 拒絕任何落在 worktree 之外的 `filePath`（拋出並附上修正提示）。成本低；
 為唯一會結構性修改檔案的工具強制執行釘選。Bash 仍然只靠提示詞強制
 執行——這是已記載的殘留風險。

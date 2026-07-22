@@ -589,17 +589,17 @@ var main = async () => {
     }
   }
   const stageWorktree = typeof marker.worktree === "string" && marker.worktree ? marker.worktree : null;
-  const loopWorktree = stageWorktree ?? (typeof marker.loopWorktree === "string" && marker.loopWorktree ? marker.loopWorktree : null);
+  const workflowWorktree = stageWorktree ?? (typeof marker.workflowWorktree === "string" && marker.workflowWorktree ? marker.workflowWorktree : null);
   const rawCommand = String(ti.command ?? "");
   let effectiveCommand = rawCommand;
   let commandRewritten = false;
-  if (tool === "Bash" && loopWorktree) {
-    const pinVerdict = pinBash(rawCommand, loopWorktree);
+  if (tool === "Bash" && workflowWorktree) {
+    const pinVerdict = pinBash(rawCommand, workflowWorktree);
     if (pinVerdict.action === "block") return block2(pinVerdict.reason);
     if (pinVerdict.action === "rewrite") {
       if (!stageWorktree) {
         return block2(
-          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 "${rawCommand}" would mutate the main tree. Only read-only commands are available here; code changes belong to the BUILD stage, inside ${loopWorktree}.`
+          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 "${rawCommand}" would mutate the main tree. Only read-only commands are available here; code changes belong to the BUILD stage, inside ${workflowWorktree}.`
         );
       }
       effectiveCommand = pinVerdict.value;
@@ -616,19 +616,19 @@ var main = async () => {
     }
   }
   if (commandRewritten) return rewriteInput({ ...ti, command: effectiveCommand });
-  if (loopWorktree && WRITE_TOOLS.includes(tool)) {
+  if (workflowWorktree && WRITE_TOOLS.includes(tool)) {
     const fp = ti.file_path ?? ti.path ?? ti.notebook_path;
     if (typeof fp !== "string") {
       return block2(
-        `agentic-workflow: this loop is isolated to its worktree ${loopWorktree}, but ${tool}'s target path could not be determined \u2014 pass an absolute path under the worktree.`
+        `agentic-workflow: this loop is isolated to its worktree ${workflowWorktree}, but ${tool}'s target path could not be determined \u2014 pass an absolute path under the worktree.`
       );
     }
-    const verdict = pinEditPath(fp, loopWorktree, cwd, tasksDir);
+    const verdict = pinEditPath(fp, workflowWorktree, cwd, tasksDir);
     if (verdict.action === "block") return block2(verdict.reason);
     if (verdict.action === "rewrite") {
       if (!stageWorktree) {
         return block2(
-          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 it must not write ${fp}. Code changes belong to the BUILD stage, inside the loop's worktree ${loopWorktree}.`
+          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 it must not write ${fp}. Code changes belong to the BUILD stage, inside the loop's worktree ${workflowWorktree}.`
         );
       }
       const key = ti.file_path !== void 0 ? "file_path" : ti.path !== void 0 ? "path" : "notebook_path";

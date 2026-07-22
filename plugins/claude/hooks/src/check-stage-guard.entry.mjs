@@ -226,13 +226,13 @@ const main = async () => {
   // (engineering plan is `isolation: "none"`). Without it every write during an
   // unisolated stage — bash included — was unguarded and landed on the human's
   // branch.
-  const loopWorktree = stageWorktree ?? (typeof marker.loopWorktree === "string" && marker.loopWorktree ? marker.loopWorktree : null)
+  const workflowWorktree = stageWorktree ?? (typeof marker.workflowWorktree === "string" && marker.workflowWorktree ? marker.workflowWorktree : null)
 
   const rawCommand = String(ti.command ?? "")
   let effectiveCommand = rawCommand
   let commandRewritten = false
-  if (tool === "Bash" && loopWorktree) {
-    const pinVerdict = pinBash(rawCommand, loopWorktree)
+  if (tool === "Bash" && workflowWorktree) {
+    const pinVerdict = pinBash(rawCommand, workflowWorktree)
     if (pinVerdict.action === "block") return block(pinVerdict.reason)
     if (pinVerdict.action === "rewrite") {
       // An unisolated stage has no worktree to correct INTO: prefixing would
@@ -242,7 +242,7 @@ const main = async () => {
       if (!stageWorktree) {
         return block(
           `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build — "${rawCommand}" would mutate the main tree. ` +
-            `Only read-only commands are available here; code changes belong to the BUILD stage, inside ${loopWorktree}.`,
+            `Only read-only commands are available here; code changes belong to the BUILD stage, inside ${workflowWorktree}.`,
         )
       }
       effectiveCommand = pinVerdict.value
@@ -273,14 +273,14 @@ const main = async () => {
   // the "agent keeps editing the current branch" symptom; both are mechanical
   // misses, so both are remapped onto the worktree. A path we cannot read at all
   // stays fail-closed, and so does one under neither tree.
-  if (loopWorktree && WRITE_TOOLS.includes(tool)) {
+  if (workflowWorktree && WRITE_TOOLS.includes(tool)) {
     const fp = ti.file_path ?? ti.path ?? ti.notebook_path
     if (typeof fp !== "string") {
       return block(
-        `agentic-workflow: this loop is isolated to its worktree ${loopWorktree}, but ${tool}'s target path could not be determined — pass an absolute path under the worktree.`,
+        `agentic-workflow: this loop is isolated to its worktree ${workflowWorktree}, but ${tool}'s target path could not be determined — pass an absolute path under the worktree.`,
       )
     }
-    const verdict = pinEditPath(fp, loopWorktree, cwd, tasksDir)
+    const verdict = pinEditPath(fp, workflowWorktree, cwd, tasksDir)
     if (verdict.action === "block") return block(verdict.reason)
     if (verdict.action === "rewrite") {
       // An unisolated stage has no worktree to correct INTO: PLAN does not build,
@@ -289,7 +289,7 @@ const main = async () => {
       if (!stageWorktree) {
         return block(
           `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build — it must not write ${fp}. ` +
-            `Code changes belong to the BUILD stage, inside the loop's worktree ${loopWorktree}.`,
+            `Code changes belong to the BUILD stage, inside the loop's worktree ${workflowWorktree}.`,
         )
       }
       const key = ti.file_path !== undefined ? "file_path" : ti.path !== undefined ? "path" : "notebook_path"
