@@ -60,7 +60,10 @@ manifest, under the plugin namespace (e.g. `agentic-workflow:workflow-verify` �
 Task tool's `subagent_type` for a plugin-provided agent). Always spawn the
 agent named there; never hardcode a per-kind name. If that subagent type is
 unknown to your Claude Code version, retry once with the bare name (e.g.
-`workflow-verify`). The stage names below (`workflow-plan-author`, `workflow-build`, …) are
+`workflow-verify`). The `agent` value is a **Task-tool `subagent_type`, not a
+skill name** — spawn it with the Task tool, never the `skill` tool, even though
+this same turn also invokes genuine skills (`interview-me`,
+`task-backlog-management`); a stage agent is always a subagent. The stage names below (`workflow-plan-author`, `workflow-build`, …) are
 the engineering kind's current values, shown for concreteness — a new workflow kind
 needs no edit to this protocol. The same responses may also carry a `model`
 field — the model the user configured for that stage (manifest `model` or

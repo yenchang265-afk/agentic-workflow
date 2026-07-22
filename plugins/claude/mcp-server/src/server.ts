@@ -253,6 +253,12 @@ const stageModelWarnings = (): string[] =>
 const SPAWN_MODEL_NOTE =
   ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)"
 
+// A stage agent is a Task subagent, not a skill. Name the tool explicitly at the
+// spawn instruction: the host otherwise mis-routes the `agent`-field name to the
+// skill tool (primed by skill-first rules and the real skills spawned the same turn).
+const SPAWN_TOOL_NOTE =
+  " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)"
+
 /** Flip the stage marker's `verdictRecorded` flag in place once workflow_verdict
  *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
 const stampVerdictRecorded = () => {
@@ -492,7 +498,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     isolation: state.git ?? null,
     prompt: composePrompt(manifest, state, state.stage),
     ...(state.stage === "plan"
-      ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
+      ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
       : {}),
   }
 }
@@ -899,7 +905,7 @@ server.registerTool(
         ...(nextModel ? { model: nextModel } : {}),
         prompt: composePrompt(activeManifest(), active, action.stage),
         note:
-          `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_MODEL_NOTE}` +
+          `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}` +
           (nextDef.kind === "check"
             ? " — it MUST call the workflow_verdict MCP tool before returning; never call workflow_verdict yourself on its behalf"
             : ""),
