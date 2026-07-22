@@ -65,7 +65,9 @@ const makeCtx = (
     $,
     log: () => {},
     directory: "/repo",
-    config: DEFAULT_CONFIG,
+    // ignoreBacklog defaults to true; these tests assert the commit STRATEGY
+    // itself (ordering vs. checkpoint/teardown), so opt back into committing.
+    config: { ...DEFAULT_CONFIG, ignoreBacklog: false },
     state,
     manifest,
     actor: "tester",

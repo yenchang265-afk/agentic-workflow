@@ -103,6 +103,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
 |-------|---------|--------------|
 | `maxIterations` | `3` | 在因為重複的 check 階段失敗而停止之前，迴圈可執行的最大疊代次數（engineering：VERIFY/REVIEW；某個清單可能會依類型覆寫此值）。當 engineering 的上限被觸發時，代表計畫本身可疑——用 `/agentic-loop:engineering replan <id>` 把它送回去。 |
 | `tasksDir` | `"docs/tasks"` | 任務待辦的儲存庫相對根目錄；它的子資料夾就是各個任務狀態。也承載暫存的 `runs/` 機器狀態（快照、指標、階段標記、PR-sitter 帳本）。 |
+| `ignoreBacklog` | `true` | 見下方強化項。設成 `false` 可將每次任務移動都提交為稽核紀錄（舊有行為）。 |
 | `stageTimeoutMinutes` | `60` | 單一階段的牆鐘時間上限；超過此時限的階段會讓迴圈失敗，而不是卡住不動。 |
 | `watchIntervalMinutes` | `5` | `/agentic-loop:engineering watch` 的預設輪詢週期；可透過 `/agentic-loop:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
 | `loops` | `{}` | 各迴圈類型的區段——見下方。 |
@@ -488,8 +489,16 @@ issue 的 key/id 複製進任務裡。
   `worktreesDir: false` 可以退回共用工作樹的分支切換方式。一個
   全新的 worktree**沒有安裝任何相依套件**：搭配 `worktreeSetup`
   使用（例如 `"npm ci"`），否則 VERIFY 會在一個空的檢出上失敗。
-  稽核記錄和任務移動仍然留在主工作樹中，並在每一個終端事件時在
-  那裡提交。
+  稽核記錄和任務移動仍然留在主工作樹中，是否在那裡提交則取決於
+  下方的 `ignoreBacklog`。
+- **`ignoreBacklog`**——完全不讓 `tasksDir` 進入 git：迴圈不會把每次
+  任務移動（approve、plan、ship、park、done、stop）都提交為稽核紀錄，
+  而是把它登記進 `<git-common-dir>/info/exclude`——一份僅限本機、
+  未被追蹤的排除清單，與 `worktreesDir` 使用的機制相同——因此永遠
+  不會碰到共用、被追蹤的 `.gitignore`。**預設開啟**——設成
+  `ignoreBacklog: false` 可以恢復舊有的提交式待辦行為。無論哪種
+  設定，任務檔案本身在磁碟上都不受影響；改變的只是迴圈是否提交
+  它們的移動。
 - **`reviewLenses`**——每個視角各跑一次 REVIEW（例如
   `["correctness", "security", "test-adequacy"]`），取最差的裁定，
   這樣單一個被提示注入攻擊的審查者就無法讓一項變更蒙混過關。成本

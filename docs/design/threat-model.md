@@ -113,14 +113,20 @@ Change management needs who/what/when for every gate decision.
 - **Control:** every lifecycle event (plan recorded, plan approved, build
   start/finish, verdicts, stop, recovery, completion) is appended to the
   task file as a timestamped note attributed to the machine's git identity,
-  and backlog mutations are committed (planning-phase commits scoped to the
-  tasks dir; execution-phase notes ride the branch checkpoints in shared-tree
-  mode, or are committed to the main tree per terminal event in worktree
-  mode). Full stage outputs land in `<tasksDir>/runs/<id>.md`, plus a
-  `## Run summary` with per-stage timings and verdict history on termination.
-- **Residual:** the actor is the *configured* git identity, not an
-  authenticated one. For hard identity guarantees, gate approvals through
-  your forge instead (protected branches + PR review of the parked plan).
+  and — when `ignoreBacklog: false` — backlog mutations are committed
+  (planning-phase commits scoped to the tasks dir; execution-phase notes ride
+  the branch checkpoints in shared-tree mode, or are committed to the main
+  tree per terminal event in worktree mode). Full stage outputs land in
+  `<tasksDir>/runs/<id>.md`, plus a `## Run summary` with per-stage timings
+  and verdict history on termination.
+- **Residual:** `ignoreBacklog` defaults to `true`, so the git-commit history
+  of backlog moves is opt-in, not on by default — the timestamped notes still
+  land in the task file either way, but they only persist through a shared
+  git history when `ignoreBacklog: false`. Repos that want a committed audit
+  trail as a T4 control must set it explicitly. The actor is also the
+  *configured* git identity, not an authenticated one; for hard identity
+  guarantees, gate approvals through your forge instead (protected branches +
+  PR review of the parked plan).
 
 ### T5. Runaway or wedged automation
 

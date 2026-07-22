@@ -339,6 +339,7 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
 const testConfig: Config = {
   maxIterations: 1,
   tasksDir: "docs/tasks",
+  ignoreBacklog: true,
   stageTimeoutMinutes: 10,
   watchIntervalMinutes: 5,
   worktreesDir: false,

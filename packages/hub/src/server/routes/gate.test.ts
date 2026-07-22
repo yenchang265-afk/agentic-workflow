@@ -80,7 +80,9 @@ const depsFor = (directory: string): HubDeps => ({
   directory,
   tasksDir: "docs/tasks",
   boards: BOARDS,
-  config: DEFAULT_CONFIG,
+  // ignoreBacklog defaults to true; these tests assert the commit itself, so
+  // opt back into committing (see packages/core/src/loop/gate.ts).
+  config: { ...DEFAULT_CONFIG, ignoreBacklog: false },
   loopsDir: path.join(directory, "loops-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",

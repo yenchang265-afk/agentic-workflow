@@ -103,6 +103,7 @@ hand-edited afterward.
 |-------|---------|--------------|
 | `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agentic-loop:engineering replan <id>`. |
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
+| `ignoreBacklog` | `true` | See hardening below. Set to `false` to commit every task move as an audit trail (the old behavior). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-loop:engineering watch`; overridable per session via `/agentic-loop:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `loops` | `{}` | Per-loop-kind sections — see below. |
@@ -518,7 +519,15 @@ Impact on the commands:
   to opt back into shared-tree branch switching. A fresh worktree has **no
   installed deps**: pair it with `worktreeSetup` (e.g. `"npm ci"`), or VERIFY
   will fail in a bare checkout. Audit notes and task moves stay in the main
-  tree and are committed there per terminal event.
+  tree, subject to `ignoreBacklog` below.
+- **`ignoreBacklog`** — keep `tasksDir` out of git entirely: instead of
+  committing every task move (approve, plan, ship, park, done, stop) as an
+  audit trail, the loop registers it in `<git-common-dir>/info/exclude` — a
+  per-clone, untracked list, the same mechanism `worktreesDir` uses — so it
+  never touches the shared, tracked `.gitignore`. **On by default** — set
+  `ignoreBacklog: false` to restore the old committed-backlog behavior.
+  Either way the task files themselves are unaffected on disk; only whether
+  the loop commits their moves changes.
 - **`reviewLenses`** — run REVIEW once per lens (e.g.
   `["correctness", "security", "test-adequacy"]`) and take the worst verdict,
   so a single prompt-injected reviewer can't wave a change through. Costs ~N×
