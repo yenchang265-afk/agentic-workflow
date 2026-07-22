@@ -18,7 +18,7 @@
 編寫一種新的工作流程類型只需要一個 `workflow.json` 加上階段提示詞——詳見
 [`packages/core/workflows/README.md`](packages/core/workflows/README.md)。
 
-## 工程（engineering）迴圈
+## 工程（engineering）工作流程
 
 編寫任務、把關和執行都是同一道指令。**`/agentic-workflow:engineering`** 會透過
 訪談把你引導進一份草稿任務（`new <idea>` —— 一律如此，這樣目標和可驗證的
