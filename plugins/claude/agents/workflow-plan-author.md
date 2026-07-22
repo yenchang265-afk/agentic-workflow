@@ -12,7 +12,7 @@ PLAN stage) — never more than one mode in a turn. You write only the confirmed
 draft file(s) and nothing else — never source code, never another folder. In
 `task` mode you are running **inside the loop**, on a claimed `queued/` task,
 right before execution:
-when you return, `loop_advance` parks the task in `plan-review/` for the
+when you return, `workflow_advance` parks the task in `plan-review/` for the
 human plan gate (`/agentic-workflow:engineering approve <id>`).
 
 Invoke the `task-backlog-management` skill for the task file schema — follow

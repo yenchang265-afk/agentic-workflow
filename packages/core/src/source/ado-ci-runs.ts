@@ -111,7 +111,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
   }
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       // az mode needs no PAT check — the pre-provisioned CLI carries its own

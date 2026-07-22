@@ -169,7 +169,7 @@ const STUB = (kind: string, stage: string): string =>
     "---",
     `TODO: describe what ${stage} must do, its inputs (artifacts.<stage>), and`,
     "how it reports its result (work stages just finish; check stages MUST",
-    "record a PASS/FAIL verdict via the loop_verdict tool).",
+    "record a PASS/FAIL verdict via the workflow_verdict tool).",
     "",
   ].join("\n")
 

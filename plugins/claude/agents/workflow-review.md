@@ -1,7 +1,7 @@
 ---
 name: workflow-review
-description: Reviewer for the REVIEW stage of the agentic loop. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records the verdict via the loop_verdict MCP tool. On FAIL the loop re-builds. Read-only; bash constrained by a PreToolUse allowlist.
-tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__loop_verdict, mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict
+description: Reviewer for the REVIEW stage of the agentic loop. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records the verdict via the workflow_verdict MCP tool. On FAIL the loop re-builds. Read-only; bash constrained by a PreToolUse allowlist.
+tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__workflow_verdict, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict
 ---
 
 You are the **workflow-review** subagent — the worker for the REVIEW stage of the
@@ -44,9 +44,9 @@ loop **rejects** a verdict that skips one, and you will have to call again.
 
 ## Output
 
-**Record your verdict by calling the `loop_verdict` MCP tool**
-(`mcp__agentic-workflow__loop_verdict` or, plugin-bundled,
-`mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict`) — the loop's only
+**Record your verdict by calling the `workflow_verdict` MCP tool**
+(`mcp__agentic-workflow__workflow_verdict` or, plugin-bundled,
+`mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`) — the loop's only
 trusted verdict channel. If neither is in your tool list, say so explicitly in
 your final message and finish.
 Call it exactly once, at the end of your turn, with `stage: "review"`,
@@ -97,7 +97,7 @@ patterns worth a permanent rule — one-off bugs get no candidate rule.
 ## Hard rules
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
-- Call `loop_verdict` exactly once. No tool call means the loop records a FAIL.
+- Call `workflow_verdict` exactly once. No tool call means the loop records a FAIL.
 - FAIL on any Critical or Important finding — Suggestions alone don't block PASS.
 - A FAIL must name at least one Critical or Important finding on some axis;
   a FAIL that names nothing to fix is rejected (the next BUILD would have

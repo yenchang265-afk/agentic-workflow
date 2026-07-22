@@ -95,7 +95,7 @@ engineering loop's observable behavior.
 | Scheduler tick | `packages/core/src/scheduler/scheduler.ts` (`pollOnce`) |
 | Per-kind config + enablement | `packages/core/src/config.ts` (`workflows`, `enabledWorkflowKinds`) |
 | OpenCode wiring (watch/idle → pollOnce) | `src/workflow/driver.ts` (`tryClaim`, `sourcesFor`, `drive` returns the terminal outcome) |
-| Claude wiring (`loop_claim` → pollOnce) | `claude-plugin/mcp-server/src/server.ts` |
+| Claude wiring (`workflow_claim` → pollOnce) | `claude-plugin/mcp-server/src/server.ts` |
 | Stage guard (marker allowlists) | `claude-plugin/hooks/check-stage-guard.mjs` + `runs/.stage.json` `{kind, bashAllowlist}` |
 | PR-sitter stage personas | `.opencode/agents/workflow-pr-*.md`, `claude-plugin/agents/workflow-pr-*.md` |
 
@@ -109,5 +109,5 @@ engineering loop's observable behavior.
   the `makeLifecycle` parameterization of the store's typed status set.
 - **MCP stays single-active-loop**; OpenCode serializes per working dir in
   shared-tree mode — concurrency policy remains per-host, by design.
-- **`loop_start <id>` / gates / recover remain engineering verbs**; PR-sitter
-  work arrives only through the scheduler (`watch` / `loop_claim`).
+- **`workflow_start <id>` / gates / recover remain engineering verbs**; PR-sitter
+  work arrives only through the scheduler (`watch` / `workflow_claim`).

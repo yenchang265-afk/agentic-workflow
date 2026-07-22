@@ -78,10 +78,10 @@ Authoring + gates (`/agentic-workflow:engineering`):
   ambiguous. Without an id it advances the single task at a loop wait-gate
   (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only
   when neither has anything waiting.
-  (Also exposed as the `loop_approve` MCP tool.)
+  (Also exposed as the `workflow_approve` MCP tool.)
 - `/agentic-workflow:engineering replan [id] [reason]` — the sole rejection verb: send a
   parked plan (or a cap-tripped `in-progress/` task, by id) back to
-  `queued/`, with the reason audited. (Also exposed as the `loop_reject` MCP
+  `queued/`, with the reason audited. (Also exposed as the `workflow_reject` MCP
   tool.)
 
 The loop (`/agentic-workflow:engineering`):
@@ -111,7 +111,7 @@ their config keys may still change; `engineering` is the stable, default-on
 kind). **What each one does is documented once in
 [`../../docs/sitters.md`](../../docs/sitters.md)** — on this host every
 sitter has the same command surface: `claim` (maps to
-`loop_claim({kind: "<kind>"})`; no standing watch here, so `claim` is the
+`workflow_claim({kind: "<kind>"})`; no standing watch here, so `claim` is the
 pull) and `status` · `stop` (report / abort the active loop; bare
 `/agentic-workflow:<kind>` = status):
 
@@ -151,7 +151,7 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
   handle the deterministic `approve` gate before the agent's turn; and
   SessionStart hooks that reconcile interrupted loops and export config
   `ado.pat` into the session env for the sitter's ADO stages.
-- `mcp-server/` — the `agentic-workflow` MCP server (`mcp__agentic-workflow__loop_*`
+- `mcp-server/` — the `agentic-workflow` MCP server (`mcp__agentic-workflow__workflow_*`
   tools), reusing the original pure state machine and porting its
   git/backlog/persistence IO.
 
@@ -162,7 +162,7 @@ Optional `.agentic-workflow.json` at the repo root, layered over a user-scope
 field reference in [`docs/configuration.md`](../../docs/configuration.md). Same
 schema as the OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode
 here — see below); `workflows.<kind>.trigger` parses but is a no-op on this
-pull-only host (`loop_claim` stays the manual trigger); the removed
+pull-only host (`workflow_claim` stays the manual trigger); the removed
 `gateBeforeBuild`/`interviewBeforePlan` keys are silently ignored.
 `workflows.<kind>.stageModels` works here: the MCP server's fire payloads carry a
 `model` field the orchestration skill passes to the Task tool (a `provider/`

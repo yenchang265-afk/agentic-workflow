@@ -21,6 +21,11 @@
   `loop-orchestration` skill 現在是 `workflow-orchestration`。一般
   使用不受影響;只有在你自行編寫過引用舊名稱的自訂階段或 skill 時
   才需要留意。
+- **Claude 外掛的 MCP 工具名稱也變了**(`loop_start` → `workflow_start`、
+  `loop_verdict` → `workflow_verdict` 等,涵蓋全部 21 個工具;完整
+  名稱現在是 `mcp__agentic-workflow__workflow_verdict`)。一般使用不受
+  影響;只有在你自行以腳本呼叫 MCP 伺服器、或手寫的階段在 bash
+  allowlist 中指名某個工具時才需要留意。
 - worktree 隔離的預設目錄從 `.loop-worktrees` 改為
   `.workflow-worktrees`(`worktreesDir` 設定預設值)。如果你已經明確
   設定過 `worktreesDir`,不需要變更;如果你依賴預設值且用該名稱

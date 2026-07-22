@@ -118,9 +118,9 @@ const main = async () => {
   if (!serverBuilt) lines.push("agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) — gates and loop tools will not work. Run plugins/claude/install.sh, then restart the session.")
   if (notes.length) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
   if (snapshots.length) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`)
-  if (planClaims.length) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`loop_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
+  if (planClaims.length) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
   if (hasAnomalies(anomalies)) {
-    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} — \`loop_doctor\` reports and repairs.`)
+    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} — \`workflow_doctor\` reports and repairs.`)
   }
   if (!lines.length) return process.exit(0)
 

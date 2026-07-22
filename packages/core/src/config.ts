@@ -172,7 +172,7 @@ const BaseConfigSchema = z.object({
     .optional(),
   /**
    * Project-management setup — the team's tracker and how tasks pair to it.
-   * Drives task-authoring defaults and the pairing view in `loop_status`.
+   * Drives task-authoring defaults and the pairing view in `workflow_status`.
    */
   projectManagement: ProjectManagementSchema.optional(),
 })

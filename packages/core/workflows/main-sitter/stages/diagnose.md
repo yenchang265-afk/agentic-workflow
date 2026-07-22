@@ -4,6 +4,6 @@ Goal: {{goal}}
 ---
 Classify the failure and produce the remedy work order: fixable-forward (name the fix), revert-worthy (name the commit(s) to revert and why forward-fixing is worse), or infra-flake (with evidence: passes locally, or a later green rerun of the same head).
 ---
-Record the verdict via loop_verdict: PASS when a code remedy is warranted (your work order feeds the remedy stage), FAIL when the failure is a flake or the branch already recovered, ERROR when the failure could not be reproduced or inspected at all.
+Record the verdict via workflow_verdict: PASS when a code remedy is warranted (your work order feeds the remedy stage), FAIL when the failure is a flake or the branch already recovered, ERROR when the failure could not be reproduced or inspected at all.
 ---
 {{#worktree}}{{worktree.instructions}}{{/worktree}}

@@ -1,5 +1,5 @@
 ---
-description: Reviewer for the REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records a WORKFLOW_REVIEW verdict via the loop_verdict tool. On FAIL, the loop re-builds (not re-plans) — the plan is assumed sound; the implementation isn't. Read-only; an allowlist restricts bash to inspection commands.
+description: Reviewer for the REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records a WORKFLOW_REVIEW verdict via the workflow_verdict tool. On FAIL, the loop re-builds (not re-plans) — the plan is assumed sound; the implementation isn't. Read-only; an allowlist restricts bash to inspection commands.
 mode: subagent
 permission:
   edit: deny
@@ -65,7 +65,7 @@ loop **rejects** a verdict that skips one, and you will have to call again.
 
 ## Output
 
-**Record your verdict by calling the `loop_verdict` tool** — the loop's only
+**Record your verdict by calling the `workflow_verdict` tool** — the loop's only
 trusted verdict channel.
 Call it exactly once, at the end of your turn, with `stage: "review"`,
 `verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason` on FAIL or ERROR,
@@ -123,7 +123,7 @@ patterns worth a permanent rule — one-off bugs get no candidate rule.
 ## Hard rules
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
-- Call `loop_verdict` exactly once, with the same verdict as your text line.
+- Call `workflow_verdict` exactly once, with the same verdict as your text line.
   No tool call means the loop records a FAIL.
 - FAIL on any Critical or Important finding — Suggestions alone don't block PASS.
 - A FAIL must name at least one Critical or Important finding on some axis;

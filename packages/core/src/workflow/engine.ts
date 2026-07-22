@@ -104,7 +104,7 @@ export const firstStep = (loaded: LoadedManifest, state: WorkflowState): { state
 /**
  * Decide what to do when `state.stage` completed. `output` is that stage's
  * captured text (stored as its artifact). `verdict` is a check stage's
- * resolved verdict — recorded via the `loop_verdict` tool, never parsed out
+ * resolved verdict — recorded via the `workflow_verdict` tool, never parsed out
  * of `output` (free text is an untrusted channel; see verdict.ts). A missing
  * verdict on a check stage is a FAIL, not a stall — though hosts re-fire the
  * check once before feeding the miss in here (verdict-channel resilience).

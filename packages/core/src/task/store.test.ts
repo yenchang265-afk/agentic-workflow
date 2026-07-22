@@ -197,7 +197,7 @@ test("isRecoverable is true for a planned task with only a CLAIMED note (crashed
 
 test("isOrphanedClaim is false once CLAIMED landed — the sweep must not release a run's marker", () => {
   const body = `${PLAN_HEADING}\n\n1. Do it.\n\n> CLAIMED — loop starting [2026-07-13T08:31:53.000Z]`
-  assert.equal(isOrphanedClaim(task("a", 0, body), { drivenByLiveLoop: false, markerStale: true }), false)
+  assert.equal(isOrphanedClaim(task("a", 0, body), { drivenByLiveWorkflow: false, markerStale: true }), false)
 })
 
 test("markClaimed appends the CLAIMED audit note to the task file", async () => {
@@ -321,7 +321,7 @@ test("summarizeBacklog flags approvable drafts and excludes the never-approve tr
   assert.deepEqual(s.awaitingTask, ["real"])
 })
 
-// --- pairingCoverage (the loop_status pairing view) ---
+// --- pairingCoverage (the workflow_status pairing view) ---
 
 const paired = (id: string): Task => ({ ...task(id, 0), tracker: { system: "jira", key: `PROJ-${id}` } })
 
@@ -530,7 +530,7 @@ test("resolveTaskIdIn returns null when nothing matches", async () => {
   assert.equal(await resolveTaskIdIn($, "/r", "docs/tasks", "queued", "zzzz"), null)
 })
 
-// --- resolveTaskIdAnywhere (cross-status: what plan/recover/loop_start accept) ---
+// --- resolveTaskIdAnywhere (cross-status: what plan/recover/workflow_start accept) ---
 
 /** A fake shell over several status folders at once: `dirs` maps folder path → filenames. */
 const multiDirShell = (dirs: Record<string, string[]>) =>
@@ -594,10 +594,10 @@ const planned = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING
 const started = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`)
 
 test("isOrphanedClaim requires claimable body, no live loop, and a stale marker", () => {
-  const ok = { drivenByLiveLoop: false, markerStale: true }
+  const ok = { drivenByLiveWorkflow: false, markerStale: true }
   assert.equal(isOrphanedClaim(planned("a"), ok), true)
   assert.equal(isOrphanedClaim(started("a"), ok), false)
-  assert.equal(isOrphanedClaim(planned("a"), { ...ok, drivenByLiveLoop: true }), false)
+  assert.equal(isOrphanedClaim(planned("a"), { ...ok, drivenByLiveWorkflow: true }), false)
   assert.equal(isOrphanedClaim(planned("a"), { ...ok, markerStale: false }), false)
 })
 

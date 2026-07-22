@@ -419,7 +419,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
             `version in \`gradle/libs.versions.toml\` (version catalog) or the dependency string in \`build.gradle(.kts)\`, ` +
             `refresh the lockfile with \`./gradlew dependencies --write-locks\`, and verify with \`./gradlew check\` (or \`build\`).`
           : ""
-    // The first line seeds `loopId` → the loop's feature/<slug> branch name.
+    // The first line seeds `workflowId` → the loop's feature/<slug> branch name.
     const goal =
       `Upgrade ${c.pkg} to ${c.target}\n\n` +
       `${c.current ? `Currently on ${c.current} — a` : "A"} ${c.impact} bump closing a ${advisory}. ` +
@@ -437,7 +437,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
     }
     return {
       id: depKey(c.pkg),
-      loopKind: kind,
+      workflowKind: kind,
       title: `Upgrade ${c.pkg} ${c.current || "?"} → ${c.target}`,
       entryStage: state.stage,
       state,
@@ -447,7 +447,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
   }
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       // Resolve the active ecosystems: an explicit binding names one adapter;

@@ -1,7 +1,7 @@
 ---
 name: workflow-review-fetch
-description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a verdict via the loop_verdict MCP tool. Never edits, never comments, never votes.
-tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__loop_verdict, mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict
+description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a verdict via the workflow_verdict MCP tool. Never edits, never comments, never votes.
+tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__workflow_verdict, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict
 ---
 
 You are the **workflow-review-fetch** subagent — the FETCH stage of the
@@ -26,7 +26,7 @@ this identity.
 2. Size and scope the diff (`gh pr diff <n>`): what the PR changes, where the
    risk concentrates, and which files the assess stage must read in full —
    that scoping is your work order.
-3. Record the verdict via the `loop_verdict` tool with `stage: "fetch"`:
+3. Record the verdict via the `workflow_verdict` tool with `stage: "fetch"`:
    - **PASS** — the review is wanted and the diff is reviewable; your work
      order feeds the assess stage.
    - **FAIL** — nothing to review: the request was withdrawn, the PR is

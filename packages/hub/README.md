@@ -116,7 +116,7 @@ creator tab is unaffected.
 
   When the backlog has structural damage (a stray file, an invented folder, a
   claim marker a crashed loop left behind), the anomaly chip opens the
-  **backlog doctor** — the same `loop_doctor` repair the CLI runs. It rescues
+  **backlog doctor** — the same `workflow_doctor` repair the CLI runs. It rescues
   strays to `draft/`, removes empty stray folders, and releases the *stale,
   undriven* claim markers that would otherwise refuse a gate move forever;
   duplicate ids it only reports.

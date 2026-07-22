@@ -219,7 +219,7 @@ test("composePrompt appends the verdict contract to check stages only", () => {
   for (const stage of ["verify", "review"]) {
     const prompt = composePrompt(eng, { ...state, stage }, stage)
     assert.ok(prompt.endsWith(verdictContractBlock(stage, stageDef(eng.manifest, stage).requiredAxes)), `${stage} carries the contract`)
-    assert.match(prompt, /loop_verdict/)
+    assert.match(prompt, /workflow_verdict/)
   }
   for (const stage of ["plan", "build"]) {
     assert.doesNotMatch(composePrompt(eng, { ...state, stage }, stage), /MANDATORY VERDICT/, `${stage} has no contract`)

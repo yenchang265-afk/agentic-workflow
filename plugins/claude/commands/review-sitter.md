@@ -13,19 +13,19 @@ one structured review comment per requested head. Read the
 
 Dispatch:
 
-- **`claim`** — call `mcp__agentic-workflow__loop_claim({kind: "review-sitter"})`
+- **`claim`** — call `mcp__agentic-workflow__workflow_claim({kind: "review-sitter"})`
   to poll for the next PR whose review is wanted and drive it per the
-  review-sitter manifest: `loop_stage` before spawning each stage subagent
+  review-sitter manifest: `workflow_stage` before spawning each stage subagent
   (`workflow-review-fetch` / `workflow-review-assess` / `workflow-review-publish` —
   fetch → assess → publish — via the Task tool, passing the response's
-  `model` as the Task tool's `model` when present) and `loop_advance` after
+  `model` as the Task tool's `model` when present) and `workflow_advance` after
   each returns, until a terminal action. A head already reviewed is skipped until
   a human pushes a new one. There is no standing watch mode on this substrate
   — `claim` is the pull; the OpenCode plugin's
   `/agentic-workflow:review-sitter watch` is the push equivalent.
-- **`status`** (or bare) — call `mcp__agentic-workflow__loop_status` and report
+- **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.
-- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__loop_stop` to abort
+- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 

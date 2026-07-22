@@ -21,6 +21,11 @@ English | [繁體中文](migration.zh-TW.md)
   the `loop-orchestration` skill is now `workflow-orchestration`. Transparent
   for normal use; relevant only if you hand-authored a custom stage or skill
   referencing one of the old names.
+- **Claude-plugin MCP tool names changed** (`loop_start` → `workflow_start`,
+  `loop_verdict` → `workflow_verdict`, etc., across all 21 tools; the
+  fully-qualified form is now `mcp__agentic-workflow__workflow_verdict`).
+  Transparent for normal use; relevant only if you scripted against the MCP
+  server or hand-authored a stage that names a tool in its bash allowlist.
 - The default worktree-isolation directory changed from `.loop-worktrees` to
   `.workflow-worktrees` (`worktreesDir` config default). If you'd set
   `worktreesDir` explicitly, no change needed; if you relied on the default

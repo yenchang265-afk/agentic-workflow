@@ -14,17 +14,17 @@ on the argument below.
 
 Dispatch:
 
-- **`claim`** — call `mcp__agentic-workflow__loop_claim({kind: "dep-sitter"})`
+- **`claim`** — call `mcp__agentic-workflow__workflow_claim({kind: "dep-sitter"})`
   to poll the dependency reports for the next claimable upgrade and drive it
-  per the dep-sitter manifest: `loop_stage` before spawning each stage
+  per the dep-sitter manifest: `workflow_stage` before spawning each stage
   subagent (`workflow-dep-scan` / `workflow-dep-upgrade` / `workflow-verify` /
   `workflow-dep-publish` — scan → upgrade → verify → publish — via the Task
   tool, passing the response's `model` as the Task tool's `model` when
-  present) and `loop_advance` after each returns, until a terminal action.
+  present) and `workflow_advance` after each returns, until a terminal action.
   Major bumps are never claimed — they are logged and left for a human.
-- **`status`** (or bare) — call `mcp__agentic-workflow__loop_status` and report
+- **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.
-- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__loop_stop` to abort
+- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 

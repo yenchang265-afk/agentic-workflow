@@ -14,19 +14,19 @@ pr-sitter manifest); then act on the argument below.
 
 Dispatch:
 
-- **`claim`** — call `mcp__agentic-workflow__loop_claim({kind: "pr-sitter"})` to
+- **`claim`** — call `mcp__agentic-workflow__workflow_claim({kind: "pr-sitter"})` to
   poll the configured PR source for the next actionable pull request and
-  drive it per the pr-sitter manifest: `loop_stage` before spawning each
+  drive it per the pr-sitter manifest: `workflow_stage` before spawning each
   stage subagent (`workflow-pr-triage` / `workflow-pr-fix` / `workflow-verify` /
   `workflow-pr-publish` — triage → fix → verify → publish — via the Task tool,
   passing the response's `model` as the Task tool's `model` when present)
-  and `loop_advance` after each returns, until a terminal action. A PR with nothing actionable is skipped
+  and `workflow_advance` after each returns, until a terminal action. A PR with nothing actionable is skipped
   (triage FAIL → done). There is no standing watch mode on this substrate —
   `claim` is the pull; the OpenCode plugin's `/agentic-workflow:pr-sitter watch`
   is the push equivalent.
-- **`status`** (or bare) — call `mcp__agentic-workflow__loop_status` and report
+- **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.
-- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__loop_stop` to abort
+- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 

@@ -68,7 +68,7 @@ test("saveKind writes workflow.json + prompt stubs and returns the checklist", a
 
   const onDisk = JSON.parse(fs.readFileSync(path.join(workflows, "triage-bot", "workflow.json"), "utf8")) as { kind: string }
   assert.equal(onDisk.kind, "triage-bot")
-  assert.match(fs.readFileSync(path.join(workflows, "triage-bot", "stages", "check.md"), "utf8"), /loop_verdict/)
+  assert.match(fs.readFileSync(path.join(workflows, "triage-bot", "stages", "check.md"), "utf8"), /workflow_verdict/)
 
   const labels = body.checklist.map((c) => c.label).join("\n")
   assert.match(labels, /prompts\/agents\/workflow-scan\//)

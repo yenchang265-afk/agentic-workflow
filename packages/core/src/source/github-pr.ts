@@ -89,7 +89,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
   const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       const fields =

@@ -5,11 +5,11 @@
  * never edit the bundled output by hand.
  *
  * When a check-stage subagent (VERIFY/REVIEW/…) stops without having called
- * the `loop_verdict` MCP tool, block the stop once with a reminder (exit 2 —
+ * the `workflow_verdict` MCP tool, block the stop once with a reminder (exit 2 —
  * stderr goes back to the subagent). The `.verdict-nag` sentinel makes the
  * block one-shot per stage attempt: a subagent whose tool is genuinely
  * unreachable is never trapped, and the MCP server's no-verdict retry
- * (loop_advance) handles the miss from there. The MCP server clears the
+ * (workflow_advance) handles the miss from there. The MCP server clears the
  * sentinel on every stage (re-)arm and when a verdict lands.
  *
  * Contract: exit 0 allows the stop; exit 2 blocks it and feeds stderr back.

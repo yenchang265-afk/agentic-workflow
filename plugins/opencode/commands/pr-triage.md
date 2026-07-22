@@ -11,5 +11,5 @@ Run the **TRIAGE** stage of the PR-sitter loop
 
 Delegated to the `workflow-pr-triage` subagent, which inspects the PR (comments,
 checks, conflict state) read-only, emits a structured findings list, and
-records a `loop_verdict` (PASS = actionable work for the fix stage; FAIL =
+records a `workflow_verdict` (PASS = actionable work for the fix stage; FAIL =
 nothing to do; ERROR = could not inspect).

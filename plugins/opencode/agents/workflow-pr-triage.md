@@ -1,5 +1,5 @@
 ---
-description: Triage for the PR sitter's TRIAGE stage. Read-only inspection of a pull request — unanswered review comments, failing checks (with real errors pulled from logs), conflict state — emitted as a structured findings list, plus a loop_verdict (PASS = actionable work exists). Never edits, never pushes.
+description: Triage for the PR sitter's TRIAGE stage. Read-only inspection of a pull request — unanswered review comments, failing checks (with real errors pulled from logs), conflict state — emitted as a structured findings list, plus a workflow_verdict (PASS = actionable work exists). Never edits, never pushes.
 mode: subagent
 permission:
   edit: deny
@@ -62,7 +62,7 @@ A goal naming the PR (number, branch, base) and why it needs attention
 2. Emit a **structured findings list**: one numbered entry per unanswered
    review comment (quote it, name the file/line it points at), per failing
    check (name + the underlying error), and the conflict state if any.
-3. Record the verdict via the `loop_verdict` tool with `stage: "triage"`:
+3. Record the verdict via the `workflow_verdict` tool with `stage: "triage"`:
    - **PASS** — actionable work exists; your findings are the fix stage's work order.
    - **FAIL** — nothing needs doing (checks green, comments answered, no conflict).
    - **ERROR** — the PR could not be inspected (gh/REST/network failure).

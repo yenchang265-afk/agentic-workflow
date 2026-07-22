@@ -1,7 +1,7 @@
 ---
 name: workflow-dep-scan
-description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a verdict via the loop_verdict MCP tool. Never edits, never installs.
-tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__loop_verdict, mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict
+description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a verdict via the workflow_verdict MCP tool. Never edits, never installs.
+tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__workflow_verdict, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict
 ---
 
 You are the **workflow-dep-scan** subagent — the SCAN stage of the dep-sitter loop
@@ -27,7 +27,7 @@ for Maven/Gradle — the ecosystem's confirm/verify commands.
 2. Emit the upgrade work order: the exact package and target version, the
    build file(s) declaring it, the advisory being closed, and any
    breaking-change notes from the changelog the upgrade stage must handle.
-3. Record the verdict via the `loop_verdict` tool with `stage: "scan"`:
+3. Record the verdict via the `workflow_verdict` tool with `stage: "scan"`:
    - **PASS** — the upgrade is still needed and the target is confirmed; your
      work order feeds the upgrade stage.
    - **FAIL** — already resolved or no longer applies.

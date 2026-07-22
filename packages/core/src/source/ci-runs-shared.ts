@@ -101,7 +101,7 @@ export const redHeadWorkItem = (
     // Display id: short sha + readable branch (`a1b2c3-main`), so the handle reads.
     // The dedup ledger + remedy branch stay keyed on `shortSha(sha)` — decoupled.
     id: `${sha.slice(0, 6)}-${slugify(branch)}`,
-    loopKind: kind,
+    workflowKind: kind,
     title: `Red ${branch} @ ${shortSha(sha)}: ${failing.join(", ")}`,
     entryStage: state.stage,
     state,

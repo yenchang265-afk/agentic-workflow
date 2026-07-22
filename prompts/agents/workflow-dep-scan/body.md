@@ -23,7 +23,7 @@ for Maven/Gradle — the ecosystem's confirm/verify commands.
 2. Emit the upgrade work order: the exact package and target version, the
    build file(s) declaring it, the advisory being closed, and any
    breaking-change notes from the changelog the upgrade stage must handle.
-3. Record the verdict via the `loop_verdict` tool with `stage: "scan"`:
+3. Record the verdict via the `workflow_verdict` tool with `stage: "scan"`:
    - **PASS** — the upgrade is still needed and the target is confirmed; your
      work order feeds the upgrade stage.
    - **FAIL** — already resolved or no longer applies.

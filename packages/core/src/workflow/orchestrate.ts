@@ -33,7 +33,7 @@ export const taskRef = (task: Task, filePath: string): TaskRef => ({
 })
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. Pure. */
-export const loopWorkTree = (directory: string, state: WorkflowState): string => state.git?.worktree ?? directory
+export const workflowWorkTree = (directory: string, state: WorkflowState): string => state.git?.worktree ?? directory
 
 /** BUILD-entry state for an approved in-progress task (plan persisted on the file). Pure. */
 export const buildEntryState = (task: Task): WorkflowState => resumeAtBuild(taskGoal(task), taskRef(task, task.path), extractPlan(task) ?? "")

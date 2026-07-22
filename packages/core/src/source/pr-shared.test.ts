@@ -56,7 +56,7 @@ test("prWorkItem enters the pr-sitter's first stage with an author-role goal and
   const loaded = loadManifest(WORKFLOWS_DIR, "pr-sitter")
   const item = prWorkItem(loaded, "github", snapshot(), ["failing-checks"])
   assert.equal(item.id, "pr-7")
-  assert.equal(item.loopKind, "pr-sitter")
+  assert.equal(item.workflowKind, "pr-sitter")
   assert.equal(item.entryStage, loaded.manifest.stages[0]?.name)
   assert.deepEqual(item.state.git, { base: "main", branch: "feature/flux" })
   assert.match(item.state.goal, /Never merge the PR/)
@@ -67,7 +67,7 @@ test("prWorkItem gives a reviewer-role kind a comment-only goal", () => {
   const loaded = loadManifest(WORKFLOWS_DIR, "review-sitter")
   const item = prWorkItem(loaded, "github", snapshot(), ["review-requested"])
   assert.match(item.state.goal, /Never approve, request changes, or merge/)
-  assert.equal(item.loopKind, "review-sitter")
+  assert.equal(item.workflowKind, "review-sitter")
 })
 
 test("triggerSummary names every trigger in a human line", () => {

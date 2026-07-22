@@ -45,13 +45,13 @@ loop **rejects** a verdict that skips one, and you will have to call again.
 ## Output
 
 {{#host opencode}}
-**Record your verdict by calling the `loop_verdict` tool** — the loop's only
+**Record your verdict by calling the `workflow_verdict` tool** — the loop's only
 trusted verdict channel.
 {{/host}}
 {{#host claude}}
-**Record your verdict by calling the `loop_verdict` MCP tool**
-(`mcp__agentic-workflow__loop_verdict` or, plugin-bundled,
-`mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict`) — the loop's only
+**Record your verdict by calling the `workflow_verdict` MCP tool**
+(`mcp__agentic-workflow__workflow_verdict` or, plugin-bundled,
+`mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`) — the loop's only
 trusted verdict channel. If neither is in your tool list, say so explicitly in
 your final message and finish.
 {{/host}}
@@ -114,11 +114,11 @@ patterns worth a permanent rule — one-off bugs get no candidate rule.
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
 {{#host opencode}}
-- Call `loop_verdict` exactly once, with the same verdict as your text line.
+- Call `workflow_verdict` exactly once, with the same verdict as your text line.
   No tool call means the loop records a FAIL.
 {{/host}}
 {{#host claude}}
-- Call `loop_verdict` exactly once. No tool call means the loop records a FAIL.
+- Call `workflow_verdict` exactly once. No tool call means the loop records a FAIL.
 {{/host}}
 - FAIL on any Critical or Important finding — Suggestions alone don't block PASS.
 - A FAIL must name at least one Critical or Important finding on some axis;

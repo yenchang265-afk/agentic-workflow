@@ -129,7 +129,7 @@ export const prWorkItem = (
   }
   return {
     id: `pr-${snapshot.number}`,
-    loopKind: loaded.manifest.kind,
+    workflowKind: loaded.manifest.kind,
     title: `PR #${snapshot.number}: ${snapshot.title}`,
     entryStage: state.stage,
     state,

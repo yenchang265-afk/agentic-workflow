@@ -22,7 +22,7 @@ promoted to an implementation plan without re-translation:
   a new `WorkSource` under `packages/core/src/source/`. New sources dominate
   the implementation cost.
 - **Stage graph** — stages with their `kind` (`work` completes on its own,
-  `check` must record a `loop_verdict` or it FAILs), isolation, and the
+  `check` must record a `workflow_verdict` or it FAILs), isolation, and the
   transition sketch (`fire` / `park` / `done` / `stop`, iteration budget).
 - **Human gates** — where the loop parks and why. Every kind keeps the
   framework's stance: agents propose, humans dispose.
@@ -188,7 +188,7 @@ from "someone filed a bug" to "the engineering loop can claim it."
   labels and comments only.
 - **Authority & threat notes**: backlog-write + comment. Issue bodies are
   the canonical untrusted input — the T7 injection discipline (external text
-  is data, verdicts only via `loop_verdict`) applies verbatim, and the
+  is data, verdicts only via `workflow_verdict`) applies verbatim, and the
   triage stage's allowlist keeps it read-only. Comment authority is bounded
   to the claimed issue, mirroring T8's "authority no wider than the job."
 - **Config sketch**:

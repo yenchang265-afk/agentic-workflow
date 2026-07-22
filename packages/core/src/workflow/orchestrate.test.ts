@@ -11,7 +11,7 @@ import { PLAN_HEADING } from "../task/store.js"
 import {
   buildEntryState,
   buildWorkSources,
-  loopWorkTree,
+  workflowWorkTree,
   makeManifestCache,
   planEntryState,
   taskGoal,
@@ -43,10 +43,10 @@ test("buildEntryState enters at build with the persisted plan; planEntryState at
   assert.equal(plan.stage, "plan")
 })
 
-test("loopWorkTree prefers the state's worktree over the main tree", () => {
+test("workflowWorkTree prefers the state's worktree over the main tree", () => {
   const base = planEntryState(task("x"))
-  assert.equal(loopWorkTree("/repo", base), "/repo")
-  assert.equal(loopWorkTree("/repo", { ...base, git: { base: "main", branch: "b", worktree: "/wt" } }), "/wt")
+  assert.equal(workflowWorkTree("/repo", base), "/repo")
+  assert.equal(workflowWorkTree("/repo", { ...base, git: { base: "main", branch: "b", worktree: "/wt" } }), "/wt")
 })
 
 test("makeManifestCache loads eagerly, caches, and serves lazy kinds", () => {
@@ -98,11 +98,11 @@ test("buildWorkSources wires review-sitter as a second pull-request source along
   const sources = buildWorkSources(deps, config, manifestFor)
   assert.equal(sources.length, 3)
   assert.deepEqual(
-    sources.map((s) => s.loopKind),
+    sources.map((s) => s.workflowKind),
     ["engineering", "pr-sitter", "review-sitter"],
   )
   // The claim/watch kind filter reaches the reviewer kind on its own too.
-  assert.equal(buildWorkSources(deps, config, manifestFor, "review-sitter")[0]?.loopKind, "review-sitter")
+  assert.equal(buildWorkSources(deps, config, manifestFor, "review-sitter")[0]?.workflowKind, "review-sitter")
 })
 
 test('a manifest using the legacy "github-pr" type still wires on both platforms', () => {
@@ -135,7 +135,7 @@ test("buildWorkSources wires dep-sitter and main-sitter on both github and ado â
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
   const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
   assert.deepEqual(
-    buildWorkSources(deps, config, manifestFor).map((s) => s.loopKind),
+    buildWorkSources(deps, config, manifestFor).map((s) => s.workflowKind),
     ["engineering", "dep-sitter", "main-sitter"],
   )
   const warnings: string[] = []
@@ -150,7 +150,7 @@ test("buildWorkSources wires dep-sitter and main-sitter on both github and ado â
     manifestFor,
   )
   assert.deepEqual(
-    sources.map((s) => s.loopKind),
+    sources.map((s) => s.workflowKind),
     ["engineering", "dep-sitter", "main-sitter"],
   )
   assert.deepEqual(warnings, [])
@@ -200,7 +200,7 @@ test("the workflows.dep-sitter.ecosystem override reaches the source through bui
     makeManifestCache(defaultWorkflowsDir()),
   )
   assert.deepEqual(
-    sources.map((s) => s.loopKind),
+    sources.map((s) => s.workflowKind),
     ["dep-sitter"],
   )
   await sources[0]?.claimNext()

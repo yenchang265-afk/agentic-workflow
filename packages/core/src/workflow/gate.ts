@@ -128,7 +128,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
         ok: true,
         message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
         path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` },
+        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
       }
     }
     return {
@@ -155,7 +155,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
     ok: true,
     message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
     path: newPath,
-    data: { approved: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) runs its PLAN stage` },
+    data: { approved: true, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
   }
 }
 
@@ -235,16 +235,16 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
         ok: true,
         message: `Plan for "${elsewhere!.title}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
         path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}", or loop_claim` },
+        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `workflow_start with id "${id}", or workflow_claim` },
       }
     }
     return {
       ok: false,
       message:
         where === "queued"
-          ? `Can't approve the plan for "${id}": it's still queued — the loop hasn't planned it yet (loop_start runs its PLAN stage).`
+          ? `Can't approve the plan for "${id}": it's still queued — the loop hasn't planned it yet (workflow_start runs its PLAN stage).`
           : where === "draft"
-            ? `Can't approve the plan for "${id}": it's a draft — approve the task first with loop_task_approve.`
+            ? `Can't approve the plan for "${id}": it's a draft — approve the task first with workflow_task_approve.`
             : where
               ? `Can't approve the plan for "${id}": it's in ${where} — only plan-review tasks can be plan-approved.`
               : ((await unparseableAt(ctx, id)) ?? `Can't approve the plan for "${id}": no task found.`),
@@ -262,7 +262,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
     ok: true,
     message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.`,
     path: newPath,
-    data: { approved: true, path: newPath, next: `loop_start with id "${id}", or loop_claim` },
+    data: { approved: true, path: newPath, next: `workflow_start with id "${id}", or workflow_claim` },
   }
 }
 
@@ -288,7 +288,7 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
         ok: true,
         message: `"${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
         path: elsewhere!.path,
-        data: { requeued: true, alreadyDone: true, path: elsewhere!.path, next: `loop_start with id "${id}" (or loop_claim) re-plans it` },
+        data: { requeued: true, alreadyDone: true, path: elsewhere!.path, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it` },
       }
     }
     return {
@@ -307,7 +307,7 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
     ok: true,
     message: `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
     path: newPath,
-    data: { requeued: true, path: newPath, next: `loop_start with id "${id}" (or loop_claim) re-plans it` },
+    data: { requeued: true, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it` },
   }
 }
 

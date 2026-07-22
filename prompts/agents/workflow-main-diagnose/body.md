@@ -30,7 +30,7 @@ workflow(s). The red head is checked out on this loop's pinned branch.
    revert-worthy (name the commit(s) to revert and why forward-fixing is
    worse), or infra-flake (with evidence: passes locally, or a later green
    rerun of the same head).
-4. Record the verdict via the `loop_verdict` tool with `stage: "diagnose"`:
+4. Record the verdict via the `workflow_verdict` tool with `stage: "diagnose"`:
    - **PASS** — a code remedy is warranted; your work order feeds the remedy stage.
    - **FAIL** — a flake, or the branch already recovered.
    - **ERROR** — the failure could not be reproduced or inspected at all.

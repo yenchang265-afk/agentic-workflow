@@ -155,7 +155,7 @@ const agentBody = (name: string, description: string, skills: readonly string[])
     "## Output",
     "",
     "TODO: describe what this stage returns (work stages just finish; check",
-    "stages MUST record a PASS/FAIL verdict via the loop_verdict tool).",
+    "stages MUST record a PASS/FAIL verdict via the workflow_verdict tool).",
     "",
   ].join("\n")
 
@@ -178,7 +178,7 @@ const OPENCODE_PRESET: Record<AgentPreset, (description: string) => string> = {
 
 const CLAUDE_TOOLS: Record<AgentPreset, string> = {
   builder: "Read, Edit, Write, Bash, Grep, Glob",
-  checker: "Read, Grep, Glob, Bash, mcp__agentic-workflow__loop_verdict, mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict",
+  checker: "Read, Grep, Glob, Bash, mcp__agentic-workflow__workflow_verdict, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
 }
 
 const claudeYaml = (name: string, description: string, preset: AgentPreset): string =>

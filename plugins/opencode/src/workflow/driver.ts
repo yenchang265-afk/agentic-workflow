@@ -12,7 +12,7 @@ import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/schedul
 import {
   buildEntryState,
   buildWorkSources,
-  loopWorkTree,
+  workflowWorkTree,
   makeManifestCache,
   planEntryState,
   taskGoal,
@@ -20,7 +20,7 @@ import {
 import type { TerminalOutcome, WorkSource } from "@agentic-workflow/core/source/types"
 import {
   ensureIsolation as coreEnsureIsolation,
-  loopId,
+  workflowId,
   teardownIsolation as coreTeardownIsolation,
 } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -88,7 +88,7 @@ import { enabledWorkflowKinds, modelFor, triggerFor, unknownStageModelKeys, unre
 import type { Config } from "../config.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
 import type { Action, WorkflowState, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
-import { clearLoop, findSessionDriving, getLoop, setLoop } from "@agentic-workflow/core/workflow/state"
+import { clearWorkflow, findSessionDriving, getWorkflow, setWorkflow } from "@agentic-workflow/core/workflow/state"
 
 /**
  * Impure orchestration for the agentic loop. Thin glue over the pure helpers in
@@ -205,16 +205,16 @@ const driving = new Set<string>()
 const watching = new Set<string>()
 /** Sessions the user interrupted (ESC) mid-drive. Trips drive's stop guard after
  *  the current stage settles, so the loop halts without prematurely nulling
- *  `getLoop` (which `onIdle`'s catch still needs on a reject-on-abort). Cleared
+ *  `getWorkflow` (which `onIdle`'s catch still needs on a reject-on-abort). Cleared
  *  when the drive unwinds. */
 const interrupted = new Set<string>()
 /**
  * Should this session stop firing agent turns? Either a `stop` cleared the loop,
  * or the user pressed ESC. Both must be tested: `onInterrupt` deliberately keeps
- * `getLoop` set, so a `getLoop`-only check silently keeps working after an
+ * `getWorkflow` set, so a `getWorkflow`-only check silently keeps working after an
  * interrupt (firing the remaining review lenses and the verdict retry).
  */
-const halted = (sessionID: string): boolean => !getLoop(sessionID) || interrupted.has(sessionID)
+const halted = (sessionID: string): boolean => !getWorkflow(sessionID) || interrupted.has(sessionID)
 /** Per-watching-session trigger timers (poll/cron/idle strategies) and modes. */
 const watchTimers = new Map<string, WatchTimerHandle>()
 const watchTriggerMode = new Map<string, TriggerMode>()
@@ -340,7 +340,7 @@ const executingDirs = new Set<string>()
 type CheckStage = string
 
 /**
- * Verdicts recorded by the `loop_verdict` tool, per session, consumed by the
+ * Verdicts recorded by the `workflow_verdict` tool, per session, consumed by the
  * drive loop right after the check stage that recorded them completes. This
  * tool call — not the stage's free text — is the authoritative channel;
  * text is untrusted (quoted contracts, echoed repo content).
@@ -360,7 +360,7 @@ const axisRequirement = new Map<string, readonly string[]>()
 
 /**
  * The stage a session has already audited an out-of-stage verdict for. A
- * drifting work stage typically calls `loop_verdict` more than once (verify,
+ * drifting work stage typically calls `workflow_verdict` more than once (verify,
  * then review, inside the same build turn); the task file gets one note per
  * drifting stage, not one per call.
  */
@@ -384,7 +384,7 @@ const addSample = (sessionID: string, sample: StageSample): void => {
 }
 
 /**
- * Record a verdict from the `loop_verdict` plugin tool. Only accepted while
+ * Record a verdict from the `workflow_verdict` plugin tool. Only accepted while
  * this session's live loop is actually sitting in that check stage —
  * anything else (no loop, wrong stage, e.g. a build agent trying to
  * pre-empt its own verification) is ignored with an explanatory result.
@@ -402,7 +402,7 @@ export const recordVerdict = (
   deps?: Deps,
 ): { readonly accepted: boolean; readonly message: string } => {
   const reject = (message: string) => ({ accepted: false, message })
-  const state = getLoop(sessionID)
+  const state = getWorkflow(sessionID)
   if (!state) return reject("No active loop in this session — verdict ignored.")
   if (state.stage !== stage) {
     // The rejection alone reaches only the calling agent. Audit it on the task
@@ -450,8 +450,8 @@ const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord 
 
 /**
  * Resolve the DRIVING session for a tool call. Check stages run as subtasks
- * (`subtask: true` commands), so `loop_verdict` arrives with the CHILD
- * session's id — `getLoop` missed, the verdict was silently ignored, and the
+ * (`subtask: true` commands), so `workflow_verdict` arrives with the CHILD
+ * session's id — `getWorkflow` missed, the verdict was silently ignored, and the
  * stage read "none recorded → FAIL" even though the verifier called the tool
  * (its prose PASS is the untrusted channel and rightly ignored). Walk the
  * session's parentID chain until a session with a live loop is found.
@@ -459,7 +459,7 @@ const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord 
  * "no active loop" when nothing in the chain is driving.
  */
 export const resolveDrivingSession = async (client: Client, sessionID: string): Promise<string> =>
-  (await findDrivingLoop(client, sessionID).catch(() => null))?.sessionID ?? sessionID
+  (await findDrivingWorkflow(client, sessionID).catch(() => null))?.sessionID ?? sessionID
 
 /**
  * Strict core of `resolveDrivingSession`: resolve the loop driving `sessionID`
@@ -467,13 +467,13 @@ export const resolveDrivingSession = async (client: Client, sessionID: string): 
  * with no loop, but THROWS on a session-API failure — the worktree-pinning
  * guard must fail CLOSED on "can't tell", not silently skip enforcement.
  */
-export const findDrivingLoop = async (
+export const findDrivingWorkflow = async (
   client: Client,
   sessionID: string,
 ): Promise<{ readonly sessionID: string; readonly state: WorkflowState } | null> => {
   let id = sessionID
   for (let depth = 0; depth < 5; depth++) {
-    const state = getLoop(id)
+    const state = getWorkflow(id)
     if (state) return { sessionID: id, state }
     const res = await client.session.get({ path: { id } })
     const parent = res?.data?.parentID
@@ -498,7 +498,7 @@ const teardownIsolation = (deps: Deps, state: WorkflowState): Promise<void> =>
   state.isolated ? coreTeardownIsolation(deps.$, deps.log, deps.directory, state) : Promise.resolve()
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. */
-const workTree = (deps: Deps, state: WorkflowState): string => loopWorkTree(deps.directory, state)
+const workTree = (deps: Deps, state: WorkflowState): string => workflowWorkTree(deps.directory, state)
 
 /**
  * Serialize commits per git tree. In worktree mode `serialize` is off, so N in-process
@@ -717,10 +717,10 @@ export const runStageWithLenses = async (
     const lens = passes[i]
     const args = lens
       ? `${baseArgs}\n\nReview lens ${i + 1}/${passes.length}: focus exclusively on ${lens}. The other lenses ` +
-        `run as separate passes — don't repeat them. Record this pass's verdict via loop_verdict as usual.`
+        `run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.`
       : baseArgs
     // One pass, plus at most one retry when a check stage ends with no
-    // loop_verdict call — a broken verdict channel is not a genuine FAIL, and
+    // workflow_verdict call — a broken verdict channel is not a genuine FAIL, and
     // burning a build iteration on it re-built already-done work (the
     // theater-booking-0 failure mode; parity with the Claude host's retry).
     let passRecord: VerdictRecord | null = null
@@ -728,7 +728,7 @@ export const runStageWithLenses = async (
       const passArgs =
         attempt === 0
           ? args
-          : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the loop_verdict tool call is MANDATORY. ` +
+          : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
@@ -747,7 +747,7 @@ export const runStageWithLenses = async (
       const header = lens
         ? `${stage} (lens: ${lens}) · iteration ${iteration + 1}${retryTag} · ${stamp}`
         : `${stage} · iteration ${iteration + 1}${retryTag} · ${stamp}`
-      await appendRunLog(deps.$, deps.directory, config.tasksDir, loopId(state), header, out, deps.log)
+      await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), header, out, deps.log)
       outputs.push(lens ? `### Review lens: ${lens}\n${out}` : out)
       passRecord = isCheck ? takeVerdictRecord(sessionID, stage as CheckStage) : null
       addSample(sessionID, {
@@ -764,7 +764,7 @@ export const runStageWithLenses = async (
       await flushMetrics(deps, sessionID, config, state)
       if (!isCheck || passRecord || halted(sessionID)) break
       if (attempt === 0) {
-        await deps.log("warn", `${stage}${lens ? ` (${lens})` : ""} recorded no verdict via loop_verdict — re-running the pass once`)
+        await deps.log("warn", `${stage}${lens ? ` (${lens})` : ""} recorded no verdict via workflow_verdict — re-running the pass once`)
       }
     }
     records.push(passRecord)
@@ -803,12 +803,12 @@ export const runStageWithLenses = async (
     const lensTag = missingLenses.length ? ` (lens${missingLenses.length > 1 ? "es" : ""}: ${missingLenses.join(", ")})` : ""
     await deps.log(
       "warn",
-      `${stage} recorded no verdict via loop_verdict even after a retry${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
+      `${stage} recorded no verdict via workflow_verdict even after a retry${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
     )
     const errorRecord: VerdictRecord = {
       verdict: "ERROR",
       reason:
-        `no loop_verdict recorded even after a retry${lensTag} — the verdict channel is unreachable from the stage subagent ` +
+        `no workflow_verdict recorded even after a retry${lensTag} — the verdict channel is unreachable from the stage subagent ` +
         "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
         (inText ? ` (prose claimed ${inText}, ignored — free text is untrusted)` : ""),
     }
@@ -837,7 +837,7 @@ const snapshot = async (deps: Deps, config: Config, state: WorkflowState): Promi
 const flushMetrics = async (deps: Deps, sessionID: string, config: Config, state: WorkflowState): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   if (samples.length === 0) return
-  const file = metricsPath(deps.directory, config.tasksDir, loopId(state))
+  const file = metricsPath(deps.directory, config.tasksDir, workflowId(state))
   const existing = await deps.$`cat ${file}`.quiet().nothrow()
   const doc = upsertRunMetrics(existing.exitCode === 0 ? existing.stdout.toString() : null, {
     endedAt: new Date().toISOString(),
@@ -872,10 +872,10 @@ const renderMetrics = async (
   const cap = manifestFor(state.kind ?? "engineering").manifest.maxIterations ?? config.maxIterations
   const stamp = new Date().toISOString()
   const summary = renderRunSummary(samples, outcome, detail, cap, stamp)
-  await appendRunLog(deps.$, deps.directory, config.tasksDir, loopId(state), `run · ${outcome}`, summary, deps.log)
+  await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, deps.log)
   // Structured twin of the summary table — the machine-readable record token
   // dashboards join against. sessionID lets host storage be joined exactly.
-  const file = metricsPath(deps.directory, config.tasksDir, loopId(state))
+  const file = metricsPath(deps.directory, config.tasksDir, workflowId(state))
   const existing = await deps.$`cat ${file}`.quiet().nothrow()
   // Upsert (not append): replace the trailing `open` entry that the per-stage
   // flush left behind — appending here would double-count the run.
@@ -943,7 +943,7 @@ export const drive = async (
     if (isolated) {
       step = { ...step, state: await ensureIsolation(deps, config, step.state) }
     }
-    setLoop(sessionID, step.state)
+    setWorkflow(sessionID, step.state)
     if (isolated) await snapshot(deps, config, step.state)
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
@@ -973,13 +973,13 @@ export const drive = async (
     // Halt the chain when either a `stop` cleared this session's loop
     // while the stage ran, or the user interrupted (ESC) mid-drive — preserving
     // whatever the stage did as a checkpoint on the branch. The interrupt path
-    // leaves `getLoop` set (so `onIdle`'s catch stays intact on a reject-on-abort),
+    // leaves `getWorkflow` set (so `onIdle`'s catch stays intact on a reject-on-abort),
     // so this block clears it itself.
     const wasInterrupted = interrupted.has(sessionID)
-    if (!getLoop(sessionID) || wasInterrupted) {
+    if (!getWorkflow(sessionID) || wasInterrupted) {
       const how = wasInterrupted ? "interrupted" : "stopped"
       await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`)
-      await checkpoint(deps, config, step.state, `loop(${loopId(step.state)}): incomplete — ${how} during ${stage}`)
+      await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): incomplete — ${how} during ${stage}`)
       await teardownIsolation(deps, step.state)
       // A deliberate stop ends the run — drop the snapshot so recover can't
       // resurrect stale state. An ESC interrupt is a pause: KEEP the snapshot so
@@ -987,7 +987,7 @@ export const drive = async (
       // restart. A reject-on-abort already keeps it (onIdle's catch never clears state),
       // so both interrupt paths converge on exact-stage resume.
       if (step.state.task && !wasInterrupted) await clearState(deps.$, deps.directory, config.tasksDir, step.state.task.id)
-      clearLoop(sessionID) // self-contained — no-op no-harm when stop already cleared it
+      clearWorkflow(sessionID) // self-contained — no-op no-harm when stop already cleared it
       // A mid-drive interrupt / human ESC (or an externally-cleared loop) is not a
       // genuine exhaustion — mark it retryable so the work source keeps the item
       // claimable for the next poll rather than suppressing it forever (C2).
@@ -997,7 +997,7 @@ export const drive = async (
     // engineering `build` — pr-sitter's `fix` stage writes code too and otherwise
     // gets no driver-side commit backstop if its agent forgets to commit.
     if (stageDef(loaded.manifest, stage).kind === "work" && isolated) {
-      await checkpoint(deps, config, step.state, `loop(${loopId(step.state)}): ${stage} iteration ${iteration + 1}`)
+      await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): ${stage} iteration ${iteration + 1}`)
     }
     if (stageDef(loaded.manifest, stage).kind === "check" && task) {
       const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0
@@ -1049,7 +1049,7 @@ export const drive = async (
     writeMetrics: (outcome, detail) => renderMetrics(deps, sessionID, config, state, outcome, detail),
   }
   const report = await runTerminal(ctx, action)
-  clearLoop(sessionID)
+  clearWorkflow(sessionID)
 
   switch (report.kind) {
     case "error":
@@ -1121,15 +1121,15 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
   await toast(deps.client, item.claimMessage, "info")
   // Task-backed claims entering an isolated stage get the durable CLAIMED note
   // before drive() establishes isolation.
-  if (item.state.task && stageDef(manifestFor(item.loopKind).manifest, item.state.stage).isolation !== "none") {
+  if (item.state.task && stageDef(manifestFor(item.workflowKind).manifest, item.state.stage).isolation !== "none") {
     await markClaimedOnHumanBranch(deps, config, item.state.task)
   }
   try {
-    const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.loopKind), item.state))
+    const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.workflowKind), item.state))
     if (outcome && claim.source.onTerminal) await claim.source.onTerminal(item, outcome)
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
-    // setLoop ran — onIdle's catch can't see the task): the claim is ours, so
+    // setWorkflow ran — onIdle's catch can't see the task): the claim is ours, so
     // release it or watch stays wedged. The source knows what "real work"
     // means per pool (a BUILD-started note keeps the marker for recovery).
     await claim.source.release(item)
@@ -1194,21 +1194,21 @@ const stopWatching = async (deps: Deps, sessionID: string): Promise<boolean> => 
  * (session.error + message.updated for one ESC) is a harmless no-op.
  */
 export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> => {
-  const state = getLoop(sessionID) // still set on the interrupt (the flag path keeps it)
-  const hadLoop = state !== undefined
+  const state = getWorkflow(sessionID) // still set on the interrupt (the flag path keeps it)
+  const hadWorkflow = state !== undefined
   const priorPending = pending.get(sessionID)
   pending.delete(sessionID) // synchronous — beat the racing idle; marker released below
   claimRequested.delete(sessionID) // a dropped one-shot claim must not fire on the trailing idle
   // Only flag when a loop is actually driving — otherwise the flag would linger
   // (no drive to consume it in onIdle's finally) and wrongly halt this session's
-  // NEXT loop. A running stage always has getLoop set (drive's setLoop), so the
+  // NEXT loop. A running stage always has getWorkflow set (drive's setWorkflow), so the
   // interruptable moment is covered.
-  if (hadLoop) interrupted.add(sessionID)
+  if (hadWorkflow) interrupted.add(sessionID)
   await releasePendingMarker(deps, priorPending) // dropped one-shot work must not leave a held claim
   const wasWatching = await stopWatching(deps, sessionID)
   // The interrupt keeps the snapshot, so recover resumes at the interrupted stage —
   // point the user straight at it.
-  if (hadLoop) {
+  if (hadWorkflow) {
     const id = state?.task?.id
     const msg = id ? `Loop interrupted — run /agentic-workflow:engineering recover ${id} to resume.` : "Loop interrupted."
     await toast(deps.client, msg, "info")
@@ -1250,7 +1250,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   // A plain idle event claims for poll/idle watchers only — cron kinds claim
   // exclusively when the schedule fires (which arrives as a one-shot claim).
   const idleMayClaim = claimsOnIdle(watchTriggerMode.get(sessionID) ?? "poll")
-  const shouldWatch = ((watching.has(sessionID) && idleMayClaim) || oneShotClaim) && !getLoop(sessionID)
+  const shouldWatch = ((watching.has(sessionID) && idleMayClaim) || oneShotClaim) && !getWorkflow(sessionID)
   if (!work && !shouldWatch) return
   // Serialize drives per working tree ONLY in shared-tree mode — there, two
   // loops would switch branches out from under each other. In worktree mode
@@ -1289,7 +1289,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     }
   } catch (err) {
     const message = (err as Error).message
-    const state = getLoop(sessionID)
+    const state = getWorkflow(sessionID)
     if (state?.task) {
       await appendNote(
         deps.$,
@@ -1314,12 +1314,12 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     if (state) {
       await renderMetrics(deps, sessionID, config, state, "error", message)
       if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
-      await checkpoint(deps, config, state, `loop(${loopId(state)}): incomplete — loop error`)
+      await checkpoint(deps, config, state, `loop(${workflowId(state)}): incomplete — loop error`)
       await teardownIsolation(deps, state)
     } else {
       runSamples.delete(sessionID)
     }
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
     await toast(deps.client, `Loop error: ${message}`, "error")
   } finally {
     driving.delete(sessionID)
@@ -1416,7 +1416,7 @@ export const disposeWatch = (): void => {
 const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
   try {
     if (!watching.has(sessionID)) return
-    if (driving.has(sessionID) || getLoop(sessionID)) return
+    if (driving.has(sessionID) || getWorkflow(sessionID)) return
     const res = await deps.client.session.status().catch(() => null)
     const status = res?.data?.[sessionID]
     if (status && status.type !== "idle") return
@@ -1519,9 +1519,9 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
 const startPlanById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<void> => {
   const { client } = deps
   // Same busy guard as `claim`: this session may already be driving a
-  // DIFFERENT task (watch-claimed) — the unconditional clearLoop below would
+  // DIFFERENT task (watch-claimed) — the unconditional clearWorkflow below would
   // null that run's state and silently abandon it mid-stage.
-  if (driving.has(sessionID) || getLoop(sessionID)) {
+  if (driving.has(sessionID) || getWorkflow(sessionID)) {
     return void (await toast(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning"))
   }
   // Accept the short-hash handle (`plan f7k3`) the UIs surface as the copyable
@@ -1552,7 +1552,7 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   if (!(await claimTask(deps.$, queued))) {
     return void (await toast(client, `Task "${id}" was just claimed by another watcher.`, "warning"))
   }
-  clearLoop(sessionID)
+  clearWorkflow(sessionID)
   await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
   await toast(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
 }
@@ -1638,7 +1638,7 @@ export const handleCommand = async (
   // once this command's own turn settles — the same idle deferral `plan <id>`
   // gets. The pull equivalent of `watch`.
   if (verb === "claim") {
-    if (driving.has(sessionID) || getLoop(sessionID)) {
+    if (driving.has(sessionID) || getWorkflow(sessionID)) {
       return void (await toast(client, `A loop is already driving in this session — /agentic-workflow:${kind} stop it first.`, "warning"))
     }
     claimRequested.set(sessionID, kind)
@@ -1650,7 +1650,7 @@ export const handleCommand = async (
     const wasWatching = await stopWatching(deps, sessionID)
     claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
-    const state = getLoop(sessionID)
+    const state = getWorkflow(sessionID)
     if (state?.task) {
       await appendNote(
         deps.$,
@@ -1662,7 +1662,7 @@ export const handleCommand = async (
         ),
       )
     }
-    const existed = clearLoop(sessionID)
+    const existed = clearWorkflow(sessionID)
     const message = existed ? "Loop stopped." : wasWatching ? "Stopped watching." : "No active loop to stop."
     await toast(client, message, "info")
     return
@@ -1732,8 +1732,8 @@ export const handleCommand = async (
     let id = arg.slice("recover".length).trim()
     if (!id) return void (await toast(client, `Usage: ${ECMD} recover <id>.`, "warning"))
     // Same busy guard as `claim`: recovering while this session drives a
-    // DIFFERENT task would clearLoop that run's state and abandon it mid-stage.
-    if (driving.has(sessionID) || getLoop(sessionID)) {
+    // DIFFERENT task would clearWorkflow that run's state and abandon it mid-stage.
+    if (driving.has(sessionID) || getWorkflow(sessionID)) {
       return void (await toast(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning"))
     }
     // Accept the short-hash handle, same as the gate verbs and `plan <id>`.
@@ -1758,7 +1758,7 @@ export const handleCommand = async (
     // re-entering at BUILD from the persisted plan when there's no valid one.
     const snap = await loadState(client, deps.directory, config.tasksDir, id)
     const actor = await gitActor(deps.$, deps.directory)
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
     if (snap && snap.task?.id === id) {
       // Refresh the task path from disk — the file may have moved since the snapshot.
       const state: WorkflowState = { ...snap, task: { ...snap.task, path: task.path } }
@@ -1857,7 +1857,7 @@ export const handleCommand = async (
 
   if (lower === "status" || lower === "") {
     const isWatching = watching.has(sessionID)
-    const state = getLoop(sessionID)
+    const state = getWorkflow(sessionID)
     // Backlog roll-up accompanies the session-loop line — a whole-backlog view,
     // not just this session's loop (engineering only: other kinds have no
     // backlog folders). Detailed flag lists go to the log.

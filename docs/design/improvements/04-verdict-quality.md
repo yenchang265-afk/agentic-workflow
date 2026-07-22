@@ -9,7 +9,7 @@ nothing from A, but A sharpens the feedback loop B exercises harder).
 
 ### Context
 
-`loop_verdict` (`src/index.ts:95-111`) records only
+`workflow_verdict` (`src/index.ts:95-111`) records only
 `stage + PASS/FAIL/ERROR`. The *reasons* live in the stage's free text,
 which `composeArgs` (`state.ts:122`) threads into the next iteration as a
 raw prose blob (`Verify failure to address:` / `Review feedback to
@@ -51,7 +51,7 @@ Carry them through:
   stage's output *before* `advanceOnIdle` stores it as the artifact:
 
   ```
-  FAILED CRITERIA (from loop_verdict):
+  FAILED CRITERIA (from workflow_verdict):
   - returns 429 over the limit
   - limit configurable per route
 
@@ -87,7 +87,7 @@ remains `verdict` alone.
 ### Context
 
 REVIEW is one agent, one pass. Threat model T1's residual: repo-content
-prompt injection persuading *that one agent* to call `loop_verdict` PASS.
+prompt injection persuading *that one agent* to call `workflow_verdict` PASS.
 The current backstops are the iteration cap and the human diff gate. N
 independent review passes with distinct lenses make a single injection much
 less likely to flip the outcome — diverse perspectives also catch different

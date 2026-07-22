@@ -7,7 +7,7 @@ import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
-import { anyLoopActive, anyWorktreeLoopActive, findSessionDriving, getLoop, hasLoop, planStageTaskId } from "@agentic-workflow/core/workflow/state"
+import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWorkflow, hasWorkflow, planStageTaskId } from "@agentic-workflow/core/workflow/state"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
@@ -226,7 +226,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
 
     "tool.execute.before": async (input, output) => {
       // Only trace tool calls while a loop is actively driving this session.
-      if (hasLoop(input.sessionID)) {
+      if (hasWorkflow(input.sessionID)) {
         await log("info", `tool ${input.tool} starting (call ${input.callID})`)
       }
       // Backlog-mutation guard (always on, loop or no loop): the folder a task
@@ -237,15 +237,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // draft/*.md and the live PLAN stage writing its own queued/ task.
       const config = await getConfig()
       // Stage commands run as subtasks, so tool calls arrive with the CHILD
-      // session's id — getLoop misses and every per-loop guard below would be
+      // session's id — getWorkflow misses and every per-loop guard below would be
       // silently skipped (the worktree pinning was dead code for stage
       // subagents). Walk the parentID chain to the driving loop, like
-      // loop_verdict does; the walk only runs while some loop is live.
-      let loop = getLoop(input.sessionID)
+      // workflow_verdict does; the walk only runs while some loop is live.
+      let loop = getWorkflow(input.sessionID)
       let resolutionFailed = false
-      if (!loop && anyLoopActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool))) {
+      if (!loop && anyWorkflowActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool))) {
         try {
-          loop = (await driver.findDrivingLoop(client, input.sessionID))?.state
+          loop = (await driver.findDrivingWorkflow(client, input.sessionID))?.state
         } catch (err) {
           resolutionFailed = true
           await log("warn", `could not resolve driving session for ${input.sessionID}: ${(err as Error).message}`)
@@ -306,7 +306,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // session, a file-writing tool must not touch anything outside the
       // worktree, and bash is pinned by classifyWorktreeBash above — the same
       // fail-closed stance for both tool shapes.
-      if (resolutionFailed && (EDIT_TOOLS.has(input.tool) || input.tool === "bash") && anyWorktreeLoopActive()) {
+      if (resolutionFailed && (EDIT_TOOLS.has(input.tool) || input.tool === "bash") && anyWorktreeWorkflowActive()) {
         // Fail CLOSED on "can't tell": a worktree-isolated loop is live but this
         // session couldn't be attributed to (or cleared of) it — refusing the edit
         // beats risking a silent write to the human's main tree.
@@ -317,7 +317,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       }
       // NOTE: unlike the Claude host this reads only the loop's worktree, with no
       // per-stage isolation flag — OpenCode's state carries no equivalent of the
-      // marker's `loopWorktree`/`worktree` split. In practice the driver sets
+      // marker's `workflowWorktree`/`worktree` split. In practice the driver sets
       // `git.worktree` only once it has isolated, so an unisolated stage sees no
       // worktree and no pin; the asymmetry is that a stage which runs unisolated
       // AFTER a worktree exists (a replan bounce back to PLAN) would have its
@@ -346,7 +346,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     },
 
     tool: {
-      loop_verdict: tool({
+      workflow_verdict: tool({
         description:
           "Record a check stage's machine-readable verdict for the running loop (engineering: verify/review; pr-sitter: triage/verify). This tool " +
           "call is the loop's ONLY trusted verdict channel — a PASS/FAIL written in plain text is ignored. " +

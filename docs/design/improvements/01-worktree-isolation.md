@@ -25,7 +25,7 @@ Verified against `@opencode-ai/plugin` / `@opencode-ai/sdk` v1.17.11:
   `query: { directory?: string }` — but pointing a stage session at the
   worktree **boots a separate app instance rooted there**, which loads its
   own plugin set. A fresh worktree has no `node_modules`, so this plugin
-  can't load there — **the `loop_verdict` tool would not exist in the stage
+  can't load there — **the `workflow_verdict` tool would not exist in the stage
   session**, breaking the loop's only trusted verdict channel. Even if it
   loaded, it would be a different module instance with its own
   `recordedVerdicts` map, invisible to the driving instance, plus version

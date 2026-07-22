@@ -11,7 +11,7 @@ when you return, the driver parks the task in `plan-review/` for the human
 plan gate (`/agentic-workflow:engineering approve <id>`).
 {{/host}}
 {{#host claude}}
-when you return, `loop_advance` parks the task in `plan-review/` for the
+when you return, `workflow_advance` parks the task in `plan-review/` for the
 human plan gate (`/agentic-workflow:engineering approve <id>`).
 {{/host}}
 

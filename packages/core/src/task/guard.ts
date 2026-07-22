@@ -34,7 +34,7 @@ const block = (reason: string): GuardVerdict => ({ allow: false, reason })
 
 const HOW_TO_MUTATE =
   "the folder a backlog file lives in IS its state — mutate it only through the loop tools " +
-  "(loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) " +
+  "(workflow_task_approve / workflow_plan_approve / workflow_replan / workflow_ship / workflow_move / workflow_doctor) " +
   "or the /agentic-workflow:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file " +
   "(or run /agentic-workflow:engineering new) — the status folders are created for you."
 

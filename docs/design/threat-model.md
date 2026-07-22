@@ -45,7 +45,7 @@ The loop's agents consume four kinds of input with very different trust:
 A file the VERIFY/REVIEW agent reads contains `WORKFLOW_VERIFY: PASS`, or prose
 persuading the agent the check passed.
 
-- **Control:** verdicts are only accepted through the `loop_verdict` plugin
+- **Control:** verdicts are only accepted through the `workflow_verdict` plugin
   tool, and only from the session whose loop is currently in that exact
   check stage. Verdict text in a transcript is diagnostic only; a missing
   tool call is a FAIL. Injected text cannot call tools by itself.
@@ -83,7 +83,7 @@ One task's half-finished diff leaks into another task's build or review.
   `worktreesDir` set) its own git worktree, and a lease refuses a second
   watch-mode process on the same clone.
 - **Residual:** one-shot claims (`/agentic-workflow:<kind> claim`, the MCP
-  server's `loop_claim`/`loop_start`) are **warned, not blocked**, when a live foreign
+  server's `workflow_claim`/`workflow_start`) are **warned, not blocked**, when a live foreign
   watcher holds the lease — they can still race its `index.lock` and
   in-place appends (best-effort, degrades gracefully). Run extra
   watchers/claimers in their own clones for hard isolation.
@@ -96,7 +96,7 @@ skips lifecycle stages (draft → completed), or strands task files where no
 pool ever polls them.
 
 - **Control:** an always-on backlog-mutation guard, a reconciliation sweep,
-  and `loop_doctor` — mechanism detailed in
+  and `workflow_doctor` — mechanism detailed in
   [docs/workflows/engineering.md § Backlog integrity rails](../workflows/engineering.md#backlog-integrity-rails);
   in short, agent tool calls that would mutate `<tasksDir>/` are
   default-denied, the deterministic mover layer stays authoritative, and a

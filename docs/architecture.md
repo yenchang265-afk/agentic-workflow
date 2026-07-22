@@ -21,7 +21,7 @@ still change; `engineering` is the stable, default-on kind.
 flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
         oc["OpenCode plugin (src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
-        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>loop_claim / loop_start / loop_advance"]
+        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
     end
 
     subgraph core["@agentic-workflow/core (packages/core)"]
@@ -93,7 +93,7 @@ flowchart TB
   `enabledWorkflowKinds` in core config); the first successful claim wins, and
   each kind's command scopes the poll to its own kind's source. Both
   hosts' triggers delegate to it: OpenCode's `session.idle` + the per-kind
-  `watch` timer, and the Claude Code MCP server's `loop_claim`. A source may
+  `watch` timer, and the Claude Code MCP server's `workflow_claim`. A source may
   implement `onTerminal` for end-of-drive bookkeeping (the PR sitter's dedup
   ledger); the backlog source doesn't need it.
 - **Per-kind status semantics** — the `docs/tasks/` status folders are the
@@ -112,8 +112,8 @@ who-does-what breakdown, and the backlog integrity rails that protect
 `docs/tasks/` now live in their own file:
 **[`docs/workflows/engineering.md`](workflows/engineering.md)**.
 
-Verdicts across every kind are only trusted through the `loop_verdict` plugin
-tool — a stage agent claiming "PASS" in prose is ignored. `loop_verdict`
+Verdicts across every kind are only trusted through the `workflow_verdict` plugin
+tool — a stage agent claiming "PASS" in prose is ignored. `workflow_verdict`
 accepts any check stage the active loop's manifest declares (engineering:
 `verify`/`review`; pr-sitter: `triage`/`verify`; review-sitter: `fetch`;
 dep-sitter: `scan`/`verify`; main-sitter: `diagnose`/`verify`) and validates
@@ -129,7 +129,7 @@ At most one watch-mode process per clone, across every kind
 every tick; a second watch-mode process — for any kind — is refused with the
 live owner's identity, and a dead watcher's lease is taken over once the
 heartbeat exceeds `max(3×interval, 2min)`. One-shot claims
-(`loop_claim`/`loop_start`) warn — not block — when a foreign live lease
+(`workflow_claim`/`workflow_start`) warn — not block — when a foreign live lease
 exists.
 
 ## The sitter kinds — experimental
@@ -148,7 +148,7 @@ what each one does, its stage pipeline, its authority limits, and its
 
 Same workflow kinds and lifecycles, different driver: Claude Code has no
 background `session.idle` driver, so the main agent drives the loop through a
-bundled MCP server (`mcp__agentic-workflow__loop_*` tools) rather than agent
+bundled MCP server (`mcp__agentic-workflow__workflow_*` tools) rather than agent
 frontmatter permissions, and human gates are **interactive** — a park or a
 done returns a `gate` field and the driving agent asks inline via
 AskUserQuestion instead of only waiting for a command. Full install and
@@ -182,7 +182,7 @@ It also **edits `.agentic-workflow.json`**, one named layer at a time — never 
 merged view, which would flatten the user-scope layer (and its `ado.pat`) into
 the repo's file. It writes raw JSON, so keys core's schema doesn't know survive
 a save instead of being stripped. And it exposes the **backlog doctor**
-(`loop_doctor`) — rescuing strays, removing invented folders, and releasing the
+(`workflow_doctor`) — rescuing strays, removing invented folders, and releasing the
 stale, undriven claim markers that would otherwise keep refusing a gate move.
 
 Its write surface is bounded by the localhost bind, a Host-header check, and an

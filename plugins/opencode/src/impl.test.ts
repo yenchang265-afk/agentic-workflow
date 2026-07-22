@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { clearLoop, setLoop, type WorkflowState } from "@agentic-workflow/core/workflow/state"
+import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { makeAgenticWorkflow } from "./impl.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
  * the plugin factory with a fake client. Stage commands run as subtasks, so tool
  * calls arrive with the CHILD session's id — the regression here is the guard
- * reading only `getLoop(input.sessionID)` and silently skipping enforcement for
+ * reading only `getWorkflow(input.sessionID)` and silently skipping enforcement for
  * every stage subagent (edits landed in the human's main tree).
  */
 
@@ -31,7 +31,7 @@ const makeHooks = async (sessions: Record<string, string | undefined>, opts: { f
   return (await makeAgenticWorkflow({ client, directory: "/repo", $, worktree: "/repo" } as never)) as unknown as Hooks
 }
 
-const worktreeLoop = (): WorkflowState => ({
+const worktreeWorkflow = (): WorkflowState => ({
   goal: "Do it",
   stage: "build",
   iteration: 0,
@@ -42,7 +42,7 @@ const worktreeLoop = (): WorkflowState => ({
 })
 
 test("worktree pinning fires for a stage subagent's child session (the dead-guard regression)", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({ child: "drv" })
     // A main-tree path is REMAPPED onto the worktree mirror, even though the
@@ -75,22 +75,22 @@ test("worktree pinning fires for a stage subagent's child session (the dead-guar
       /docs\/tasks|driver-owned/,
     )
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("a session with no loop ancestor is untouched while a worktree loop runs elsewhere", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({ stranger: undefined })
     await hooks["tool.execute.before"]({ sessionID: "stranger", tool: "write", callID: "c1" }, { args: { filePath: "/elsewhere/x.ts" } })
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("session-API failure while a worktree loop is live fails CLOSED for edit tools", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({}, { failSessionApi: true })
     await assert.rejects(
@@ -98,12 +98,12 @@ test("session-API failure while a worktree loop is live fails CLOSED for edit to
       /could not be attributed/,
     )
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("bash is pinned to the worktree while a worktree loop drives (the sometimes-builds-in-main-tree bug)", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({ child: "drv" })
     // Unpinned mutating command → would run in the main tree → prefix inserted.
@@ -133,22 +133,22 @@ test("bash is pinned to the worktree while a worktree loop drives (the sometimes
       /reaches \/repo\/dist\/a\.js/,
     )
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("bash in a session with no loop ancestor is untouched while a worktree loop runs elsewhere", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({ stranger: undefined })
     await hooks["tool.execute.before"]({ sessionID: "stranger", tool: "bash", callID: "c1" }, { args: { command: "npm test" } })
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("session-API failure while a worktree loop is live fails CLOSED for bash too", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({}, { failSessionApi: true })
     await assert.rejects(
@@ -156,12 +156,12 @@ test("session-API failure while a worktree loop is live fails CLOSED for bash to
       /could not be attributed/,
     )
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("edits to the worktree's frozen backlog copy are refused (task files are driver-owned)", async () => {
-  setLoop("drv", worktreeLoop())
+  setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({ child: "drv" })
     // Status-folder copy: already denied by the always-on backlog guard.
@@ -184,7 +184,7 @@ test("edits to the worktree's frozen backlog copy are refused (task files are dr
       /driver-owned/,
     )
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 

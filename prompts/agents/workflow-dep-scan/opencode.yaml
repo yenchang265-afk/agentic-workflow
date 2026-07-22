@@ -1,4 +1,4 @@
-description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a loop_verdict (PASS = upgrade needed). Never edits, never installs.
+description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a workflow_verdict (PASS = upgrade needed). Never edits, never installs.
 mode: subagent
 permission:
   edit: deny

@@ -177,7 +177,7 @@ const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review"
 /**
  * Pairing coverage across the active backlog (everything but completed/abandoned):
  * how many active tasks carry a `tracker` block vs the ids of those that don't.
- * Feeds the `loop_status` pairing view when project management is configured. Pure.
+ * Feeds the `workflow_status` pairing view when project management is configured. Pure.
  */
 export const pairingCoverage = (
   byStatus: Readonly<Record<TaskStatus, readonly Task[]>>,
@@ -322,7 +322,7 @@ export const resolveTaskIdIn = async (
  * prefix matches from every folder are merged: exactly one → resolved, several
  * → ambiguous (never guesses), none → null. This is the resolution the gate
  * verbs (approve/replan) have always done — exported so every id-taking verb
- * (`plan`, `recover`, loop_start) accepts the same short handles the UIs
+ * (`plan`, `recover`, workflow_start) accepts the same short handles the UIs
  * surface as "the copyable id".
  */
 export const resolveTaskIdAnywhere = async (
@@ -411,8 +411,8 @@ export const listClaimIds = async (
  */
 export const isOrphanedClaim = (
   task: Task,
-  opts: { readonly drivenByLiveLoop: boolean; readonly markerStale: boolean },
-): boolean => isClaimable(task) && !opts.drivenByLiveLoop && opts.markerStale
+  opts: { readonly drivenByLiveWorkflow: boolean; readonly markerStale: boolean },
+): boolean => isClaimable(task) && !opts.drivenByLiveWorkflow && opts.markerStale
 
 /**
  * The `queued/` variant of `isOrphanedClaim`: a queued task is planless by
@@ -423,8 +423,8 @@ export const isOrphanedClaim = (
  */
 export const isOrphanedPlanClaim = (
   _task: Task,
-  opts: { readonly drivenByLiveLoop: boolean; readonly markerStale: boolean },
-): boolean => !opts.drivenByLiveLoop && opts.markerStale
+  opts: { readonly drivenByLiveWorkflow: boolean; readonly markerStale: boolean },
+): boolean => !opts.drivenByLiveWorkflow && opts.markerStale
 
 /** Result of walking the claim candidates: the winner, and the ids whose markers stayed held. */
 export interface ClaimAttempt {
@@ -477,7 +477,7 @@ export const claimFirst = async (
       continue // stale listing, nothing holds it — not a held marker
     }
     const markerStale = await claimOlderThan($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
-    if (isOrphaned(task, { drivenByLiveLoop: opts.isDriving(task.id), markerStale })) {
+    if (isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(task.id), markerStale })) {
       opts.log?.("warn", `releasing orphaned claim marker for ${task.id} — its claimer died before the stage started`)
       await releaseClaim($, task)
       if (await claimTask($, task)) {
@@ -518,7 +518,7 @@ export const releaseOrphanedClaims = async (
     const ref: FileRef = task ?? { id, path: path.join(inProgressDir, `${id}.md`) }
     const markerStale = await claimOlderThan($, ref, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
     const orphaned = task
-      ? isOrphaned(task, { drivenByLiveLoop: opts.isDriving(id), markerStale })
+      ? isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(id), markerStale })
       : markerStale && !opts.isDriving(id)
     if (!orphaned) continue
     await releaseClaim($, ref)

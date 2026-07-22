@@ -21,7 +21,7 @@ import {
  * MCP server drive the exact same behavior.
  */
 
-export const loopId = (state: WorkflowState): string =>
+export const workflowId = (state: WorkflowState): string =>
   state.task?.id ?? (slugify(state.goal.split("\n")[0] ?? "") || "goal")
 
 /** Absolute path to a task's dedicated worktree under the configured root. Pure. */
@@ -111,7 +111,7 @@ export const ensureIsolation = async (
     //     (`isolated` already true): just make sure the tree is back on its branch.
     if (!state.isolated && config.worktreesDir) {
       await ensureExcluded($, directory, config.worktreesDir)
-      const wtPath = worktreePathFor(directory, config.worktreesDir, loopId(state))
+      const wtPath = worktreePathFor(directory, config.worktreesDir, workflowId(state))
       // `git worktree list` includes the MAIN tree as its first entry; if the human
       // (or a prior shared-mode run) left it checked out on this branch,
       // `existing === directory` — adopting it as "the worktree" would isolate ONTO
@@ -153,10 +153,10 @@ export const ensureIsolation = async (
     await log("warn", "loop: detached HEAD — building without branch isolation")
     return { ...state, isolationWarning: "detached HEAD — building without branch isolation" }
   }
-  const branch = `feature/${loopId(state)}`
+  const branch = `feature/${workflowId(state)}`
 
   if (config.worktreesDir) {
-    const wtPath = worktreePathFor(directory, config.worktreesDir, loopId(state))
+    const wtPath = worktreePathFor(directory, config.worktreesDir, workflowId(state))
     await ensureExcluded($, directory, config.worktreesDir)
     if (await isDirty($, directory)) {
       await log("info", "loop: main tree has uncommitted changes — they are NOT visible in this loop's worktree")

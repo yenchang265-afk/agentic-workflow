@@ -19,7 +19,7 @@ export interface ClaimSkipReason {
 export interface WorkItem {
   readonly id: string
   /** The workflow kind (manifest) that drives this item. */
-  readonly loopKind: string
+  readonly workflowKind: string
   /** Human-facing title for toasts/logs. */
   readonly title: string
   readonly entryStage: string
@@ -46,7 +46,7 @@ export interface TerminalOutcome {
 }
 
 export interface WorkSource {
-  readonly loopKind: string
+  readonly workflowKind: string
   /**
    * Walk this source's pools in priority order and atomically claim the next
    * item. Exactly one of `item`/`skip` is non-null: a claim, or the reason

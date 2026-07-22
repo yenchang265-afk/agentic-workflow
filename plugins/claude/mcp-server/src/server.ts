@@ -16,7 +16,7 @@ import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import {
   buildEntryState,
   buildWorkSources,
-  loopWorkTree,
+  workflowWorkTree,
   makeManifestCache,
   planEntryState,
 } from "@agentic-workflow/core/workflow/orchestrate"
@@ -38,7 +38,7 @@ import {
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
-import { ensureIsolation, loopId } from "@agentic-workflow/core/workflow/isolate"
+import { ensureIsolation, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
@@ -88,19 +88,19 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflo
  * server is the trusted state + git/backlog substrate.
  *
  * Task authoring happens before the loop, via `/agentic-workflow:engineering new`: it interviews
- * the user into a draft (main-agent turn) and `loop_approve` (unified gate)
+ * the user into a draft (main-agent turn) and `workflow_approve` (unified gate)
  * parks it planless in `queued/`. Planning happens inside the loop, right before
- * execution, and only on demand: `loop_start` on a queued task enters at PLAN
- * (no git isolation — it writes only the task file; `loop_claim` never
- * auto-plans from `queued/`), and `loop_advance` after PLAN
+ * execution, and only on demand: `workflow_start` on a queued task enters at PLAN
+ * (no git isolation — it writes only the task file; `workflow_claim` never
+ * auto-plans from `queued/`), and `workflow_advance` after PLAN
  * parks the task in `plan-review/` and ends the loop (`park`). The human plan
- * gate is `loop_plan_approve` (plan-review → in-progress); `loop_replan`
+ * gate is `workflow_plan_approve` (plan-review → in-progress); `workflow_replan`
  * sends a rejected or cap-tripped task back to `queued/`. From `in-progress/`
  * — the build-ready queue — claims enter at BUILD.
  *
  * There is no `/agentic-workflow:engineering watch` here, deliberately: watch needs an autonomous
  * driver firing stages on idle events/timers, and the MCP server can't spawn
- * subagents. `loop_claim` is the pull equivalent — one human trigger claims
+ * subagents. `workflow_claim` is the pull equivalent — one human trigger claims
  * the next approved task.
  */
 
@@ -129,7 +129,7 @@ const log = (level: "info" | "warn" | "error", message: string) =>
 // --- shared in-process loop state (one active loop per server/session) ---
 
 let active: WorkflowState | null = null
-let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when loop_claim made it
+let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when workflow_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
 let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
 let verdictRejected = false // whether the current check stage had a verdict REJECTED (incomplete axis coverage) — changes the re-fire wording
@@ -253,7 +253,7 @@ const stageModelWarnings = (): string[] =>
 const SPAWN_MODEL_NOTE =
   ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)"
 
-/** Flip the stage marker's `verdictRecorded` flag in place once loop_verdict
+/** Flip the stage marker's `verdictRecorded` flag in place once workflow_verdict
  *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
 const stampVerdictRecorded = () => {
   try {
@@ -309,9 +309,9 @@ const writeStageMarker = (stage: string | null) => {
           // (workflow-orchestration SKILL) spawns whatever is named here, so a new kind
           // needs no prose edit.
           agent: def.agent,
-          // Check stages must record a verdict via loop_verdict before ending;
+          // Check stages must record a verdict via workflow_verdict before ending;
           // the SubagentStop guard blocks a first stop that hasn't (see
-          // check-verdict-guard.mjs). loop_verdict flips verdictRecorded in place.
+          // check-verdict-guard.mjs). workflow_verdict flips verdictRecorded in place.
           check: def.kind === "check",
           verdictRecorded: false,
           // The backlog guard's PLAN carve-out: only this task's queued/ file
@@ -324,7 +324,7 @@ const writeStageMarker = (stage: string | null) => {
           // An unisolated stage still must not write code into the human's
           // checkout — without this the guard saw no worktree at all and waved
           // every PLAN-stage write through onto the current branch.
-          loopWorktree: active?.git?.worktree ?? null,
+          workflowWorktree: active?.git?.worktree ?? null,
           deadline: stageDeadline,
           // 1-indexed to match the "BUILD started (iteration N)" audit notes.
           iteration: active ? active.iteration + 1 : null,
@@ -344,7 +344,7 @@ const snapshot = async () => {
   if (active?.task) await saveState(sh, directory, config.tasksDir, active.task.id, active)
 }
 
-const workTree = () => (active ? loopWorkTree(directory, active) : directory)
+const workTree = () => (active ? workflowWorkTree(directory, active) : directory)
 
 /** The manifest driving the active loop (engineering when kind is absent). */
 const activeManifest = (): LoadedManifest => manifestFor(active?.kind ?? "engineering")
@@ -378,19 +378,19 @@ const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx =>
   // Worktree checkpoints exclude the backlog dir — the frozen `<tasksDir>` copy
   // must never ride feature/<id> (task-file lifecycle lives on the main tree).
   checkpoint: async (message) =>
-    void (await commitAll(sh, loopWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
+    void (await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
   writeMetrics: async (outcome, detail) => {
     const stamp = new Date().toISOString()
     const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
-    await appendRunLog(sh, directory, config.tasksDir, loopId(state), `run · ${outcome}`, summary, log)
-    writeRunMetrics(loopId(state), outcome, detail, stamp)
+    await appendRunLog(sh, directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, log)
+    writeRunMetrics(workflowId(state), outcome, detail, stamp)
   },
 })
 
 /** Locate which status folder a task id lives in. */
 const findAnyStatus = (id: string): Promise<Task | null> => coreFindAnyStatus(gateCtx(), id)
 
-/** The work sources loop_claim polls, in claim-priority order (config order).
+/** The work sources workflow_claim polls, in claim-priority order (config order).
  *  An `only` kind restricts the poll to that one kind. */
 const sourcesFor = (only?: string): WorkSource[] =>
   buildWorkSources(
@@ -402,7 +402,7 @@ const sourcesFor = (only?: string): WorkSource[] =>
   )
 
 /** Claim an approved in-progress task and construct its build-entry state.
- *  Shared by loop_start and loop_claim. */
+ *  Shared by workflow_start and workflow_claim. */
 const startTask = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
@@ -421,8 +421,8 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
   } catch (err) {
     // Died before any durable work (only the CLAIMED note exists — no BUILD
     // note yet), and the claim above is ours, so hand it back. Without this the
-    // marker is wedged: the orphan sweep and loop_doctor both refuse a body
-    // carrying CLAIMED on purpose, so only a manual loop_recover would free it.
+    // marker is wedged: the orphan sweep and workflow_doctor both refuse a body
+    // carrying CLAIMED on purpose, so only a manual workflow_recover would free it.
     await releaseClaim(sh, t)
     return { error: (err as Error).message }
   }
@@ -434,7 +434,7 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
 /** Claim a queued (planless) task and construct its PLAN-entry state. No git
  *  isolation and no snapshot: PLAN writes only the task file, in the main
  *  tree. A died PLAN leaves a stale marker in queued/.claims/ — release it
- *  with loop_doctor fix, then re-run loop_start on the task. */
+ *  with workflow_doctor fix, then re-run workflow_start on the task. */
 const startPlan = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
@@ -445,9 +445,9 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   active = state
   // Arm the PreToolUse carve-out for the whole PLAN window: {stage:"plan", taskId}
   // so the workflow-plan-author subagent may Edit its own queued/<id>.md. The PLAN
-  // path spawns the author straight off loop_start without a loop_stage call, so
+  // path spawns the author straight off workflow_start without a workflow_stage call, so
   // without this the marker never exists and the one write PLAN exists to make is
-  // blocked. loop_advance clears it on park.
+  // blocked. workflow_advance clears it on park.
   writeStageMarker("plan")
   return { state }
 }
@@ -467,11 +467,11 @@ const claimWarnings = async (): Promise<string[]> => {
     )
   }
   const anomalies = await auditBacklog(fsClient, directory, config.tasksDir)
-  if (hasAnomalies(anomalies)) warnings.push(...formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (loop_doctor repairs)`))
+  if (hasAnomalies(anomalies)) warnings.push(...formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (workflow_doctor repairs)`))
   return warnings
 }
 
-/** The fire payload loop_start/loop_claim return for a fresh claim. */
+/** The fire payload workflow_start/workflow_claim return for a fresh claim. */
 const firePayload = (state: WorkflowState, id: string) => {
   const manifest = manifestFor(state.kind ?? "engineering")
   const def = stageDef(manifest.manifest, state.stage)
@@ -487,7 +487,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     isolation: state.git ?? null,
     prompt: composePrompt(manifest, state, state.stage),
     ...(state.stage === "plan"
-      ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_MODEL_NOTE}; on loop_advance the task parks in plan-review/ for the human gate` }
+      ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
       : {}),
   }
 }
@@ -497,15 +497,15 @@ const firePayload = (state: WorkflowState, id: string) => {
 const server = new McpServer({ name: "agentic-workflow", version: "0.0.1" })
 
 server.registerTool(
-  "loop_start",
+  "workflow_start",
   {
     description:
-      "Execute one task now. An in-progress/ task (plan approved via loop_plan_approve) is claimed and started at BUILD with git isolation; a queued/ task (approved via loop_task_approve, planless) is claimed and started at PLAN — it will park in plan-review/ for the human plan gate. Returns the composed stage prompt. Entering PLAN arms the stage marker automatically (so the plan-author may write its own queued/ task); call loop_stage right before spawning each later stage subagent.",
+      "Execute one task now. An in-progress/ task (plan approved via workflow_plan_approve) is claimed and started at BUILD with git isolation; a queued/ task (approved via workflow_task_approve, planless) is claimed and started at PLAN — it will park in plan-review/ for the human plan gate. Returns the composed stage prompt. Entering PLAN arms the stage marker automatically (so the plan-author may write its own queued/ task); call workflow_stage right before spawning each later stage subagent.",
     inputSchema: { id: z.string().min(1).describe("The task's id (filename without .md) in in-progress/ or queued/.") },
   },
   async ({ id }) => {
     await loadCfg()
-    if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
+    if (active) return fail(`A loop is already driving "${workflowId(active)}" — finish or workflow_stop it first.`)
     // Accept the short-hash handle (`f7k3`) the UIs surface as the copyable id —
     // the same resolution the gate tools do.
     const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
@@ -526,9 +526,9 @@ server.registerTool(
       const where = elsewhere ? path.basename(path.dirname(elsewhere.path)) : null
       return fail(
         where === "plan-review"
-          ? `Task "${id}" is parked in plan-review/ — approve its plan (loop_plan_approve) or reject it (loop_replan) first.`
+          ? `Task "${id}" is parked in plan-review/ — approve its plan (workflow_plan_approve) or reject it (workflow_replan) first.`
           : where === "draft"
-            ? `Task "${id}" is a draft — approve it into the queue with loop_task_approve first.`
+            ? `Task "${id}" is a draft — approve it into the queue with workflow_task_approve first.`
             : where
               ? `Task "${id}" is in ${where} — only queued or in-progress tasks can be executed.`
               : `No task "${id}" found.`,
@@ -537,8 +537,8 @@ server.registerTool(
     if (!isClaimable(t)) {
       return fail(
         isRecoverable(t)
-          ? `Task "${id}" has already started — resume it with loop_recover instead.`
-          : `Task "${id}" has no Implementation Plan — send it back to planning with loop_replan.`,
+          ? `Task "${id}" has already started — resume it with workflow_recover instead.`
+          : `Task "${id}" has no Implementation Plan — send it back to planning with workflow_replan.`,
       )
     }
     const started = await startTask(t)
@@ -549,15 +549,15 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_claim",
+  "workflow_claim",
   {
     description:
-      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with loop_start({id}). Returns null when nothing is claimable.",
+      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with workflow_start({id}). Returns null when nothing is claimable.",
     inputSchema: { kind: z.string().optional().describe("Restrict the pull to one enabled workflow kind (e.g. pr-sitter).") },
   },
   async ({ kind }) => {
     await loadCfg()
-    if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
+    if (active) return fail(`A loop is already driving "${workflowId(active)}" — finish or workflow_stop it first.`)
     if (kind && !enabledWorkflowKinds(config).includes(kind)) {
       return fail(`Unknown workflow kind "${kind}" — enabled: ${enabledWorkflowKinds(config).join(", ")}.`)
     }
@@ -571,7 +571,7 @@ server.registerTool(
     pending = null
     verdictRetried = false
     verdictRejected = false
-    const loaded = manifestFor(claim.item.loopKind)
+    const loaded = manifestFor(claim.item.workflowKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
       // Task-backed claims get the durable CLAIMED note on the human branch
       // before feature/<id> is cut — same as startTask (see store.ts CLAIMED_MARKER).
@@ -591,11 +591,11 @@ server.registerTool(
     } else {
       active = state
       // Arm the stage marker for a no-isolation entry stage, mirroring startPlan
-      // (loop_start's queued path). Engineering's PLAN is spawned straight off this
-      // claim with no loop_stage call (firePayload emits no such instruction for
+      // (workflow_start's queued path). Engineering's PLAN is spawned straight off this
+      // claim with no workflow_stage call (firePayload emits no such instruction for
       // plan), so without the marker the {stage:"plan", taskId} carve-out never
       // exists and the plan-author's one write to queued/<id>.md is blocked (exit 2)
-      // → loop_advance finds no plan. Sitter check-stage entries re-arm via loop_stage
+      // → workflow_advance finds no plan. Sitter check-stage entries re-arm via workflow_stage
       // anyway, so this is the fix for PLAN and a harmless no-op for them.
       writeStageMarker(state.stage)
     }
@@ -605,7 +605,7 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_compose",
+  "workflow_compose",
   {
     description: "Return the composed prompt (goal + relevant prior artifacts + isolation lines) to hand a stage subagent.",
     inputSchema: { stage: z.string().min(1) },
@@ -621,7 +621,7 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_verdict",
+  "workflow_verdict",
   {
     description:
       "Record the VERIFY or REVIEW verdict for the running loop. THE ONLY TRUSTED verdict channel — a PASS/FAIL in prose is ignored. Called by the workflow-verify/workflow-review subagent exactly once per pass. Multiple calls in one stage (multi-lens review) are combined worst-wins.",
@@ -694,10 +694,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_isolate",
+  "workflow_isolate",
   {
     description:
-      "Explicitly ensure the feature/<id> branch (or worktree when worktreesDir is set) exists. Normally loop_start does this; use it standalone only when recovering.",
+      "Explicitly ensure the feature/<id> branch (or worktree when worktreesDir is set) exists. Normally workflow_start does this; use it standalone only when recovering.",
     inputSchema: {},
   },
   async () => {
@@ -713,10 +713,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_stage",
+  "workflow_stage",
   {
     description:
-      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. The stage must be the one the state machine is at (the stage the last fire action named) — a mismatch means loop_advance was skipped and the call is rejected. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
+      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. The stage must be the one the state machine is at (the stage the last fire action named) — a mismatch means workflow_advance was skipped and the call is rejected. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
     inputSchema: { stage: z.string().min(1) },
   },
   async ({ stage }) => {
@@ -765,8 +765,8 @@ server.registerTool(
       ...(def.kind === "check"
         ? {
             note:
-              "check stage: the spawned subagent MUST call the loop_verdict MCP tool before returning — " +
-              "a verdict in prose is ignored. Never call loop_verdict yourself on its behalf.",
+              "check stage: the spawned subagent MUST call the workflow_verdict MCP tool before returning — " +
+              "a verdict in prose is ignored. Never call workflow_verdict yourself on its behalf.",
           }
         : {}),
     })
@@ -774,10 +774,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_advance",
+  "workflow_advance",
   {
     description:
-      "Feed a completed stage's output back into the state machine and get the next action. Returns {kind:'fire',stage,prompt} to run the next stage, or {kind:'done'|'stop'} (terminal — the task is moved and metrics written). Uses the verdict recorded via loop_verdict for check stages. A stage past its stageTimeoutMinutes deadline stops the loop.",
+      "Feed a completed stage's output back into the state machine and get the next action. Returns {kind:'fire',stage,prompt} to run the next stage, or {kind:'done'|'stop'} (terminal — the task is moved and metrics written). Uses the verdict recorded via workflow_verdict for check stages. A stage past its stageTimeoutMinutes deadline stops the loop.",
     inputSchema: { stageOutput: z.string().describe("The finished stage subagent's summary/output text.") },
   },
   async ({ stageOutput }) => {
@@ -803,8 +803,8 @@ server.registerTool(
         ? { verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none" }
         : {}),
     })
-    flushRunMetrics(loopId(active)) // publish samples-so-far live to the hub
-    // A check stage that ended with NO loop_verdict call is a broken verdict
+    flushRunMetrics(workflowId(active)) // publish samples-so-far live to the hub
+    // A check stage that ended with NO workflow_verdict call is a broken verdict
     // channel, not a genuine FAIL — re-fire the same check once (no iteration
     // consumed, no rebuild), then stop with a retryable ERROR instead of
     // burning build iterations on a stage that may have passed (the
@@ -820,7 +820,7 @@ server.registerTool(
             sh,
             active.task,
             auditNote(
-              `${stage.toUpperCase()} ended with no loop_verdict call — re-running the check once (prose claimed ${prose ?? "nothing"}; free text is untrusted)`,
+              `${stage.toUpperCase()} ended with no workflow_verdict call — re-running the check once (prose claimed ${prose ?? "nothing"}; free text is untrusted)`,
               new Date(),
               noteActor,
             ),
@@ -838,17 +838,17 @@ server.registerTool(
             composePrompt(activeManifest(), active, stage) +
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
-                "or it declared FAIL without naming a critical/important finding. Call loop_verdict ONCE with the " +
+                "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
                 "COMPLETE axes array; partial submissions are not accumulated."
-              : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the loop_verdict tool call is MANDATORY. " +
+              : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
-          note: `check retry (no iteration consumed): the previous pass never called loop_verdict — call loop_stage, then spawn the stage subagent again${SPAWN_MODEL_NOTE}`,
+          note: `check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again${SPAWN_MODEL_NOTE}`,
         })
       }
       pending = {
         verdict: "ERROR",
         reason:
-          "no loop_verdict recorded even after a retry — the verdict channel is unreachable from the stage subagent " +
+          "no workflow_verdict recorded even after a retry — the verdict channel is unreachable from the stage subagent " +
           "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
           (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
       }
@@ -863,7 +863,7 @@ server.registerTool(
       await commitAll(
         sh,
         workTree(),
-        `loop(${loopId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
+        `loop(${workflowId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
         active.git?.worktree ? [config.tasksDir] : undefined,
       )
     }
@@ -892,9 +892,9 @@ server.registerTool(
         ...(nextModel ? { model: nextModel } : {}),
         prompt: composePrompt(activeManifest(), active, action.stage),
         note:
-          `call loop_stage, then spawn the subagent named in the \`agent\` field${SPAWN_MODEL_NOTE}` +
+          `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_MODEL_NOTE}` +
           (nextDef.kind === "check"
-            ? " — it MUST call the loop_verdict MCP tool before returning; never call loop_verdict yourself on its behalf"
+            ? " — it MUST call the workflow_verdict MCP tool before returning; never call workflow_verdict yourself on its behalf"
             : ""),
       })
     }
@@ -917,7 +917,7 @@ server.registerTool(
             gate: { kind: "ship", id: taskId },
             next:
               `ship gate: show the user the loop branch's diff summary, then ask with AskUserQuestion — ` +
-              `Ship (loop_ship("${taskId}")), Replan with a reason (loop_replan("${taskId}", reason)), ` +
+              `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
               `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later).`,
           }
         : {}),
@@ -967,14 +967,14 @@ const runPark = async (
     gate: { kind: "plan", id },
     next:
       `plan gate: show the user the plan summary, then ask with AskUserQuestion — ` +
-      `Approve (loop_plan_approve("${id}") then loop_start("${id}") continues into BUILD now), ` +
-      `Replan with a reason (loop_replan("${id}", reason)), ` +
+      `Approve (workflow_plan_approve("${id}") then workflow_start("${id}") continues into BUILD now), ` +
+      `Replan with a reason (workflow_replan("${id}", reason)), ` +
       `or Park for later (stop here; /agentic-workflow:engineering approve ${id} resumes it).`,
   }
 }
 
 server.registerTool(
-  "loop_stop",
+  "workflow_stop",
   {
     description: "Abort the active loop: checkpoint partial work, append an audited stop note, write the run summary, clear the snapshot, and tear down isolation. The loop branch keeps the committed work.",
     inputSchema: {},
@@ -1017,7 +1017,7 @@ const runTerminal = async (action: Action) => {
 }
 
 server.registerTool(
-  "loop_checkpoint",
+  "workflow_checkpoint",
   { description: "Commit the current build state as a checkpoint on the loop branch/worktree.", inputSchema: { message: z.string() } },
   async ({ message }) => {
     if (!active?.git) return ok({ committed: false, note: "no isolation active" })
@@ -1027,7 +1027,7 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_note",
+  "workflow_note",
   { description: "Append a timestamped, secret-redacted audit note to the active loop's task file.", inputSchema: { text: z.string() } },
   async ({ text }) => {
     if (!active?.task) return fail("No active task-backed loop.")
@@ -1053,7 +1053,7 @@ const kindsReport = (): { kind: string; enabled: boolean }[] => {
 }
 
 server.registerTool(
-  "loop_status",
+  "workflow_status",
   {
     description:
       "Report the active loop (stage/iteration) plus a whole-backlog roll-up: counts per folder, the actionable flags, and the workflow kinds (enabled/disabled).",
@@ -1071,13 +1071,13 @@ server.registerTool(
       backlog: summary,
       kinds: kindsReport(),
       ...(pm ? { pairing: { system: pm.system, ...pairingCoverage(byStatus) } } : {}),
-      ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (loop_doctor repairs)`) } : {}),
+      ...(hasAnomalies(anomalies) ? { anomalies: formatAnomalies(anomalies, config.tasksDir).map((l) => `${l} (workflow_doctor repairs)`) } : {}),
     })
   },
 )
 
 server.registerTool(
-  "loop_doctor",
+  "workflow_doctor",
   {
     description:
       "Audit the backlog for structural damage a confused agent can cause: stray folders (not a status folder), task files outside every status folder, duplicate ids across status folders, and held claim markers. With fix:true, performs only the unambiguous repairs — rescue stray .md files back to draft/ (audited note + commit), remove now-empty stray folders, and release stale orphaned claim markers. Duplicates are always flagged for a human, never auto-resolved.",
@@ -1094,9 +1094,9 @@ server.registerTool(
     const report = {
       findings: formatAnomalies(anomalies, config.tasksDir),
       heldClaims,
-      ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, loop_move the rest to abandoned" } : {}),
+      ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, workflow_move the rest to abandoned" } : {}),
     }
-    if (!fix) return ok({ ...report, next: hasAnomalies(anomalies) || Object.keys(heldClaims).length ? "loop_doctor with fix:true applies the unambiguous repairs" : "backlog is clean" })
+    if (!fix) return ok({ ...report, next: hasAnomalies(anomalies) || Object.keys(heldClaims).length ? "workflow_doctor with fix:true applies the unambiguous repairs" : "backlog is clean" })
 
     const actor = await gitActor(sh, directory)
     const rescued: string[] = []
@@ -1154,10 +1154,10 @@ const retaskTask = (id: string, liveTaskId: string | null): Promise<GateResult> 
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
-  "loop_task_approve",
+  "workflow_task_approve",
   {
     description:
-      "Deterministic /agentic-workflow:engineering approve <id> on a draft — the task gate: move a reviewed draft/ task to queued/ (audited note + commit). No plan is required or expected; the loop's PLAN stage writes it right before execution. The agent writes nothing. Prefer loop_approve (the unified gate) unless you specifically need the draft-only form.",
+      "Deterministic /agentic-workflow:engineering approve <id> on a draft — the task gate: move a reviewed draft/ task to queued/ (audited note + commit). No plan is required or expected; the loop's PLAN stage writes it right before execution. The agent writes nothing. Prefer workflow_approve (the unified gate) unless you specifically need the draft-only form.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1168,10 +1168,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_plan_approve",
+  "workflow_plan_approve",
   {
     description:
-      "Deterministic /agentic-workflow:engineering approve <id> — the plan gate: validate the plan-review/ task has an ## Implementation Plan, move it to in-progress/ (the build-ready queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing. Prefer loop_approve (the unified gate).",
+      "Deterministic /agentic-workflow:engineering approve <id> — the plan gate: validate the plan-review/ task has an ## Implementation Plan, move it to in-progress/ (the build-ready queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing. Prefer workflow_approve (the unified gate).",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1182,7 +1182,7 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_replan",
+  "workflow_replan",
   {
     description:
       "Deterministic /agentic-workflow:engineering replan <id> [reason] — the sole rejection verb: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
@@ -1196,10 +1196,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_retask",
+  "workflow_retask",
   {
     description:
-      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via loop_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
+      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via workflow_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1210,10 +1210,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_approve",
+  "workflow_approve",
   {
     description:
-      "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved. Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
+      "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved. Prefer this over the specific workflow_task_approve / workflow_plan_approve / workflow_ship tools. The agent writes nothing.",
     inputSchema: { id: z.string().optional() },
   },
   async ({ id }) => {
@@ -1224,10 +1224,10 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_reject",
+  "workflow_reject",
   {
     description:
-      "/agentic-workflow:engineering replan [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ for re-planning (the counterpart of loop_approve at the plan gate). Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
+      "/agentic-workflow:engineering replan [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ for re-planning (the counterpart of workflow_approve at the plan gate). Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
     inputSchema: { id: z.string().optional(), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {
@@ -1240,7 +1240,7 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_move",
+  "workflow_move",
   { description: "Move a task file to another status folder.", inputSchema: { id: z.string(), status: z.enum(["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]) } },
   async ({ id, status }) => {
     await loadCfg()
@@ -1252,8 +1252,8 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_ship",
-  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agentic-workflow:engineering approve (loop_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
+  "workflow_ship",
+  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agentic-workflow:engineering approve (workflow_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
   async ({ id }) => {
     await loadCfg()
     const r = await shipAny((id ?? "").trim())
@@ -1262,16 +1262,16 @@ server.registerTool(
 )
 
 server.registerTool(
-  "loop_recover",
+  "workflow_recover",
   {
     description:
-      "Resume an interrupted in-progress task from its state snapshot (exact stage) or, failing that, from its persisted plan at BUILD. Refuses never-started tasks (use loop_start/loop_claim) and planless ones (re-plan first). Returns the next action + prompt.",
+      "Resume an interrupted in-progress task from its state snapshot (exact stage) or, failing that, from its persisted plan at BUILD. Refuses never-started tasks (use workflow_start/workflow_claim) and planless ones (re-plan first). Returns the next action + prompt.",
     inputSchema: { id: z.string() },
   },
   async ({ id }) => {
     await loadCfg()
-    if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    // Accept the short-hash handle, same as loop_start and the gate tools.
+    if (active) return fail(`A loop is already driving "${workflowId(active)}" — finish or workflow_stop it first.`)
+    // Accept the short-hash handle, same as workflow_start and the gate tools.
     const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
     if (resolved && "ambiguous" in resolved) {
       return fail(`Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`)
@@ -1279,8 +1279,8 @@ server.registerTool(
     if (resolved) id = resolved.id
     const t = await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)
     if (!t) return fail(`No in-progress task "${id}".`)
-    if (isClaimable(t)) return fail(`Task "${id}" never started — start it with loop_start or loop_claim.`)
-    if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — send it back to planning with loop_replan.`)
+    if (isClaimable(t)) return fail(`Task "${id}" never started — start it with workflow_start or workflow_claim.`)
+    if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — send it back to planning with workflow_replan.`)
     // Re-mark; the dead run's claim marker may linger (then this is a no-op and
     // `tookClaim` is false — the marker isn't ours to hand back on failure).
     const tookClaim = await claimTask(sh, t)
@@ -1309,7 +1309,7 @@ server.registerTool(
         action: step.action,
         agent: agentRef(resumedDef.agent),
         ...(resumedModel ? { model: resumedModel } : {}),
-        note: `call loop_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
+        note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
       })
     }
     active = buildEntryState(t)
@@ -1330,7 +1330,7 @@ server.registerTool(
       prompt: composePrompt(eng, active, "build"),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
-      note: `call loop_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
+      note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
     })
   },
 )

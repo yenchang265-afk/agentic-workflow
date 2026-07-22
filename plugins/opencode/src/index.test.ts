@@ -69,13 +69,13 @@ test("an agentic-workflow:engineering gate verb is dispatched (it triggers a con
   assert.ok(calls.includes("file.read"), "an /agentic-workflow:engineering gate verb must reach the plugin handler")
 })
 
-test("the plugin exposes dispose (watch-timer cleanup) and no loop_begin tool", async () => {
+test("the plugin exposes dispose (watch-timer cleanup) and no workflow_begin tool", async () => {
   const hooks = await AgenticWorkflow(makeInput([]))
   assert.notEqual(hooks, undefined)
   assert.equal(typeof (hooks as { dispose?: unknown }).dispose, "function")
   const tools = (hooks as { tool?: Record<string, unknown> }).tool ?? {}
-  assert.ok(!("loop_begin" in tools), "loop_begin was removed with the old free-text command mode")
-  assert.ok("loop_verdict" in tools)
+  assert.ok(!("workflow_begin" in tools), "workflow_begin was removed with the old free-text command mode")
+  assert.ok("workflow_verdict" in tools)
   await (hooks as { dispose: () => Promise<void> }).dispose() // must not throw with no timers
 })
 

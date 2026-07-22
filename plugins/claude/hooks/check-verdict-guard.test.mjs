@@ -4,7 +4,7 @@ import { decideVerdictGuard, nagMessage } from "./src/verdict-guard.mjs"
 
 /**
  * The SubagentStop verdict guard: a check-stage subagent that stops without a
- * loop_verdict call gets blocked exactly once with a reminder, then always
+ * workflow_verdict call gets blocked exactly once with a reminder, then always
  * allowed (never trap an agent whose tool is genuinely unreachable — the MCP
  * server's no-verdict retry handles it from there).
  */
@@ -32,9 +32,9 @@ test("allows non-check stages and missing markers", () => {
 
 test("nag message names the tool (both registered forms) and the stage", () => {
   const msg = nagMessage("verify")
-  assert.match(msg, /loop_verdict/)
-  assert.match(msg, /mcp__agentic-workflow__loop_verdict/)
-  assert.match(msg, /mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict/)
+  assert.match(msg, /workflow_verdict/)
+  assert.match(msg, /mcp__agentic-workflow__workflow_verdict/)
+  assert.match(msg, /mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict/)
   assert.match(msg, /VERIFY/)
   assert.match(msg, /stage: "verify"/)
 })

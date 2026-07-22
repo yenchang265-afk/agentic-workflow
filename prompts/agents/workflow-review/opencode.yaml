@@ -1,4 +1,4 @@
-description: Reviewer for the REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records a WORKFLOW_REVIEW verdict via the loop_verdict tool. On FAIL, the loop re-builds (not re-plans) — the plan is assumed sound; the implementation isn't. Read-only; an allowlist restricts bash to inspection commands.
+description: Reviewer for the REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records a WORKFLOW_REVIEW verdict via the workflow_verdict tool. On FAIL, the loop re-builds (not re-plans) — the plan is assumed sound; the implementation isn't. Read-only; an allowlist restricts bash to inspection commands.
 mode: subagent
 permission:
   edit: deny

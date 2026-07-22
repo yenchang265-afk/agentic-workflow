@@ -124,7 +124,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
 
   const item = (pool: Pool, task: Task): WorkItem => ({
     id: task.id,
-    loopKind: loaded.manifest.kind,
+    workflowKind: loaded.manifest.kind,
     title: task.title,
     entryStage: pool.entryStage,
     state: entryState(loaded, pool, task),
@@ -133,7 +133,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
   })
 
   return {
-    loopKind: loaded.manifest.kind,
+    workflowKind: loaded.manifest.kind,
 
     async claimNext() {
       const heldIds: string[] = []
@@ -159,8 +159,8 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
           // without one (planless pools), a stale undriven marker is always
           // safe to release.
           isOrphaned: predicate
-            ? (task, opts) => predicate(task) && !opts.drivenByLiveLoop && opts.markerStale
-            : (_task, opts) => !opts.drivenByLiveLoop && opts.markerStale,
+            ? (task, opts) => predicate(task) && !opts.drivenByLiveWorkflow && opts.markerStale
+            : (_task, opts) => !opts.drivenByLiveWorkflow && opts.markerStale,
           // The candidate came from the client index, which can lag the real FS
           // (a just-finished run's mv + marker release may not be reflected yet)
           // — confirm on the real FS before handing the claim out, and hand out

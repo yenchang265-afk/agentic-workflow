@@ -1,4 +1,4 @@
-description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a loop_verdict (PASS = reviewable). Never edits, never comments, never votes.
+description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a workflow_verdict (PASS = reviewable). Never edits, never comments, never votes.
 mode: subagent
 permission:
   edit: deny

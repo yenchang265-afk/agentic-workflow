@@ -18,7 +18,7 @@
  *  1. Check-stage bash allowlist — while the loop is in VERIFY or REVIEW, Bash is
  *     restricted to a default-deny read/test allowlist (threat-model T2). The
  *     active stage is read from the marker the MCP server writes
- *     (<tasksDir>/runs/.stage.json via loop_stage/loop_advance).
+ *     (<tasksDir>/runs/.stage.json via workflow_stage/workflow_advance).
  *  2. Worktree pinning — while a worktree-isolated loop is active, edit/write
  *     tools may not touch anything outside the worktree (fail closed:
  *     relative and unreadable paths are refused, and the worktree's frozen
@@ -202,7 +202,7 @@ const main = async () => {
   }
 
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
-  // tools so it returns control; loop_advance then stops the loop.
+  // tools so it returns control; workflow_advance then stops the loop.
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
     if (tool === "Bash" || WRITE_TOOLS.includes(tool)) {
       return block(

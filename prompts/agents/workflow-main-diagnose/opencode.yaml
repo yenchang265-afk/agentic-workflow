@@ -1,4 +1,4 @@
-description: Diagnostician for the main sitter's DIAGNOSE stage. Reproduces a red default-branch head locally, bisects to the culprit when needed, and emits a remedy work order (fix-forward, revert, or flake) plus a loop_verdict. Never edits files, never pushes.
+description: Diagnostician for the main sitter's DIAGNOSE stage. Reproduces a red default-branch head locally, bisects to the culprit when needed, and emits a remedy work order (fix-forward, revert, or flake) plus a workflow_verdict. Never edits files, never pushes.
 mode: subagent
 permission:
   edit: deny

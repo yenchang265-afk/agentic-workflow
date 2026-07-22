@@ -473,7 +473,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       </div>
 
       <h3>The trusted-verdict boundary</h3>
-      <p>A check stage's outcome counts only when recorded through the dedicated <code>loop_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
+      <p>A check stage's outcome counts only when recorded through the dedicated <code>workflow_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
 
       <h3>The pr-sitter kind <span class="def">experimental</span></h3>
       <p>The four sitters (<code>pr-sitter</code>, <code>review-sitter</code>, <code>dep-sitter</code>, <code>main-sitter</code>) are <b>experimental</b> — their manifests, config keys, and defaults may still change. <code>engineering</code> is the stable, default-on kind.</p>
@@ -818,11 +818,11 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
       cond:["frontend-ui-engineering","observability-and-instrumentation","code-simplification"],
       transit:[["done","→","onDone fires VERIFY"]]},
     verify:{name:"VERIFY",kind:"check",agent:"workflow-verify",iso:"isolation: worktree",
-      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Records only PASS / FAIL / ERROR through the trusted <code>loop_verdict</code> tool.",
+      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Records only PASS / FAIL / ERROR through the trusted <code>workflow_verdict</code> tool.",
       skills:["debugging-and-error-recovery"],
       transit:[["pass","→","fires REVIEW"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]},
     review:{name:"REVIEW",kind:"check",agent:"workflow-review",iso:"isolation: worktree",
-      what:"Five-axis diff review, run once per configured <code>reviewLens</code> with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>loop_verdict</code>.",
+      what:"Five-axis diff review, run once per configured <code>reviewLens</code> with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>workflow_verdict</code>.",
       skills:["code-review-and-quality","security-and-hardening","performance-optimization"],
       transit:[["pass","→","done — parks the task in in-review/"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]}
   };
@@ -867,7 +867,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
 
   /* ---- skills catalog ---- */
   var SKILLS=[
-    ["workflow-orchestration",["machinery"],"The authoritative protocol for the automatic loop — stages, park-at-gate review, the loop_verdict contracts, workflow kinds and the scheduler, and termination."],
+    ["workflow-orchestration",["machinery"],"The authoritative protocol for the automatic loop — stages, park-at-gate review, the workflow_verdict contracts, workflow kinds and the scheduler, and termination."],
     ["task-backlog-management",["machinery","plan"],"The docs/tasks/ filesystem backlog: the task-file schema and the folder-as-status lifecycle from draft to completed."],
     ["using-agent-skills",["machinery"],"The meta-skill: discovers and invokes agent skills; governs how every other skill is found and applied."],
     ["interview-me",["authoring"],"Extracts what you actually want via a one-question-at-a-time interview until ~95% confident about the underlying intent."],

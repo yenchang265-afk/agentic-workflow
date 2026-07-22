@@ -9,7 +9,7 @@ B 更頻繁操練的回饋迴圈變得更犀利）。
 
 ### 背景
 
-`loop_verdict`（`src/index.ts:95-111`）只會記錄 `stage + PASS/FAIL/ERROR`。
+`workflow_verdict`（`src/index.ts:95-111`）只會記錄 `stage + PASS/FAIL/ERROR`。
 *原因*則存在於階段的自由文字中，`composeArgs`（`state.ts:122`）會把它們當作
 一整團原始散文（`Verify failure to address:` / `Review feedback to
 address:`）串接進下一次疊代。重新規劃的 agent 得重新解析散文才能找出究竟
@@ -48,7 +48,7 @@ args: {
   *之前*，先在前面加上一個結構化區塊：
 
   ```
-  FAILED CRITERIA (from loop_verdict):
+  FAILED CRITERIA (from workflow_verdict):
   - returns 429 over the limit
   - limit configurable per route
 
@@ -82,7 +82,7 @@ args: {
 ### 背景
 
 REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自 repo 內容的
-提示詞注入，說服*那一個 agent* 呼叫 `loop_verdict` PASS。目前的後盾是
+提示詞注入，說服*那一個 agent* 呼叫 `workflow_verdict` PASS。目前的後盾是
 疊代上限和人工 diff 把關。用 N 個具有不同視角、彼此獨立的審查輪次，能
 大幅降低單一注入翻轉結果的機率——多元視角同時也能抓到不同類別的真實
 缺陷（這正是 `references/orchestration-patterns.md` 建議採用視角多元化

@@ -90,7 +90,7 @@ test("scaffoldAgent writes body.md + both yamls with host blocks and skill prose
   assert.match(bodyMd, /\{\{#host opencode\}\}/)
   assert.match(bodyMd, /\{\{#host claude\}\}/)
   assert.match(bodyMd, /Invoke the `sample-skill` skill for this stage's workflow/)
-  assert.match(bodyMd, /loop_verdict/)
+  assert.match(bodyMd, /workflow_verdict/)
   const opencode = fs.readFileSync(path.join(dir, "opencode.yaml"), "utf8")
   assert.match(opencode, /edit: allow/)
   assert.match(opencode, /bash: allow/)
@@ -111,7 +111,7 @@ test("scaffoldAgent checker preset carries the allowlist marker, verdict tools, 
   const opencode = fs.readFileSync(path.join(dir, "opencode.yaml"), "utf8")
   assert.match(opencode, /"\*": deny/)
   assert.match(opencode, /\{\{allowlist\}\}/)
-  assert.match(fs.readFileSync(path.join(dir, "claude.yaml"), "utf8"), /loop_verdict/)
+  assert.match(fs.readFileSync(path.join(dir, "claude.yaml"), "utf8"), /workflow_verdict/)
 })
 
 test("scaffold handlers reject bad slugs, duplicates, and unknown skills", async () => {

@@ -1,5 +1,5 @@
 ---
-description: Verifier for the VERIFY stage. Runs tests and checks the build against the plan's acceptance criteria, then records a WORKFLOW_VERIFY verdict via the loop_verdict tool. Runs an allowlisted set of read/test commands but never edits files or fixes code.
+description: Verifier for the VERIFY stage. Runs tests and checks the build against the plan's acceptance criteria, then records a WORKFLOW_VERIFY verdict via the workflow_verdict tool. Runs an allowlisted set of read/test commands but never edits files or fixes code.
 mode: subagent
 permission:
   edit: deny
@@ -127,7 +127,7 @@ unavailable.
 
 ## Recording your verdict — the only trusted channel
 
-**Record your verdict by calling the `loop_verdict` tool** — stage `verify`,
+**Record your verdict by calling the `workflow_verdict` tool** — stage `verify`,
 verdict `PASS`, `FAIL`, or `ERROR` — exactly once, at the end of your turn.
 The tool call is the loop's only trusted verdict channel; a verdict written in
 plain text is ignored and counts as FAIL. Use `ERROR` **only** when the check
@@ -151,7 +151,7 @@ Above the verdict, give:
 ## Hard rules
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
-- Call `loop_verdict` exactly once, with the same verdict as your text line.
+- Call `workflow_verdict` exactly once, with the same verdict as your text line.
   No tool call means the loop records a FAIL.
 - Do not report PASS on unobserved or flaky evidence. Tests that ran and
   failed are a FAIL; tests that could not run at all are an ERROR with the

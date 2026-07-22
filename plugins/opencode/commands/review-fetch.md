@@ -11,5 +11,5 @@ Run the **FETCH** stage of the review-sitter loop
 
 Delegated to the `workflow-review-fetch` subagent, which confirms the review is
 still wanted, sizes the diff, emits the review work order, and records a
-`loop_verdict` (PASS = reviewable; FAIL = nothing to review; ERROR = could
+`workflow_verdict` (PASS = reviewable; FAIL = nothing to review; ERROR = could
 not inspect).

@@ -176,7 +176,7 @@ ship，比一個確認對話框還更會騙人。
 
 **授權層級：backlog-write · 成本：M · 狀態：已發布**
 
-**完全**鏡射 `loop_doctor` 的語意——MCP 伺服器和 OpenCode 的動詞早已
+**完全**鏡射 `workflow_doctor` 的語意——MCP 伺服器和 OpenCode 的動詞早已
 一致，第三套分歧的語意只會是製造 bug 的工廠。
 
 **伺服器端**——新增 `server/routes/doctor.ts`：

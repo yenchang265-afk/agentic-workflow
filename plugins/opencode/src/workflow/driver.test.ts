@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-workflow/core/task/store"
 import { serializeTask } from "@agentic-workflow/core/task/schema"
 import { firstStep } from "@agentic-workflow/core/workflow/engine"
-import { clearLoop, setLoop, type WorkflowState } from "@agentic-workflow/core/workflow/state"
+import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import type { Config } from "../config.ts"
 import {
   abortedSessionID,
@@ -16,7 +16,7 @@ import {
   onInterrupt,
   parseWatchArgs,
   recordVerdict,
-  findDrivingLoop,
+  findDrivingWorkflow,
   resolveDrivingSession,
   runStageWithLenses,
   type Deps,
@@ -399,13 +399,13 @@ test("plan <short-id> resolves the short-hash handle and starts planning", async
   assert.match(toasts[0]?.message ?? "", /planning…/, `unexpected toast: ${toasts[0]?.message}`)
 })
 
-test("plan <id> refuses while this session is already driving a loop (no clearLoop clobber)", async () => {
+test("plan <id> refuses while this session is already driving a loop (no clearWorkflow clobber)", async () => {
   // A watch session mid-BUILD on task A has live loop state; `plan C` used to
-  // clearLoop it unconditionally, silently abandoning A at the next stage
+  // clearWorkflow it unconditionally, silently abandoning A at the next stage
   // boundary. It must refuse with the same busy guard `claim` uses.
   const sessionID = "sess-busy-plan"
   const busy: WorkflowState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
-  setLoop(sessionID, busy)
+  setWorkflow(sessionID, busy)
   try {
     const queued = serializeTask({ title: "Do the thing", body: "Just a body, no plan yet." })
     const { client, toasts } = makeClient()
@@ -418,14 +418,14 @@ test("plan <id> refuses while this session is already driving a loop (no clearLo
     assert.match(toasts[0]?.message ?? "", /already driving in this session/)
     assert.ok(!log.some((cmd) => cmd.startsWith("mkdir ")), "no claim marker was taken")
   } finally {
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
   }
 })
 
-test("recover <id> refuses while this session is already driving a loop (no clearLoop clobber)", async () => {
+test("recover <id> refuses while this session is already driving a loop (no clearWorkflow clobber)", async () => {
   const sessionID = "sess-busy-recover"
   const busy: WorkflowState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
-  setLoop(sessionID, busy)
+  setWorkflow(sessionID, busy)
   try {
     const inProgress = serializeTask({ title: "Other task", body: `${PLAN_HEADING}\n\n1. Step.` })
     const { client, toasts } = makeClient()
@@ -437,7 +437,7 @@ test("recover <id> refuses while this session is already driving a loop (no clea
     assert.equal(toasts.length, 1)
     assert.match(toasts[0]?.message ?? "", /already driving in this session/)
   } finally {
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
   }
 })
 
@@ -952,7 +952,7 @@ test("drive interprets a pr-sitter loop with the pr-sitter manifest, not enginee
   const sessionID = "sess-pr-sitter"
   const log: string[] = []
   // A session.command that records a triage FAIL verdict through the same
-  // channel the loop_verdict tool uses, then returns the stage's text.
+  // channel the workflow_verdict tool uses, then returns the stage's text.
   const client = {
     tui: { showToast: async () => ({ data: undefined }) },
     session: {
@@ -1052,7 +1052,7 @@ test("a timed-out stage aborts the orphaned session turn before unwinding", asyn
     )
     assert.deepEqual(events, ["abort"], "the orphaned turn was aborted exactly once")
   } finally {
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
   }
 })
 
@@ -1150,13 +1150,13 @@ test("pr-sitter triage-FAIL leaves the human's main tree untouched (no commit / 
 })
 
 // --- resolveDrivingSession: verdicts from subtask (child) sessions ---
-// Check stages run as subtasks, so loop_verdict arrives with the child
+// Check stages run as subtasks, so workflow_verdict arrives with the child
 // session's id; unresolved, the verdict was silently ignored and the stage
 // read "none recorded → FAIL" while the verifier's prose said PASS.
 
 test("resolveDrivingSession walks the parentID chain to the driving session", async () => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
-  setLoop("parent-sess", { goal: "g", stage: "verify", iteration: 0, artifacts: {} })
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow("parent-sess", { goal: "g", stage: "verify", iteration: 0, artifacts: {} })
   const client = {
     session: {
       get: async ({ path: { id } }: { path: { id: string } }) =>
@@ -1169,14 +1169,14 @@ test("resolveDrivingSession walks the parentID chain to the driving session", as
     assert.equal(await resolveDrivingSession(client, "parent-sess"), "parent-sess", "the driving session resolves to itself")
     assert.equal(await resolveDrivingSession(client, "stranger"), "stranger", "an unrelated session falls back to itself")
   } finally {
-    clearLoop("parent-sess")
+    clearWorkflow("parent-sess")
   }
 })
 
-test("findDrivingLoop returns the driving ancestor's state, null at root, and throws on API failure", async () => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
+test("findDrivingWorkflow returns the driving ancestor's state, null at root, and throws on API failure", async () => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   const state: WorkflowState = { goal: "g", stage: "build", iteration: 0, artifacts: {} }
-  setLoop("drv", state)
+  setWorkflow("drv", state)
   const client = {
     session: {
       get: async ({ path: { id } }: { path: { id: string } }) => {
@@ -1188,38 +1188,38 @@ test("findDrivingLoop returns the driving ancestor's state, null at root, and th
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any
   try {
-    assert.deepEqual(await findDrivingLoop(client, "kid"), { sessionID: "drv", state }, "child resolves to its driving ancestor")
-    assert.equal(await findDrivingLoop(client, "stranger"), null, "a chain ending with no loop resolves to null")
+    assert.deepEqual(await findDrivingWorkflow(client, "kid"), { sessionID: "drv", state }, "child resolves to its driving ancestor")
+    assert.equal(await findDrivingWorkflow(client, "stranger"), null, "a chain ending with no loop resolves to null")
     // The strict core THROWS on a session-API failure so the worktree guard can
     // fail closed — the lenient resolveDrivingSession wrapper keeps falling back.
-    await assert.rejects(() => findDrivingLoop(client, "broken"), /session API down/)
+    await assert.rejects(() => findDrivingWorkflow(client, "broken"), /session API down/)
     assert.equal(await resolveDrivingSession(client, "broken"), "broken", "lenient wrapper falls back to the input id")
   } finally {
-    clearLoop("drv")
+    clearWorkflow("drv")
   }
 })
 
 test("recordVerdict accepts the verdict once the child session is resolved to the driver", async () => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
-  setLoop("drv-sess", { goal: "g", stage: "verify", iteration: 0, artifacts: {} })
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow("drv-sess", { goal: "g", stage: "verify", iteration: 0, artifacts: {} })
   try {
     // Unresolved child id: ignored (the pre-fix behavior the resolver exists to prevent).
     assert.match(recordVerdict("some-child", "verify", { verdict: "PASS" }).message, /No active loop/)
     // Resolved driving id: recorded.
     assert.match(recordVerdict("drv-sess", "verify", { verdict: "PASS" }).message, /Recorded verify verdict: PASS/)
   } finally {
-    clearLoop("drv-sess")
+    clearWorkflow("drv-sess")
   }
 })
 
 // --- stage drift: an out-of-stage verdict is rejected AND audited on the task ---
 
 test("recordVerdict audits an out-of-stage verdict on the task file, once per stage attempt", async () => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   const shellLog: string[] = []
   const task = { id: "drift-task", path: "/repo/docs/tasks/in-progress/drift-task.md", acceptance: [] }
   const deps: Deps = { client: makeClient().client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
-  setLoop("drv-drift", { goal: "g", stage: "build", iteration: 0, artifacts: {}, task })
+  setWorkflow("drv-drift", { goal: "g", stage: "build", iteration: 0, artifacts: {}, task })
   try {
     // A build stage that verified its own work: rejected, as before.
     assert.match(recordVerdict("drv-drift", "verify", { verdict: "PASS" }, deps).message, /loop is at build, not verify/)
@@ -1236,28 +1236,28 @@ test("recordVerdict audits an out-of-stage verdict on the task file, once per st
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(shellLog.filter((cmd) => cmd.includes("Stage drift")).length, 1, "one note per stage attempt")
   } finally {
-    clearLoop("drv-drift")
+    clearWorkflow("drv-drift")
   }
 })
 
 test("recordVerdict still records a verdict from the stage the loop is actually at", async () => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   const shellLog: string[] = []
   const deps: Deps = { client: makeClient().client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
   const task = { id: "ok-task", path: "/repo/docs/tasks/in-progress/ok-task.md", acceptance: [] }
-  setLoop("drv-ok", { goal: "g", stage: "verify", iteration: 0, artifacts: {}, task })
+  setWorkflow("drv-ok", { goal: "g", stage: "verify", iteration: 0, artifacts: {}, task })
   try {
     assert.match(recordVerdict("drv-ok", "verify", { verdict: "PASS" }, deps).message, /Recorded verify verdict: PASS/)
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(shellLog.filter((cmd) => cmd.includes("Stage drift")).length, 0, "no drift note on the happy path")
   } finally {
-    clearLoop("drv-ok")
+    clearWorkflow("drv-ok")
   }
 })
 
 // --- runStageWithLenses: a missing lens verdict is a broken channel, not a FAIL ---
 // Regression guard for the spurious-second-iteration bug: with reviewLenses
-// configured, a lens whose loop_verdict call never lands used to combine as
+// configured, a lens whose workflow_verdict call never lands used to combine as
 // null→FAIL (worstOf) and fire a rebuild of already-passing work; it must take
 // the same ERROR→recoverable-stop path as the single-pass case.
 
@@ -1265,8 +1265,8 @@ const lensConfig: Config = { ...testConfig, reviewLenses: ["correctness", "secur
 
 /** Run the review stage with two lenses; `onCall(n, deps)` runs before the nth stage command returns. */
 const runLensReview = async (sessionID: string, onCall: (call: number, deps: Deps) => void, warns: string[] = []) => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
-  setLoop(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
   let calls = 0
   const client = {
     tui: { showToast: async () => ({ data: undefined }) },
@@ -1299,7 +1299,7 @@ const runLensReview = async (sessionID: string, onCall: (call: number, deps: Dep
     )
     return { result, calls: () => calls }
   } finally {
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
   }
 }
 
@@ -1310,8 +1310,8 @@ const cleanAxes = FIVE.map((axis) => ({ axis, verdict: "PASS" as const }))
 
 /** Run the review stage as ONE pass (no lenses), so axis coverage is enforced. */
 const runSinglePassReview = async (sessionID: string, onCall: (deps: Deps) => void) => {
-  const { setLoop, clearLoop } = await import("@agentic-workflow/core/workflow/state")
-  setLoop(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
   const client = {
     tui: { showToast: async () => ({ data: undefined }) },
     session: {
@@ -1334,7 +1334,7 @@ const runSinglePassReview = async (sessionID: string, onCall: (deps: Deps) => vo
       0,
     )
   } finally {
-    clearLoop(sessionID)
+    clearWorkflow(sessionID)
   }
 }
 
@@ -1451,9 +1451,9 @@ test("lenses: both PASS combines to PASS", async () => {
 })
 
 test("lenses: an ESC interrupt during lens 1 fires no further lens and no verdict retry", async () => {
-  // `onInterrupt` deliberately KEEPS getLoop set (onIdle's catch needs it on a
+  // `onInterrupt` deliberately KEEPS getWorkflow set (onIdle's catch needs it on a
   // reject-on-abort) and signals through the separate `interrupted` set. Both
-  // halt checks here tested only getLoop, so after the user pressed ESC the
+  // halt checks here tested only getWorkflow, so after the user pressed ESC the
   // driver still fired the verdict retry for lens 1 AND both passes of lens 2 —
   // up to 3 more agent turns the user had just asked to stop.
   const sessionID = "sess-lens-interrupt"
@@ -1504,11 +1504,11 @@ test("lenses: a genuine FAIL plus a missing lens still stops with ERROR (no rebu
 test("lenses: a stop mid-pass returns quietly — no ERROR, no retry, no warn", async () => {
   const sessionID = "sess-lens-stop"
   const warns: string[] = []
-  const { clearLoop } = await import("@agentic-workflow/core/workflow/state")
+  const { clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   const { result, calls } = await runLensReview(
     sessionID,
     () => {
-      clearLoop(sessionID) // a user `stop` lands while the first lens runs
+      clearWorkflow(sessionID) // a user `stop` lands while the first lens runs
     },
     warns,
   )

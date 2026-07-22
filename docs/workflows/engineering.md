@@ -70,7 +70,7 @@ flowchart TB
         claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now (the only PLAN entry)<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull (build-ready only)<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(claim/watch never auto-plan queued/)"]
         planstage["<b>PLAN</b><br/>agent: workflow-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: workflow-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
-        verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via loop_verdict tool only</i>"]
+        verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via workflow_verdict tool only</i>"]
         review["<b>REVIEW</b><br/>agent: workflow-review · edit ❌ bash: read-only<br/>skills: code-review-and-quality<br/>(+ security-and-hardening, performance-optimization)<br/><i>5-axis diff review, once per reviewLens,<br/>worst verdict wins</i>"]
     end
 
@@ -125,11 +125,11 @@ step doesn't.
 | PLAN (in the loop, on a `queued/` task) | driver → agent | `workflow-plan-author` (task mode) | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | plugin driver (`plugins/opencode/src/workflow/driver.ts`) | spawns the three stage agents below | — | `workflow-orchestration` protocol | stage sequencing, claims, snapshots, run log |
 | BUILD (also `/build`) | driver → agent | `workflow-build` | edit ✅ bash ✅ | `incremental-implementation`, `test-driven-development` (+ `frontend-ui-engineering`, `observability-and-instrumentation`, `code-simplification` when relevant) | code + one commit checkpoint per iteration |
-| VERIFY (also `/verify`) | driver → agent | `workflow-verify` | edit ❌ bash: test-runner allowlist | `debugging-and-error-recovery` (on FAIL) | trusted `loop_verdict` PASS/FAIL/ERROR |
-| REVIEW (also `/review`) | driver → agent | `workflow-review` | edit ❌ bash: read-only git/fs | `code-review-and-quality` (+ `security-and-hardening`, `performance-optimization`) | trusted `loop_verdict` per lens, worst wins |
+| VERIFY (also `/verify`) | driver → agent | `workflow-verify` | edit ❌ bash: test-runner allowlist | `debugging-and-error-recovery` (on FAIL) | trusted `workflow_verdict` PASS/FAIL/ERROR |
+| REVIEW (also `/review`) | driver → agent | `workflow-review` | edit ❌ bash: read-only git/fs | `code-review-and-quality` (+ `security-and-hardening`, `performance-optimization`) | trusted `workflow_verdict` per lens, worst wins |
 | `/plan` (ad hoc) | agent | `workflow-plan` | none (read-only) | `spec-driven-development`, `planning-and-task-breakdown` | a plan in chat — writes no file |
 
-Verdicts are only trusted through the `loop_verdict` plugin tool — a stage
+Verdicts are only trusted through the `workflow_verdict` plugin tool — a stage
 agent claiming "PASS" in prose is ignored. Stage agents can't approve tasks,
 move backlog folders, or ship; the plugin and the human own every transition
 between statuses.
@@ -150,8 +150,8 @@ backlog (threat model T3/T3b):
 - **Reconciliation sweep** (`task/audit.ts`): detects stray folders (a
   `run/` an agent invented), task files outside every status folder, and one
   id duplicated across status folders. Surfaced at session start (both
-  substrates), in `loop_status`, and as warnings on claims.
-- **Doctor** (`loop_doctor` / `/agentic-workflow:engineering doctor [fix]`): reports the sweep's
+  substrates), in `workflow_status`, and as warnings on claims.
+- **Doctor** (`workflow_doctor` / `/agentic-workflow:engineering doctor [fix]`): reports the sweep's
   findings plus held claim markers; with `fix` it applies only the
   unambiguous repairs — rescue strays back to `draft/` (audited + committed),
   remove emptied stray folders, release stale orphaned claim markers.

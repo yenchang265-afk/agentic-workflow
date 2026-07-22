@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: Explains the automatic agentic loop driven by the OpenCode `/agentic-workflow:engineering` plugin command — declarative workflow kinds under `packages/core/workflows/<kind>/`, with the engineering kind (plan → build → verify → review) as the default — including the authoring verbs (new, retask) and the human gates (the unified folder-driven approve, replan). Use when you need to understand how /agentic-workflow:engineering plans and executes stages, how the park-at-gate plan review works, the loop_verdict contracts, how workflow kinds and the scheduler work (e.g. the pr-sitter kind), or how the loop terminates.
+description: Explains the automatic agentic loop driven by the OpenCode `/agentic-workflow:engineering` plugin command — declarative workflow kinds under `packages/core/workflows/<kind>/`, with the engineering kind (plan → build → verify → review) as the default — including the authoring verbs (new, retask) and the human gates (the unified folder-driven approve, replan). Use when you need to understand how /agentic-workflow:engineering plans and executes stages, how the park-at-gate plan review works, the workflow_verdict contracts, how workflow kinds and the scheduler work (e.g. the pr-sitter kind), or how the loop terminates.
 ---
 
 # The agentic loop
@@ -89,8 +89,8 @@ flowchart LR
 |-------|--------------|------|
 | plan | no (task file only) | reads the task + relevant code and writes the `## Implementation Plan` onto the task file in place, in the main tree; terminates with a park — the task moves to `plan-review/` for the human gate |
 | build | **yes** | implements the approved plan test-first on the loop's own `feature/<id>` branch, or applies a VERIFY/REVIEW stage's feedback on a re-build; each iteration is committed as a checkpoint |
-| verify | no | runs tests (bash allowlist), checks acceptance criteria, records `PASS`/`FAIL`/`ERROR` via the `loop_verdict` tool |
-| review | no | five-axis code review of exactly `git diff base...branch` (read-only bash allowlist), records `PASS`/`FAIL`/`ERROR` via the `loop_verdict` tool |
+| verify | no | runs tests (bash allowlist), checks acceptance criteria, records `PASS`/`FAIL`/`ERROR` via the `workflow_verdict` tool |
+| review | no | five-axis code review of exactly `git diff base...branch` (read-only bash allowlist), records `PASS`/`FAIL`/`ERROR` via the `workflow_verdict` tool |
 
 ## Process
 
@@ -246,7 +246,7 @@ flowchart LR
 
 - **triage** — read-only `gh` inspection of a PR needing attention (failing
   checks, changes requested, new comments, merge conflict); emits findings
-  and a `loop_verdict`: PASS = actionable, FAIL = nothing to do → done,
+  and a `workflow_verdict`: PASS = actionable, FAIL = nothing to do → done,
   ERROR = couldn't inspect → stop.
 - **fix** — commits on the PR's **existing branch** in a worktree; never
   pushes.
@@ -296,7 +296,7 @@ T11–T13 for their authority):
 
 ## The verdict contracts
 
-VERIFY and REVIEW each record their verdict by calling the **`loop_verdict`
+VERIFY and REVIEW each record their verdict by calling the **`workflow_verdict`
 plugin tool** — the loop's only trusted verdict channel. The driver accepts
 a verdict only from the session whose loop is currently sitting in that
 exact check stage; a `WORKFLOW_VERIFY:`/`WORKFLOW_REVIEW:` line in the stage's text
@@ -327,7 +327,7 @@ No tool call at all is treated as FAIL, not as a stall — the loop still
 terminates via the iteration cap rather than hanging indefinitely.
 
 The same contract covers every manifest **check** stage, not just VERIFY and
-REVIEW: `loop_verdict` accepts any check stage of the running loop's kind
+REVIEW: `workflow_verdict` accepts any check stage of the running loop's kind
 (engineering: `verify`/`review`; pr-sitter: `triage`/`verify`), validated
 against that kind's manifest, and a missing verdict on a check stage is
 still FAIL.
@@ -433,7 +433,7 @@ T1). Costs ~N× review time. Off by default (single review).
 - A re-build (from a VERIFY FAIL) that ignores the "Verify failure to
   address" context and repeats the previous implementation verbatim.
 - A check stage that wrote a `WORKFLOW_VERIFY`/`WORKFLOW_REVIEW` text line but never
-  called `loop_verdict` — the loop logs the discrepancy and records FAIL;
+  called `workflow_verdict` — the loop logs the discrepancy and records FAIL;
   the subagent didn't follow its contract.
 - An approved task sitting in `queued/` or `in-progress/` indefinitely —
   nothing is watching it. `/agentic-workflow:engineering watch` in some session, or
@@ -451,7 +451,7 @@ T1). Costs ~N× review time. Off by default (single review).
 
 - [ ] `/agentic-workflow:engineering status` reflects the actual current stage while a loop runs, and
       the watch cadence when watching.
-- [ ] Every VERIFY and REVIEW turn calls `loop_verdict` exactly once, and its
+- [ ] Every VERIFY and REVIEW turn calls `workflow_verdict` exactly once, and its
       text line matches the recorded verdict.
 - [ ] No file was edited by a task that never got its plan `/agentic-workflow:engineering
       approve`d, and every build edit landed on the `feature/<id>` branch,

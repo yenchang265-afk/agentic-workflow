@@ -185,7 +185,7 @@ reconcile.
 
 **Authority: backlog-write · Cost: M · Status: SHIPPED**
 
-Mirror `loop_doctor` semantics **exactly** — the MCP server and the OpenCode
+Mirror `workflow_doctor` semantics **exactly** — the MCP server and the OpenCode
 verb already agree, and a third divergent semantic would be a bug factory.
 
 **Server** — new `server/routes/doctor.ts`:

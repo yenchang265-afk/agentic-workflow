@@ -71,7 +71,7 @@ flowchart TB
         claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — 立即規劃一個任務（唯一的 PLAN 入口）<br/><b>/agentic-workflow:engineering claim</b> — 一次性拉取（僅限可建置的任務）<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session，<br/>透過原子性的 mkdir lock 認領<br/>（claim/watch 絕不會自動為 queued/ 中的任務規劃）"]
         planstage["<b>PLAN</b><br/>agent：workflow-plan-author · 僅限任務檔案，於主樹（main tree）<br/>skill：planning-and-task-breakdown<br/>（相關時 + api-and-interface-design、deprecation-and-migration、<br/>documentation-and-adrs）<br/><i>就地寫入 ## Implementation Plan，<br/>然後暫存 —— 迴圈結束</i>"]
         build["<b>BUILD</b><br/>agent：workflow-build · edit ✅ bash ✅<br/>skills：incremental-implementation、<br/>test-driven-development<br/>（相關時 + frontend-ui-engineering、observability-and-instrumentation、<br/>code-simplification）<br/><i>在 feature/&lt;id&gt; 分支或 worktree 上進行 TDD，<br/>每次疊代一個 commit checkpoint</i>"]
-        verify["<b>VERIFY</b><br/>agent：workflow-verify · edit ❌ bash：測試白名單<br/>FAIL 時的 skill：debugging-and-error-recovery<br/><i>執行測試 + 驗收標準，<br/>裁定只透過 loop_verdict 工具產生</i>"]
+        verify["<b>VERIFY</b><br/>agent：workflow-verify · edit ❌ bash：測試白名單<br/>FAIL 時的 skill：debugging-and-error-recovery<br/><i>執行測試 + 驗收標準，<br/>裁定只透過 workflow_verdict 工具產生</i>"]
         review["<b>REVIEW</b><br/>agent：workflow-review · edit ❌ bash：唯讀<br/>skills：code-review-and-quality<br/>（+ security-and-hardening、performance-optimization）<br/><i>五軸向 diff 審查，每個 reviewLens 各一次，<br/>取最差裁定</i>"]
     end
 
@@ -124,11 +124,11 @@ flowchart TB
 | PLAN（在迴圈中，作用於 `queued/` 中的任務） | driver → agent | `workflow-plan-author`（任務模式） | 僅限任務檔案 | `planning-and-task-breakdown`（相關時 + `api-and-interface-design`、`deprecation-and-migration`、`documentation-and-adrs`） | 就地寫入 `## Implementation Plan` → 任務暫存進 `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | 外掛 driver（`plugins/opencode/src/workflow/driver.ts`） | 生成以下三個階段 agent | — | `workflow-orchestration` 協定 | 階段排序、認領、快照、執行紀錄 |
 | BUILD（也是 `/build`） | driver → agent | `workflow-build` | edit ✅ bash ✅ | `incremental-implementation`、`test-driven-development`（相關時 + `frontend-ui-engineering`、`observability-and-instrumentation`、`code-simplification`） | 程式碼 + 每次疊代一個 commit checkpoint |
-| VERIFY（也是 `/verify`） | driver → agent | `workflow-verify` | edit ❌ bash：測試執行器白名單 | `debugging-and-error-recovery`（FAIL 時） | 可信的 `loop_verdict` PASS/FAIL/ERROR |
-| REVIEW（也是 `/review`） | driver → agent | `workflow-review` | edit ❌ bash：唯讀 git/fs | `code-review-and-quality`（+ `security-and-hardening`、`performance-optimization`） | 每個 lens 一份可信的 `loop_verdict`，取最差裁定 |
+| VERIFY（也是 `/verify`） | driver → agent | `workflow-verify` | edit ❌ bash：測試執行器白名單 | `debugging-and-error-recovery`（FAIL 時） | 可信的 `workflow_verdict` PASS/FAIL/ERROR |
+| REVIEW（也是 `/review`） | driver → agent | `workflow-review` | edit ❌ bash：唯讀 git/fs | `code-review-and-quality`（+ `security-and-hardening`、`performance-optimization`） | 每個 lens 一份可信的 `workflow_verdict`，取最差裁定 |
 | `/plan`（臨時） | agent | `workflow-plan` | 無（唯讀） | `spec-driven-development`、`planning-and-task-breakdown` | 聊天視窗中的一份計畫——不寫入任何檔案 |
 
-裁定只透過 `loop_verdict` 外掛工具才可信——階段 agent 在文字中宣稱
+裁定只透過 `workflow_verdict` 外掛工具才可信——階段 agent 在文字中宣稱
 「PASS」會被忽略。階段 agent 無法核准任務、移動待辦資料夾或發布；每一次
 狀態間的轉換都由外掛和人類擁有。
 
@@ -147,8 +147,8 @@ T3/T3b）：
 - **調和巡查（Reconciliation sweep）**（`task/audit.ts`）：偵測迷途資料夾
   （一個被 agent 憑空發明的 `run/`）、落在所有狀態資料夾之外的任務檔案，
   以及在多個狀態資料夾中重複出現的同一個 id。會在 session 啟動時（兩種
-  基底皆然）、`loop_status` 中，以及認領時的警告中呈現。
-- **Doctor**（`loop_doctor` / `/agentic-workflow:engineering doctor [fix]`）：
+  基底皆然）、`workflow_status` 中，以及認領時的警告中呈現。
+- **Doctor**（`workflow_doctor` / `/agentic-workflow:engineering doctor [fix]`）：
   回報巡查結果加上被持有的認領標記；帶上 `fix` 時只會套用明確無歧義的
   修復——把迷途項目救回 `draft/`（稽核 + 提交）、移除清空後的迷途資料夾、
   釋放過期的孤兒認領標記。重複項目永遠是人類的決定。

@@ -13,18 +13,18 @@ then act on the argument below.
 
 Dispatch:
 
-- **`claim`** — call `mcp__agentic-workflow__loop_claim({kind: "main-sitter"})`
+- **`claim`** — call `mcp__agentic-workflow__workflow_claim({kind: "main-sitter"})`
   to judge the watched branch's newest head and, when it is red and
-  unhandled, drive it per the main-sitter manifest: `loop_stage` before
+  unhandled, drive it per the main-sitter manifest: `workflow_stage` before
   spawning each stage subagent (`workflow-main-diagnose` / `workflow-main-remedy` /
   `workflow-verify` / `workflow-main-publish` — diagnose → remedy → verify → publish
   — via the Task tool, passing the response's `model` as the Task tool's
-  `model` when present) and `loop_advance` after each returns, until a
+  `model` when present) and `workflow_advance` after each returns, until a
   terminal action. A green or in-flight head claims nothing; a handled head
   waits for the next push.
-- **`status`** (or bare) — call `mcp__agentic-workflow__loop_status` and report
+- **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.
-- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__loop_stop` to abort
+- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 

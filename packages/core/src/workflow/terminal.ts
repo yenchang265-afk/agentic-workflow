@@ -5,7 +5,7 @@ import { appendNote, auditNote, findByIdIn, hasPlan, moveTask, releaseClaim } fr
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
-import { loopId, releaseWorktreeAt, teardownIsolation } from "./isolate.js"
+import { workflowId, releaseWorktreeAt, teardownIsolation } from "./isolate.js"
 import type { Action, Config, WorkflowState } from "./state.js"
 import type { Outcome } from "./metrics.js"
 
@@ -163,7 +163,7 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
   // Checkpoint + teardown FIRST — after this, a shared-tree main tree is back on
   // the base branch, so the note/move/commit below land where the human (and the
   // ship gate) will actually look.
-  await closeIsolation(ctx, `loop(${loopId(state)}): done — review passed`)
+  await closeIsolation(ctx, `loop(${workflowId(state)}): done — review passed`)
   // A task-less loop (free-text goal, sitter kind) never reaches the ship gate —
   // the only other place a worktree is released — so a done here is its last
   // chance to reclaim the directory. The work is already checkpointed on the
@@ -197,7 +197,7 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
 /** stop: the loop stopped incomplete — annotate the task and preserve partial work. */
 const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
-  await closeIsolation(ctx, `loop(${loopId(state)}): incomplete — ${action.message}`)
+  await closeIsolation(ctx, `loop(${workflowId(state)}): incomplete — ${action.message}`)
   if (state.task) {
     // Re-resolve the real current path (shell-authoritative) like runDone: the
     // claim-time state.task.path goes stale if the file moved since the claim, and

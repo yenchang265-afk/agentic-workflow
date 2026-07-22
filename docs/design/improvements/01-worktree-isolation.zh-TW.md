@@ -25,7 +25,7 @@ clone／worktree 中執行」。
   `query: { directory?: string }`——但把一個階段工作階段指向該 worktree
   會**啟動一個以該處為根目錄的獨立 app 實體**，而它會載入自己的一套
   外掛。全新的 worktree 沒有 `node_modules`，所以本外掛在那裡無法載入——
-  **`loop_verdict` 工具在該階段工作階段中將不存在**，破壞了迴圈唯一可信的
+  **`workflow_verdict` 工具在該階段工作階段中將不存在**，破壞了迴圈唯一可信的
   裁定（verdict）通道。就算真的載入了，那也會是另一個模組實體，帶著自己的
   `recordedVerdicts` map，對驅動端的實體不可見，還會有版本落差問題
   （該 worktree 帶的是基礎分支的外掛程式碼）。

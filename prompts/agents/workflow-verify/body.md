@@ -39,16 +39,16 @@ unavailable.
 ## Recording your verdict — the only trusted channel
 
 {{#host opencode}}
-**Record your verdict by calling the `loop_verdict` tool** — stage `verify`,
+**Record your verdict by calling the `workflow_verdict` tool** — stage `verify`,
 verdict `PASS`, `FAIL`, or `ERROR` — exactly once, at the end of your turn.
 {{/host}}
 {{#host claude}}
-Call the **`loop_verdict`** MCP tool exactly once, at the end of your turn:
+Call the **`workflow_verdict`** MCP tool exactly once, at the end of your turn:
 `stage: "verify"`, `verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason` (on
 FAIL/ERROR), and `criteria` mirroring the acceptance criteria you were given
 (`{criterion, pass}` each). In your tool list it appears as
-`mcp__agentic-workflow__loop_verdict` or, plugin-bundled,
-`mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict` — if neither is present,
+`mcp__agentic-workflow__workflow_verdict` or, plugin-bundled,
+`mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict` — if neither is present,
 say so explicitly in your final message and finish.
 {{/host}}
 The tool call is the loop's only trusted verdict channel; a verdict written in
@@ -76,11 +76,11 @@ Above the verdict, give:
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
 {{#host opencode}}
-- Call `loop_verdict` exactly once, with the same verdict as your text line.
+- Call `workflow_verdict` exactly once, with the same verdict as your text line.
   No tool call means the loop records a FAIL.
 {{/host}}
 {{#host claude}}
-- Call `loop_verdict` exactly once. No tool call means the loop records a FAIL.
+- Call `workflow_verdict` exactly once. No tool call means the loop records a FAIL.
 {{/host}}
 - Do not report PASS on unobserved or flaky evidence. Tests that ran and
   failed are a FAIL; tests that could not run at all are an ERROR with the

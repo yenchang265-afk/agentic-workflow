@@ -90,7 +90,7 @@ var hasShellExpansion = (seg) => {
 // packages/core/dist/task/guard.js
 var ALLOW = { allow: true };
 var block = (reason) => ({ allow: false, reason });
-var HOW_TO_MUTATE = "the folder a backlog file lives in IS its state \u2014 mutate it only through the loop tools (loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) or the /agentic-workflow:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file (or run /agentic-workflow:engineering new) \u2014 the status folders are created for you.";
+var HOW_TO_MUTATE = "the folder a backlog file lives in IS its state \u2014 mutate it only through the loop tools (workflow_task_approve / workflow_plan_approve / workflow_replan / workflow_ship / workflow_move / workflow_doctor) or the /agentic-workflow:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file (or run /agentic-workflow:engineering new) \u2014 the status folders are created for you.";
 var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var backlogRelPath = (filePath, tasksDir) => {
   const normalized = filePath.replace(/\\/g, "/");

@@ -61,12 +61,12 @@ fails loud at host startup). A minimal two-stage kind:
     },
     {
       "name": "check",
-      "kind": "check",                  // … "check" must record a loop_verdict (missing = FAIL)
+      "kind": "check",                  // … "check" must record a workflow_verdict (missing = FAIL)
       "command": "verify",
       "agent": "workflow-verify",
       "prompt": "stages/check.md",
       "isolation": "worktree",
-      "requiredAxes": ["correctness", "security"],  // optional; check stages only — loop_verdict rejects a verdict missing any of them
+      "requiredAxes": ["correctness", "security"],  // optional; check stages only — workflow_verdict rejects a verdict missing any of them
       "bashAllowlist": ["git diff*", "npm test*"]  // default-deny bash for this stage
     }
   ],
@@ -100,7 +100,7 @@ stages need all of `onPass`/`onFail`/`onError`. A missing verdict on a check
 stage resolves as FAIL — never as a stall, never parsed from prose.
 
 A check stage may also declare `requiredAxes`. The stage prompt then carries the
-per-axis payload contract, and `loop_verdict` **rejects** a verdict whose `axes`
+per-axis payload contract, and `workflow_verdict` **rejects** a verdict whose `axes`
 array misses any of them, so a multi-axis review cannot silently skip one. The
 recorded verdict is also worsened to match its axes — a declared PASS carrying a
 Critical or Important finding resolves as FAIL. `requiredAxes` on a `work` stage

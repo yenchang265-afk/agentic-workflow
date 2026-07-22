@@ -116,7 +116,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
   }
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       const b = await branch()

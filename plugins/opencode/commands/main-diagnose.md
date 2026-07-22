@@ -11,5 +11,5 @@ Run the **DIAGNOSE** stage of the main-sitter loop
 
 Delegated to the `workflow-main-diagnose` subagent, which reproduces the failure
 on the pinned red head, bisects when needed, classifies it (fix-forward /
-revert / flake), and records a `loop_verdict` (PASS = remedy warranted; FAIL
+revert / flake), and records a `workflow_verdict` (PASS = remedy warranted; FAIL
 = flake or recovered; ERROR = could not reproduce).

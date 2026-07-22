@@ -19,7 +19,7 @@ PR）、`dep-sitter`（有漏洞或已過期的相依套件），以及 `main-si
 flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
         oc["OpenCode plugin (src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
-        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>loop_claim / loop_start / loop_advance"]
+        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
     end
 
     subgraph core["@agentic-workflow/core (packages/core)"]
@@ -90,7 +90,7 @@ flowchart TB
   中的 `enabledWorkflowKinds`）；第一次成功的認領勝出，且每種類型的指令
   都把輪詢範圍限定在自己的工作來源上。兩個 host 的觸發器都委派給它：
   OpenCode 的 `session.idle` + 各類型的 `watch` 計時器，以及 Claude
-  Code MCP 伺服器的 `loop_claim`。一個工作來源可以實作 `onTerminal`
+  Code MCP 伺服器的 `workflow_claim`。一個工作來源可以實作 `onTerminal`
   來做驅動結束時的收尾記帳（PR sitter 的去重帳本）；backlog 工作來源
   不需要它。
 - **各類型的狀態語意**——`docs/tasks/` 的狀態資料夾是*engineering*
@@ -107,8 +107,8 @@ flowchart TB
 保護 `docs/tasks/` 的待辦完整性防護欄，現在都收在自己的檔案裡：
 **[`docs/workflows/engineering.md`](workflows/engineering.md)**。
 
-跨所有類型的裁定，只透過 `loop_verdict` 這個外掛工具取信——一個階段
-agent 在文字裡宣稱「PASS」會被忽略。`loop_verdict` 接受目前作用中
+跨所有類型的裁定，只透過 `workflow_verdict` 這個外掛工具取信——一個階段
+agent 在文字裡宣稱「PASS」會被忽略。`workflow_verdict` 接受目前作用中
 迴圈的清單所宣告的任何 check 階段（engineering：`verify`/`review`；
 pr-sitter：`triage`/`verify`；review-sitter：`fetch`；dep-sitter：
 `scan`/`verify`；main-sitter：`diagnose`/`verify`），並依此驗證所
@@ -123,7 +123,7 @@ pr-sitter：`triage`/`verify`；review-sitter：`fetch`；dep-sitter：
 tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種類型——都
 會被拒絕，並附上目前存活擁有者的身分；一旦心跳超過
 `max(3×interval, 2min)`，一個已死亡 watcher 的租約就會被接管。一次性
-的認領（`loop_claim`/`loop_start`）在有外部存活租約時只會警告——而
+的認領（`workflow_claim`/`workflow_start`）在有外部存活租約時只會警告——而
 不會阻擋。
 
 ## sitter 類型——實驗性
@@ -141,7 +141,7 @@ tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種
 
 相同的工作流程類型和生命週期，不同的驅動方式：Claude Code 沒有背景的
 `session.idle` 驅動程式，所以主 agent 是透過一個內建的 MCP 伺服器
-（`mcp__agentic-workflow__loop_*` 工具）而不是 agent frontmatter 權限來
+（`mcp__agentic-workflow__workflow_*` 工具）而不是 agent frontmatter 權限來
 驅動迴圈，而且人工把關點是**互動式**的——一次 park 或 done 會回傳
 一個 `gate` 欄位，驅動中的 agent 會透過 AskUserQuestion 就地詢問，
 而不是只等待一個指令。完整的安裝和指令細節見
@@ -173,7 +173,7 @@ approve、replan、ship。
 編輯合併後的視圖，那樣會把使用者層級（以及其中的 `ado.pat`）扁平化
 進儲存庫的檔案裡。它寫入的是原始 JSON，因此核心套件的結構描述不
 認識的鍵在儲存後仍會存活，而不會被剝除。它也提供**待辦 doctor**
-（`loop_doctor`）——搶救流離的任務、移除憑空出現的資料夾，以及釋放
+（`workflow_doctor`）——搶救流離的任務、移除憑空出現的資料夾，以及釋放
 那些原本會不斷拒絕把關動作的、陳舊而無迴圈驅動的認領標記。
 
 它的寫入介面受限於 localhost 綁定、一個 Host 標頭檢查，以及每一個

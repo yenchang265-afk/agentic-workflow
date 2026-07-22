@@ -62,11 +62,11 @@ export const StageDefSchema = z.object({
    */
   model: z.string().min(1).optional(),
   /**
-   * Axes a `check` stage's verdict must cover, or none. When set, `loop_verdict`
+   * Axes a `check` stage's verdict must cover, or none. When set, `workflow_verdict`
    * rejects a call whose `axes` array misses any of them, and the stage prompt
    * carries the payload contract — so a multi-axis review can't silently skip an
    * axis. Declared per stage rather than baked into the tool because one
-   * `loop_verdict` serves every check stage of every kind.
+   * `workflow_verdict` serves every check stage of every kind.
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
   /** Bash-command globs this stage may run (enforced by the Claude Code stage guard). */

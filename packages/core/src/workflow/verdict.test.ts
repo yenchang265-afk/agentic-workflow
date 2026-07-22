@@ -57,10 +57,10 @@ test("a WORKFLOW_VERIFY tag in the text does not satisfy a WORKFLOW_REVIEW looku
 
 test("verdictContractBlock names the stage, the tool, and both registered tool names", () => {
   const block = verdictContractBlock("verify")
-  assert.match(block, /loop_verdict/)
+  assert.match(block, /workflow_verdict/)
   assert.match(block, /stage: "verify"/)
-  assert.match(block, /mcp__agentic-workflow__loop_verdict/)
-  assert.match(block, /mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict/)
+  assert.match(block, /mcp__agentic-workflow__workflow_verdict/)
+  assert.match(block, /mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict/)
   assert.match(block, /PASS/)
 })
 
@@ -96,9 +96,9 @@ test("workScopeBlock names the stage and confines the turn to it", () => {
   assert.match(block, /after your turn ends/i)
 })
 
-test("workScopeBlock forbids calling loop_verdict and claiming the loop finished", () => {
+test("workScopeBlock forbids calling workflow_verdict and claiming the loop finished", () => {
   const block = workScopeBlock("build")
-  assert.match(block, /never call .*loop_verdict/i)
+  assert.match(block, /never call .*workflow_verdict/i)
   assert.match(block, /never (state|claim)/i)
 })
 
@@ -168,7 +168,7 @@ test("verdictFeedbackBlock output is unchanged for an axis-less record (rename r
   // The two host call sites render VERIFY records too; adding axes must not
   // have disturbed the criteria-only output by so much as a newline.
   const record = { verdict: "FAIL" as const, reason: "boom", criteria: [{ criterion: "c1", pass: false }] }
-  assert.equal(verdictFeedbackBlock(record), "Verdict reason: boom\nFailed criteria (from loop_verdict):\n- c1")
+  assert.equal(verdictFeedbackBlock(record), "Verdict reason: boom\nFailed criteria (from workflow_verdict):\n- c1")
 })
 
 test("verdictFeedbackBlock renders failing axes with their blocking findings only", () => {
@@ -187,7 +187,7 @@ test("verdictFeedbackBlock renders failing axes with their blocking findings onl
       { axis: "performance", verdict: "ERROR", findings: [] },
     ],
   })
-  assert.match(block, /Failing review axes \(from loop_verdict\):/)
+  assert.match(block, /Failing review axes \(from workflow_verdict\):/)
   assert.match(block, /- security \(FAIL\)/)
   assert.match(block, /\[critical\] unvalidated id in SQL template — src\/db\/query\.ts:41/)
   assert.match(block, /- performance \(ERROR\)/)

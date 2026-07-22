@@ -17,7 +17,7 @@ import { ok, type JsonResponse } from "../http.js"
 
 /**
  * The backlog doctor: report structural anomalies and held claims, and (on
- * /fix) apply only the unambiguous repairs. Mirrors `loop_doctor` /
+ * /fix) apply only the unambiguous repairs. Mirrors `workflow_doctor` /
  * `/agentic-workflow:engineering doctor [fix]` exactly — the MCP server and the
  * OpenCode driver already agree, and a third divergent semantic here would be a
  * bug factory.
