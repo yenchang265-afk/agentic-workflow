@@ -26,14 +26,24 @@ import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/c
  * Mirror of core `wasInterrupted` (store.ts): a BUILD started with no later
  * finish, read only within the current lifecycle window (after the last
  * "> Plan approved" note) — an older attempt's unmatched note must not keep
- * flagging a re-planned, freshly approved task.
+ * flagging a re-planned, freshly approved task. Like core, markers count only
+ * at line starts (audit notes are whole lines): a body QUOTING the literal
+ * text mid-line must not read as lifecycle state. MUST stay behaviorally in
+ * sync with store.ts `lastMarkerIndex`/`wasInterrupted`.
  */
+const lastMarkerIndex = (body, marker) => {
+  for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
+    if (idx === 0 || body[idx - 1] === "\n") return idx
+  }
+  return -1
+}
+
 const wasInterrupted = (body) => {
-  const anchor = body.lastIndexOf("> Plan approved")
+  const anchor = lastMarkerIndex(body, "> Plan approved")
   const window = anchor === -1 ? body : body.slice(anchor)
-  const lastStart = window.lastIndexOf("> BUILD started")
+  const lastStart = lastMarkerIndex(window, "> BUILD started")
   if (lastStart === -1) return false
-  return window.lastIndexOf("> BUILD finished") < lastStart
+  return lastMarkerIndex(window, "> BUILD finished") < lastStart
 }
 
 const read = () =>

@@ -138,6 +138,10 @@ export interface WatcherOptions {
   readonly pollMs?: number
   /** fs.watch debounce. */
   readonly debounceMs?: number
+  /** Called when fs.watch could not start (recursive watch unsupported, dir
+   *  missing) — delivery silently degrades to the poll otherwise, and a broken
+   *  watcher is indistinguishable from a working one. */
+  readonly onDegraded?: (reason: string) => void
 }
 
 /** Start watching; `onEvents` fires with each non-empty diff. Returns a stop function. */
@@ -160,8 +164,9 @@ export const startWatcher = (opts: WatcherOptions, onEvents: (events: HubEventBa
   let watcher: fs.FSWatcher | null = null
   try {
     watcher = fs.watch(path.join(opts.directory, opts.tasksDir), { recursive: true }, poke)
-  } catch {
-    // watch unavailable (or dir missing) — the poll still delivers
+  } catch (err) {
+    // watch unavailable (or dir missing) — the poll still delivers, but say so.
+    opts.onDegraded?.((err as Error).message)
   }
   const poll = setInterval(rescan, opts.pollMs ?? 4000)
 

@@ -13,6 +13,11 @@ export interface EventHub {
   readonly close: () => void
 }
 
+/** Concurrent SSE connections kept per hub. A local page opening EventSources
+ *  in a loop (or leaking reconnects) must not grow the set without bound; the
+ *  OLDEST connection is evicted — its EventSource auto-reconnects if still live. */
+const MAX_SSE_CLIENTS = 32
+
 export const makeEventHub = (heartbeatMs = 25_000): EventHub => {
   const clients = new Set<ServerResponse>()
 
@@ -43,6 +48,17 @@ export const makeEventHub = (heartbeatMs = 25_000): EventHub => {
       // A client that aborts mid-write emits 'error' on the response stream;
       // without a listener that becomes an uncaught exception. Prune on both.
       res.on("error", () => clients.delete(res))
+      if (clients.size >= MAX_SSE_CLIENTS) {
+        const oldest = clients.values().next().value
+        if (oldest) {
+          clients.delete(oldest)
+          try {
+            oldest.end()
+          } catch {
+            /* already dead — eviction is what mattered */
+          }
+        }
+      }
       clients.add(res)
       safeWrite(res, ": connected\n\n")
       req.on("close", () => clients.delete(res))

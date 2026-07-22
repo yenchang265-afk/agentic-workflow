@@ -1,7 +1,7 @@
 import { ConfigSchema, mergeConfigLayers } from "@agentic-workflow/core/config"
 import { REDACTED, type ConfigEdit, type ConfigIssue, type ConfigLayer, type ConfigLayerResponse, type ConfigProvenance, type SaveConfigRequest, type SaveConfigResponse } from "../../shared/api.js"
 import { isGitIgnored, knownTopLevelKeys, layerPath, readRawLayer, redactSecrets, SECRET_PATHS, writeRawLayer } from "../configfile.js"
-import { deleteAt, isPlainObject, leafPaths, provenanceOf, setAt, valueAt } from "../configlayers.js"
+import { deleteAt, isPlainObject, isSafeConfigPath, leafPaths, provenanceOf, setAt, valueAt } from "../configlayers.js"
 import type { HubDeps } from "../deps.js"
 import { badRequest, json, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 import { lintWorkflowKnobs } from "../knobs.js"
@@ -108,6 +108,13 @@ export const saveConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
 
   const file = layerPath(deps, layer as ConfigLayer)
   if (!file) return badRequest("the user-scope config layer is disabled (AGENTIC_WORKFLOW_USER_CONFIG is empty)")
+
+  for (const edit of body.edits as ConfigEdit[]) {
+    const segments = (edit?.path ?? "").split(".").filter(Boolean)
+    if (segments.length > 0 && !isSafeConfigPath(segments)) {
+      return badRequest(`refusing edit path "${edit.path}": prototype-shaped or empty key segments are not writable`)
+    }
+  }
 
   const self = readRawLayer(deps, layer as ConfigLayer)
   if (self.parseError) return json(400, { error: `refusing to edit ${file}: ${self.parseError} — fix the file by hand first` })

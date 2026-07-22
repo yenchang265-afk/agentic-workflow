@@ -1,3 +1,4 @@
+import { z } from "zod"
 import type { Log, Shell } from "../host.js"
 import { platformFor } from "../config.js"
 import { ADO_HEADERS_ENV, adoFetch, buildAdoHeaders, makeAdoAuthHeader, resolveAdoHeaders } from "../source/ado-shared.js"
@@ -74,6 +75,14 @@ const shipGithub = async ($: Shell, log: Log, directory: string, branch: string,
 const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
 const API_VERSION = "api-version=7.1"
 
+/** ADO response shapes, validated — a type-confused body (string pullRequestId,
+ *  numeric defaultBranch) must degrade to the same fallbacks as a parse failure,
+ *  never flow onward as a trusted value. */
+const AdoDefaultBranchSchema = z.object({ defaultBranch: z.string().optional() })
+const AdoPrRefSchema = z.object({ pullRequestId: z.number().int().positive().optional() })
+const AdoPrListEnvelopeSchema = z.object({ value: z.array(AdoPrRefSchema).optional() })
+const AdoPrArraySchema = z.array(AdoPrRefSchema)
+
 /** One authenticated call. Never throws — a network error reads as a non-ok response. */
 const adoCall = async (
   http: ShipHttp,
@@ -103,7 +112,7 @@ const adoDefaultBranch = async (
   const out = await adoCall(http, `${repoBase}?${API_VERSION}`, authHeader, "GET", customHeaders)
   if (!out.ok) return null
   try {
-    const data = JSON.parse(out.body || "{}") as { defaultBranch?: string }
+    const data = AdoDefaultBranchSchema.parse(JSON.parse(out.body || "{}"))
     return data.defaultBranch ? data.defaultBranch.replace(/^refs\/heads\//, "") : null
   } catch {
     return null
@@ -122,7 +131,7 @@ const adoExistingPrId = async (
   const out = await adoCall(http, url, authHeader, "GET", customHeaders)
   if (!out.ok) return null
   try {
-    const data = JSON.parse(out.body || "{}") as { value?: Array<{ pullRequestId?: number }> }
+    const data = AdoPrListEnvelopeSchema.parse(JSON.parse(out.body || "{}"))
     return data.value?.[0]?.pullRequestId ?? null
   } catch {
     return null
@@ -148,7 +157,7 @@ const shipAdoAz = async (
   if (existing.ok) {
     try {
       // Native az verbs return the bare array (no { value } envelope).
-      const prs = JSON.parse(existing.body || "[]") as Array<{ pullRequestId?: number }>
+      const prs = AdoPrArraySchema.parse(JSON.parse(existing.body || "[]"))
       const id = prs[0]?.pullRequestId
       if (id) return { attempted: true, created: false, url: prUrl(id) }
     } catch {
@@ -160,7 +169,7 @@ const shipAdoAz = async (
   let base: string | null = null
   if (repoOut.ok) {
     try {
-      const data = JSON.parse(repoOut.body || "{}") as { defaultBranch?: string }
+      const data = AdoDefaultBranchSchema.parse(JSON.parse(repoOut.body || "{}"))
       base = data.defaultBranch ? data.defaultBranch.replace(/^refs\/heads\//, "") : null
     } catch {
       base = null
@@ -181,7 +190,7 @@ const shipAdoAz = async (
     return { attempted: true, created: false, reason }
   }
   try {
-    const data = JSON.parse(createOut.body || "{}") as { pullRequestId?: number }
+    const data = AdoPrRefSchema.parse(JSON.parse(createOut.body || "{}"))
     if (!data.pullRequestId) return { attempted: true, created: false, reason: "ADO PR create: no pullRequestId in response" }
     return { attempted: true, created: true, url: prUrl(data.pullRequestId) }
   } catch (err) {
@@ -239,7 +248,7 @@ const shipAdo = async (
     return { attempted: true, created: false, reason }
   }
   try {
-    const data = JSON.parse(createOut.body || "{}") as { pullRequestId?: number }
+    const data = AdoPrRefSchema.parse(JSON.parse(createOut.body || "{}"))
     if (!data.pullRequestId) return { attempted: true, created: false, reason: "ADO PR create: no pullRequestId in response" }
     return { attempted: true, created: true, url: prUrl(data.pullRequestId) }
   } catch (err) {

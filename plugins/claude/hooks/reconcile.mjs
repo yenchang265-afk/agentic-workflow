@@ -60,12 +60,18 @@ var auditBacklog = async (client, directory, tasksDir) => {
 };
 
 // plugins/claude/hooks/src/reconcile.entry.mjs
+var lastMarkerIndex = (body, marker) => {
+  for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
+    if (idx === 0 || body[idx - 1] === "\n") return idx;
+  }
+  return -1;
+};
 var wasInterrupted = (body) => {
-  const anchor = body.lastIndexOf("> Plan approved");
+  const anchor = lastMarkerIndex(body, "> Plan approved");
   const window = anchor === -1 ? body : body.slice(anchor);
-  const lastStart = window.lastIndexOf("> BUILD started");
+  const lastStart = lastMarkerIndex(window, "> BUILD started");
   if (lastStart === -1) return false;
-  return window.lastIndexOf("> BUILD finished") < lastStart;
+  return lastMarkerIndex(window, "> BUILD finished") < lastStart;
 };
 var read = () => new Promise((resolve) => {
   let s = "";

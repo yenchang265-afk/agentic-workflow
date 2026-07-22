@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { serializeTask, type Task } from "./schema.js"
 import {
+  appendNote,
+  appendPlan,
+  appendRunLog,
   auditNote,
   canTransition,
   claimFirst,
@@ -594,6 +597,18 @@ test("selectNext equals the head of selectOrder", () => {
 
 const planned = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING}\n\n1. Go.`)
 const started = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`)
+
+test("appendNote/appendPlan/appendRunLog warn when the append never landed", async () => {
+  // The CLAIMED/BUILD notes are the durable evidence the claim protocol
+  // depends on — a silently lost append re-claims already-done work.
+  const warns: string[] = []
+  const failing = makeShell((cmd) => (cmd.startsWith("printf") ? { exitCode: 1, stderr: "read-only fs" } : { exitCode: 0 }))
+  const log = async (level: string, message: string) => void (level === "warn" && warns.push(message))
+  await appendNote(failing, task("a", 0), "CLAIMED — loop starting", log)
+  await appendPlan(failing, task("a", 0), "1. step", log)
+  await appendRunLog(failing, "/r", "docs/tasks", "a", "hdr", "text", log)
+  assert.equal(warns.filter((m) => m.includes("append")).length, 3, `got: ${JSON.stringify(warns)}`)
+})
 
 test("a marker quoted mid-line in the body is not lifecycle state", () => {
   // A task ABOUT this system (or a pasted log) can quote the literal note

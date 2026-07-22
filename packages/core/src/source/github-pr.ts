@@ -55,6 +55,19 @@ const FAILING = new Set(["FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "ACTION_R
  */
 const PR_LIST_LIMIT = 200
 
+/**
+ * Chronological "a is strictly after b" for API timestamp strings. GitHub
+ * emits ISO-8601 Zulu (where lexical order happens to work), but an offset or
+ * precision change would silently skew a string `>` — parse both sides and
+ * fall back to lexical only when either is unparseable. Pure.
+ */
+const isAfter = (a: string, b: string): boolean => {
+  const ta = Date.parse(a)
+  const tb = Date.parse(b)
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return a > b
+  return ta > tb
+}
+
 interface GithubPrDeps {
   readonly $: Shell
   readonly client: Client
@@ -152,7 +165,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
             .map((c) => c.name)
             .filter(Boolean),
           newComments: (pr.comments ?? [])
-            .filter((c) => (c.author?.login ?? "") !== login && c.createdAt > watermark)
+            .filter((c) => (c.author?.login ?? "") !== login && isAfter(c.createdAt, watermark))
             .map((c) => ({ author: c.author?.login ?? "", at: c.createdAt })),
         }
         const triggers = attentionTriggers(snapshot, ledger, binding.triggers)
@@ -205,7 +218,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
           const data = FreshHeadSchema.parse(JSON.parse(fresh.stdout.toString()))
           head = data.headRefOid ?? head
           for (const c of data.comments) {
-            if (c.createdAt && c.createdAt > lastCommentAt) lastCommentAt = c.createdAt
+            if (c.createdAt && isAfter(c.createdAt, lastCommentAt)) lastCommentAt = c.createdAt
           }
         } catch {
           reReadFailed = true

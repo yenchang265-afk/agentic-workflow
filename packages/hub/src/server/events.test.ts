@@ -53,6 +53,22 @@ test("a client whose write throws is pruned and does not starve later clients", 
   hub.close()
 })
 
+test("the client set is capped — the oldest connection is evicted, never unbounded growth", () => {
+  const hub = makeEventHub()
+  const first = fakeClient()
+  hub.handle(first.req, first.res)
+  const rest = Array.from({ length: 32 }, () => fakeClient())
+  for (const c of rest) hub.handle(c.req, c.res)
+  first.writes.length = 0
+  hub.broadcast([{ type: "run" } as HubEvent])
+  assert.ok(!first.writes.some((w) => w.includes('"type":"run"')), "the oldest client was evicted")
+  assert.ok(
+    rest.every((c) => c.writes.some((w) => w.includes('"type":"run"'))),
+    "every newer client still receives broadcasts",
+  )
+  hub.close()
+})
+
 test("a response 'error' event prunes the client without throwing", () => {
   const hub = makeEventHub()
   const c = fakeClient()

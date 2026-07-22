@@ -61,8 +61,9 @@ export const readLeaseOwner = async ($: Shell, directory: string, tasksDir: stri
   }
 }
 
-const writeOwner = async ($: Shell, directory: string, tasksDir: string, owner: LeaseOwner): Promise<void> => {
-  await writeFileAtomic($, ownerFile(directory, tasksDir), JSON.stringify(owner))
+const writeOwner = async ($: Shell, directory: string, tasksDir: string, owner: LeaseOwner): Promise<boolean> => {
+  const out = await writeFileAtomic($, ownerFile(directory, tasksDir), JSON.stringify(owner))
+  return out.exitCode === 0
 }
 
 /**
@@ -161,12 +162,19 @@ export const heartbeatLease = async (
 ): Promise<boolean> => {
   const current = await readLeaseOwner($, directory, tasksDir)
   if (!current || current.pid !== owner.pid || current.host !== owner.host) return false
-  await writeOwner($, directory, tasksDir, {
+  // The read-then-write is not atomic: a takeover can land in between. Two
+  // narrowing rails — the write itself must land (a yanked dir fails the
+  // write), and the record read back must still be ours (a rival's fresh
+  // record wins). Neither closes the window fully; both shrink it and make
+  // the loss VISIBLE to this watcher instead of silent.
+  const wrote = await writeOwner($, directory, tasksDir, {
     ...owner,
     startedAt: current.startedAt,
     heartbeatAt: now.toISOString(),
   })
-  return true
+  if (!wrote) return false
+  const after = await readLeaseOwner($, directory, tasksDir)
+  return after !== null && after.pid === owner.pid && after.host === owner.host
 }
 
 /**

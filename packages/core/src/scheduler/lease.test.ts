@@ -246,6 +246,18 @@ test("heartbeatLease refuses to clobber a lease it no longer owns (post-takeover
   assert.equal(owner?.pid, 200, "the new owner's record survives")
 })
 
+test("heartbeatLease reports false when the write never landed (lease dir yanked mid-beat)", async () => {
+  // A takeover renames the dir aside BETWEEN our ownership read and the write:
+  // the write fails against the missing dir — that must read as "lost", not
+  // "landed", or the watcher keeps driving a clone it no longer owns.
+  let failWrites = false
+  const { $ } = makeLeaseFs({ failCmd: (cmd) => failWrites && cmd.startsWith("printf") })
+  await acquireLease($, "/r", "docs/tasks", me, now)
+  failWrites = true
+  const later = new Date("2026-07-06T12:01:00.000Z")
+  assert.equal(await heartbeatLease($, "/r", "docs/tasks", me, later), false)
+})
+
 test("heartbeatLease refuses when the lease is gone (released or renamed aside)", async () => {
   const { $ } = makeLeaseFs()
   assert.equal(await heartbeatLease($, "/r", "docs/tasks", me, now), false)

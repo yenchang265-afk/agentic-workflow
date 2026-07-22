@@ -58,6 +58,13 @@ export type AdoHttp = (
 /** The env var holding the Azure DevOps PAT — the same name the `az` extension used, for continuity. */
 const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
 
+/** The post-run PR re-read — validated so a type-confused body degrades to the
+ *  snapshot fallback like a parse failure, never flows on as a trusted head. */
+const AdoFreshPrSchema = z.object({
+  lastMergeSourceCommit: z.object({ commitId: z.string().optional() }).optional(),
+  repository: z.object({ id: z.string().optional(), name: z.string().optional() }).optional(),
+})
+
 /**
  * Active-PR list paging. ADO caps `$top` at 100 and offers no server-side
  * search, so the identity/role filter runs client-side over the whole set —
@@ -373,10 +380,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
       let repositoryId = ""
       if (fresh.ok) {
         try {
-          const data = JSON.parse(fresh.body) as {
-            lastMergeSourceCommit?: { commitId?: string }
-            repository?: { id?: string; name?: string }
-          }
+          const data = AdoFreshPrSchema.parse(JSON.parse(fresh.body))
           head = data.lastMergeSourceCommit?.commitId ?? head
           repositoryId = data.repository?.id ?? data.repository?.name ?? ""
         } catch {

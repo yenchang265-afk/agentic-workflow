@@ -68,6 +68,16 @@ export const leafPaths = (root: unknown, prefix: readonly string[] = []): string
 }
 
 /**
+ * Whether a client-supplied edit path may be written. Segments become literal
+ * keys in the config file that grants every other authority — prototype-shaped
+ * names (`__proto__`, `constructor`, `prototype`) and empty segments are
+ * refused outright. Pure.
+ */
+const UNSAFE_CONFIG_KEYS = new Set(["__proto__", "constructor", "prototype"])
+export const isSafeConfigPath = (path: readonly string[]): boolean =>
+  path.length > 0 && path.every((seg) => seg.length > 0 && !UNSAFE_CONFIG_KEYS.has(seg))
+
+/**
  * Immutably set a key path, creating intermediate objects. Returns a new root —
  * the raw config is never mutated in place, so a failed validation leaves the
  * caller's copy intact.

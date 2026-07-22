@@ -207,6 +207,20 @@ test("shipPr (ado) opens a new draft PR when none exists, using the repo's defau
   })
 })
 
+test("shipPr (ado) ignores type-confused API bodies instead of acting on them", async () => {
+  // A string pullRequestId must never become a reuse URL, and a non-string
+  // defaultBranch must fall back — malformed bodies degrade, never propagate.
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
+  const http = scriptedHttp([
+    { match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [{ pullRequestId: "42/../evil" }] }) },
+    { match: "_apis/git/repositories/widgets?api-version", body: JSON.stringify({ defaultBranch: 7 }) },
+    { match: "pullrequests?api-version", body: JSON.stringify({ pullRequestId: 99 }) },
+  ])
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  assert.equal(result.created, true)
+  assert.equal(result.url, "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99")
+})
+
 test("shipPr (ado) reports a reason when PR creation fails", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
   const http = scriptedHttp([

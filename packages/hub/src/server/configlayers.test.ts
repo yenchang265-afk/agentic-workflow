@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { mergeConfigLayers } from "@agentic-workflow/core/config"
-import { deleteAt, leafPaths, provenanceOf, setAt, valueAt } from "./configlayers.js"
+import { deleteAt, isSafeConfigPath, leafPaths, provenanceOf, setAt, valueAt } from "./configlayers.js"
 
 /**
  * provenanceOf mirrors core's mergeConfigLayers rule. Mirroring is exactly where
@@ -104,6 +104,17 @@ test("setAt and deleteAt are immutable and create intermediates", () => {
   const pruned = deleteAt(next, ["ado", "project"])
   assert.deepEqual(pruned, { ado: { organization: "acme" } })
   assert.deepEqual(deleteAt(raw, ["nope"]), raw, "deleting an absent key is a no-op")
+})
+
+test("isSafeConfigPath rejects prototype-shaped and empty segments", () => {
+  // Client-supplied edit paths land as literal keys in the config file that
+  // grants every other authority — never accept prototype-shaped names.
+  assert.equal(isSafeConfigPath(["ado", "pat"]), true)
+  assert.equal(isSafeConfigPath(["__proto__", "x"]), false)
+  assert.equal(isSafeConfigPath(["a", "constructor"]), false)
+  assert.equal(isSafeConfigPath(["a", "prototype"]), false)
+  assert.equal(isSafeConfigPath([]), false)
+  assert.equal(isSafeConfigPath([""]), false)
 })
 
 test("leafPaths walks plain objects and stops at arrays and scalars", () => {

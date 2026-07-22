@@ -21,13 +21,20 @@ export interface PollResult {
   readonly skips: readonly ClaimSkipReason[]
 }
 
-/** Walk `sources` in priority order; first successful claim wins. */
+/** Walk `sources` in priority order; first successful claim wins. A source
+ *  that THROWS (sources are internally nothrow today, but the invariant is
+ *  theirs, not enforced here) becomes an actionable skip — one bad source
+ *  must not stop the kinds behind it from ever being polled. */
 export const pollOnce = async (sources: readonly WorkSource[]): Promise<PollResult> => {
   const skips: ClaimSkipReason[] = []
   for (const source of sources) {
-    const { item, skip } = await source.claimNext()
-    if (item) return { claim: { source, item }, skips }
-    if (skip) skips.push(skip)
+    try {
+      const { item, skip } = await source.claimNext()
+      if (item) return { claim: { source, item }, skips }
+      if (skip) skips.push(skip)
+    } catch (err) {
+      skips.push({ message: `${source.workflowKind}: poll failed — ${(err as Error).message}`, actionable: true })
+    }
   }
   return { claim: null, skips }
 }

@@ -86,7 +86,10 @@ const restartWatcher = (repo: Repo): void => {
   watcherStops.get(repo.id)?.()
   watcherStops.set(
     repo.id,
-    startWatcher(watchShape(repo.deps), async (evts) => {
+    startWatcher({
+      ...watchShape(repo.deps),
+      onDegraded: (reason) => log("warn", `${repo.id}: fs.watch unavailable (${reason}) — falling back to the 4s poll only`),
+    }, async (evts) => {
       // Reload BEFORE fanning out: a `config` event tells clients to refetch, and
       // they must not refetch against the config the server has just been told is
       // stale. Covers hand-edits in $EDITOR as well as the hub's own save.

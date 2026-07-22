@@ -680,7 +680,15 @@ const warnRedaction = (hits: readonly { pattern: string; count: number }[], wher
 export const appendNote = async ($: Shell, task: FileRef, note: string, log?: Log): Promise<void> => {
   const { text, hits } = redact(note)
   warnRedaction(hits, `note on ${task.id}`, log)
-  await $`printf '\n> %s\n' ${text} >> ${task.path}`.quiet().nothrow()
+  const out = await $`printf '\n> %s\n' ${text} >> ${task.path}`.quiet().nothrow()
+  await warnLostAppend(out.exitCode, `note on ${task.id}`, log)
+}
+
+/** Appends stay best-effort, but a lost one must be LOUD: the CLAIMED/BUILD
+ *  notes are the durable evidence the claim protocol depends on — silently
+ *  losing one re-claims already-done work. */
+const warnLostAppend = async (exitCode: number, what: string, log?: Log): Promise<void> => {
+  if (exitCode !== 0) await log?.("warn", `append failed (exit ${exitCode}): ${what} never landed on disk`)
 }
 
 /**
@@ -711,14 +719,16 @@ export const appendRunLog = async (
   const file = path.join(dir, `${id}.md`)
   const clean = redact(text)
   warnRedaction(clean.hits, `run log ${id}.md`, log)
-  await $`printf '\n## %s\n\n%s\n' ${header} ${clean.text} >> ${file}`.quiet().nothrow()
+  const out = await $`printf '\n## %s\n\n%s\n' ${header} ${clean.text} >> ${file}`.quiet().nothrow()
+  await warnLostAppend(out.exitCode, `run log ${id}.md`, log)
 }
 
 /** Append a plan under `PLAN_HEADING` to a task file in place. Secrets redacted. Best-effort. */
 export const appendPlan = async ($: Shell, task: FileRef, plan: string, log?: Log): Promise<void> => {
   const { text, hits } = redact(plan)
   warnRedaction(hits, `plan on ${task.id}`, log)
-  await $`printf '\n%s\n\n%s\n' ${PLAN_HEADING} ${text} >> ${task.path}`.quiet().nothrow()
+  const out = await $`printf '\n%s\n\n%s\n' ${PLAN_HEADING} ${text} >> ${task.path}`.quiet().nothrow()
+  await warnLostAppend(out.exitCode, `plan on ${task.id}`, log)
 }
 
 /** Existing task ids (filenames without `.md`) in a status folder; `[]` if absent. */

@@ -139,6 +139,22 @@ test("a human comment newer than the ledger watermark triggers a claim; an older
   assert.match(fresh.item?.state.goal ?? "", /1 unanswered comment/)
 })
 
+test("comment recency is chronological, not lexical — an offset timestamp still triggers", async () => {
+  // 2026-07-04T23:30:00-02:00 is 01:30Z on the 5th — AFTER the watermark —
+  // but lexically sorts before "2026-07-05...". String `>` would drop it.
+  const ledgers = {
+    "docs/tasks/runs/pr-sitter/pr-7.json": JSON.stringify({
+      pr: 7,
+      lastCommentAtHandled: "2026-07-05T00:00:00Z",
+      failedAttempts: [],
+      updatedAt: "2026-07-05T00:00:00Z",
+    }),
+  }
+  const comment = { author: { login: "alice" }, createdAt: "2026-07-04T23:30:00-02:00" }
+  const { item } = await source([pr({ comments: [comment] })], { ledgers }).claimNext()
+  assert.match(item?.state.goal ?? "", /1 unanswered comment/)
+})
+
 test("a held claim marker reports actionably and claims nothing", async () => {
   const prs = [pr({ statusCheckRollup: [{ name: "ci", conclusion: "FAILURE" }] })]
   const { item, skip } = await source(prs, {
