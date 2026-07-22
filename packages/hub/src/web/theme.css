@@ -892,6 +892,34 @@ body {
   fill: var(--ok);
 }
 
+/* --- metrics tab ------------------------------------------------------------ */
+
+/* The capped bucket is the one worth noticing: those passes ran out of
+   iterations rather than passing review, so it borrows the gate colour. */
+.bar-burn {
+  fill: var(--accent);
+}
+.bar-burn.capped {
+  fill: var(--gate);
+}
+
+.burn-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.burn-label,
+.burn-count {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.burn-label {
+  width: 8ch;
+  text-align: right;
+}
+
 /* --- creator ---------------------------------------------------------------- */
 
 .creator {

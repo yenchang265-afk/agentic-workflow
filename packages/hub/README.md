@@ -134,6 +134,31 @@ creator tab is unaffected.
   toggles for the optional state (task / git / worktree / platform) — a stage
   prompt is mostly conditional sections, and the mistake worth catching is a
   block that silently never fires.
+- **Metrics**: cross-run loop health, rolled up from the same `runs/<id>.md`
+  logs and `runs/<id>.metrics.json` sidecars the monitor reads one run at a
+  time. Iteration burn and cap-trip rate (is the loop converging, or running out
+  of iterations?), first-pass yield, per-stage verdict tallies with the
+  fail→pass / pass→fail / fail→fail flip counts, outcome mix, per-stage
+  wall-clock, and prompt-cache hit rate. `GET /api/metrics`.
+
+  Two conventions make the numbers trustworthy, and both are visible in the UI:
+
+  - **The unit is the pass, not the file.** One run log accumulates a plan pass
+    and then a build pass — independent runs with their own cap and verdict
+    stream — so the tab reports `runs` and `passes` separately and every rate
+    names the population it measured.
+  - **Unmeasurable is not zero.** A rate with no valid denominator renders `—`,
+    never `0%`: "no pass recorded a cap" and "no pass tripped the cap" are
+    different findings. Passes excluded from a rate are counted and stated.
+
+  Known limits, both stated in the tab's footer rather than hidden:
+  the **cache hit rate covers opencode-driven runs only** (the Claude host never
+  calls the LLM itself, so it observes no tokens; the transcript-attribution
+  fallback the per-run token panel uses is deliberately *not* used here, because
+  a ratio of two time-window estimates would disagree with the observed one with
+  no way to reconcile them). And **stage names are not namespaced by kind** — all
+  kinds append to the same flat `runs/`, and a run-log summary does not record
+  its kind, so `build` in engineering and `build` in a sitter tally into one row.
 - **Config**: read and write `.agentic-workflow.json`. It edits **one layer at a
   time** (this repo, or user-scope) and badges every field with where its
   effective value actually comes from — the merged view is never written back,

@@ -17,6 +17,7 @@ import { getDoctor, postDoctorFix } from "./routes/doctor.js"
 import { postGate } from "./routes/gate.js"
 import { getAssets, postGenPrompts, scaffoldAgent, scaffoldCommand, scaffoldSkill } from "./routes/assets.js"
 import { checklistKind, getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
+import { getMetrics } from "./routes/metrics.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
 import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
 
@@ -158,6 +159,7 @@ const routes: Route[] = [
   { method: "GET", pattern: "/api/runs", handler: scoped((deps) => getRuns(deps)) },
   { method: "GET", pattern: "/api/runs/:id", handler: scoped(getRunDetail) },
   { method: "GET", pattern: "/api/active", handler: scoped((deps) => getActive(deps)) },
+  { method: "GET", pattern: "/api/metrics", handler: scoped((deps) => getMetrics(deps)) },
   { method: "GET", pattern: "/api/tokens", handler: scoped((deps) => getTokensSummary(deps)) },
   { method: "GET", pattern: "/api/tokens/:id", handler: scoped(getRunTokens) },
   { method: "GET", pattern: "/api/assets", handler: scoped((deps) => getAssets(deps)) },

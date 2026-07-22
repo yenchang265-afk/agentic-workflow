@@ -4,6 +4,7 @@ import type { MonitorKindsResponse } from "../shared/api.js"
 import { ConfigEditor } from "./config/ConfigEditor.js"
 import { Creator } from "./creator/Creator.js"
 import { EventsProvider, useEvents } from "./events.js"
+import { MetricsTab } from "./metrics/MetricsTab.js"
 import { ActivePanel } from "./monitor/ActivePanel.js"
 import { Board } from "./monitor/Board.js"
 import { PrKindPanel } from "./monitor/PrKindPanel.js"
@@ -15,11 +16,12 @@ import { BellIcon } from "./ui/icons.js"
 import { ThemeToggle } from "./ui/ThemeToggle.js"
 import "./theme.css"
 
-type Tab = "monitor" | "creator" | "config"
+type Tab = "monitor" | "creator" | "metrics" | "config"
 
 const TABS: readonly { id: Tab; label: string }[] = [
   { id: "monitor", label: "Workflow monitor" },
   { id: "creator", label: "Workflow creator" },
+  { id: "metrics", label: "Metrics" },
   { id: "config", label: "Config" },
 ]
 
@@ -116,6 +118,7 @@ const App = () => {
       <main className="hub-main">
         {tab === "monitor" && <Monitor />}
         {tab === "creator" && <Creator />}
+        {tab === "metrics" && <MetricsTab />}
         {tab === "config" && <ConfigEditor />}
       </main>
     </div>

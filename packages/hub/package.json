@@ -10,7 +10,7 @@
     "start": "node dist/server/main.js",
     "dev": "node scripts/build-web.mjs --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json && tsc -p tsconfig.test.json",
-    "test": "node --import tsx --test src/server/*.test.ts src/server/routes/*.test.ts src/server/tokens/*.test.ts src/web/creator/*.test.ts"
+    "test": "node --import tsx --test src/server/*.test.ts src/server/metrics/*.test.ts src/server/routes/*.test.ts src/server/tokens/*.test.ts src/web/creator/*.test.ts src/web/metrics/*.test.ts"
   },
   "dependencies": {
     "@agentic-workflow/core": "*",

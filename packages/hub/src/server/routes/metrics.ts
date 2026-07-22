@@ -1,0 +1,60 @@
+import { parseRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
+import type { HubDeps } from "../deps.js"
+import { ok, type JsonResponse } from "../http.js"
+import { aggregateMetrics, type RunMetricsInput } from "../metrics/aggregate.js"
+
+/**
+ * Cross-run loop health: `GET /api/metrics`.
+ *
+ * IO only — list the run logs, read each one's `.md` and `.metrics.json`, hand
+ * the parsed pair to the pure `aggregateMetrics`. The route takes no path
+ * parameter, so unlike `getRunDetail` it has no `isSafeId` surface; its only
+ * untrusted input is `?repo=`, which `main.ts`'s `pickRepo` resolves against the
+ * registry before a handler ever runs.
+ *
+ * Token numbers come from the sidecars directly rather than `resolveRunTokens`:
+ * see the rationale in `metrics/cache.ts` — the transcript fallback would make
+ * the cache ratio a quotient of two correlated estimates.
+ */
+
+const read = async (deps: HubDeps, rel: string): Promise<string | null> => {
+  const res = await deps.client.file.read({ query: { path: rel, directory: deps.directory } }).catch(() => null)
+  return res?.data?.content ?? null
+}
+
+export const getMetrics = async (deps: HubDeps): Promise<JsonResponse> => {
+  const listed = await deps.client.file
+    .list({ query: { path: `${deps.tasksDir}/runs`, directory: deps.directory } })
+    .catch(() => null)
+  const ids = (listed?.data ?? [])
+    .filter((n) => n.type === "file" && n.name.endsWith(".md"))
+    .map((n) => n.name.replace(/\.md$/, ""))
+
+  // Every run's two files fetched concurrently: this is the one route that
+  // touches the whole of runs/, so a serial loop would scale its latency with
+  // the backlog's whole history.
+  const reads = await Promise.all(
+    ids.map(async (id) => {
+      const [log, sidecar] = await Promise.all([
+        read(deps, `${deps.tasksDir}/runs/${id}.md`),
+        read(deps, `${deps.tasksDir}/runs/${id}.metrics.json`),
+      ])
+      return { id, log, sidecar }
+    }),
+  )
+
+  const inputs: RunMetricsInput[] = []
+  const skipped: string[] = []
+  for (const { id, log, sidecar } of reads) {
+    if (log === null) {
+      // Listed but unreadable. Reported rather than dropped, so a permission
+      // problem or a dangling link shows up instead of shrinking the denominator.
+      skipped.push(id)
+      continue
+    }
+    inputs.push({ id, log: parseRunLog(log), sidecar: sidecar === null ? null : parseRunMetrics(sidecar) })
+  }
+
+  return ok(aggregateMetrics(inputs, skipped))
+}

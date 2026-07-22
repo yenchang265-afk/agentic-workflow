@@ -490,6 +490,147 @@ export interface TokensSummaryResponse {
   readonly runs: readonly TokensSummaryEntry[]
 }
 
+// --- cross-run metrics -------------------------------------------------------
+
+/**
+ * Loop health rolled up across every run, so "is the loop converging or burning
+ * iterations?" is answerable without reading `runs/*.md` by hand.
+ *
+ * Two conventions run through every type below, because the failure mode worth
+ * designing against is a confident wrong number:
+ *
+ * 1. **The unit is the pass, not the file.** One `runs/<id>.md` holds several
+ *    terminal summaries (a plan pass, then a build pass) — independent runs with
+ *    their own cap and verdict stream. Averaging them together is meaningless,
+ *    so every rate names the population it measured.
+ * 2. **Missing data is never a zero.** Every rate is `number | null` and every
+ *    excluded population gets its own counter. An unmeasurable metric and a
+ *    genuine 0% must not render alike.
+ */
+
+/** One bucket of the iteration-burn histogram over `iterationsUsed / cap`. */
+export interface BurnBucket {
+  /** Inclusive lower bound of the ratio band. */
+  readonly from: number
+  /** Exclusive upper bound; the top bucket is closed at 1 (a capped pass). */
+  readonly to: number
+  readonly passes: number
+}
+
+export interface IterationBurn {
+  /** Passes whose footer carried `iterations used: N/M` — the only valid denominator. */
+  readonly passesMeasured: number
+  /** Passes with a summary but no footer (older logs). Excluded, never counted as ratio 0. */
+  readonly passesUnmeasured: number
+  /** Mean `iterationsUsed / cap` over `passesMeasured`; null when that is 0. */
+  readonly meanRatio: number | null
+  readonly medianRatio: number | null
+  /** Passes that ended at or above their cap. */
+  readonly cappedPasses: number
+  /** `cappedPasses / passesMeasured`; null when nothing was measurable. */
+  readonly capTripRate: number | null
+  readonly buckets: readonly BurnBucket[]
+}
+
+export interface FirstPassYield {
+  /** Passes carrying at least one verdict-bearing check row — the denominator. */
+  readonly passesMeasured: number
+  /** Passes whose summary recorded no check row at all (a plan pass). Excluded. */
+  readonly passesWithoutChecks: number
+  /** Passes where every check row sits on the first iteration and every verdict is PASS. */
+  readonly cleanPasses: number
+  /** `cleanPasses / passesMeasured`; null when `passesMeasured` is 0. */
+  readonly rate: number | null
+}
+
+/** Verdict tallies for one stage name, lens variants merged. */
+export interface StageVerdicts {
+  readonly stage: string
+  readonly pass: number
+  readonly fail: number
+  readonly error: number
+  /** Rows whose verdict cell read `none` — the check ran and declined to judge. */
+  readonly none: number
+}
+
+/** Verdict transitions on the same stage+lens within one pass — the thrash signal. */
+export interface VerdictFlips {
+  /** FAIL→PASS: the loop recovered. */
+  readonly failToPass: number
+  /** PASS→FAIL: a later iteration regressed a check that had passed. */
+  readonly passToFail: number
+  /** FAIL→FAIL: a re-build that did not move the check. */
+  readonly failToFail: number
+  /** Passes containing at least one transition of any kind. */
+  readonly passesWithFlips: number
+}
+
+/** Wall-clock roll-up for one stage, from the logs' parsed `wall-clock` cells. */
+export interface StageDuration {
+  readonly stage: string
+  /** Rows with a parseable duration; rows rendered `—`/empty are excluded, not zeroed. */
+  readonly rows: number
+  readonly meanSeconds: number
+  readonly medianSeconds: number
+  readonly maxSeconds: number
+}
+
+/** Cache-hit ratio for one stage: `cacheRead / (input + cacheRead)`. */
+export interface StageCache {
+  readonly stage: string
+  /** Sidecar samples for this stage that carried a `tokens` block. */
+  readonly samples: number
+  readonly input: number
+  readonly cacheRead: number
+  /** null when `input + cacheRead` is 0 — unmeasurable, not 0%. */
+  readonly ratio: number | null
+}
+
+export interface CacheHit {
+  /**
+   * Runs whose `.metrics.json` sidecar carried at least one token-bearing sample.
+   * Read against `runsTotal`: only the opencode driver observes tokens, so a low
+   * number means this ratio describes a slice of the fleet, not all of it.
+   */
+  readonly runsCovered: number
+  readonly samples: number
+  readonly input: number
+  readonly cacheRead: number
+  /** Overall `cacheRead / (input + cacheRead)`; null when the denominator is 0. */
+  readonly ratio: number | null
+  readonly stages: readonly StageCache[]
+}
+
+/**
+ * Cross-run loop health. Sourced entirely from `runs/<id>.md` plus the
+ * `runs/<id>.metrics.json` sidecars — no transcript joins, so every token number
+ * here is observed rather than estimated (see `cache.runsCovered`).
+ */
+export interface MetricsResponse {
+  /** Readable run-log files in `runs/` — the file-level denominator. Files listed but unreadable go to `skippedRuns` instead. */
+  readonly runsTotal: number
+  /** Files whose log parsed to at least one terminal summary. */
+  readonly runsWithSummary: number
+  /**
+   * Terminal summaries across all files — the unit every pass-scoped metric
+   * below counts. One file holds several, so this is >= `runsWithSummary` and is
+   * NOT interchangeable with `runsTotal`.
+   */
+  readonly passesTotal: number
+  /** Sidecars whose trailing entry is `open` — runs still accruing. */
+  readonly runsInProgress: number
+  /** Terminal outcome tallies, keyed by the log's own word (done/stopped/error, and anything newer). */
+  readonly outcomes: Readonly<Record<string, number>>
+  readonly burn: IterationBurn
+  readonly firstPass: FirstPassYield
+  readonly verdicts: readonly StageVerdicts[]
+  readonly flips: VerdictFlips
+  readonly durations: readonly StageDuration[]
+  readonly cache: CacheHit
+  /** Ids listed but unreadable — surfaced so a silent drop is visible in the UI. */
+  readonly skippedRuns: readonly string[]
+}
+
 /** One monitored repo (from `--dir` / user-scope `hub.repos` resolution). */
 export interface RepoInfo {
   readonly id: string
