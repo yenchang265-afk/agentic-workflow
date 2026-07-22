@@ -143,7 +143,11 @@ const routes: Route[] = [
     pattern: "/api/repos",
     handler: async () =>
       ok({
-        repos: registry.repos.map((r) => ({ id: r.id, directory: r.deps.directory })),
+        repos: registry.repos.map((r) => ({
+          id: r.id,
+          directory: r.deps.directory,
+          ...(r.deps.configError ? { configError: r.deps.configError } : {}),
+        })),
       } satisfies ReposResponse),
   },
   { method: "GET", pattern: "/api/monitor/kinds", handler: scoped(async (deps) => ok({ kinds: deps.boards })) },

@@ -84,6 +84,39 @@ test("reload of a schema-invalid config keeps the last good config", async () =>
   cleanup(dir)
 })
 
+test("initial build of a schema-invalid config serves a degraded board instead of crashing", async () => {
+  // codePlatform "ado" without an ado section trips the schema's cross-field
+  // refinement — the initial build must not throw (it would kill the hub before
+  // it binds a socket), it must fall back to defaults and mark the error.
+  const dir = makeFixture(JSON.stringify({ codePlatform: "ado" }))
+  const { log, seen } = warnings()
+
+  const repo = await makeRepo("r1", dir, log)
+
+  assert.ok(repo.deps.configError, "the degraded repo carries the config error")
+  assert.equal(repo.deps.config.maxIterations, 3, "falls back to the schema defaults")
+  assert.equal(repo.deps.tasksDir, "docs/tasks")
+  assert.equal(seen.length, 1)
+  assert.match(seen[0] ?? "", /serving a degraded board/)
+  cleanup(dir)
+})
+
+test("a degraded repo heals on reload once the config is fixed", async () => {
+  const dir = makeFixture(JSON.stringify({ codePlatform: "ado" }))
+  const repo = await makeRepo("r1", dir, silent)
+  assert.ok(repo.deps.configError)
+
+  fs.writeFileSync(
+    path.join(dir, ".agentic-workflow.json"),
+    JSON.stringify({ codePlatform: "ado", ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot@acme" } }),
+  )
+  assert.equal(await repo.reload(), true)
+
+  assert.equal(repo.deps.configError, undefined, "a healthy reload clears the degraded marker")
+  assert.equal(repo.deps.config.codePlatform, "ado")
+  cleanup(dir)
+})
+
 test("a reload that moves tasksDir signals the watcher, which is built from it", async () => {
   const dir = makeFixture(JSON.stringify({ tasksDir: "docs/tasks" }))
   const fired: string[] = []
