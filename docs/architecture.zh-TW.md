@@ -18,7 +18,7 @@ PR）、`dep-sitter`（有漏洞或已過期的相依套件），以及 `main-si
 ```mermaid
 flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
-        oc["OpenCode plugin (src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
+        oc["OpenCode plugin (plugins/opencode/src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
         cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
     end
 

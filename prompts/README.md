@@ -1,6 +1,6 @@
 # prompts/ — single-source agent prompts
 
-The 8 loop stage/authoring agents ship on **both** hosts (OpenCode and Claude
+The 17 workflow stage/authoring agents ship on **both** hosts (OpenCode and Claude
 Code), which used to mean two hand-maintained copies per agent that drifted.
 Each agent now has one source here:
 
