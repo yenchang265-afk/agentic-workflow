@@ -149,7 +149,7 @@ REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自
 
 - `README.md` + `.opencode/commands/agent-loop.md` —— `reviewLenses`
   設定項、成本備註；裁定工具更豐富的參數。
-- `skills/loop-orchestration/SKILL.md` —— 裁定契約章節（reason/criteria）、
+- `skills/workflow-orchestration/SKILL.md` —— 裁定契約章節（reason/criteria）、
   多視角審查說明。
 - `.opencode/agents/{verify,review}.md` —— 裁定契約更新（A）以及 lens
   聚焦行為（B）。

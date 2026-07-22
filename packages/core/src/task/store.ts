@@ -67,7 +67,7 @@ const lifecycleWindow = (body: string): string => {
 }
 
 /**
- * Eligible for `/agentic-loop:engineering watch` to claim: planned, with no
+ * Eligible for `/agentic-workflow:engineering watch` to claim: planned, with no
  * "> BUILD started" or CLAIMED note in the current lifecycle window — not just
  * "last pair unmatched" (that's `wasInterrupted`, below). A marker in the
  * window means another live LoopState is driving it right now, or it crashed
@@ -102,8 +102,8 @@ export const extractPlan = (task: Task): string | undefined => {
 
 /**
  * Planned and started at least once in the current lifecycle window — no longer
- * claimable by `/agentic-loop:engineering watch`, but a human can force-resume it
- * with `/agentic-loop:engineering recover <id>` once no live loop is driving it
+ * claimable by `/agentic-workflow:engineering watch`, but a human can force-resume it
+ * with `/agentic-workflow:engineering recover <id>` once no live loop is driving it
  * (crashed runs, restarted plugins). Pure.
  */
 export const isRecoverable = (task: Task): boolean => {
@@ -126,22 +126,22 @@ export const wasInterrupted = (task: Task): boolean => {
   return lastFinish < lastStart
 }
 
-/** A per-status roll-up of the backlog for `/agentic-loop:engineering status`. Pure. */
+/** A per-status roll-up of the backlog for `/agentic-workflow:engineering status`. Pure. */
 export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
-  /** draft tasks awaiting the human task gate (/agentic-loop:engineering approve) — tracking epics excluded, they are never approved. */
+  /** draft tasks awaiting the human task gate (/agentic-workflow:engineering approve) — tracking epics excluded, they are never approved. */
   readonly awaitingTask: readonly string[]
   /** queued tasks awaiting the loop's PLAN stage (a watcher will claim them once no build work remains). */
   readonly awaitingPlan: readonly string[]
-  /** plan-review tasks whose plan is parked for human review (/agentic-loop:engineering approve). */
+  /** plan-review tasks whose plan is parked for human review (/agentic-workflow:engineering approve). */
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
   /** in-progress tasks whose body is claimable but whose claim marker is currently held. */
   readonly claimHeld: readonly string[]
-  /** in-progress tasks whose last build looks interrupted (crashed — /agentic-loop:engineering recover). */
+  /** in-progress tasks whose last build looks interrupted (crashed — /agentic-workflow:engineering recover). */
   readonly interrupted: readonly string[]
-  /** in-review tasks awaiting a human diff review (/agentic-loop:engineering approve). */
+  /** in-review tasks awaiting a human diff review (/agentic-workflow:engineering approve). */
   readonly awaitingReview: readonly string[]
 }
 
@@ -228,7 +228,7 @@ export const listByStatus = async (
 export const listQueued = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "queued", log)
 
-/** List and parse every task in `in-progress/` — the pool `/agentic-loop:engineering watch` claims from. */
+/** List and parse every task in `in-progress/` — the pool `/agentic-workflow:engineering watch` claims from. */
 export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "in-progress", log)
 
@@ -697,8 +697,8 @@ export interface WriteLocation {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating a task today, use `/agentic-loop:engineering new <idea>` — the
- * `loop-plan-author` subagent, which runs inside OpenCode; see the
+ * command. For creating a task today, use `/agentic-workflow:engineering new <idea>` — the
+ * `workflow-plan-author` subagent, which runs inside OpenCode; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
  * writes it. Returns the new task's id and absolute path.

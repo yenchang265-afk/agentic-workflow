@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { parseManifest, type WorkSourceBinding } from "@agentic-loop/core/manifest/schema"
+import { parseManifest, type WorkSourceBinding } from "@agentic-workflow/core/manifest/schema"
 import { graphToManifest, manifestToGraph } from "./graphmodel.js"
 import { layoutGraph } from "./layout.js"
 import { stageChain, TEMPLATES } from "./templates.js"

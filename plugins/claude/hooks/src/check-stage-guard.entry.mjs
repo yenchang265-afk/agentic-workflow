@@ -2,7 +2,7 @@
 /**
  * SOURCE of the PreToolUse guard hook. `npm run build:hooks`
  * (scripts/build-hooks.mjs) esbuild-bundles this file — inlining the
- * @agentic-loop/core backlog-mutation guard — into the self-contained
+ * @agentic-workflow/core backlog-mutation guard — into the self-contained
  * ../check-stage-guard.mjs that hooks.json actually runs (hooks execute under
  * bare `node` from a possibly-copied plugin dir with no node_modules).
  * Never edit the bundled output by hand; edit this file and rebuild.
@@ -13,7 +13,7 @@
  *     Edit mutations of `<tasksDir>/` are blocked (the folder a task file
  *     lives in IS its state; only the MCP verbs may move it). Carve-outs:
  *     authoring drafts (`draft/*.md`) and the live PLAN stage writing its own
- *     `queued/` task. The classifier is @agentic-loop/core/task/guard —
+ *     `queued/` task. The classifier is @agentic-workflow/core/task/guard —
  *     the same code the OpenCode plugin enforces in `tool.execute.before`.
  *  1. Check-stage bash allowlist — while the loop is in VERIFY or REVIEW, Bash is
  *     restricted to a default-deny read/test allowlist (threat-model T2). The
@@ -26,7 +26,7 @@
  *     main tree), and (2b) Bash is pinned too: the agent session's real cwd
  *     is the MAIN tree, so a command without the `cd <wt> && ` prefix is
  *     blocked unless it is read-only or a `git -C <wt> …`
- *     (@agentic-loop/core/loop/worktree-guard).
+ *     (@agentic-workflow/core/workflow/worktree-guard).
  *  3. Azure DevOps write backstop — ALWAYS ON: a sitter kind reaches ADO over
  *     REST (curl + PAT, `ado.access: "rest"`) or the az CLI (`"az"`) and may only
  *     read, POST a thread-comment reply, or create a brand-new DRAFT pull request
@@ -43,8 +43,8 @@
  */
 import fs from "node:fs"
 import path from "node:path"
-import { classifyMutation } from "@agentic-loop/core/task/guard"
-import { pinBash, pinEditPath } from "@agentic-loop/core/loop/worktree-guard"
+import { classifyMutation } from "@agentic-workflow/core/task/guard"
+import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
 
 const read = () =>
@@ -87,10 +87,10 @@ const rewriteInput = (updatedInput) => {
 // third real one.
 const WRITE_TOOLS = ["Edit", "Write", "NotebookEdit"]
 
-// tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
+// tasksDir defaults to docs/tasks; honor .agentic-workflow.json if present.
 const readTasksDir = (cwd) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-loop.json"), "utf8"))
+    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"))
     if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir
   } catch {
     /* default */
@@ -125,7 +125,7 @@ const main = async () => {
   // T8/T12/T13).
   if (tool === "Bash" && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block(
-      `agentic-loop: the loop must never mutate an existing pull request — this Azure DevOps REST call is blocked. ` +
+      `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps REST call is blocked. ` +
         `Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR ` +
         `(POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and ` +
         `pipeline runs stay a human call.`,
@@ -137,7 +137,7 @@ const main = async () => {
   // `az pipelines`/`az devops invoke` commands (config `ado.access: "az"`).
   if (tool === "Bash" && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
     return block(
-      `agentic-loop: the loop must never mutate an existing pull request — this az CLI call is blocked. ` +
+      `agentic-workflow: the loop must never mutate an existing pull request — this az CLI call is blocked. ` +
         `Only reads, thread-comment replies (az devops invoke POST to a pullRequestThreads/pullRequestThreadComments ` +
         `resource), and creating a new DRAFT PR (az repos pr create --draft) are permitted; completing, abandoning, ` +
         `voting, reviewer changes, and pipeline runs stay a human call.`,
@@ -169,7 +169,7 @@ const main = async () => {
   // primary control. Creation tools pass — publish stages open draft PRs.
   if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpMutationTool(tool)) {
     return block(
-      `agentic-loop: the loop must never mutate an existing pull request — this Azure DevOps MCP tool looks ` +
+      `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps MCP tool looks ` +
         `state-mutating and is blocked. Only reads, thread-comment replies, and creating a new DRAFT PR are ` +
         `permitted; completing, abandoning, approving, voting, and reviewer changes stay a human call.`,
     )
@@ -183,7 +183,7 @@ const main = async () => {
   // marker so a human's manual `gh pr merge` outside a loop is untouched.
   if (tool === "Bash" && chainedGithubPrMutation(String(ti.command ?? ""))) {
     return block(
-      `agentic-loop: the loop must never mutate a pull request — this GitHub command is blocked. ` +
+      `agentic-workflow: the loop must never mutate a pull request — this GitHub command is blocked. ` +
         `Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) ` +
         `are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`,
     )
@@ -195,7 +195,7 @@ const main = async () => {
   // manual push outside a loop is untouched (gated on the marker, like 3b).
   if (tool === "Bash" && chainedGitPushViolation(String(ti.command ?? ""))) {
     return block(
-      `agentic-loop: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
+      `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
         `Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; ` +
         `the watched and default branches stay a human call.`,
     )
@@ -206,7 +206,7 @@ const main = async () => {
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
     if (tool === "Bash" || WRITE_TOOLS.includes(tool)) {
       return block(
-        `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
+        `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
           `stop working, summarize what you have, and return control so the loop can stop cleanly.`,
       )
     }
@@ -241,7 +241,7 @@ const main = async () => {
       // have mutated the main tree" — refuse it, matching the edit path below.
       if (!stageWorktree) {
         return block(
-          `agentic-loop: the ${String(marker.stage).toUpperCase()} stage does not build — "${rawCommand}" would mutate the main tree. ` +
+          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build — "${rawCommand}" would mutate the main tree. ` +
             `Only read-only commands are available here; code changes belong to the BUILD stage, inside ${loopWorktree}.`,
         )
       }
@@ -250,8 +250,8 @@ const main = async () => {
     }
   }
 
-  // (1) bash allowlist for check stages. The marker carries the loop kind's
-  // manifest allowlist (loops/<kind>/loop.json); the built-in engineering
+  // (1) bash allowlist for check stages. The marker carries the workflow kind's
+  // manifest allowlist (workflows/<kind>/workflow.json); the built-in engineering
   // lists remain as a fallback for markers written by older servers.
   const markerList =
     Array.isArray(marker.bashAllowlist) && marker.bashAllowlist.every((g) => typeof g === "string") && marker.bashAllowlist.length
@@ -261,7 +261,7 @@ const main = async () => {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW)
     if (!commandAllowed(effectiveCommand, list)) {
       return block(
-        `agentic-loop: the ${marker.stage.toUpperCase()} stage is read-only — the command "${rawCommand}" is not on its allowlist. ` +
+        `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only — the command "${rawCommand}" is not on its allowlist. ` +
           `Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`,
       )
     }
@@ -277,7 +277,7 @@ const main = async () => {
     const fp = ti.file_path ?? ti.path ?? ti.notebook_path
     if (typeof fp !== "string") {
       return block(
-        `agentic-loop: this loop is isolated to its worktree ${loopWorktree}, but ${tool}'s target path could not be determined — pass an absolute path under the worktree.`,
+        `agentic-workflow: this loop is isolated to its worktree ${loopWorktree}, but ${tool}'s target path could not be determined — pass an absolute path under the worktree.`,
       )
     }
     const verdict = pinEditPath(fp, loopWorktree, cwd, tasksDir)
@@ -288,7 +288,7 @@ const main = async () => {
       // build branch. (Its legitimate backlog write returns `allow` above.)
       if (!stageWorktree) {
         return block(
-          `agentic-loop: the ${String(marker.stage).toUpperCase()} stage does not build — it must not write ${fp}. ` +
+          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build — it must not write ${fp}. ` +
             `Code changes belong to the BUILD stage, inside the loop's worktree ${loopWorktree}.`,
         )
       }

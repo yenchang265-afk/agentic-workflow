@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
+import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
 import { projectSlug } from "./transcripts.js"
@@ -23,7 +23,7 @@ const depsFor = (directory: string, projectsDir: string): HubDeps => ({
   tasksDir: "docs/tasks",
   boards: [],
   config: DEFAULT_CONFIG,
-  loopsDir: "/loops-unused",
+  workflowsDir: "/workflows-unused",
   projectsDir,
   opencodeDbPath: "/nonexistent.db",
   client: fsClient,
@@ -174,7 +174,7 @@ test("resolveRunTokens returns null for an unknown run", async () => {
 
 test("projectSlug matches Claude Code's directory slugging", () => {
   assert.equal(
-    projectSlug("/mnt/c/Users/User/Desktop/Claude Code/agentic-loop"),
-    "-mnt-c-Users-User-Desktop-Claude-Code-agentic-loop",
+    projectSlug("/mnt/c/Users/User/Desktop/Claude Code/agentic-workflow"),
+    "-mnt-c-Users-User-Desktop-Claude-Code-agentic-workflow",
   )
 })

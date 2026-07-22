@@ -1,4 +1,4 @@
-import { defaultLoopsDir } from "../manifest/dir.js"
+import { defaultWorkflowsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
@@ -16,8 +16,8 @@ import type { AzExec } from "./ado-az.js"
  * ci-runs-shared.ts), and terminal writes.
  */
 
-const LOOPS_DIR = defaultLoopsDir()
-const sitter = loadManifest(LOOPS_DIR, "main-sitter")
+const WORKFLOWS_DIR = defaultWorkflowsDir()
+const sitter = loadManifest(WORKFLOWS_DIR, "main-sitter")
 const SHA = "abcdef1234567890abcdef1234567890abcdef12"
 const OLD = "0123456789abcdef0123456789abcdef01234567"
 

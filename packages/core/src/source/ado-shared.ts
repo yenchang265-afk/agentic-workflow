@@ -9,10 +9,10 @@ import { z } from "zod"
  */
 
 /** The env var holding a JSON object of extra headers to send on every ADO REST call. */
-export const ADO_HEADERS_ENV = "AGENTIC_LOOP_ADO_HEADERS"
+export const ADO_HEADERS_ENV = "AGENTIC_WORKFLOW_ADO_HEADERS"
 
 /**
- * Parse the `AGENTIC_LOOP_ADO_HEADERS` value: a JSON object of string→string
+ * Parse the `AGENTIC_WORKFLOW_ADO_HEADERS` value: a JSON object of string→string
  * header pairs. Anything malformed — not JSON, not an object, or a non-string
  * value — is ignored (→ `{}`) rather than thrown, so a bad env var degrades to
  * "no override" instead of crashing the driver. Empty-string keys are dropped.
@@ -36,7 +36,7 @@ export const parseAdoHeadersEnv = (raw: string | undefined): Record<string, stri
 
 /**
  * Resolve the effective custom headers with the same env-wins precedence as the
- * PAT: config `ado.customHeaders` is the base, and `AGENTIC_LOOP_ADO_HEADERS`
+ * PAT: config `ado.customHeaders` is the base, and `AGENTIC_WORKFLOW_ADO_HEADERS`
  * (parsed via {@link parseAdoHeadersEnv}) overrides it key by key. Pure over its
  * inputs — callers pass `process.env[ADO_HEADERS_ENV]`.
  */

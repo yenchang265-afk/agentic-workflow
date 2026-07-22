@@ -1,0 +1,3 @@
+name: workflow-dep-publish
+description: Publisher for the dep sitter's PUBLISH stage. Pushes the verified upgrade branch (feature/* only) and opens a draft PR naming the advisory, impact, and verification result. Never merges, never marks ready, never pushes the default branch; a PreToolUse allowlist constrains its bash surface.
+tools: Read, Grep, Glob, Bash

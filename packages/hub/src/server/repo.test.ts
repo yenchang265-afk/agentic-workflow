@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import type { Log } from "@agentic-loop/core/host"
+import type { Log } from "@agentic-workflow/core/host"
 import { makeRepo } from "./repo.js"
 
 /**
@@ -15,7 +15,7 @@ import { makeRepo } from "./repo.js"
 
 const makeFixture = (config?: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hub-repo-"))
-  if (config !== undefined) fs.writeFileSync(path.join(dir, ".agentic-loop.json"), config)
+  if (config !== undefined) fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), config)
   return dir
 }
 
@@ -43,7 +43,7 @@ test("reload picks up an edited config and swaps deps wholesale", async () => {
   const before = repo.deps
   assert.equal(repo.deps.config.maxIterations, 3)
 
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), JSON.stringify({ maxIterations: 9 }))
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), JSON.stringify({ maxIterations: 9 }))
   assert.equal(await repo.reload(), true)
 
   assert.equal(repo.deps.config.maxIterations, 9)
@@ -60,7 +60,7 @@ test("reload of malformed JSON keeps the last good config and warns", async () =
   const repo = await makeRepo("r1", dir, log)
   const good = repo.deps
 
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), "{ not json")
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), "{ not json")
   assert.equal(await repo.reload(), false)
 
   assert.equal(repo.deps, good, "a broken hand-edit must never blank the board")
@@ -77,7 +77,7 @@ test("reload of a schema-invalid config keeps the last good config", async () =>
 
   // codePlatform "ado" without an ado section trips the schema's cross-field
   // refinement — invalid, not merely unparseable.
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), JSON.stringify({ codePlatform: "ado" }))
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), JSON.stringify({ codePlatform: "ado" }))
   assert.equal(await repo.reload(), false)
 
   assert.equal(repo.deps, good)
@@ -89,7 +89,7 @@ test("a reload that moves tasksDir signals the watcher, which is built from it",
   const fired: string[] = []
   const repo = await makeRepo("r1", dir, silent, (r) => fired.push(r.deps.tasksDir))
 
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), JSON.stringify({ tasksDir: "work/items" }))
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), JSON.stringify({ tasksDir: "work/items" }))
   assert.equal(await repo.reload(), true)
 
   assert.deepEqual(fired, ["work/items"], "otherwise the watcher scans the old folder forever")
@@ -101,7 +101,7 @@ test("a reload that leaves the watch shape alone does not churn the watcher", as
   let fired = 0
   const repo = await makeRepo("r1", dir, silent, () => void fired++)
 
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), JSON.stringify({ tasksDir: "docs/tasks", maxIterations: 9 }))
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), JSON.stringify({ tasksDir: "docs/tasks", maxIterations: 9 }))
   assert.equal(await repo.reload(), true)
 
   assert.equal(repo.deps.config.maxIterations, 9)

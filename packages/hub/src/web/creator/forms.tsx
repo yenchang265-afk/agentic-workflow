@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { LoopManifest, StageDef } from "@agentic-loop/core/manifest/schema"
+import type { WorkflowManifest, StageDef } from "@agentic-workflow/core/manifest/schema"
 import type { AssetsResponse } from "../../shared/api.js"
 import { isUnknownAsset, knownNames } from "./assets.js"
 import { AgentScaffoldForm, CommandScaffoldForm } from "./assetforms.js"
@@ -40,7 +40,7 @@ export const StageForm = ({
   stage: StageDef
   prompt: string
   /** The live graph as a manifest, for the preview. Null while it doesn't validate. */
-  manifest: LoopManifest | null
+  manifest: WorkflowManifest | null
   prompts: Readonly<Record<string, string>>
   /** Repo asset inventory for the command/agent pickers. Null while loading. */
   assets: AssetsResponse | null
@@ -191,7 +191,7 @@ export const TerminalAddForm = ({
   onCancel,
 }: {
   outcome: "park" | "done"
-  workSource: LoopManifest["workSource"]
+  workSource: WorkflowManifest["workSource"]
   onAdd: (toStatus?: string) => void
   onCancel: () => void
 }) => {
@@ -296,7 +296,7 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
   const ws = meta.workSource
   return (
     <div className="panel-form">
-      <h3>Loop kind</h3>
+      <h3>Workflow kind</h3>
       <Field label="kind (folder + command name)">
         <input value={meta.kind} onChange={(e) => onChange({ ...meta, kind: e.target.value })} />
       </Field>

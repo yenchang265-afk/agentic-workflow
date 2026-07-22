@@ -83,7 +83,7 @@ test("diffSnapshots emits gate for arrivals in a custom (manifest-declared) gate
   assert.deepEqual(events, [{ type: "gate", taskId: "t", toStatus: "waiting-human" }, { type: "backlog" }])
 })
 
-test("diffSnapshots emits config when .agentic-loop.json changes", () => {
+test("diffSnapshots emits config when .agentic-workflow.json changes", () => {
   const prev = snap({ config: "100:1" })
   const next = snap({ config: "120:2" })
   assert.deepEqual(diffSnapshots(prev, next, GATES), [{ type: "config" }])
@@ -97,7 +97,7 @@ test("scanSnapshot picks up the config file, which lives outside tasksDir", () =
   fs.mkdirSync(path.join(dir, "docs", "tasks", "queued"), { recursive: true })
   assert.equal(scanSnapshot(dir, "docs/tasks", ["queued"]).config, null, "absent config reads as null")
 
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), JSON.stringify({ maxIterations: 3 }))
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), JSON.stringify({ maxIterations: 3 }))
   const withCfg = scanSnapshot(dir, "docs/tasks", ["queued"])
   assert.notEqual(withCfg.config, null, "the poll is what delivers this — fs.watch never sees it")
   fs.rmSync(dir, { recursive: true, force: true })

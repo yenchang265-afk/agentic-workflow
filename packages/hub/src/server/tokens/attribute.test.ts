@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { addTokens, attribute, windowsFromSamples, windowsFromSummary, ZERO_TOKENS, type UsageRecord } from "./attribute.js"
-import type { RunLogSummary } from "@agentic-loop/core/loop/runlog"
+import type { RunLogSummary } from "@agentic-workflow/core/workflow/runlog"
 
 const T0 = Date.parse("2026-07-06T10:00:00.000Z")
 

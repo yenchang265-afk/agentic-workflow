@@ -7,9 +7,9 @@ import {
   summarizeBacklog,
   STATUSES,
   type TaskStatus,
-} from "@agentic-loop/core/task/store"
-import { isPaired, shortIdOf, type Task } from "@agentic-loop/core/task/schema"
-import { auditBacklog, hasAnomalies } from "@agentic-loop/core/task/audit"
+} from "@agentic-workflow/core/task/store"
+import { isPaired, shortIdOf, type Task } from "@agentic-workflow/core/task/schema"
+import { auditBacklog, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import type { BacklogResponse, KindBoardInfo, TaskCard, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { badRequest, isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
@@ -40,7 +40,7 @@ const boardFor = (deps: HubDeps, kind: string): KindBoardInfo | undefined =>
 export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const kind = req.query.get("kind") ?? "engineering"
   const board = boardFor(deps, kind)
-  if (!board) return notFound(`no enabled loop kind "${kind}"`)
+  if (!board) return notFound(`no enabled workflow kind "${kind}"`)
   if (board.sourceType !== "backlog") return badRequest(`kind "${kind}" has no backlog board (${board.sourceType})`)
 
   const tasks: Record<string, readonly Task[]> = {}

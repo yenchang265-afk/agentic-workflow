@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * UserPromptSubmit hook for the agentic-loop plugin. Makes the gate verbs
- * `/agentic-loop:engineering approve|replan [id] [reason]` move the task file
+ * UserPromptSubmit hook for the agentic-workflow plugin. Makes the gate verbs
+ * `/agentic-workflow:engineering approve|replan [id] [reason]` move the task file
  * DETERMINISTICALLY — in the harness, before the model runs — so the move
  * happens even when a degraded model would not call the equivalent MCP tool.
  *
@@ -87,7 +87,7 @@ const main = async () => {
     ? spawnSync("node", [serverJs, ...args], {
         cwd,
         encoding: "utf8",
-        env: { ...process.env, AGENTIC_LOOP_DIR: process.env.AGENTIC_LOOP_DIR ?? cwd },
+        env: { ...process.env, AGENTIC_WORKFLOW_DIR: process.env.AGENTIC_WORKFLOW_DIR ?? cwd },
       })
     : {}
 

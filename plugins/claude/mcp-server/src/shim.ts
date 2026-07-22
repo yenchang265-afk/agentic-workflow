@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import type { Client, FileNode, Shell, ShellOutput } from "@agentic-loop/core/host"
+import type { Client, FileNode, Shell, ShellOutput } from "@agentic-workflow/core/host"
 
 /**
- * Runtime implementations of the `@agentic-loop/core` host interfaces
+ * Runtime implementations of the `@agentic-workflow/core` host interfaces
  * (`host.ts`): the shell `$` and the file/log `client`. Backed by node's
  * child_process + fs so the shared core modules run inside the MCP server —
  * the server is the substrate adapter, core is the behavior.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Clean agentic-loop local state for the project the loop drives.
+# Clean agentic-workflow local state for the project the loop drives.
 #
 # Tiers (least to most destructive):
 #   default     — ephemeral run state only: <tasksDir>/runs/ (snapshots,
@@ -11,11 +11,11 @@
 #                 (draft/ queued/ plan-review/ in-progress/ in-review/
 #                 completed/ abandoned/). The folders and their .gitkeep stay.
 #                 Destructive — this is your authored backlog. Confirm-gated.
-#   --config    — ALSO remove the project's .agentic-loop.json.
+#   --config    — ALSO remove the project's .agentic-workflow.json.
 #   --purge     — everything above (runs + backlog + config): a full reset.
 #
-# Target dir resolves like the plugin at runtime: $AGENTIC_LOOP_DIR, else $PWD.
-# tasksDir is read from that project's .agentic-loop.json (default docs/tasks).
+# Target dir resolves like the plugin at runtime: $AGENTIC_WORKFLOW_DIR, else $PWD.
+# tasksDir is read from that project's .agentic-workflow.json (default docs/tasks).
 #
 #   ./scripts/clean.sh [dir] [--backlog] [--config] [--purge] [--dry-run] [-y]
 
@@ -25,16 +25,16 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/clean.sh                 # remove <tasksDir>/runs/ ephemeral state only
-  ./scripts/clean.sh /path/to/repo   # target a specific project (default: $AGENTIC_LOOP_DIR or $PWD)
+  ./scripts/clean.sh /path/to/repo   # target a specific project (default: $AGENTIC_WORKFLOW_DIR or $PWD)
   ./scripts/clean.sh --backlog       # also delete task files in the status folders (destructive)
-  ./scripts/clean.sh --config        # also remove .agentic-loop.json
+  ./scripts/clean.sh --config        # also remove .agentic-workflow.json
   ./scripts/clean.sh --purge         # runs + backlog + config (full reset)
   ./scripts/clean.sh --dry-run       # list what would be removed, delete nothing
   ./scripts/clean.sh -y | --yes      # skip the confirmation prompt
 EOF
 }
 
-TARGET_DIR="${AGENTIC_LOOP_DIR:-$PWD}"
+TARGET_DIR="${AGENTIC_WORKFLOW_DIR:-$PWD}"
 DO_BACKLOG=0
 DO_CONFIG=0
 DRY_RUN=0
@@ -62,7 +62,7 @@ if [ ! -d "$TARGET_DIR" ]; then
   exit 1
 fi
 TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
-CONFIG_FILE="$TARGET_DIR/.agentic-loop.json"
+CONFIG_FILE="$TARGET_DIR/.agentic-workflow.json"
 
 # tasksDir: read it from the config (JSON) when node is available; else default.
 TASKS_DIR="docs/tasks"
@@ -141,7 +141,7 @@ fi
 if [ -d "$RUNS_PATH/.watch-lease" ]; then
   echo
   echo "note: a watch lease exists ($TASKS_DIR/runs/.watch-lease/) — stop any running"
-  echo "      watcher (/agentic-loop:<kind> stop or ESC) before cleaning."
+  echo "      watcher (/agentic-workflow:<kind> stop or ESC) before cleaning."
 fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -154,7 +154,7 @@ fi
 if [ "$ASSUME_YES" -ne 1 ]; then
   destructive=""
   [ "$DO_BACKLOG" -eq 1 ] && [ -n "$BACKLOG_FILES" ] && destructive="backlog task files"
-  [ "$DO_CONFIG" -eq 1 ] && [ -f "$CONFIG_FILE" ] && destructive="${destructive:+$destructive + }.agentic-loop.json"
+  [ "$DO_CONFIG" -eq 1 ] && [ -f "$CONFIG_FILE" ] && destructive="${destructive:+$destructive + }.agentic-workflow.json"
   echo
   if [ -n "$destructive" ]; then
     printf 'This DELETES %s and cannot be undone. Continue? [y/N]: ' "$destructive" >&2

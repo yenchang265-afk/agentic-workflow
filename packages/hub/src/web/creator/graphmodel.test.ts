@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
-import { loadManifest, listLoopKinds } from "@agentic-loop/core/manifest/load"
-import { parseManifest } from "@agentic-loop/core/manifest/schema"
+import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
+import { loadManifest, listWorkflowKinds } from "@agentic-workflow/core/manifest/load"
+import { parseManifest } from "@agentic-workflow/core/manifest/schema"
 import { graphToManifest, manifestToGraph, sameTerminalSpec, terminalId, terminalStatusOptions } from "./graphmodel.js"
 import { layoutGraph } from "./layout.js"
 
 test("graph round-trips every shipped manifest exactly", () => {
-  for (const kind of listLoopKinds(defaultLoopsDir())) {
-    const { manifest } = loadManifest(defaultLoopsDir(), kind)
+  for (const kind of listWorkflowKinds(defaultWorkflowsDir())) {
+    const { manifest } = loadManifest(defaultWorkflowsDir(), kind)
     const roundTripped = graphToManifest(manifestToGraph(manifest))
     assert.deepEqual(roundTripped, manifest, `round-trip diverged for kind "${kind}"`)
     // and the round-tripped manifest still validates
@@ -17,7 +17,7 @@ test("graph round-trips every shipped manifest exactly", () => {
 })
 
 test("a stage's optional model survives the graph round-trip", () => {
-  const { manifest } = loadManifest(defaultLoopsDir(), "engineering")
+  const { manifest } = loadManifest(defaultWorkflowsDir(), "engineering")
   const withModel = parseManifest({
     ...manifest,
     stages: manifest.stages.map((s, i) => (i === 0 ? { ...s, model: "anthropic/claude-sonnet-4-5" } : s)),
@@ -28,7 +28,7 @@ test("a stage's optional model survives the graph round-trip", () => {
 })
 
 test("terminals dedupe by outcome+status while messages stay on edges", () => {
-  const { manifest } = loadManifest(defaultLoopsDir(), "engineering")
+  const { manifest } = loadManifest(defaultWorkflowsDir(), "engineering")
   const graph = manifestToGraph(manifest)
   const terminals = graph.nodes.filter((n) => n.type === "terminal")
   const ids = terminals.map((t) => t.id)
@@ -71,16 +71,16 @@ test("terminalStatusOptions exposes backlog statuses and nothing for other sourc
     terminalStatusOptions({ type: "backlog", statuses: ["queued", "in-progress", "completed"], humanGates: [], pools: [] }),
     ["queued", "in-progress", "completed"],
   )
-  const { manifest } = loadManifest(defaultLoopsDir(), "pr-sitter")
+  const { manifest } = loadManifest(defaultWorkflowsDir(), "pr-sitter")
   assert.deepEqual(terminalStatusOptions(manifest.workSource), [])
-  const dep = loadManifest(defaultLoopsDir(), "dep-sitter").manifest
+  const dep = loadManifest(defaultWorkflowsDir(), "dep-sitter").manifest
   assert.deepEqual(terminalStatusOptions(dep.workSource), [])
-  const ci = loadManifest(defaultLoopsDir(), "main-sitter").manifest
+  const ci = loadManifest(defaultWorkflowsDir(), "main-sitter").manifest
   assert.deepEqual(terminalStatusOptions(ci.workSource), [])
 })
 
 test("stage order is preserved through the round-trip", () => {
-  const { manifest } = loadManifest(defaultLoopsDir(), "pr-sitter")
+  const { manifest } = loadManifest(defaultWorkflowsDir(), "pr-sitter")
   const names = graphToManifest(manifestToGraph(manifest)).stages.map((s) => s.name)
   assert.deepEqual(
     names,
@@ -89,7 +89,7 @@ test("stage order is preserved through the round-trip", () => {
 })
 
 test("layoutGraph ranks fire-chains left to right and gives every node a position", () => {
-  const { manifest } = loadManifest(defaultLoopsDir(), "engineering")
+  const { manifest } = loadManifest(defaultWorkflowsDir(), "engineering")
   const graph = manifestToGraph(manifest)
   const pos = layoutGraph(graph)
   for (const node of graph.nodes) assert.ok(pos[node.id], `no position for ${node.id}`)

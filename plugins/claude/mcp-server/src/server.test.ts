@@ -9,7 +9,7 @@ const pkgDir = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 
 // Every fire payload has always carried the configured stage model, but the
 // notes that tell the orchestrator what to spawn once named only `agent` — so
-// loops.<kind>.stageModels was dropped at each hop and every stage ran the
+// workflows.<kind>.stageModels was dropped at each hop and every stage ran the
 // host default. Source-level because the notes are inline literals in a module
 // that only boots as an MCP transport: assert no spawn instruction can lose
 // the model again.
@@ -49,6 +49,6 @@ test("server boots, announces readiness on stderr, and exits on stdin EOF", asyn
   clearTimeout(timeout)
 
   assert.notEqual(code, null, `server was killed after 30s without exiting; stderr:\n${stderr}`)
-  assert.match(stderr, /agentic-loop MCP server ready/)
+  assert.match(stderr, /agentic-workflow MCP server ready/)
   assert.equal(stdout, "", "stdout must stay clean for the MCP protocol")
 })

@@ -1,3 +1,0 @@
-name: loop-pr-triage
-description: Triage for the PR sitter's TRIAGE stage. Read-only inspection of a pull request — unanswered review comments, failing checks (with real errors from logs), conflict state — emitted as a structured findings list, plus a verdict via the loop_verdict MCP tool. Never edits, never pushes.
-tools: Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict, mcp__plugin_agentic-loop_agentic-loop__loop_verdict

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mergeConfigLayers } from "@agentic-loop/core/config"
+import { mergeConfigLayers } from "@agentic-workflow/core/config"
 import { deleteAt, leafPaths, provenanceOf, setAt, valueAt } from "./configlayers.js"
 
 /**
@@ -37,9 +37,9 @@ const LAYER_PAIRS: readonly { name: string; user: unknown; repo: unknown }[] = [
     repo: { worktreeSetup: null },
   },
   {
-    name: "loops sections merge per kind",
-    user: { loops: { engineering: { enabled: true }, "pr-sitter": { enabled: true } } },
-    repo: { loops: { "pr-sitter": { enabled: false, query: "is:open" } } },
+    name: "workflows sections merge per kind",
+    user: { workflows: { engineering: { enabled: true }, "pr-sitter": { enabled: true } } },
+    repo: { workflows: { "pr-sitter": { enabled: false, query: "is:open" } } },
   },
   {
     name: "keys core does not know ride along",

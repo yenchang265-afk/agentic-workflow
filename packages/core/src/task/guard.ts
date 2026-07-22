@@ -35,8 +35,8 @@ const block = (reason: string): GuardVerdict => ({ allow: false, reason })
 const HOW_TO_MUTATE =
   "the folder a backlog file lives in IS its state — mutate it only through the loop tools " +
   "(loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) " +
-  "or the /agentic-loop:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file " +
-  "(or run /agentic-loop:engineering new) — the status folders are created for you."
+  "or the /agentic-workflow:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file " +
+  "(or run /agentic-workflow:engineering new) — the status folders are created for you."
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
@@ -50,7 +50,7 @@ export const backlogRelPath = (filePath: string, tasksDir: string): string | nul
 /**
  * Edit-shaped tools (Write / Edit / MultiEdit / NotebookEdit) targeting a
  * single file path. Allowed inside the backlog: authoring drafts
- * (`draft/*.md` — the `loop-plan-author` inbox) and a live PLAN stage writing
+ * (`draft/*.md` — the `workflow-plan-author` inbox) and a live PLAN stage writing
  * the plan onto its own task in `queued/`. Everything else — status folders,
  * `runs/`, unknown dirs — is blocked.
  */
@@ -64,7 +64,7 @@ export const classifyEdit = (filePath: string, ctx: GuardContext): GuardVerdict 
     return ALLOW
   }
   return block(
-    `agentic-loop: direct edits under ${ctx.tasksDir}/ are limited to draft/*.md ` +
+    `agentic-workflow: direct edits under ${ctx.tasksDir}/ are limited to draft/*.md ` +
       `(and the live PLAN stage's own queued/ task) — ${HOW_TO_MUTATE}`,
   )
 }
@@ -155,10 +155,10 @@ const isCanonicalMkdir = (segment: string, tasksDir: string): boolean => {
 export const classifyBash = (command: string, ctx: GuardContext): GuardVerdict => {
   if (!referencesBacklog(command, ctx.tasksDir)) return ALLOW
   if (/>/.test(command)) {
-    return block(`agentic-loop: redirecting output while referencing ${ctx.tasksDir}/ is blocked — ${HOW_TO_MUTATE}`)
+    return block(`agentic-workflow: redirecting output while referencing ${ctx.tasksDir}/ is blocked — ${HOW_TO_MUTATE}`)
   }
   if (MUTATING_TOKENS.some((t) => command.includes(t))) {
-    return block(`agentic-loop: this command can mutate ${ctx.tasksDir}/ — ${HOW_TO_MUTATE}`)
+    return block(`agentic-workflow: this command can mutate ${ctx.tasksDir}/ — ${HOW_TO_MUTATE}`)
   }
   // Command substitution runs a second command the read-only globs never see:
   // `^cat .*$` matches the whole of `cat docs/tasks/queued/a.md $(rm -rf …)`.
@@ -166,7 +166,7 @@ export const classifyBash = (command: string, ctx: GuardContext): GuardVerdict =
   // term) stays allowed, and so `"…$( )…"` — which bash DOES expand — does not.
   if (splitSegments(command).some(hasShellExpansion)) {
     return block(
-      `agentic-loop: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked — ${HOW_TO_MUTATE}`,
+      `agentic-workflow: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked — ${HOW_TO_MUTATE}`,
     )
   }
   // Split on every shell chaining operator INCLUDING a lone `&` and newlines: a
@@ -183,7 +183,7 @@ export const classifyBash = (command: string, ctx: GuardContext): GuardVerdict =
   const segments = splitSegments(command)
   if (segments.every((s) => matchesAny(s, READ_ONLY) || isCanonicalMkdir(s, ctx.tasksDir))) return ALLOW
   return block(
-    `agentic-loop: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) ` +
+    `agentic-workflow: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) ` +
       `and canonical-status mkdir may reference ${ctx.tasksDir}/ — ${HOW_TO_MUTATE}`,
   )
 }

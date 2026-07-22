@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Manual, on-demand e2e smoke test: drives the REAL agentic-loop task
+// Manual, on-demand e2e smoke test: drives the REAL agentic-workflow task
 // lifecycle (draft -> queued -> plan-review -> in-progress -> in-review ->
 // completed) against a real headless opencode process building one small
 // app picked from a fixed idea pool, in a throwaway scratch git repo and a
@@ -118,10 +118,10 @@ const pickIdea = () => {
 // --- setup ---
 
 const setupScratchRepo = () => {
-  const dir = mkdtempSync(path.join(tmpdir(), "agentic-loop-e2e-repo-"))
+  const dir = mkdtempSync(path.join(tmpdir(), "agentic-workflow-e2e-repo-"))
   execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" })
-  execFileSync("git", ["config", "user.name", "agentic-loop-e2e"], { cwd: dir, stdio: "ignore" })
-  execFileSync("git", ["config", "user.email", "agentic-loop-e2e@example.invalid"], { cwd: dir, stdio: "ignore" })
+  execFileSync("git", ["config", "user.name", "agentic-workflow-e2e"], { cwd: dir, stdio: "ignore" })
+  execFileSync("git", ["config", "user.email", "agentic-workflow-e2e@example.invalid"], { cwd: dir, stdio: "ignore" })
   writeFileSync(path.join(dir, "README.md"), "# scratch e2e repo\n")
   execFileSync("git", ["add", "-A"], { cwd: dir, stdio: "ignore" })
   execFileSync("git", ["commit", "-m", "initial commit"], { cwd: dir, stdio: "ignore" })
@@ -138,12 +138,12 @@ const ensureBuilt = () => {
 
 const setupScratchConfig = () => {
   ensureBuilt()
-  const dir = mkdtempSync(path.join(tmpdir(), "agentic-loop-e2e-config-"))
+  const dir = mkdtempSync(path.join(tmpdir(), "agentic-workflow-e2e-config-"))
   sh("./install.sh", ["opencode", "--no-config", dir], { stdio: "inherit" })
   // A scratch config dir has no model preference, so opencode falls back to
   // its weakest free-tier default — too weak to drive the authoring/stage
-  // protocol. Pin one via AGENTIC_LOOP_E2E_MODEL (provider/model form).
-  const model = process.env.AGENTIC_LOOP_E2E_MODEL
+  // protocol. Pin one via AGENTIC_WORKFLOW_E2E_MODEL (provider/model form).
+  const model = process.env.AGENTIC_WORKFLOW_E2E_MODEL
   if (model) {
     writeFileSync(path.join(dir, "opencode.json"), JSON.stringify({ model }, null, 2) + "\n")
     log(`scratch config model pinned: ${model}`)
@@ -153,7 +153,7 @@ const setupScratchConfig = () => {
 
 // --- driving ---
 
-const REQUIRED_AGENTS = ["loop-plan-author", "loop-build", "loop-verify", "loop-review"]
+const REQUIRED_AGENTS = ["workflow-plan-author", "workflow-build", "workflow-verify", "workflow-review"]
 
 const assertPluginLoaded = async (client) => {
   const { data, error } = await client.app.agents()
@@ -162,7 +162,7 @@ const assertPluginLoaded = async (client) => {
   const missing = REQUIRED_AGENTS.filter((n) => !names.has(n))
   if (missing.length) {
     throw new Error(
-      `agentic-loop plugin did not load from the scratch config — missing agents: ${missing.join(", ")}. ` +
+      `agentic-workflow plugin did not load from the scratch config — missing agents: ${missing.join(", ")}. ` +
         `Check npm install / ./install.sh ran cleanly.`,
     )
   }
@@ -170,11 +170,11 @@ const assertPluginLoaded = async (client) => {
   // (a literal colon can't live in an NTFS filename) — verify the running
   // opencode honors it BEFORE the expensive LLM steps. If this throws, the
   // installed opencode ignores frontmatter names: fall back to the subdir
-  // layout (commands/agentic-loop/engineering.md → /agentic-loop/engineering).
+  // layout (commands/agentic-workflow/engineering.md → /agentic-workflow/engineering).
   const cmds = await client.command.list()
   if (cmds.error) throw new Error(`command.list() failed: ${JSON.stringify(cmds.error)}`)
   const cmdNames = new Set((cmds.data ?? []).map((c) => c.name))
-  for (const required of ["agentic-loop:engineering", "agentic-loop:pr-sitter"]) {
+  for (const required of ["agentic-workflow:engineering", "agentic-workflow:pr-sitter"]) {
     if (!cmdNames.has(required)) {
       throw new Error(
         `command "${required}" is not registered — the installed opencode ignored the frontmatter name override. ` +
@@ -266,12 +266,12 @@ const main = async () => {
     if (sessionErr) throw new Error(`session.create failed: ${JSON.stringify(sessionErr)}`)
     log(`session created: ${session.id}`)
 
-    // Step 1: new — real LLM turn (interview-me + loop-plan-author). The
+    // Step 1: new — real LLM turn (interview-me + workflow-plan-author). The
     // interview always ends the first turn on a restate-and-confirm question,
     // so a headless run must answer it: nudge with a confirmation prompt
     // whenever the draft hasn't appeared yet.
-    log("step 1/6: agentic-loop:engineering new ...")
-    await runCommand(client, session.id, scratchRepo, "agentic-loop:engineering", `new ${idea.newPromptSpec}`)
+    log("step 1/6: agentic-workflow:engineering new ...")
+    await runCommand(client, session.id, scratchRepo, "agentic-workflow:engineering", `new ${idea.newPromptSpec}`)
     for (let nudge = 0; nudge < 3 && !findSoleDraftId(scratchRepo); nudge++) {
       try {
         await pollUntil("step 1 (interview turn)", () => (findSoleDraftId(scratchRepo) ? "pass" : "pending"), {
@@ -302,15 +302,15 @@ const main = async () => {
     log(`task id: ${id}`)
 
     // Step 2: approve — deterministic.
-    log("step 2/6: agentic-loop:engineering approve")
-    await runCommand(client, session.id, scratchRepo, "agentic-loop:engineering", `approve ${id}`)
+    log("step 2/6: agentic-workflow:engineering approve")
+    await runCommand(client, session.id, scratchRepo, "agentic-workflow:engineering", `approve ${id}`)
     await pollUntil("step 2 (approve)", () => (existsSync(taskPath(scratchRepo, "queued", id)) ? "pass" : "pending"), {
       timeoutMs: 30_000,
     })
 
     // Step 3: task <id> — async PLAN stage.
-    log("step 3/6: agentic-loop:engineering plan (PLAN)")
-    await runCommand(client, session.id, scratchRepo, "agentic-loop:engineering", `plan ${id}`)
+    log("step 3/6: agentic-workflow:engineering plan (PLAN)")
+    await runCommand(client, session.id, scratchRepo, "agentic-workflow:engineering", `plan ${id}`)
     await pollUntil(
       "step 3 (PLAN)",
       () => {
@@ -325,8 +325,8 @@ const main = async () => {
     log("PLAN parked in plan-review/")
 
     // Step 4: approve (plan gate) — deterministic.
-    log("step 4/6: agentic-loop:engineering approve (plan gate)")
-    await runCommand(client, session.id, scratchRepo, "agentic-loop:engineering", `approve ${id}`)
+    log("step 4/6: agentic-workflow:engineering approve (plan gate)")
+    await runCommand(client, session.id, scratchRepo, "agentic-workflow:engineering", `approve ${id}`)
     await pollUntil(
       "step 4 (plan gate)",
       () => (existsSync(taskPath(scratchRepo, "in-progress", id)) ? "pass" : "pending"),
@@ -335,8 +335,8 @@ const main = async () => {
 
     // Step 5: claim — async BUILD -> VERIFY -> REVIEW chain (building is
     // claim/watch's job; `plan <id>` only runs the PLAN stage).
-    log("step 5/6: agentic-loop:engineering claim (BUILD -> VERIFY -> REVIEW)")
-    await runCommand(client, session.id, scratchRepo, "agentic-loop:engineering", `claim`)
+    log("step 5/6: agentic-workflow:engineering claim (BUILD -> VERIFY -> REVIEW)")
+    await runCommand(client, session.id, scratchRepo, "agentic-workflow:engineering", `claim`)
     await pollUntil(
       "step 5 (BUILD chain)",
       () => {
@@ -351,8 +351,8 @@ const main = async () => {
     log("BUILD chain parked in in-review/")
 
     // Step 6: approve (ship gate) — deterministic.
-    log("step 6/6: agentic-loop:engineering approve (ship)")
-    await runCommand(client, session.id, scratchRepo, "agentic-loop:engineering", `approve ${id}`)
+    log("step 6/6: agentic-workflow:engineering approve (ship)")
+    await runCommand(client, session.id, scratchRepo, "agentic-workflow:engineering", `approve ${id}`)
     await pollUntil("step 6 (ship)", () => (existsSync(taskPath(scratchRepo, "completed", id)) ? "pass" : "pending"), {
       timeoutMs: 30_000,
     })

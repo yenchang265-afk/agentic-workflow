@@ -2,6 +2,30 @@
 
 # 跨版面遷移
 
+## 遷移到 `workflows` ——內部由 `loop` 改名為 `workflow`
+
+- **設定鍵現在是 `workflows`，不再是 `loops`。** 把你的
+  `.agentic-workflow.json` 頂層 `"loops": { ... }` 區塊改名為
+  `"workflows": { ... }`(每種類型的結構不變：`enabled`、
+  `codePlatform`、`trigger`、`stageModels`)。**這是無聲的中斷，不是
+  會報錯的中斷**：這個結構描述欄位是選填的，預設為 `{}`，所以還沒改名
+  的檔案仍帶著 `loops` 鍵也能成功解析——卻會被讀成「沒有設定任何
+  類型」，你以為已經啟用的每個 sitter 都會悄悄停止認領工作。沒有
+  相容層；升級前請先改名這個鍵。
+- **清單與文件路徑也跟著搬動**：`packages/core/loops/<kind>/loop.json`
+  現在是 `packages/core/workflows/<kind>/workflow.json`，
+  `docs/loops/<kind>.md` 現在是 `docs/workflows/<kind>.md`。只有在你
+  自行編寫過自訂類型、或直接連結到這些路徑時才需要留意。
+- **內部 agent 識別字也變了**(`loop-build` → `workflow-build`、
+  `loop-verify` → `workflow-verify` 等,涵蓋全部 17 個階段 agent),
+  `loop-orchestration` skill 現在是 `workflow-orchestration`。一般
+  使用不受影響;只有在你自行編寫過引用舊名稱的自訂階段或 skill 時
+  才需要留意。
+- worktree 隔離的預設目錄從 `.loop-worktrees` 改為
+  `.workflow-worktrees`(`worktreesDir` 設定預設值)。如果你已經明確
+  設定過 `worktreesDir`,不需要變更;如果你依賴預設值且用該名稱
+  `.gitignore` 過它,請更新被忽略的路徑。
+
 ## 遷移到 Azure DevOps 的 az CLI 預設值（`ado.access`）
 
 - **既有 ADO 設定的行為變更**：階段代理人的 ADO 存取方式現在由
@@ -21,28 +45,28 @@
 ## 遷移到分層設定（使用者層級 + 儲存庫層級）
 
 - 設定現在從**兩個層**解析而來：一個可選的使用者層級
-  `~/.agentic-loop.json`（適用所有儲存庫），疊放在儲存庫的
-  `.agentic-loop.json` 之下，儲存庫層級逐欄位優先——見
+  `~/.agentic-workflow.json`（適用所有儲存庫），疊放在儲存庫的
+  `.agentic-workflow.json` 之下，儲存庫層級逐欄位優先——見
   [configuration.md](configuration.md#layers--precedence)。不需要
   遷移任何東西：一個只有儲存庫層級的設定行為和之前完全一樣。
 - **注意**：一份因為先前實驗而遺留下來的雜散
-  `~/.agentic-loop.json` 現在會被讀取並疊加進來。刪除它，或者設定
-  `AGENTIC_LOOP_USER_CONFIG=""` 來停用這一層。
+  `~/.agentic-workflow.json` 現在會被讀取並疊加進來。刪除它，或者設定
+  `AGENTIC_WORKFLOW_USER_CONFIG=""` 來停用這一層。
 - 給多儲存庫 ADO 使用者的建議分工：把 `ado.organization`、
   `ado.selfLogin` 和 `ado.pat` 移到使用者層級檔案；把
-  `codePlatform`、`ado.project`/`repository` 和 `loops` 留在各個
+  `codePlatform`、`ado.project`/`repository` 和 `workflows` 留在各個
   儲存庫裡。
 
-## 遷移到各類型專屬指令（`/agentic-loop:engineering`、`/agentic-loop:pr-sitter`）
+## 遷移到各類型專屬指令（`/agentic-workflow:engineering`、`/agentic-workflow:pr-sitter`）
 
-- **總管式的 `/agent-loop` 指令已經消失**——每一種迴圈類型現在都有
+- **總管式的 `/agent-loop` 指令已經消失**——每一種工作流程類型現在都有
   自己、以外掛命名空間區隔的指令。Engineering：
-  `/agentic-loop:engineering`（`new <idea>` · `retask <id> [note]` ·
+  `/agentic-workflow:engineering`（`new <idea>` · `retask <id> [note]` ·
   `approve [id]`——統一的、以資料夾驅動的把關點，行為不變 ·
   `replan [id] [reason]`——唯一的拒絕動詞，先前叫 `reject` ·
   `plan <id>` · `claim` · `watch [interval]` / `unwatch`
   （OpenCode）· `recover <id>` · `kinds` · `doctor [fix]` · `stop` ·
-  `status`）。PR sitter：`/agentic-loop:pr-sitter`（`claim` ·
+  `status`）。PR sitter：`/agentic-workflow:pr-sitter`（`claim` ·
   `watch [interval]` / `unwatch`（OpenCode）· `stop` · `status`）。
 - **隨總管指令一起消失的**：`ok`/`go` 這兩個 approve 別名；
   `reject` 和它的 `redo` 別名（改用 `replan`）；明確的
@@ -52,8 +76,8 @@
   `approve <id>` 會從 `in-review/` 發布）。
 - **範圍限定**：`claim [kind]` / `watch [interval] [kind]` 不再
   接受類型過濾器——指令本身就是過濾器。把舊的 `/agent-loop watch`
-  session 重新啟動為 `/agentic-loop:engineering watch`（如果啟用了
-  sitter，再加上 `/agentic-loop:pr-sitter watch`）。
+  session 重新啟動為 `/agentic-workflow:engineering watch`（如果啟用了
+  sitter，再加上 `/agentic-workflow:pr-sitter watch`）。
 - 更新之後重新執行 `./install.sh`；先前安裝的
   `commands/agent-loop.md` 符號連結現在會是懸空的——如果它還留著就
   刪掉它。

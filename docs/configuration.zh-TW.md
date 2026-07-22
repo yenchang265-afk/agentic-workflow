@@ -1,29 +1,29 @@
 [English](configuration.md) | 繁體中文
 
-# 設定（`.agentic-loop.json`）
+# 設定（`.agentic-workflow.json`）
 
 儲存庫根目錄下的一份可選 JSON 檔案。每個欄位都有合理的預設值；一份
 設定錯誤的檔案會快速失敗並附上清楚的訊息，而不是悄悄回退。
 
 ## 快速上手範本
 
-把符合你平台的區塊複製進 `.agentic-loop.json`，替換掉裡面的預留位置，
+把符合你平台的區塊複製進 `.agentic-workflow.json`，替換掉裡面的預留位置，
 就完成了——其餘一切都維持預設值。本頁其餘部分是逐欄位參考；第一次
 設定通常用不到。
 
-**GitHub**（預設平台——這份檔案等同於完全沒有 `.agentic-loop.json`，
+**GitHub**（預設平台——這份檔案等同於完全沒有 `.agentic-workflow.json`，
 外加開啟 `pr-sitter`）：
 
 ```json
 {
-  "loops": {
+  "workflows": {
     "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```
 
 把 `query` 換成你想讓 sitter 監看的 PR 搜尋條件，或者如果你只想要
-engineering 迴圈（它的預設值），就整段刪掉 `loops` 區塊。
+engineering 迴圈（它的預設值），就整段刪掉 `workflows` 區塊。
 
 **Azure DevOps：**
 
@@ -35,7 +35,7 @@ engineering 迴圈（它的預設值），就整段刪掉 `loops` 區塊。
     "project": "<your-project>",
     "selfLogin": "<your-login-or-service-account-email>"
   },
-  "loops": {
+  "workflows": {
     "pr-sitter": { "enabled": true }
   }
 }
@@ -53,14 +53,14 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
 
 設定從兩個可選的層解析而來：
 
-1. **使用者層級**——`~/.agentic-loop.json`，套用到你執行迴圈的每一個
-   儲存庫。用 `AGENTIC_LOOP_USER_CONFIG` 覆寫路徑；設成 `""` 可完全
+1. **使用者層級**——`~/.agentic-workflow.json`，套用到你執行迴圈的每一個
+   儲存庫。用 `AGENTIC_WORKFLOW_USER_CONFIG` 覆寫路徑；設成 `""` 可完全
    停用這一層（例如在 CI 中）。
-2. **儲存庫層級**——儲存庫根目錄的 `.agentic-loop.json`，會**逐欄位
+2. **儲存庫層級**——儲存庫根目錄的 `.agentic-workflow.json`，會**逐欄位
    覆寫使用者層級**。
 
-合併方式是欄位層級的深度合併：巢狀物件（`ado`、`loops`、每個
-`loops.<kind>` 區段）會逐鍵遞迴合併；陣列（`reviewLenses`）和純量則
+合併方式是欄位層級的深度合併：巢狀物件（`ado`、`workflows`、每個
+`workflows.<kind>` 區段）會逐鍵遞迴合併；陣列（`reviewLenses`）和純量則
 整個取代。分層合併發生在驗證**之前**，因此預設值永遠不會蓋掉任一份
 檔案中的明確值，跨欄位的必要條件（例如 `codePlatform: "ado"` 需要
 `ado.selfLogin`）是針對合併後的視圖去檢查的——依此設計，理想的
@@ -70,26 +70,26 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
   `ado.selfLogin`、`ado.pat`——加上個人化的預設值，例如
   `maxIterations`。
 - **儲存庫層級**：一切與專案綁定的東西——`codePlatform`、
-  `ado.project`、`ado.repository`、`tasksDir`、`loops`、worktree
+  `ado.project`、`ado.repository`、`tasksDir`、`workflows`、worktree
   設定。
 
-依慣例把 `codePlatform` 和 `loops` 留在儲存庫檔案裡：使用者層級的值
+依慣例把 `codePlatform` 和 `workflows` 留在儲存庫檔案裡：使用者層級的值
 會悄悄套用到*每一個*儲存庫。如果使用者檔案裡放了 PAT，請保護它
-（`chmod 600 ~/.agentic-loop.json`）；`AZURE_DEVOPS_EXT_PAT` 環境
+（`chmod 600 ~/.agentic-workflow.json`）；`AZURE_DEVOPS_EXT_PAT` 環境
 變數仍然會贏過這兩層。在混合 Windows/WSL 的環境中，注意這兩個世界
 有不同的家目錄——在 WSL 內執行的 host 會解析 WSL 的家目錄；如果你
-橫跨兩者，就把 `AGENTIC_LOOP_USER_CONFIG` 指向同一份檔案。
+橫跨兩者，就把 `AGENTIC_WORKFLOW_USER_CONFIG` 指向同一份檔案。
 
 `./install.sh` 會為你產生這份檔案：在互動式終端機上，它會執行一個
 簡短的精靈（程式碼平台、sitter、worktree，外加一個進階關卡處理
-tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-loop.json`。
+tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-workflow.json`。
 它的第一個問題是**範圍**——寫到哪裡：
 
-- **儲存庫層級**（預設）——`<project>/.agentic-loop.json`，位於外掛
-  在執行期讀取設定的那個目錄（`$AGENTIC_LOOP_DIR`，否則就是目前
+- **儲存庫層級**（預設）——`<project>/.agentic-workflow.json`，位於外掛
+  在執行期讀取設定的那個目錄（`$AGENTIC_WORKFLOW_DIR`，否則就是目前
   目錄），它會詢問你這個路徑。專案專屬的設定放這裡。
-- **使用者層級**——共用的使用者層級檔案（`$AGENTIC_LOOP_USER_CONFIG`，
-  否則就是 `~/.agentic-loop.json`），你驅動的每一個儲存庫都會讀取
+- **使用者層級**——共用的使用者層級檔案（`$AGENTIC_WORKFLOW_USER_CONFIG`，
+  否則就是 `~/.agentic-workflow.json`），你驅動的每一個儲存庫都會讀取
   它。跨儲存庫共用的設定（`ado` 區塊、審查視角）屬於這裡；儲存庫
   檔案會逐欄位覆寫它（見上方[分層與優先順序](#layers--precedence)）。
 
@@ -101,15 +101,15 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
 
 | 欄位 | 預設值 | 作用 |
 |-------|---------|--------------|
-| `maxIterations` | `3` | 在因為重複的 check 階段失敗而停止之前，迴圈可執行的最大疊代次數（engineering：VERIFY/REVIEW；某個清單可能會依類型覆寫此值）。當 engineering 的上限被觸發時，代表計畫本身可疑——用 `/agentic-loop:engineering replan <id>` 把它送回去。 |
+| `maxIterations` | `3` | 在因為重複的 check 階段失敗而停止之前，迴圈可執行的最大疊代次數（engineering：VERIFY/REVIEW；某個清單可能會依類型覆寫此值）。當 engineering 的上限被觸發時，代表計畫本身可疑——用 `/agentic-workflow:engineering replan <id>` 把它送回去。 |
 | `tasksDir` | `"docs/tasks"` | 任務待辦的儲存庫相對根目錄；它的子資料夾就是各個任務狀態。也承載暫存的 `runs/` 機器狀態（快照、指標、階段標記、PR-sitter 帳本）。 |
 | `stageTimeoutMinutes` | `60` | 單一階段的牆鐘時間上限；超過此時限的階段會讓迴圈失敗，而不是卡住不動。 |
-| `watchIntervalMinutes` | `5` | `/agentic-loop:engineering watch` 的預設輪詢週期；可透過 `/agentic-loop:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
-| `loops` | `{}` | 各迴圈類型的區段——見下方。 |
-| `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——依 `ado.access` 透過 az CLI、原生 REST 或 MCP 伺服器）。可用 `loops.<kind>.codePlatform` 依類型覆寫。見下方。 |
+| `watchIntervalMinutes` | `5` | `/agentic-workflow:engineering watch` 的預設輪詢週期；可透過 `/agentic-workflow:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
+| `workflows` | `{}` | 各工作流程類型的區段——見下方。 |
+| `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——依 `ado.access` 透過 az CLI、原生 REST 或 MCP 伺服器）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
 | `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `access`、`repository`、`selfLogin`、`customHeaders`、`insecureSkipTlsVerify`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。`access` 決定階段代理人如何觸達 ADO：`"az"`（預設）、`"rest"` 或 `"mcp"`。 |
-| `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-loop:engineering status` 中的配對視圖。見下方。 |
-| `worktreesDir` | `".loop-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
+| `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
+| `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。 |
 | `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 
@@ -118,17 +118,17 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
 欄位去擴充它（目前：OpenCode 的 `watchIntervalMinutes`——見
 [`plugins/claude/README.md`](../plugins/claude/README.md)）。
 
-## 迴圈類型（`loops`）
+## 工作流程類型（`workflows`）
 
-`loops` 底下的每一個鍵會啟用並設定一種迴圈類型（一份
-`packages/core/loops/<kind>/` 清單）。**`engineering` 除非被明確
+`workflows` 底下的每一個鍵會啟用並設定一種工作流程類型（一份
+`packages/core/workflows/<kind>/` 清單）。**`engineering` 除非被明確
 停用，否則都會執行**；其他每一種類型都是可選啟用的，需要
 `"enabled": true`。已啟用的類型依認領優先順序輪詢：engineering
 優先，接著是設定中依序排列的已啟用類型。
 
-類型專屬的旋鈕就放在同一個區段裡。**它們不會被驗證**：`loops` 依
+類型專屬的旋鈕就放在同一個區段裡。**它們不會被驗證**：`workflows` 依
 設計是一個鬆散的記錄（各類型可由使用者自行編寫——見
-[`packages/core/loops/README.md`](../packages/core/loops/README.md)），
+[`packages/core/workflows/README.md`](../packages/core/workflows/README.md)），
 迴圈會依名稱位置性地讀取每一個旋鈕，並做一次簡單的型別檢查。因此
 一個拼錯或型別錯誤的旋鈕會被**悄悄忽略**——迴圈會照預設值執行，
 且不會發出任何訊息：
@@ -155,7 +155,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
 
 ```json
 {
-  "loops": {
+  "workflows": {
     "engineering": { "enabled": true },
     "pr-sitter": {
       "enabled": true,
@@ -168,24 +168,24 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
 }
 ```
 
-- **`loops.engineering.enabled`**——預設 `true`；設成 `false` 可以
+- **`workflows.engineering.enabled`**——預設 `true`；設成 `false` 可以
   只執行其他類型（例如一個專用的 PR-sitter watcher）。
-- **`loops.pr-sitter`**、**`loops.review-sitter`**、
-  **`loops.dep-sitter`**、**`loops.main-sitter`**——每一個預設都是
+- **`workflows.pr-sitter`**、**`workflows.review-sitter`**、
+  **`workflows.dep-sitter`**、**`workflows.main-sitter`**——每一個預設都是
   `enabled: false`。每個 sitter 做什麼、它的階段流水線，以及它完整
   的類型專屬鍵集合（`query`、`ecosystem`、`severityFloor`、
   `includeOutdated`、`branch`……）都只在一個地方權威記載，就是
   **[`docs/sitters.md`](sitters.md)**——不要在這裡重複那些內容。
-- **`loops.<kind>.codePlatform`**——依類型覆寫全域的
+- **`workflows.<kind>.codePlatform`**——依類型覆寫全域的
   `codePlatform`（例如讓某個 sitter 對接 ADO，同時其他一切都預設
   使用 GitHub）。
-- **`loops.<kind>.trigger`**——一個正在 watch 的 host 如何為這個
+- **`workflows.<kind>.trigger`**——一個正在 watch 的 host 如何為這個
   類型排程認領（僅限 OpenCode 的 `watch` 模式；純拉取式的 Claude
   host 會忽略它）：
 
   ```json
   {
-    "loops": {
+    "workflows": {
       "engineering": { "trigger": { "type": "idle" } },
       "pr-sitter": {
         "enabled": true,
@@ -206,15 +206,15 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
     一進入 idle，新的迴圈就立刻開始，把各迴圈前後串連起來
     （「webhook 式」的即時性——但不涉及任何 HTTP 端點）。
 
-  設定值是**預設值**；帶引數的 `/agentic-loop:<kind> watch` 會為
+  設定值是**預設值**；帶引數的 `/agentic-workflow:<kind> watch` 會為
   該 session 覆寫它：`watch poll [interval]`（或一個裸的間隔值）、
   `watch cron "<schedule>"`，或 `watch idle`。
 
 ## 管理面板（`hub`——僅限使用者層級）
 
 管理面板只從**使用者層級**設定的 `hub` 區段讀取它的設定
-（`~/.agentic-loop.json` / `AGENTIC_LOOP_USER_CONFIG`）。管理面板
-會同時監看多個儲存庫，所以某個儲存庫 `.agentic-loop.json` 中的
+（`~/.agentic-workflow.json` / `AGENTIC_WORKFLOW_USER_CONFIG`）。管理面板
+會同時監看多個儲存庫，所以某個儲存庫 `.agentic-workflow.json` 中的
 `hub` 鍵會被忽略而不是合併：
 
 ```json
@@ -236,7 +236,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-lo
 
 ### 從管理面板編輯這份檔案
 
-管理面板的**設定分頁**會讀寫 `.agentic-loop.json`。有四個行為值得
+管理面板的**設定分頁**會讀寫 `.agentic-workflow.json`。有四個行為值得
 了解，因為每一個都是為了防止某種特定的資料遺失方式而存在的：
 
 - **它一次只編輯一層，並且會說明是哪一層。** 你可以選擇「這個
@@ -295,8 +295,7 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
 界線落在 `az repos pr`/`az pipelines`/`az devops invoke` 指令上
 （`create` 只允許帶 `--draft`，`invoke` 的 POST 只允許打到討論串
 /PR 集合資源）。任何對*既有* PR 的變更——完成、放棄、投票、加入
-審查者，或任何 PATCH/PUT/DELETE——都會被直接擋下，不論是哪種迴圈
-類型或哪個階段；看起來會變更狀態的 ADO MCP 工具名稱也會被盡力
+審查者，或任何 PATCH/PUT/DELETE——都會被直接擋下，不論是哪種工作流程類型或哪個階段；看起來會變更狀態的 ADO MCP 工具名稱也會被盡力
 （best-effort）擋下。
 
 ```json
@@ -308,7 +307,7 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
     "repository": "widgets-api",
     "selfLogin": "sitter@acme.com"
   },
-  "loops": { "pr-sitter": { "enabled": true } }
+  "workflows": { "pr-sitter": { "enabled": true } }
 }
 ```
 
@@ -352,8 +351,8 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
 - **`ado.pat`**——選填；明碼存放的 PAT，作為 `AZURE_DEVOPS_EXT_PAT`
   環境變數未設定時的備援。兩者都設定時**環境變數優先**。優先使用
   環境變數；如果你要用 `ado.pat`，使用者層級的
-  `~/.agentic-loop.json` 是自然的歸屬（從不提交、跨儲存庫共用）——
-  在儲存庫檔案中，保持 `.agentic-loop.json` 加入 gitignore（預設
+  `~/.agentic-workflow.json` 是自然的歸屬（從不提交、跨儲存庫共用）——
+  在儲存庫檔案中，保持 `.agentic-workflow.json` 加入 gitignore（預設
   就是如此），這樣密鑰就永遠不會被提交。它會傳達到每一個消費者：
   工作來源直接讀取它，而 triage/publish 階段 agent（透過
   `$AZURE_DEVOPS_EXT_PAT` 驗證）也會拿到它——在 OpenCode 上是在
@@ -367,13 +366,13 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
   標頭。它是一個純粹的 string→string 物件；鍵和值都必須非空。這些
   標頭會被合併到內建的 `Authorization`/`Accept`/`Content-Type`
   **之上**，因此這裡的一個鍵可以覆寫其中之一（很少會需要，但由你
-  決定）。`AGENTIC_LOOP_ADO_HEADERS` 環境變數——一個同樣形狀的 JSON
+  決定）。`AGENTIC_WORKFLOW_ADO_HEADERS` 環境變數——一個同樣形狀的 JSON
   物件——會**逐鍵覆寫 `customHeaders`**（環境變數優先，和
   `AZURE_DEVOPS_EXT_PAT` 覆寫 `ado.pat` 的方式相同），因此一個攜帶
   密鑰的代理 token 可以來自你的密鑰管理系統，而非密鑰的路由標頭則
   留在設定裡。一個格式錯誤的環境變數值會被忽略（→ 不覆寫），而
   不是造成致命錯誤。和 `ado.pat` 一樣，攜帶密鑰的標頭該放在使用者
-  層級的 `~/.agentic-loop.json`（或環境變數）裡，而不是一份會被
+  層級的 `~/.agentic-workflow.json`（或環境變數）裡，而不是一份會被
   提交的儲存庫檔案裡。注意這只會傳達到驅動程式自己的 `fetch`
   呼叫；階段 agent 自己的原始 `curl`（透過 `$AZURE_DEVOPS_EXT_PAT`
   驗證）不會繼承它——如果它們也需要，就用代理伺服器自己的環境變數
@@ -393,7 +392,7 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
 
   ```bash
   # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
-  export AGENTIC_LOOP_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
+  export AGENTIC_WORKFLOW_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
   ```
 - **`ado.insecureSkipTlsVerify`**——選填，預設 `false`；跳過驅動
   程式發出的每一次 ADO REST 呼叫上的 TLS 憑證驗證（PR/CI-runs 工作
@@ -432,9 +431,9 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
   `platformAllowlist.github` / `.ado` 萬用字元模式，會被合併進該
   階段解析後平台所對應的 `bashAllowlist`。OpenCode 的 agent
   frontmatter（靜態 YAML）同時攜帶兩個平台的 CLI 白名單，這是一個
-  刻意的廣度取捨——loop.json/階段標記路徑則維持窄平台。
+  刻意的廣度取捨——workflow.json/階段標記路徑則維持窄平台。
 
-新類型的編寫方式見 [`loops/README.md`](../packages/core/loops/README.md)，
+新類型的編寫方式見 [`workflows/README.md`](../packages/core/workflows/README.md)，
 啟用 PR sitter 前的安全態勢見
 [`docs/design/threat-model.md`](design/threat-model.md)。
 
@@ -459,7 +458,7 @@ issue 的 key/id 複製進任務裡。
 ```
 
 - **`system`**（必填）——`"jira"` 或 `"azure-devops"`。成為透過
-  `/agentic-loop:engineering new` 撰寫的任務上所蓋的預設
+  `/agentic-workflow:engineering new` 撰寫的任務上所蓋的預設
   `tracker.system`。
 - **`baseUrl`**——選填的 URL 前綴，會被附加到任務的 `tracker.key`
   上，以建構一個深層連結（Jira：`…/browse/`；ADO：
@@ -472,10 +471,10 @@ issue 的 key/id 複製進任務裡。
 
 對指令的影響：
 
-- **`/agentic-loop:engineering new`** 會預先填入 `tracker.system`
+- **`/agentic-workflow:engineering new`** 會預先填入 `tracker.system`
   （以及來自 `defaultType` 的 `type`），讓草擬出來的任務已經準備好
   可以配對——你只需要填入 `tracker.key`。
-- **`/agentic-loop:engineering status`** 會加上一個 `pairing`
+- **`/agentic-workflow:engineering status`** 會加上一個 `pairing`
   彙總：tracker 系統、有多少個活躍任務已配對，以及還未配對的任務
   id。
 
@@ -483,8 +482,8 @@ issue 的 key/id 複製進任務裡。
 
 - **`worktreesDir`**——讓每個迴圈都在自己的 `git worktree` 中執行，
   而不是在共用的檢出（checkout）裡切換分支。人類的工作樹永遠不會
-  被碰到，多個 `/agentic-loop:engineering watch` session 可以在
-  同一個實例中並行建置。**預設開啟**（`.loop-worktrees`）——設成
+  被碰到，多個 `/agentic-workflow:engineering watch` session 可以在
+  同一個實例中並行建置。**預設開啟**（`.workflow-worktrees`）——設成
   `worktreesDir: false` 可以退回共用工作樹的分支切換方式。一個
   全新的 worktree**沒有安裝任何相依套件**：搭配 `worktreeSetup`
   使用（例如 `"npm ci"`），否則 VERIFY 會在一個空的檢出上失敗。
@@ -507,24 +506,24 @@ issue 的 key/id 複製進任務裡。
 
 有一個變數適用於**每一個 host**：
 
-- **`AGENTIC_LOOP_USER_CONFIG`**——使用者層級設定檔的路徑（預設
-  `~/.agentic-loop.json`）；設成 `""` 可停用這一層。見
+- **`AGENTIC_WORKFLOW_USER_CONFIG`**——使用者層級設定檔的路徑（預設
+  `~/.agentic-workflow.json`）；設成 `""` 可停用這一層。見
   [分層與優先順序](#layers--precedence)。
 
 Claude Code MCP 伺服器額外會讀取兩個目錄指標。這兩者都不適用於
 OpenCode host，它會從你開啟的專案取得目錄。
 
-- **`AGENTIC_LOOP_DIR`**——伺服器運作所在的權威儲存庫根目錄：任務
+- **`AGENTIC_WORKFLOW_DIR`**——伺服器運作所在的權威儲存庫根目錄：任務
   待辦所在之處、`worktreesDir` 下每個任務的 worktree 建立之處，以及
   執行紀錄寫入之處。預設為伺服器啟動時的工作目錄。當 Claude Code
   把伺服器的根目錄設在你想要的儲存庫以外的地方時，就設定這個變數。
-- **`AGENTIC_LOOP_BASE_DIR`**——新的 `feature/<id>` worktree 的
-  **基底分支**要從哪裡讀取。Claude Code 會把 `AGENTIC_LOOP_DIR`
+- **`AGENTIC_WORKFLOW_BASE_DIR`**——新的 `feature/<id>` worktree 的
+  **基底分支**要從哪裡讀取。Claude Code 會把 `AGENTIC_WORKFLOW_DIR`
   凍結在主要檢出（通常是預設分支）上，所以沒有這個變數的話，每個
   迴圈都會從那個分支切出。把它指向你實際工作的那棵樹，基底就會在
   **每次認領時即時**（`git rev-parse --abbrev-ref HEAD`）從那裡
   讀取，因此 `feature/<id>` 分支會從你目前所在的分支切出。未設定
-  ⇒ 基底會回退到 `AGENTIC_LOOP_DIR` 目前檢出的任何分支（先前的
+  ⇒ 基底會回退到 `AGENTIC_WORKFLOW_DIR` 目前檢出的任何分支（先前的
   行為）。一個處於 detached 狀態的基底目錄會被忽略（同樣回退）。
 
 安全態勢見 `design/threat-model.md`，這些功能背後的設計紀錄見

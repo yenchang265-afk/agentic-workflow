@@ -33,7 +33,7 @@ import {
 /**
  * store.ts shells out via Bun's `$` for moveTask (mkdir/mv), which the
  * node+tsx test runner can't execute. Mirrors the fake shell in
- * `../loop/git.test.ts`.
+ * `../workflow/git.test.ts`.
  */
 type FakeResult = { exitCode?: number; stdout?: string; stderr?: string }
 
@@ -270,7 +270,7 @@ test("audit-suffixed build markers still satisfy the claim/interrupt greps", () 
   assert.equal(wasInterrupted(task("a", 0, body)), true)
 })
 
-// --- summarizeBacklog (the /agentic-loop:engineering status roll-up) ---
+// --- summarizeBacklog (the /agentic-workflow:engineering status roll-up) ---
 
 const empty = () =>
   Object.fromEntries(STATUSES.map((s) => [s, []])) as unknown as Record<TaskStatus, ReturnType<typeof task>[]>

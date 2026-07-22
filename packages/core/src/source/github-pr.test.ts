@@ -1,4 +1,4 @@
-import { defaultLoopsDir } from "../manifest/dir.js"
+import { defaultWorkflowsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
@@ -13,8 +13,8 @@ import { makeGithubPrSource } from "./github-pr.js"
  * own comments), claim/fetch mechanics, and terminal ledger writes.
  */
 
-const LOOPS_DIR = defaultLoopsDir()
-const sitter = loadManifest(LOOPS_DIR, "pr-sitter")
+const WORKFLOWS_DIR = defaultWorkflowsDir()
+const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
 
@@ -220,7 +220,7 @@ test("onTerminal(stop) records a failed attempt pinned to the claimed head", asy
 
 // --- the review-sitter kind over the same source: reviewer role, review-requested trigger ---
 
-const reviewer = loadManifest(LOOPS_DIR, "review-sitter")
+const reviewer = loadManifest(WORKFLOWS_DIR, "review-sitter")
 
 const reviewerSource = (prs: unknown[], opts: { ledgers?: Record<string, string>; script?: Cmd[]; log?: string[] } = {}) =>
   makeGithubPrSource({

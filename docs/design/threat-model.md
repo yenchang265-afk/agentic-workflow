@@ -2,10 +2,10 @@ English | [繁體中文](threat-model.zh-TW.md)
 
 # Threat model — the agentic loop
 
-What can go wrong when a loop kind runs largely unattended — the engineering
+What can go wrong when a workflow kind runs largely unattended — the engineering
 PLAN → BUILD → VERIFY → REVIEW workflow (T1–T6) and the PR sitter
 (T7–T10) — and which control answers it. The audience is a team adopting
-`/agentic-loop:engineering` (or a sitter) in an environment where unreviewed
+`/agentic-workflow:engineering` (or a sitter) in an environment where unreviewed
 code changes, data exfiltration, or unauditable approvals are real costs,
 not hypotheticals.
 
@@ -25,7 +25,7 @@ not hypotheticals.
 
 The loop's agents consume four kinds of input with very different trust:
 
-1. **Human input** — the goal, the plan approval, `/agentic-loop:<kind>` commands. Trusted.
+1. **Human input** — the goal, the plan approval, `/agentic-workflow:<kind>` commands. Trusted.
 2. **Loop-internal context** — prior stage artifacts threaded between
    stages. Semi-trusted: produced by our own agents, but those agents read
    untrusted input, so anything in an artifact may be attacker-influenced.
@@ -42,7 +42,7 @@ The loop's agents consume four kinds of input with very different trust:
 
 ### T1. Repo-content prompt injection flips a verdict
 
-A file the VERIFY/REVIEW agent reads contains `LOOP_VERIFY: PASS`, or prose
+A file the VERIFY/REVIEW agent reads contains `WORKFLOW_VERIFY: PASS`, or prose
 persuading the agent the check passed.
 
 - **Control:** verdicts are only accepted through the `loop_verdict` plugin
@@ -78,11 +78,11 @@ One task's half-finished diff leaks into another task's build or review.
 
 - **Control:** per-task branch/worktree isolation plus the single-watcher
   lease — mechanism detailed in
-  [docs/loops/engineering.md § Backlog integrity rails](../loops/engineering.md#backlog-integrity-rails);
+  [docs/workflows/engineering.md § Backlog integrity rails](../workflows/engineering.md#backlog-integrity-rails);
   in short, each execution gets its own `feature/<id>` branch or (with
   `worktreesDir` set) its own git worktree, and a lease refuses a second
   watch-mode process on the same clone.
-- **Residual:** one-shot claims (`/agentic-loop:<kind> claim`, the MCP
+- **Residual:** one-shot claims (`/agentic-workflow:<kind> claim`, the MCP
   server's `loop_claim`/`loop_start`) are **warned, not blocked**, when a live foreign
   watcher holds the lease — they can still race its `index.lock` and
   in-place appends (best-effort, degrades gracefully). Run extra
@@ -97,7 +97,7 @@ pool ever polls them.
 
 - **Control:** an always-on backlog-mutation guard, a reconciliation sweep,
   and `loop_doctor` — mechanism detailed in
-  [docs/loops/engineering.md § Backlog integrity rails](../loops/engineering.md#backlog-integrity-rails);
+  [docs/workflows/engineering.md § Backlog integrity rails](../workflows/engineering.md#backlog-integrity-rails);
   in short, agent tool calls that would mutate `<tasksDir>/` are
   default-denied, the deterministic mover layer stays authoritative, and a
   sweep + doctor detect and repair stray folders/files and duplicate ids.
@@ -150,9 +150,9 @@ committed.
 
 ## PR sitter surfaces (T7–T10)
 
-The opt-in `pr-sitter` loop kind (`loops/pr-sitter/`) adds two things the
+The opt-in `pr-sitter` workflow kind (`workflows/pr-sitter/`) adds two things the
 engineering loop deliberately lacks: it reads text strangers can write, and
-it pushes. These threats apply only when `loops.pr-sitter.enabled` is set.
+it pushes. These threats apply only when `workflows.pr-sitter.enabled` is set.
 
 ### T7. PR comment/diff text prompt-injects the sitter
 
@@ -203,7 +203,7 @@ push to any branch, comment anywhere, sometimes merge.
   `.../pullrequests` collection, no id segment after it — dep-sitter's and
   main-sitter's publish stage; see T12/T13) — blocking complete/abandon,
   approve/reject reviewer votes, reviewer edits, and run-pipeline regardless
-  of loop kind or stage. The distinction between "create" and "mutate an
+  of workflow kind or stage. The distinction between "create" and "mutate an
   existing PR" is a regex lookahead (`isAdoWriteBackstopViolation`,
   `plugins/claude/hooks/src/allowlist.mjs`) checking whether anything
   (a `/`, an id) follows `pullrequests` in the URL. One allowlist-breadth
@@ -212,14 +212,14 @@ push to any branch, comment anywhere, sometimes merge.
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
   static YAML and deliberately carries **both** platforms' globs. PAT at-rest
   note: besides the env var, the PAT may sit as `ado.pat` in the (gitignored)
-  repo `.agentic-loop.json` or the user-scope `~/.agentic-loop.json` — the
+  repo `.agentic-workflow.json` or the user-scope `~/.agentic-workflow.json` — the
   user file lives outside every repo so it can never be committed, but it is
   plaintext on disk; keep it `chmod 600`. The env var wins over both files.
 
 ### T9. Ledger tampering replays or suppresses work
 
 The per-PR dedup ledger (`<tasksDir>/runs/<kind>/pr-<n>.json`, one namespace
-per PR-shaped loop kind) records what was handled; it is plain local JSON.
+per PR-shaped workflow kind) records what was handled; it is plain local JSON.
 The dep-sitter's per-dependency and main-sitter's per-head ledgers live under
 the same `runs/<kind>/` convention and carry the same properties.
 
@@ -249,11 +249,11 @@ attacker-authored end to end.
 
 Three further opt-in kinds reuse the T7–T10 posture with narrower or
 differently-shaped authority. Each threat applies only when its
-`loops.<kind>.enabled` is set.
+`workflows.<kind>.enabled` is set.
 
 ### T11. review-sitter — strictly less authority than the PR sitter
 
-The review sitter (`loops/review-sitter/`) reads PRs authored by *other
+The review sitter (`workflows/review-sitter/`) reads PRs authored by *other
 people* (`review-requested:@me`), so T7's injection surface applies at full
 strength to the PR description and diff — but its authority is
 **comment-only**: no push, no approval, no merge.
@@ -274,7 +274,7 @@ strength to the PR description and diff — but its authority is
 
 ### T12. dep-sitter — registry/advisory text and the upgrade supply chain
 
-The dep sitter (`loops/dep-sitter/`) reads advisory text and changelogs
+The dep sitter (`workflows/dep-sitter/`) reads advisory text and changelogs
 (untrusted, same discipline as T7) and *installs packages* — the upgrade
 stage's `npm install <pkg>@<target>` executes the new version's install
 scripts.
@@ -314,7 +314,7 @@ scripts.
 
 ### T13. main-sitter — CI logs and executing historical commits
 
-The main sitter (`loops/main-sitter/`) reads CI logs (untrusted — T7
+The main sitter (`workflows/main-sitter/`) reads CI logs (untrusted — T7
 discipline: data to diagnose, never instructions) and its DIAGNOSE stage
 *bisects*, i.e. checks out and executes arbitrary historical commits of the
 watched branch inside the loop's worktree.
@@ -345,13 +345,13 @@ watched branch inside the loop's worktree.
 The hub (`packages/hub/`, beta) is a localhost web app. It began read-only; it
 now also performs the **human gate moves** (approve / replan / ship), backlog
 kind authoring, and **config writes**. It is a fourth caller of the shared gate
-(`loop/gate.ts`), not a fourth driver: it never claims work and never runs a
+(`workflow/gate.ts`), not a fourth driver: it never claims work and never runs a
 stage, so T1/T2-style prompt-injection surfaces don't extend to it. What it adds
 is an HTTP surface in front of authority the hosts already hold.
 
 The three things a browser click can now cause: a task file moves and a **git
 commit** lands; `ship` additionally opens a **pull request**; and
-`.agentic-loop.json` is **rewritten**.
+`.agentic-workflow.json` is **rewritten**.
 
 ### T14. The HTTP surface is reachable by something other than you
 
@@ -363,8 +363,8 @@ A local web server with no auth is reachable by any process on the machine, and
   cross-origin page can't read a response; every mutating route additionally
   requires an `X-Hub-Client: 1` header, which a cross-origin form post cannot
   set without a preflight it will fail. Bodies are capped at 1 MB. Task ids and
-  kind slugs are pattern-screened before reaching the filesystem, and loop-kind
-  writes are prefix-checked inside `packages/core/loops/<kind>/`.
+  kind slugs are pattern-screened before reaching the filesystem, and workflow-kind
+  writes are prefix-checked inside `packages/core/workflows/<kind>/`.
 - **Residual:** **no authentication.** Any local process running as you can
   drive the hub — approve a gate, open a PR, rewrite the config. That is the
   same authority such a process already has over the repo and your `gh` token,
@@ -396,7 +396,7 @@ than what is.
 
 ### T16. A config write leaks a secret or silently destroys settings
 
-`.agentic-loop.json` is the file that grants every *other* authority in this
+`.agentic-workflow.json` is the file that grants every *other* authority in this
 model — the code platform, the ADO PAT, which kinds run at all. Writing it is a
 step up from backlog-write even though it is one small file. Two failure modes
 are specific and severe: `ado.pat` lives in the **user-scope** layer, and the

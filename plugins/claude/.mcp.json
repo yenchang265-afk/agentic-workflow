@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "agentic-loop": {
+    "agentic-workflow": {
       "command": "node",
       "args": ["${CLAUDE_PLUGIN_ROOT}/mcp-server/dist/server.js"]
     }

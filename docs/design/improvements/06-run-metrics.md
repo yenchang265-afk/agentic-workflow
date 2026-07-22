@@ -97,6 +97,6 @@ greps get old — don't build it speculatively.
 
 - `README.md` — mention the run-summary block in the audit/observability
   paragraph.
-- `skills/loop-orchestration/SKILL.md` — run-log section: what the summary
+- `skills/workflow-orchestration/SKILL.md` — run-log section: what the summary
   contains, and the tuning loop it enables (`maxIterations` /
   `stageTimeoutMinutes` from observed numbers).

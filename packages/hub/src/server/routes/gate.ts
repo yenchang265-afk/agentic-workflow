@@ -1,6 +1,6 @@
-import { approvePlan, approveTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-loop/core/loop/gate"
-import { findByIdIn, STATUSES } from "@agentic-loop/core/task/store"
-import type { TaskStatus } from "@agentic-loop/core/task/statuses"
+import { approvePlan, approveTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { findByIdIn, STATUSES } from "@agentic-workflow/core/task/store"
+import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 import type { GateAction, GateRequest } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { gateCtx } from "../gatectx.js"
@@ -10,7 +10,7 @@ import { badRequest, isSafeId, json, ok, type JsonResponse, type ParsedRequest }
  * The human gate moves, from a browser click. This is the hub's first real
  * write: it moves task files and writes git commits, and `ship` opens a pull
  * request. It performs those moves through the *same* core entry points both
- * hosts use (`loop/gate.ts`) rather than re-implementing them — the hub is a
+ * hosts use (`workflow/gate.ts`) rather than re-implementing them — the hub is a
  * fourth caller of the gate, not a fourth driver. It never claims work and never
  * runs a stage.
  */

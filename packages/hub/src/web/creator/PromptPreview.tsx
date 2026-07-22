@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import type { LoopManifest } from "@agentic-loop/core/manifest/schema"
+import type { WorkflowManifest } from "@agentic-workflow/core/manifest/schema"
 import type { PreviewResponse, PreviewSample } from "../../shared/api.js"
 import { postJson } from "../api.js"
 import { Button } from "../ui/Button.js"
@@ -29,7 +29,7 @@ export const PromptPreview = ({
   stage,
   prompts,
 }: {
-  manifest: LoopManifest | null
+  manifest: WorkflowManifest | null
   stage: string
   prompts: Readonly<Record<string, string>>
 }) => {

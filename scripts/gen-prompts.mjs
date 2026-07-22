@@ -21,15 +21,15 @@ import { fileURLToPath } from "node:url"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SRC = path.join(ROOT, "prompts", "agents")
-const LOOPS = path.join(ROOT, "packages", "core", "loops")
+const WORKFLOWS = path.join(ROOT, "packages", "core", "workflows")
 const HOSTS = [
   { host: "opencode", frontmatter: "opencode.yaml", outDir: path.join(ROOT, "plugins", "opencode", "agents") },
   { host: "claude", frontmatter: "claude.yaml", outDir: path.join(ROOT, "plugins", "claude", "agents") },
 ]
 
 /**
- * The bash allowlist each stage agent may run, sourced from the loop manifests
- * (`loops/<kind>/loop.json`) — the single source of truth. An agent's globs are
+ * The bash allowlist each stage agent may run, sourced from the workflow manifests
+ * (`workflows/<kind>/workflow.json`) — the single source of truth. An agent's globs are
  * its stage's `bashAllowlist` plus every `platformAllowlist` value (static
  * frontmatter can't switch on platform, so all platforms are allowed and the
  * stage prompt uses the configured one). Same agent in two manifests must declare
@@ -37,8 +37,8 @@ const HOSTS = [
  */
 const agentAllowlists = () => {
   const byAgent = new Map()
-  for (const kind of fs.readdirSync(LOOPS).sort()) {
-    const manifestPath = path.join(LOOPS, kind, "loop.json")
+  for (const kind of fs.readdirSync(WORKFLOWS).sort()) {
+    const manifestPath = path.join(WORKFLOWS, kind, "workflow.json")
     if (!fs.existsSync(manifestPath)) continue
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
     for (const stage of manifest.stages ?? []) {
@@ -47,7 +47,7 @@ const agentAllowlists = () => {
       const existing = byAgent.get(stage.agent)
       if (existing && JSON.stringify(existing) !== JSON.stringify(globs)) {
         throw new Error(
-          `agent "${stage.agent}" has conflicting bash allowlists across manifests — reconcile them in loops/*/loop.json`,
+          `agent "${stage.agent}" has conflicting bash allowlists across manifests — reconcile them in workflows/*/workflow.json`,
         )
       }
       byAgent.set(stage.agent, globs)
@@ -59,8 +59,8 @@ const agentAllowlists = () => {
 const ALLOWLISTS = agentAllowlists()
 
 /**
- * The subagent each per-stage OpenCode command fires, sourced from the loop
- * manifests (`loops/<kind>/loop.json` — the single source): `command` name →
+ * The subagent each per-stage OpenCode command fires, sourced from the workflow
+ * manifests (`workflows/<kind>/workflow.json` — the single source): `command` name →
  * `stage.agent`. This is what makes the agent-per-stage binding manifest-driven
  * instead of a hand-copied `agent:` frontmatter line. A command shared across
  * kinds (e.g. `verify`) must bind the identical agent everywhere. Keyed by command
@@ -68,8 +68,8 @@ const ALLOWLISTS = agentAllowlists()
  */
 const commandAgents = () => {
   const byCommand = new Map()
-  for (const kind of fs.readdirSync(LOOPS).sort()) {
-    const manifestPath = path.join(LOOPS, kind, "loop.json")
+  for (const kind of fs.readdirSync(WORKFLOWS).sort()) {
+    const manifestPath = path.join(WORKFLOWS, kind, "workflow.json")
     if (!fs.existsSync(manifestPath)) continue
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
     for (const stage of manifest.stages ?? []) {
@@ -77,7 +77,7 @@ const commandAgents = () => {
       const existing = byCommand.get(stage.command)
       if (existing && existing !== stage.agent) {
         throw new Error(
-          `command "${stage.command}" binds different agents across manifests ("${existing}" vs "${stage.agent}") — reconcile them in loops/*/loop.json`,
+          `command "${stage.command}" binds different agents across manifests ("${existing}" vs "${stage.agent}") — reconcile them in workflows/*/workflow.json`,
         )
       }
       byCommand.set(stage.command, stage.agent)
@@ -106,7 +106,7 @@ const setCommandAgent = (src, agent, command) => {
  * Expand a `# {{allowlist}}` marker line in an OpenCode frontmatter's
  * `permission.bash` map into `"<glob>": allow` lines from the manifest, preserving
  * the marker's indentation. This is what single-sources the allowlist: the yaml
- * declares only the `"*": deny` sentinel and the marker; the globs live in loop.json.
+ * declares only the `"*": deny` sentinel and the marker; the globs live in workflow.json.
  */
 const expandAllowlist = (frontmatter, agent) => {
   // Match the whole marker line (any surrounding comment text), capturing its
@@ -115,7 +115,7 @@ const expandAllowlist = (frontmatter, agent) => {
   const m = marker.exec(frontmatter)
   if (!m) return frontmatter
   const globs = ALLOWLISTS.get(agent)
-  if (!globs) throw new Error(`agent "${agent}" uses {{allowlist}} but declares no bashAllowlist in any loop.json`)
+  if (!globs) throw new Error(`agent "${agent}" uses {{allowlist}} but declares no bashAllowlist in any workflow.json`)
   const indent = m[1]
   const lines = globs.map((g) => `${indent}${JSON.stringify(g)}: allow`).join("\n")
   // Function replacement, not a string: a glob containing `$` (e.g. `$HOME`) must
@@ -186,4 +186,4 @@ for (const file of fs.readdirSync(CMD_DIR).sort()) {
   if (normalized !== src) fs.writeFileSync(p, normalized)
   cmds++
 }
-console.log(`gen-prompts: normalized ${cmds} command agents from ${LOOPS}`)
+console.log(`gen-prompts: normalized ${cmds} command agents from ${WORKFLOWS}`)

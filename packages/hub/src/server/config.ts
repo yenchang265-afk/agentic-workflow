@@ -1,11 +1,11 @@
-import { readUserLayer, resolveUserConfigPath } from "@agentic-loop/core/config"
+import { readUserLayer, resolveUserConfigPath } from "@agentic-workflow/core/config"
 import { z } from "zod"
 
 /**
  * Hub settings live in the `hub` section of the USER-SCOPE config only
- * (`~/.agentic-loop.json`, or $AGENTIC_LOOP_USER_CONFIG). The hub monitors
+ * (`~/.agentic-workflow.json`, or $AGENTIC_WORKFLOW_USER_CONFIG). The hub monitors
  * many repos at once, so a repos list inside any single repo's
- * `.agentic-loop.json` would be circular — a repo-level `hub` key is
+ * `.agentic-workflow.json` would be circular — a repo-level `hub` key is
  * deliberately ignored.
  */
 

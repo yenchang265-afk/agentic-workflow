@@ -84,7 +84,7 @@ interface CiRunsDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
-  /** Config override of the manifest's watched branch (`loops.<kind>.branch`). */
+  /** Config override of the manifest's watched branch (`workflows.<kind>.branch`). */
   readonly branch?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
   readonly now?: () => string
@@ -94,7 +94,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
   const { $, client, directory, tasksDir, log, loaded } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "ci-runs") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a ci-runs work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a ci-runs work source`)
   }
   const kind = loaded.manifest.kind
   const now = deps.now ?? (() => new Date().toISOString())

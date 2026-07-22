@@ -1,6 +1,6 @@
 import type { Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, LoopState } from "../loop/state.js"
+import type { AdoAccessMethod, CodePlatform, LoopState } from "../workflow/state.js"
 import type { PrLedger, PrSnapshot, PrTrigger } from "./ledger.js"
 import type { TerminalOutcome, WorkItem } from "./types.js"
 

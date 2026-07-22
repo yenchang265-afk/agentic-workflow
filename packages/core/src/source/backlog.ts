@@ -1,7 +1,7 @@
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveClaimPredicate } from "../manifest/registry.js"
-import type { LoopState } from "../loop/state.js"
+import type { LoopState } from "../workflow/state.js"
 import type { Task } from "../task/schema.js"
 import {
   claimFirst,
@@ -78,7 +78,7 @@ export const claimSkipReason = (
     return {
       message:
         `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
-        `${startedIds.join(", ")} (run /agentic-loop:engineering recover <id>)`,
+        `${startedIds.join(", ")} (run /agentic-workflow:engineering recover <id>)`,
       actionable: true,
     }
   }
@@ -86,13 +86,13 @@ export const claimSkipReason = (
     return {
       message:
         `watch: 0 claimable — ${queuedCount} task(s) awaiting a plan in queued/ ` +
-        `(run /agentic-loop:engineering plan <id>)`,
+        `(run /agentic-workflow:engineering plan <id>)`,
       actionable: true,
     }
   }
   return {
     message:
-      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agentic-loop:engineering replan <id>)",
+      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agentic-workflow:engineering replan <id>)",
     actionable: true,
   }
 }
@@ -118,7 +118,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
   const { $, client, directory, tasksDir, log, loaded, isDriving } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "backlog") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a backlog work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a backlog work source`)
   }
   const pools: readonly Pool[] = binding.pools
 

@@ -24,7 +24,7 @@ import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
  * Hub server entry. Binds 127.0.0.1 only — this is a local admin tool, never
  * an exposed service. Repos to monitor come from repeatable `--dir <path>`
  * flags (values may contain `*` wildcards — see repos.ts), or, when no --dir
- * is given, from the `hub` section of the user-scope `~/.agentic-loop.json`
+ * is given, from the `hub` section of the user-scope `~/.agentic-workflow.json`
  * (`{ "hub": { "repos": [...], "port"?: n } }` — see config.ts; a repo-level
  * `hub` key is ignored). With neither the hub exits — it never watches a repo
  * you didn't name. `--port <n>` overrides the port. Repo-scoped routes take
@@ -55,7 +55,7 @@ try {
 const patterns = dirArgs.length > 0 ? dirArgs : [...(settings?.repos ?? [])]
 if (patterns.length === 0) {
   console.error(
-    'hub: no repos configured — pass --dir <path> (repeatable, * wildcards ok) or set { "hub": { "repos": [...] } } in ~/.agentic-loop.json',
+    'hub: no repos configured — pass --dir <path> (repeatable, * wildcards ok) or set { "hub": { "repos": [...] } } in ~/.agentic-workflow.json',
   )
   process.exit(1)
 }
@@ -63,7 +63,7 @@ if (patterns.length === 0) {
 const { repos: resolved, notes } = resolveRepos(patterns, cwd)
 for (const note of notes) process.stderr.write(`[hub] warn: ${note}\n`)
 if (resolved.length === 0) {
-  console.error("hub: no repos to monitor — check --dir values / the hub.repos entries in ~/.agentic-loop.json")
+  console.error("hub: no repos to monitor — check --dir values / the hub.repos entries in ~/.agentic-workflow.json")
   process.exit(1)
 }
 
@@ -131,10 +131,10 @@ const scoped =
   }
 
 /**
- * The loop-kind manifests themselves live in the core package and are shared by
+ * The workflow-kind manifests themselves live in the core package and are shared by
  * every repo, but these handlers read the *repo* around them — saveKind's
  * checklist probes `deps.directory` for agent personas, command wrappers, and
- * the kind's `.agentic-loop.json` entry. Unscoped they answered for the first
+ * the kind's `.agentic-workflow.json` entry. Unscoped they answered for the first
  * repo whatever `?repo=` asked for, so they are scoped like everything else.
  */
 const routes: Route[] = [
@@ -189,7 +189,7 @@ server.listen(port, "127.0.0.1", () => {
     registry.repos.length === 1
       ? defaultRepo.deps.directory
       : `${registry.repos.length} repos: ${registry.repos.map((r) => r.id).join(", ")}`
-  console.log(`agentic-loop hub: http://127.0.0.1:${port} (watching ${watched})`)
+  console.log(`agentic-workflow hub: http://127.0.0.1:${port} (watching ${watched})`)
 })
 
 const shutdown = (): void => {

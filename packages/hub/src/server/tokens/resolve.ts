@@ -1,5 +1,5 @@
-import { parseRunLog } from "@agentic-loop/core/loop/runlog"
-import { parseRunMetrics, type RunEntry } from "@agentic-loop/core/loop/metrics-file"
+import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
+import { parseRunMetrics, type RunEntry } from "@agentic-workflow/core/workflow/metrics-file"
 import type { RunTokensResponse, TokenRow } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { addTokens, attribute, windowsFromSamples, windowsFromSummary, ZERO_TOKENS, type StageWindow } from "./attribute.js"

@@ -1,5 +1,5 @@
-import type { Client, Log, Shell } from "@agentic-loop/core/host"
-import type { Config } from "@agentic-loop/core/loop/state"
+import type { Client, Log, Shell } from "@agentic-workflow/core/host"
+import type { Config } from "@agentic-workflow/core/workflow/state"
 import type { KindBoardInfo } from "../shared/api.js"
 
 /**
@@ -8,7 +8,7 @@ import type { KindBoardInfo } from "../shared/api.js"
  * sockets. main.ts builds the real one.
  */
 export interface HubDeps {
-  /** Absolute repo root the hub serves (where .agentic-loop.json / docs/tasks live). */
+  /** Absolute repo root the hub serves (where .agentic-workflow.json / docs/tasks live). */
   readonly directory: string
   readonly tasksDir: string
   /** Per-kind dashboard metadata for this repo's enabled kinds (see kindboard.ts). */
@@ -21,7 +21,7 @@ export interface HubDeps {
    * truth. Swapped wholesale on reload (see main.ts), never mutated in place.
    */
   readonly config: Config
-  readonly loopsDir: string
+  readonly workflowsDir: string
   /** Claude Code transcript root (~/.claude/projects) for token joins. */
   readonly projectsDir: string
   /** opencode SQLite store for legacy token backfill. */
@@ -30,7 +30,7 @@ export interface HubDeps {
   readonly sh: Shell
   readonly log: Log
   /**
-   * Re-read this repo's `.agentic-loop.json` and swap its deps. Config is read
+   * Re-read this repo's `.agentic-workflow.json` and swap its deps. Config is read
    * once at startup, so a route that writes the config must call this or the
    * server keeps serving the old one until a restart. Optional: test fixtures
    * and read-only routes have no use for it. Returns false when the new config

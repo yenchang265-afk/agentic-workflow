@@ -1,0 +1,263 @@
+{
+  "kind": "pr-sitter",
+  "version": 1,
+  "description": "Sits on open pull requests: answers review comments, fixes failing checks, resolves conflicts, and keeps the branch green until a human merges. Never merges.",
+  "workSource": {
+    "type": "pull-request",
+    "query": "is:open author:@me",
+    "triggers": [
+      "failing-checks",
+      "changes-requested",
+      "new-comments",
+      "merge-conflict"
+    ]
+  },
+  "maxIterations": 3,
+  "stages": [
+    {
+      "name": "triage",
+      "kind": "check",
+      "command": "pr-triage",
+      "agent": "workflow-pr-triage",
+      "prompt": "stages/triage.md",
+      "isolation": "none",
+      "bashAllowlist": [
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git fetch*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "git -C * fetch*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "find *",
+        "wc *"
+      ],
+      "platformAllowlist": {
+        "github": [
+          "gh pr view*",
+          "gh pr checks*",
+          "gh pr diff*",
+          "gh api repos/*/pulls/*/comments*",
+          "gh run view*",
+          "gh run list*"
+        ],
+        "ado": [
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
+        ],
+        "ado:az": [
+          "az repos pr show*",
+          "az repos pr list*",
+          "az repos pr policy list*",
+          "az devops invoke *"
+        ]
+      }
+    },
+    {
+      "name": "fix",
+      "kind": "work",
+      "command": "pr-fix",
+      "agent": "workflow-pr-fix",
+      "prompt": "stages/fix.md",
+      "isolation": "worktree"
+    },
+    {
+      "name": "verify",
+      "kind": "check",
+      "command": "verify",
+      "agent": "workflow-verify",
+      "prompt": "stages/verify.md",
+      "isolation": "worktree",
+      "bashAllowlist": [
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "find *",
+        "wc *",
+        "npm test*",
+        "npm run *",
+        "pnpm test*",
+        "pnpm run *",
+        "yarn test*",
+        "yarn run *",
+        "bun test*",
+        "node --test*",
+        "npx tsc*",
+        "npx vitest*",
+        "npx jest*",
+        "npx eslint*",
+        "pytest*",
+        "go test*",
+        "cargo test*",
+        "make test*",
+        "make check*",
+        "npm ci*",
+        "npm install*",
+        "npm audit*",
+        "npm ls*",
+        "npm outdated*",
+        "osv-scanner *",
+        "mvn test*",
+        "mvn verify*",
+        "mvn dependency:tree*",
+        "./mvnw test*",
+        "./mvnw verify*",
+        "./mvnw dependency:tree*",
+        "gradle test*",
+        "gradle check*",
+        "gradle build*",
+        "gradle dependencyInsight*",
+        "./gradlew test*",
+        "./gradlew check*",
+        "./gradlew build*",
+        "./gradlew dependencyInsight*",
+        "cd * && npm test*",
+        "cd * && npm run *",
+        "cd * && pnpm test*",
+        "cd * && pnpm run *",
+        "cd * && yarn test*",
+        "cd * && yarn run *",
+        "cd * && bun test*",
+        "cd * && node --test*",
+        "cd * && npx tsc*",
+        "cd * && npx vitest*",
+        "cd * && npx jest*",
+        "cd * && npx eslint*",
+        "cd * && pytest*",
+        "cd * && go test*",
+        "cd * && cargo test*",
+        "cd * && make test*",
+        "cd * && make check*",
+        "cd * && npm ci*",
+        "cd * && npm install*",
+        "cd * && npm audit*",
+        "cd * && npm ls*",
+        "cd * && osv-scanner *",
+        "cd * && mvn test*",
+        "cd * && mvn verify*",
+        "cd * && mvn dependency:tree*",
+        "cd * && ./mvnw test*",
+        "cd * && ./mvnw verify*",
+        "cd * && ./mvnw dependency:tree*",
+        "cd * && gradle test*",
+        "cd * && gradle check*",
+        "cd * && gradle build*",
+        "cd * && gradle dependencyInsight*",
+        "cd * && ./gradlew test*",
+        "cd * && ./gradlew check*",
+        "cd * && ./gradlew build*",
+        "cd * && ./gradlew dependencyInsight*"
+      ]
+    },
+    {
+      "name": "publish",
+      "kind": "work",
+      "command": "pr-publish",
+      "agent": "workflow-pr-publish",
+      "prompt": "stages/publish.md",
+      "isolation": "worktree",
+      "bashAllowlist": [
+        "git push origin *",
+        "git -C * push origin *",
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "wc *"
+      ],
+      "platformAllowlist": {
+        "github": [
+          "gh pr comment *",
+          "gh pr view*",
+          "gh pr checks*",
+          "gh api repos/*/pulls/*/comments*"
+        ],
+        "ado": [
+          "curl -sS -u :* https://dev.azure.com/*/threads*",
+          "curl -sS -u :* https://*.visualstudio.com/*/threads*"
+        ],
+        "ado:az": [
+          "az repos pr show*",
+          "az repos pr list*",
+          "az devops invoke --area git --resource pullRequestThreadComments*"
+        ]
+      }
+    }
+  ],
+  "transitions": {
+    "triage": {
+      "onPass": {
+        "kind": "fire",
+        "stage": "fix"
+      },
+      "onFail": {
+        "kind": "done",
+        "message": "✓ PR sitter done — nothing actionable on this PR right now."
+      },
+      "onError": {
+        "kind": "stop",
+        "message": "✗ PR sitter stopped — triage could not inspect the PR (gh/network error). Fix the environment and let the next poll retry."
+      }
+    },
+    "fix": {
+      "onDone": {
+        "kind": "fire",
+        "stage": "verify"
+      }
+    },
+    "verify": {
+      "onPass": {
+        "kind": "fire",
+        "stage": "publish"
+      },
+      "onFail": {
+        "kind": "fire",
+        "stage": "fix",
+        "countIteration": true,
+        "dropArtifacts": [],
+        "capMessage": "✗ PR sitter stopped — verify failed after {maxIterations} iterations. The attempt is recorded; the PR parks until a human pushes a new head."
+      },
+      "onError": {
+        "kind": "stop",
+        "message": "✗ PR sitter stopped — verify could not run (environment/infrastructure error)."
+      }
+    },
+    "publish": {
+      "onDone": {
+        "kind": "done",
+        "message": "✓ PR sitter done — pushed the fixes and replied on the PR. Merging stays a human call."
+      }
+    }
+  },
+  "hooks": {
+    "compose": {},
+    "validateBeforeTransition": {}
+  }
+}

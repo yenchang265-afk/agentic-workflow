@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
+import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
 import type { ActiveResponse, RunDetailResponse, RunsResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
@@ -54,7 +54,7 @@ const depsFor = (directory: string): HubDeps => ({
     { kind: "pr-sitter", description: "pr sitter", sourceType: "pull-request", statuses: [], gateStatuses: [], pools: [] },
     { kind: "review-sitter", description: "review sitter", sourceType: "pull-request", statuses: [], gateStatuses: [], pools: [] },
   ],
-  loopsDir: path.join(directory, "loops-unused"),
+  workflowsDir: path.join(directory, "workflows-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",
   client: fsClient,
@@ -112,7 +112,7 @@ test("getRunDetail 404s on missing or malformed ids", async () => {
   const missing = await getRunDetail(depsFor(dir), { params: { id: "nope" }, query: new URLSearchParams() })
   assert.equal(missing.status, 404)
   const traversal = await getRunDetail(depsFor(dir), {
-    params: { id: "../../.agentic-loop" },
+    params: { id: "../../.agentic-workflow" },
     query: new URLSearchParams(),
   })
   assert.equal(traversal.status, 404)

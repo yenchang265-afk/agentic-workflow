@@ -105,5 +105,5 @@ Store 整合測試（擴充 `src/task/store.test.ts`）：`appendNote` 傳入
 
 - `docs/design/threat-model.md` —— T6 改寫（見上文）。
 - `README.md` —— 在強化／功能清單中加一行。
-- `skills/loop-orchestration/SKILL.md` —— 註明執行日誌和稽核備註都經過
+- `skills/workflow-orchestration/SKILL.md` —— 註明執行日誌和稽核備註都經過
   基於形狀的遮蔽處理，以及其殘留風險。

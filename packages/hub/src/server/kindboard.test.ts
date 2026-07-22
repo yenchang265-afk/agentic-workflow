@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import path from "node:path"
 import { test } from "node:test"
-import { parseConfig } from "@agentic-loop/core/config"
+import { parseConfig } from "@agentic-workflow/core/config"
 import { kindBoards, unionGates, unionStatuses } from "./kindboard.js"
 
-// The shipped loop kinds are the fixture — boards must mirror their manifests.
-const LOOPS_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "core", "loops")
+// The shipped workflow kinds are the fixture — boards must mirror their manifests.
+const WORKFLOWS_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "core", "workflows")
 
 test("kindBoards derives the engineering board from its manifest", () => {
-  const boards = kindBoards(LOOPS_DIR, parseConfig({}))
+  const boards = kindBoards(WORKFLOWS_DIR, parseConfig({}))
   assert.equal(boards.length, 1)
   const eng = boards[0]!
   assert.equal(eng.kind, "engineering")
@@ -21,7 +21,7 @@ test("kindBoards derives the engineering board from its manifest", () => {
 })
 
 test("kindBoards includes opted-in kinds and excludes disabled ones", () => {
-  const both = kindBoards(LOOPS_DIR, parseConfig({ loops: { "pr-sitter": { enabled: true } } }))
+  const both = kindBoards(WORKFLOWS_DIR, parseConfig({ workflows: { "pr-sitter": { enabled: true } } }))
   assert.deepEqual(
     both.map((b) => [b.kind, b.sourceType]),
     [
@@ -33,8 +33,8 @@ test("kindBoards includes opted-in kinds and excludes disabled ones", () => {
   assert.deepEqual(sitter.statuses, [])
   assert.deepEqual(sitter.pools, [])
   const sitterOnly = kindBoards(
-    LOOPS_DIR,
-    parseConfig({ loops: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } }),
+    WORKFLOWS_DIR,
+    parseConfig({ workflows: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } }),
   )
   assert.deepEqual(
     sitterOnly.map((b) => b.kind),
@@ -44,7 +44,7 @@ test("kindBoards includes opted-in kinds and excludes disabled ones", () => {
 
 test("kindBoards skips (with a warning) an enabled kind whose manifest doesn't load", () => {
   const warnings: string[] = []
-  const boards = kindBoards(LOOPS_DIR, parseConfig({ loops: { ghost: { enabled: true } } }), (level, msg) => {
+  const boards = kindBoards(WORKFLOWS_DIR, parseConfig({ workflows: { ghost: { enabled: true } } }), (level, msg) => {
     if (level === "warn") warnings.push(msg)
   })
   assert.deepEqual(

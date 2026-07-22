@@ -2,9 +2,9 @@ import assert from "node:assert/strict"
 import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
-import { verdictContractBlock } from "@agentic-loop/core/loop/verdict"
-import { loadManifest } from "@agentic-loop/core/manifest/load"
+import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
+import { verdictContractBlock } from "@agentic-workflow/core/workflow/verdict"
+import { loadManifest } from "@agentic-workflow/core/manifest/load"
 import type { KindDetailResponse, KindsResponse, PreviewResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
@@ -12,14 +12,14 @@ import type { JsonResponse } from "../http.js"
 import { getKind, getKinds, previewKind, saveKind } from "./kinds.js"
 
 /** The real shipped manifests are the fixture — they must always load. */
-const LOOPS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../core/loops")
+const WORKFLOWS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../core/workflows")
 
 const deps: HubDeps = {
   directory: "/unused",
   tasksDir: "docs/tasks",
   boards: [],
   config: DEFAULT_CONFIG,
-  loopsDir: LOOPS_DIR,
+  workflowsDir: WORKFLOWS_DIR,
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",
   client: fsClient,
@@ -27,7 +27,7 @@ const deps: HubDeps = {
   log: () => {},
 }
 
-test("getKinds lists the shipped loop kinds with stages", async () => {
+test("getKinds lists the shipped workflow kinds with stages", async () => {
   const res = await getKinds(deps)
   assert.equal(res.status, 200)
   const body = res.body as KindsResponse
@@ -57,7 +57,7 @@ test("getKind 404s on unknown or malformed kind names", async () => {
 
 /** The shipped engineering kind, loaded off disk — the same fixture getKind serves. */
 const engineering = (): KindDetailResponse => {
-  const { manifest, prompts } = loadManifest(LOOPS_DIR, "engineering")
+  const { manifest, prompts } = loadManifest(WORKFLOWS_DIR, "engineering")
   return { manifest, prompts }
 }
 

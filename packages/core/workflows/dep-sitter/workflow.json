@@ -1,0 +1,251 @@
+{
+  "kind": "dep-sitter",
+  "version": 1,
+  "description": "Sits on vulnerable and outdated dependencies: confirms the advisory, applies the patch/minor upgrade on a branch, fixes the fallout, verifies the suite is green, and opens a draft PR. Major bumps are never auto-fixed and merging stays a human call.",
+  "workSource": {
+    "type": "dependency-scan",
+    "autoFix": [
+      "patch",
+      "minor"
+    ],
+    "severityFloor": "high",
+    "includeOutdated": false,
+    "ecosystem": "auto"
+  },
+  "maxIterations": 2,
+  "stages": [
+    {
+      "name": "scan",
+      "kind": "check",
+      "command": "dep-scan",
+      "agent": "workflow-dep-scan",
+      "prompt": "stages/scan.md",
+      "isolation": "none",
+      "bashAllowlist": [
+        "npm audit*",
+        "npm ls*",
+        "npm outdated*",
+        "npm view *",
+        "osv-scanner *",
+        "mvn dependency:tree*",
+        "mvn help:evaluate*",
+        "./mvnw dependency:tree*",
+        "./mvnw help:evaluate*",
+        "gradle dependencies*",
+        "gradle dependencyInsight*",
+        "./gradlew dependencies*",
+        "./gradlew dependencyInsight*",
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "find *",
+        "wc *"
+      ]
+    },
+    {
+      "name": "upgrade",
+      "kind": "work",
+      "command": "dep-upgrade",
+      "agent": "workflow-dep-upgrade",
+      "prompt": "stages/upgrade.md",
+      "isolation": "worktree"
+    },
+    {
+      "name": "verify",
+      "kind": "check",
+      "command": "verify",
+      "agent": "workflow-verify",
+      "prompt": "stages/verify.md",
+      "isolation": "worktree",
+      "bashAllowlist": [
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "find *",
+        "wc *",
+        "npm test*",
+        "npm run *",
+        "pnpm test*",
+        "pnpm run *",
+        "yarn test*",
+        "yarn run *",
+        "bun test*",
+        "node --test*",
+        "npx tsc*",
+        "npx vitest*",
+        "npx jest*",
+        "npx eslint*",
+        "pytest*",
+        "go test*",
+        "cargo test*",
+        "make test*",
+        "make check*",
+        "npm ci*",
+        "npm install*",
+        "npm audit*",
+        "npm ls*",
+        "npm outdated*",
+        "osv-scanner *",
+        "mvn test*",
+        "mvn verify*",
+        "mvn dependency:tree*",
+        "./mvnw test*",
+        "./mvnw verify*",
+        "./mvnw dependency:tree*",
+        "gradle test*",
+        "gradle check*",
+        "gradle build*",
+        "gradle dependencyInsight*",
+        "./gradlew test*",
+        "./gradlew check*",
+        "./gradlew build*",
+        "./gradlew dependencyInsight*",
+        "cd * && npm test*",
+        "cd * && npm run *",
+        "cd * && pnpm test*",
+        "cd * && pnpm run *",
+        "cd * && yarn test*",
+        "cd * && yarn run *",
+        "cd * && bun test*",
+        "cd * && node --test*",
+        "cd * && npx tsc*",
+        "cd * && npx vitest*",
+        "cd * && npx jest*",
+        "cd * && npx eslint*",
+        "cd * && pytest*",
+        "cd * && go test*",
+        "cd * && cargo test*",
+        "cd * && make test*",
+        "cd * && make check*",
+        "cd * && npm ci*",
+        "cd * && npm install*",
+        "cd * && npm audit*",
+        "cd * && npm ls*",
+        "cd * && osv-scanner *",
+        "cd * && mvn test*",
+        "cd * && mvn verify*",
+        "cd * && mvn dependency:tree*",
+        "cd * && ./mvnw test*",
+        "cd * && ./mvnw verify*",
+        "cd * && ./mvnw dependency:tree*",
+        "cd * && gradle test*",
+        "cd * && gradle check*",
+        "cd * && gradle build*",
+        "cd * && gradle dependencyInsight*",
+        "cd * && ./gradlew test*",
+        "cd * && ./gradlew check*",
+        "cd * && ./gradlew build*",
+        "cd * && ./gradlew dependencyInsight*"
+      ]
+    },
+    {
+      "name": "publish",
+      "kind": "work",
+      "command": "dep-publish",
+      "agent": "workflow-dep-publish",
+      "prompt": "stages/publish.md",
+      "isolation": "worktree",
+      "bashAllowlist": [
+        "git push origin feature/*",
+        "git -C * push origin feature/*",
+        "git status*",
+        "git diff*",
+        "git log*",
+        "git show*",
+        "git -C * status*",
+        "git -C * diff*",
+        "git -C * log*",
+        "git -C * show*",
+        "ls*",
+        "cat *",
+        "head *",
+        "tail *",
+        "grep *",
+        "wc *"
+      ],
+      "platformAllowlist": {
+        "github": [
+          "gh pr create *",
+          "gh pr view*",
+          "gh pr list*",
+          "gh pr comment *"
+        ],
+        "ado": [
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
+        ],
+        "ado:az": [
+          "az repos pr create*",
+          "az repos pr show*",
+          "az repos pr list*",
+          "az devops invoke *"
+        ]
+      }
+    }
+  ],
+  "transitions": {
+    "scan": {
+      "onPass": {
+        "kind": "fire",
+        "stage": "upgrade"
+      },
+      "onFail": {
+        "kind": "done",
+        "message": "✓ Dep sitter done — the upgrade is already resolved or no longer applies."
+      },
+      "onError": {
+        "kind": "stop",
+        "message": "✗ Dep sitter stopped — scan could not read the dependency reports (registry/scanner/environment error). Fix the environment and let the next poll retry."
+      }
+    },
+    "upgrade": {
+      "onDone": {
+        "kind": "fire",
+        "stage": "verify"
+      }
+    },
+    "verify": {
+      "onPass": {
+        "kind": "fire",
+        "stage": "publish"
+      },
+      "onFail": {
+        "kind": "fire",
+        "stage": "upgrade",
+        "countIteration": true,
+        "dropArtifacts": [],
+        "capMessage": "✗ Dep sitter stopped — verify failed after {maxIterations} iterations. The attempt is recorded; this upgrade parks until its target version moves or a human takes it over."
+      },
+      "onError": {
+        "kind": "stop",
+        "message": "✗ Dep sitter stopped — verify could not run (environment/infrastructure error)."
+      }
+    },
+    "publish": {
+      "onDone": {
+        "kind": "done",
+        "message": "✓ Dep sitter done — pushed the upgrade and opened a draft PR. Merging stays a human call."
+      }
+    }
+  },
+  "hooks": {
+    "compose": {},
+    "validateBeforeTransition": {}
+  }
+}

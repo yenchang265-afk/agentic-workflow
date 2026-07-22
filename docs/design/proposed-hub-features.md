@@ -29,7 +29,7 @@ without re-translation:
   already established in `packages/hub/src/server/routes/kinds.ts`.
 - **Authority** — what the feature lets a browser click do, tied back to
   [`threat-model.md`](./threat-model.md). Same ladder as
-  [`proposed-loops.md`](./proposed-loops.md), plus one new rung.
+  [`proposed-workflows.md`](./proposed-workflows.md), plus one new rung.
 - **Cost** — S / M / L:
   - **S** — routes + components only; composes existing core exports, grants no
     new authority.
@@ -41,7 +41,7 @@ Authority levels, in increasing order of blast radius:
 1. **read** — no writes (what the hub holds today).
 2. **backlog-write** — writes task files under the configured `tasksDir`, and
    commits them (what the engineering loop already holds).
-3. **config-write** — writes `.agentic-loop.json`. **New rung, hub-specific**:
+3. **config-write** — writes `.agentic-workflow.json`. **New rung, hub-specific**:
    config is the file that grants every *other* authority, so writing it is a
    step up from backlog-write even though it touches one small file.
 4. **push / comment** — pushes branches, opens PRs. Visible outside the machine.
@@ -50,10 +50,10 @@ Authority levels, in increasing order of blast radius:
 
 | # | Feature | Gap it closes | Authority | Cost | Status |
 |---|---------|---------------|-----------|------|--------|
-| [1](#1--gate-actions) | Gate actions | `loop/gate.ts` — **zero hub callers** | backlog-write, push | M | **shipped** |
+| [1](#1--gate-actions) | Gate actions | `workflow/gate.ts` — **zero hub callers** | backlog-write, push | M | **shipped** |
 | [2](#2--backlog-doctor) | Backlog doctor | write half of `task/store.ts` | backlog-write | M | **shipped** |
 | [3](#3--creator-prompt-preview) | Creator prompt preview | `manifest/template.ts` `renderPrompt` | read | S | **shipped** |
-| [4](#4--config-editor) | Config editor | **nothing anywhere writes `.agentic-loop.json`** | config-write | L | **shipped** |
+| [4](#4--config-editor) | Config editor | **nothing anywhere writes `.agentic-workflow.json`** | config-write | L | **shipped** |
 
 **All four features have shipped**, plus the PR 0 foundation. The gaps they
 closed are described below in the present tense they were written in — see
@@ -83,13 +83,13 @@ That stance had gone stale in four specific places:
 
 | Core capability | Status | Hub today |
 |---|---|---|
-| `loop/gate.ts` — `approveTask:101`, `approvePlan:150`, `replanTask:200`, `shipTask:241` | shipped, tested | **zero callers.** Hub detects gates (SSE `gate` events, `gateStatuses` column highlighting) and can act on none of them. `packages/hub/README.md:111` defers this explicitly. |
+| `workflow/gate.ts` — `approveTask:101`, `approvePlan:150`, `replanTask:200`, `shipTask:241` | shipped, tested | **zero callers.** Hub detects gates (SSE `gate` events, `gateStatuses` column highlighting) and can act on none of them. `packages/hub/README.md:111` defers this explicitly. |
 | `task/store.ts` write half — `rescueStray:549`, `releaseOrphanedClaims:456` | shipped, tested | unused. `Board.tsx:65` renders a dead-end chip reading *"backlog anomalies — run doctor"* — it tells you to go type a CLI verb. |
-| `.agentic-loop.json` | — | **nothing writes it.** `routes/kinds.ts:108` ends the creator flow by telling you to hand-edit the file. |
+| `.agentic-workflow.json` | — | **nothing writes it.** `routes/kinds.ts:108` ends the creator flow by telling you to hand-edit the file. |
 | `manifest/template.ts` `renderPrompt:61` | shipped, tested | unused. The creator writes prompt stubs blind. |
 
 **The stance is already broken in practice**: the creator writes
-`loops/<kind>/` via `POST /api/kinds` (`routes/kinds.ts:113`). So the honest
+`workflows/<kind>/` via `POST /api/kinds` (`routes/kinds.ts:113`). So the honest
 move is to formalize the boundary, not to pretend it holds.
 
 ### The new boundary
@@ -115,7 +115,7 @@ answering `isDriving` "from the on-disk stage marker". The hub is that host.
 | Preview | `renderPrompt:61`, `promptContext:32`, `verdictContractBlock` (`verdict.ts:79`) | Compose — **not** `composePrompt:68` (see [3](#3--creator-prompt-preview)). |
 | Config | `mergeConfigLayers:248`, `readUserLayer:293`, `resolveUserConfigPath:230`, `ConfigSchema:150`, `BaseConfigSchema.shape` | Compose. |
 | Provenance | — | **Hub.** Core would need a second copy of the merge rule. See [Crux B](#crux-b--the-layer-footgun). |
-| Per-kind knob validation | — | **Hub, advisory.** Tightening core is a breaking change. See [Crux C](#crux-c--loops-is-looseobject). |
+| Per-kind knob validation | — | **Hub, advisory.** Tightening core is a breaking change. See [Crux C](#crux-c--workflows-is-looseobject). |
 
 Two ~1-line core touches, both comments: a pointer at `orchestrate.ts:107` to
 hub's knob registry, and one at `config.ts:94` noting the loose contract is
@@ -161,7 +161,7 @@ Screen `id` through `isSafeId` (`http.ts:85`) before it reaches the filesystem �
 the rule `backlog.ts:84` already applies. Short-hash prefixes (`f7k3`) pass.
 
 **Wire types** — `export type { GateResult, GateVariant } from
-"@agentic-loop/core/loop/gate"`. The type-only re-export pattern at
+"@agentic-workflow/core/workflow/gate"`. The type-only re-export pattern at
 `shared/api.ts:7-8`; zero hand-maintained duplication.
 
 **Web** — `web/monitor/GateActions.tsx`, mounted in `Board.tsx`'s `TaskCardView`
@@ -299,7 +299,7 @@ WRITE(layer, patch):
   un-redact: patch value === "__REDACTED__" → keep raw's existing value
   issues = ConfigSchema.safeParse(merged-with-next).issues → any? 400.
                                                    // never write an invalid config
-  warnings = lintLoopKnobs(next.loops, boards)     // advisory, does NOT block
+  warnings = lintWorkflowKnobs(next.workflows, boards)     // advisory, does NOT block
   writeFileSync(path, JSON.stringify(next, null, 2) + "\n")
   repo.reload() → 200 { written, warnings }
 ```
@@ -324,10 +324,10 @@ writing a key nothing reads.
 
 **Edit one named layer; compute provenance in hub, not core.**
 
-`mergeConfigLayers:248` merges the user layer (`~/.agentic-loop.json`) **under**
+`mergeConfigLayers:248` merges the user layer (`~/.agentic-workflow.json`) **under**
 the repo layer, *before* the parse. An editor that showed the *effective* merged
 config and saved it back to the repo file would **flatten the user layer into
-the repo file** — writing `ado.pat` out of `~/.agentic-loop.json` and into a
+the repo file** — writing `ado.pat` out of `~/.agentic-workflow.json` and into a
 file that `config.ts:121-126` explicitly warns must stay gitignored.
 
 **That is secret exfiltration, and it is the single worst thing this feature
@@ -358,11 +358,11 @@ could do.** Four rails:
    existing value. This is why the write re-reads from disk instead of trusting
    a client echo.
 4. **Gitignore guard.** Before a write that *sets* `ado.pat` in the **repo**
-   layer, run `git check-ignore -q .agentic-loop.json`. Not ignored → **400**
+   layer, run `git check-ignore -q .agentic-workflow.json`. Not ignored → **400**
    carrying the warning from `config.ts:121-126`. Two lines that turn a doc
    comment nobody reads into an enforced rail, at exactly the moment it matters.
 
-### Crux C — `loops` is `looseObject`
+### Crux C — `workflows` is `looseObject`
 
 **Lint in hub as warnings; do not touch core's schema.**
 
@@ -386,7 +386,7 @@ config editor's best selling point.
 > knobs are "validated by the kind itself"; they are not. Fixing that doc is
 > worthwhile independent of this feature.
 
-**Tightening core's `loops` schema is the wrong move**, and this is the one
+**Tightening core's `workflows` schema is the wrong move**, and this is the one
 place to push back hardest. `looseObject` is *deliberate* (`config.ts:86-90`:
 kind-specific knobs "ride along and are validated by the kind itself") and kinds
 are user-authorable — the entire creator feature exists to author them. Making
@@ -397,7 +397,7 @@ in core, load per kind, and stay in sync with `orchestrate.ts` anyway — same
 drift, higher blast radius.
 
 Instead: `server/knobs.ts`, an advisory registry keyed by `workSource.type`
-(available from `deps.boards[].sourceType`). `lintLoopKnobs(rawLoops, boards) →
+(available from `deps.boards[].sourceType`). `lintWorkflowKnobs(rawWorkflows, boards) →
 ConfigWarning[]`, four classes, all **non-blocking** — they annotate the write,
 never fail it:
 
@@ -408,7 +408,7 @@ never fail it:
   (`orchestrate.ts:124`); ignored."*
 - **wrong source** — `query` on a backlog kind → *"only applies to `pull-request`
   kinds; ignored."*
-- **unknown kind** — a `loops.<kind>` with no `loops/<kind>/` manifest.
+- **unknown kind** — a `workflows.<kind>` with no `workflows/<kind>/` manifest.
 
 **Named tradeoff:** this registry duplicates knowledge that lives in
 `orchestrate.ts` and can drift. Accepted, with a ~15-line mitigation: a
@@ -420,9 +420,9 @@ this on.
 
 ### Closing the kinds.ts loop
 
-`routes/kinds.ts:98-108` reads `.agentic-loop.json` with a raw `fs.readFileSync`
+`routes/kinds.ts:98-108` reads `.agentic-workflow.json` with a raw `fs.readFileSync`
 + `JSON.parse`, bypassing core's `loadConfig`, purely to check
-`loops.<kind>.enabled` — then emits a hand-edit-the-file checklist item at :108.
+`workflows.<kind>.enabled` — then emits a hand-edit-the-file checklist item at :108.
 Replace the raw read with `readConfigLayer(deps, "repo")`, and turn :108 into
 `{ done: enabled, label: "enable in the Config tab", href: "#config" }`.
 
@@ -432,7 +432,7 @@ kinds routes.
 ### The reload story
 
 Config is read at **startup only** (`main.ts:86`); nothing watches
-`.agentic-loop.json`. **Both halves are required** — the write route alone
+`.agentic-workflow.json`. **Both halves are required** — the write route alone
 leaves the server stale after any `$EDITOR` edit, which is the common case:
 
 1. **Write route → `repo.reload()`.** In-process, no restart.
@@ -684,7 +684,7 @@ docs are part of done:
   editor ([4](#4--config-editor)). Document the editor:
   layer-explicit editing, provenance, the passthrough rule, `ado.pat`
   redaction, the gitignore guard, advisory knob linting. **Cross-link the
-  `loops.<kind>` knob table** ([Crux C](#crux-c--loops-is-looseobject)) and fix
+  `workflows.<kind>` knob table** ([Crux C](#crux-c--workflows-is-looseobject)) and fix
   the "validated by the kind itself" claim at :126 — a doc fix that pays for
   itself independent of this feature.
 - ~~**[`threat-model.md`](./threat-model.md)**~~ — **done** (PR 4). Adds T14–T16:

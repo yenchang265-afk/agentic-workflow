@@ -1,6 +1,6 @@
-import type { StageTokens } from "@agentic-loop/core/loop/metrics"
-import type { RunLogSummary } from "@agentic-loop/core/loop/runlog"
-import type { MetricsSample } from "@agentic-loop/core/loop/metrics-file"
+import type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
+import type { RunLogSummary } from "@agentic-workflow/core/workflow/runlog"
+import type { MetricsSample } from "@agentic-workflow/core/workflow/metrics-file"
 
 /**
  * Time-window token attribution — pure. When a host can't observe usage

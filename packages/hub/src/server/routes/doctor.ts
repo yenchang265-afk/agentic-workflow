@@ -1,6 +1,6 @@
 import path from "node:path"
-import { commitPaths, gitActor } from "@agentic-loop/core/loop/git"
-import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
+import { commitPaths, gitActor } from "@agentic-workflow/core/workflow/git"
+import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import {
   appendNote,
   auditNote,
@@ -9,7 +9,7 @@ import {
   listClaimIds,
   releaseOrphanedClaims,
   rescueStray,
-} from "@agentic-loop/core/task/store"
+} from "@agentic-workflow/core/task/store"
 import type { DoctorReport, DoctorFixResponse, HeldClaim } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { makeDrivingOracle } from "../driving.js"
@@ -18,7 +18,7 @@ import { ok, type JsonResponse } from "../http.js"
 /**
  * The backlog doctor: report structural anomalies and held claims, and (on
  * /fix) apply only the unambiguous repairs. Mirrors `loop_doctor` /
- * `/agentic-loop:engineering doctor [fix]` exactly — the MCP server and the
+ * `/agentic-workflow:engineering doctor [fix]` exactly — the MCP server and the
  * OpenCode driver already agree, and a third divergent semantic here would be a
  * bug factory.
  *

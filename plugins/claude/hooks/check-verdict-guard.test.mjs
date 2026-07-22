@@ -33,8 +33,8 @@ test("allows non-check stages and missing markers", () => {
 test("nag message names the tool (both registered forms) and the stage", () => {
   const msg = nagMessage("verify")
   assert.match(msg, /loop_verdict/)
-  assert.match(msg, /mcp__agentic-loop__loop_verdict/)
-  assert.match(msg, /mcp__plugin_agentic-loop_agentic-loop__loop_verdict/)
+  assert.match(msg, /mcp__agentic-workflow__loop_verdict/)
+  assert.match(msg, /mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict/)
   assert.match(msg, /VERIFY/)
   assert.match(msg, /stage: "verify"/)
 })

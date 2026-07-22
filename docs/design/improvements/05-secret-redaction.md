@@ -111,5 +111,5 @@ pattern names only.
 
 - `docs/design/threat-model.md` — T6 rewrite (see above).
 - `README.md` — one line in the hardening/features list.
-- `skills/loop-orchestration/SKILL.md` — note that run logs and audit notes
+- `skills/workflow-orchestration/SKILL.md` — note that run logs and audit notes
   are shape-redacted, and the residual.

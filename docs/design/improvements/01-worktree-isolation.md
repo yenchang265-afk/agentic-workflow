@@ -57,7 +57,7 @@ worktreeSetup: z.string().min(1).optional(),
 ```
 
 Mirror both (optional) on the `Config` interface in `state.ts`. Suggested
-README value: `".loop-worktrees"`.
+README value: `".workflow-worktrees"`.
 
 ## 2. State — `src/loop/state.ts`
 
@@ -120,7 +120,7 @@ Replace `ensureBranch` with `ensureIsolation(deps, config, state)`:
      `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`.
      `baseBranch` is an optional host-resolved override: the Claude Code MCP
      host's `directory` is frozen at the main checkout (usually the default
-     branch), so it resolves the base from `AGENTIC_LOOP_BASE_DIR` (the user's
+     branch), so it resolves the base from `AGENTIC_WORKFLOW_BASE_DIR` (the user's
      real working tree) instead. The OpenCode host omits it — its `directory`
      already reflects the user's branch. Unset ⇒ cut from `directory`'s branch.
    - `ensureExcluded(main, worktreesDir)`.
@@ -322,7 +322,7 @@ structurally. Bash remains prompt-enforced — documented residual.
 - `README.md` — the two knobs, the "one drive per tree" limitation lifted in
   worktree mode, backlog-commit behavior change.
 - `.opencode/commands/agent-loop.md` — concurrency note.
-- `skills/loop-orchestration/SKILL.md` — isolation section, watch
+- `skills/workflow-orchestration/SKILL.md` — isolation section, watch
   concurrency.
 - `docs/design/threat-model.md` — T3 (residual shrinks), T4 (execution-phase
   notes now committed to the human's branch via `commitPaths`).

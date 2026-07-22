@@ -13,7 +13,7 @@ import {
   type NodeChange,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import { LoopManifestSchema, type Effect, type LoopManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
+import { WorkflowManifestSchema, type Effect, type WorkflowManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import type {
   AssetsResponse,
   ChecklistItem,
@@ -53,7 +53,7 @@ const edgeLabel = (slot: TransitionSlot, data: EdgeFormValue): string => {
   return data.countIteration ? `${verb} (counted)` : verb
 }
 
-const toFlow = (manifest: LoopManifest): { nodes: Node[]; edges: Edge[]; meta: GraphMeta } => {
+const toFlow = (manifest: WorkflowManifest): { nodes: Node[]; edges: Edge[]; meta: GraphMeta } => {
   const graph = manifestToGraph(manifest)
   const pos = layoutGraph(graph)
   const nodes: Node[] = graph.nodes.map((n) => ({
@@ -78,7 +78,7 @@ const toFlow = (manifest: LoopManifest): { nodes: Node[]; edges: Edge[]; meta: G
   return { nodes, edges, meta: manifestToGraph(manifest).meta }
 }
 
-const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMeta): LoopManifest => {
+const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMeta): WorkflowManifest => {
   const stageOf = new Map(nodes.filter((n) => n.type === "stage").map((n) => [n.id, (n.data as StageNodeData).stage]))
   const terminalOf = new Map(
     nodes.filter((n) => n.type === "terminal").map((n) => [n.id, n.data as TerminalNodeData]),
@@ -122,7 +122,7 @@ const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMet
     description: meta.description,
     workSource: meta.workSource,
     stages,
-    transitions: transitions as LoopManifest["transitions"],
+    transitions: transitions as WorkflowManifest["transitions"],
     ...(meta.maxIterations !== undefined ? { maxIterations: meta.maxIterations } : {}),
     hooks: meta.hooks,
   }
@@ -153,7 +153,7 @@ export const Creator = () => {
       .catch((e: Error) => setError(e.message))
   }, [])
 
-  const load = (manifest: LoopManifest, promptsIn: Record<string, string>, fresh: boolean): void => {
+  const load = (manifest: WorkflowManifest, promptsIn: Record<string, string>, fresh: boolean): void => {
     const flow = toFlow(manifest)
     setMeta(flow.meta)
     setNodes(flow.nodes)
@@ -190,7 +190,7 @@ export const Creator = () => {
   // instant client-side validation with the same schema the engine uses
   const liveIssues = useMemo<ManifestIssue[]>(() => {
     if (!currentManifest) return []
-    const result = LoopManifestSchema.safeParse(currentManifest)
+    const result = WorkflowManifestSchema.safeParse(currentManifest)
     return result.success ? [] : result.error.issues.map((i) => ({ path: i.path.join(".") || "(root)", message: i.message }))
   }, [currentManifest])
 
@@ -225,7 +225,7 @@ export const Creator = () => {
       name,
       kind: "work",
       command: name,
-      agent: `loop-${name}`,
+      agent: `workflow-${name}`,
       prompt: `stages/${name}.md`,
       isolation: "worktree",
       bashAllowlist: [],
@@ -332,7 +332,7 @@ export const Creator = () => {
       <div>
         {error && <div className="error-banner">{error}</div>}
         <div className="creator-start">
-          <h2 className="section-title">Open a loop kind</h2>
+          <h2 className="section-title">Open a workflow kind</h2>
           <div className="summary-chips">
             {kinds.map((k) => (
               <Button key={k} onClick={() => openKind(k)}>
@@ -355,7 +355,7 @@ export const Creator = () => {
             })}
           </div>
           <p className="muted">
-            A loop kind is a declarative state machine: stages (work/check nodes) wired by transitions
+            A workflow kind is a declarative state machine: stages (work/check nodes) wired by transitions
             (fire/park/done/stop edges) over a work source. Open a shipped kind to see the shape, or start from a template.
           </p>
         </div>

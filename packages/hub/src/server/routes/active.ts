@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/core/scheduler/lease"
-import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
+import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
+import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import type {
   ActiveResponse,
   DepLedgerView,

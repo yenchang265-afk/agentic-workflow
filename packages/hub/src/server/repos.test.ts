@@ -39,7 +39,7 @@ test("resolveRepos notes and skips explicit paths that are not directories", () 
 
 test("resolveRepos expands * patterns and keeps only loop repos", () => {
   const root = fixture([
-    "one/.agentic-loop.json",
+    "one/.agentic-workflow.json",
     "two/docs/tasks/queued/",
     "plain/", // a directory but not a loop repo
     ".hidden/docs/tasks/", // dot-dirs never match a wildcard
@@ -84,7 +84,7 @@ test("resolveRepos sanitizes ids to url-safe slugs", () => {
 })
 
 test("resolveNewRepos returns only directories absent from knownDirs", () => {
-  const root = fixture(["one/.agentic-loop.json", "two/docs/tasks/"])
+  const root = fixture(["one/.agentic-workflow.json", "two/docs/tasks/"])
   const known = new Set([path.join(root, "one")])
   const fresh = resolveNewRepos([path.join(root, "*")], root, known, new Set(["one"]))
   assert.deepEqual(
@@ -109,7 +109,7 @@ test("resolveNewRepos picks up a wildcard match once it gains a loop marker", ()
   const root = fixture(["plain/"])
   const pattern = path.join(root, "*")
   assert.deepEqual(resolveNewRepos([pattern], root, new Set(), new Set()), [])
-  fs.writeFileSync(path.join(root, "plain", ".agentic-loop.json"), "{}")
+  fs.writeFileSync(path.join(root, "plain", ".agentic-workflow.json"), "{}")
   assert.deepEqual(
     resolveNewRepos([pattern], root, new Set(), new Set()).map((r) => r.directory),
     [path.join(root, "plain")],

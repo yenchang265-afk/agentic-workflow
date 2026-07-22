@@ -21,7 +21,7 @@ export const decideVerdictGuard = (marker, nagAlreadyFired) => {
 
 /** The reminder fed back to the check subagent on the blocked stop. */
 export const nagMessage = (stage) =>
-  `agentic-loop: this ${String(stage ?? "check").toUpperCase()} stage recorded no verdict — call the loop_verdict MCP tool now ` +
-  `(mcp__agentic-loop__loop_verdict or, plugin-bundled, mcp__plugin_agentic-loop_agentic-loop__loop_verdict) ` +
+  `agentic-workflow: this ${String(stage ?? "check").toUpperCase()} stage recorded no verdict — call the loop_verdict MCP tool now ` +
+  `(mcp__agentic-workflow__loop_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict) ` +
   `with stage: "${String(stage ?? "check")}" and verdict PASS/FAIL/ERROR. A verdict in prose is ignored. ` +
   `If the tool is not in your tool list, state that explicitly in your final message and finish.`

@@ -54,7 +54,7 @@ worktreeSetup: z.string().min(1).optional(),
 ```
 
 在 `state.ts` 的 `Config` 介面上同步鏡射兩者（皆為選填）。建議的 README
-值：`".loop-worktrees"`。
+值：`".workflow-worktrees"`。
 
 ## 2. 狀態——`src/loop/state.ts`
 
@@ -120,7 +120,7 @@ export const ensureExcluded = ($: Shell, cwd: string, rel: string): Promise<void
      `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`。
      `baseBranch` 是一個可選的、由 host 端解析出的覆寫值：Claude Code MCP
      host 的 `directory` 被凍結在主要 checkout（通常是預設分支）上，因此
-     它會改從 `AGENTIC_LOOP_BASE_DIR`（使用者真正在用的工作樹）解析
+     它會改從 `AGENTIC_WORKFLOW_BASE_DIR`（使用者真正在用的工作樹）解析
      base。OpenCode host 則省略這個值——它的 `directory` 本身就已反映
      使用者所在的分支。未設定 ⇒ 從 `directory` 所在分支切出。
    - `ensureExcluded(main, worktreesDir)`。
@@ -320,6 +320,6 @@ export const ensureExcluded = ($: Shell, cwd: string, rel: string): Promise<void
 - `README.md`——兩個設定項、worktree 模式下解除的「每個工作樹一次驅動」
   限制、backlog 提交行為的變化。
 - `.opencode/commands/agent-loop.md`——並行性說明。
-- `skills/loop-orchestration/SKILL.md`——隔離小節、watch 並行性。
+- `skills/workflow-orchestration/SKILL.md`——隔離小節、watch 並行性。
 - `docs/design/threat-model.md`——T3（殘餘風險縮小）、T4（執行階段的
   記錄現在透過 `commitPaths` 提交到人類的分支）。

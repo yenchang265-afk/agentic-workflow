@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { clearLoop, setLoop, type LoopState } from "@agentic-loop/core/loop/state"
-import { makeAgenticLoop } from "./impl.ts"
+import { clearLoop, setLoop, type LoopState } from "@agentic-workflow/core/workflow/state"
+import { makeAgenticWorkflow } from "./impl.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -28,7 +28,7 @@ const makeHooks = async (sessions: Record<string, string | undefined>, opts: { f
   } as any
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const $ = (() => ({ quiet: () => ({ nothrow: () => Promise.resolve({ exitCode: 1, stdout: "" }) }) })) as any
-  return (await makeAgenticLoop({ client, directory: "/repo", $, worktree: "/repo" } as never)) as unknown as Hooks
+  return (await makeAgenticWorkflow({ client, directory: "/repo", $, worktree: "/repo" } as never)) as unknown as Hooks
 }
 
 const worktreeLoop = (): LoopState => ({

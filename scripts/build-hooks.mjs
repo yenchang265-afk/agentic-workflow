@@ -3,7 +3,7 @@
  * Bundle the Claude plugin's hook sources (plugins/claude/hooks/src/*.entry.mjs)
  * into the self-contained .mjs files hooks.json runs. Hooks execute under bare
  * `node` from a possibly-copied plugin dir with no node_modules, so anything
- * they share with @agentic-loop/core must be INLINED, not imported — esbuild
+ * they share with @agentic-workflow/core must be INLINED, not imported — esbuild
  * bundles core's built dist/ into the output.
  *
  * Outputs are checked in; CI fails when they drift from their sources

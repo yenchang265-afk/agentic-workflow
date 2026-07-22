@@ -9,7 +9,7 @@ import {
   bareModel,
   DEFAULT_CONFIG,
   defaultTrackerSystem,
-  enabledLoopKinds,
+  enabledWorkflowKinds,
   loadConfig,
   mergeConfigLayers,
   modelFor,
@@ -24,14 +24,14 @@ import type { Client } from "./host.js"
 import type { StageDef } from "./manifest/schema.js"
 
 test("defaults enable worktree isolation and leave review single-pass", () => {
-  assert.equal(DEFAULT_CONFIG.worktreesDir, ".loop-worktrees")
+  assert.equal(DEFAULT_CONFIG.worktreesDir, ".workflow-worktrees")
   assert.equal(DEFAULT_CONFIG.worktreeSetup, undefined)
   assert.deepEqual(DEFAULT_CONFIG.reviewLenses, [])
 })
 
 test("parseConfig accepts worktree knobs", () => {
-  const c = parseConfig({ worktreesDir: ".loop-worktrees", worktreeSetup: "npm ci" })
-  assert.equal(c.worktreesDir, ".loop-worktrees")
+  const c = parseConfig({ worktreesDir: ".workflow-worktrees", worktreeSetup: "npm ci" })
+  assert.equal(c.worktreesDir, ".workflow-worktrees")
   assert.equal(c.worktreeSetup, "npm ci")
 })
 
@@ -72,43 +72,43 @@ test("a config still carrying removed keys parses (silent deprecation)", () => {
   assert.ok(!("gateBeforeBuild" in c))
 })
 
-test("loops section defaults to empty and enabledLoopKinds keeps engineering on", () => {
-  assert.deepEqual(DEFAULT_CONFIG.loops, {})
-  assert.deepEqual(enabledLoopKinds(DEFAULT_CONFIG), ["engineering"])
+test("workflows section defaults to empty and enabledWorkflowKinds keeps engineering on", () => {
+  assert.deepEqual(DEFAULT_CONFIG.workflows, {})
+  assert.deepEqual(enabledWorkflowKinds(DEFAULT_CONFIG), ["engineering"])
 })
 
-test("other loop kinds are opt-in; engineering can be disabled", () => {
-  const c = parseConfig({ loops: { "pr-sitter": { enabled: true, query: "author:@me" } } })
-  assert.deepEqual(enabledLoopKinds(c), ["engineering", "pr-sitter"])
+test("other workflow kinds are opt-in; engineering can be disabled", () => {
+  const c = parseConfig({ workflows: { "pr-sitter": { enabled: true, query: "author:@me" } } })
+  assert.deepEqual(enabledWorkflowKinds(c), ["engineering", "pr-sitter"])
   // A section with no explicit `enabled` must NOT activate the kind — otherwise
   // merely tuning a knob silently starts a loop that opens PRs on the user's repo.
-  const offByDefault = parseConfig({ loops: { "pr-sitter": {} } })
-  assert.deepEqual(enabledLoopKinds(offByDefault), ["engineering"])
-  const knobOnly = parseConfig({ loops: { "dep-sitter": { severityFloor: "critical" } } })
-  assert.deepEqual(enabledLoopKinds(knobOnly), ["engineering"])
-  const explicitlyOff = parseConfig({ loops: { "pr-sitter": { enabled: false } } })
-  assert.deepEqual(enabledLoopKinds(explicitlyOff), ["engineering"])
+  const offByDefault = parseConfig({ workflows: { "pr-sitter": {} } })
+  assert.deepEqual(enabledWorkflowKinds(offByDefault), ["engineering"])
+  const knobOnly = parseConfig({ workflows: { "dep-sitter": { severityFloor: "critical" } } })
+  assert.deepEqual(enabledWorkflowKinds(knobOnly), ["engineering"])
+  const explicitlyOff = parseConfig({ workflows: { "pr-sitter": { enabled: false } } })
+  assert.deepEqual(enabledWorkflowKinds(explicitlyOff), ["engineering"])
   // Engineering keeps the opposite default: on unless explicitly disabled.
-  const engImplicit = parseConfig({ loops: { engineering: {} } })
-  assert.deepEqual(enabledLoopKinds(engImplicit), ["engineering"])
-  const disabled = parseConfig({ loops: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } })
-  assert.deepEqual(enabledLoopKinds(disabled), ["pr-sitter"])
+  const engImplicit = parseConfig({ workflows: { engineering: {} } })
+  assert.deepEqual(enabledWorkflowKinds(engImplicit), ["engineering"])
+  const disabled = parseConfig({ workflows: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } })
+  assert.deepEqual(enabledWorkflowKinds(disabled), ["pr-sitter"])
 })
 
-test("kind-specific knobs ride along in the loops section", () => {
-  const c = parseConfig({ loops: { "pr-sitter": { enabled: true, query: "is:open author:@me" } } })
-  assert.equal(c.loops["pr-sitter"]?.["query"], "is:open author:@me")
+test("kind-specific knobs ride along in the workflows section", () => {
+  const c = parseConfig({ workflows: { "pr-sitter": { enabled: true, query: "is:open author:@me" } } })
+  assert.equal(c.workflows["pr-sitter"]?.["query"], "is:open author:@me")
 })
 
 test("triggerFor defaults to poll for unconfigured kinds", () => {
   assert.deepEqual(triggerFor(DEFAULT_CONFIG, "engineering"), { type: "poll" })
-  const c = parseConfig({ loops: { engineering: {} } })
+  const c = parseConfig({ workflows: { engineering: {} } })
   assert.deepEqual(triggerFor(c, "engineering"), { type: "poll" })
 })
 
-test("loops.<kind>.trigger accepts all three types and knobs still ride along", () => {
+test("workflows.<kind>.trigger accepts all three types and knobs still ride along", () => {
   const c = parseConfig({
-    loops: {
+    workflows: {
       engineering: { trigger: { type: "idle" } },
       "pr-sitter": { enabled: true, query: "author:@me", trigger: { type: "cron", schedule: "0 9 * * 1-5" } },
       nightly: { enabled: true, trigger: { type: "poll", intervalMinutes: 30 } },
@@ -117,14 +117,14 @@ test("loops.<kind>.trigger accepts all three types and knobs still ride along", 
   assert.deepEqual(triggerFor(c, "engineering"), { type: "idle" })
   assert.deepEqual(triggerFor(c, "pr-sitter"), { type: "cron", schedule: "0 9 * * 1-5" })
   assert.deepEqual(triggerFor(c, "nightly"), { type: "poll", intervalMinutes: 30 })
-  assert.equal(c.loops["pr-sitter"]?.["query"], "author:@me")
+  assert.equal(c.workflows["pr-sitter"]?.["query"], "author:@me")
 })
 
 const stageWith = (model?: string): StageDef => ({
   name: "build",
   kind: "work",
   command: "build",
-  agent: "loop-build",
+  agent: "workflow-build",
   prompt: "stages/build.md",
   isolation: "worktree",
   bashAllowlist: [],
@@ -133,18 +133,18 @@ const stageWith = (model?: string): StageDef => ({
 })
 
 test("modelFor: config stageModels wins over the manifest stage's model, which wins over nothing", () => {
-  const c = parseConfig({ loops: { engineering: { stageModels: { build: "anthropic/claude-opus-4-5" } } } })
+  const c = parseConfig({ workflows: { engineering: { stageModels: { build: "anthropic/claude-opus-4-5" } } } })
   assert.equal(modelFor(c, "engineering", stageWith("anthropic/claude-sonnet-4-5")), "anthropic/claude-opus-4-5")
   assert.equal(modelFor(DEFAULT_CONFIG, "engineering", stageWith("anthropic/claude-sonnet-4-5")), "anthropic/claude-sonnet-4-5")
   assert.equal(modelFor(DEFAULT_CONFIG, "engineering", stageWith()), undefined)
   // A stageModels entry for a different stage leaves this one alone.
-  const other = parseConfig({ loops: { engineering: { stageModels: { review: "anthropic/claude-opus-4-5" } } } })
+  const other = parseConfig({ workflows: { engineering: { stageModels: { review: "anthropic/claude-opus-4-5" } } } })
   assert.equal(modelFor(other, "engineering", stageWith()), undefined)
 })
 
-test("loops.<kind>.stageModels validates fail-fast, unlike positional knobs", () => {
-  assert.throws(() => parseConfig({ loops: { engineering: { stageModels: { build: 42 } } } }), /stageModels/)
-  assert.throws(() => parseConfig({ loops: { engineering: { stageModels: { build: "" } } } }), /stageModels/)
+test("workflows.<kind>.stageModels validates fail-fast, unlike positional knobs", () => {
+  assert.throws(() => parseConfig({ workflows: { engineering: { stageModels: { build: 42 } } } }), /stageModels/)
+  assert.throws(() => parseConfig({ workflows: { engineering: { stageModels: { build: "" } } } }), /stageModels/)
 })
 
 const reviewStage = (requiredAxes?: string[]) =>
@@ -152,7 +152,7 @@ const reviewStage = (requiredAxes?: string[]) =>
     name: "review",
     kind: "check",
     command: "review",
-    agent: "loop-review",
+    agent: "workflow-review",
     prompt: "stages/review.md",
     isolation: "worktree",
     bashAllowlist: [],
@@ -181,7 +181,7 @@ test("unreviewedAxes is empty for a stage that requires no axes (verify, the sit
 
 test("unknownStageModelKeys names stageModels entries that match no stage of the kind", () => {
   const c = parseConfig({
-    loops: { engineering: { stageModels: { build: "anthropic/claude-opus-4-5", BUILD: "x", triage: "y" } } },
+    workflows: { engineering: { stageModels: { build: "anthropic/claude-opus-4-5", BUILD: "x", triage: "y" } } },
   })
   assert.deepEqual(unknownStageModelKeys(c, "engineering", ["plan", "build", "verify", "review"]), ["BUILD", "triage"])
   // Every key matching a stage, an absent section, and an absent stageModels are all clean.
@@ -195,15 +195,15 @@ test("bareModel strips a provider prefix and passes bare ids through", () => {
   assert.equal(bareModel("sonnet"), "sonnet")
 })
 
-test("loops.<kind>.trigger rejects unknown types and malformed shapes", () => {
-  assert.throws(() => parseConfig({ loops: { engineering: { trigger: { type: "webhook" } } } }), /trigger/)
-  assert.throws(() => parseConfig({ loops: { engineering: { trigger: { type: "cron" } } } }), /schedule/)
+test("workflows.<kind>.trigger rejects unknown types and malformed shapes", () => {
+  assert.throws(() => parseConfig({ workflows: { engineering: { trigger: { type: "webhook" } } } }), /trigger/)
+  assert.throws(() => parseConfig({ workflows: { engineering: { trigger: { type: "cron" } } } }), /schedule/)
   assert.throws(
-    () => parseConfig({ loops: { engineering: { trigger: { type: "poll", intervalMinutes: 0 } } } }),
+    () => parseConfig({ workflows: { engineering: { trigger: { type: "poll", intervalMinutes: 0 } } } }),
     /intervalMinutes/,
   )
   assert.throws(
-    () => parseConfig({ loops: { engineering: { trigger: { type: "poll", intervalMinutes: 2000 } } } }),
+    () => parseConfig({ workflows: { engineering: { trigger: { type: "poll", intervalMinutes: 2000 } } } }),
     /intervalMinutes/,
   )
 })
@@ -266,19 +266,19 @@ test("ado.insecureSkipTlsVerify parses as an optional boolean, off by default", 
 
 test("per-loop codePlatform overrides the global default and also requires the ado section and selfLogin", () => {
   assert.throws(
-    () => parseConfig({ loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } } }),
+    () => parseConfig({ workflows: { "pr-sitter": { enabled: true, codePlatform: "ado" } } }),
     /requires an 'ado' section/,
   )
   assert.throws(
     () =>
       parseConfig({
-        loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } },
+        workflows: { "pr-sitter": { enabled: true, codePlatform: "ado" } },
         ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
       }),
     /requires ado\.selfLogin/,
   )
   const c = parseConfig({
-    loops: { "pr-sitter": { enabled: true, codePlatform: "ado" } },
+    workflows: { "pr-sitter": { enabled: true, codePlatform: "ado" } },
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
   })
   assert.equal(platformFor(c, "pr-sitter"), "ado")
@@ -286,7 +286,7 @@ test("per-loop codePlatform overrides the global default and also requires the a
   const back = parseConfig({
     codePlatform: "ado",
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    loops: { "pr-sitter": { enabled: true, codePlatform: "github" } },
+    workflows: { "pr-sitter": { enabled: true, codePlatform: "github" } },
   })
   assert.equal(platformFor(back, "pr-sitter"), "github")
 })
@@ -399,19 +399,19 @@ test("mergeConfigLayers: nested objects merge per field (the ado split use case)
   })
 })
 
-test("mergeConfigLayers: loops merge per kind and per knob; other kinds survive", () => {
-  const user = { loops: { "pr-sitter": { enabled: true } } }
-  const repo = { loops: { "pr-sitter": { query: "author:@me" }, engineering: { enabled: false } } }
+test("mergeConfigLayers: workflows merge per kind and per knob; other kinds survive", () => {
+  const user = { workflows: { "pr-sitter": { enabled: true } } }
+  const repo = { workflows: { "pr-sitter": { query: "author:@me" }, engineering: { enabled: false } } }
   assert.deepEqual(mergeConfigLayers(user, repo), {
-    loops: { "pr-sitter": { enabled: true, query: "author:@me" }, engineering: { enabled: false } },
+    workflows: { "pr-sitter": { enabled: true, query: "author:@me" }, engineering: { enabled: false } },
   })
 })
 
 test("mergeConfigLayers: stageModels merge per stage; repo wins per key", () => {
-  const user = { loops: { engineering: { stageModels: { build: "a", review: "b" } } } }
-  const repo = { loops: { engineering: { stageModels: { build: "c" } } } }
+  const user = { workflows: { engineering: { stageModels: { build: "a", review: "b" } } } }
+  const repo = { workflows: { engineering: { stageModels: { build: "c" } } } }
   assert.deepEqual(mergeConfigLayers(user, repo), {
-    loops: { engineering: { stageModels: { build: "c", review: "b" } } },
+    workflows: { engineering: { stageModels: { build: "c", review: "b" } } },
   })
 })
 
@@ -443,8 +443,8 @@ const stubClient = (repoContent: string | undefined): Client => ({
 })
 
 const tempUserFile = (content: string): string => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-loop-config-"))
-  const file = path.join(dir, ".agentic-loop.json")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-workflow-config-"))
+  const file = path.join(dir, ".agentic-workflow.json")
   fs.writeFileSync(file, content)
   return file
 }
@@ -487,7 +487,7 @@ test("loadConfig: user-only, repo-only, and neither", async () => {
 })
 
 test("loadConfig: absent or empty user file → layer skipped", async () => {
-  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agentic-loop-config-")), "nope.json")
+  const missing = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "agentic-workflow-config-")), "nope.json")
   const c = await loadConfig(stubClient(undefined), "/repo", { userConfigPath: missing })
   assert.deepEqual(c, DEFAULT_CONFIG)
   const empty = tempUserFile("")
@@ -512,7 +512,7 @@ test("loadConfig: merged-parse errors name both layers", async () => {
   const userPath = tempUserFile(JSON.stringify({ maxIterations: 0 }))
   await assert.rejects(
     () => loadConfig(stubClient(JSON.stringify({ tasksDir: "x" })), "/repo", { userConfigPath: userPath }),
-    /Invalid \.agentic-loop\.json \(merged with .*\): .*maxIterations/,
+    /Invalid \.agentic-workflow\.json \(merged with .*\): .*maxIterations/,
   )
 })
 
@@ -527,8 +527,8 @@ test("trackerUrl appends the key to baseUrl, or returns undefined without one", 
 
 
 test("review-sitter is opt-in like every non-engineering kind; its query knob rides the open record", () => {
-  assert.deepEqual(enabledLoopKinds(parseConfig({})), ["engineering"])
-  const c = parseConfig({ loops: { "review-sitter": { enabled: true, query: "is:open review-requested:@me" } } })
-  assert.deepEqual(enabledLoopKinds(c), ["engineering", "review-sitter"])
-  assert.equal(c.loops["review-sitter"]?.["query"], "is:open review-requested:@me")
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({})), ["engineering"])
+  const c = parseConfig({ workflows: { "review-sitter": { enabled: true, query: "is:open review-requested:@me" } } })
+  assert.deepEqual(enabledWorkflowKinds(c), ["engineering", "review-sitter"])
+  assert.equal(c.workflows["review-sitter"]?.["query"], "is:open review-requested:@me")
 })

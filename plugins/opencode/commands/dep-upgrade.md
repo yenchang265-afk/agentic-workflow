@@ -1,6 +1,6 @@
 ---
 description: Enter the UPGRADE stage of the dep-sitter loop — apply the ordered dependency bump and fix its fallout
-agent: loop-dep-upgrade
+agent: workflow-dep-upgrade
 subtask: true
 ---
 
@@ -9,6 +9,6 @@ Run the **UPGRADE** stage of the dep-sitter loop
 
 **$ARGUMENTS**
 
-Delegated to the `loop-dep-upgrade` subagent, which bumps exactly the ordered
+Delegated to the `workflow-dep-upgrade` subagent, which bumps exactly the ordered
 package (manifest + lockfile), fixes the fallout, and commits locally. It
 never pushes (publish's job) and never touches unrelated versions.

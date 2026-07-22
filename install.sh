@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the agentic-loop plugins.
+# Install the agentic-workflow plugins.
 #
 # OpenCode half: symlinks agents/commands/skills/references into an OpenCode
 # config directory (global by default: ~/.config/opencode, or
@@ -22,17 +22,17 @@ Usage:
   ./install.sh [opencode] /dir    # install the OpenCode half into an arbitrary config dir
                                   # (a dir literally named "claude"/"opencode"/"all" needs a slash, e.g. ./claude)
 
-After installing, a short wizard offers to write an initial .agentic-loop.json
+After installing, a short wizard offers to write an initial .agentic-workflow.json
 into the project the loop will drive (interactive terminals only):
   --config                        # force the config wizard on
   --no-config                     # skip the config wizard (also skips the
                                    # user-scope defaults file below)
-  --user                          # write config to the user scope (~/.agentic-loop.json), not the repo
-  --repo                          # write config to the project's .agentic-loop.json (default)
-  -y, --yes                       # non-interactive: seed a defaults .agentic-loop.json, no prompts
+  --user                          # write config to the user scope (~/.agentic-workflow.json), not the repo
+  --repo                          # write config to the project's .agentic-workflow.json (default)
+  -y, --yes                       # non-interactive: seed a defaults .agentic-workflow.json, no prompts
 
 Every run (regardless of the above) also seeds a fully-expanded user-scope
-~/.agentic-loop.json — every field at its default, every sitter listed with
+~/.agentic-workflow.json — every field at its default, every sitter listed with
 enabled:false — if one doesn't already exist there, so every knob is visible
 without reading docs/configuration.md. Never overwrites an existing file.
 
@@ -47,23 +47,23 @@ MODE=symlink
 CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 WANT_CONFIG=1
 ASSUME_YES=0
-# Config scope the wizard writes to: "" = ask, "repo" = <project>/.agentic-loop.json,
+# Config scope the wizard writes to: "" = ask, "repo" = <project>/.agentic-workflow.json,
 # "user" = the user-scope file shared across every repo. Forced by --repo/--user.
 CONFIG_SCOPE=""
-# The directory the plugin actually reads .agentic-loop.json from at runtime:
-# the Claude host uses `AGENTIC_LOOP_DIR ?? cwd`, the OpenCode host the project
+# The directory the plugin actually reads .agentic-workflow.json from at runtime:
+# the Claude host uses `AGENTIC_WORKFLOW_DIR ?? cwd`, the OpenCode host the project
 # dir. Default the wizard's target to that same resolution; it is prompted for.
-TARGET_DIR="${AGENTIC_LOOP_DIR:-$PWD}"
+TARGET_DIR="${AGENTIC_WORKFLOW_DIR:-$PWD}"
 
 # Where the user-scope config lives, mirroring core's resolveUserConfigPath:
-# $AGENTIC_LOOP_USER_CONFIG when set non-empty, else ~/.agentic-loop.json.
+# $AGENTIC_WORKFLOW_USER_CONFIG when set non-empty, else ~/.agentic-workflow.json.
 # ("" disables the layer for the runtime; for the wizard we fall back to $HOME
 # so a scoped write still has a home, and warn.) Echoes the path, or "" if none.
 user_config_path() {
-  if [ -n "${AGENTIC_LOOP_USER_CONFIG-}" ]; then
-    printf '%s' "$AGENTIC_LOOP_USER_CONFIG"
+  if [ -n "${AGENTIC_WORKFLOW_USER_CONFIG-}" ]; then
+    printf '%s' "$AGENTIC_WORKFLOW_USER_CONFIG"
   elif [ -n "${HOME-}" ]; then
-    printf '%s' "$HOME/.agentic-loop.json"
+    printf '%s' "$HOME/.agentic-workflow.json"
   else
     printf ''
   fi
@@ -116,13 +116,13 @@ link_or_copy() {
 }
 
 install_opencode() {
-  echo "Installing agentic-loop for OpenCode ($MODE) into $CONFIG_DIR"
+  echo "Installing agentic-workflow for OpenCode ($MODE) into $CONFIG_DIR"
 
   mkdir -p "$CONFIG_DIR/agents" "$CONFIG_DIR/commands" "$CONFIG_DIR/skills" \
            "$CONFIG_DIR/references" "$CONFIG_DIR/plugins"
 
   # Drop symlinks that point back into this repo but whose source is gone —
-  # e.g. commands/task.md after its rename to loop-plan.md.
+  # e.g. commands/task.md after its rename to workflow-plan.md.
   for dir in agents commands skills references; do
     for link in "$CONFIG_DIR/$dir"/*; do
       [ -L "$link" ] || continue
@@ -153,22 +153,22 @@ install_opencode() {
   # The plugin itself: a local plugin file that re-exports this repo's entry
   # point. OpenCode auto-loads any file dropped in plugins/, no opencode.json
   # edit needed. Requires `npm install` to have been run in $REPO_DIR.
-  PLUGIN_FILE="$CONFIG_DIR/plugins/agentic-loop.ts"
+  PLUGIN_FILE="$CONFIG_DIR/plugins/agentic-workflow.ts"
   printf 'export * from "%s/plugins/opencode/src/index.ts"\n' "$REPO_DIR" > "$PLUGIN_FILE"
   echo "installed: $PLUGIN_FILE"
 
   if [ ! -d "$REPO_DIR/node_modules" ] || [ ! -d "$REPO_DIR/packages/core/dist" ]; then
     echo
     echo "warning: dependencies not built — run 'npm install' in $REPO_DIR" >&2
-    echo "         (it also builds the @agentic-loop/core workspace the plugin imports)" >&2
+    echo "         (it also builds the @agentic-workflow/core workspace the plugin imports)" >&2
   fi
 
   echo
-  echo "OpenCode: /agentic-loop:engineering and the bundled skills are available in every OpenCode session."
+  echo "OpenCode: /agentic-workflow:engineering and the bundled skills are available in every OpenCode session."
 }
 
 install_claude() {
-  echo "Installing agentic-loop for Claude Code (plugins/claude/)"
+  echo "Installing agentic-workflow for Claude Code (plugins/claude/)"
   if [ "$MODE" = copy ]; then
     echo "note: --copy applies to the OpenCode install only"
   fi
@@ -176,7 +176,7 @@ install_claude() {
 }
 
 # ---------------------------------------------------------------------------
-# Config wizard: writes an initial .agentic-loop.json into the project the loop
+# Config wizard: writes an initial .agentic-workflow.json into the project the loop
 # will drive. All bash 3.2 compatible (no associative arrays, no `read -i`).
 # ---------------------------------------------------------------------------
 
@@ -230,18 +230,18 @@ json_escape() {
 MEMBERS=""
 add_member() { MEMBERS="${MEMBERS:+$MEMBERS,}$1"; }
 
-# Loop kinds accumulate into one "loops" object so several can be enabled at
-# once without emitting a duplicate "loops" key. add_loop takes a
-# "\"kind\":{…}" fragment; flush_loops folds them into a single member.
-LOOPS=""
-add_loop()    { LOOPS="${LOOPS:+$LOOPS,}$1"; }
+# Workflow kinds accumulate into one "workflows" object so several can be enabled at
+# once without emitting a duplicate "workflows" key. add_workflow takes a
+# "\"kind\":{…}" fragment; flush_workflows folds them into a single member.
+WORKFLOWS=""
+add_workflow()    { WORKFLOWS="${WORKFLOWS:+$WORKFLOWS,}$1"; }
 # `return 0`: with no sitters the `[ -n ]` test is the last command and returns
-# 1, which would trip `set -e` at the bare `flush_loops` call before the write.
-flush_loops() { [ -n "$LOOPS" ] && add_member "\"loops\":{$LOOPS}"; return 0; }
+# 1, which would trip `set -e` at the bare `flush_workflows` call before the write.
+flush_workflows() { [ -n "$WORKFLOWS" ] && add_member "\"workflows\":{$WORKFLOWS}"; return 0; }
 
 configure() {
   echo
-  echo "== config (.agentic-loop.json) =="
+  echo "== config (.agentic-workflow.json) =="
   echo "A few questions to seed an initial config. Blank accepts the [default]."
 
   # Q0a — scope: user-scope (shared across every repo) or repo-scope (this
@@ -252,7 +252,7 @@ configure() {
   if [ -z "$scope" ]; then
     echo
     echo "Where should this config be written?"
-    echo "  [1] This project only — <dir>/.agentic-loop.json (repo scope, default)"
+    echo "  [1] This project only — <dir>/.agentic-workflow.json (repo scope, default)"
     echo "  [2] User scope — shared across every repo you drive"
     case "$(ask "Choice" "1")" in
       2) scope="user" ;;
@@ -265,18 +265,18 @@ configure() {
   if [ "$scope" = "user" ]; then
     target_config="$(user_config_path)"
     if [ -z "$target_config" ]; then
-      skip "config wizard — cannot resolve a user-scope path (no \$AGENTIC_LOOP_USER_CONFIG and no \$HOME)"
+      skip "config wizard — cannot resolve a user-scope path (no \$AGENTIC_WORKFLOW_USER_CONFIG and no \$HOME)"
       return
     fi
-    if [ "${AGENTIC_LOOP_USER_CONFIG-x}" = "" ]; then
-      echo "note: \$AGENTIC_LOOP_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
+    if [ "${AGENTIC_WORKFLOW_USER_CONFIG-x}" = "" ]; then
+      echo "note: \$AGENTIC_WORKFLOW_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
       echo "      writing to $target_config anyway — unset it to have the loop read this file." >&2
     fi
   else
     local dir
     dir="$(ask "Write config for which project directory" "$TARGET_DIR")"
     TARGET_DIR="$dir"
-    target_config="$TARGET_DIR/.agentic-loop.json"
+    target_config="$TARGET_DIR/.agentic-workflow.json"
     if [ ! -d "$TARGET_DIR" ]; then
       skip "config wizard — '$TARGET_DIR' is not a directory"
       return
@@ -288,7 +288,7 @@ configure() {
   fi
 
   MEMBERS=""
-  LOOPS=""
+  WORKFLOWS=""
 
   # Q1 — code platform.
   local platform choice
@@ -325,9 +325,9 @@ configure() {
     echo
     echo "  → Azure DevOps auth: a PAT scoped to Code (read) + Pull Request (contribute)."
     echo "    Preferred: export AZURE_DEVOPS_EXT_PAT=<pat>. Or add \"pat\":\"<pat>\" to the"
-    echo "    ado section of the (gitignored) .agentic-loop.json — the env var wins if both are set."
+    echo "    ado section of the (gitignored) .agentic-workflow.json — the env var wins if both are set."
     echo "    Tip: settings shared across repos (organization, selfLogin, pat) can live in a"
-    echo "    user-scope ~/.agentic-loop.json; the repo file overrides it field by field."
+    echo "    user-scope ~/.agentic-workflow.json; the repo file overrides it field by field."
   fi
 
   # Q2 — PR sitter (experimental).
@@ -336,10 +336,10 @@ configure() {
     if [ "$platform" = "github" ]; then
       local query
       query="$(ask "PR search query" "is:open author:@me")"
-      add_loop "\"pr-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$query")\"}"
+      add_workflow "\"pr-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$query")\"}"
     else
       # query is a GitHub-only knob; on ADO the sitter watches its own PRs.
-      add_loop "\"pr-sitter\":{\"enabled\":true}"
+      add_workflow "\"pr-sitter\":{\"enabled\":true}"
     fi
   fi
 
@@ -353,9 +353,9 @@ configure() {
       if [ "$platform" = "github" ]; then
         local rquery
         rquery="$(ask "  Review-request search query" "is:open review-requested:@me")"
-        add_loop "\"review-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$rquery")\"}"
+        add_workflow "\"review-sitter\":{\"enabled\":true,\"query\":\"$(json_escape "$rquery")\"}"
       else
-        add_loop "\"review-sitter\":{\"enabled\":true}"
+        add_workflow "\"review-sitter\":{\"enabled\":true}"
       fi
     fi
 
@@ -371,7 +371,7 @@ configure() {
         4) floor="low" ;;
         *) floor="high" ;;
       esac
-      add_loop "\"dep-sitter\":{\"enabled\":true,\"severityFloor\":\"$floor\"}"
+      add_workflow "\"dep-sitter\":{\"enabled\":true,\"severityFloor\":\"$floor\"}"
     fi
 
     # main-sitter — the default branch's CI. Never pushes the watched branch.
@@ -379,24 +379,24 @@ configure() {
       local mbranch
       mbranch="$(ask "  Watched branch (blank = the remote default branch)" "")"
       if [ -n "$mbranch" ]; then
-        add_loop "\"main-sitter\":{\"enabled\":true,\"branch\":\"$(json_escape "$mbranch")\"}"
+        add_workflow "\"main-sitter\":{\"enabled\":true,\"branch\":\"$(json_escape "$mbranch")\"}"
       else
-        add_loop "\"main-sitter\":{\"enabled\":true}"
+        add_workflow "\"main-sitter\":{\"enabled\":true}"
       fi
     fi
   fi
 
-  # Q3 — worktrees. On by default (schema default: worktreesDir=".loop-worktrees"),
+  # Q3 — worktrees. On by default (schema default: worktreesDir=".workflow-worktrees"),
   # so nothing needs writing unless the path is overridden or opted out of.
   echo
   local wt_opt_out=""
-  if confirm "Worktree isolation runs by default (.loop-worktrees) — customize the path or opt out?"; then
+  if confirm "Worktree isolation runs by default (.workflow-worktrees) — customize the path or opt out?"; then
     if confirm "  Opt out (use shared-tree branch switching instead)?"; then
       add_member "\"worktreesDir\":false"
       wt_opt_out="1"
     else
       local wtdir
-      wtdir="$(ask "  Worktrees directory" ".loop-worktrees")"
+      wtdir="$(ask "  Worktrees directory" ".workflow-worktrees")"
       add_member "\"worktreesDir\":\"$(json_escape "$wtdir")\""
     fi
   fi
@@ -465,7 +465,7 @@ configure() {
     esac
   fi
 
-  flush_loops
+  flush_workflows
   printf '{\n  %s\n}\n' "$MEMBERS" > "$target_config"
 
   # Safety net: confirm the file parses. We author it deterministically, so a
@@ -478,7 +478,7 @@ configure() {
   fi
   ok "wrote $target_config ($scope scope)"
   if [ "$scope" = "user" ]; then
-    echo "         (shared across every repo you drive; a repo's own .agentic-loop.json overrides it field by field)"
+    echo "         (shared across every repo you drive; a repo's own .agentic-workflow.json overrides it field by field)"
   elif [ "$TARGET_DIR" != "$REPO_DIR" ]; then
     echo "         (the loop reads this from the project it runs in — move it if you drive a different repo)"
   fi
@@ -495,7 +495,7 @@ maybe_configure() {
     if [ "$scope" = "user" ]; then
       target_config="$(user_config_path)"
       if [ -z "$target_config" ]; then
-        skip "config wizard — cannot resolve a user-scope path (no \$AGENTIC_LOOP_USER_CONFIG and no \$HOME)"
+        skip "config wizard — cannot resolve a user-scope path (no \$AGENTIC_WORKFLOW_USER_CONFIG and no \$HOME)"
         return
       fi
     else
@@ -503,7 +503,7 @@ maybe_configure() {
         skip "config wizard — '$TARGET_DIR' is not a directory"
         return
       fi
-      target_config="$TARGET_DIR/.agentic-loop.json"
+      target_config="$TARGET_DIR/.agentic-workflow.json"
     fi
     if [ -f "$target_config" ]; then
       skip "$target_config already exists — leaving it untouched"
@@ -536,15 +536,15 @@ ensure_user_defaults() {
   local target_config
   target_config="$(user_config_path)"
   if [ -z "$target_config" ]; then
-    skip "user-scope defaults — cannot resolve a path (no \$AGENTIC_LOOP_USER_CONFIG and no \$HOME)"
+    skip "user-scope defaults — cannot resolve a path (no \$AGENTIC_WORKFLOW_USER_CONFIG and no \$HOME)"
     return
   fi
   if [ -f "$target_config" ]; then
     skip "$target_config already exists — leaving it untouched"
     return
   fi
-  if [ "${AGENTIC_LOOP_USER_CONFIG-x}" = "" ]; then
-    echo "note: \$AGENTIC_LOOP_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
+  if [ "${AGENTIC_WORKFLOW_USER_CONFIG-x}" = "" ]; then
+    echo "note: \$AGENTIC_WORKFLOW_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
     echo "      writing to $target_config anyway — unset it to have the loop read this file." >&2
   fi
   cat <<'EOF' > "$target_config"
@@ -553,9 +553,9 @@ ensure_user_defaults() {
   "tasksDir": "docs/tasks",
   "stageTimeoutMinutes": 60,
   "codePlatform": "github",
-  "worktreesDir": ".loop-worktrees",
+  "worktreesDir": ".workflow-worktrees",
   "reviewLenses": [],
-  "loops": {
+  "workflows": {
     "pr-sitter": { "enabled": false, "query": "is:open author:@me" },
     "review-sitter": { "enabled": false, "query": "is:open review-requested:@me" },
     "dep-sitter": { "enabled": false, "severityFloor": "high" },
@@ -579,12 +579,12 @@ EOF
   echo "           tasksDir (\"docs/tasks\")           — root of the task backlog"
   echo "           stageTimeoutMinutes (60)           — wall-clock cap per stage"
   echo "           codePlatform (\"github\")            — or \"ado\" (needs an \"ado\" section)"
-  echo "           worktreesDir (\".loop-worktrees\")   — per-task git worktree isolation; false to opt out"
+  echo "           worktreesDir (\".workflow-worktrees\")   — per-task git worktree isolation; false to opt out"
   echo "           reviewLenses ([])                  — extra REVIEW passes, e.g. [\"security\"]"
-  echo "           loops.pr-sitter    (off) — watches your own open PRs"
-  echo "           loops.review-sitter (off) — comments on PRs awaiting your review"
-  echo "           loops.dep-sitter   (off) — opens draft PRs for vulnerable/outdated deps"
-  echo "           loops.main-sitter  (off) — opens a draft PR when the default branch's CI goes red"
+  echo "           workflows.pr-sitter    (off) — watches your own open PRs"
+  echo "           workflows.review-sitter (off) — comments on PRs awaiting your review"
+  echo "           workflows.dep-sitter   (off) — opens draft PRs for vulnerable/outdated deps"
+  echo "           workflows.main-sitter  (off) — opens a draft PR when the default branch's CI goes red"
   echo "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
 }
 

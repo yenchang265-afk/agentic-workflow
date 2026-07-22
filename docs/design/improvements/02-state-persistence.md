@@ -127,7 +127,7 @@ task-less states never snapshot).
 - `README.md` — soften the "in-memory only" known limitation: state now
   survives restarts for task-driven loops; recovery resumes at the exact
   stage.
-- `skills/loop-orchestration/SKILL.md` — recovery section: snapshot-first,
+- `skills/workflow-orchestration/SKILL.md` — recovery section: snapshot-first,
   plan-fallback.
 - `skills/task-backlog-management/SKILL.md` — "Identifying an interrupted
   loop": the `.state.json` presence signal joins the BUILD-note heuristics.

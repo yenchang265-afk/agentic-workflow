@@ -3,7 +3,7 @@ import { z } from "zod"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, LoopState } from "../loop/state.js"
+import type { AdoAccessMethod, CodePlatform, LoopState } from "../workflow/state.js"
 import { slugify } from "../task/schema.js"
 import type { WorkItem } from "./types.js"
 

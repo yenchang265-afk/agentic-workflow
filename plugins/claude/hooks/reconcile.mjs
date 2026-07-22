@@ -94,7 +94,7 @@ var main = async () => {
   const cwd = input.cwd || process.cwd();
   let tasksDir = "docs/tasks";
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-loop.json"), "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"));
     if (typeof cfg.tasksDir === "string" && cfg.tasksDir) tasksDir = cfg.tasksDir;
   } catch {
   }
@@ -122,12 +122,12 @@ var main = async () => {
   const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const serverBuilt = fs.existsSync(path.join(pluginRoot, "mcp-server", "dist", "server.js"));
   const lines = [];
-  if (!serverBuilt) lines.push("agentic-loop: MCP server not built (mcp-server/dist/server.js missing) \u2014 gates and loop tools will not work. Run plugins/claude/install.sh, then restart the session.");
-  if (notes.length) lines.push(`agentic-loop: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} \u2014 run \`/agentic-loop:engineering recover <id>\` to resume.`);
-  if (snapshots.length) lines.push(`agentic-loop: loop state snapshot(s) present: ${snapshots.join(", ")} \u2014 \`/agentic-loop:engineering recover <id>\` resumes at the exact stage.`);
-  if (planClaims.length) lines.push(`agentic-loop: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} \u2014 a prior run died mid-PLAN; \`loop_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
+  if (!serverBuilt) lines.push("agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) \u2014 gates and loop tools will not work. Run plugins/claude/install.sh, then restart the session.");
+  if (notes.length) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} \u2014 run \`/agentic-workflow:engineering recover <id>\` to resume.`);
+  if (snapshots.length) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshots.join(", ")} \u2014 \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`);
+  if (planClaims.length) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} \u2014 a prior run died mid-PLAN; \`loop_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
   if (hasAnomalies(anomalies)) {
-    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-loop: ${line} \u2014 \`loop_doctor\` reports and repairs.`);
+    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} \u2014 \`loop_doctor\` reports and repairs.`);
   }
   if (!lines.length) return process.exit(0);
   process.stdout.write(

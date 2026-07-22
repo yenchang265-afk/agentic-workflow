@@ -125,7 +125,7 @@ Zod 結構描述會完全鏡射 `LoopState`（階段列舉取自 `STAGES`，`art
 
 - `README.md` — 軟化「僅存在於記憶體中」這條已知限制：對於任務驅動的
   迴圈，狀態現在能在重啟後存活；復原會從精確的階段恢復。
-- `skills/loop-orchestration/SKILL.md` — 復原章節：快照優先，計畫回退。
+- `skills/workflow-orchestration/SKILL.md` — 復原章節：快照優先，計畫回退。
 - `skills/task-backlog-management/SKILL.md` — 「識別中斷的迴圈」：
   `.state.json` 的存在訊號會加入 BUILD 附註的啟發式判斷之列。
 - `docs/design/threat-model.md` — 註明快照在讀取時會經過 zod 驗證（屬於

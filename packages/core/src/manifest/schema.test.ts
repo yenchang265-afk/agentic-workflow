@@ -121,8 +121,8 @@ test("rejects requiredAxes on a work stage — only a verdict can carry axes", (
 })
 
 test("the shipped engineering manifest requires all five review axes and none on verify", () => {
-  const loopsDir = path.join(import.meta.dirname, "..", "..", "loops")
-  const m = parseManifest(JSON.parse(fs.readFileSync(path.join(loopsDir, "engineering", "loop.json"), "utf8")))
+  const workflowsDir = path.join(import.meta.dirname, "..", "..", "workflows")
+  const m = parseManifest(JSON.parse(fs.readFileSync(path.join(workflowsDir, "engineering", "workflow.json"), "utf8")))
   assert.deepEqual(m.stages.find((s) => s.name === "review")?.requiredAxes, [
     "correctness",
     "readability",
@@ -210,7 +210,7 @@ test("gateStatuses is empty when no effect targets a status", () => {
 })
 
 test("gateStatuses derives the engineering kind's gates from its shipped manifest", () => {
-  const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "loops", "engineering", "loop.json"), "utf8"))
+  const raw = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "..", "workflows", "engineering", "workflow.json"), "utf8"))
   // "draft" comes from workSource.humanGates, not the transition table — nothing
   // parks into it, a human authors it there.
   assert.deepEqual(gateStatuses(parseManifest(raw)).sort(), ["draft", "in-review", "plan-review"])

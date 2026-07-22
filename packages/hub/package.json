@@ -1,7 +1,7 @@
 {
-  "name": "@agentic-loop/hub",
+  "name": "@agentic-workflow/hub",
   "version": "0.1.0-beta.2",
-  "description": "Local admin hub for agentic-loop (beta) — visual loop creator, loop monitor",
+  "description": "Local admin hub for agentic-workflow (beta) — visual workflow creator, workflow monitor",
   "license": "MIT",
   "type": "module",
   "private": true,
@@ -13,7 +13,7 @@
     "test": "node --import tsx --test src/server/*.test.ts src/server/routes/*.test.ts src/server/tokens/*.test.ts src/web/creator/*.test.ts"
   },
   "dependencies": {
-    "@agentic-loop/core": "*",
+    "@agentic-workflow/core": "*",
     "zod": "^4.1.8"
   },
   "devDependencies": {

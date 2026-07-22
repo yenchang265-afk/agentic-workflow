@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies (builds @agentic-loop/core via prepare)
+      - name: Install dependencies (builds @agentic-workflow/core via prepare)
         run: npm ci
 
       - name: Typecheck (all workspaces)
@@ -38,7 +38,7 @@ jobs:
 
       - name: Build and smoke-run the MCP server
         run: |
-          npm run build -w agentic-loop-mcp
+          npm run build -w agentic-workflow-mcp
           out=$(node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
           echo "$out"
           echo "$out" | grep -q "MCP server ready"

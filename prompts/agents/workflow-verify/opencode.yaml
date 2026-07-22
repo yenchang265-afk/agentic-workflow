@@ -1,0 +1,8 @@
+description: Verifier for the VERIFY stage. Runs tests and checks the build against the plan's acceptance criteria, then records a WORKFLOW_VERIFY verdict via the loop_verdict tool. Runs an allowlisted set of read/test commands but never edits files or fixes code.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # {{allowlist}} — globs generated from the stage's bashAllowlist in workflows/*/workflow.json; edit the manifest, not here

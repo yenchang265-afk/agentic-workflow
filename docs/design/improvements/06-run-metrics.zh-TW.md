@@ -94,6 +94,6 @@ iterations used: 2/3 · total: 33m 00s · outcome: done (review passed)
 ## 待更新文件
 
 - `README.md` —— 在稽核／可觀測性段落中提及執行摘要區塊。
-- `skills/loop-orchestration/SKILL.md` —— 執行紀錄檔段落：摘要包含什麼
+- `skills/workflow-orchestration/SKILL.md` —— 執行紀錄檔段落：摘要包含什麼
   內容，以及它讓哪種調校迴圈成為可能（根據觀察到的數字調整
   `maxIterations` / `stageTimeoutMinutes`）。

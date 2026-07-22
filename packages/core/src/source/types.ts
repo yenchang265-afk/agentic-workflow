@@ -1,8 +1,8 @@
-import type { LoopState } from "../loop/state.js"
+import type { LoopState } from "../workflow/state.js"
 
 /**
  * The work-source abstraction the unified scheduler polls: a source knows how
- * to find claimable units of work for one loop kind (backlog folders, GitHub
+ * to find claimable units of work for one workflow kind (backlog folders, GitHub
  * PRs, …), claim them atomically, and release a claim whose drive died before
  * doing real work. The scheduler (`scheduler/scheduler.ts`) walks sources in
  * priority order; the winning item carries a fully-constructed entry
@@ -18,7 +18,7 @@ export interface ClaimSkipReason {
 /** One claimed unit of work, ready to drive. */
 export interface WorkItem {
   readonly id: string
-  /** The loop kind (manifest) that drives this item. */
+  /** The workflow kind (manifest) that drives this item. */
   readonly loopKind: string
   /** Human-facing title for toasts/logs. */
   readonly title: string

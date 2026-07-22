@@ -4,7 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
+import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
 import { REDACTED, type ConfigLayerResponse, type KindBoardInfo, type SaveConfigResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
@@ -35,12 +35,12 @@ interface Fixture {
 
 const makeFixture = (repoCfg?: unknown, userCfg?: unknown, git = false): Fixture => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hub-config-"))
-  const userFile = path.join(dir, "user-agentic-loop.json")
+  const userFile = path.join(dir, "user-agentic-workflow.json")
   // Point the user layer at a fixture file — never a developer's real
-  // ~/.agentic-loop.json, which core's own docs warn tests about.
-  process.env["AGENTIC_LOOP_USER_CONFIG"] = userFile
+  // ~/.agentic-workflow.json, which core's own docs warn tests about.
+  process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = userFile
 
-  if (repoCfg !== undefined) fs.writeFileSync(path.join(dir, ".agentic-loop.json"), typeof repoCfg === "string" ? repoCfg : JSON.stringify(repoCfg, null, 2))
+  if (repoCfg !== undefined) fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), typeof repoCfg === "string" ? repoCfg : JSON.stringify(repoCfg, null, 2))
   if (userCfg !== undefined) fs.writeFileSync(userFile, JSON.stringify(userCfg, null, 2))
   if (git) {
     execFileSync("git", ["init", "-q"], { cwd: dir, stdio: "pipe" })
@@ -55,7 +55,7 @@ const makeFixture = (repoCfg?: unknown, userCfg?: unknown, git = false): Fixture
       tasksDir: "docs/tasks",
       boards: BOARDS,
       config: DEFAULT_CONFIG,
-      loopsDir: path.join(dir, "loops-unused"),
+      workflowsDir: path.join(dir, "workflows-unused"),
       projectsDir: "/nonexistent",
       opencodeDbPath: "/nonexistent.db",
       client: fsClient,
@@ -71,7 +71,7 @@ const makeFixture = (repoCfg?: unknown, userCfg?: unknown, git = false): Fixture
 }
 
 const cleanup = (f: Fixture): void => {
-  delete process.env["AGENTIC_LOOP_USER_CONFIG"]
+  delete process.env["AGENTIC_WORKFLOW_USER_CONFIG"]
   fs.rmSync(f.dir, { recursive: true, force: true })
 }
 
@@ -82,7 +82,7 @@ const save = async (f: Fixture, body: unknown): Promise<JsonResponse> =>
   saveConfig(f.deps, { params: {}, query: new URLSearchParams(), body })
 
 const repoFile = (f: Fixture): Record<string, unknown> =>
-  JSON.parse(fs.readFileSync(path.join(f.dir, ".agentic-loop.json"), "utf8")) as Record<string, unknown>
+  JSON.parse(fs.readFileSync(path.join(f.dir, ".agentic-workflow.json"), "utf8")) as Record<string, unknown>
 
 // --- Crux A: the strip footgun ----------------------------------------------
 
@@ -162,7 +162,7 @@ test("writing a plaintext pat into a repo file that isn't gitignored is refused"
   assert.equal(JSON.stringify(repoFile(f)).includes("leak-me"), false, "nothing was written")
 
   // Gitignored → allowed.
-  fs.writeFileSync(path.join(f.dir, ".gitignore"), ".agentic-loop.json\n")
+  fs.writeFileSync(path.join(f.dir, ".gitignore"), ".agentic-workflow.json\n")
   const ok = await save(f, { layer: "repo", edits: [{ path: "ado.pat", value: "fine" }] })
   assert.equal(ok.status, 200)
   cleanup(f)
@@ -193,7 +193,7 @@ test("validation runs against the MERGED view, not the layer alone", async () =>
 })
 
 test("knob warnings annotate a save but never block it", async () => {
-  const f = makeFixture({ loops: { "dep-sitter": { severityfloor: "high" } } })
+  const f = makeFixture({ workflows: { "dep-sitter": { severityfloor: "high" } } })
   const res = await save(f, { layer: "repo", edits: [{ path: "maxIterations", value: 4 }] })
 
   assert.equal(res.status, 200, "warnings are advisory")

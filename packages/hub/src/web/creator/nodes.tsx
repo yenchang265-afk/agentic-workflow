@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react"
-import type { StageDef } from "@agentic-loop/core/manifest/schema"
+import type { StageDef } from "@agentic-workflow/core/manifest/schema"
 
 /** Custom React Flow nodes: work stages (single onDone output), check stages
  *  (pass/fail/error outputs), and terminal pills (park/done/stop). */

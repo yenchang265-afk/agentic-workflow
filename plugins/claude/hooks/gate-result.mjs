@@ -17,7 +17,7 @@
 
 /** The actionable block message when the plugin's MCP server was never built. */
 export const missingDistMessage = (label) =>
-  `agentic-loop: can't run the "${label}" gate — the plugin is not built ` +
+  `agentic-workflow: can't run the "${label}" gate — the plugin is not built ` +
   `(mcp-server/dist/server.js is missing). Run plugins/claude/install.sh, then retry.`
 
 /**

@@ -1,5 +1,5 @@
 {
-  "name": "agentic-loop",
+  "name": "agentic-workflow",
   "version": "0.0.1",
   "description": "opencode plugin for transforming engineer workflow into an agentic loop",
   "license": "MIT",
@@ -23,10 +23,10 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --import tsx --test src/*.test.ts src/loop/*.test.ts"
+    "test": "node --import tsx --test src/*.test.ts src/workflow/*.test.ts"
   },
   "dependencies": {
-    "@agentic-loop/core": "*",
+    "@agentic-workflow/core": "*",
     "croner": "^9.1.0",
     "yaml": "^2.9.0",
     "zod": "^4.1.8"

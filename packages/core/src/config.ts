@@ -3,15 +3,15 @@ import os from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
-import { ADO_ACCESS_METHODS, CODE_PLATFORMS, type AdoAccessMethod, type Config, type LoopTrigger } from "./loop/state.js"
+import { ADO_ACCESS_METHODS, CODE_PLATFORMS, type AdoAccessMethod, type Config, type LoopTrigger } from "./workflow/state.js"
 import type { StageDef } from "./manifest/schema.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
 /**
  * Loop configuration, layered from two optional files: a user-scope
- * `~/.agentic-loop.json` (settings shared across every repo — e.g.
+ * `~/.agentic-workflow.json` (settings shared across every repo — e.g.
  * `ado.organization`, `ado.selfLogin`, `ado.pat`) under a repo-scope
- * `.agentic-loop.json` at the repo root, which overrides it field by field.
+ * `.agentic-workflow.json` at the repo root, which overrides it field by field.
  * The repo layer is read via the host client; the user layer sits outside the
  * project directory, so it is read with Node fs directly (precedent:
  * manifest/load.ts). Both files are optional; every field has a sane default.
@@ -48,8 +48,8 @@ export const ProjectManagementSchema = z.object({
 export type ProjectManagement = z.infer<typeof ProjectManagementSchema>
 
 /**
- * How a watching host schedules claims for a loop kind — see the `LoopTrigger`
- * type in loop/state.ts for semantics. Core validates shape only; cron
+ * How a watching host schedules claims for a workflow kind — see the `LoopTrigger`
+ * type in workflow/state.ts for semantics. Core validates shape only; cron
  * `schedule` syntax is validated by the host that honors it (the OpenCode
  * plugin), and the pull-only Claude host ignores the field entirely.
  */
@@ -71,10 +71,10 @@ const BaseConfigSchema = z.object({
    * loop's BUILD/VERIFY/REVIEW runs against its own worktree instead of
    * switching branches in the shared checkout — the human's tree is never
    * touched and concurrent watch sessions become safe. Defaults to
-   * `.loop-worktrees`; set explicitly to `false` to opt back into shared-tree
+   * `.workflow-worktrees`; set explicitly to `false` to opt back into shared-tree
    * branch switching. See docs/design/improvements/01.
    */
-  worktreesDir: z.union([z.string().min(1), z.literal(false)]).default(".loop-worktrees"),
+  worktreesDir: z.union([z.string().min(1), z.literal(false)]).default(".workflow-worktrees"),
   /** Optional shell command run inside a freshly created worktree (e.g. "npm ci"). */
   worktreeSetup: z.string().min(1).optional(),
   /**
@@ -84,20 +84,20 @@ const BaseConfigSchema = z.object({
    */
   reviewLenses: z.array(z.string().min(1)).max(5).default([]),
   /**
-   * Per-loop-kind sections keyed by kind (a `loops/<kind>/` manifest).
+   * Per-workflow-kind sections keyed by kind (a `workflows/<kind>/` manifest).
    * Engineering runs unless explicitly disabled; every other kind is opt-in
    * (`enabled: true`). Kind-specific knobs ride along and are validated by
    * the kind itself. See docs/configuration.md.
    */
-  loops: z
+  workflows: z
     .record(
       z.string(),
       z.looseObject({
         /**
-         * Deliberately NOT defaulted: `enabledLoopKinds` discriminates on
+         * Deliberately NOT defaulted: `enabledWorkflowKinds` discriminates on
          * `=== true` for non-engineering kinds, so a default would make every
          * mentioned kind opt-OUT and a knob-only section would silently start a
-         * loop. Engineering reads it as `!== false`, so undefined keeps it on.
+         * workflow. Engineering reads it as `!== false`, so undefined keeps it on.
          */
         enabled: z.boolean().optional(),
         /** Per-kind override of the global `codePlatform`. */
@@ -114,7 +114,7 @@ const BaseConfigSchema = z.object({
    * default) or `ado` (Azure DevOps via its REST API). GitHub auth is delegated
    * to `gh auth login`; ADO auth is a Personal Access Token in the
    * `AZURE_DEVOPS_EXT_PAT` env var. Overridable per kind via
-   * `loops.<kind>.codePlatform`.
+   * `workflows.<kind>.codePlatform`.
    */
   codePlatform: CodePlatformSchema.default("github"),
   /** Azure DevOps coordinates; required when any effective platform is `ado`. */
@@ -143,13 +143,13 @@ const BaseConfigSchema = z.object({
       /**
        * The PAT in plaintext — a fallback for when AZURE_DEVOPS_EXT_PAT is unset
        * (the env var wins). Prefer the env var; if set here, keep
-       * `.agentic-loop.json` gitignored so the secret is never committed.
+       * `.agentic-workflow.json` gitignored so the secret is never committed.
        */
       pat: z.string().min(1).optional(),
       /**
        * Extra HTTP headers sent on every ADO REST call (e.g. a proxy auth or
        * routing header). Keys and values must be non-empty. The
-       * `AGENTIC_LOOP_ADO_HEADERS` env var (JSON) overrides these key by key.
+       * `AGENTIC_WORKFLOW_ADO_HEADERS` env var (JSON) overrides these key by key.
        */
       customHeaders: z.record(z.string().min(1), z.string().min(1)).optional(),
       /**
@@ -170,7 +170,7 @@ const BaseConfigSchema = z.object({
 const isAdo = (p: CodePlatform | undefined): boolean => p === "ado"
 
 export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
-  const platforms = [c.codePlatform, ...Object.values(c.loops).map((section) => section.codePlatform)]
+  const platforms = [c.codePlatform, ...Object.values(c.workflows).map((section) => section.codePlatform)]
   const wantsAdo = platforms.some(isAdo)
   if (wantsAdo && !c.ado) {
     ctx.addIssue({
@@ -191,11 +191,11 @@ export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
 })
 
 /**
- * The loop kinds this config activates, in claim-priority order: engineering
+ * The workflow kinds this config activates, in claim-priority order: engineering
  * first (unless disabled), then any opted-in kinds in config order. Pure.
  */
-export const enabledLoopKinds = (config: Config): string[] => {
-  const sections = config.loops
+export const enabledWorkflowKinds = (config: Config): string[] => {
+  const sections = config.workflows
   const kinds: string[] = []
   if (sections["engineering"]?.enabled !== false) kinds.push("engineering")
   for (const [kind, section] of Object.entries(sections)) {
@@ -204,23 +204,23 @@ export const enabledLoopKinds = (config: Config): string[] => {
   return kinds
 }
 
-/** The code platform a loop kind's PR source talks to: per-kind override, else the global default. Pure. */
+/** The code platform a workflow kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config: Config, kind: string): CodePlatform =>
-  config.loops[kind]?.codePlatform ?? config.codePlatform ?? "github"
+  config.workflows[kind]?.codePlatform ?? config.codePlatform ?? "github"
 
 /** How stage agents talk to ADO: config `ado.access`, else the `az` default. Pure. */
 export const adoAccessFor = (config: Config): AdoAccessMethod => config.ado?.access ?? "az"
 
-/** How a watching host schedules claims for a loop kind: configured trigger, else poll. Pure. */
+/** How a watching host schedules claims for a workflow kind: configured trigger, else poll. Pure. */
 export const triggerFor = (config: Config, kind: string): LoopTrigger =>
-  config.loops[kind]?.trigger ?? { type: "poll" }
+  config.workflows[kind]?.trigger ?? { type: "poll" }
 
 /**
- * The model a stage runs with: config `loops.<kind>.stageModels.<stage>`, else
+ * The model a stage runs with: config `workflows.<kind>.stageModels.<stage>`, else
  * the manifest stage's `model`, else undefined (the host's default). Pure.
  */
 export const modelFor = (config: Config, kind: string, def: StageDef): string | undefined =>
-  config.loops[kind]?.stageModels?.[def.name] ?? def.model
+  config.workflows[kind]?.stageModels?.[def.name] ?? def.model
 
 /**
  * The `stageModels` keys that name no stage of `kind` — a typo'd or
@@ -230,7 +230,7 @@ export const modelFor = (config: Config, kind: string, def: StageDef): string | 
  * hosts surface this as a warning once the kind's stages are known. Pure.
  */
 export const unknownStageModelKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
-  Object.keys(config.loops[kind]?.stageModels ?? {}).filter((name) => !stageNames.includes(name))
+  Object.keys(config.workflows[kind]?.stageModels ?? {}).filter((name) => !stageNames.includes(name))
 
 /**
  * The stage's `requiredAxes` that no configured review lens names — the axes
@@ -287,14 +287,14 @@ export const applyAdoPatEnv = (config: { readonly ado?: { readonly pat?: string 
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})
 
-const CONFIG_FILE = ".agentic-loop.json"
+const CONFIG_FILE = ".agentic-workflow.json"
 
 /** Env override for the user-scope config path; set to "" to disable the layer (e.g. in CI). */
-export const USER_CONFIG_ENV = "AGENTIC_LOOP_USER_CONFIG"
+export const USER_CONFIG_ENV = "AGENTIC_WORKFLOW_USER_CONFIG"
 
 /**
- * Where the user-scope config lives: $AGENTIC_LOOP_USER_CONFIG when set ("" →
- * layer disabled), else `~/.agentic-loop.json`. Returns null when the layer is
+ * Where the user-scope config lives: $AGENTIC_WORKFLOW_USER_CONFIG when set ("" →
+ * layer disabled), else `~/.agentic-workflow.json`. Returns null when the layer is
  * disabled or no home directory can be resolved.
  */
 export const resolveUserConfigPath = (): string | null => {
@@ -346,7 +346,7 @@ export interface LoadConfigOptions {
   /**
    * Absolute path of the user-scope config file. `null` disables the layer;
    * undefined → `resolveUserConfigPath()`. Tests must pass an explicit value
-   * so a developer's real `~/.agentic-loop.json` never leaks in.
+   * so a developer's real `~/.agentic-workflow.json` never leaks in.
    */
   readonly userConfigPath?: string | null
 }
@@ -380,7 +380,7 @@ export const readUserLayer = (userPath: string): unknown => {
 
 /**
  * Load a host config by layering the user-scope file (if any) under the repo's
- * `.agentic-loop.json` (repo wins field by field), falling back to the
+ * `.agentic-workflow.json` (repo wins field by field), falling back to the
  * schema's defaults when both are absent.
  */
 export const loadConfigWith = async <T>(

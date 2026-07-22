@@ -1,13 +1,13 @@
 import fs from "node:fs"
 import path from "node:path"
-import { ConfigSchema, resolveUserConfigPath } from "@agentic-loop/core/config"
-import type { Shell } from "@agentic-loop/core/host"
+import { ConfigSchema, resolveUserConfigPath } from "@agentic-workflow/core/config"
+import type { Shell } from "@agentic-workflow/core/host"
 import { REDACTED, type ConfigLayer } from "../shared/api.js"
 import { isPlainObject, valueAt } from "./configlayers.js"
 import type { HubDeps } from "./deps.js"
 
 /**
- * Raw read/write of the two `.agentic-loop.json` layers.
+ * Raw read/write of the two `.agentic-workflow.json` layers.
  *
  * **Raw is the model; zod is only a linter.** `ConfigSchema` is a plain
  * `z.object`, so zod v4 *strips* keys it doesn't know. Parsing a config and
@@ -25,7 +25,7 @@ export const SECRET_PATHS: readonly (readonly string[])[] = [["ado", "pat"]]
 export const knownTopLevelKeys = (): readonly string[] => Object.keys(ConfigSchema.shape)
 
 export interface RawLayer {
-  /** Absolute path, or null when the layer is disabled (AGENTIC_LOOP_USER_CONFIG="" / no home). */
+  /** Absolute path, or null when the layer is disabled (AGENTIC_WORKFLOW_USER_CONFIG="" / no home). */
   readonly path: string | null
   /** The file's JSON, or null when absent/unreadable/unparseable. */
   readonly raw: Record<string, unknown> | null
@@ -34,7 +34,7 @@ export interface RawLayer {
 }
 
 export const layerPath = (deps: HubDeps, layer: ConfigLayer): string | null =>
-  layer === "repo" ? path.join(deps.directory, ".agentic-loop.json") : resolveUserConfigPath()
+  layer === "repo" ? path.join(deps.directory, ".agentic-workflow.json") : resolveUserConfigPath()
 
 /**
  * Read one layer's raw JSON. A malformed file is reported, not thrown: the whole

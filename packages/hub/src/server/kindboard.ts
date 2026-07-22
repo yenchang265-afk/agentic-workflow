@@ -1,8 +1,8 @@
-import { enabledLoopKinds } from "@agentic-loop/core/config"
-import type { Config } from "@agentic-loop/core/loop/state"
-import { loadManifest } from "@agentic-loop/core/manifest/load"
-import { gateStatuses } from "@agentic-loop/core/manifest/schema"
-import type { Log } from "@agentic-loop/core/host"
+import { enabledWorkflowKinds } from "@agentic-workflow/core/config"
+import type { Config } from "@agentic-workflow/core/workflow/state"
+import { loadManifest } from "@agentic-workflow/core/manifest/load"
+import { gateStatuses } from "@agentic-workflow/core/manifest/schema"
+import type { Log } from "@agentic-workflow/core/host"
 import type { KindBoardInfo } from "../shared/api.js"
 
 /**
@@ -16,11 +16,11 @@ import type { KindBoardInfo } from "../shared/api.js"
  * ship. Note: two backlog kinds sharing status-folder names in one tasksDir
  * is untested territory; boards render per kind either way.
  */
-export const kindBoards = (loopsDir: string, config: Config, log?: Log): KindBoardInfo[] => {
+export const kindBoards = (workflowsDir: string, config: Config, log?: Log): KindBoardInfo[] => {
   const boards: KindBoardInfo[] = []
-  for (const kind of enabledLoopKinds(config)) {
+  for (const kind of enabledWorkflowKinds(config)) {
     try {
-      const { manifest } = loadManifest(loopsDir, kind)
+      const { manifest } = loadManifest(workflowsDir, kind)
       const source = manifest.workSource
       boards.push({
         kind,

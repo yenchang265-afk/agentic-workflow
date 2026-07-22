@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { defaultLoopsDir } from "../manifest/dir.js"
+import { defaultWorkflowsDir } from "../manifest/dir.js"
 import { loadManifest } from "../manifest/load.js"
 import { emptyLedger, type PrSnapshot } from "./ledger.js"
 import { prWorkItem, terminalLedgerUpdate, triggerSummary } from "./pr-shared.js"
@@ -11,7 +11,7 @@ import { prWorkItem, terminalLedgerUpdate, triggerSummary } from "./pr-shared.js
  * the real pr-sitter / review-sitter manifests.
  */
 
-const LOOPS_DIR = defaultLoopsDir()
+const WORKFLOWS_DIR = defaultWorkflowsDir()
 const NOW = "2026-07-05T00:00:00Z"
 
 const snapshot = (over: Partial<PrSnapshot> = {}): PrSnapshot => ({
@@ -53,7 +53,7 @@ test("a genuine stop records a failed attempt against the SNAPSHOT head; a retry
 })
 
 test("prWorkItem enters the pr-sitter's first stage with an author-role goal and reusable git refs", () => {
-  const loaded = loadManifest(LOOPS_DIR, "pr-sitter")
+  const loaded = loadManifest(WORKFLOWS_DIR, "pr-sitter")
   const item = prWorkItem(loaded, "github", snapshot(), ["failing-checks"])
   assert.equal(item.id, "pr-7")
   assert.equal(item.loopKind, "pr-sitter")
@@ -64,7 +64,7 @@ test("prWorkItem enters the pr-sitter's first stage with an author-role goal and
 })
 
 test("prWorkItem gives a reviewer-role kind a comment-only goal", () => {
-  const loaded = loadManifest(LOOPS_DIR, "review-sitter")
+  const loaded = loadManifest(WORKFLOWS_DIR, "review-sitter")
   const item = prWorkItem(loaded, "github", snapshot(), ["review-requested"])
   assert.match(item.state.goal, /Never approve, request changes, or merge/)
   assert.equal(item.loopKind, "review-sitter")

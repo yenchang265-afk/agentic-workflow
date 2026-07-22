@@ -5,7 +5,7 @@
  * command-chaining bypass lives in exactly one place.
  *
  * The entry imports these; esbuild inlines them into the bundled
- * ../check-stage-guard.mjs. Keep this file dependency-free (no @agentic-loop/core,
+ * ../check-stage-guard.mjs. Keep this file dependency-free (no @agentic-workflow/core,
  * no node built-ins) so a test can import it under bare `node --test`.
  *
  * TWIN FILE: `packages/core/src/task/write-backstop.ts` carries the same
@@ -14,7 +14,7 @@
  * test suites share their vectors so the twins can't drift silently.
  */
 
-// Built-in fallback lists (ported from loop-verify.md / loop-review.md
+// Built-in fallback lists (ported from workflow-verify.md / workflow-review.md
 // frontmatter), used only for markers written by older servers that didn't stamp
 // the manifest allowlist. The compound `cd <dir> && <runner>` test form is NOT
 // listed here: `commandAllowed` splits on operators and accepts a bare `cd` as

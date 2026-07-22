@@ -1,0 +1,3 @@
+name: workflow-review
+description: Reviewer for the REVIEW stage of the agentic loop. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records the verdict via the loop_verdict MCP tool. On FAIL the loop re-builds. Read-only; bash constrained by a PreToolUse allowlist.
+tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__loop_verdict, mcp__plugin_agentic-workflow_agentic-workflow__loop_verdict

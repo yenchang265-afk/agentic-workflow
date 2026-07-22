@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
+import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
 import type { AssetsResponse, GenPromptsResponse, ScaffoldResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
@@ -14,7 +14,7 @@ const depsFor = (directory: string): HubDeps => ({
   tasksDir: "docs/tasks",
   boards: [],
   config: DEFAULT_CONFIG,
-  loopsDir: "/unused-loops",
+  workflowsDir: "/unused-workflows",
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",
   client: fsClient,
@@ -139,12 +139,12 @@ test("scaffoldCommand and scaffoldSkill write idiomatic stubs", async () => {
   const repo = tempRepo()
   const deps = depsFor(repo)
 
-  const cmd = await scaffoldCommand(deps, req({ name: "triage", description: "Triage: the incoming work.", agent: "loop-triage" }))
+  const cmd = await scaffoldCommand(deps, req({ name: "triage", description: "Triage: the incoming work.", agent: "workflow-triage" }))
   assert.equal(cmd.status, 200)
   const cmdMd = fs.readFileSync(path.join(repo, "plugins", "opencode", "commands", "triage.md"), "utf8")
   // description contains a colon → JSON-quoted in the frontmatter
   assert.match(cmdMd, /description: "Triage: the incoming work\."/)
-  assert.match(cmdMd, /agent: loop-triage/)
+  assert.match(cmdMd, /agent: workflow-triage/)
   assert.match(cmdMd, /subtask: true/)
   assert.match(cmdMd, /\*\*\$ARGUMENTS\*\*/)
 

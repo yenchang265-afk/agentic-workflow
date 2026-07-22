@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import type { StageTokens } from "@agentic-loop/core/loop/metrics"
+import type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
 
 /**
  * opencode.db reader — backfill for opencode runs that predate the driver's

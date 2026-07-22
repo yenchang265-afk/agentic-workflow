@@ -1,6 +1,6 @@
 English | [繁體中文](configuration.zh-TW.md)
 
-# Configuration (`.agentic-loop.json`)
+# Configuration (`.agentic-workflow.json`)
 
 Optional JSON file at the repo root. Every field has a sane default; a
 misconfigured file fails fast with a clear message instead of silently
@@ -8,23 +8,23 @@ falling back.
 
 ## Quick-start templates
 
-Copy the block for your platform into `.agentic-loop.json`, replace the
+Copy the block for your platform into `.agentic-workflow.json`, replace the
 placeholders, done — everything else keeps its default. The rest of this
 page is the field-by-field reference; you shouldn't need it for a first setup.
 
 **GitHub** (the default platform — this file is equivalent to having no
-`.agentic-loop.json` at all, plus `pr-sitter` turned on):
+`.agentic-workflow.json` at all, plus `pr-sitter` turned on):
 
 ```json
 {
-  "loops": {
+  "workflows": {
     "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```
 
 Replace `query` with the PR search you want the sitter to watch, or delete
-the whole `loops` block if you only want the engineering loop (its default).
+the whole `workflows` block if you only want the engineering loop (its default).
 
 **Azure DevOps:**
 
@@ -36,7 +36,7 @@ the whole `loops` block if you only want the engineering loop (its default).
     "project": "<your-project>",
     "selfLogin": "<your-login-or-service-account-email>"
   },
-  "loops": {
+  "workflows": {
     "pr-sitter": { "enabled": true }
   }
 }
@@ -54,14 +54,14 @@ its tradeoffs.
 
 Config is resolved from two optional layers:
 
-1. **User scope** — `~/.agentic-loop.json`, applied to every repo you run the
-   loop in. Override the path with `AGENTIC_LOOP_USER_CONFIG`; set it to `""`
+1. **User scope** — `~/.agentic-workflow.json`, applied to every repo you run the
+   loop in. Override the path with `AGENTIC_WORKFLOW_USER_CONFIG`; set it to `""`
    to disable the layer entirely (e.g. in CI).
-2. **Repo scope** — `.agentic-loop.json` at the repo root, which **overrides
+2. **Repo scope** — `.agentic-workflow.json` at the repo root, which **overrides
    the user layer field by field**.
 
-The merge is a field-level deep merge: nested objects (`ado`, `loops`, each
-`loops.<kind>` section) merge per key recursively; arrays (`reviewLenses`) and
+The merge is a field-level deep merge: nested objects (`ado`, `workflows`, each
+`workflows.<kind>` section) merge per key recursively; arrays (`reviewLenses`) and
 scalars replace wholesale. Layers merge *before* validation, so defaults never
 clobber an explicit value from either file, and cross-field requirements (like
 `codePlatform: "ado"` needing `ado.selfLogin`) are checked against the
@@ -71,25 +71,25 @@ combined view — the intended split being:
   `ado.organization`, `ado.selfLogin`, `ado.pat` — plus personal defaults such
   as `maxIterations`.
 - **Repo scope**: everything tied to the project — `codePlatform`,
-  `ado.project`, `ado.repository`, `tasksDir`, `loops`, worktree settings.
+  `ado.project`, `ado.repository`, `tasksDir`, `workflows`, worktree settings.
 
-Keep `codePlatform` and `loops` in the repo file by convention: a user-scope
+Keep `codePlatform` and `workflows` in the repo file by convention: a user-scope
 value silently applies to *every* repo. If the user file holds a PAT, protect
-it (`chmod 600 ~/.agentic-loop.json`); the `AZURE_DEVOPS_EXT_PAT` env var
+it (`chmod 600 ~/.agentic-workflow.json`); the `AZURE_DEVOPS_EXT_PAT` env var
 still wins over both layers. On a mixed Windows/WSL setup note the two worlds
 have different home directories — hosts running inside WSL resolve the WSL
-home; point `AGENTIC_LOOP_USER_CONFIG` at one file if you straddle both.
+home; point `AGENTIC_WORKFLOW_USER_CONFIG` at one file if you straddle both.
 
 `./install.sh` seeds this file for you: on an interactive terminal it runs a
 short wizard (code platform, sitters, worktrees, plus an advanced gate for the
-tracker, review lenses, and iteration cap) and writes a valid `.agentic-loop.json`.
+tracker, review lenses, and iteration cap) and writes a valid `.agentic-workflow.json`.
 Its first question is the **scope** — where to write:
 
-- **repo scope** (default) — `<project>/.agentic-loop.json` in the directory the
-  plugin reads config from at runtime (`$AGENTIC_LOOP_DIR`, else the current
+- **repo scope** (default) — `<project>/.agentic-workflow.json` in the directory the
+  plugin reads config from at runtime (`$AGENTIC_WORKFLOW_DIR`, else the current
   directory), which it prompts for. Per-project settings live here.
-- **user scope** — the shared user-scope file (`$AGENTIC_LOOP_USER_CONFIG`, else
-  `~/.agentic-loop.json`), read for every repo you drive. Settings shared across
+- **user scope** — the shared user-scope file (`$AGENTIC_WORKFLOW_USER_CONFIG`, else
+  `~/.agentic-workflow.json`), read for every repo you drive. Settings shared across
   repos (the `ado` block, review lenses) belong here; a repo file overrides it
   field by field (see [Layers & precedence](#layers--precedence) above).
 
@@ -101,15 +101,15 @@ hand-edited afterward.
 
 | Field | Default | What it does |
 |-------|---------|--------------|
-| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agentic-loop:engineering replan <id>`. |
+| `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agentic-workflow:engineering replan <id>`. |
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
-| `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-loop:engineering watch`; overridable per session via `/agentic-loop:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
-| `loops` | `{}` | Per-loop-kind sections — see below. |
-| `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the az CLI, raw REST, or an MCP server per `ado.access`). Overridable per kind with `loops.<kind>.codePlatform`. See below. |
+| `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-workflow:engineering watch`; overridable per session via `/agentic-workflow:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
+| `workflows` | `{}` | Per-workflow-kind sections — see below. |
+| `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the az CLI, raw REST, or an MCP server per `ado.access`). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `access`, `repository`, `selfLogin`, `customHeaders`, `insecureSkipTlsVerify`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). `access` picks how stage agents reach ADO: `"az"` (default), `"rest"`, or `"mcp"`. |
-| `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-loop:engineering status`. See below. |
-| `worktreesDir` | `".loop-worktrees"` | See hardening below. Set to `false` to opt out. |
+| `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
+| `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
@@ -118,16 +118,16 @@ Both plugins read the same file: the schema lives in the shared core package
 it can honor (today: OpenCode's `watchIntervalMinutes` — see
 [`plugins/claude/README.md`](../plugins/claude/README.md)).
 
-## Loop kinds (`loops`)
+## Workflow kinds (`workflows`)
 
-Each key under `loops` enables and configures one loop kind (a
-`packages/core/loops/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
+Each key under `workflows` enables and configures one workflow kind (a
+`packages/core/workflows/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
 every other kind is opt-in with `"enabled": true`. Enabled kinds are polled in
 claim-priority order: engineering first, then opted-in kinds in config order.
 
 Kind-specific knobs ride along in the same section. **They are not validated**:
-`loops` is a loose record by design (kinds are user-authorable — see
-[`packages/core/loops/README.md`](../packages/core/loops/README.md)), and the
+`workflows` is a loose record by design (kinds are user-authorable — see
+[`packages/core/workflows/README.md`](../packages/core/workflows/README.md)), and the
 loop reads each knob positionally by name with a bare type check. A misspelled
 or wrongly-typed knob is therefore **silently ignored** — the loop runs on the
 default and says nothing:
@@ -154,7 +154,7 @@ it. The warnings are advisory: they annotate a save, never block it. See
 
 ```json
 {
-  "loops": {
+  "workflows": {
     "engineering": { "enabled": true },
     "pr-sitter": {
       "enabled": true,
@@ -167,23 +167,23 @@ it. The warnings are advisory: they annotate a save, never block it. See
 }
 ```
 
-- **`loops.engineering.enabled`** — default `true`; set `false` to run only
+- **`workflows.engineering.enabled`** — default `true`; set `false` to run only
   other kinds (e.g. a dedicated PR-sitter watcher).
-- **`loops.pr-sitter`**, **`loops.review-sitter`**, **`loops.dep-sitter`**,
-  **`loops.main-sitter`** — each `enabled: false` by default. What each sitter
+- **`workflows.pr-sitter`**, **`workflows.review-sitter`**, **`workflows.dep-sitter`**,
+  **`workflows.main-sitter`** — each `enabled: false` by default. What each sitter
   does, its stage pipeline, and its full set of kind-specific keys
   (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
   documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —
   don't duplicate that content here.
-- **`loops.<kind>.codePlatform`** — per-kind override of the global
+- **`workflows.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
-- **`loops.<kind>.trigger`** — how a watching host schedules claims for this
+- **`workflows.<kind>.trigger`** — how a watching host schedules claims for this
   kind (OpenCode `watch` mode only; the pull-only Claude host ignores it):
 
   ```json
   {
-    "loops": {
+    "workflows": {
       "engineering": { "trigger": { "type": "idle" } },
       "pr-sitter": {
         "enabled": true,
@@ -203,18 +203,18 @@ it. The warnings are advisory: they annotate a save, never block it. See
     session goes idle, chaining loops back to back ("webhook-style" immediacy —
     no HTTP endpoint is involved).
 
-  The config value is the **default**; `/agentic-loop:<kind> watch` with an
+  The config value is the **default**; `/agentic-workflow:<kind> watch` with an
   argument overrides it for that session only:
   `watch poll [interval]` (or a bare interval), `watch cron "<schedule>"`,
   or `watch idle`.
 
-- **`loops.<kind>.stageModels`** — stage name → the model that stage runs
+- **`workflows.<kind>.stageModels`** — stage name → the model that stage runs
   with, so cheap stages can run on a cheap model and hard stages on a strong
   one:
 
   ```json
   {
-    "loops": {
+    "workflows": {
       "engineering": {
         "stageModels": {
           "build": "anthropic/claude-sonnet-4-5",
@@ -234,7 +234,7 @@ it. The warnings are advisory: they annotate a save, never block it. See
 
   Keys must be the kind's **stage names**, lowercase, as the manifest spells
   them (engineering: `plan`, `build`, `verify`, `review`; run
-  `/agentic-loop:<kind> kinds` for the others). A key that names no stage —
+  `/agentic-workflow:<kind> kinds` for the others). A key that names no stage —
   `BUILD`, or a stage from another kind — cannot be rejected at parse time
   (the manifest isn't loaded yet), so it is accepted, ignored, and the stage
   runs the host default. Both hosts warn about such keys when a loop starts.
@@ -242,8 +242,8 @@ it. The warnings are advisory: they annotate a save, never block it. See
 ## Admin hub (`hub` — user scope only)
 
 The hub reads its settings from the `hub` section of the **user-scope**
-config only (`~/.agentic-loop.json` / `AGENTIC_LOOP_USER_CONFIG`). The hub
-monitors many repos at once, so a `hub` key in a repo's `.agentic-loop.json`
+config only (`~/.agentic-workflow.json` / `AGENTIC_WORKFLOW_USER_CONFIG`). The hub
+monitors many repos at once, so a `hub` key in a repo's `.agentic-workflow.json`
 is ignored rather than merged:
 
 ```json
@@ -265,7 +265,7 @@ Unknown keys under `hub` are rejected (typo safety). See
 
 ### Editing this file from the hub
 
-The hub's **Config tab** reads and writes `.agentic-loop.json`. Four behaviours
+The hub's **Config tab** reads and writes `.agentic-workflow.json`. Four behaviours
 are worth knowing, because each exists to prevent a specific way of losing data:
 
 - **It edits one layer at a time, and says which.** You pick *This repo* or
@@ -339,7 +339,7 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
     "repository": "widgets-api",
     "selfLogin": "sitter@acme.com"
   },
-  "loops": { "pr-sitter": { "enabled": true } }
+  "workflows": { "pr-sitter": { "enabled": true } }
 }
 ```
 
@@ -387,8 +387,8 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
 - **`ado.pat`** — optional; the PAT in plaintext, as a fallback for when the
   `AZURE_DEVOPS_EXT_PAT` env var is unset. **The env var wins** when both are
   set. Prefer the env var; if you use `ado.pat`, the user-scope
-  `~/.agentic-loop.json` is the natural home (never committed, shared across
-  repos) — in the repo file, keep `.agentic-loop.json` gitignored (it is by
+  `~/.agentic-workflow.json` is the natural home (never committed, shared across
+  repos) — in the repo file, keep `.agentic-workflow.json` gitignored (it is by
   default) so the secret is never committed. It reaches
   every consumer: the work source reads it directly, and the triage/publish
   stage agents (which authenticate via `$AZURE_DEVOPS_EXT_PAT`) get it exported
@@ -402,12 +402,12 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
   object; keys and values must be non-empty. The headers are merged **over** the
   built-in `Authorization`/`Accept`/`Content-Type`, so a key here can override
   one of those (rarely wanted, but yours to decide). The
-  `AGENTIC_LOOP_ADO_HEADERS` env var — a JSON object of the same shape —
+  `AGENTIC_WORKFLOW_ADO_HEADERS` env var — a JSON object of the same shape —
   **overrides `customHeaders` key by key** (env wins, mirroring how
   `AZURE_DEVOPS_EXT_PAT` overrides `ado.pat`), so a secret proxy token can come
   from your secret manager while non-secret routing headers stay in config. A
   malformed env value is ignored (→ no override), never fatal. Like `ado.pat`,
-  a header that carries a secret belongs in the user-scope `~/.agentic-loop.json`
+  a header that carries a secret belongs in the user-scope `~/.agentic-workflow.json`
   (or the env var), not a committed repo file. Note this reaches only the
   driver's own `fetch` calls; the stage agents' raw `curl` (which authenticate
   via `$AZURE_DEVOPS_EXT_PAT`) do not inherit it — front those with the proxy's
@@ -427,7 +427,7 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
 
   ```bash
   # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
-  export AGENTIC_LOOP_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
+  export AGENTIC_WORKFLOW_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
   ```
 - **`ado.insecureSkipTlsVerify`** — optional, `false` by default; skip TLS
   certificate verification on every ADO REST call the driver makes (the
@@ -464,9 +464,9 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
   `platformAllowlist.github` / `.ado` globs are merged into the stage's
   `bashAllowlist` for the resolved platform. The OpenCode agent frontmatter
   (static YAML) carries both platforms' CLI allowlists as a deliberate
-  breadth tradeoff — the loop.json/stage-marker path stays platform-narrow.
+  breadth tradeoff — the workflow.json/stage-marker path stays platform-narrow.
 
-See [`loops/README.md`](../packages/core/loops/README.md) for authoring new kinds and
+See [`workflows/README.md`](../packages/core/workflows/README.md) for authoring new kinds and
 [`docs/design/threat-model.md`](design/threat-model.md) for the PR sitter's
 security posture before enabling it.
 
@@ -491,7 +491,7 @@ API; a human copies the issue key/id into the task.
 ```
 
 - **`system`** (required) — `"jira"` or `"azure-devops"`. Becomes the default
-  `tracker.system` stamped on tasks authored via `/agentic-loop:engineering new`.
+  `tracker.system` stamped on tasks authored via `/agentic-workflow:engineering new`.
 - **`baseUrl`** — optional URL prefix a task's `tracker.key` is appended to,
   to build a deep link (Jira: `…/browse/`; ADO: `…/_workitems/edit/`). Unset →
   no link is built.
@@ -503,18 +503,18 @@ this section only supplies authoring defaults and the status view.
 
 Impact on the commands:
 
-- **`/agentic-loop:engineering new`** pre-fills `tracker.system` (and `type` from
+- **`/agentic-workflow:engineering new`** pre-fills `tracker.system` (and `type` from
   `defaultType`) so the drafted task is ready to pair — you fill in the
   `tracker.key`.
-- **`/agentic-loop:engineering status`** adds a `pairing` roll-up: the tracker system, how
+- **`/agentic-workflow:engineering status`** adds a `pairing` roll-up: the tracker system, how
   many active tasks are paired, and the ids of those still unpaired.
 
 ## Optional hardening
 
 - **`worktreesDir`** — run each loop in its own `git worktree` instead of
   switching branches in the shared checkout. The human's tree is never
-  touched and multiple `/agentic-loop:engineering watch` sessions can build concurrently in one
-  instance. **On by default** (`.loop-worktrees`) — set `worktreesDir: false`
+  touched and multiple `/agentic-workflow:engineering watch` sessions can build concurrently in one
+  instance. **On by default** (`.workflow-worktrees`) — set `worktreesDir: false`
   to opt back into shared-tree branch switching. A fresh worktree has **no
   installed deps**: pair it with `worktreeSetup` (e.g. `"npm ci"`), or VERIFY
   will fail in a bare checkout. Audit notes and task moves stay in the main
@@ -537,26 +537,26 @@ Impact on the commands:
 
 One variable applies to **every host**:
 
-- **`AGENTIC_LOOP_USER_CONFIG`** — path of the user-scope config file
-  (default `~/.agentic-loop.json`); set to `""` to disable the layer. See
+- **`AGENTIC_WORKFLOW_USER_CONFIG`** — path of the user-scope config file
+  (default `~/.agentic-workflow.json`); set to `""` to disable the layer. See
   [Layers & precedence](#layers--precedence).
 
 The Claude Code MCP server additionally reads two directory pointers.
 Neither applies to the OpenCode host, which takes its directory from the
 project you opened.
 
-- **`AGENTIC_LOOP_DIR`** — the canonical repo root the server operates on:
+- **`AGENTIC_WORKFLOW_DIR`** — the canonical repo root the server operates on:
   where the task backlog lives, where per-task worktrees are created under
   `worktreesDir`, and where run logs are written. Defaults to the server's
   working directory at launch. Set it when Claude Code roots the server
   somewhere other than the repo you mean.
-- **`AGENTIC_LOOP_BASE_DIR`** — where the **base branch** for a new
-  `feature/<id>` worktree is read from. Claude Code freezes `AGENTIC_LOOP_DIR`
+- **`AGENTIC_WORKFLOW_BASE_DIR`** — where the **base branch** for a new
+  `feature/<id>` worktree is read from. Claude Code freezes `AGENTIC_WORKFLOW_DIR`
   at the main checkout (usually the default branch), so without this every
   loop cuts from that branch. Point it at the tree you actually work in and
   the base is read there **live per claim** (`git rev-parse --abbrev-ref
   HEAD`), so `feature/<id>` branches off the branch you're on. Unset ⇒ the base
-  falls back to whatever branch `AGENTIC_LOOP_DIR` has checked out (the prior
+  falls back to whatever branch `AGENTIC_WORKFLOW_DIR` has checked out (the prior
   behavior). A detached base dir is ignored (same fallback).
 
 See `design/threat-model.md` for the security posture and

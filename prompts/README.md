@@ -37,8 +37,8 @@ Only the Claude rendering keeps this.
 Keep the blocks small and few — shared substance belongs in the unconditional
 text so it can't drift between hosts again.
 
-The two `loop-orchestration` SKILL.md files are **not** generated: they
+The two `workflow-orchestration` SKILL.md files are **not** generated: they
 document two genuinely different driving protocols (the OpenCode in-process
 driver vs the Claude MCP tool sequence) and stay authored per host —
-`skills/loop-orchestration/SKILL.md` and
-`plugins/claude/skills/loop-orchestration/SKILL.md`.
+`skills/workflow-orchestration/SKILL.md` and
+`plugins/claude/skills/workflow-orchestration/SKILL.md`.

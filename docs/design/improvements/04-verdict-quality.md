@@ -157,7 +157,7 @@ recommends perspective-diverse verification).
 
 - `README.md` + `.opencode/commands/agent-loop.md` — `reviewLenses` knob, cost
   note; verdict tool's richer args.
-- `skills/loop-orchestration/SKILL.md` — verdict contract section
+- `skills/workflow-orchestration/SKILL.md` — verdict contract section
   (reason/criteria), multi-lens review description.
 - `.opencode/agents/{verify,review}.md` — verdict-contract updates (A) and
   lens-focus behavior (B).

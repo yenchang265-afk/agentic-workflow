@@ -30,10 +30,10 @@ const block = (reason) => {
   process.exit(2)
 }
 
-// tasksDir defaults to docs/tasks; honor .agentic-loop.json if present.
+// tasksDir defaults to docs/tasks; honor .agentic-workflow.json if present.
 const readTasksDir = (cwd) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-loop.json"), "utf8"))
+    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"))
     if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir
   } catch {
     /* default */

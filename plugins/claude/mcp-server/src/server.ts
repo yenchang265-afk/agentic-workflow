@@ -6,23 +6,23 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
-import { DEFAULT_CONFIG, loadConfig } from "@agentic-loop/core/config"
-import { type Action, type Config, type LoopState, type TaskRef } from "@agentic-loop/core/loop/state"
-import { advance, composePrompt, firstStep } from "@agentic-loop/core/loop/engine"
-import { registerEngineeringHooks } from "@agentic-loop/core/kinds/engineering"
-import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
-import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
-import { pollOnce } from "@agentic-loop/core/scheduler/scheduler"
+import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
+import { type Action, type Config, type LoopState, type TaskRef } from "@agentic-workflow/core/workflow/state"
+import { advance, composePrompt, firstStep } from "@agentic-workflow/core/workflow/engine"
+import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
+import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
+import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
+import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import {
   buildEntryState,
   buildWorkSources,
   loopWorkTree,
   makeManifestCache,
   planEntryState,
-} from "@agentic-loop/core/loop/orchestrate"
-import type { PolledClaim } from "@agentic-loop/core/scheduler/scheduler"
-import type { WorkSource } from "@agentic-loop/core/source/types"
-import { adoAccessFor, bareModel, enabledLoopKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-loop/core/config"
+} from "@agentic-workflow/core/workflow/orchestrate"
+import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
+import type { WorkSource } from "@agentic-workflow/core/source/types"
+import { adoAccessFor, bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
   axisVerdict,
@@ -34,11 +34,11 @@ import {
   type CriterionResult,
   type Verdict,
   type VerdictRecord,
-} from "@agentic-loop/core/loop/verdict"
-import { renderRunSummary, type Outcome, type StageSample } from "@agentic-loop/core/loop/metrics"
-import { metricsPath, upsertRunMetrics } from "@agentic-loop/core/loop/metrics-file"
-import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
-import { ensureIsolation, loopId } from "@agentic-loop/core/loop/isolate"
+} from "@agentic-workflow/core/workflow/verdict"
+import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
+import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
+import { ensureIsolation, loopId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
@@ -50,10 +50,10 @@ import {
   shipAny as coreShipAny,
   type GateCtx,
   type GateResult,
-} from "@agentic-loop/core/loop/gate"
-import { runTerminal as coreRunTerminal, type TerminalCtx } from "@agentic-loop/core/loop/terminal"
-import { loadState, saveState } from "@agentic-loop/core/loop/persist"
-import { type Task } from "@agentic-loop/core/task/schema"
+} from "@agentic-workflow/core/workflow/gate"
+import { runTerminal as coreRunTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
+import { loadState, saveState } from "@agentic-workflow/core/workflow/persist"
+import { type Task } from "@agentic-workflow/core/task/schema"
 import {
   appendNote,
   appendRunLog,
@@ -75,19 +75,19 @@ import {
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
-} from "@agentic-loop/core/task/store"
-import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-loop/core/task/audit"
-import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/core/scheduler/lease"
+} from "@agentic-workflow/core/task/store"
+import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
+import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 
 /**
- * MCP server backing the agentic-loop Claude Code plugin. It holds the loop's
+ * MCP server backing the agentic-workflow Claude Code plugin. It holds the loop's
  * LoopState (the same pure state machine the OpenCode driver uses) and exposes
  * the deterministic/trusted operations as tools the MAIN agent calls while it
  * drives BUILD→VERIFY→REVIEW via the Task tool. The autonomous background
  * driver is gone (no Claude Code equivalent) — the agent is the driver; this
  * server is the trusted state + git/backlog substrate.
  *
- * Task authoring happens before the loop, via `/agentic-loop:engineering new`: it interviews
+ * Task authoring happens before the loop, via `/agentic-workflow:engineering new`: it interviews
  * the user into a draft (main-agent turn) and `loop_approve` (unified gate)
  * parks it planless in `queued/`. Planning happens inside the loop, right before
  * execution, and only on demand: `loop_start` on a queued task enters at PLAN
@@ -98,33 +98,33 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/co
  * sends a rejected or cap-tripped task back to `queued/`. From `in-progress/`
  * — the build-ready queue — claims enter at BUILD.
  *
- * There is no `/agentic-loop:engineering watch` here, deliberately: watch needs an autonomous
+ * There is no `/agentic-workflow:engineering watch` here, deliberately: watch needs an autonomous
  * driver firing stages on idle events/timers, and the MCP server can't spawn
  * subagents. `loop_claim` is the pull equivalent — one human trigger claims
  * the next approved task.
  */
 
-const directory = process.env.AGENTIC_LOOP_DIR ?? process.cwd()
+const directory = process.env.AGENTIC_WORKFLOW_DIR ?? process.cwd()
 /**
  * Where to read the base branch for a fresh `feature/<id>` worktree. `directory`
  * (the canonical root: backlog + worktree parent) is frozen at server launch
  * on the main checkout — usually the default branch — so worktrees would
- * always cut from it. Point `AGENTIC_LOOP_BASE_DIR` at the tree you actually
+ * always cut from it. Point `AGENTIC_WORKFLOW_BASE_DIR` at the tree you actually
  * work in and the base is read there live (per claim). Unset ⇒ core falls back
  * to `directory`'s branch (today's behavior).
  */
-const baseDir = process.env.AGENTIC_LOOP_BASE_DIR
+const baseDir = process.env.AGENTIC_WORKFLOW_BASE_DIR
 const resolveBase = async (): Promise<string | undefined> =>
   baseDir ? ((await currentBranch(sh, baseDir)) ?? undefined) : undefined
-/** The loop-kind manifests shipped with core (packages/core/loops/<kind>/) —
+/** The workflow-kind manifests shipped with core (packages/core/workflows/<kind>/) —
  *  resolved from core's own install location so the server works from any cwd
  *  and survives plugin relocations. */
-const LOOPS_DIR = defaultLoopsDir()
-const manifestFor = makeManifestCache(LOOPS_DIR, ["engineering"])
+const WORKFLOWS_DIR = defaultWorkflowsDir()
+const manifestFor = makeManifestCache(WORKFLOWS_DIR, ["engineering"])
 const eng = manifestFor("engineering")
 registerEngineeringHooks()
 const log = (level: "info" | "warn" | "error", message: string) =>
-  fsClient.app.log({ body: { service: "agentic-loop", level, message } })
+  fsClient.app.log({ body: { service: "agentic-workflow", level, message } })
 
 // --- shared in-process loop state (one active loop per server/session) ---
 
@@ -184,17 +184,17 @@ const loadCfg = async () => {
   }
 }
 
-// --- host wiring (shared helpers live in @agentic-loop/core/loop/orchestrate) ---
+// --- host wiring (shared helpers live in @agentic-workflow/core/workflow/orchestrate) ---
 
 const stageMarkerPath = () => path.join(directory, config.tasksDir, "runs", ".stage.json")
 const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
 
 /**
  * Plugin-bundled agents resolve under the plugin namespace in Claude Code —
- * Task's subagent_type is "agentic-loop:<name>", not the bare manifest name.
+ * Task's subagent_type is "agentic-workflow:<name>", not the bare manifest name.
  * The manifests stay host-neutral; only this host prefixes.
  */
-const agentRef = (name: string): string => `agentic-loop:${name}`
+const agentRef = (name: string): string => `agentic-workflow:${name}`
 
 /**
  * The stage's configured model in this host's vocabulary (config > manifest,
@@ -210,7 +210,7 @@ const stageModel = (kind: string, def: StageDef): string | undefined => {
  * Every spawn instruction must name the `model` field, not just `agent`.
  * The fire payloads have always carried the configured stage model, but the
  * per-transition notes only told the orchestrator to spawn the `agent` — so
- * `loops.<kind>.stageModels` was silently dropped at each hop and every stage
+ * `workflows.<kind>.stageModels` was silently dropped at each hop and every stage
  * ran on the host default. Appended to each note rather than stated once in
  * the skill: the note is what the orchestrator reads at the point of use.
  */
@@ -222,7 +222,7 @@ const stageModel = (kind: string, def: StageDef): string | undefined => {
  * manifest must never block a claim.
  */
 const stageModelWarnings = (): string[] =>
-  enabledLoopKinds(config).flatMap((kind) => {
+  enabledWorkflowKinds(config).flatMap((kind) => {
     let stageNames: string[]
     try {
       stageNames = manifestFor(kind).manifest.stages.map((s) => s.name)
@@ -232,7 +232,7 @@ const stageModelWarnings = (): string[] =>
     const unknown = unknownStageModelKeys(config, kind, stageNames)
     const warnings = unknown.length
       ? [
-          `loops.${kind}.stageModels names ${unknown.map((k) => `"${k}"`).join(", ")}, which ${unknown.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
+          `workflows.${kind}.stageModels names ${unknown.map((k) => `"${k}"`).join(", ")}, which ${unknown.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
             `${unknown.length > 1 ? "those overrides are" : "that override is"} ignored and the stage runs the host default model. Valid stages: ${stageNames.join(", ")}.`,
         ]
       : []
@@ -306,7 +306,7 @@ const writeStageMarker = (stage: string | null) => {
           platform,
           ...(access ? { access } : {}),
           // The subagent this stage binds, straight from the manifest — the driver
-          // (loop-orchestration SKILL) spawns whatever is named here, so a new kind
+          // (workflow-orchestration SKILL) spawns whatever is named here, so a new kind
           // needs no prose edit.
           agent: def.agent,
           // Check stages must record a verdict via loop_verdict before ending;
@@ -444,7 +444,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: LoopStat
   const state = planEntryState(t)
   active = state
   // Arm the PreToolUse carve-out for the whole PLAN window: {stage:"plan", taskId}
-  // so the loop-plan-author subagent may Edit its own queued/<id>.md. The PLAN
+  // so the workflow-plan-author subagent may Edit its own queued/<id>.md. The PLAN
   // path spawns the author straight off loop_start without a loop_stage call, so
   // without this the marker never exists and the one write PLAN exists to make is
   // blocked. loop_advance clears it on park.
@@ -494,7 +494,7 @@ const firePayload = (state: LoopState, id: string) => {
 
 // --- server + tools ---
 
-const server = new McpServer({ name: "agentic-loop", version: "0.0.1" })
+const server = new McpServer({ name: "agentic-workflow", version: "0.0.1" })
 
 server.registerTool(
   "loop_start",
@@ -552,14 +552,14 @@ server.registerTool(
   "loop_claim",
   {
     description:
-      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-loop:engineering watch. Polls all enabled loop kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-loop:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with loop_start({id}). Returns null when nothing is claimable.",
-    inputSchema: { kind: z.string().optional().describe("Restrict the pull to one enabled loop kind (e.g. pr-sitter).") },
+      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with loop_start({id}). Returns null when nothing is claimable.",
+    inputSchema: { kind: z.string().optional().describe("Restrict the pull to one enabled workflow kind (e.g. pr-sitter).") },
   },
   async ({ kind }) => {
     await loadCfg()
     if (active) return fail(`A loop is already driving "${loopId(active)}" — finish or loop_stop it first.`)
-    if (kind && !enabledLoopKinds(config).includes(kind)) {
-      return fail(`Unknown loop kind "${kind}" — enabled: ${enabledLoopKinds(config).join(", ")}.`)
+    if (kind && !enabledWorkflowKinds(config).includes(kind)) {
+      return fail(`Unknown workflow kind "${kind}" — enabled: ${enabledWorkflowKinds(config).join(", ")}.`)
     }
     const { claim, skips } = await pollOnce(sourcesFor(kind))
     if (!claim) {
@@ -624,7 +624,7 @@ server.registerTool(
   "loop_verdict",
   {
     description:
-      "Record the VERIFY or REVIEW verdict for the running loop. THE ONLY TRUSTED verdict channel — a PASS/FAIL in prose is ignored. Called by the loop-verify/loop-review subagent exactly once per pass. Multiple calls in one stage (multi-lens review) are combined worst-wins.",
+      "Record the VERIFY or REVIEW verdict for the running loop. THE ONLY TRUSTED verdict channel — a PASS/FAIL in prose is ignored. Called by the workflow-verify/workflow-review subagent exactly once per pass. Multiple calls in one stage (multi-lens review) are combined worst-wins.",
     inputSchema: {
       stage: z.string().min(1).describe("The loop's currently running check stage (engineering: verify/review; pr-sitter: triage/verify)."),
       verdict: z.enum(["PASS", "FAIL", "ERROR"]),
@@ -722,7 +722,7 @@ server.registerTool(
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
     if (!activeManifest().manifest.stages.some((d) => d.name === stage)) {
-      return fail(`Unknown stage "${stage}" for loop kind "${activeManifest().manifest.kind}".`)
+      return fail(`Unknown stage "${stage}" for workflow kind "${activeManifest().manifest.kind}".`)
     }
     const outOfOrder = stageOrderError(active.stage, stage)
     if (outOfOrder) return fail(outOfOrder)
@@ -786,7 +786,7 @@ server.registerTool(
     if (isOverdue(stageDeadline, Date.now())) {
       const action: Action = {
         kind: "stop",
-        message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agentic-loop:engineering recover the task.`,
+        message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agentic-workflow:engineering recover the task.`,
       }
       samples.push({ stage, iteration: active.iteration, ms: Date.now() - lastFireAt, startedAt: new Date(lastFireAt).toISOString() })
       await runTerminal(action)
@@ -811,7 +811,7 @@ server.registerTool(
     // theater-booking-0 failure mode: three rebuilds of an already-done task).
     if (stageDef(activeManifest().manifest, stage).kind === "check" && !pending) {
       // Diagnostic only — free text never flips control flow (verdict.ts).
-      const prose = parseVerdict(stageOutput, `LOOP_${stage.toUpperCase()}`)
+      const prose = parseVerdict(stageOutput, `WORKFLOW_${stage.toUpperCase()}`)
       if (!verdictRetried) {
         verdictRetried = true
         if (active.task) {
@@ -918,7 +918,7 @@ server.registerTool(
             next:
               `ship gate: show the user the loop branch's diff summary, then ask with AskUserQuestion — ` +
               `Ship (loop_ship("${taskId}")), Replan with a reason (loop_replan("${taskId}", reason)), ` +
-              `or Leave in in-review (stop here; /agentic-loop:engineering approve ${taskId} ships it later).`,
+              `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later).`,
           }
         : {}),
     })
@@ -969,7 +969,7 @@ const runPark = async (
       `plan gate: show the user the plan summary, then ask with AskUserQuestion — ` +
       `Approve (loop_plan_approve("${id}") then loop_start("${id}") continues into BUILD now), ` +
       `Replan with a reason (loop_replan("${id}", reason)), ` +
-      `or Park for later (stop here; /agentic-loop:engineering approve ${id} resumes it).`,
+      `or Park for later (stop here; /agentic-workflow:engineering approve ${id} resumes it).`,
   }
 }
 
@@ -983,7 +983,7 @@ server.registerTool(
     if (!active) return ok({ stopped: false, note: "no active loop" })
     const action: Action = {
       kind: "stop",
-      message: `Loop stopped by /agentic-loop:engineering stop at ${active.stage} (iteration ${active.iteration + 1}).`,
+      message: `Loop stopped by /agentic-workflow:engineering stop at ${active.stage} (iteration ${active.iteration + 1}).`,
     }
     await runTerminal(action)
     return ok({ stopped: true })
@@ -1036,13 +1036,13 @@ server.registerTool(
   },
 )
 
-/** The loop kinds this repo ships (loops/<kind>/ dirs) with their enabled state. */
+/** The workflow kinds this repo ships (workflows/<kind>/ dirs) with their enabled state. */
 const kindsReport = (): { kind: string; enabled: boolean }[] => {
-  const enabled = enabledLoopKinds(config)
+  const enabled = enabledWorkflowKinds(config)
   let known: string[]
   try {
     known = fs
-      .readdirSync(LOOPS_DIR, { withFileTypes: true })
+      .readdirSync(WORKFLOWS_DIR, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name)
       .sort()
@@ -1056,7 +1056,7 @@ server.registerTool(
   "loop_status",
   {
     description:
-      "Report the active loop (stage/iteration) plus a whole-backlog roll-up: counts per folder, the actionable flags, and the loop kinds (enabled/disabled).",
+      "Report the active loop (stage/iteration) plus a whole-backlog roll-up: counts per folder, the actionable flags, and the workflow kinds (enabled/disabled).",
     inputSchema: {},
   },
   async () => {
@@ -1135,7 +1135,7 @@ server.registerTool(
 
 /**
  * The human gate moves — approve (task), approve-plan, replan, ship — now live in
- * @agentic-loop/core/loop/gate, shared with the OpenCode driver. These thin
+ * @agentic-workflow/core/workflow/gate, shared with the OpenCode driver. These thin
  * adapters bind this host's substrate into the shared `GateCtx` and keep the exact
  * signatures the MCP tools + the deterministic `gate` CLI already call. `replan`/
  * `reject` take the id a live loop is driving explicitly (the MCP tool's `active`;
@@ -1157,7 +1157,7 @@ server.registerTool(
   "loop_task_approve",
   {
     description:
-      "Deterministic /agentic-loop:engineering approve <id> on a draft — the task gate: move a reviewed draft/ task to queued/ (audited note + commit). No plan is required or expected; the loop's PLAN stage writes it right before execution. The agent writes nothing. Prefer loop_approve (the unified gate) unless you specifically need the draft-only form.",
+      "Deterministic /agentic-workflow:engineering approve <id> on a draft — the task gate: move a reviewed draft/ task to queued/ (audited note + commit). No plan is required or expected; the loop's PLAN stage writes it right before execution. The agent writes nothing. Prefer loop_approve (the unified gate) unless you specifically need the draft-only form.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1171,7 +1171,7 @@ server.registerTool(
   "loop_plan_approve",
   {
     description:
-      "Deterministic /agentic-loop:engineering approve <id> — the plan gate: validate the plan-review/ task has an ## Implementation Plan, move it to in-progress/ (the build-ready queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing. Prefer loop_approve (the unified gate).",
+      "Deterministic /agentic-workflow:engineering approve <id> — the plan gate: validate the plan-review/ task has an ## Implementation Plan, move it to in-progress/ (the build-ready queue), append an audited note, and commit. Refuses planless tasks. The agent writes nothing. Prefer loop_approve (the unified gate).",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1185,7 +1185,7 @@ server.registerTool(
   "loop_replan",
   {
     description:
-      "Deterministic /agentic-loop:engineering replan <id> [reason] — the sole rejection verb: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
+      "Deterministic /agentic-workflow:engineering replan <id> [reason] — the sole rejection verb: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
     inputSchema: { id: z.string().min(1), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {
@@ -1199,7 +1199,7 @@ server.registerTool(
   "loop_retask",
   {
     description:
-      "Deterministic half of /agentic-loop:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via loop_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
+      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via loop_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
     inputSchema: { id: z.string().min(1) },
   },
   async ({ id }) => {
@@ -1213,7 +1213,7 @@ server.registerTool(
   "loop_approve",
   {
     description:
-      "/agentic-loop:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved. Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
+      "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved. Prefer this over the specific loop_task_approve / loop_plan_approve / loop_ship tools. The agent writes nothing.",
     inputSchema: { id: z.string().optional() },
   },
   async ({ id }) => {
@@ -1227,7 +1227,7 @@ server.registerTool(
   "loop_reject",
   {
     description:
-      "/agentic-loop:engineering replan [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ for re-planning (the counterpart of loop_approve at the plan gate). Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
+      "/agentic-workflow:engineering replan [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ for re-planning (the counterpart of loop_approve at the plan gate). Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
     inputSchema: { id: z.string().optional(), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {
@@ -1253,7 +1253,7 @@ server.registerTool(
 
 server.registerTool(
   "loop_ship",
-  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agentic-loop:engineering approve (loop_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
+  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agentic-workflow:engineering approve (loop_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
   async ({ id }) => {
     await loadCfg()
     const r = await shipAny((id ?? "").trim())
@@ -1403,10 +1403,10 @@ async function main() {
         (await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)) ??
         (await findByIdIn(sh, directory, config.tasksDir, "in-review", id))
       if (active) await log("info", `loop worktree ${w.path} (${w.branch}) kept for task ${id} — released when it ships`)
-      else await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — no in-progress/in-review task ${id}; /agentic-loop:engineering recover its task or remove it`)
+      else await log("info", `leftover loop worktree: ${w.path} (${w.branch}) — no in-progress/in-review task ${id}; /agentic-workflow:engineering recover its task or remove it`)
     }
   }
-  await log("info", `agentic-loop MCP server ready (directory=${directory})`)
+  await log("info", `agentic-workflow MCP server ready (directory=${directory})`)
   const transport = new StdioServerTransport()
   await server.connect(transport)
 }
@@ -1422,7 +1422,7 @@ if (process.argv[2] === "gate") {
     })
 } else {
   main().catch((err) => {
-    process.stderr.write(`agentic-loop MCP fatal: ${(err as Error).message}\n`)
+    process.stderr.write(`agentic-workflow MCP fatal: ${(err as Error).message}\n`)
     process.exit(1)
   })
 }

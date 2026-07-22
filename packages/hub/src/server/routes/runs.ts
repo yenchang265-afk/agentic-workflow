@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { parseRunLog } from "@agentic-loop/core/loop/runlog"
+import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
 import type { RunDetailResponse, RunListItem, RunsResponse, SnapshotView } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"

@@ -2,8 +2,8 @@ import { registerClaimPredicate, registerValidateHook } from "../manifest/regist
 import { isClaimable } from "../task/store.js"
 
 /**
- * The engineering loop kind's TS escape hooks — everything its manifest
- * (`loops/engineering/loop.json`) names by ref. Hosts call this once at
+ * The engineering workflow kind's TS escape hooks — everything its manifest
+ * (`workflows/engineering/workflow.json`) names by ref. Hosts call this once at
  * startup before polling.
  *
  * Note: `validateBeforeTransition.plan = "engineering.planLandedOnDisk"` is

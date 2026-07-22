@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Uninstall the agentic-loop plugins — the reverse of ./install.sh.
+# Uninstall the agentic-workflow plugins — the reverse of ./install.sh.
 #
 # OpenCode half: removes the agents/commands/skills/references entries this repo
 # installed into an OpenCode config directory (symlinks that point back here, or
@@ -7,10 +7,10 @@
 # Claude Code half: drops the built MCP server (mcp-server/dist); the plugin's
 # committed in-repo skill/reference symlinks are git-tracked, not install
 # artifacts, so they are left alone. Detaching the plugin from Claude Code
-# itself is a `/plugin uninstall agentic-loop` (or dropping --plugin-dir) — this
+# itself is a `/plugin uninstall agentic-workflow` (or dropping --plugin-dir) — this
 # script prints the reminder.
 #
-# It never touches your .agentic-loop.json or the docs/tasks/ backlog — use
+# It never touches your .agentic-workflow.json or the docs/tasks/ backlog — use
 # ./scripts/clean.sh for that. It also does NOT reverse ./bootstrap.sh extras
 # (e.g. the chrome-devtools MCP registration in the user-global Claude /
 # OpenCode configs) — remove those entries by hand if you want them gone.
@@ -69,7 +69,7 @@ remove_owned() {
 }
 
 uninstall_opencode() {
-  echo "Uninstalling agentic-loop for OpenCode from $CONFIG_DIR"
+  echo "Uninstalling agentic-workflow for OpenCode from $CONFIG_DIR"
   if [ ! -d "$CONFIG_DIR" ]; then
     echo "skip: $CONFIG_DIR does not exist — nothing to remove"
     return
@@ -95,7 +95,7 @@ uninstall_opencode() {
 
   # The local plugin file — remove it only when it re-exports THIS repo, so a
   # second clone's uninstall doesn't yank a plugin file pointing elsewhere.
-  local plugin_file="$CONFIG_DIR/plugins/agentic-loop.ts"
+  local plugin_file="$CONFIG_DIR/plugins/agentic-workflow.ts"
   if [ -f "$plugin_file" ] && grep -qF "$REPO_DIR/plugins/opencode/src/index.ts" "$plugin_file" 2>/dev/null; then
     rm -f "$plugin_file"; echo "removed: $plugin_file"
   fi
@@ -105,18 +105,18 @@ uninstall_opencode() {
     rmdir "$CONFIG_DIR/$dir" 2>/dev/null || true
   done
 
-  echo "OpenCode: agentic-loop entries removed. Your OpenCode config file is untouched."
+  echo "OpenCode: agentic-workflow entries removed. Your OpenCode config file is untouched."
 }
 
 uninstall_claude() {
-  echo "Uninstalling agentic-loop for Claude Code (plugins/claude/)"
+  echo "Uninstalling agentic-workflow for Claude Code (plugins/claude/)"
   local dist="$REPO_DIR/plugins/claude/mcp-server/dist"
   if [ -d "$dist" ]; then
     rm -rf "$dist"; echo "removed: $dist"
   else
     echo "skip: $dist not present"
   fi
-  echo "Claude Code: detach the plugin itself with '/plugin uninstall agentic-loop'"
+  echo "Claude Code: detach the plugin itself with '/plugin uninstall agentic-workflow'"
   echo "             (or drop the --plugin-dir flag). The in-repo skill/reference"
   echo "             symlinks are git-tracked and are left in place."
 }

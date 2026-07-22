@@ -1,11 +1,11 @@
 {
-  "name": "agentic-loop-mcp",
+  "name": "agentic-workflow-mcp",
   "version": "0.0.1",
-  "description": "MCP server backing the agentic-loop Claude Code plugin — verdicts, git isolation, backlog, snapshots, metrics",
+  "description": "MCP server backing the agentic-workflow Claude Code plugin — verdicts, git isolation, backlog, snapshots, metrics",
   "license": "MIT",
   "type": "module",
   "bin": {
-    "agentic-loop-mcp": "dist/server.js"
+    "agentic-workflow-mcp": "dist/server.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -13,7 +13,7 @@
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@agentic-loop/core": "*",
+    "@agentic-workflow/core": "*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "yaml": "^2.9.0",
     "zod": "^4.1.8"

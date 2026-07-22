@@ -1,8 +1,0 @@
-description: Reviewer for the REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records a LOOP_REVIEW verdict via the loop_verdict tool. On FAIL, the loop re-builds (not re-plans) — the plan is assumed sound; the implementation isn't. Read-only; an allowlist restricts bash to inspection commands.
-mode: subagent
-permission:
-  edit: deny
-  webfetch: deny
-  bash:
-    "*": deny
-    # {{allowlist}} — globs generated from the stage's bashAllowlist in loops/*/loop.json; edit the manifest, not here
