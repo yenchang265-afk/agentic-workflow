@@ -3,8 +3,8 @@ English | [繁體中文](architecture.zh-TW.md)
 # Architecture
 
 Two layers. The **framework** — a shared core package, a manifest-interpreted
-loop engine, and a work-source scheduler — knows nothing about engineering
-tasks or pull requests. The **loop kinds** (`packages/core/loops/<kind>/`) are declarative
+workflow engine, and a work-source scheduler — knows nothing about engineering
+tasks or pull requests. The **workflow kinds** (`packages/core/workflows/<kind>/`) are declarative
 manifests plus stage prompts that the framework interprets. Five ship today:
 `engineering` is the reference kind (the original PLAN / BUILD → VERIFY →
 REVIEW workflow, behavior-identical to when it was hardcoded), and four opt-in
@@ -20,11 +20,11 @@ still change; `engineering` is the stable, default-on kind.
 ```mermaid
 flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
-        oc["OpenCode plugin (src/)<br/>session.idle + /agentic-loop:engineering watch timer"]
-        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>loop_claim / loop_start / loop_advance"]
+        oc["OpenCode plugin (src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
+        cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
     end
 
-    subgraph core["@agentic-loop/core (packages/core)"]
+    subgraph core["@agentic-workflow/core (packages/core)"]
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
@@ -32,13 +32,13 @@ flowchart TB
             depscan["dependency-scan.ts<br/>advisory reports"]
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
-        engine["loop/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
+        engine["workflow/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
         manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
     end
 
-    subgraph kinds["LOOP KINDS — loops/&lt;kind&gt;/"]
-        eng["engineering/loop.json<br/>+ stages/*.md"]
-        sitter["pr-sitter · review-sitter ·<br/>dep-sitter · main-sitter<br/>loop.json + stages/*.md"]
+    subgraph kinds["WORKFLOW KINDS — workflows/&lt;kind&gt;/"]
+        eng["engineering/workflow.json<br/>+ stages/*.md"]
+        sitter["pr-sitter · review-sitter ·<br/>dep-sitter · main-sitter<br/>workflow.json + stages/*.md"]
     end
 
     oc --> sched
@@ -47,35 +47,35 @@ flowchart TB
     sched --> ghpr
     sched --> depscan
     sched --> ciruns
-    backlog -->|"WorkItem + entry LoopState"| engine
-    ghpr -->|"WorkItem + entry LoopState"| engine
-    depscan -->|"WorkItem + entry LoopState"| engine
-    ciruns -->|"WorkItem + entry LoopState"| engine
+    backlog -->|"WorkItem + entry WorkflowState"| engine
+    ghpr -->|"WorkItem + entry WorkflowState"| engine
+    depscan -->|"WorkItem + entry WorkflowState"| engine
+    ciruns -->|"WorkItem + entry WorkflowState"| engine
     manifest --> engine
     eng --> manifest
     sitter --> manifest
     engine -->|"fire stage / park / done / stop"| hosts
 ```
 
-- **Core package** — `@agentic-loop/core` (npm workspace) holds everything
+- **Core package** — `@agentic-workflow/core` (npm workspace) holds everything
   both plugins share: the pure engine and state, the manifest layer, work
   sources + scheduler, the task store, git helpers + worktree isolation,
   snapshots, verdict handling, metrics, and config (resolved by layering an
-  optional user-scope `~/.agentic-loop.json` under the repo's
-  `.agentic-loop.json` — see
+  optional user-scope `~/.agentic-workflow.json` under the repo's
+  `.agentic-workflow.json` — see
   [configuration.md](configuration.md#layers--precedence)). Core never imports a host
   SDK; the entire host surface is the interfaces in
   `packages/core/src/host.ts` (Shell, Client, Log, …). The OpenCode plugin
   satisfies them with Bun's `$` and the opencode SDK client; the Claude Code
   MCP server with Node shims (`plugins/claude/mcp-server/src/shim.ts`) — its
   former `src/lib/` fork of the loop logic is gone.
-- **Manifest engine** — a loop kind is `packages/core/loops/<kind>/loop.json`
+- **Manifest engine** — a workflow kind is `packages/core/workflows/<kind>/workflow.json`
   (zod-validated: stages with `work|check` kind, agent, prompt path,
   isolation, bash allowlist; a transitions table mapping
   onDone/onPass/onFail/onError to fire/park/done/stop effects with iteration
   counting; a work-source binding) plus `stages/*.md` prompt templates
   (`---`-separated sections, `{{var}}` interpolation, `{{#path}}…{{/path}}`
-  conditional blocks). `loop/engine.ts` interprets it as a pure state machine:
+  conditional blocks). `workflow/engine.ts` interprets it as a pure state machine:
   `advance(manifest, state, output, verdict)` returns the next state and
   action. Logic a manifest can't express hangs off named hooks resolved
   through `manifest/registry.ts` — compose hooks (prompt-context augmenters),
@@ -83,17 +83,17 @@ flowchart TB
 - **Work sources + scheduler** — a `WorkSource`
   (`packages/core/src/source/types.ts`) knows how to find, atomically claim,
   and release units of work for one kind; a claimed `WorkItem` carries a
-  fully-constructed entry `LoopState`, so drivers stay source-agnostic.
+  fully-constructed entry `WorkflowState`, so drivers stay source-agnostic.
   The PR and CI sources have Azure DevOps twins (`ado-pr.ts`,
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
   `"ado"`; how they talk to ADO — `az` CLI (default), REST, or MCP —
   follows `ado.access`.
   `pollOnce(sources)` walks the given sources in claim-priority order
   (engineering first unless disabled, then opted-in kinds in config order —
-  `enabledLoopKinds` in core config); the first successful claim wins, and
+  `enabledWorkflowKinds` in core config); the first successful claim wins, and
   each kind's command scopes the poll to its own kind's source. Both
   hosts' triggers delegate to it: OpenCode's `session.idle` + the per-kind
-  `watch` timer, and the Claude Code MCP server's `loop_claim`. A source may
+  `watch` timer, and the Claude Code MCP server's `workflow_claim`. A source may
   implement `onTerminal` for end-of-drive bookkeeping (the PR sitter's dedup
   ledger); the backlog source doesn't need it.
 - **Per-kind status semantics** — the `docs/tasks/` status folders are the
@@ -104,16 +104,16 @@ flowchart TB
   (`<tasksDir>/runs/pr-sitter/pr-<n>.json`) records what has already been
   handled. Other kinds pick whichever source fits.
 
-## The engineering kind (`packages/core/loops/engineering/`)
+## The engineering kind (`packages/core/workflows/engineering/`)
 
 The reference kind — the original PLAN / BUILD → VERIFY → REVIEW workflow,
 behavior-identical to when it was hardcoded. Its full pipeline diagram, the
 who-does-what breakdown, and the backlog integrity rails that protect
 `docs/tasks/` now live in their own file:
-**[`docs/loops/engineering.md`](loops/engineering.md)**.
+**[`docs/workflows/engineering.md`](workflows/engineering.md)**.
 
-Verdicts across every kind are only trusted through the `loop_verdict` plugin
-tool — a stage agent claiming "PASS" in prose is ignored. `loop_verdict`
+Verdicts across every kind are only trusted through the `workflow_verdict` plugin
+tool — a stage agent claiming "PASS" in prose is ignored. `workflow_verdict`
 accepts any check stage the active loop's manifest declares (engineering:
 `verify`/`review`; pr-sitter: `triage`/`verify`; review-sitter: `fetch`;
 dep-sitter: `scan`/`verify`; main-sitter: `diagnose`/`verify`) and validates
@@ -124,12 +124,12 @@ statuses.
 ## Watch lease
 
 At most one watch-mode process per clone, across every kind
-(`scheduler/lease.ts`): `/agentic-loop:<kind> watch` atomically creates
+(`scheduler/lease.ts`): `/agentic-workflow:<kind> watch` atomically creates
 `<tasksDir>/runs/.watch-lease/` (gitignored) with a heartbeat JSON refreshed
 every tick; a second watch-mode process — for any kind — is refused with the
 live owner's identity, and a dead watcher's lease is taken over once the
 heartbeat exceeds `max(3×interval, 2min)`. One-shot claims
-(`loop_claim`/`loop_start`) warn — not block — when a foreign live lease
+(`workflow_claim`/`workflow_start`) warn — not block — when a foreign live lease
 exists.
 
 ## The sitter kinds — experimental
@@ -141,14 +141,14 @@ always leaving the terminal call — merge, approve, close — to a human. Each
 binds its own work source and follows the same check → work → publish
 shape. **[`docs/sitters.md`](sitters.md) is the canonical reference** for
 what each one does, its stage pipeline, its authority limits, and its
-`loops.<kind>` config keys; the security posture for all four is in the
+`workflows.<kind>` config keys; the security posture for all four is in the
 [threat model](design/threat-model.md).
 
 ## Claude Code variant (`plugins/claude/`)
 
-Same loop kinds and lifecycles, different driver: Claude Code has no
+Same workflow kinds and lifecycles, different driver: Claude Code has no
 background `session.idle` driver, so the main agent drives the loop through a
-bundled MCP server (`mcp__agentic-loop__loop_*` tools) rather than agent
+bundled MCP server (`mcp__agentic-workflow__workflow_*` tools) rather than agent
 frontmatter permissions, and human gates are **interactive** — a park or a
 done returns a `gate` field and the driving agent asks inline via
 AskUserQuestion instead of only waiting for a command. Full install and
@@ -163,7 +163,7 @@ run logs, snapshots, the stage marker, the watch lease — and **performs the
 human gate moves on it**: approve, replan, ship.
 
 It does so by calling the *same* shared entry points both hosts call
-(`loop/gate.ts`), never its own copy of the moves — so an approval from a
+(`workflow/gate.ts`), never its own copy of the moves — so an approval from a
 browser and an approval from a slash command are the same audited,
 committed transition. The line it does not cross is **driving**: the hub never
 claims work and never runs a stage. It is a fourth caller of the gate, not a
@@ -178,11 +178,11 @@ Two consequences worth stating, because they are what keep that line honest:
 - **Ship opens a pull request**, which is visible outside the machine. Every
   hub write is behind a confirm that names its real effect.
 
-It also **edits `.agentic-loop.json`**, one named layer at a time — never the
+It also **edits `.agentic-workflow.json`**, one named layer at a time — never the
 merged view, which would flatten the user-scope layer (and its `ado.pat`) into
 the repo's file. It writes raw JSON, so keys core's schema doesn't know survive
 a save instead of being stripped. And it exposes the **backlog doctor**
-(`loop_doctor`) — rescuing strays, removing invented folders, and releasing the
+(`workflow_doctor`) — rescuing strays, removing invented folders, and releasing the
 stale, undriven claim markers that would otherwise keep refusing a gate move.
 
 Its write surface is bounded by the localhost bind, a Host-header check, and an

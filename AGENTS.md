@@ -4,17 +4,17 @@ Guidance for AI coding agents working in this repository.
 
 ## Repository Overview
 
-`agentic-loop` is a multi-kind agentic-loop framework (shared engine in
-`@agentic-loop/core`, shipping both an OpenCode and a Claude Code plugin); this
+`agentic-workflow` is a multi-kind agentic-workflow framework (shared engine in
+`@agentic-workflow/core`, shipping both an OpenCode and a Claude Code plugin); this
 guide covers the OpenCode plugin — see `plugins/claude/README.md` for the
 Claude Code equivalent. It has two ways to work: an **automatic loop** that
 drives a backlog task through its whole lifecycle unattended, and **ad-hoc,
 skill-driven execution** for a single request that doesn't need a loop. The
 sections below cover each.
 
-1. **The automatic agentic loop** (`/agentic-loop:engineering`) — a real plugin
+1. **The automatic agentic loop** (`/agentic-workflow:engineering`) — a real plugin
    (`plugins/opencode/src/`, agents/commands under `plugins/opencode/`) that
-   drives the whole lifecycle from one command: `/agentic-loop:engineering new` interviews you
+   drives the whole lifecycle from one command: `/agentic-workflow:engineering new` interviews you
    into a planless draft task (`new <idea>` — always), `retask <id>` reshapes
    a planless task in place (a draft, or a `queued/` task sent back to `draft/`
    first), `approve [id]` is the one folder-driven gate (draft →
@@ -28,21 +28,21 @@ sections below cover each.
    planned only on demand via `plan <id>` (PLAN parks the plan in
    `plan-review/` for your gate and exits — `claim`/`watch` never auto-plan). `recover <id>` resumes a run that stopped early (crash or ESC
    interrupt); `stop`/`abort` ends a run outright; `status` reports the
-   current loop plus a backlog roll-up; `kinds` lists which loop kinds this
+   current loop plus a backlog roll-up; `kinds` lists which workflow kinds this
    repo has enabled; `doctor [fix]` audits (and optionally repairs) backlog
    structural damage. Use this
    when a goal should run the whole lifecycle largely unattended. See the
-   `loop-orchestration` skill for the pipeline, gates, and verdict contracts,
+   `workflow-orchestration` skill for the pipeline, gates, and verdict contracts,
    and `task-backlog-management` for driving it from
    `docs/tasks/`.
-   That pipeline is the **engineering loop kind** — the default of several
-   declarative kinds under `packages/core/loops/<kind>/` (manifest + stage prompts) run by
-   the shared `@agentic-loop/core` engine. Other kinds are enabled via
-   `loops.<kind>` in `.agentic-loop.json` and are all **experimental** (their
+   That pipeline is the **engineering workflow kind** — the default of several
+   declarative kinds under `packages/core/workflows/<kind>/` (manifest + stage prompts) run by
+   the shared `@agentic-workflow/core` engine. Other kinds are enabled via
+   `workflows.<kind>` in `.agentic-workflow.json` and are all **experimental** (their
    manifests and config keys may still change; `engineering` is the stable
    default): `pr-sitter` (agents
-   `loop-pr-triage` / `loop-pr-fix` / `loop-pr-publish`, plus
-   the shared `loop-verify`) sits on open PRs — triages, fixes, verifies, and pushes
+   `workflow-pr-triage` / `workflow-pr-fix` / `workflow-pr-publish`, plus
+   the shared `workflow-verify`) sits on open PRs — triages, fixes, verifies, and pushes
    replies, but never merges; `review-sitter` sits on PRs where your review is
    requested and posts one structured review comment per head, but never
    approves or requests changes — the human stays reviewer of record;
@@ -51,8 +51,8 @@ sections below cover each.
    never merges; and `main-sitter` sits on the default branch's CI and, when it
    goes red, opens a draft remedy PR with a verified forward fix or revert, but
    never pushes the watched branch. Each enabled kind has its own command —
-   `claim`/`watch` on `/agentic-loop:pr-sitter` are scoped to the sitter, just
-   as `/agentic-loop:engineering`'s are to the backlog.
+   `claim`/`watch` on `/agentic-workflow:pr-sitter` are scoped to the sitter, just
+   as `/agentic-workflow:engineering`'s are to the backlog.
 2. **Ad-hoc, skill-driven execution** — for a single request that doesn't
    warrant starting a loop, OpenCode still has a **skill-driven execution
    model** powered by the `skill` tool and the `skills/` directory bundled
@@ -63,7 +63,7 @@ sections below cover each.
 A task moves through exactly one folder at a time under `docs/tasks/`. The
 same `approve` verb drives every forward move (which one depends on which
 folder the task is currently in); `replan` is the sole rejection verb, always
-back to `queued/`. Full protocol: `loop-orchestration` skill.
+back to `queued/`. Full protocol: `workflow-orchestration` skill.
 
 ```mermaid
 stateDiagram-v2
@@ -99,12 +99,12 @@ stateDiagram-v2
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Run the whole lifecycle on a goal, largely unattended → `/agentic-loop:engineering new <idea>` then `/agentic-loop:engineering approve <id>` then `/agentic-loop:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-loop:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, falling back to a lone draft only when no loop gate is waiting. See `loop-orchestration`, not a manual skill chain
+- Run the whole lifecycle on a goal, largely unattended → `/agentic-workflow:engineering new <idea>` then `/agentic-workflow:engineering approve <id>` then `/agentic-workflow:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-workflow:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, falling back to a lone draft only when no loop gate is waiting. See `workflow-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
 
-`/agentic-loop:engineering` implements this lifecycle as real pipeline stages (see
-`loop-orchestration`). Outside the loop, follow it as an implicit sequence of
+`/agentic-workflow:engineering` implements this lifecycle as real pipeline stages (see
+`workflow-orchestration`). Outside the loop, follow it as an implicit sequence of
 skill invocations instead:
 
 - PLAN → `spec-driven-development` + `planning-and-task-breakdown`
@@ -114,7 +114,7 @@ skill invocations instead:
 
 ### Execution Model (ad-hoc mode)
 
-For every request that isn't handed to `/agentic-loop:engineering`:
+For every request that isn't handed to `/agentic-workflow:engineering`:
 
 1. Determine if any skill applies (even 1% chance)
 2. Invoke the appropriate skill using the `skill` tool
@@ -133,17 +133,17 @@ Correct behavior: always check for and use skills first.
 
 ## Plugin Structure
 
-The shared `@agentic-loop/core` engine and its declarative loop-kind
+The shared `@agentic-workflow/core` engine and its declarative workflow-kind
 manifests are consumed by three different hosts — the OpenCode plugin, the
 Claude Code plugin (via an MCP — Model Context Protocol — server), and the
 admin hub:
 
 ```mermaid
 flowchart TD
-    subgraph Core["packages/core — @agentic-loop/core engine"]
+    subgraph Core["packages/core — @agentic-workflow/core engine"]
         Engine["manifest interpreter, scheduler, work sources"]
-        Loops["packages/core/loops/&lt;kind&gt;/<br/>loop.json manifest + stage prompts<br/>(engineering, pr-sitter, review-sitter, dep-sitter, main-sitter)"]
-        Engine --- Loops
+        Workflows["packages/core/workflows/&lt;kind&gt;/<br/>workflow.json manifest + stage prompts<br/>(engineering, pr-sitter, review-sitter, dep-sitter, main-sitter)"]
+        Engine --- Workflows
     end
 
     OpenCode["plugins/opencode<br/>OpenCode plugin (state machine + driver)"]
@@ -156,11 +156,11 @@ flowchart TD
 ```
 
 - `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
-- `packages/core/` — the shared `@agentic-loop/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
-- `packages/core/loops/<kind>/` — declarative loop-kind manifests (`loop.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
-- `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship) and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-loop/core` entry points the hosts call, a Config tab that edits `.agentic-loop.json` one layer at a time, and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
-- `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `loop-*`, pr-sitter's `loop-pr-triage`/`loop-pr-fix`/`loop-pr-publish`, review-sitter's `loop-review-fetch`/`loop-review-assess`/`loop-review-publish`, dep-sitter's `loop-dep-scan`/`loop-dep-upgrade`/`loop-dep-publish`, and main-sitter's `loop-main-diagnose`/`loop-main-remedy`/`loop-main-publish`, with the shared `loop-verify` reused as the VERIFY stage across several kinds)
-- `plugins/opencode/commands/` — the slash commands (`/agentic-loop:engineering`, `/agentic-loop:pr-sitter`, `/agentic-loop:review-sitter`, `/agentic-loop:dep-sitter`, `/agentic-loop:main-sitter`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`, and the new-kind stage commands `/review-fetch`, `/review-assess`, `/review-publish`, `/dep-scan`, `/dep-upgrade`, `/dep-publish`, `/main-diagnose`, `/main-remedy`, `/main-publish`)
+- `packages/core/` — the shared `@agentic-workflow/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
+- `packages/core/workflows/<kind>/` — declarative workflow-kind manifests (`workflow.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
+- `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship) and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-workflow/core` entry points the hosts call, a Config tab that edits `.agentic-workflow.json` one layer at a time, and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
+- `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `workflow-*`, pr-sitter's `workflow-pr-triage`/`workflow-pr-fix`/`workflow-pr-publish`, review-sitter's `workflow-review-fetch`/`workflow-review-assess`/`workflow-review-publish`, dep-sitter's `workflow-dep-scan`/`workflow-dep-upgrade`/`workflow-dep-publish`, and main-sitter's `workflow-main-diagnose`/`workflow-main-remedy`/`workflow-main-publish`, with the shared `workflow-verify` reused as the VERIFY stage across several kinds)
+- `plugins/opencode/commands/` — the slash commands (`/agentic-workflow:engineering`, `/agentic-workflow:pr-sitter`, `/agentic-workflow:review-sitter`, `/agentic-workflow:dep-sitter`, `/agentic-workflow:main-sitter`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`, and the new-kind stage commands `/review-fetch`, `/review-assess`, `/review-publish`, `/dep-scan`, `/dep-upgrade`, `/dep-publish`, `/main-diagnose`, `/main-remedy`, `/main-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
@@ -177,6 +177,6 @@ Rules earn their place — every line costs context on every session.
 - **What to write:** the constraint **and why** it exists (so a future agent
   doesn't "fix" it back), not a narration of the bug.
 - **Where:** a durable, cross-task fact → here. A task-specific instruction →
-  the task file or the stage prompt (`packages/core/loops/<kind>/stages/*.md`), not here.
+  the task file or the stage prompt (`packages/core/workflows/<kind>/stages/*.md`), not here.
 - **Prune:** delete a rule when the code it guards moves or the reason dies. A
   stale rule is worse than none.

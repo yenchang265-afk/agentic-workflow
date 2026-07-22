@@ -1,7 +1,7 @@
 {
-  "name": "agentic-loop-monorepo",
+  "name": "agentic-workflow-monorepo",
   "version": "0.0.1",
-  "description": "The agentic-loop plugins (OpenCode + Claude Code) and their shared core",
+  "description": "The agentic-workflow plugins (OpenCode + Claude Code) and their shared core",
   "license": "MIT",
   "type": "module",
   "private": true,
@@ -15,8 +15,8 @@
     "plugins/claude/mcp-server"
   ],
   "scripts": {
-    "prepare": "npm run build -w @agentic-loop/core && npm run build -w agentic-loop-mcp",
-    "hub": "npm run build -w @agentic-loop/core && npm run build -w @agentic-loop/hub && npm run start -w @agentic-loop/hub --",
+    "prepare": "npm run build -w @agentic-workflow/core && npm run build -w agentic-workflow-mcp",
+    "hub": "npm run build -w @agentic-workflow/core && npm run build -w @agentic-workflow/hub && npm run start -w @agentic-workflow/hub --",
     "gen:prompts": "node scripts/gen-prompts.mjs",
     "build:hooks": "node scripts/build-hooks.mjs",
     "test:hooks": "node --test plugins/claude/hooks/*.test.mjs",

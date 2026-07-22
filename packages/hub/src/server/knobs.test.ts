@@ -4,7 +4,7 @@ import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
 import type { KindBoardInfo } from "../shared/api.js"
-import { BY_SOURCE, lintLoopKnobs } from "./knobs.js"
+import { BY_SOURCE, lintWorkflowKnobs } from "./knobs.js"
 
 const board = (kind: string, sourceType: KindBoardInfo["sourceType"]): KindBoardInfo => ({
   kind,
@@ -22,12 +22,12 @@ const BOARDS: readonly KindBoardInfo[] = [
   board("main-sitter", "ci-runs"),
 ]
 
-const lint = (loops: unknown) => lintLoopKnobs(loops, BOARDS)
+const lint = (workflows: unknown) => lintWorkflowKnobs(workflows, BOARDS)
 
 test("a typo is caught with a suggestion — orchestrate would ignore it silently", () => {
   const w = lint({ "dep-sitter": { severityfloor: "high" } })
   assert.equal(w.length, 1)
-  assert.equal(w[0]?.path, "loops.dep-sitter.severityfloor")
+  assert.equal(w[0]?.path, "workflows.dep-sitter.severityfloor")
   assert.equal(w[0]?.suggestion, "severityFloor")
   assert.match(w[0]?.message ?? "", /silently ignored/)
 })
@@ -50,7 +50,7 @@ test("a knob on the wrong source is named as such, not merely 'unknown'", () => 
 test("a section for a kind that isn't installed is reported as inert", () => {
   const w = lint({ "ghost-sitter": { enabled: true } })
   assert.equal(w.length, 1)
-  assert.match(w[0]?.message ?? "", /no loop kind "ghost-sitter" is installed/)
+  assert.match(w[0]?.message ?? "", /no workflow kind "ghost-sitter" is installed/)
 })
 
 test("valid knobs, universal keys, and the structured trigger/stageModels produce no warnings", () => {
@@ -63,7 +63,7 @@ test("valid knobs, universal keys, and the structured trigger/stageModels produc
   assert.deepEqual(w, [])
 })
 
-test("linting is total — a non-object loops section or member never throws", () => {
+test("linting is total — a non-object workflows section or member never throws", () => {
   assert.deepEqual(lint(undefined), [])
   assert.deepEqual(lint("nonsense"), [])
   assert.deepEqual(lint({ engineering: "nonsense" }), [])
@@ -76,15 +76,15 @@ test("linting is total — a non-object loops section or member never throws", (
  *
  * Reads orchestrate's source and extracts every positional knob read. Both
  * spellings it uses today, optional chaining included:
- *   config.loops[kind]?.["query"]      knobs["severityFloor"]
+ *   config.workflows[kind]?.["query"]      knobs["severityFloor"]
  */
 test("drift alarm: the registry matches the knobs orchestrate.ts actually reads", () => {
   const here = path.dirname(fileURLToPath(import.meta.url))
-  const orchestrate = path.resolve(here, "../../../core/src/loop/orchestrate.ts")
+  const orchestrate = path.resolve(here, "../../../core/src/workflow/orchestrate.ts")
   const src = fs.readFileSync(orchestrate, "utf8")
 
   const found = new Set<string>()
-  for (const m of src.matchAll(/(?:knobs|config\.loops\[kind\])\??\.?\[["']([A-Za-z]+)["']\]/g)) {
+  for (const m of src.matchAll(/(?:knobs|config\.workflows\[kind\])\??\.?\[["']([A-Za-z]+)["']\]/g)) {
     if (m[1]) found.add(m[1])
   }
 

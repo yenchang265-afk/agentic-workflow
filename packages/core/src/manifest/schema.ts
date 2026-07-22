@@ -1,10 +1,10 @@
 import { z } from "zod"
 
 /**
- * The declarative definition of one loop kind: its stages, transition table,
- * work-source binding, and gate semantics. A loop kind lives in
- * `loops/<kind>/loop.json` next to per-stage prompt templates
- * (`loops/<kind>/stages/*.md`); the engine (`loop/engine.ts`) interprets it.
+ * The declarative definition of one workflow kind: its stages, transition table,
+ * work-source binding, and gate semantics. A workflow kind lives in
+ * `workflows/<kind>/workflow.json` next to per-stage prompt templates
+ * (`workflows/<kind>/stages/*.md`); the engine (`workflow/engine.ts`) interprets it.
  * Logic a manifest can't express hangs off named hooks resolved through
  * `registry.ts` (the TS escape hatch).
  */
@@ -47,7 +47,7 @@ export const StageDefSchema = z.object({
   kind: z.enum(["work", "check"]),
   /** The OpenCode slash command this stage fires (e.g. `plan-task`). */
   command: z.string().min(1),
-  /** The subagent persona backing the stage (e.g. `loop-plan-author`). */
+  /** The subagent persona backing the stage (e.g. `workflow-plan-author`). */
   agent: z.string().min(1),
   /** Manifest-relative path of the stage's prompt template (e.g. `stages/build.md`). */
   prompt: z.string().min(1),
@@ -58,15 +58,15 @@ export const StageDefSchema = z.object({
   /**
    * Host-specific model this stage runs with (OpenCode: `provider/modelID`;
    * Claude Code: a Task-tool model). Unset ⇒ the host's default; config
-   * `loops.<kind>.stageModels.<name>` wins over this.
+   * `workflows.<kind>.stageModels.<name>` wins over this.
    */
   model: z.string().min(1).optional(),
   /**
-   * Axes a `check` stage's verdict must cover, or none. When set, `loop_verdict`
+   * Axes a `check` stage's verdict must cover, or none. When set, `workflow_verdict`
    * rejects a call whose `axes` array misses any of them, and the stage prompt
    * carries the payload contract — so a multi-axis review can't silently skip an
    * axis. Declared per stage rather than baked into the tool because one
-   * `loop_verdict` serves every check stage of every kind.
+   * `workflow_verdict` serves every check stage of every kind.
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
   /** Bash-command globs this stage may run (enforced by the Claude Code stage guard). */
@@ -206,7 +206,7 @@ export const WorkSourceBindingSchema = z.discriminatedUnion("type", [
 ])
 export type WorkSourceBinding = z.infer<typeof WorkSourceBindingSchema>
 
-export const LoopManifestSchema = z
+export const WorkflowManifestSchema = z
   .object({
     kind: z.string().min(1),
     version: z.literal(1),
@@ -271,18 +271,18 @@ export const LoopManifestSchema = z
       }
     }
   })
-export type LoopManifest = z.infer<typeof LoopManifestSchema>
+export type WorkflowManifest = z.infer<typeof WorkflowManifestSchema>
 
 /** The manifest plus its loaded per-stage prompt templates, keyed by stage name. */
 export interface LoadedManifest {
-  readonly manifest: LoopManifest
+  readonly manifest: WorkflowManifest
   readonly prompts: Readonly<Record<string, string>>
 }
 
 /** Find a stage definition by name; throws on an unknown stage (a manifest/state mismatch). */
-export const stageDef = (manifest: LoopManifest, name: string): StageDef => {
+export const stageDef = (manifest: WorkflowManifest, name: string): StageDef => {
   const def = manifest.stages.find((s) => s.name === name)
-  if (!def) throw new Error(`loop kind "${manifest.kind}" has no stage "${name}"`)
+  if (!def) throw new Error(`workflow kind "${manifest.kind}" has no stage "${name}"`)
   return def
 }
 
@@ -294,7 +294,7 @@ export const stageDef = (manifest: LoopManifest, name: string): StageDef => {
  * kind this derives ["plan-review", "in-review"] and adds "draft". Callers
  * treat the result as a set — the order is not meaningful. Pure.
  */
-export const gateStatuses = (manifest: LoopManifest): string[] => {
+export const gateStatuses = (manifest: WorkflowManifest): string[] => {
   const out = new Set<string>()
   for (const t of Object.values(manifest.transitions)) {
     for (const effect of [t.onDone, t.onPass, t.onFail, t.onError]) {
@@ -306,8 +306,8 @@ export const gateStatuses = (manifest: LoopManifest): string[] => {
 }
 
 /** Validate a raw manifest object; throws a readable error on schema failure. */
-export const parseManifest = (raw: unknown): LoopManifest => {
-  const result = LoopManifestSchema.safeParse(raw)
+export const parseManifest = (raw: unknown): WorkflowManifest => {
+  const result = WorkflowManifestSchema.safeParse(raw)
   if (!result.success) {
     const detail = result.error.issues.map((i) => `${i.path.join(".") || "(root)"} ${i.message}`).join("; ")
     throw new Error(`Invalid loop manifest: ${detail}`)

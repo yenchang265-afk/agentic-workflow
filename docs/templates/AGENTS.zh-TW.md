@@ -3,7 +3,7 @@
 # AGENTS.md — <專案名稱>
 
 <!--
-  給由 agentic-loop 外掛驅動的專案使用的起始 AGENTS.md。
+  給由 agentic-workflow 外掛驅動的專案使用的起始 AGENTS.md。
 
   使用方式：
   1. 把這份檔案複製到你的儲存庫根目錄，命名為 `AGENTS.md`（OpenCode）或
@@ -43,23 +43,23 @@
 當一個目標是多步驟、且應該在大致無人看管的情況下執行時（一項功能、
 一次帶測試的重構，任何值得建一份任務檔案的工作），**使用 agentic loop**：
 
-1. `/agentic-loop:engineering new <idea>` —— 訪談會產生一份草稿任務，
+1. `/agentic-workflow:engineering new <idea>` —— 訪談會產生一份草稿任務，
    包含目標和可測試的驗收標準（一律來自你本人，絕不用猜的）
-2. 審查草稿，然後執行 `/agentic-loop:engineering approve <id>` —— 將其排入佇列
-3. `/agentic-loop:engineering plan <id>` 認領已排入佇列的任務，
+2. 審查草稿，然後執行 `/agentic-workflow:engineering approve <id>` —— 將其排入佇列
+3. `/agentic-workflow:engineering plan <id>` 認領已排入佇列的任務，
    在執行前寫入 `## Implementation Plan`，並將其暫存在計畫把關點
    （`claim`/`watch` 絕不會自動為已排入佇列的任務產生計畫）
-4. `/agentic-loop:engineering approve <id>`（或 `replan <id> [why]`）——
+4. `/agentic-workflow:engineering approve <id>`（或 `replan <id> [why]`）——
    核准後，一個 `claim`/`watch` worker 會在 `feature/<id>` 分支上無人看管地
    執行 BUILD→VERIFY→REVIEW；你審查結果，並用
-   `/agentic-loop:engineering approve <id>` 發布它
+   `/agentic-workflow:engineering approve <id>` 發布它
 
 `approve` 在每一個把關點都是同一個動詞——由任務所在的資料夾決定
-要做的動作，因此永遠不會有歧義。省略 id 的 **`/agentic-loop:engineering approve`**
+要做的動作，因此永遠不會有歧義。省略 id 的 **`/agentic-workflow:engineering approve`**
 會推進目前唯一停在迴圈把關點上的任務（一份暫存的計畫或一份完成的
 審查；兩者都沒有時，才退而推進唯一的一份草稿。如果不只一個在等待，就要帶上
 id），而
-**`/agentic-loop:engineering replan`** 會把一份暫存的計畫送回去。
+**`/agentic-workflow:engineering replan`** 會把一份暫存的計畫送回去。
 
 對於單一、範圍明確的請求（重新命名、小修正、提問），**維持臨時
 （ad-hoc）模式**：直接呼叫對應的 skill 並嚴格遵循它。
@@ -120,6 +120,6 @@ id），而
 - **要寫什麼：** 這個限制**以及它存在的原因**（這樣未來的 agent
   才不會把它「修」回去），而不是對這個 bug 的敘述。
 - **放在哪裡：** 一項持久、跨任務的事實 → 放在這裡。一項任務特定的
-  指示 → 放進任務檔案或階段提示詞（`loops/<kind>/stages/*.md`），不要放在這裡。
+  指示 → 放進任務檔案或階段提示詞（`workflows/<kind>/stages/*.md`），不要放在這裡。
 - **修剪：** 當一條規則所守護的程式碼被搬移、或它存在的理由已經消失，
   就刪掉它。一條過時的規則比沒有規則更糟。

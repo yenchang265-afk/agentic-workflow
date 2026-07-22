@@ -4,35 +4,35 @@ argument-hint: claim | status | stop
 ---
 
 You are about to work the **review sitter agentic loop** (typed as
-`/agentic-loop:review-sitter`) — it sits on pull requests where **your review
+`/agentic-workflow:review-sitter`) — it sits on pull requests where **your review
 is requested** (GitHub via `gh`, or Azure DevOps via its REST API) and posts
 one structured review comment per requested head. Read the
-`loop-orchestration` skill now; then act on the argument below.
+`workflow-orchestration` skill now; then act on the argument below.
 
 **Argument:** `$ARGUMENTS`
 
 Dispatch:
 
-- **`claim`** — call `mcp__agentic-loop__loop_claim({kind: "review-sitter"})`
+- **`claim`** — call `mcp__agentic-workflow__workflow_claim({kind: "review-sitter"})`
   to poll for the next PR whose review is wanted and drive it per the
-  review-sitter manifest: `loop_stage` before spawning each stage subagent
-  (`loop-review-fetch` / `loop-review-assess` / `loop-review-publish` —
+  review-sitter manifest: `workflow_stage` before spawning each stage subagent
+  (`workflow-review-fetch` / `workflow-review-assess` / `workflow-review-publish` —
   fetch → assess → publish — via the Task tool, passing the response's
-  `model` as the Task tool's `model` when present) and `loop_advance` after
+  `model` as the Task tool's `model` when present) and `workflow_advance` after
   each returns, until a terminal action. A head already reviewed is skipped until
   a human pushes a new one. There is no standing watch mode on this substrate
   — `claim` is the pull; the OpenCode plugin's
-  `/agentic-loop:review-sitter watch` is the push equivalent.
-- **`status`** (or bare) — call `mcp__agentic-loop__loop_status` and report
+  `/agentic-workflow:review-sitter watch` is the push equivalent.
+- **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.
-- **`stop`** (alias: `abort`) — call `mcp__agentic-loop__loop_stop` to abort
+- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 
-The kind must be enabled in `.agentic-loop.json`:
+The kind must be enabled in `.agentic-workflow.json`:
 
 ```json
-{ "loops": { "review-sitter": { "enabled": true, "query": "is:open review-requested:@me" } } }
+{ "workflows": { "review-sitter": { "enabled": true, "query": "is:open review-requested:@me" } } }
 ```
 
 `query` (GitHub) narrows which PRs are polled; on Azure DevOps set
@@ -44,4 +44,4 @@ of record (enforced by the stage allowlists and the ADO write backstop
 hook).
 
 Task authoring and the engineering backlog live in the sibling command:
-`/agentic-loop:engineering`.
+`/agentic-workflow:engineering`.

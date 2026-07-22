@@ -67,10 +67,10 @@ const lifecycleWindow = (body: string): string => {
 }
 
 /**
- * Eligible for `/agentic-loop:engineering watch` to claim: planned, with no
+ * Eligible for `/agentic-workflow:engineering watch` to claim: planned, with no
  * "> BUILD started" or CLAIMED note in the current lifecycle window — not just
  * "last pair unmatched" (that's `wasInterrupted`, below). A marker in the
- * window means another live LoopState is driving it right now, or it crashed
+ * window means another live WorkflowState is driving it right now, or it crashed
  * and needs manual recovery — a watch session must never silently reclaim
  * either case. Pure.
  */
@@ -102,8 +102,8 @@ export const extractPlan = (task: Task): string | undefined => {
 
 /**
  * Planned and started at least once in the current lifecycle window — no longer
- * claimable by `/agentic-loop:engineering watch`, but a human can force-resume it
- * with `/agentic-loop:engineering recover <id>` once no live loop is driving it
+ * claimable by `/agentic-workflow:engineering watch`, but a human can force-resume it
+ * with `/agentic-workflow:engineering recover <id>` once no live loop is driving it
  * (crashed runs, restarted plugins). Pure.
  */
 export const isRecoverable = (task: Task): boolean => {
@@ -126,22 +126,22 @@ export const wasInterrupted = (task: Task): boolean => {
   return lastFinish < lastStart
 }
 
-/** A per-status roll-up of the backlog for `/agentic-loop:engineering status`. Pure. */
+/** A per-status roll-up of the backlog for `/agentic-workflow:engineering status`. Pure. */
 export interface BacklogSummary {
   readonly counts: Readonly<Record<TaskStatus, number>>
-  /** draft tasks awaiting the human task gate (/agentic-loop:engineering approve) — tracking epics excluded, they are never approved. */
+  /** draft tasks awaiting the human task gate (/agentic-workflow:engineering approve) — tracking epics excluded, they are never approved. */
   readonly awaitingTask: readonly string[]
   /** queued tasks awaiting the loop's PLAN stage (a watcher will claim them once no build work remains). */
   readonly awaitingPlan: readonly string[]
-  /** plan-review tasks whose plan is parked for human review (/agentic-loop:engineering approve). */
+  /** plan-review tasks whose plan is parked for human review (/agentic-workflow:engineering approve). */
   readonly gated: readonly string[]
   /** in-progress tasks parked and never started (a watcher will claim them). */
   readonly claimable: readonly string[]
   /** in-progress tasks whose body is claimable but whose claim marker is currently held. */
   readonly claimHeld: readonly string[]
-  /** in-progress tasks whose last build looks interrupted (crashed — /agentic-loop:engineering recover). */
+  /** in-progress tasks whose last build looks interrupted (crashed — /agentic-workflow:engineering recover). */
   readonly interrupted: readonly string[]
-  /** in-review tasks awaiting a human diff review (/agentic-loop:engineering approve). */
+  /** in-review tasks awaiting a human diff review (/agentic-workflow:engineering approve). */
   readonly awaitingReview: readonly string[]
 }
 
@@ -177,7 +177,7 @@ const ACTIVE_STATUSES: readonly TaskStatus[] = ["draft", "queued", "plan-review"
 /**
  * Pairing coverage across the active backlog (everything but completed/abandoned):
  * how many active tasks carry a `tracker` block vs the ids of those that don't.
- * Feeds the `loop_status` pairing view when project management is configured. Pure.
+ * Feeds the `workflow_status` pairing view when project management is configured. Pure.
  */
 export const pairingCoverage = (
   byStatus: Readonly<Record<TaskStatus, readonly Task[]>>,
@@ -228,7 +228,7 @@ export const listByStatus = async (
 export const listQueued = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "queued", log)
 
-/** List and parse every task in `in-progress/` — the pool `/agentic-loop:engineering watch` claims from. */
+/** List and parse every task in `in-progress/` — the pool `/agentic-workflow:engineering watch` claims from. */
 export const listInProgress = (client: Client, directory: string, tasksDir: string, log?: Log): Promise<Task[]> =>
   listByStatus(client, directory, tasksDir, "in-progress", log)
 
@@ -322,7 +322,7 @@ export const resolveTaskIdIn = async (
  * prefix matches from every folder are merged: exactly one → resolved, several
  * → ambiguous (never guesses), none → null. This is the resolution the gate
  * verbs (approve/replan) have always done — exported so every id-taking verb
- * (`plan`, `recover`, loop_start) accepts the same short handles the UIs
+ * (`plan`, `recover`, workflow_start) accepts the same short handles the UIs
  * surface as "the copyable id".
  */
 export const resolveTaskIdAnywhere = async (
@@ -411,8 +411,8 @@ export const listClaimIds = async (
  */
 export const isOrphanedClaim = (
   task: Task,
-  opts: { readonly drivenByLiveLoop: boolean; readonly markerStale: boolean },
-): boolean => isClaimable(task) && !opts.drivenByLiveLoop && opts.markerStale
+  opts: { readonly drivenByLiveWorkflow: boolean; readonly markerStale: boolean },
+): boolean => isClaimable(task) && !opts.drivenByLiveWorkflow && opts.markerStale
 
 /**
  * The `queued/` variant of `isOrphanedClaim`: a queued task is planless by
@@ -423,8 +423,8 @@ export const isOrphanedClaim = (
  */
 export const isOrphanedPlanClaim = (
   _task: Task,
-  opts: { readonly drivenByLiveLoop: boolean; readonly markerStale: boolean },
-): boolean => !opts.drivenByLiveLoop && opts.markerStale
+  opts: { readonly drivenByLiveWorkflow: boolean; readonly markerStale: boolean },
+): boolean => !opts.drivenByLiveWorkflow && opts.markerStale
 
 /** Result of walking the claim candidates: the winner, and the ids whose markers stayed held. */
 export interface ClaimAttempt {
@@ -477,7 +477,7 @@ export const claimFirst = async (
       continue // stale listing, nothing holds it — not a held marker
     }
     const markerStale = await claimOlderThan($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
-    if (isOrphaned(task, { drivenByLiveLoop: opts.isDriving(task.id), markerStale })) {
+    if (isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(task.id), markerStale })) {
       opts.log?.("warn", `releasing orphaned claim marker for ${task.id} — its claimer died before the stage started`)
       await releaseClaim($, task)
       if (await claimTask($, task)) {
@@ -518,7 +518,7 @@ export const releaseOrphanedClaims = async (
     const ref: FileRef = task ?? { id, path: path.join(inProgressDir, `${id}.md`) }
     const markerStale = await claimOlderThan($, ref, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
     const orphaned = task
-      ? isOrphaned(task, { drivenByLiveLoop: opts.isDriving(id), markerStale })
+      ? isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(id), markerStale })
       : markerStale && !opts.isDriving(id)
     if (!orphaned) continue
     await releaseClaim($, ref)
@@ -697,8 +697,8 @@ export interface WriteLocation {
  * Create a task file programmatically from *inside the plugin runtime* (a
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
- * command. For creating a task today, use `/agentic-loop:engineering new <idea>` — the
- * `loop-plan-author` subagent, which runs inside OpenCode; see the
+ * command. For creating a task today, use `/agentic-workflow:engineering new <idea>` — the
+ * `workflow-plan-author` subagent, which runs inside OpenCode; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
  * writes it. Returns the new task's id and absolute path.

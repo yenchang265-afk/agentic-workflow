@@ -8,20 +8,20 @@
 
 | 文件 | 權威範圍 |
 |-----|---------------|
-| [loops/](loops/README.md) | 每種類型的完整全貌（engineering、pr-sitter、review-sitter、dep-sitter、main-sitter）——架構（階段流水線、mermaid 圖、設定項）、啟用片段、指令面，以及 1-2 個實戰範例，每種類型都收在同一份檔案裡 |
-| [architecture.md](architecture.md) | 僅框架本身（核心套件、清單引擎、排程器、工作來源、watch 租約），以及 Claude Code 版本 + 管理面板有何不同——各類型的架構收在 `loops/` 下 |
-| [sitters.md](sitters.md) | 四個實驗性 sitter 的共同點（形狀、可選啟用、不可信輸入的處理方式），並索引到 `loops/` 下它們各自的檔案 |
-| [configuration.md](configuration.md) | 每一個 `.agentic-loop.json` 欄位（分層/優先順序、`loops`、`codePlatform`/`ado`、`projectManagement`、強化項、環境變數） |
+| [workflows/](workflows/README.md) | 每種類型的完整全貌（engineering、pr-sitter、review-sitter、dep-sitter、main-sitter）——架構（階段流水線、mermaid 圖、設定項）、啟用片段、指令面，以及 1-2 個實戰範例，每種類型都收在同一份檔案裡 |
+| [architecture.md](architecture.md) | 僅框架本身（核心套件、清單引擎、排程器、工作來源、watch 租約），以及 Claude Code 版本 + 管理面板有何不同——各類型的架構收在 `workflows/` 下 |
+| [sitters.md](sitters.md) | 四個實驗性 sitter 的共同點（形狀、可選啟用、不可信輸入的處理方式），並索引到 `workflows/` 下它們各自的檔案 |
+| [configuration.md](configuration.md) | 每一個 `.agentic-workflow.json` 欄位（分層/優先順序、`workflows`、`codePlatform`/`ado`、`projectManagement`、強化項、環境變數） |
 | [opencode.md](opencode.md) | OpenCode 特有的執行細節（watch 觸發、ESC/recover）以及完整的 OpenCode 指令面 |
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code 安裝、MCP 伺服器指令面，以及已知限制 |
-| [`../packages/core/loops/README.md`](../packages/core/loops/README.md) | 如何編寫一種新的迴圈類型（清單結構描述、提示詞範本、hooks、工作來源） |
+| [`../packages/core/workflows/README.md`](../packages/core/workflows/README.md) | 如何編寫一種新的工作流程類型（清單結構描述、提示詞範本、hooks、工作來源） |
 | [`../packages/hub/README.md`](../packages/hub/README.md) | 管理面板（測試版）：安裝、各視圖，以及它自己的設定 |
-| [design/threat-model.md](design/threat-model.md) | 安全態勢——每種迴圈類型的威脅與控制措施 |
-| [design/proposed-loops.md](design/proposed-loops.md) | 尚未建置的迴圈類型提案（其中三項已經上線——目前行為見 `sitters.md`） |
+| [design/threat-model.md](design/threat-model.md) | 安全態勢——每種工作流程類型的威脅與控制措施 |
+| [design/proposed-workflows.md](design/proposed-workflows.md) | 尚未建置的工作流程類型提案（其中三項已經上線——目前行為見 `sitters.md`） |
 | [design/proposed-hub-features.md](design/proposed-hub-features.md) | 管理面板提案——把關/doctor/設定寫入介面（基礎架構、提示詞預覽和把關動作已經上線；doctor 和設定編輯器尚未——管理面板目前實際做了什麼見 `../packages/hub/README.md`） |
 | [design/improvements/](design/improvements/README.md) | 已上線強化工作的實作設計紀錄（worktree、狀態持久化、裁定品質……） |
 | [migration.md](migration.md) | 從早期版面遷移（舊的 `/agent-loop` 指令、`in-planning/`、阻塞式 PLAN 把關） |
-| [templates/AGENTS.md](templates/AGENTS.md) | 可複製到由 agentic-loop 驅動的專案中的起始 `AGENTS.md`/`CLAUDE.md` |
+| [templates/AGENTS.md](templates/AGENTS.md) | 可複製到由 agentic-workflow 驅動的專案中的起始 `AGENTS.md`/`CLAUDE.md` |
 | [`../prompts/README.md`](../prompts/README.md) | 單一來源的 agent 提示詞流水線如何運作（`prompts/agents/` → `npm run gen:prompts` → 兩個外掛） |
 
 `manual.html` 是一份手動維護的單頁 HTML 手冊，為求方便而重述上述大部分

@@ -1,5 +1,5 @@
 <meta charset="utf-8">
-<title>agentic-loop — User Manual</title>
+<title>agentic-workflow — User Manual</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 /* ============================================================= tokens */
@@ -288,7 +288,7 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
   <button id="navToggle" class="btn" aria-label="Toggle navigation" aria-expanded="false">☰ Menu</button>
   <div class="brand">
     <span class="glyph" aria-hidden="true"></span>
-    <b>agentic-loop</b><span class="tag">user manual</span>
+    <b>agentic-workflow</b><span class="tag">user manual</span>
   </div>
   <div class="sp"></div>
   <button id="theme" class="btn" aria-label="Toggle colour theme">◐ Theme</button>
@@ -315,7 +315,7 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
     <section id="overview" class="hero" style="padding-top:40px">
       <div class="eyebrow">Supervised automation for long-lived goals</div>
       <h1>Run a goal like a <span class="k">state machine</span>, not a chat.</h1>
-      <p class="lede">agentic-loop drives a goal through named stages automatically, pausing only at the human gates you decide matter. It is a multi-kind loop framework: each loop kind is a declarative manifest — stages, transitions, a work source — interpreted by one shared engine and fed by a common scheduler.</p>
+      <p class="lede">agentic-workflow drives a goal through named stages automatically, pausing only at the human gates you decide matter. It is a multi-kind workflow framework: each workflow kind is a declarative manifest — stages, transitions, a work source — interpreted by one shared engine and fed by a common scheduler.</p>
 
       <div class="pillrow">
         <span class="pill"><b>engineering</b> · default-on · PLAN→BUILD→VERIFY→REVIEW</span>
@@ -365,9 +365,9 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
 ./bootstrap.sh --check-only    <span class="c"># report dependency status, change nothing</span></pre></div>
       </div>
       <div class="tabpanel" id="pan-b" role="tabpanel" aria-labelledby="tab-b" hidden>
-        <p>If the toolchain is already present, install the plugins directly. <code>npm install</code> uses npm workspaces and also builds <code>@agentic-loop/core</code>; <code>install.sh</code> then symlinks both plugins and runs the config wizard.</p>
+        <p>If the toolchain is already present, install the plugins directly. <code>npm install</code> uses npm workspaces and also builds <code>@agentic-workflow/core</code>; <code>install.sh</code> then symlinks both plugins and runs the config wizard.</p>
         <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>git clone &lt;this-repo&gt;
-cd agentic-loop
+cd agentic-workflow
 npm install                    <span class="c"># workspaces + builds core dist/</span>
 ./install.sh                   <span class="c"># both plugins; or: opencode | claude</span></pre></div>
       </div>
@@ -379,7 +379,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <div class="card">
           <h4 style="margin-top:0">Claude Code</h4>
           <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>claude --plugin-dir /abs/path/to/plugins/claude</pre></div>
-          <p style="font-size:13.5px;color:var(--muted-txt)">Or add the repo as a marketplace: <code>/plugin marketplace add /abs/path/to/repo</code> then <code>/plugin install agentic-loop</code>.</p>
+          <p style="font-size:13.5px;color:var(--muted-txt)">Or add the repo as a marketplace: <code>/plugin marketplace add /abs/path/to/repo</code> then <code>/plugin install agentic-workflow</code>.</p>
         </div>
         <div class="card">
           <h4 style="margin-top:0">OpenCode</h4>
@@ -389,21 +389,21 @@ npm install                    <span class="c"># workspaces + builds core dist/<
 
       <h3>Your first run</h3>
       <div class="flow">
-        <span class="f">/agentic-loop:engineering new &lt;idea&gt;</span><span class="arr">→</span>
+        <span class="f">/agentic-workflow:engineering new &lt;idea&gt;</span><span class="arr">→</span>
         <span class="f">approve &lt;id&gt;</span><span class="arr">→</span>
         <span class="f">plan &lt;id&gt;</span><span class="arr">→</span>
         <span class="f">approve</span><span class="arr">→</span>
         <span class="f">claim builds it</span><span class="arr">→</span>
         <span class="f term">approve</span>
       </div>
-      <p style="font-size:14px;color:var(--muted-txt)">You author and gate; the loop plans, builds, verifies and reviews in between. <code>approve</code> is the one gate verb — the folder the task sits in decides what it means (queue a draft, release a parked plan, or ship a reviewed diff). On OpenCode, <code>/agentic-loop:engineering watch</code> polls for approved work; on Claude Code, <code>/agentic-loop:engineering claim</code> is the one-shot pull.</p>
+      <p style="font-size:14px;color:var(--muted-txt)">You author and gate; the loop plans, builds, verifies and reviews in between. <code>approve</code> is the one gate verb — the folder the task sits in decides what it means (queue a draft, release a parked plan, or ship a reviewed diff). On OpenCode, <code>/agentic-workflow:engineering watch</code> polls for approved work; on Claude Code, <code>/agentic-workflow:engineering claim</code> is the one-shot pull.</p>
     </section>
 
     <!-- ===================================================== WIZARD -->
     <section id="wizard">
       <div class="eyebrow">Setup</div>
       <h2>The config wizard</h2>
-      <p class="lede"><code>./install.sh</code> ends with a short interactive wizard that seeds <code>.agentic-loop.json</code> into the project the loop will drive. Blank always accepts the <span class="def">[default]</span>. It never overwrites an existing file and is skipped under pipes/CI.</p>
+      <p class="lede"><code>./install.sh</code> ends with a short interactive wizard that seeds <code>.agentic-workflow.json</code> into the project the loop will drive. Blank always accepts the <span class="def">[default]</span>. It never overwrites an existing file and is skipped under pipes/CI.</p>
 
       <div class="pillrow">
         <span class="pill"><b>--config</b> force the wizard on</span>
@@ -415,8 +415,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
 
       <details class="q" open><summary><span class="step">Q0</span> Which project directory should the loop drive?</summary>
         <div class="body">
-          <p>Prompts <em>"Write config for which project directory"</em>, defaulting to the current dir. The file is written to <code>&lt;dir&gt;/.agentic-loop.json</code> — the same directory the plugin reads config from at runtime. Skips if it isn't a directory or the file already exists.</p>
-          <div class="kv">writes → <b>&lt;dir&gt;/.agentic-loop.json</b></div>
+          <p>Prompts <em>"Write config for which project directory"</em>, defaulting to the current dir. The file is written to <code>&lt;dir&gt;/.agentic-workflow.json</code> — the same directory the plugin reads config from at runtime. Skips if it isn't a directory or the file already exists.</p>
+          <div class="kv">writes → <b>&lt;dir&gt;/.agentic-workflow.json</b></div>
         </div>
       </details>
 
@@ -432,7 +432,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <details class="q"><summary><span class="step">Q2</span> Enable the PR-sitter loop?</summary>
         <div class="body">
           <p>Default <b>No</b>. If yes on GitHub, also asks for a <em>"PR search query"</em> (default <code>is:open author:@me</code>). On ADO the sitter watches its own PRs, so no query is asked.</p>
-          <div class="kv">writes → <b>loops.pr-sitter</b>: { enabled: true, query? }</div>
+          <div class="kv">writes → <b>workflows.pr-sitter</b>: { enabled: true, query? }</div>
         </div>
       </details>
 
@@ -468,12 +468,12 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <div class="node" data-stage="verify" role="tab" tabindex="0" aria-selected="false"><div class="num">03</div><div class="nm">VERIFY</div><span class="kd check">check</span></div>
           <div class="node" data-stage="review" role="tab" tabindex="0" aria-selected="false"><div class="num">04</div><div class="nm">REVIEW</div><span class="kd check">check</span></div>
         </div>
-        <div class="loopback">↩ a <span class="fail">FAIL</span> at VERIFY or REVIEW re-fires BUILD — verify and review share one iteration counter, capped at <code>maxIterations</code> (default 3). Cap tripped → the plan is suspect → a human sends it back with <code>/agentic-loop:engineering replan &lt;id&gt;</code>.</div>
+        <div class="loopback">↩ a <span class="fail">FAIL</span> at VERIFY or REVIEW re-fires BUILD — verify and review share one iteration counter, capped at <code>maxIterations</code> (default 3). Cap tripped → the plan is suspect → a human sends it back with <code>/agentic-workflow:engineering replan &lt;id&gt;</code>.</div>
         <div class="stagedetail" id="stagedetail" aria-live="polite"></div>
       </div>
 
       <h3>The trusted-verdict boundary</h3>
-      <p>A check stage's outcome counts only when recorded through the dedicated <code>loop_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
+      <p>A check stage's outcome counts only when recorded through the dedicated <code>workflow_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
 
       <h3>The pr-sitter kind <span class="def">experimental</span></h3>
       <p>The four sitters (<code>pr-sitter</code>, <code>review-sitter</code>, <code>dep-sitter</code>, <code>main-sitter</code>) are <b>experimental</b> — their manifests, config keys, and defaults may still change. <code>engineering</code> is the stable, default-on kind.</p>
@@ -489,7 +489,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <div class="note warn">Read <code>docs/design/threat-model.md</code> before enabling the PR sitter — it documents the security posture for acting on untrusted PR content.</div>
 
       <h3>The other sitter kinds <span class="def">experimental</span></h3>
-      <p>Three more opt-in sitters ship on the same engine, each watching a different signal. Enable one with <code>loops.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
+      <p>Three more opt-in sitters ship on the same engine, each watching a different signal. Enable one with <code>workflows.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
       <div class="card" style="margin-top:10px">
         <h4 style="margin-top:0">review-sitter <span style="text-transform:none;color:var(--ink-2)">— sits on PRs where your review is requested</span></h4>
         <div class="flow" style="margin:2px 0">
@@ -525,13 +525,13 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="gates">
       <div class="eyebrow">Understand</div>
       <h2>Gates &amp; the backlog</h2>
-      <p class="lede">Authoring, gating, and execution all live in <code>/agentic-loop:engineering</code>. A task's <b>folder is its status</b> — moving files between folders is how state advances, and <code>approve</code> is one verb whose meaning the folder decides.</p>
+      <p class="lede">Authoring, gating, and execution all live in <code>/agentic-workflow:engineering</code>. A task's <b>folder is its status</b> — moving files between folders is how state advances, and <code>approve</code> is one verb whose meaning the folder decides.</p>
 
       <h3>The three human gates — one verb</h3>
       <div class="gates">
-        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-loop:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts.</span></div>
-        <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve</b><code>/agentic-loop:engineering approve [id]</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan [id] [reason]</code>.</span></div>
-        <div class="gate"><span class="n">Gate 3 · ship</span><b>approve</b><code>/agentic-loop:engineering approve [id]</code><span>You accept the reviewed diff. in-review → completed.</span></div>
+        <div class="gate"><span class="n">Gate 1 · task gate</span><b>approve</b><code>/agentic-workflow:engineering approve &lt;id&gt;</code><span>You accept the goal &amp; acceptance criteria. draft → queued. Explicit id always required for drafts.</span></div>
+        <div class="gate"><span class="n">Gate 2 · plan gate</span><b>approve</b><code>/agentic-workflow:engineering approve [id]</code><span>You accept the plan the loop parked. plan-review → in-progress. Reject with <code>replan [id] [reason]</code>.</span></div>
+        <div class="gate"><span class="n">Gate 3 · ship</span><b>approve</b><code>/agentic-workflow:engineering approve [id]</code><span>You accept the reviewed diff. in-review → completed.</span></div>
       </div>
       <p style="margin:8px 0 0;font-size:14px;color:var(--muted-txt)">Id-less <code>approve</code> advances the single task the loop is waiting on you for (a parked plan → build, or a reviewed diff → completed), falling back to a lone <code>draft/</code> task only when neither gate has anything waiting. <code>replan</code> is the sole rejection verb: it sends a parked plan (or a cap-tripped task, by id) back to <code>queued/</code> for a fresh PLAN pass.</p>
 
@@ -546,9 +546,9 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       </div>
       <p style="font-size:14px;color:var(--muted-txt)">Under <code>docs/tasks/</code> (configurable via <code>tasksDir</code>), plus <code>abandoned/</code> for dropped work and an ephemeral <code>runs/</code> holding machine state. PLAN <em>parks</em> — it writes the plan onto the task file and exits rather than blocking on a human, so the loop is always free to pick up other work.</p>
 
-      <div class="note"><b>OpenCode vs Claude Code.</b> Same kinds and lifecycle. OpenCode runs a background <code>session.idle</code> driver with a <code>watch</code> polling mode; Claude Code has no background driver — the main agent drives via a bundled MCP server, gates are interactive prompts, and <code>/agentic-loop:engineering claim</code> replaces <code>watch</code>.</p></div>
+      <div class="note"><b>OpenCode vs Claude Code.</b> Same kinds and lifecycle. OpenCode runs a background <code>session.idle</code> driver with a <code>watch</code> polling mode; Claude Code has no background driver — the main agent drives via a bundled MCP server, gates are interactive prompts, and <code>/agentic-workflow:engineering claim</code> replaces <code>watch</code>.</p></div>
 
-      <div class="note"><b>Pausing a run (Esc).</b> On OpenCode, pressing <kbd>Esc</kbd> mid-drive interrupts the loop: it stops watch mode and halts <em>after</em> the in-flight stage settles, keeping the run snapshot. Resume exactly where it stopped with <code>/agentic-loop:engineering recover &lt;id&gt;</code>. That is the difference from <code>/agentic-loop:engineering stop</code>, a deliberate end that drops the snapshot — nothing to recover.</p></div>
+      <div class="note"><b>Pausing a run (Esc).</b> On OpenCode, pressing <kbd>Esc</kbd> mid-drive interrupts the loop: it stops watch mode and halts <em>after</em> the in-flight stage settles, keeping the run snapshot. Resume exactly where it stopped with <code>/agentic-workflow:engineering recover &lt;id&gt;</code>. That is the difference from <code>/agentic-workflow:engineering stop</code>, a deliberate end that drops the snapshot — nothing to recover.</p></div>
     </section>
 
     <!-- ===================================================== SKILLS -->
@@ -562,15 +562,15 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <table>
           <thead><tr><th>Stage</th><th>Sub-agent</th><th>Invokes</th></tr></thead>
           <tbody>
-            <tr><td><span class="stag plan" style="font-size:11px">PLAN</span></td><td><code>loop-plan-author</code></td><td><code>task-backlog-management</code> · <code>planning-and-task-breakdown</code><br><span style="color:var(--muted-txt)">when relevant: <code>api-and-interface-design</code> · <code>deprecation-and-migration</code> · <code>documentation-and-adrs</code></span></td></tr>
-            <tr><td><span class="stag build" style="font-size:11px">BUILD</span></td><td><code>loop-build</code></td><td><code>incremental-implementation</code> · <code>test-driven-development</code><br><span style="color:var(--muted-txt)">when relevant: <code>frontend-ui-engineering</code> · <code>observability-and-instrumentation</code> · <code>code-simplification</code></span></td></tr>
-            <tr><td><span class="stag verify" style="font-size:11px">VERIFY</span></td><td><code>loop-verify</code></td><td><code>debugging-and-error-recovery</code> <span style="color:var(--muted-txt)">(on FAIL, to root-cause)</span></td></tr>
-            <tr><td><span class="stag review" style="font-size:11px">REVIEW</span></td><td><code>loop-review</code></td><td><code>code-review-and-quality</code> · <code>security-and-hardening</code> · <code>performance-optimization</code></td></tr>
+            <tr><td><span class="stag plan" style="font-size:11px">PLAN</span></td><td><code>workflow-plan-author</code></td><td><code>task-backlog-management</code> · <code>planning-and-task-breakdown</code><br><span style="color:var(--muted-txt)">when relevant: <code>api-and-interface-design</code> · <code>deprecation-and-migration</code> · <code>documentation-and-adrs</code></span></td></tr>
+            <tr><td><span class="stag build" style="font-size:11px">BUILD</span></td><td><code>workflow-build</code></td><td><code>incremental-implementation</code> · <code>test-driven-development</code><br><span style="color:var(--muted-txt)">when relevant: <code>frontend-ui-engineering</code> · <code>observability-and-instrumentation</code> · <code>code-simplification</code></span></td></tr>
+            <tr><td><span class="stag verify" style="font-size:11px">VERIFY</span></td><td><code>workflow-verify</code></td><td><code>debugging-and-error-recovery</code> <span style="color:var(--muted-txt)">(on FAIL, to root-cause)</span></td></tr>
+            <tr><td><span class="stag review" style="font-size:11px">REVIEW</span></td><td><code>workflow-review</code></td><td><code>code-review-and-quality</code> · <code>security-and-hardening</code> · <code>performance-optimization</code></td></tr>
             <tr><td><span class="stag authoring" style="font-size:11px">AUTHOR</span></td><td>main agent</td><td><code>interview-me</code> · <code>idea-refine</code></td></tr>
           </tbody>
         </table>
       </div>
-      <div class="note">The wiring lives in the sub-agent definitions (<code>plugins/&lt;host&gt;/agents/loop-*.md</code>, generated from <code>prompts/agents/</code>), not the stage prompts — so "the stage's agent invokes these skills." Stage names themselves come from each kind's <code>packages/core/loops/&lt;kind&gt;/loop.json</code>; they are not a fixed global enum.</div>
+      <div class="note">The wiring lives in the sub-agent definitions (<code>plugins/&lt;host&gt;/agents/workflow-*.md</code>, generated from <code>prompts/agents/</code>), not the stage prompts — so "the stage's agent invokes these skills." Stage names themselves come from each kind's <code>packages/core/workflows/&lt;kind&gt;/workflow.json</code>; they are not a fixed global enum.</div>
 
       <h3>Full skills catalog</h3>
       <p style="font-size:14px;color:var(--muted-txt)">Filter by role, or search names and purposes.</p>
@@ -586,7 +586,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="config">
       <div class="eyebrow">Reference</div>
       <h2>Config reference</h2>
-      <p class="lede"><code>.agentic-loop.json</code> lives at the root of the project the loop drives. Optional — every field has a default. A <em>misconfigured</em> file fails fast with a clear message rather than silently falling back.</p>
+      <p class="lede"><code>.agentic-workflow.json</code> lives at the root of the project the loop drives. Optional — every field has a default. A <em>misconfigured</em> file fails fast with a clear message rather than silently falling back.</p>
       <div class="tblwrap">
         <table>
           <thead><tr><th>Field</th><th>Default</th><th>What it does</th></tr></thead>
@@ -595,7 +595,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>tasksDir</code></td><td><span class="def">"docs/tasks"</span></td><td>Root of the task backlog; subfolders are statuses. Also hosts the ephemeral <code>runs/</code> machine state.</td></tr>
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
             <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>watch</code> (either kind's command). <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
-            <tr><td><code>loops</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
+            <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
             <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (Azure DevOps REST API, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
             <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
             <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
@@ -605,12 +605,12 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           </tbody>
         </table>
       </div>
-      <div class="code"><div class="cbar"><span>.agentic-loop.json — example</span><button class="copy">Copy</button></div><pre>{
+      <div class="code"><div class="cbar"><span>.agentic-workflow.json — example</span><button class="copy">Copy</button></div><pre>{
   <span class="p">"codePlatform"</span>: "github",
   <span class="p">"worktreesDir"</span>: ".worktrees",
   <span class="p">"worktreeSetup"</span>: "npm ci",
   <span class="p">"reviewLenses"</span>: ["correctness", "security", "test-adequacy"],
-  <span class="p">"loops"</span>: {
+  <span class="p">"workflows"</span>: {
     <span class="p">"engineering"</span>: { "enabled": true },
     <span class="p">"pr-sitter"</span>: { "enabled": true, "query": "is:open author:@me" }
   }
@@ -623,7 +623,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <h2>Command cheat-sheet</h2>
       <div class="two">
         <div class="card">
-          <h4 style="margin-top:0">/agentic-loop:engineering <span style="text-transform:none;color:var(--ink-2)">— the backlog lifecycle</span></h4>
+          <h4 style="margin-top:0">/agentic-workflow:engineering <span style="text-transform:none;color:var(--ink-2)">— the backlog lifecycle</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>new &lt;idea&gt;</code></td><td>Interview you into a planless draft (splits heavy ideas into sibling drafts).</td></tr>
             <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a planless task in place. Works on <code>draft/</code>, and on <code>queued/</code> — that one is sent back to <code>draft/</code> first, so re-approve it. From <code>plan-review/</code> on, use <code>replan</code>.</td></tr>
@@ -634,49 +634,49 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
             <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>
-            <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the loop kinds &amp; enabled state; diagnose/repair backlog damage.</td></tr>
+            <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the workflow kinds &amp; enabled state; diagnose/repair backlog damage.</td></tr>
             <tr><td><code>stop</code> · <code>status</code></td><td>Deliberate end (drops the snapshot — nothing to recover, unlike <kbd>Esc</kbd>); loop + backlog roll-up (bare command = status).</td></tr>
           </tbody></table></div>
         </div>
         <div class="card">
-          <h4 style="margin-top:0">/agentic-loop:pr-sitter <span style="text-transform:none;color:var(--ink-2)">— the PR sitter</span></h4>
+          <h4 style="margin-top:0">/agentic-workflow:pr-sitter <span style="text-transform:none;color:var(--ink-2)">— the PR sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: the next actionable open PR through triage → fix → verify → publish.</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the pr-sitter kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
-          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">The command <em>is</em> the kind — <code>claim</code>/<code>watch</code> take no kind argument. Opt in via <code>loops.pr-sitter.enabled</code> in <code>.agentic-loop.json</code>.</p>
+          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">The command <em>is</em> the kind — <code>claim</code>/<code>watch</code> take no kind argument. Opt in via <code>workflows.pr-sitter.enabled</code> in <code>.agentic-workflow.json</code>.</p>
         </div>
         <div class="card">
-          <h4 style="margin-top:0">/agentic-loop:review-sitter <span style="text-transform:none;color:var(--ink-2)">— the review sitter</span></h4>
+          <h4 style="margin-top:0">/agentic-workflow:review-sitter <span style="text-transform:none;color:var(--ink-2)">— the review sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: the next PR awaiting your review through fetch → assess → publish (one comment).</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the review-sitter kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
-          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Comment-only — never approves or merges. Opt in via <code>loops.review-sitter.enabled</code> (override the search with <code>loops.review-sitter.query</code>).</p>
+          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Comment-only — never approves or merges. Opt in via <code>workflows.review-sitter.enabled</code> (override the search with <code>workflows.review-sitter.query</code>).</p>
         </div>
         <div class="card">
-          <h4 style="margin-top:0">/agentic-loop:dep-sitter <span style="text-transform:none;color:var(--ink-2)">— the dependency sitter</span></h4>
+          <h4 style="margin-top:0">/agentic-workflow:dep-sitter <span style="text-transform:none;color:var(--ink-2)">— the dependency sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: the next advisory through scan → upgrade → verify → publish (draft PR).</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the dep-sitter kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
-          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Patch/minor bumps only — major bumps and merging stay human. Opt in via <code>loops.dep-sitter.enabled</code>.</p>
+          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Patch/minor bumps only — major bumps and merging stay human. Opt in via <code>workflows.dep-sitter.enabled</code>.</p>
         </div>
         <div class="card">
-          <h4 style="margin-top:0">/agentic-loop:main-sitter <span style="text-transform:none;color:var(--ink-2)">— the default-branch CI sitter</span></h4>
+          <h4 style="margin-top:0">/agentic-workflow:main-sitter <span style="text-transform:none;color:var(--ink-2)">— the default-branch CI sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: a red CI run through diagnose → remedy → verify → publish (draft remedy PR).</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the main-sitter kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
-          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Never pushes the watched branch; merging stays human. Opt in via <code>loops.main-sitter.enabled</code>.</p>
+          <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Never pushes the watched branch; merging stays human. Opt in via <code>workflows.main-sitter.enabled</code>.</p>
         </div>
       </div>
     </section>
@@ -694,18 +694,18 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       </div>
 
       <h3>Launch</h3>
-      <p>One command builds core + the SPA and serves it. Point <code>--dir</code> at the repo the loop drives (the same directory that holds <code>.agentic-loop.json</code>).</p>
+      <p>One command builds core + the SPA and serves it. Point <code>--dir</code> at the repo the loop drives (the same directory that holds <code>.agentic-workflow.json</code>).</p>
       <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>npm run hub -- --dir /path/to/repo      <span class="c"># → http://127.0.0.1:4317</span>
 npm run hub -- --dir /a --dir /b        <span class="c"># watch several repos (repeat --dir; '*' wildcards ok)</span>
 npm run hub -- --dir /path --port 4400  <span class="c"># override the port</span></pre></div>
-      <p style="font-size:14px;color:var(--muted-txt)">With no <code>--dir</code>, the hub reads the <code>hub</code> section of the user-scope <code>~/.agentic-loop.json</code> (<code>{"hub":{"repos":[…],"port":…}}</code>) instead; if neither is present it exits with usage. When more than one repo is watched a repo picker appears in the header and every view is scoped to the selected one.</p>
+      <p style="font-size:14px;color:var(--muted-txt)">With no <code>--dir</code>, the hub reads the <code>hub</code> section of the user-scope <code>~/.agentic-workflow.json</code> (<code>{"hub":{"repos":[…],"port":…}}</code>) instead; if neither is present it exits with usage. When more than one repo is watched a repo picker appears in the header and every view is scoped to the selected one.</p>
 
       <div class="note warn"><b>Local by design — do not expose it.</b> The server answers only requests whose <code>Host</code> is loopback and binds <code>127.0.0.1</code>; there is no login. Mutating routes (saving a kind) additionally require an <code>X-Hub-Client</code> header, so a stray browser tab cannot POST to it. Keep it on your machine — don't put it behind a public proxy.</p>
 
       <h3>The two views</h3>
       <div class="two">
         <div class="card">
-          <h4 style="margin-top:0">Loop monitor <span style="text-transform:none;color:var(--ink-2)">— what's happening</span></h4>
+          <h4 style="margin-top:0">Workflow monitor <span style="text-transform:none;color:var(--ink-2)">— what's happening</span></h4>
           <p style="font-size:14px;margin-top:0">One sub-tab per enabled kind. Top to bottom:</p>
           <div class="tblwrap" style="margin-top:4px"><table style="min-width:0"><tbody>
             <tr><td><b>Active strip</b></td><td>The stage running right now with a live countdown to its deadline, the watcher lease (pid/host, flagged when stale), resumable snapshots, and PR ledgers.</td></tr>
@@ -715,12 +715,12 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
           <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Updates stream live (SSE + a polling reconciler). Arm the header <b>bell</b> once and the browser notifies you the moment a task parks at a gate.</p>
         </div>
         <div class="card">
-          <h4 style="margin-top:0">Loop creator <span style="text-transform:none;color:var(--ink-2)">— author a kind</span></h4>
+          <h4 style="margin-top:0">Workflow creator <span style="text-transform:none;color:var(--ink-2)">— author a kind</span></h4>
           <p style="font-size:14px;margin-top:0">Opens a kind's manifest as an editable node graph:</p>
           <div class="tblwrap" style="margin-top:4px"><table style="min-width:0"><tbody>
             <tr><td><b>Nodes</b></td><td>Work / check <b>stages</b> (blue) wired by pass / fail / error handles to <b>terminal</b> pills — <span class="verd done" style="padding:0 6px">done</span>, <span class="verd fail" style="padding:0 6px">park</span>, <span class="verd err" style="padding:0 6px">stop</span>.</td></tr>
             <tr><td><b>Side panel</b></td><td>Edits the selected stage (agent, isolation, timeout, bash allowlist, prompt), edge (transition message / iteration count), or the kind's meta &amp; work source.</td></tr>
-            <tr><td><b>Validate + Save</b></td><td>The same Zod schema the engine uses runs live; <b>Save</b> is disabled until it's clean and writes only into <code>packages/core/loops/&lt;kind&gt;/</code> — it never clobbers a hand-tuned prompt, and prints a checklist of the manual steps left.</td></tr>
+            <tr><td><b>Validate + Save</b></td><td>The same Zod schema the engine uses runs live; <b>Save</b> is disabled until it's clean and writes only into <code>packages/core/workflows/&lt;kind&gt;/</code> — it never clobbers a hand-tuned prompt, and prints a checklist of the manual steps left.</td></tr>
           </tbody></table></div>
         </div>
       </div>
@@ -739,11 +739,11 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
     <a href="../README.md">README.md — overview</a>
     <a href="architecture.md">docs/architecture.md — internals</a>
     <a href="configuration.md">docs/configuration.md — full config</a>
-    <a href="../packages/core/loops/README.md">packages/core/loops/README.md — author a kind</a>
+    <a href="../packages/core/workflows/README.md">packages/core/workflows/README.md — author a kind</a>
     <a href="../plugins/claude/README.md">plugins/claude/README.md — Claude host</a>
     <a href="design/threat-model.md">design/threat-model.md — security</a>
   </div>
-  <p class="fine">agentic-loop · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: engineering (stable) plus the experimental pr-sitter, review-sitter, dep-sitter, and main-sitter.</p>
+  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: engineering (stable) plus the experimental pr-sitter, review-sitter, dep-sitter, and main-sitter.</p>
 </footer>
 
 <script>
@@ -807,22 +807,22 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
 
   /* ---- stage diagram ---- */
   var STAGES={
-    plan:{name:"PLAN",kind:"work",agent:"loop-plan-author",iso:"isolation: none",
+    plan:{name:"PLAN",kind:"work",agent:"workflow-plan-author",iso:"isolation: none",
       what:"Writes an <b>## Implementation Plan</b> directly onto the claimed queued task file, then <b>parks</b> it in plan-review/ and exits. It never blocks on a human and touches only the task file on the main tree.",
       skills:["task-backlog-management","planning-and-task-breakdown"],
       cond:["api-and-interface-design","deprecation-and-migration","documentation-and-adrs"],
       transit:[["done","→","onDone parks the task in plan-review/ for the plan gate"]]},
-    build:{name:"BUILD",kind:"work",agent:"loop-build",iso:"isolation: worktree",
+    build:{name:"BUILD",kind:"work",agent:"workflow-build",iso:"isolation: worktree",
       what:"Implements the approved plan <b>test-first (TDD)</b> on the loop's <code>feature/&lt;id&gt;</code> branch or worktree, committing a checkpoint each iteration. Edit + bash allowed.",
       skills:["incremental-implementation","test-driven-development"],
       cond:["frontend-ui-engineering","observability-and-instrumentation","code-simplification"],
       transit:[["done","→","onDone fires VERIFY"]]},
-    verify:{name:"VERIFY",kind:"check",agent:"loop-verify",iso:"isolation: worktree",
-      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Records only PASS / FAIL / ERROR through the trusted <code>loop_verdict</code> tool.",
+    verify:{name:"VERIFY",kind:"check",agent:"workflow-verify",iso:"isolation: worktree",
+      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Records only PASS / FAIL / ERROR through the trusted <code>workflow_verdict</code> tool.",
       skills:["debugging-and-error-recovery"],
       transit:[["pass","→","fires REVIEW"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]},
-    review:{name:"REVIEW",kind:"check",agent:"loop-review",iso:"isolation: worktree",
-      what:"Five-axis diff review, run once per configured <code>reviewLens</code> with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>loop_verdict</code>.",
+    review:{name:"REVIEW",kind:"check",agent:"workflow-review",iso:"isolation: worktree",
+      what:"Five-axis diff review, run once per configured <code>reviewLens</code> with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>workflow_verdict</code>.",
       skills:["code-review-and-quality","security-and-hardening","performance-optimization"],
       transit:[["pass","→","done — parks the task in in-review/"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]}
   };
@@ -867,7 +867,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
 
   /* ---- skills catalog ---- */
   var SKILLS=[
-    ["loop-orchestration",["machinery"],"The authoritative protocol for the automatic loop — stages, park-at-gate review, the loop_verdict contracts, loop kinds and the scheduler, and termination."],
+    ["workflow-orchestration",["machinery"],"The authoritative protocol for the automatic loop — stages, park-at-gate review, the workflow_verdict contracts, workflow kinds and the scheduler, and termination."],
     ["task-backlog-management",["machinery","plan"],"The docs/tasks/ filesystem backlog: the task-file schema and the folder-as-status lifecycle from draft to completed."],
     ["using-agent-skills",["machinery"],"The meta-skill: discovers and invokes agent skills; governs how every other skill is found and applied."],
     ["interview-me",["authoring"],"Extracts what you actually want via a one-question-at-a-time interview until ~95% confident about the underlying intent."],

@@ -17,7 +17,7 @@ VERIFY FAILs outnumber REVIEW FAILs?" — the numbers that would tune
 
 ### Driver-local accumulator (keep `state.ts` pure)
 
-`LoopState` stays untouched — metrics are an impure driver concern, like
+`WorkflowState` stays untouched — metrics are an impure driver concern, like
 `recordedVerdicts`:
 
 ```ts
@@ -35,7 +35,7 @@ const runMetrics = new Map<string, StageSample[]>()  // keyed by sessionID
   (line 292), push a sample after it (and after the verdict is taken for
   check stages, so the sample carries it). With plan 04's multi-lens
   review, one sample per lens pass with a `lens?` field.
-- Cleared alongside `clearLoop` on `done`/`stop`/error — after rendering.
+- Cleared alongside `clearWorkflow` on `done`/`stop`/error — after rendering.
 
 ### Render on terminal events
 
@@ -81,7 +81,7 @@ greps get old — don't build it speculatively.
   only and says so (`outcome: done (recovered run — pre-crash stages not
   timed)`). Do not persist metrics into the state snapshot; not worth the
   coupling.
-- Free-text loop with no task: `loopId()` slug already routes the run log —
+- Free-text loop with no task: `workflowId()` slug already routes the run log —
   works unchanged.
 
 ## Test plan (TDD)
@@ -97,6 +97,6 @@ greps get old — don't build it speculatively.
 
 - `README.md` — mention the run-summary block in the audit/observability
   paragraph.
-- `skills/loop-orchestration/SKILL.md` — run-log section: what the summary
+- `skills/workflow-orchestration/SKILL.md` — run-log section: what the summary
   contains, and the tuning loop it enables (`maxIterations` /
   `stageTimeoutMinutes` from observed numbers).

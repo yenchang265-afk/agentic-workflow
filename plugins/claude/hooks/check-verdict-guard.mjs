@@ -11,7 +11,7 @@ var decideVerdictGuard = (marker, nagAlreadyFired) => {
   if (marker.verdictRecorded === true) return "allow";
   return nagAlreadyFired ? "allow" : "nag";
 };
-var nagMessage = (stage) => `agentic-loop: this ${String(stage ?? "check").toUpperCase()} stage recorded no verdict \u2014 call the loop_verdict MCP tool now (mcp__agentic-loop__loop_verdict or, plugin-bundled, mcp__plugin_agentic-loop_agentic-loop__loop_verdict) with stage: "${String(stage ?? "check")}" and verdict PASS/FAIL/ERROR. A verdict in prose is ignored. If the tool is not in your tool list, state that explicitly in your final message and finish.`;
+var nagMessage = (stage) => `agentic-workflow: this ${String(stage ?? "check").toUpperCase()} stage recorded no verdict \u2014 call the workflow_verdict MCP tool now (mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict) with stage: "${String(stage ?? "check")}" and verdict PASS/FAIL/ERROR. A verdict in prose is ignored. If the tool is not in your tool list, state that explicitly in your final message and finish.`;
 
 // plugins/claude/hooks/src/check-verdict-guard.entry.mjs
 var read = () => new Promise((resolve) => {
@@ -25,7 +25,7 @@ var block = (reason) => {
 };
 var readTasksDir = (cwd) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-loop.json"), "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"));
     if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir;
   } catch {
   }

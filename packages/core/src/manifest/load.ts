@@ -1,16 +1,16 @@
 import fs from "node:fs"
 import path from "node:path"
-import { parseManifest, type LoadedManifest, type LoopManifest } from "./schema.js"
+import { parseManifest, type LoadedManifest, type WorkflowManifest } from "./schema.js"
 
 /**
- * Load loop-kind manifests from a `loops/` directory:
+ * Load workflow-kind manifests from a `workflows/` directory:
  *
- *   loops/<kind>/loop.json      — the manifest (schema.ts)
- *   loops/<kind>/stages/*.md    — per-stage prompt templates (template.ts)
+ *   workflows/<kind>/workflow.json      — the manifest (schema.ts)
+ *   workflows/<kind>/stages/*.md    — per-stage prompt templates (template.ts)
  *
  * Loading is synchronous, once, at host startup — manifests are plugin
  * assets, not runtime state. A malformed manifest throws with the offending
- * path so a broken loop kind fails loud instead of driving garbage.
+ * path so a broken workflow kind fails loud instead of driving garbage.
  */
 
 /**
@@ -38,18 +38,18 @@ export const normalizeManifestJson = (raw: unknown): unknown => {
   return { ...raw, workSource: { ...workSource, type: renamed } }
 }
 
-/** Load one loop kind's manifest + stage prompts. Throws on missing/invalid files. */
-export const loadManifest = (loopsDir: string, kind: string): LoadedManifest => {
-  const dir = path.join(loopsDir, kind)
-  const manifestPath = path.join(dir, "loop.json")
-  let manifest: LoopManifest
+/** Load one workflow kind's manifest + stage prompts. Throws on missing/invalid files. */
+export const loadManifest = (workflowsDir: string, kind: string): LoadedManifest => {
+  const dir = path.join(workflowsDir, kind)
+  const manifestPath = path.join(dir, "workflow.json")
+  let manifest: WorkflowManifest
   try {
     manifest = parseManifest(normalizeManifestJson(JSON.parse(fs.readFileSync(manifestPath, "utf8"))))
   } catch (err) {
-    throw new Error(`could not load loop manifest ${manifestPath}: ${(err as Error).message}`)
+    throw new Error(`could not load workflow manifest ${manifestPath}: ${(err as Error).message}`)
   }
   if (manifest.kind !== kind) {
-    throw new Error(`loop manifest ${manifestPath} declares kind "${manifest.kind}" but lives in loops/${kind}/`)
+    throw new Error(`workflow manifest ${manifestPath} declares kind "${manifest.kind}" but lives in workflows/${kind}/`)
   }
   const prompts: Record<string, string> = {}
   for (const stage of manifest.stages) {
@@ -63,16 +63,16 @@ export const loadManifest = (loopsDir: string, kind: string): LoadedManifest => 
   return { manifest, prompts }
 }
 
-/** Every loop kind defined under `loopsDir` (any directory holding a loop.json). */
-export const listLoopKinds = (loopsDir: string): string[] => {
+/** Every workflow kind defined under `workflowsDir` (any directory holding a workflow.json). */
+export const listWorkflowKinds = (workflowsDir: string): string[] => {
   let entries: fs.Dirent[]
   try {
-    entries = fs.readdirSync(loopsDir, { withFileTypes: true })
+    entries = fs.readdirSync(workflowsDir, { withFileTypes: true })
   } catch {
     return []
   }
   return entries
-    .filter((e) => e.isDirectory() && fs.existsSync(path.join(loopsDir, e.name, "loop.json")))
+    .filter((e) => e.isDirectory() && fs.existsSync(path.join(workflowsDir, e.name, "workflow.json")))
     .map((e) => e.name)
     .sort()
 }

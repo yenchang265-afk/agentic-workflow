@@ -10,9 +10,9 @@
  *  - writes only when Claude Code provides $CLAUDE_ENV_FILE (the supported
  *    channel for persisting env into subsequent Bash executions);
  *  - never overrides a PAT the user already exported (the env var wins);
- *  - a no-op when there is no `ado.pat` in the repo's `.agentic-loop.json` or
- *    the user-scope `~/.agentic-loop.json` (repo wins, mirroring the core
- *    loader's layering; $AGENTIC_LOOP_USER_CONFIG overrides the user path,
+ *  - a no-op when there is no `ado.pat` in the repo's `.agentic-workflow.json` or
+ *    the user-scope `~/.agentic-workflow.json` (repo wins, mirroring the core
+ *    loader's layering; $AGENTIC_WORKFLOW_USER_CONFIG overrides the user path,
  *    "" disables the layer).
  *
  * The secret goes only into $CLAUDE_ENV_FILE (session-scoped, managed by Claude
@@ -31,12 +31,12 @@ const read = () =>
 /** Single-quote for a POSIX shell (the env file is sourced): wrap in '…', escaping embedded quotes. */
 const shellSingleQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`
 
-/** User-scope config path: $AGENTIC_LOOP_USER_CONFIG ("" disables), else ~/.agentic-loop.json. */
+/** User-scope config path: $AGENTIC_WORKFLOW_USER_CONFIG ("" disables), else ~/.agentic-workflow.json. */
 const userConfigPath = () => {
-  const env = process.env.AGENTIC_LOOP_USER_CONFIG
+  const env = process.env.AGENTIC_WORKFLOW_USER_CONFIG
   if (env !== undefined) return env === "" ? null : env
   const home = os.homedir()
-  return home ? path.join(home, ".agentic-loop.json") : null
+  return home ? path.join(home, ".agentic-workflow.json") : null
 }
 
 /** Best-effort `ado.pat` from a config file; undefined when absent/unreadable/malformed. */
@@ -65,7 +65,7 @@ const main = async () => {
   const cwd = input.cwd || process.cwd()
 
   // Repo layer wins over the user layer, mirroring the core loader's merge.
-  const pat = readPat(path.join(cwd, ".agentic-loop.json")) ?? readPat(userConfigPath())
+  const pat = readPat(path.join(cwd, ".agentic-workflow.json")) ?? readPat(userConfigPath())
   if (!pat) return
 
   try {

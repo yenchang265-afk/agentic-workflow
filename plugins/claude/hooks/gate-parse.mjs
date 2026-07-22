@@ -4,7 +4,7 @@
  * hook's stdin/spawn machinery.
  *
  * The gate verbs live under the engineering command, typed as
- * `/agentic-loop:engineering` (or the bare `/engineering` disambiguation
+ * `/agentic-workflow:engineering` (or the bare `/engineering` disambiguation
  * Claude Code offers for plugin commands):
  *   approve [id]           → gate approve-any [id]   (unified folder-driven gate)
  *   replan [id] [reason]   → gate reject-any [id] [reason...]
@@ -21,11 +21,11 @@
 const VERB = "(approve-plan|replan|approve)"
 const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im")
 
-// The two gate verbs of /agentic-loop:engineering — subcommands, NOT top-level
+// The two gate verbs of /agentic-workflow:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
 // on both: a bare `approve` auto-resolves the single awaiting task (loop gates
 // first, a lone draft as fallback — the CLI's approve-any owns that priority).
-const CMD = "\\/(?:agentic-loop:)?engineering"
+const CMD = "\\/(?:agentic-workflow:)?engineering"
 const APPROVE = new RegExp(`(?:^|\\s)${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)$`, "im")
 const REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im")
 // retask is the one HYBRID verb: its move is deterministic (queued/ → draft/, or

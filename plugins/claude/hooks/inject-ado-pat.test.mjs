@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url"
  * The SessionStart PAT hook, exercised as a subprocess (it has no exports —
  * its whole surface is stdin + env + the $CLAUDE_ENV_FILE side effect).
  * Layering contract: env var wins outright, then the repo's
- * `.agentic-loop.json`, then the user-scope file ($AGENTIC_LOOP_USER_CONFIG,
+ * `.agentic-workflow.json`, then the user-scope file ($AGENTIC_WORKFLOW_USER_CONFIG,
  * "" disabling the layer).
  */
 
@@ -21,8 +21,8 @@ const tempDir = () => fs.mkdtempSync(path.join(os.tmpdir(), "inject-ado-pat-"))
 /** Run the hook with a repo config, a user config, and extra env; return the env file's content. */
 const runHook = ({ repoCfg, userCfg, env = {} }) => {
   const cwd = tempDir()
-  if (repoCfg !== undefined) fs.writeFileSync(path.join(cwd, ".agentic-loop.json"), JSON.stringify(repoCfg))
-  const userFile = path.join(tempDir(), ".agentic-loop.json")
+  if (repoCfg !== undefined) fs.writeFileSync(path.join(cwd, ".agentic-workflow.json"), JSON.stringify(repoCfg))
+  const userFile = path.join(tempDir(), ".agentic-workflow.json")
   if (userCfg !== undefined) fs.writeFileSync(userFile, JSON.stringify(userCfg))
   const envFile = path.join(tempDir(), "env")
   fs.writeFileSync(envFile, "")
@@ -31,7 +31,7 @@ const runHook = ({ repoCfg, userCfg, env = {} }) => {
     env: {
       ...process.env,
       CLAUDE_ENV_FILE: envFile,
-      AGENTIC_LOOP_USER_CONFIG: userCfg !== undefined ? userFile : "",
+      AGENTIC_WORKFLOW_USER_CONFIG: userCfg !== undefined ? userFile : "",
       ...env,
     },
   })

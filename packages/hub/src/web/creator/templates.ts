@@ -1,4 +1,4 @@
-import { LoopManifestSchema, type LoopManifest, type WorkSourceBinding } from "@agentic-loop/core/manifest/schema"
+import { WorkflowManifestSchema, type WorkflowManifest, type WorkSourceBinding } from "@agentic-workflow/core/manifest/schema"
 
 /**
  * Starter templates for the new-kind landing screen — one valid manifest
@@ -9,24 +9,24 @@ import { LoopManifestSchema, type LoopManifest, type WorkSourceBinding } from "@
  * per open keeps template constants out of live editor state.
  */
 
-export interface LoopTemplate {
+export interface WorkflowTemplate {
   /** The workSource type this template is built around; doubles as the card's source tag. */
   readonly id: WorkSourceBinding["type"]
   readonly label: string
   readonly description: string
-  readonly manifest: () => LoopManifest
+  readonly manifest: () => WorkflowManifest
 }
 
 /** "work → verify" — the card's stage-chain preview line. Pure. */
-export const stageChain = (manifest: LoopManifest): string => manifest.stages.map((s) => s.name).join(" → ")
+export const stageChain = (manifest: WorkflowManifest): string => manifest.stages.map((s) => s.name).join(" → ")
 
-export const TEMPLATES: readonly LoopTemplate[] = [
+export const TEMPLATES: readonly WorkflowTemplate[] = [
   {
     id: "backlog",
     label: "Backlog loop",
     description: "Drive docs/tasks backlog items through work and verification.",
     manifest: () =>
-      LoopManifestSchema.parse({
+      WorkflowManifestSchema.parse({
         kind: "my-backlog-loop",
         version: 1,
         description: "Drives queued backlog tasks through work and verification.",
@@ -37,8 +37,8 @@ export const TEMPLATES: readonly LoopTemplate[] = [
         },
         maxIterations: 3,
         stages: [
-          { name: "work", kind: "work", command: "work", agent: "loop-work", prompt: "stages/work.md" },
-          { name: "verify", kind: "check", command: "verify", agent: "loop-verify", prompt: "stages/verify.md" },
+          { name: "work", kind: "work", command: "work", agent: "workflow-work", prompt: "stages/work.md" },
+          { name: "verify", kind: "check", command: "verify", agent: "workflow-verify", prompt: "stages/verify.md" },
         ],
         transitions: {
           work: { onDone: { kind: "fire", stage: "verify" } },
@@ -60,7 +60,7 @@ export const TEMPLATES: readonly LoopTemplate[] = [
     label: "PR sitter",
     description: "Sit on your open PRs — triage, fix, verify, reply. Never merges.",
     manifest: () =>
-      LoopManifestSchema.parse({
+      WorkflowManifestSchema.parse({
         kind: "my-pr-loop",
         version: 1,
         description: "Sits on open pull requests: triages activity, fixes what's actionable, verifies, and replies. Never merges.",
@@ -72,10 +72,10 @@ export const TEMPLATES: readonly LoopTemplate[] = [
         },
         maxIterations: 3,
         stages: [
-          { name: "triage", kind: "check", command: "triage", agent: "loop-triage", prompt: "stages/triage.md", isolation: "none" },
-          { name: "fix", kind: "work", command: "fix", agent: "loop-fix", prompt: "stages/fix.md" },
-          { name: "verify", kind: "check", command: "verify", agent: "loop-verify", prompt: "stages/verify.md" },
-          { name: "publish", kind: "work", command: "publish", agent: "loop-publish", prompt: "stages/publish.md" },
+          { name: "triage", kind: "check", command: "triage", agent: "workflow-triage", prompt: "stages/triage.md", isolation: "none" },
+          { name: "fix", kind: "work", command: "fix", agent: "workflow-fix", prompt: "stages/fix.md" },
+          { name: "verify", kind: "check", command: "verify", agent: "workflow-verify", prompt: "stages/verify.md" },
+          { name: "publish", kind: "work", command: "publish", agent: "workflow-publish", prompt: "stages/publish.md" },
         ],
         transitions: {
           triage: {
@@ -103,17 +103,17 @@ export const TEMPLATES: readonly LoopTemplate[] = [
     label: "Dependency sitter",
     description: "Sit on vulnerable deps — verified patch/minor bumps as draft PRs.",
     manifest: () =>
-      LoopManifestSchema.parse({
+      WorkflowManifestSchema.parse({
         kind: "my-dep-loop",
         version: 1,
         description: "Sits on vulnerable or outdated dependencies: confirms the advisory, applies the safe bump, verifies, and opens a draft PR. Never merges.",
         workSource: { type: "dependency-scan" },
         maxIterations: 2,
         stages: [
-          { name: "scan", kind: "check", command: "scan", agent: "loop-scan", prompt: "stages/scan.md", isolation: "none" },
-          { name: "upgrade", kind: "work", command: "upgrade", agent: "loop-upgrade", prompt: "stages/upgrade.md" },
-          { name: "verify", kind: "check", command: "verify", agent: "loop-verify", prompt: "stages/verify.md" },
-          { name: "publish", kind: "work", command: "publish", agent: "loop-publish", prompt: "stages/publish.md" },
+          { name: "scan", kind: "check", command: "scan", agent: "workflow-scan", prompt: "stages/scan.md", isolation: "none" },
+          { name: "upgrade", kind: "work", command: "upgrade", agent: "workflow-upgrade", prompt: "stages/upgrade.md" },
+          { name: "verify", kind: "check", command: "verify", agent: "workflow-verify", prompt: "stages/verify.md" },
+          { name: "publish", kind: "work", command: "publish", agent: "workflow-publish", prompt: "stages/publish.md" },
         ],
         transitions: {
           scan: {
@@ -141,17 +141,17 @@ export const TEMPLATES: readonly LoopTemplate[] = [
     label: "CI sitter",
     description: "Sit on the watched branch's CI — verified remedy PRs when it goes red.",
     manifest: () =>
-      LoopManifestSchema.parse({
+      WorkflowManifestSchema.parse({
         kind: "my-ci-loop",
         version: 1,
         description: "Sits on the watched branch's CI: diagnoses red runs, builds a verified remedy, and opens a draft PR. Never pushes the watched branch.",
         workSource: { type: "ci-runs", workflows: [] },
         maxIterations: 2,
         stages: [
-          { name: "diagnose", kind: "check", command: "diagnose", agent: "loop-diagnose", prompt: "stages/diagnose.md" },
-          { name: "remedy", kind: "work", command: "remedy", agent: "loop-remedy", prompt: "stages/remedy.md" },
-          { name: "verify", kind: "check", command: "verify", agent: "loop-verify", prompt: "stages/verify.md" },
-          { name: "publish", kind: "work", command: "publish", agent: "loop-publish", prompt: "stages/publish.md" },
+          { name: "diagnose", kind: "check", command: "diagnose", agent: "workflow-diagnose", prompt: "stages/diagnose.md" },
+          { name: "remedy", kind: "work", command: "remedy", agent: "workflow-remedy", prompt: "stages/remedy.md" },
+          { name: "verify", kind: "check", command: "verify", agent: "workflow-verify", prompt: "stages/verify.md" },
+          { name: "publish", kind: "work", command: "publish", agent: "workflow-publish", prompt: "stages/publish.md" },
         ],
         transitions: {
           diagnose: {

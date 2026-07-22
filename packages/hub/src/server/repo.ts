@@ -1,7 +1,7 @@
-import { loadConfig } from "@agentic-loop/core/config"
-import type { Log } from "@agentic-loop/core/host"
-import { defaultLoopsDir } from "@agentic-loop/core/manifest/dir"
-import { STATUSES } from "@agentic-loop/core/task/store"
+import { loadConfig } from "@agentic-workflow/core/config"
+import type { Log } from "@agentic-workflow/core/host"
+import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
+import { STATUSES } from "@agentic-workflow/core/task/store"
 import type { HubDeps } from "./deps.js"
 import { fsClient, sh } from "./fsclient.js"
 import { kindBoards, unionGates, unionStatuses } from "./kindboard.js"
@@ -24,9 +24,9 @@ export const buildDeps = async (directory: string, log: Log, reloadRepo?: () => 
   return {
     directory,
     tasksDir: config.tasksDir,
-    boards: kindBoards(defaultLoopsDir(), config, log),
+    boards: kindBoards(defaultWorkflowsDir(), config, log),
     config,
-    loopsDir: defaultLoopsDir(),
+    workflowsDir: defaultWorkflowsDir(),
     projectsDir: defaultProjectsDir(),
     opencodeDbPath: defaultOpencodeDbPath(),
     client: fsClient,
@@ -60,7 +60,7 @@ export interface Repo {
    */
   deps: HubDeps
   /**
-   * Re-read `.agentic-loop.json` and rebuild this repo's deps. Config is
+   * Re-read `.agentic-workflow.json` and rebuild this repo's deps. Config is
    * otherwise read once at startup, so without this every edit needs a restart.
    * Returns false when the new config is unusable, keeping the last good deps —
    * a broken hand-edit must never blank the board or kill the server.

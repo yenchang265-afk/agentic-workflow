@@ -7,7 +7,7 @@ import { Confirm } from "../ui/Confirm.js"
 
 /**
  * The gate buttons on a task card. Each performs a human gate move through
- * core's `loop/gate.ts` — the same entry point both hosts call.
+ * core's `workflow/gate.ts` — the same entry point both hosts call.
  *
  * Every one of these commits to git, and `ship` opens a pull request, so all of
  * them go through <Confirm> with copy that names the effect. The button knows

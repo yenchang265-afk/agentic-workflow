@@ -33,9 +33,9 @@ Apply this skill when:
 
 ## Loading Constraints
 
-This skill needs a live, responsive user. **Do not invoke inside an automatic, unattended pipeline** — the build/verify/review stage turns `/agentic-loop:engineering` drives via `session.idle`, CI pipelines, scheduled runs, or autonomous-loop. If you're in one of those and the ask is underspecified, flag that as a blocker for the user instead of guessing.
+This skill needs a live, responsive user. **Do not invoke inside an automatic, unattended pipeline** — the build/verify/review stage turns `/agentic-workflow:engineering` drives via `session.idle`, CI pipelines, scheduled runs, or autonomous-loop. If you're in one of those and the ask is underspecified, flag that as a blocker for the user instead of guessing.
 
-It is **mandatory** inside `/agentic-loop:engineering new <idea>` — every run interviews the user before the draft is written; when the idea already states a clear goal and testable criteria, the floor is a single restate-and-confirm question, never a silent skip. The interview runs in the **calling agent's own turn** (subagents cannot converse with the user); only after the user confirms the draft does the calling agent hand the confirmed intent to the `loop-plan-author` subagent to write the file, and nothing is queued for execution until a human later runs `/agentic-loop:engineering approve <id>` (and, after the loop plans it, approves the parked plan with the same `approve` verb).
+It is **mandatory** inside `/agentic-workflow:engineering new <idea>` — every run interviews the user before the draft is written; when the idea already states a clear goal and testable criteria, the floor is a single restate-and-confirm question, never a silent skip. The interview runs in the **calling agent's own turn** (subagents cannot converse with the user); only after the user confirms the draft does the calling agent hand the confirmed intent to the `workflow-plan-author` subagent to write the file, and nothing is queued for execution until a human later runs `/agentic-workflow:engineering approve <id>` (and, after the loop plans it, approves the parked plan with the same `approve` verb).
 
 ## The Process
 

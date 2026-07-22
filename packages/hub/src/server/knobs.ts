@@ -2,10 +2,10 @@ import type { ConfigWarning, KindBoardInfo } from "../shared/api.js"
 import { isPlainObject } from "./configlayers.js"
 
 /**
- * Advisory linting for `loops.<kind>` sections.
+ * Advisory linting for `workflows.<kind>` sections.
  *
- * `config.loops` is a `z.looseObject`, so per-kind knobs pass validation
- * unchecked, and `loop/orchestrate.ts` reads them **positionally by string key
+ * `config.workflows` is a `z.looseObject`, so per-kind knobs pass validation
+ * unchecked, and `workflow/orchestrate.ts` reads them **positionally by string key
  * with bare `typeof` checks**. A typo (`severityfloor`) or a wrong type
  * (`severityFloor: 7`) is therefore *silently ignored* — the loop runs on a
  * default and nobody is told. Catching that is the config editor's best trick.
@@ -13,7 +13,7 @@ import { isPlainObject } from "./configlayers.js"
  * **Why this lives in hub and is advisory, not in core's schema.** The
  * looseness is deliberate: core's comment says kind-specific knobs "ride along
  * and are validated by the kind itself", and kinds are user-authorable — the
- * whole creator feature exists to author them. Making `loops` strict would be a
+ * whole creator feature exists to author them. Making `workflows` strict would be a
  * breaking change: every config carrying a knob core doesn't know would fail
  * `loadConfig`, breaking both hosts and every user's repo at once. So these are
  * warnings that annotate a save; they never fail one.
@@ -51,7 +51,7 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
   "ci-runs": { branch: { type: "string", site: "orchestrate.ts:132" } },
 }
 
-/** Object-shaped keys validated by core's schema (LoopTriggerSchema; the `stageModels` record) — not positional knobs. */
+/** Object-shaped keys validated by core's schema (WorkflowTriggerSchema; the `stageModels` record) — not positional knobs. */
 const STRUCTURED_KEYS: readonly string[] = ["trigger", "stageModels"]
 
 /** Levenshtein distance, capped: we only care whether it's 1. */
@@ -79,20 +79,20 @@ const isNearMiss = (a: string, b: string): boolean => {
 }
 
 /**
- * Lint every `loops.<kind>` section against the knobs its work source actually
+ * Lint every `workflows.<kind>` section against the knobs its work source actually
  * reads. Pure. Never fails a save — every finding is advisory.
  */
-export const lintLoopKnobs = (rawLoops: unknown, boards: readonly KindBoardInfo[]): ConfigWarning[] => {
-  if (!isPlainObject(rawLoops)) return []
+export const lintWorkflowKnobs = (rawWorkflows: unknown, boards: readonly KindBoardInfo[]): ConfigWarning[] => {
+  if (!isPlainObject(rawWorkflows)) return []
   const byKind = new Map(boards.map((b) => [b.kind, b]))
   const warnings: ConfigWarning[] = []
 
-  for (const [kind, section] of Object.entries(rawLoops)) {
+  for (const [kind, section] of Object.entries(rawWorkflows)) {
     const board = byKind.get(kind)
     if (!board) {
       warnings.push({
-        path: `loops.${kind}`,
-        message: `no loop kind "${kind}" is installed — this section is inert. Enabled kinds: ${boards.map((b) => b.kind).join(", ") || "(none)"}.`,
+        path: `workflows.${kind}`,
+        message: `no workflow kind "${kind}" is installed — this section is inert. Enabled kinds: ${boards.map((b) => b.kind).join(", ") || "(none)"}.`,
       })
       continue
     }
@@ -111,14 +111,14 @@ export const lintLoopKnobs = (rawLoops: unknown, boards: readonly KindBoardInfo[
         const owner = Object.entries(BY_SOURCE).find(([src, defs]) => src !== board.sourceType && defs[key])
         if (owner) {
           warnings.push({
-            path: `loops.${kind}.${key}`,
+            path: `workflows.${kind}.${key}`,
             message: `"${key}" only applies to ${owner[0]} kinds, and "${kind}" is ${board.sourceType} — it is silently ignored.`,
           })
           continue
         }
         const suggestion = Object.keys(known).find((k) => isNearMiss(k, key))
         warnings.push({
-          path: `loops.${kind}.${key}`,
+          path: `workflows.${kind}.${key}`,
           message: suggestion
             ? `unknown knob "${key}" — did you mean "${suggestion}"? It is silently ignored.`
             : `unknown knob "${key}" — it is silently ignored.`,
@@ -129,7 +129,7 @@ export const lintLoopKnobs = (rawLoops: unknown, boards: readonly KindBoardInfo[
 
       if (typeof value !== def.type) {
         warnings.push({
-          path: `loops.${kind}.${key}`,
+          path: `workflows.${kind}.${key}`,
           message: `"${key}" is read only when it is a ${def.type} (${def.site}) — a ${typeof value} is silently ignored.`,
         })
       }

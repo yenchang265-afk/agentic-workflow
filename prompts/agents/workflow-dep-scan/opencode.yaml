@@ -1,0 +1,33 @@
+description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a workflow_verdict (PASS = upgrade needed). Never edits, never installs.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # All ecosystems' read verbs coexist here (static frontmatter can't switch);
+    # the work order names which the stage actually uses.
+    "npm audit*": allow
+    "npm ls*": allow
+    "npm outdated*": allow
+    "npm view *": allow
+    "osv-scanner *": allow
+    "mvn dependency:tree*": allow
+    "mvn help:evaluate*": allow
+    "./mvnw dependency:tree*": allow
+    "./mvnw help:evaluate*": allow
+    "gradle dependencies*": allow
+    "gradle dependencyInsight*": allow
+    "./gradlew dependencies*": allow
+    "./gradlew dependencyInsight*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "ls*": allow
+    "cat *": allow
+    "head *": allow
+    "tail *": allow
+    "grep *": allow
+    "find *": allow
+    "wc *": allow

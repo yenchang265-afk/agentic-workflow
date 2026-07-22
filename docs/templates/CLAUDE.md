@@ -3,7 +3,7 @@ English | [繁體中文](CLAUDE.zh-TW.md)
 # AGENTS.md — <project name>
 
 <!--
-  Starter AGENTS.md for projects driven by the agentic-loop plugin.
+  Starter AGENTS.md for projects driven by the agentic-workflow plugin.
 
   How to use:
   1. Copy this file to your repo root as `AGENTS.md` (OpenCode) or `CLAUDE.md`
@@ -43,23 +43,23 @@ Two execution modes. Pick by scope, not habit.
 **Use the agentic loop** when a goal is multi-step and should run largely
 unattended (a feature, a refactor with tests, anything worth a task file):
 
-1. `/agentic-loop:engineering new <idea>` — interview produces a draft task with the
+1. `/agentic-workflow:engineering new <idea>` — interview produces a draft task with the
    goal and testable acceptance criteria (always from you, never guessed)
-2. Review the draft, then `/agentic-loop:engineering approve <id>` — queues it
-3. `/agentic-loop:engineering plan <id>` claims the queued task,
+2. Review the draft, then `/agentic-workflow:engineering approve <id>` — queues it
+3. `/agentic-workflow:engineering plan <id>` claims the queued task,
    writes the `## Implementation Plan` right before execution, and parks it
    at the plan gate (`claim`/`watch` never auto-plan a queued task)
-4. `/agentic-loop:engineering approve <id>` (or `replan <id> [why]`) — after
+4. `/agentic-workflow:engineering approve <id>` (or `replan <id> [why]`) — after
    approval a `claim`/`watch` worker runs BUILD→VERIFY→REVIEW unattended on a
    `feature/<id>` branch; you review the result and
-   `/agentic-loop:engineering approve <id>` ships it
+   `/agentic-workflow:engineering approve <id>` ships it
 
 `approve` is the same verb at every gate — the folder the task sits in picks
-the move, so it is never ambiguous. Id-less **`/agentic-loop:engineering approve`** advances
+the move, so it is never ambiguous. Id-less **`/agentic-workflow:engineering approve`** advances
 the one task waiting at a loop gate (a parked plan or a finished review —
 falling back to a lone draft when neither waits; pass the id when more than
 one waits), and
-**`/agentic-loop:engineering replan`** bounces a parked plan back.
+**`/agentic-workflow:engineering replan`** bounces a parked plan back.
 
 **Stay ad-hoc** for a single bounded request (rename, small fix, question):
 invoke the matching skill directly and follow it exactly.
@@ -122,6 +122,6 @@ Rules earn their place — every line costs context on every session.
 - **What to write:** the constraint **and why** it exists (so a future agent
   doesn't "fix" it back), not a narration of the bug.
 - **Where:** a durable, cross-task fact → here. A task-specific instruction →
-  the task file or the stage prompt (`loops/<kind>/stages/*.md`), not here.
+  the task file or the stage prompt (`workflows/<kind>/stages/*.md`), not here.
 - **Prune:** delete a rule when the code it guards moves or the reason dies. A
   stale rule is worse than none.

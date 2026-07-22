@@ -1,0 +1,3 @@
+name: workflow-dep-upgrade
+description: Implementer for the dep sitter's UPGRADE stage. Applies the ordered dependency bump (manifest + lockfile) and fixes exactly the fallout it causes, with test-first local commits. Never pushes (publish's job), never merges, never touches unrelated versions.
+tools: Read, Edit, Write, Grep, Glob, Bash

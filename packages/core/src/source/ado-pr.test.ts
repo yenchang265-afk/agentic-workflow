@@ -1,4 +1,4 @@
-import { defaultLoopsDir } from "../manifest/dir.js"
+import { defaultWorkflowsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
@@ -18,8 +18,8 @@ import type { AdoHttpResponse } from "./ado-pr.js"
  * ledger writes.
  */
 
-const LOOPS_DIR = defaultLoopsDir()
-const sitter = loadManifest(LOOPS_DIR, "pr-sitter")
+const WORKFLOWS_DIR = defaultWorkflowsDir()
+const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
 
@@ -331,14 +331,14 @@ test("unresolvable identity (no selfLogin) skips actionably instead of sitting o
   assert.equal(skip?.actionable, true)
 })
 
-test("ado.customHeaders ride every REST call, with AGENTIC_LOOP_ADO_HEADERS overriding them", async () => {
+test("ado.customHeaders ride every REST call, with AGENTIC_WORKFLOW_ADO_HEADERS overriding them", async () => {
   const seen: Array<Readonly<Record<string, string>>> = []
   const capturingHttp: AdoHttp = async (_url, init): Promise<AdoHttpResponse> => {
     seen.push(init.headers)
     return { ok: true, status: 200, statusText: "ok", text: async () => listBody([]) }
   }
-  const prevEnv = process.env.AGENTIC_LOOP_ADO_HEADERS
-  process.env.AGENTIC_LOOP_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
+  const prevEnv = process.env.AGENTIC_WORKFLOW_ADO_HEADERS
+  process.env.AGENTIC_WORKFLOW_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
   try {
     const src = makeAdoPrSource({
       $: scriptedShell([]),
@@ -365,8 +365,8 @@ test("ado.customHeaders ride every REST call, with AGENTIC_LOOP_ADO_HEADERS over
       assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
     }
   } finally {
-    if (prevEnv === undefined) delete process.env.AGENTIC_LOOP_ADO_HEADERS
-    else process.env.AGENTIC_LOOP_ADO_HEADERS = prevEnv
+    if (prevEnv === undefined) delete process.env.AGENTIC_WORKFLOW_ADO_HEADERS
+    else process.env.AGENTIC_WORKFLOW_ADO_HEADERS = prevEnv
   }
 })
 
@@ -397,7 +397,7 @@ test("variable-precision ADO timestamps compare numerically against the watermar
 
 // --- the review-sitter kind on ADO: reviewer-role filtering, no server-side query ---
 
-const reviewSitter = loadManifest(LOOPS_DIR, "review-sitter")
+const reviewSitter = loadManifest(WORKFLOWS_DIR, "review-sitter")
 
 test("review-sitter on ADO claims another author's PR where selfLogin's vote is still pending (case-insensitive)", async () => {
   const prs = [

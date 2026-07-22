@@ -1,0 +1,10 @@
+description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a workflow_verdict (PASS = reviewable). Never edits, never comments, never votes.
+mode: subagent
+permission:
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # Both platforms are allowed here (static frontmatter can't switch); config
+    # codePlatform decides which the stage prompt actually uses.
+    # {{allowlist}} — globs generated from the stage's allowlists in workflows/*/workflow.json; edit the manifest, not here

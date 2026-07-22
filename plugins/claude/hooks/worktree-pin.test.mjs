@@ -109,7 +109,7 @@ test("an unisolated stage with a live loop worktree refuses code writes outright
   fs.mkdirSync(path.join(cwd, "docs", "tasks", "runs"), { recursive: true })
   fs.writeFileSync(
     path.join(cwd, "docs", "tasks", "runs", ".stage.json"),
-    JSON.stringify({ stage: "plan", taskId: "t", worktree: null, loopWorktree: WT }),
+    JSON.stringify({ stage: "plan", taskId: "t", worktree: null, workflowWorktree: WT }),
   )
   const out = run(cwd, "Write", { file_path: path.join(cwd, "src", "x.ts") })
   assert.equal(out.status, 2)

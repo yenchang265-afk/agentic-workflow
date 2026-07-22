@@ -18,8 +18,8 @@ user → <persona> → report → user
 
 **Use when:** the work is one perspective on one artifact and you can describe it in one sentence.
 
-**Examples in this repo:** none — every persona here (`loop-plan`, `loop-build`,
-`loop-verify`, `loop-review`, the pr-sitter agents) is stage-bound and always
+**Examples in this repo:** none — every persona here (`workflow-plan`, `workflow-build`,
+`workflow-verify`, `workflow-review`, the pr-sitter agents) is stage-bound and always
 invoked through its slash command (Pattern 2 below), never called ad hoc by
 name. For a genuine one-off, single-perspective task, reach for Claude Code's
 built-ins instead — `Explore` for read-only lookups, `general-purpose` for
@@ -34,13 +34,13 @@ anything needing edits too.
 A slash command that wraps one persona with the project's skills. Saves the user from re-explaining the workflow every time.
 
 ```
-/review → loop-review (five-axis code review, emits a verdict)
+/review → workflow-review (five-axis code review, emits a verdict)
 ```
 
 **Use when:** the same single-persona invocation happens repeatedly with the same setup.
 
-**Examples in this repo:** `/build` → `loop-build`, `/verify` → `loop-verify`,
-`/review` → `loop-review` (each a stage of the agentic engineering loop,
+**Examples in this repo:** `/build` → `workflow-build`, `/verify` → `workflow-verify`,
+`/review` → `workflow-review` (each a stage of the agentic engineering loop,
 `.opencode/commands/{build,verify,review}.md`).
 
 **Cost:** same as direct invocation. The slash command is just a saved prompt.
@@ -54,9 +54,9 @@ A slash command that wraps one persona with the project's skills. Saves the user
 Multiple personas operate on the same input concurrently, each producing an independent report. A merge step (in the main agent's context) synthesizes them into a single decision.
 
 ```
-                          ┌─→ loop-review (lens: correctness) ─┐
-REVIEW stage → fan out ───┼─→ loop-review (lens: security)    ─┤→ worstOf → one verdict
-                          └─→ loop-review (lens: performance)  ─┘
+                          ┌─→ workflow-review (lens: correctness) ─┐
+REVIEW stage → fan out ───┼─→ workflow-review (lens: security)    ─┤→ worstOf → one verdict
+                          └─→ workflow-review (lens: performance)  ─┘
 ```
 
 **Use when:**
@@ -66,8 +66,8 @@ REVIEW stage → fan out ───┼─→ loop-review (lens: security)    ─�
 - Wall-clock latency matters
 
 **Examples in this repo:** the `reviewLenses` config (up to 5 lenses) runs one
-`loop-review` pass per lens in parallel, then combines them with `worstOf`
-into a single machine-readable verdict (`packages/core/src/loop/verdict.ts`;
+`workflow-review` pass per lens in parallel, then combines them with `worstOf`
+into a single machine-readable verdict (`packages/core/src/workflow/verdict.ts`;
 see [`docs/design/improvements/04-verdict-quality.md`](../docs/design/improvements/04-verdict-quality.md)).
 
 **Cost:** N parallel sub-agent contexts + one merge turn. Higher than direct invocation, but faster wall-clock and produces better reports because each sub-agent stays focused on its single perspective.
@@ -87,9 +87,9 @@ If any answer is "no," fall back to direct invocation or a single-persona comman
 The user runs slash commands in a defined order, carrying context (or commit history) between them. There is no orchestrator agent — the user IS the orchestrator.
 
 ```
-user runs:  /agentic-loop:engineering new  →  /agentic-loop:engineering approve  →
-            /plan-task  →  /agentic-loop:engineering approve  →
-            /build  →  /verify  →  /review  →  /agentic-loop:engineering approve
+user runs:  /agentic-workflow:engineering new  →  /agentic-workflow:engineering approve  →
+            /plan-task  →  /agentic-workflow:engineering approve  →
+            /build  →  /verify  →  /review  →  /agentic-workflow:engineering approve
 ```
 
 **Use when:** the workflow has dependencies (each step needs the previous step's output) and human judgment between steps adds value.
@@ -129,7 +129,7 @@ This catalog is harness-agnostic, but most readers will run it on Claude Code. H
 
 ### Where personas live
 
-Plugin subagents go in `agents/` at the plugin root. The Claude Code plugin here lives in `plugins/claude/` (manifest at `plugins/claude/.claude-plugin/plugin.json`), so `plugins/claude/agents/loop-build.md`, `plugins/claude/agents/loop-review.md`, etc. are auto-discovered when the plugin is enabled. No path configuration needed. (Those agent files are generated from `prompts/agents/` via `npm run gen:prompts` — edit the sources, not the outputs.)
+Plugin subagents go in `agents/` at the plugin root. The Claude Code plugin here lives in `plugins/claude/` (manifest at `plugins/claude/.claude-plugin/plugin.json`), so `plugins/claude/agents/workflow-build.md`, `plugins/claude/agents/workflow-review.md`, etc. are auto-discovered when the plugin is enabled. No path configuration needed. (Those agent files are generated from `prompts/agents/` via `npm run gen:prompts` — edit the sources, not the outputs.)
 
 ### Subagents vs. Agent Teams
 
@@ -143,7 +143,7 @@ Claude Code has two parallelism primitives. Pattern 3 (parallel fan-out with mer
 | Status | Stable | Experimental — requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` |
 | Cost | Lower | Higher — each teammate is a separate Claude instance |
 
-**The personas in this repo work in both modes.** When spawned as subagents (e.g. the `reviewLenses` fan-out in Pattern 3), they report findings to the main session. When spawned as teammates (`Spawn a teammate using the loop-review agent type…`), they can challenge each other's findings directly. The persona definition is the same; only the spawning context changes.
+**The personas in this repo work in both modes.** When spawned as subagents (e.g. the `reviewLenses` fan-out in Pattern 3), they report findings to the main session. When spawned as teammates (`Spawn a teammate using the workflow-review agent type…`), they can challenge each other's findings directly. The persona definition is the same; only the spawning context changes.
 
 One subtlety: the `skills` and `mcpServers` frontmatter fields in a persona are honored when it runs as a subagent but **ignored when it runs as a teammate** — teammates load skills and MCP servers from your project and user settings, the same as a regular session. If a persona depends on a specific skill or MCP server being loaded, configure it at the session level so it's available in both modes.
 
@@ -166,13 +166,13 @@ Before defining a custom subagent, check whether one of these covers the role:
 | `Plan` | Read-only research during plan mode. |
 | `general-purpose` | Multi-step tasks needing both exploration and modification. |
 
-Don't redefine these. Layer your specialist personas (`loop-plan`, `loop-build`, `loop-verify`, `loop-review`, the pr-sitter agents) on top of them.
+Don't redefine these. Layer your specialist personas (`workflow-plan`, `workflow-build`, `workflow-verify`, `workflow-review`, the pr-sitter agents) on top of them.
 
 ### Frontmatter restrictions for plugin agents
 
 Plugin subagents do **not** support the `hooks`, `mcpServers`, or `permissionMode` frontmatter fields — these are silently ignored. If a future persona needs any of those, the user must copy the file into `.claude/agents/` or `~/.claude/agents/` instead.
 
-The fields that DO work in plugin agents are: `name`, `description`, `tools`, `disallowedTools`, `model`, `maxTurns`, `skills`, `memory`, `background`, `effort`, `isolation`, `color`, `initialPrompt`. Use `model` per-persona if you want to optimize cost (e.g. a lighter model for `loop-pr-triage`'s classification pass, a heavier one for `loop-review`'s five-axis analysis).
+The fields that DO work in plugin agents are: `name`, `description`, `tools`, `disallowedTools`, `model`, `maxTurns`, `skills`, `memory`, `background`, `effort`, `isolation`, `color`, `initialPrompt`. Use `model` per-persona if you want to optimize cost (e.g. a lighter model for `workflow-pr-triage`'s classification pass, a heavier one for `workflow-review`'s five-axis analysis).
 
 ### Spawning multiple subagents in parallel
 

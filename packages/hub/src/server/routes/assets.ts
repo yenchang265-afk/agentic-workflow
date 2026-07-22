@@ -155,7 +155,7 @@ const agentBody = (name: string, description: string, skills: readonly string[])
     "## Output",
     "",
     "TODO: describe what this stage returns (work stages just finish; check",
-    "stages MUST record a PASS/FAIL verdict via the loop_verdict tool).",
+    "stages MUST record a PASS/FAIL verdict via the workflow_verdict tool).",
     "",
   ].join("\n")
 
@@ -171,21 +171,21 @@ const OPENCODE_PRESET: Record<AgentPreset, (description: string) => string> = {
       "  webfetch: deny",
       "  bash:",
       '    "*": deny',
-      "    # {{allowlist}} — globs generated from the stage's bashAllowlist in loops/*/loop.json; edit the manifest, not here",
+      "    # {{allowlist}} — globs generated from the stage's bashAllowlist in workflows/*/workflow.json; edit the manifest, not here",
       "",
     ].join("\n"),
 }
 
 const CLAUDE_TOOLS: Record<AgentPreset, string> = {
   builder: "Read, Edit, Write, Bash, Grep, Glob",
-  checker: "Read, Grep, Glob, Bash, mcp__agentic-loop__loop_verdict, mcp__plugin_agentic-loop_agentic-loop__loop_verdict",
+  checker: "Read, Grep, Glob, Bash, mcp__agentic-workflow__workflow_verdict, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
 }
 
 const claudeYaml = (name: string, description: string, preset: AgentPreset): string =>
   [`name: ${name}`, "description: " + yamlValue(description), `tools: ${CLAUDE_TOOLS[preset]}`, ""].join("\n")
 
 const CHECKER_NOTE =
-  "gen:prompts will fail for this agent until a saved loop kind gives its stage a bashAllowlist — set it in the stage form, save, then run gen:prompts"
+  "gen:prompts will fail for this agent until a saved workflow kind gives its stage a bashAllowlist — set it in the stage form, save, then run gen:prompts"
 
 export const scaffoldAgent = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const body = req.body as Partial<ScaffoldAgentRequest> | undefined

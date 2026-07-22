@@ -16,17 +16,17 @@ import { Confirm } from "../ui/Confirm.js"
 import { useJson } from "../useJson.js"
 
 /**
- * The `.agentic-loop.json` editor.
+ * The `.agentic-workflow.json` editor.
  *
  * It always edits **one named layer**, never the merged view. The merged view is
  * shown beside each field as provenance, read-only. Saving a merged view to the
  * repo file would flatten the user layer into it — writing `ado.pat` out of
- * `~/.agentic-loop.json` and into a file that may well be committed.
+ * `~/.agentic-workflow.json` and into a file that may well be committed.
  */
 
 const PROV_TITLE: Readonly<Record<ConfigProvenance, string>> = {
-  repo: "set by this repo's .agentic-loop.json",
-  user: "inherited from your ~/.agentic-loop.json (edit the user layer to change it)",
+  repo: "set by this repo's .agentic-workflow.json",
+  user: "inherited from your ~/.agentic-workflow.json (edit the user layer to change it)",
   default: "not set in either file — the schema's default applies",
 }
 
@@ -216,13 +216,13 @@ export const ConfigEditor = () => {
           </section>
 
           <section className="cfg-section">
-            <h3>Loop kinds</h3>
+            <h3>Workflow kinds</h3>
             <p className="cfg-hint">
               Engineering runs unless disabled; every other kind is opt-in. This is the switch the creator’s checklist
               points at.
             </p>
             {(kinds?.kinds ?? []).map((k) => {
-              const path = `loops.${k.kind}.enabled`
+              const path = `workflows.${k.kind}.enabled`
               const value = pending(path)
               const on = value === undefined ? k.kind === "engineering" : value === true
               return (

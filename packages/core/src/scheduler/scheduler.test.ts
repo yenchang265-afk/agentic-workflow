@@ -3,22 +3,22 @@ import { test } from "node:test"
 import type { WorkItem, WorkSource } from "../source/types.js"
 import { combineSkips, pollOnce } from "./scheduler.js"
 
-const item = (id: string, loopKind: string): WorkItem => ({
+const item = (id: string, workflowKind: string): WorkItem => ({
   id,
-  loopKind,
+  workflowKind,
   title: id,
   entryStage: "build",
-  state: { kind: loopKind, goal: id, stage: "build", iteration: 0, artifacts: {} },
+  state: { kind: workflowKind, goal: id, stage: "build", iteration: 0, artifacts: {} },
   claimMessage: `claimed ${id}`,
 })
 
 const source = (
-  loopKind: string,
+  workflowKind: string,
   next: WorkItem | null,
-  skip = { message: `${loopKind}: nothing`, actionable: false },
+  skip = { message: `${workflowKind}: nothing`, actionable: false },
 ): WorkSource & { released: string[]; polls: number } => {
   const s = {
-    loopKind,
+    workflowKind,
     released: [] as string[],
     polls: 0,
     async claimNext() {
@@ -37,7 +37,7 @@ test("pollOnce claims from the first source with work and never polls later ones
   const b = source("pr-sitter", item("pr-9", "pr-sitter"))
   const { claim, skips } = await pollOnce([a, b])
   assert.equal(claim?.item.id, "t1")
-  assert.equal(claim?.source.loopKind, "eng")
+  assert.equal(claim?.source.workflowKind, "eng")
   assert.equal(b.polls, 0)
   assert.deepEqual(skips, [])
 })

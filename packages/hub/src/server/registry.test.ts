@@ -20,7 +20,7 @@ const noLog = (): void => {}
 
 const enable = (dir: string): void => {
   fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, ".agentic-loop.json"), "{}")
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), "{}")
 }
 
 test("rescan registers a repo that became loop-enabled after startup", async () => {

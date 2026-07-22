@@ -1,0 +1,3 @@
+name: workflow-pr-triage
+description: Triage for the PR sitter's TRIAGE stage. Read-only inspection of a pull request — unanswered review comments, failing checks (with real errors from logs), conflict state — emitted as a structured findings list, plus a verdict via the workflow_verdict MCP tool. Never edits, never pushes.
+tools: Read, Grep, Glob, Bash, mcp__agentic-workflow__workflow_verdict, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict

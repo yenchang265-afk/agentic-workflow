@@ -1,6 +1,6 @@
 [English](02-state-persistence.md) | 繁體中文
 
-# 02 — 讓 LoopState 跨重啟持久化
+# 02 — 讓 WorkflowState 跨重啟持久化
 
 ## Context
 
@@ -12,13 +12,13 @@ sessionID 為鍵的 `Map`；README 將這列為已知限制）。唯一持久化
 （`resumeAtBuild`，`driver.ts:508-513`），捨棄已完成的工作內容，並把 token
 浪費在重做已經跑過的階段上。
 
-修法：每次狀態轉換（transition）後都把 `LoopState` 快照（snapshot）寫入
+修法：每次狀態轉換（transition）後都把 `WorkflowState` 快照（snapshot）寫入
 磁碟；`/agent-loop recover` 便能在完整保留產出物的情況下，精確地從中斷的
 那個階段恢復。
 
 ## Design
 
-`LoopState` 已經可以序列化為 JSON——每個欄位都是純粹的唯讀資料（`goal`、
+`WorkflowState` 已經可以序列化為 JSON——每個欄位都是純粹的唯讀資料（`goal`、
 `stage`、`iteration`、`paused`、`artifacts` 記錄，以及可選的 `task` / `git`
 參照）。不需要變更結構描述（schema）。
 
@@ -28,11 +28,11 @@ sessionID 為鍵的 `Map`；README 將這列為已知限制）。唯一持久化
 /** Snapshot path: <directory>/<tasksDir>/runs/<id>.state.json */
 export const statePath = (directory: string, tasksDir: string, id: string): string  // pure
 
-export const saveState = async ($: Shell, directory: string, tasksDir: string, id: string, state: LoopState): Promise<void>
+export const saveState = async ($: Shell, directory: string, tasksDir: string, id: string, state: WorkflowState): Promise<void>
 // mkdir -p runs/; write JSON.stringify(state, null, 2) — best-effort
 // (warn, never fail the drive over a snapshot write)
 
-export const loadState = async (client: Client, directory: string, tasksDir: string, id: string): Promise<LoopState | null>
+export const loadState = async (client: Client, directory: string, tasksDir: string, id: string): Promise<WorkflowState | null>
 // read + JSON.parse + zod-validate (schema below); null on absent/invalid
 // (an invalid snapshot must degrade to the plan-based recovery, never throw)
 
@@ -40,7 +40,7 @@ export const clearState = async ($: Shell, directory: string, tasksDir: string, 
 // rm -f — best-effort
 ```
 
-Zod 結構描述會完全鏡射 `LoopState`（階段列舉取自 `STAGES`，`artifacts` 為
+Zod 結構描述會完全鏡射 `WorkflowState`（階段列舉取自 `STAGES`，`artifacts` 為
 `Partial<Record<Stage, string>>`，可選的 `task`/`git` 子物件——一旦計畫 01
 落地，還會包含 `git.worktree`）。驗證就是信任邊界：快照存放在儲存庫的工作
 目錄中，因此一份遭竄改或損毀的檔案必須直接失敗關閉（null → 回退到以計畫為
@@ -48,10 +48,10 @@ Zod 結構描述會完全鏡射 `LoopState`（階段列舉取自 `STAGES`，`art
 
 ### Driver hooks（`src/loop/driver.ts`）
 
-- 在 `drive()` 的 fire 迴圈中，緊接在 `setLoop(sessionID, step.state)`
-  （第 287 行）之後：`await saveState(..., loopId(step.state), step.state)`。
+- 在 `drive()` 的 fire 迴圈中，緊接在 `setWorkflow(sessionID, step.state)`
+  （第 287 行）之後：`await saveState(..., workflowId(step.state), step.state)`。
   階段後的 `advanceOnIdle` 結果在進入下一輪迴圈前也要做同樣的事。每次狀態
-  轉換一份快照，以 `loopId`（任務 id 或 slug）為鍵。
+  轉換一份快照，以 `workflowId`（任務 id 或 slug）為鍵。
 - 在 `gate`（第 338 行）：同樣要做快照——目前若在暫停於執行中重新規劃
   把關點（iteration > 0）時重啟，會遺失所有東西。
 - 在 `done` / `stop` / `onIdle` 的 catch：在既有的清理動作之後執行
@@ -109,7 +109,7 @@ Zod 結構描述會完全鏡射 `LoopState`（階段列舉取自 `STAGES`，`art
 新增 `src/loop/persist.test.ts`：
 - `statePath` 的形狀（純函式）。
 - 往返測試（round-trip）：`saveState` → `loadState` 應回傳與原始
-  `LoopState` 深度相等的物件（使用暫存目錄 fixture）。
+  `WorkflowState` 深度相等的物件（使用暫存目錄 fixture）。
 - `loadState` 在下列情況應回傳 null：檔案不存在、JSON 無效、違反結構描述
   （例如未知的階段、`iteration: "2"`）。
 - `clearState` 會移除快照；在檔案不存在時是冪等的。
@@ -125,7 +125,7 @@ Zod 結構描述會完全鏡射 `LoopState`（階段列舉取自 `STAGES`，`art
 
 - `README.md` — 軟化「僅存在於記憶體中」這條已知限制：對於任務驅動的
   迴圈，狀態現在能在重啟後存活；復原會從精確的階段恢復。
-- `skills/loop-orchestration/SKILL.md` — 復原章節：快照優先，計畫回退。
+- `skills/workflow-orchestration/SKILL.md` — 復原章節：快照優先，計畫回退。
 - `skills/task-backlog-management/SKILL.md` — 「識別中斷的迴圈」：
   `.state.json` 的存在訊號會加入 BUILD 附註的啟發式判斷之列。
 - `docs/design/threat-model.md` — 註明快照在讀取時會經過 zod 驗證（屬於

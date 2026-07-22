@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { DEFAULT_CONFIG } from "@agentic-loop/core/config"
+import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
 import type { KindBoardInfo } from "../shared/api.js"
 import type { HubDeps } from "./deps.js"
 import { makeDrivingOracle, readStageMarker } from "./driving.js"
@@ -53,7 +53,7 @@ const depsFor = (directory: string): HubDeps => ({
   tasksDir: TASKS_DIR,
   boards: BOARDS,
   config: DEFAULT_CONFIG,
-  loopsDir: path.join(directory, "loops-unused"),
+  workflowsDir: path.join(directory, "workflows-unused"),
   projectsDir: "/nonexistent-projects",
   opencodeDbPath: "/nonexistent.db",
   client: fsClient,

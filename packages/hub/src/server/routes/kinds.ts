@@ -1,11 +1,11 @@
 import fs from "node:fs"
 import path from "node:path"
-import { promptContext } from "@agentic-loop/core/loop/engine"
-import type { LoopState } from "@agentic-loop/core/loop/state"
-import { verdictContractBlock, workScopeBlock } from "@agentic-loop/core/loop/verdict"
-import { listLoopKinds, loadManifest } from "@agentic-loop/core/manifest/load"
-import { LoopManifestSchema, type LoopManifest, type StageDef } from "@agentic-loop/core/manifest/schema"
-import { renderPrompt } from "@agentic-loop/core/manifest/template"
+import { promptContext } from "@agentic-workflow/core/workflow/engine"
+import type { WorkflowState } from "@agentic-workflow/core/workflow/state"
+import { verdictContractBlock, workScopeBlock } from "@agentic-workflow/core/workflow/verdict"
+import { listWorkflowKinds, loadManifest } from "@agentic-workflow/core/manifest/load"
+import { WorkflowManifestSchema, type WorkflowManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
+import { renderPrompt } from "@agentic-workflow/core/manifest/template"
 import type {
   ChecklistItem,
   ChecklistResponse,
@@ -30,7 +30,7 @@ export const SLUG_RE = /^[a-z][a-z0-9-]{1,32}$/
 
 /**
  * Sub-paths of `/api/kinds/` that are verbs, not kind names. `POST
- * /api/kinds/:kind` (saveKind) would otherwise happily write a loop kind called
+ * /api/kinds/:kind` (saveKind) would otherwise happily write a workflow kind called
  * "preview" if it ever matched first — the route table orders the verbs ahead of
  * `:kind`, but that is array order, and array order is not a safety property.
  * Both spellings pass SLUG_RE, so reject them here where it cannot drift.
@@ -38,12 +38,12 @@ export const SLUG_RE = /^[a-z][a-z0-9-]{1,32}$/
 const RESERVED_KINDS: readonly string[] = ["validate", "preview", "checklist"]
 
 export const getKinds = async (deps: HubDeps): Promise<JsonResponse> => {
-  const kinds = listLoopKinds(deps.loopsDir).flatMap((kind) => {
+  const kinds = listWorkflowKinds(deps.workflowsDir).flatMap((kind) => {
     try {
-      const { manifest } = loadManifest(deps.loopsDir, kind)
+      const { manifest } = loadManifest(deps.workflowsDir, kind)
       return [{ kind, description: manifest.description, stages: manifest.stages.map((s) => s.name) }]
     } catch (err) {
-      deps.log("warn", `skipping loop kind ${kind}: ${(err as Error).message}`)
+      deps.log("warn", `skipping workflow kind ${kind}: ${(err as Error).message}`)
       return []
     }
   })
@@ -53,8 +53,8 @@ export const getKinds = async (deps: HubDeps): Promise<JsonResponse> => {
 
 export const getKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const kind = req.params["kind"] ?? ""
-  if (!SLUG_RE.test(kind) || !listLoopKinds(deps.loopsDir).includes(kind)) return notFound(`loop kind ${kind}`)
-  const { manifest, prompts } = loadManifest(deps.loopsDir, kind)
+  if (!SLUG_RE.test(kind) || !listWorkflowKinds(deps.workflowsDir).includes(kind)) return notFound(`workflow kind ${kind}`)
+  const { manifest, prompts } = loadManifest(deps.workflowsDir, kind)
   const response: KindDetailResponse = { manifest, prompts }
   return ok(response)
 }
@@ -62,7 +62,7 @@ export const getKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonRe
 // --- creator: validate + save ---
 
 const issuesOf = (raw: unknown): ManifestIssue[] | null => {
-  const result = LoopManifestSchema.safeParse(raw)
+  const result = WorkflowManifestSchema.safeParse(raw)
   if (result.success) return null
   return result.error.issues.map((i) => ({ path: i.path.join(".") || "(root)", message: i.message }))
 }
@@ -80,7 +80,7 @@ export const validateKind = async (_deps: HubDeps, req: ParsedRequest): Promise<
 const DEFAULT_SAMPLE: PreviewSample = { task: true, git: true, worktree: true, platform: "github" }
 
 /**
- * A plausible `LoopState` to render a prompt against. Values are visibly sample
+ * A plausible `WorkflowState` to render a prompt against. Values are visibly sample
  * text rather than realistic-looking fakes — an author reading the preview should
  * never wonder whether `f7k3-add-rate-limit` is a real task of theirs.
  *
@@ -88,7 +88,7 @@ const DEFAULT_SAMPLE: PreviewSample = { task: true, git: true, worktree: true, p
  * can only read what ran before it; that makes `{{artifacts.plan}}` and friends
  * render instead of silently vanishing.
  */
-const sampleState = (manifest: LoopManifest, stage: string, sample: PreviewSample): LoopState => {
+const sampleState = (manifest: WorkflowManifest, stage: string, sample: PreviewSample): WorkflowState => {
   const artifacts: Record<string, string> = {}
   for (const s of manifest.stages) if (s.name !== stage) artifacts[s.name] = `<sample ${s.name} output>`
   // The approved plan rides in artifacts under its own key, not a stage name.
@@ -127,7 +127,7 @@ export const previewKind = async (_deps: HubDeps, req: ParsedRequest): Promise<J
 
   const issues = issuesOf(body.manifest)
   if (issues) return json(400, { error: "manifest invalid", issues })
-  const manifest = LoopManifestSchema.parse(body.manifest)
+  const manifest = WorkflowManifestSchema.parse(body.manifest)
 
   const def: StageDef | undefined = manifest.stages.find((s) => s.name === body.stage)
   if (!def) return badRequest(`unknown stage "${body.stage}" — the manifest declares ${manifest.stages.map((s) => s.name).join(", ")}`)
@@ -169,12 +169,12 @@ const STUB = (kind: string, stage: string): string =>
     "---",
     `TODO: describe what ${stage} must do, its inputs (artifacts.<stage>), and`,
     "how it reports its result (work stages just finish; check stages MUST",
-    "record a PASS/FAIL verdict via the loop_verdict tool).",
+    "record a PASS/FAIL verdict via the workflow_verdict tool).",
     "",
   ].join("\n")
 
 /** Remaining manual steps for a saved kind, computed against the repo on disk. Pure given fs. */
-const buildChecklist = (deps: HubDeps, manifest: LoopManifest): ChecklistItem[] => {
+const buildChecklist = (deps: HubDeps, manifest: WorkflowManifest): ChecklistItem[] => {
   const items: ChecklistItem[] = []
   const repo = deps.directory
   const agents = [...new Set(manifest.stages.map((s) => s.agent))]
@@ -189,7 +189,7 @@ const buildChecklist = (deps: HubDeps, manifest: LoopManifest): ChecklistItem[] 
     items.push({ done: fs.existsSync(file), label: `opencode command wrapper plugins/opencode/commands/${command}.md` })
   }
   const claudeCmd = path.join(repo, "plugins", "claude", "commands", `${manifest.kind}.md`)
-  items.push({ done: fs.existsSync(claudeCmd), label: `Claude command plugins/claude/commands/${manifest.kind}.md (/agentic-loop:${manifest.kind})` })
+  items.push({ done: fs.existsSync(claudeCmd), label: `Claude command plugins/claude/commands/${manifest.kind}.md (/agentic-workflow:${manifest.kind})` })
   const hookRefs = [...Object.values(manifest.hooks.compose ?? {}), ...Object.values(manifest.hooks.validateBeforeTransition ?? {})]
   for (const ref of hookRefs) {
     items.push({ done: false, label: `register hook "${ref}" at host startup (pattern: packages/core/src/kinds/)` })
@@ -197,10 +197,10 @@ const buildChecklist = (deps: HubDeps, manifest: LoopManifest): ChecklistItem[] 
   // Read through the same layer reader the config editor uses, rather than a
   // second raw fs.readFileSync + JSON.parse that could drift from it.
   const cfg = readRawLayer(deps, "repo").raw
-  const enabled = valueAt(cfg, ["loops", manifest.kind, "enabled"]) === true
+  const enabled = valueAt(cfg, ["workflows", manifest.kind, "enabled"]) === true
   if (manifest.kind !== "engineering") {
     // No longer "go hand-edit the file" — the Config tab writes this.
-    items.push({ done: enabled, label: `enable it in the Config tab (loops.${manifest.kind}.enabled)` })
+    items.push({ done: enabled, label: `enable it in the Config tab (workflows.${manifest.kind}.enabled)` })
   }
   return items
 }
@@ -215,7 +215,7 @@ export const checklistKind = async (deps: HubDeps, req: ParsedRequest): Promise<
   if (!body?.manifest) return badRequest("body must be {manifest}")
   const issues = issuesOf(body.manifest)
   if (issues) return json(400, { error: "manifest invalid", issues })
-  const manifest = LoopManifestSchema.parse(body.manifest)
+  const manifest = WorkflowManifestSchema.parse(body.manifest)
   const response: ChecklistResponse = { checklist: buildChecklist(deps, manifest) }
   return ok(response)
 }
@@ -223,7 +223,7 @@ export const checklistKind = async (deps: HubDeps, req: ParsedRequest): Promise<
 export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
   const kind = req.params["kind"] ?? ""
   if (!SLUG_RE.test(kind)) return badRequest(`kind must match ${SLUG_RE}`)
-  if (RESERVED_KINDS.includes(kind)) return badRequest(`"${kind}" is a reserved route name, not a loop kind`)
+  if (RESERVED_KINDS.includes(kind)) return badRequest(`"${kind}" is a reserved route name, not a workflow kind`)
   const body = req.body as
     | { manifest?: unknown; prompts?: Record<string, string>; overwrite?: boolean }
     | undefined
@@ -231,7 +231,7 @@ export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
 
   const issues = issuesOf(body.manifest)
   if (issues) return json(400, { error: "manifest invalid", issues })
-  const manifest = LoopManifestSchema.parse(body.manifest)
+  const manifest = WorkflowManifestSchema.parse(body.manifest)
   if (manifest.kind !== kind) return badRequest(`manifest.kind "${manifest.kind}" must equal the URL kind "${kind}"`)
   for (const stage of manifest.stages) {
     if (!SLUG_RE.test(stage.name)) return badRequest(`stage name "${stage.name}" must match ${SLUG_RE}`)
@@ -239,25 +239,25 @@ export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
       return badRequest(`hub-authored kinds keep prompts at stages/<stage>.md — stage "${stage.name}" declares "${stage.prompt}"`)
   }
 
-  const loopsRoot = path.resolve(deps.loopsDir)
-  const dir = path.resolve(loopsRoot, kind)
-  if (dir !== path.join(loopsRoot, kind) || !dir.startsWith(loopsRoot + path.sep)) return badRequest("bad kind path")
-  const exists = fs.existsSync(path.join(dir, "loop.json"))
-  if (exists && !body.overwrite) return json(409, { error: `loop kind "${kind}" already exists — pass overwrite to update it` })
+  const workflowsRoot = path.resolve(deps.workflowsDir)
+  const dir = path.resolve(workflowsRoot, kind)
+  if (dir !== path.join(workflowsRoot, kind) || !dir.startsWith(workflowsRoot + path.sep)) return badRequest("bad kind path")
+  const exists = fs.existsSync(path.join(dir, "workflow.json"))
+  if (exists && !body.overwrite) return json(409, { error: `workflow kind "${kind}" already exists — pass overwrite to update it` })
 
   const written: string[] = []
   fs.mkdirSync(path.join(dir, "stages"), { recursive: true })
-  fs.writeFileSync(path.join(dir, "loop.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  written.push(`loops/${kind}/loop.json`)
+  fs.writeFileSync(path.join(dir, "workflow.json"), `${JSON.stringify(manifest, null, 2)}\n`)
+  written.push(`workflows/${kind}/workflow.json`)
   for (const stage of manifest.stages) {
     const file = path.join(dir, "stages", `${stage.name}.md`)
     const provided = body.prompts?.[stage.name]
     if (provided !== undefined && (body.overwrite || !fs.existsSync(file))) {
       fs.writeFileSync(file, provided.endsWith("\n") ? provided : `${provided}\n`)
-      written.push(`loops/${kind}/stages/${stage.name}.md`)
+      written.push(`workflows/${kind}/stages/${stage.name}.md`)
     } else if (!fs.existsSync(file)) {
       fs.writeFileSync(file, STUB(kind, stage.name))
-      written.push(`loops/${kind}/stages/${stage.name}.md (stub)`)
+      written.push(`workflows/${kind}/stages/${stage.name}.md (stub)`)
     }
   }
 

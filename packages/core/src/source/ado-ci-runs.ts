@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoConfig } from "../loop/state.js"
+import type { AdoConfig } from "../workflow/state.js"
 import { newestHeadVerdict, shortSha, type CiRun } from "./ci-runs.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger } from "./ci-runs-shared.js"
 import {
@@ -20,7 +20,7 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
 /**
  * The Azure DevOps CI-runs work source: the `gh`-backed `ci-runs.ts` mirrored
  * onto the Azure DevOps Build REST API. Selected at wiring time when config
- * `codePlatform` resolves to `"ado"` for a `ci-runs`-bound loop kind
+ * `codePlatform` resolves to `"ado"` for a `ci-runs`-bound workflow kind
  * (main-sitter).
  *
  * Raw ADO builds are normalized (`normalizeAdoBuild`, `ado-shared.ts`) into the
@@ -54,7 +54,7 @@ interface AdoCiRunsDeps {
   readonly azExec?: AzExec
   /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
   readonly pat?: string
-  /** Config override of the manifest's watched branch (`loops.<kind>.branch`). */
+  /** Config override of the manifest's watched branch (`workflows.<kind>.branch`). */
   readonly branch?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
   readonly now?: () => string
@@ -64,7 +64,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
   const { $, client, directory, tasksDir, log, loaded, ado } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "ci-runs") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a ci-runs work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a ci-runs work source`)
   }
   const kind = loaded.manifest.kind
   const now = deps.now ?? (() => new Date().toISOString())
@@ -111,7 +111,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
   }
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       // az mode needs no PAT check — the pre-provisioned CLI carries its own

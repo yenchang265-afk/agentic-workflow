@@ -1,6 +1,6 @@
 ---
 description: Enter the PUBLISH stage of the main-sitter loop — push the verified remedy branch, open a draft PR, and notify the culprit PR
-agent: loop-main-publish
+agent: workflow-main-publish
 subtask: true
 ---
 
@@ -9,7 +9,7 @@ Run the **PUBLISH** stage of the main-sitter loop
 
 **$ARGUMENTS**
 
-Delegated to the `loop-main-publish` subagent, which pushes the verified
+Delegated to the `workflow-main-publish` subagent, which pushes the verified
 main-sitter/ remedy branch, opens a DRAFT pull request onto the watched
 branch, and comments once on the culprit PR. It never pushes the watched
 branch and never merges.

@@ -3,7 +3,7 @@ import type { ConfigProvenance } from "../shared/api.js"
 /**
  * Which layer a config value actually comes from.
  *
- * `.agentic-loop.json` is two files: the user-scope `~/.agentic-loop.json` and
+ * `.agentic-workflow.json` is two files: the user-scope `~/.agentic-workflow.json` and
  * the repo's own, merged by core's `mergeConfigLayers` with the repo winning
  * field by field. An editor that showed only the merged view could not tell you
  * *where* a value lives — and worse, could not save it back to the right file.

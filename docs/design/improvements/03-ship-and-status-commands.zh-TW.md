@@ -113,7 +113,7 @@ export const summarizeBacklog = (byStatus: Record<TaskStatus, readonly Task[]>):
 - `README.md` + `.opencode/commands/agent-loop.md` — 把 `ship <id>` 和更
   豐富的 `status` 加進指令清單；把「move the task to completed/」的說法
   換成 `/agent-loop ship <id>`。
-- `skills/loop-orchestration/SKILL.md` — 終止章節：把 `/agent-loop ship`
+- `skills/workflow-orchestration/SKILL.md` — 終止章節：把 `/agent-loop ship`
   列為建議的最終把關動作。
 - `skills/task-backlog-management/SKILL.md` — 生命週期表格中
   `in-review → completed` 那一列：「你，透過 `/agent-loop ship <id>`

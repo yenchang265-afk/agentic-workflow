@@ -1,13 +1,13 @@
-import { ConfigSchema, mergeConfigLayers } from "@agentic-loop/core/config"
+import { ConfigSchema, mergeConfigLayers } from "@agentic-workflow/core/config"
 import { REDACTED, type ConfigEdit, type ConfigIssue, type ConfigLayer, type ConfigLayerResponse, type ConfigProvenance, type SaveConfigRequest, type SaveConfigResponse } from "../../shared/api.js"
 import { isGitIgnored, knownTopLevelKeys, layerPath, readRawLayer, redactSecrets, SECRET_PATHS, writeRawLayer } from "../configfile.js"
 import { deleteAt, isPlainObject, leafPaths, provenanceOf, setAt, valueAt } from "../configlayers.js"
 import type { HubDeps } from "../deps.js"
 import { badRequest, json, ok, type JsonResponse, type ParsedRequest } from "../http.js"
-import { lintLoopKnobs } from "../knobs.js"
+import { lintWorkflowKnobs } from "../knobs.js"
 
 /**
- * Read and write `.agentic-loop.json` — the file that grants every other
+ * Read and write `.agentic-workflow.json` — the file that grants every other
  * authority, which is why this route is the most carefully fenced one here.
  *
  * Two rules carry it, and neither is optional:
@@ -20,7 +20,7 @@ import { lintLoopKnobs } from "../knobs.js"
  * 2. **One named layer at a time.** `mergeConfigLayers` merges the user layer
  *    under the repo's, so saving the *merged* view to the repo file would
  *    flatten the user layer into it — writing `ado.pat` out of
- *    `~/.agentic-loop.json` and into a repo file. `effective` is display-only,
+ *    `~/.agentic-workflow.json` and into a repo file. `effective` is display-only,
  *    forever.
  */
 
@@ -67,7 +67,7 @@ export const getConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Json
     effective: parsed.success ? (redactSecrets(parsed.data as unknown as Record<string, unknown>).raw as Record<string, unknown>) : null,
     provenance: provenanceMap(user.raw, repo.raw),
     issues: issuesOf(merged),
-    warnings: lintLoopKnobs(valueAt(merged, ["loops"]), deps.boards),
+    warnings: lintWorkflowKnobs(valueAt(merged, ["workflows"]), deps.boards),
     passthrough: passthroughOf(self.raw),
     redactedPaths,
     ...(self.parseError ? { parseError: self.parseError } : {}),
@@ -107,7 +107,7 @@ export const saveConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
   if (!Array.isArray(body?.edits)) return badRequest("body.edits must be an array of { path, value? }")
 
   const file = layerPath(deps, layer as ConfigLayer)
-  if (!file) return badRequest("the user-scope config layer is disabled (AGENTIC_LOOP_USER_CONFIG is empty)")
+  if (!file) return badRequest("the user-scope config layer is disabled (AGENTIC_WORKFLOW_USER_CONFIG is empty)")
 
   const self = readRawLayer(deps, layer as ConfigLayer)
   if (self.parseError) return json(400, { error: `refusing to edit ${file}: ${self.parseError} — fix the file by hand first` })
@@ -145,7 +145,7 @@ export const saveConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
 
   const response: SaveConfigResponse = {
     written: file,
-    warnings: lintLoopKnobs(valueAt(merged, ["loops"]), deps.boards),
+    warnings: lintWorkflowKnobs(valueAt(merged, ["workflows"]), deps.boards),
   }
   return ok(response)
 }

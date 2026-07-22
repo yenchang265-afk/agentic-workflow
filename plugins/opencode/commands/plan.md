@@ -1,6 +1,6 @@
 ---
 description: Ad-hoc planning — turn a raw goal into a spec-bounded, review-sized implementation plan (read-only, standalone)
-agent: loop-plan
+agent: workflow-plan
 subtask: true
 ---
 
@@ -8,10 +8,10 @@ Produce an implementation plan for:
 
 **$ARGUMENTS**
 
-Delegated to the read-only `loop-plan` subagent, which reads the relevant code
+Delegated to the read-only `workflow-plan` subagent, which reads the relevant code
 itself, sharpens and bounds the raw goal into a short problem/non-goals
 framing, then turns that into an ordered, review-sized implementation plan
 with explicit acceptance criteria. Relay its plan and stop. This is a
 standalone tool — to plan a backlog task for the automatic loop (build →
-verify → review), use `/agentic-loop:engineering new` instead — its queue’s PLAN stage persists the plan onto the
+verify → review), use `/agentic-workflow:engineering new` instead — its queue’s PLAN stage persists the plan onto the
 task file.

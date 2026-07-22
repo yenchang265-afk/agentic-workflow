@@ -5,7 +5,7 @@ import { resolveNewRepos } from "./repos.js"
 /**
  * Live registry of monitored repos. The startup set is resolved once in
  * main.ts, but a directory under a configured pattern can become loop-enabled
- * (gain `.agentic-loop.json` / `docs/tasks`) while the hub runs — `rescan()`
+ * (gain `.agentic-workflow.json` / `docs/tasks`) while the hub runs — `rescan()`
  * re-evaluates the patterns and registers newcomers without a restart.
  *
  * Append-only by design: a vanished directory stays registered (its watcher

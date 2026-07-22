@@ -1,6 +1,6 @@
 ---
 description: Enter the PUBLISH stage of the PR-sitter loop — push the verified commits and reply to the addressed review comments
-agent: loop-pr-publish
+agent: workflow-pr-publish
 subtask: true
 ---
 
@@ -9,6 +9,6 @@ Run the **PUBLISH** stage of the PR-sitter loop
 
 **$ARGUMENTS**
 
-Delegated to the `loop-pr-publish` subagent, which pushes the verified
+Delegated to the `workflow-pr-publish` subagent, which pushes the verified
 commits to the PR branch and replies to each addressed finding via `gh`.
 It never merges — that stays a human call.

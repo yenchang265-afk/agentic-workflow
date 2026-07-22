@@ -1,6 +1,6 @@
 English | [繁體中文](02-state-persistence.zh-TW.md)
 
-# 02 — Persist LoopState across restarts
+# 02 — Persist WorkflowState across restarts
 
 ## Context
 
@@ -12,12 +12,12 @@ count, and all artifacts — `/agent-loop recover <id>` can only re-enter at BUI
 from the persisted plan (`resumeAtBuild`, `driver.ts:508-513`), discarding
 completed work context and burning tokens re-doing stages that already ran.
 
-Fix: snapshot the `LoopState` to disk after every transition; `/agent-loop
+Fix: snapshot the `WorkflowState` to disk after every transition; `/agent-loop
 recover` resumes at the exact stage with artifacts intact.
 
 ## Design
 
-`LoopState` is already JSON-serializable — every field is plain readonly
+`WorkflowState` is already JSON-serializable — every field is plain readonly
 data (`goal`, `stage`, `iteration`, `paused`, `artifacts` record,
 optional `task` / `git` refs). No schema changes needed.
 
@@ -27,11 +27,11 @@ optional `task` / `git` refs). No schema changes needed.
 /** Snapshot path: <directory>/<tasksDir>/runs/<id>.state.json */
 export const statePath = (directory: string, tasksDir: string, id: string): string  // pure
 
-export const saveState = async ($: Shell, directory: string, tasksDir: string, id: string, state: LoopState): Promise<void>
+export const saveState = async ($: Shell, directory: string, tasksDir: string, id: string, state: WorkflowState): Promise<void>
 // mkdir -p runs/; write JSON.stringify(state, null, 2) — best-effort
 // (warn, never fail the drive over a snapshot write)
 
-export const loadState = async (client: Client, directory: string, tasksDir: string, id: string): Promise<LoopState | null>
+export const loadState = async (client: Client, directory: string, tasksDir: string, id: string): Promise<WorkflowState | null>
 // read + JSON.parse + zod-validate (schema below); null on absent/invalid
 // (an invalid snapshot must degrade to the plan-based recovery, never throw)
 
@@ -39,7 +39,7 @@ export const clearState = async ($: Shell, directory: string, tasksDir: string, 
 // rm -f — best-effort
 ```
 
-Zod schema mirrors `LoopState` exactly (stages enum from `STAGES`,
+Zod schema mirrors `WorkflowState` exactly (stages enum from `STAGES`,
 `artifacts` as `Partial<Record<Stage, string>>`, optional `task`/`git`
 sub-objects — including `git.worktree` once plan 01 lands). Validation is
 the trust boundary: the snapshot lives in the repo working tree, so a
@@ -48,10 +48,10 @@ inject arbitrary state.
 
 ### Driver hooks (`src/loop/driver.ts`)
 
-- In `drive()`'s fire loop, right after `setLoop(sessionID, step.state)`
-  (line 287): `await saveState(..., loopId(step.state), step.state)`. Also
+- In `drive()`'s fire loop, right after `setWorkflow(sessionID, step.state)`
+  (line 287): `await saveState(..., workflowId(step.state), step.state)`. Also
   after the post-stage `advanceOnIdle` result before looping. One snapshot
-  per transition, keyed by `loopId` (task id or slug).
+  per transition, keyed by `workflowId` (task id or slug).
 - On `gate` (line 338): snapshot too — a restart while paused at a
   mid-execution re-plan gate (iteration > 0) currently loses everything.
 - On `done` / `stop` / the `onIdle` catch: `clearState(...)` after the
@@ -109,7 +109,7 @@ history that the run log already captures deliberately.
 
 New `src/loop/persist.test.ts`:
 - `statePath` shape (pure).
-- Round-trip: `saveState` → `loadState` returns a deep-equal `LoopState`
+- Round-trip: `saveState` → `loadState` returns a deep-equal `WorkflowState`
   (temp dir fixture).
 - `loadState` returns null on: missing file, invalid JSON, schema violation
   (e.g. unknown stage, `iteration: "2"`).
@@ -127,7 +127,7 @@ task-less states never snapshot).
 - `README.md` — soften the "in-memory only" known limitation: state now
   survives restarts for task-driven loops; recovery resumes at the exact
   stage.
-- `skills/loop-orchestration/SKILL.md` — recovery section: snapshot-first,
+- `skills/workflow-orchestration/SKILL.md` — recovery section: snapshot-first,
   plan-fallback.
 - `skills/task-backlog-management/SKILL.md` — "Identifying an interrupted
   loop": the `.state.json` presence signal joins the BUILD-note heuristics.

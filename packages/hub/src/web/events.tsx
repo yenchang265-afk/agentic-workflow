@@ -13,7 +13,7 @@ export interface EventVersions {
   readonly active: number
   readonly tokens: number
   readonly gate: number
-  /** `.agentic-loop.json` changed — from the hub's own save or a hand-edit. */
+  /** `.agentic-workflow.json` changed — from the hub's own save or a hand-edit. */
   readonly config: number
   /** The monitored-repo set grew — RepoProvider refetches /api/repos. */
   readonly repos: number
@@ -57,7 +57,7 @@ export const EventsProvider = ({ children }: { children: ReactNode }) => {
       }
       setVersions((v) => ({ ...v, [event.type]: v[event.type] + 1 }))
       if (event.type === "gate" && notifRef.current === "granted") {
-        new Notification("agentic-loop: task parked for your review", {
+        new Notification("agentic-workflow: task parked for your review", {
           body: `[${event.repo}] ${event.taskId} → ${event.toStatus} — approve or replan when ready`,
           tag: `gate-${event.repo}-${event.taskId}`,
         })

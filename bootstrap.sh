@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap ALL dependencies the agentic-loop needs, then run the plugin
+# Bootstrap ALL dependencies the agentic-workflow needs, then run the plugin
 # installer.
 #
 # install.sh installs the *plugins* (npm workspaces + symlinks + the bundled
@@ -203,10 +203,10 @@ ensure_gh() {
 #   mcp            — an Azure DevOps MCP server configured in the agent host;
 #                    covers stage agents only — polling still needs the PAT
 ado_access() {
-  # Best-effort read of ado.access from .agentic-loop.json; defaults to "az".
-  local cfg=".agentic-loop.json"
+  # Best-effort read of ado.access from .agentic-workflow.json; defaults to "az".
+  local cfg=".agentic-workflow.json"
   if [ -f "$cfg" ] && command -v node >/dev/null 2>&1; then
-    node -e 'const c=JSON.parse(require("fs").readFileSync(".agentic-loop.json","utf8"));process.stdout.write(c.ado?.access??"az")' 2>/dev/null || echo "az"
+    node -e 'const c=JSON.parse(require("fs").readFileSync(".agentic-workflow.json","utf8"));process.stdout.write(c.ado?.access??"az")' 2>/dev/null || echo "az"
   else
     echo "az"
   fi
@@ -352,7 +352,7 @@ register_mcp_opencode() {
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
-echo "agentic-loop bootstrap — pkg manager: $PKG"
+echo "agentic-workflow bootstrap — pkg manager: $PKG"
 [ "$CHECK_ONLY" -eq 1 ] && echo "(check-only: reporting status, changing nothing)"
 echo
 
@@ -395,7 +395,7 @@ echo "== next: authenticate (not automated) =="
 echo "  - GitHub:       gh auth login"
 if [ "$WANT_ADO" -eq 1 ]; then
   echo "  - Azure DevOps: export AZURE_DEVOPS_EXT_PAT=<pat>   (Code read + Pull Request contribute scopes)"
-  echo "    (or put \"pat\" — with organization/selfLogin — in a user-scope ~/.agentic-loop.json,"
+  echo "    (or put \"pat\" — with organization/selfLogin — in a user-scope ~/.agentic-workflow.json,"
   echo "     shared across repos; the env var wins if both are set)"
 fi
 if [ "$WANT_BROWSER" -eq 1 ]; then

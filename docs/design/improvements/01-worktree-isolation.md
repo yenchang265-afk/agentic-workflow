@@ -25,7 +25,7 @@ Verified against `@opencode-ai/plugin` / `@opencode-ai/sdk` v1.17.11:
   `query: { directory?: string }` — but pointing a stage session at the
   worktree **boots a separate app instance rooted there**, which loads its
   own plugin set. A fresh worktree has no `node_modules`, so this plugin
-  can't load there — **the `loop_verdict` tool would not exist in the stage
+  can't load there — **the `workflow_verdict` tool would not exist in the stage
   session**, breaking the loop's only trusted verdict channel. Even if it
   loaded, it would be a different module instance with its own
   `recordedVerdicts` map, invisible to the driving instance, plus version
@@ -57,7 +57,7 @@ worktreeSetup: z.string().min(1).optional(),
 ```
 
 Mirror both (optional) on the `Config` interface in `state.ts`. Suggested
-README value: `".loop-worktrees"`.
+README value: `".workflow-worktrees"`.
 
 ## 2. State — `src/loop/state.ts`
 
@@ -117,10 +117,10 @@ Replace `ensureBranch` with `ensureIsolation(deps, config, state)`:
 2. **Fresh isolation** with `config.worktreesDir` set, `isGitRepo`, and a
    resolvable `currentBranch`:
    - `base = baseBranch ?? currentBranch(directory)`; `branch = feature/<id>`;
-     `wtPath = path.resolve(deps.directory, config.worktreesDir, loopId(state))`.
+     `wtPath = path.resolve(deps.directory, config.worktreesDir, workflowId(state))`.
      `baseBranch` is an optional host-resolved override: the Claude Code MCP
      host's `directory` is frozen at the main checkout (usually the default
-     branch), so it resolves the base from `AGENTIC_LOOP_BASE_DIR` (the user's
+     branch), so it resolves the base from `AGENTIC_WORKFLOW_BASE_DIR` (the user's
      real working tree) instead. The OpenCode host omits it — its `directory`
      already reflects the user's branch. Unset ⇒ cut from `directory`'s branch.
    - `ensureExcluded(main, worktreesDir)`.
@@ -262,7 +262,7 @@ BUILD's uncommitted diff is evidence. `/agent-loop recover` reuses it via
 ## 10. Optional hardening (small, recommended)
 
 In `index.ts`'s existing `"tool.execute.before"` hook (line 74): when
-`getLoop(sessionID)?.git?.worktree` is set and the tool is the edit/write
+`getWorkflow(sessionID)?.git?.worktree` is set and the tool is the edit/write
 tool, reject a `filePath` outside the worktree (throw with a corrective
 message). Cheap; enforces pinning for the only tool that mutates files
 structurally. Bash remains prompt-enforced — documented residual.
@@ -322,7 +322,7 @@ structurally. Bash remains prompt-enforced — documented residual.
 - `README.md` — the two knobs, the "one drive per tree" limitation lifted in
   worktree mode, backlog-commit behavior change.
 - `.opencode/commands/agent-loop.md` — concurrency note.
-- `skills/loop-orchestration/SKILL.md` — isolation section, watch
+- `skills/workflow-orchestration/SKILL.md` — isolation section, watch
   concurrency.
 - `docs/design/threat-model.md` — T3 (residual shrinks), T4 (execution-phase
   notes now committed to the human's branch via `commitPaths`).

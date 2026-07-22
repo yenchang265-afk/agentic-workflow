@@ -142,7 +142,7 @@ export const AgentScaffoldForm = ({
     <div className="asset-scaffold">
       <h3>New agent persona</h3>
       <Field label="name (prompts/agents/<name>/)">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. loop-triage" />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. workflow-triage" />
       </Field>
       <Field label="description (one line, becomes the persona frontmatter)">
         <textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />

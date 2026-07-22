@@ -2,29 +2,29 @@ import type { Plugin } from "@opencode-ai/plugin"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, applyAdoPatEnv, loadConfig } from "./config.ts"
-import { enabledLoopKinds } from "@agentic-loop/core/config"
+import { enabledWorkflowKinds } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
-import * as driver from "./loop/driver.ts"
-import { listWorktrees, pruneWorktrees } from "@agentic-loop/core/loop/git"
-import { listSnapshotIds } from "@agentic-loop/core/loop/persist"
-import { anyLoopActive, anyWorktreeLoopActive, findSessionDriving, getLoop, hasLoop, planStageTaskId } from "@agentic-loop/core/loop/state"
-import { auditBacklog, formatAnomalies } from "@agentic-loop/core/task/audit"
-import { classifyBash, classifyEdit } from "@agentic-loop/core/task/guard"
-import { pinBash, pinEditPath } from "@agentic-loop/core/loop/worktree-guard"
-import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-loop/core/task/write-backstop"
-import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-loop/core/task/store"
+import * as driver from "./workflow/driver.ts"
+import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
+import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
+import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWorkflow, hasWorkflow, planStageTaskId } from "@agentic-workflow/core/workflow/state"
+import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
+import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
+import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
+import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-workflow/core/task/write-backstop"
+import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-workflow/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 
 /**
- * agentic-loop
+ * agentic-workflow
  *
  * opencode plugin that executes approved plans as an automatic loop:
  *
  *   build → verify → review
  *
- * One command per loop kind: `/agentic-loop:engineering` carries the backlog
+ * One command per workflow kind: `/agentic-workflow:engineering` carries the backlog
  * lifecycle — `new <idea>` interviews the user into a draft, the deterministic
  * unified `approve <id>` parks it planless in `queued/`, the loop plans right
  * before execution (a claimed queued task runs the PLAN stage, writes its
@@ -32,18 +32,18 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  * again releases it to `in-progress/`, the build-ready queue. `plan <id>`
  * plans one approved task now; `claim` pulls the next item once; `watch
  * [interval]` polls for work — on every `session.idle` event plus a
- * per-session interval timer. Other kinds (`/agentic-loop:pr-sitter`) get the
+ * per-session interval timer. Other kinds (`/agentic-workflow:pr-sitter`) get the
  * minimal watcher verb set, scoped to their kind. A verify or review FAIL re-builds within the
- * iteration cap. The control surface lives in `loop/driver.ts`; the pure
- * state machine in `loop/state.ts`.
+ * iteration cap. The control surface lives in `workflow/driver.ts`; the pure
+ * state machine in `workflow/state.ts`.
  *
- * This module transitively imports `@agentic-loop/core`'s built `dist/`, so
+ * This module transitively imports `@agentic-workflow/core`'s built `dist/`, so
  * it is loaded DYNAMICALLY by the plugin entry (`index.ts`) — a stale or
  * missing core build must surface as the entry's fail-loud fallback, not
  * kill the whole plugin silently at import time.
  */
-export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
-  const service = "agentic-loop"
+export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
+  const service = "agentic-workflow"
 
   const log = (level: "info" | "warn" | "error", message: string) =>
     client.app.log({ body: { service, level, message } })
@@ -92,14 +92,14 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       if (interrupted.length) {
         await log(
           "warn",
-          `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /agentic-loop:engineering recover <id> to resume`,
+          `interrupted loop task(s) in ${config.tasksDir}/in-progress: ${interrupted.join(", ")} — run /agentic-workflow:engineering recover <id> to resume`,
         )
       }
       const snapshots = await listSnapshotIds(client, directory, config.tasksDir)
       if (snapshots.length) {
         await log(
           "warn",
-          `loop state snapshot(s) present: ${snapshots.join(", ")} — /agentic-loop:engineering recover <id> resumes at the exact stage`,
+          `loop state snapshot(s) present: ${snapshots.join(", ")} — /agentic-workflow:engineering recover <id> resumes at the exact stage`,
         )
       }
       // Claim-marker sweep: a run that died between claiming and its first
@@ -139,7 +139,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       // Report-only here; the doctor verb repairs.
       const anomalies = await auditBacklog(client, directory, config.tasksDir)
       for (const line of formatAnomalies(anomalies, config.tasksDir)) {
-        await log("warn", `backlog anomaly: ${line} — /agentic-loop:engineering doctor reports and repairs`)
+        await log("warn", `backlog anomaly: ${line} — /agentic-workflow:engineering doctor reports and repairs`)
       }
     } catch (err) {
       await log("warn", `startup task reconciliation failed: ${(err as Error).message}`)
@@ -165,7 +165,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
           } else {
             await log(
               "warn",
-              `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — no in-progress/in-review task ${id}; /agentic-loop:engineering recover will reuse it, or 'git worktree remove' it`,
+              `stale loop worktree ${w.path} (branch ${w.branch ?? "?"}) — no in-progress/in-review task ${id}; /agentic-workflow:engineering recover will reuse it, or 'git worktree remove' it`,
             )
           }
         }
@@ -196,15 +196,15 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
     },
 
     "command.execute.before": async (input) => {
-      // One command per loop kind: /agentic-loop:engineering, /agentic-loop:pr-sitter, …
-      const match = /^agentic-loop:(.+)$/.exec(input.command)
+      // One command per workflow kind: /agentic-workflow:engineering, /agentic-workflow:pr-sitter, …
+      const match = /^agentic-workflow:(.+)$/.exec(input.command)
       if (!match) return
       const kind = match[1]!
       const config = await getConfig()
-      if (!enabledLoopKinds(config).includes(kind)) {
+      if (!enabledWorkflowKinds(config).includes(kind)) {
         await client.tui
           .showToast({
-            body: { message: `Unknown loop kind "${kind}" — enabled: ${enabledLoopKinds(config).join(", ")}.`, variant: "warning" },
+            body: { message: `Unknown workflow kind "${kind}" — enabled: ${enabledWorkflowKinds(config).join(", ")}.`, variant: "warning" },
           })
           .catch(() => {})
         return
@@ -226,7 +226,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
 
     "tool.execute.before": async (input, output) => {
       // Only trace tool calls while a loop is actively driving this session.
-      if (hasLoop(input.sessionID)) {
+      if (hasWorkflow(input.sessionID)) {
         await log("info", `tool ${input.tool} starting (call ${input.callID})`)
       }
       // Backlog-mutation guard (always on, loop or no loop): the folder a task
@@ -237,15 +237,15 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       // draft/*.md and the live PLAN stage writing its own queued/ task.
       const config = await getConfig()
       // Stage commands run as subtasks, so tool calls arrive with the CHILD
-      // session's id — getLoop misses and every per-loop guard below would be
+      // session's id — getWorkflow misses and every per-loop guard below would be
       // silently skipped (the worktree pinning was dead code for stage
       // subagents). Walk the parentID chain to the driving loop, like
-      // loop_verdict does; the walk only runs while some loop is live.
-      let loop = getLoop(input.sessionID)
+      // workflow_verdict does; the walk only runs while some loop is live.
+      let loop = getWorkflow(input.sessionID)
       let resolutionFailed = false
-      if (!loop && anyLoopActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool))) {
+      if (!loop && anyWorkflowActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool))) {
         try {
-          loop = (await driver.findDrivingLoop(client, input.sessionID))?.state
+          loop = (await driver.findDrivingWorkflow(client, input.sessionID))?.state
         } catch (err) {
           resolutionFailed = true
           await log("warn", `could not resolve driving session for ${input.sessionID}: ${(err as Error).message}`)
@@ -269,7 +269,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
           // manual `gh pr merge` in a non-loop session is untouched.
           if (chainedAdoWriteBackstopViolation(cmd) || chainedAdoAzWriteViolation(cmd)) {
             throw new Error(
-              "agentic-loop: blocked an Azure DevOps write — loops may only read, reply to a comment thread, " +
+              "agentic-workflow: blocked an Azure DevOps write — loops may only read, reply to a comment thread, " +
                 "or create a DRAFT PR (curl: GET / POST …/threads… / POST …/pullrequests; az: reads, " +
                 "invoke POST to a thread resource, az repos pr create --draft); " +
                 "completing/abandoning/approving stays a human call.",
@@ -277,7 +277,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
           }
           if (loop && (chainedGithubPrMutation(cmd) || chainedGitPushViolation(cmd))) {
             throw new Error(
-              "agentic-loop: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
+              "agentic-workflow: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
                 "approves, force-pushes, or pushes the default branch; those stay a human call.",
             )
           }
@@ -306,18 +306,18 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       // session, a file-writing tool must not touch anything outside the
       // worktree, and bash is pinned by classifyWorktreeBash above — the same
       // fail-closed stance for both tool shapes.
-      if (resolutionFailed && (EDIT_TOOLS.has(input.tool) || input.tool === "bash") && anyWorktreeLoopActive()) {
+      if (resolutionFailed && (EDIT_TOOLS.has(input.tool) || input.tool === "bash") && anyWorktreeWorkflowActive()) {
         // Fail CLOSED on "can't tell": a worktree-isolated loop is live but this
         // session couldn't be attributed to (or cleared of) it — refusing the edit
         // beats risking a silent write to the human's main tree.
         throw new Error(
-          "agentic-loop: a worktree-isolated loop is active but this session could not be attributed " +
+          "agentic-workflow: a worktree-isolated loop is active but this session could not be attributed " +
             "(session lookup failed) — refusing the edit rather than risking a write outside the worktree.",
         )
       }
       // NOTE: unlike the Claude host this reads only the loop's worktree, with no
       // per-stage isolation flag — OpenCode's state carries no equivalent of the
-      // marker's `loopWorktree`/`worktree` split. In practice the driver sets
+      // marker's `workflowWorktree`/`worktree` split. In practice the driver sets
       // `git.worktree` only once it has isolated, so an unisolated stage sees no
       // worktree and no pin; the asymmetry is that a stage which runs unisolated
       // AFTER a worktree exists (a replan bounce back to PLAN) would have its
@@ -333,7 +333,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
       // misses with exactly one sensible worktree equivalent.
       if (typeof filePath !== "string") {
         throw new Error(
-          `agentic-loop: this loop is isolated to its worktree ${wt}, but ${input.tool}'s target path could not be ` +
+          `agentic-workflow: this loop is isolated to its worktree ${wt}, but ${input.tool}'s target path could not be ` +
             `determined — pass an absolute path under the worktree.`,
         )
       }
@@ -346,7 +346,7 @@ export const makeAgenticLoop: Plugin = async ({ client, directory, $ }) => {
     },
 
     tool: {
-      loop_verdict: tool({
+      workflow_verdict: tool({
         description:
           "Record a check stage's machine-readable verdict for the running loop (engineering: verify/review; pr-sitter: triage/verify). This tool " +
           "call is the loop's ONLY trusted verdict channel — a PASS/FAIL written in plain text is ignored. " +

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { PluginInput } from "@opencode-ai/plugin"
-import { AgenticLoop } from "./index.ts"
+import { AgenticWorkflow } from "./index.ts"
 import { loadFailureHooks, loadFailureMessage } from "./load-failure.ts"
 import * as entry from "./index.ts"
 
@@ -40,7 +40,7 @@ test("plugin init resolves without any client call (no bootstrap deadlock)", asy
   // which can take seconds cold on a slow filesystem — the deadlock this test
   // guards against is an infinite hang, not slow module loading.
   const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 10_000))
-  const hooks = await Promise.race([AgenticLoop(makeInput(calls)), timeout])
+  const hooks = await Promise.race([AgenticWorkflow(makeInput(calls)), timeout])
 
   assert.notEqual(hooks, "timeout", "plugin init blocked on a client call — this deadlocks opencode startup")
   assert.deepEqual(calls, [], "plugin init must not call the opencode client during bootstrap")
@@ -48,7 +48,7 @@ test("plugin init resolves without any client call (no bootstrap deadlock)", asy
 
 test("non-loop commands pass through without loading config", async () => {
   const calls: string[] = []
-  const hooks = await AgenticLoop(makeInput(calls))
+  const hooks = await AgenticWorkflow(makeInput(calls))
   await hooks["command.execute.before"]?.(
     { command: "help", sessionID: "ses_x", arguments: "" } as never,
     {} as never,
@@ -56,26 +56,26 @@ test("non-loop commands pass through without loading config", async () => {
   assert.deepEqual(calls, [], "a non-loop command must not trigger a config read")
 })
 
-test("an agentic-loop:engineering gate verb is dispatched (it triggers a config read)", async () => {
+test("an agentic-workflow:engineering gate verb is dispatched (it triggers a config read)", async () => {
   const calls: string[] = []
-  const hooks = await AgenticLoop(makeInput(calls))
+  const hooks = await AgenticWorkflow(makeInput(calls))
   const timeout = new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50))
   // The hanging fake client never resolves file.read, so the handler blocks
   // after recording the call — racing a timeout is enough to observe dispatch.
   await Promise.race([
-    hooks["command.execute.before"]?.({ command: "agentic-loop:engineering", sessionID: "ses_x", arguments: "approve x" } as never, {} as never),
+    hooks["command.execute.before"]?.({ command: "agentic-workflow:engineering", sessionID: "ses_x", arguments: "approve x" } as never, {} as never),
     timeout,
   ])
-  assert.ok(calls.includes("file.read"), "an /agentic-loop:engineering gate verb must reach the plugin handler")
+  assert.ok(calls.includes("file.read"), "an /agentic-workflow:engineering gate verb must reach the plugin handler")
 })
 
-test("the plugin exposes dispose (watch-timer cleanup) and no loop_begin tool", async () => {
-  const hooks = await AgenticLoop(makeInput([]))
+test("the plugin exposes dispose (watch-timer cleanup) and no workflow_begin tool", async () => {
+  const hooks = await AgenticWorkflow(makeInput([]))
   assert.notEqual(hooks, undefined)
   assert.equal(typeof (hooks as { dispose?: unknown }).dispose, "function")
   const tools = (hooks as { tool?: Record<string, unknown> }).tool ?? {}
-  assert.ok(!("loop_begin" in tools), "loop_begin was removed with the old free-text command mode")
-  assert.ok("loop_verdict" in tools)
+  assert.ok(!("workflow_begin" in tools), "workflow_begin was removed with the old free-text command mode")
+  assert.ok("workflow_verdict" in tools)
   await (hooks as { dispose: () => Promise<void> }).dispose() // must not throw with no timers
 })
 
@@ -83,7 +83,7 @@ test("the entry module exports ONLY plugin factories (opencode calls every expor
   // Regression: exporting loadFailureHooks from index.ts made opencode call it
   // as Plugin(input, options) — its hooks closed over client=options
   // (undefined) and threw `client.app` on EVERY command, killing the turn.
-  assert.deepEqual(Object.keys(entry).sort(), ["AgenticLoop"])
+  assert.deepEqual(Object.keys(entry).sort(), ["AgenticWorkflow"])
 })
 
 // --- fail-loud fallback (impl.ts failed to import: stale/missing core dist) ---
@@ -109,13 +109,13 @@ const makeFallbackClient = () => {
 }
 
 test("load-failure message carries the first error line and the rebuild hint", () => {
-  const msg = loadFailureMessage(new Error("Cannot find module '…/dist/loop/gate.js'\nlong stack…"))
+  const msg = loadFailureMessage(new Error("Cannot find module '…/dist/workflow/gate.js'\nlong stack…"))
   assert.ok(msg.includes("Cannot find module"), msg)
   assert.ok(!msg.includes("long stack"), "only the first error line belongs in the toast")
   assert.ok(msg.includes("npm install"), "the message must tell the human how to rebuild")
 })
 
-test("fallback hooks surface the load error on agentic-loop commands only", async () => {
+test("fallback hooks surface the load error on agentic-workflow commands only", async () => {
   const { client, toasts, logs } = makeFallbackClient()
   const hooks = loadFailureHooks(new Error("Cannot find module x"), client)
 
@@ -123,10 +123,10 @@ test("fallback hooks surface the load error on agentic-loop commands only", asyn
   assert.equal(toasts.length, 0, "non-loop commands must pass through silently")
 
   await hooks["command.execute.before"]?.(
-    { command: "agentic-loop:engineering", sessionID: "ses_x", arguments: "approve f7k3" } as never,
+    { command: "agentic-workflow:engineering", sessionID: "ses_x", arguments: "approve f7k3" } as never,
     {} as never,
   )
-  assert.equal(toasts.length, 1, "an agentic-loop command must toast the load failure")
+  assert.equal(toasts.length, 1, "an agentic-workflow command must toast the load failure")
   assert.ok(toasts[0]?.includes("failed to load"), toasts[0] ?? "(no toast)")
   assert.equal(logs.length, 1, "the load failure must also be logged")
 })
@@ -138,7 +138,7 @@ test("fallback hooks never throw when the client itself is broken", async () => 
   } as unknown as PluginInput["client"]
   const hooks = loadFailureHooks(new Error("boom"), broken)
   await hooks["command.execute.before"]?.(
-    { command: "agentic-loop:engineering", sessionID: "ses_x", arguments: "approve f7k3" } as never,
+    { command: "agentic-workflow:engineering", sessionID: "ses_x", arguments: "approve f7k3" } as never,
     {} as never,
   )
 })

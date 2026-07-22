@@ -84,7 +84,7 @@ test("review-requested fires once per head: unhandled head triggers, handled/fai
   assert.deepEqual(attentionTriggers(snap(), ledger(), ALL), [])
 })
 
-test("ledgers are namespaced per loop kind; pr-sitter's path is byte-identical to the pre-namespacing layout", () => {
+test("ledgers are namespaced per workflow kind; pr-sitter's path is byte-identical to the pre-namespacing layout", () => {
   assert.equal(ledgerPath("/r", "docs/tasks", "pr-sitter", 7), path.join("/r", "docs/tasks", "runs", "pr-sitter", "pr-7.json"))
   assert.equal(ledgerPath("/r", "docs/tasks", "review-sitter", 7), path.join("/r", "docs/tasks", "runs", "review-sitter", "pr-7.json"))
 })

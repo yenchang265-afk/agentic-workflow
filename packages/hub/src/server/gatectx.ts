@@ -1,4 +1,4 @@
-import type { GateCtx } from "@agentic-loop/core/loop/gate"
+import type { GateCtx } from "@agentic-workflow/core/workflow/gate"
 import type { HubDeps } from "./deps.js"
 import { makeDrivingOracle } from "./driving.js"
 

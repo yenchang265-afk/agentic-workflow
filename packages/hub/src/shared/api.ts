@@ -1,15 +1,15 @@
-import type { BacklogSummary } from "@agentic-loop/core/task/store"
-import type { BacklogAnomalies } from "@agentic-loop/core/task/audit"
-import type { LoopManifest } from "@agentic-loop/core/manifest/schema"
-import type { ParsedRunLog } from "@agentic-loop/core/loop/runlog"
-import type { StageTokens } from "@agentic-loop/core/loop/metrics"
-import type { TaskStatus } from "@agentic-loop/core/task/statuses"
+import type { BacklogSummary } from "@agentic-workflow/core/task/store"
+import type { BacklogAnomalies } from "@agentic-workflow/core/task/audit"
+import type { WorkflowManifest } from "@agentic-workflow/core/manifest/schema"
+import type { ParsedRunLog } from "@agentic-workflow/core/workflow/runlog"
+import type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
+import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 
-export type { ParsedRunLog, RunLogStageSection, RunLogSummary, RunSummaryRow } from "@agentic-loop/core/loop/runlog"
-export type { StageTokens } from "@agentic-loop/core/loop/metrics"
+export type { ParsedRunLog, RunLogStageSection, RunLogSummary, RunSummaryRow } from "@agentic-workflow/core/workflow/runlog"
+export type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
 /** The gate's result shape is core's, verbatim — the hub renders it, it doesn't define it. */
-export type { GateResult, GateVariant } from "@agentic-loop/core/loop/gate"
-export type { TaskStatus } from "@agentic-loop/core/task/statuses"
+export type { GateResult, GateVariant } from "@agentic-workflow/core/workflow/gate"
+export type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 
 /**
  * The hub's wire types, shared verbatim by the node server and the browser
@@ -31,7 +31,7 @@ export interface TaskCard {
   readonly hasPlan: boolean
 }
 
-/** Per-kind dashboard metadata derived from a loop-kind manifest at startup. */
+/** Per-kind dashboard metadata derived from a workflow-kind manifest at startup. */
 export interface KindBoardInfo {
   readonly kind: string
   readonly description: string
@@ -86,7 +86,7 @@ export interface KindsResponse {
 }
 
 export interface KindDetailResponse {
-  readonly manifest: LoopManifest
+  readonly manifest: WorkflowManifest
   readonly prompts: Readonly<Record<string, string>>
 }
 
@@ -150,7 +150,7 @@ export interface LeaseView {
 /** Raw hosted-PR dedup ledger entry (`runs/<kind>/pr-<n>.json`), passed through. */
 export interface PrLedgerView {
   readonly pr: number
-  /** The PR-shaped loop kind that owns this ledger (its `runs/` subdirectory); absent on legacy responses. */
+  /** The PR-shaped workflow kind that owns this ledger (its `runs/` subdirectory); absent on legacy responses. */
   readonly kind?: string
   readonly updatedAt?: string
   readonly headShaHandled?: string
@@ -322,7 +322,7 @@ export interface DoctorFixResponse {
 // --- config editor -----------------------------------------------------------
 
 /**
- * `.agentic-loop.json` is two files: the user-scope `~/.agentic-loop.json` and
+ * `.agentic-workflow.json` is two files: the user-scope `~/.agentic-workflow.json` and
  * the repo's own. The editor always names which one it is reading or writing —
  * never the merged view. Saving a merged view back to the repo file would
  * flatten the user layer into it, committing `ado.pat` into a file core warns
@@ -341,7 +341,7 @@ export interface ConfigIssue {
   readonly message: string
 }
 
-/** A non-blocking complaint about a `loops.<kind>` knob. These annotate a save, never fail it. */
+/** A non-blocking complaint about a `workflows.<kind>` knob. These annotate a save, never fail it. */
 export interface ConfigWarning {
   readonly path: string
   readonly message: string
@@ -396,7 +396,7 @@ export interface SaveConfigResponse {
 
 /**
  * The human gate moves the hub can perform. Each maps 1:1 onto a core op in
- * `loop/gate.ts` — never core's `*Any` shortcuts, which infer the gate from
+ * `workflow/gate.ts` — never core's `*Any` shortcuts, which infer the gate from
  * wherever the task sits. A button knows its own column.
  */
 export type GateAction = "approve-task" | "approve-plan" | "replan" | "ship"
@@ -412,7 +412,7 @@ export interface GateRequest {
   readonly expectStatus: TaskStatus
   /** replan only: why the plan was rejected, threaded into the audit note and the next PLAN pass. */
   readonly reason?: string
-  /** ship only: the loop kind, for the PR it opens. Defaults to engineering. */
+  /** ship only: the workflow kind, for the PR it opens. Defaults to engineering. */
   readonly kind?: string
 }
 
@@ -507,7 +507,7 @@ export type HubEventBase =
   | { readonly type: "active" }
   | { readonly type: "tokens"; readonly id: string }
   | { readonly type: "gate"; readonly taskId: string; readonly toStatus: string }
-  /** `.agentic-loop.json` changed — the server has already reloaded by the time this arrives. */
+  /** `.agentic-workflow.json` changed — the server has already reloaded by the time this arrives. */
   | { readonly type: "config" }
   /** The monitored-repo set grew (a repo became loop-enabled) — refetch /api/repos. Tagged with the new repo's id. */
   | { readonly type: "repos" }

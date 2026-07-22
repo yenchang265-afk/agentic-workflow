@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import type { Client, FileNode, Shell, ShellOutput } from "@agentic-loop/core/host"
+import type { Client, FileNode, Shell, ShellOutput } from "@agentic-workflow/core/host"
 
 /**
- * Node implementations of the `@agentic-loop/core` host interfaces so the hub
+ * Node implementations of the `@agentic-workflow/core` host interfaces so the hub
  * server can drive the shared backlog/lease helpers directly — same substrate
  * pattern as the Claude MCP server's shim (plugins/claude/mcp-server/src/shim.ts).
  */

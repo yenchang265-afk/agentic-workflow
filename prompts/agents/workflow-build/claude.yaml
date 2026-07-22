@@ -1,0 +1,3 @@
+name: workflow-build
+description: Implementer for the BUILD stage of the agentic loop. Executes an approved plan test-first with surgical diffs, or applies a VERIFY or REVIEW stage's feedback on a re-build. The only stage that writes code.
+tools: Read, Edit, Write, Bash, Grep, Glob

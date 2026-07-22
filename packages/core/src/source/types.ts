@@ -1,12 +1,12 @@
-import type { LoopState } from "../loop/state.js"
+import type { WorkflowState } from "../workflow/state.js"
 
 /**
  * The work-source abstraction the unified scheduler polls: a source knows how
- * to find claimable units of work for one loop kind (backlog folders, GitHub
+ * to find claimable units of work for one workflow kind (backlog folders, GitHub
  * PRs, …), claim them atomically, and release a claim whose drive died before
  * doing real work. The scheduler (`scheduler/scheduler.ts`) walks sources in
  * priority order; the winning item carries a fully-constructed entry
- * `LoopState`, so drivers stay source-agnostic.
+ * `WorkflowState`, so drivers stay source-agnostic.
  */
 
 /** Why a poll claimed nothing — the message, and whether a human can act on it. */
@@ -18,13 +18,13 @@ export interface ClaimSkipReason {
 /** One claimed unit of work, ready to drive. */
 export interface WorkItem {
   readonly id: string
-  /** The loop kind (manifest) that drives this item. */
-  readonly loopKind: string
+  /** The workflow kind (manifest) that drives this item. */
+  readonly workflowKind: string
   /** Human-facing title for toasts/logs. */
   readonly title: string
   readonly entryStage: string
   /** The fully-constructed loop state to enter at. */
-  readonly state: LoopState
+  readonly state: WorkflowState
   /** The toast/log line announcing the claim. */
   readonly claimMessage: string
   /** Source-private handle (e.g. the backlog `Task`). */
@@ -46,7 +46,7 @@ export interface TerminalOutcome {
 }
 
 export interface WorkSource {
-  readonly loopKind: string
+  readonly workflowKind: string
   /**
    * Walk this source's pools in priority order and atomically claim the next
    * item. Exactly one of `item`/`skip` is non-null: a claim, or the reason

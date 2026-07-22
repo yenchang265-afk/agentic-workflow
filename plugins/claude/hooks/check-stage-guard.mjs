@@ -90,7 +90,7 @@ var hasShellExpansion = (seg) => {
 // packages/core/dist/task/guard.js
 var ALLOW = { allow: true };
 var block = (reason) => ({ allow: false, reason });
-var HOW_TO_MUTATE = "the folder a backlog file lives in IS its state \u2014 mutate it only through the loop tools (loop_task_approve / loop_plan_approve / loop_replan / loop_ship / loop_move / loop_doctor) or the /agentic-loop:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file (or run /agentic-loop:engineering new) \u2014 the status folders are created for you.";
+var HOW_TO_MUTATE = "the folder a backlog file lives in IS its state \u2014 mutate it only through the loop tools (workflow_task_approve / workflow_plan_approve / workflow_replan / workflow_ship / workflow_move / workflow_doctor) or the /agentic-workflow:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file (or run /agentic-workflow:engineering new) \u2014 the status folders are created for you.";
 var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var backlogRelPath = (filePath, tasksDir) => {
   const normalized = filePath.replace(/\\/g, "/");
@@ -108,7 +108,7 @@ var classifyEdit = (filePath, ctx) => {
   if (isDirectMd && segments[0] === "queued" && ctx.planTaskId && segments[1] === `${ctx.planTaskId}.md`) {
     return ALLOW;
   }
-  return block(`agentic-loop: direct edits under ${ctx.tasksDir}/ are limited to draft/*.md (and the live PLAN stage's own queued/ task) \u2014 ${HOW_TO_MUTATE}`);
+  return block(`agentic-workflow: direct edits under ${ctx.tasksDir}/ are limited to draft/*.md (and the live PLAN stage's own queued/ task) \u2014 ${HOW_TO_MUTATE}`);
 };
 var READ_ONLY = [
   "ls*",
@@ -159,18 +159,18 @@ var classifyBash = (command, ctx) => {
   if (!referencesBacklog(command, ctx.tasksDir))
     return ALLOW;
   if (/>/.test(command)) {
-    return block(`agentic-loop: redirecting output while referencing ${ctx.tasksDir}/ is blocked \u2014 ${HOW_TO_MUTATE}`);
+    return block(`agentic-workflow: redirecting output while referencing ${ctx.tasksDir}/ is blocked \u2014 ${HOW_TO_MUTATE}`);
   }
   if (MUTATING_TOKENS.some((t) => command.includes(t))) {
-    return block(`agentic-loop: this command can mutate ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
+    return block(`agentic-workflow: this command can mutate ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
   }
   if (splitSegments(command).some(hasShellExpansion)) {
-    return block(`agentic-loop: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked \u2014 ${HOW_TO_MUTATE}`);
+    return block(`agentic-workflow: command substitution or redirection while referencing ${ctx.tasksDir}/ is blocked \u2014 ${HOW_TO_MUTATE}`);
   }
   const segments = splitSegments(command);
   if (segments.every((s) => matchesAny(s, READ_ONLY) || isCanonicalMkdir(s, ctx.tasksDir)))
     return ALLOW;
-  return block(`agentic-loop: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) and canonical-status mkdir may reference ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
+  return block(`agentic-workflow: only read-only commands (ls/cat/head/tail/grep/rg/find/wc/diff/stat/tree, git reads) and canonical-status mkdir may reference ${ctx.tasksDir}/ \u2014 ${HOW_TO_MUTATE}`);
 };
 var classifyMutation = (tool, args, ctx) => {
   if (/^(write|edit|multiedit|notebookedit)$/i.test(tool)) {
@@ -182,7 +182,7 @@ var classifyMutation = (tool, args, ctx) => {
   return ALLOW;
 };
 
-// packages/core/dist/loop/worktree-guard.js
+// packages/core/dist/workflow/worktree-guard.js
 import path from "node:path";
 var READ_ONLY2 = [
   "ls*",
@@ -254,12 +254,12 @@ var escapeReason = (segment, worktree, pinnedDir) => {
   if (gitDir && !isReadOnlySegment(segment)) {
     const resolved = path.isAbsolute(gitDir) ? path.resolve(gitDir) : path.resolve(pinnedDir ?? worktree, gitDir);
     if (!underWorktree(worktree, resolved)) {
-      return `agentic-loop: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" mutates the tree at ${resolved}, which is outside it. Use \`git -C ${worktree} \u2026\`.`;
+      return `agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" mutates the tree at ${resolved}, which is outside it. Use \`git -C ${worktree} \u2026\`.`;
     }
   }
   const target = outsideAbsPath(segment, worktree);
   if (target) {
-    return `agentic-loop: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" reaches ${target}, which is outside it. Read and write only under the worktree.`;
+    return `agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" reaches ${target}, which is outside it. Read and write only under the worktree.`;
   }
   return null;
 };
@@ -273,7 +273,7 @@ var walk = (command, worktree, initialPin) => {
     const cdMatch = /^cd\s+(.+)$/.exec(segment.trim());
     if (cdMatch) {
       const target = unquote(cdMatch[1].trim());
-      const escapeMsg = `agentic-loop: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" leaves it, so the rest of the command would run outside the worktree. Only \`cd\` into a literal directory under ${worktree}.`;
+      const escapeMsg = `agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" leaves it, so the rest of the command would run outside the worktree. Only \`cd\` into a literal directory under ${worktree}.`;
       if (isUnresolvableCd(target))
         return { ok: false, reason: escapeMsg };
       const resolved = path.isAbsolute(target) ? path.resolve(target) : pinnedDir ? path.resolve(pinnedDir, target) : null;
@@ -317,14 +317,14 @@ var isUnderTasksDir = (filePath, worktree, tasksDir) => {
 };
 var pinEditPath = (filePath, worktree, directory, tasksDir) => {
   if (filePath.startsWith("~")) {
-    return blockPin(`agentic-loop: "${filePath}" starts with \`~\`, which file tools do not expand \u2014 pass a real absolute path under the worktree ${worktree}.`);
+    return blockPin(`agentic-workflow: "${filePath}" starts with \`~\`, which file tools do not expand \u2014 pass a real absolute path under the worktree ${worktree}.`);
   }
   const wasAbsolute = path.isAbsolute(filePath);
   const resolved = wasAbsolute ? path.resolve(filePath) : path.resolve(worktree, filePath);
   if (path.resolve(resolved).split(path.sep).includes(".git")) {
-    return blockPin(`agentic-loop: ${filePath} is inside a .git directory \u2014 git metadata is never an edit target.`);
+    return blockPin(`agentic-workflow: ${filePath} is inside a .git directory \u2014 git metadata is never an edit target.`);
   }
-  const refuseTasks = blockPin(`agentic-loop: task files are driver-owned and live on the main tree \u2014 the loop records notes and moves itself; do not edit the worktree's frozen ${tasksDir} copy.`);
+  const refuseTasks = blockPin(`agentic-workflow: task files are driver-owned and live on the main tree \u2014 the loop records notes and moves itself; do not edit the worktree's frozen ${tasksDir} copy.`);
   if (underWorktree(worktree, resolved)) {
     if (isUnderTasksDir(resolved, worktree, tasksDir))
       return refuseTasks;
@@ -336,7 +336,7 @@ var pinEditPath = (filePath, worktree, directory, tasksDir) => {
       return ALLOW_PIN;
     return rewrite(path.resolve(worktree, rel));
   }
-  return blockPin(`agentic-loop: this loop is isolated to its worktree ${worktree} \u2014 ${filePath} is outside both it and the repo at ${directory}, so there is no worktree equivalent. Use a path under the worktree.`);
+  return blockPin(`agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 ${filePath} is outside both it and the repo at ${directory}, so there is no worktree equivalent. Use a path under the worktree.`);
 };
 
 // plugins/claude/hooks/src/allowlist.mjs
@@ -519,7 +519,7 @@ var rewriteInput = (updatedInput) => {
 var WRITE_TOOLS = ["Edit", "Write", "NotebookEdit"];
 var readTasksDir = (cwd) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path2.join(cwd, ".agentic-loop.json"), "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(path2.join(cwd, ".agentic-workflow.json"), "utf8"));
     if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir;
   } catch {
   }
@@ -546,12 +546,12 @@ var main = async () => {
   const ti = input.tool_input || {};
   if (tool === "Bash" && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block2(
-      `agentic-loop: the loop must never mutate an existing pull request \u2014 this Azure DevOps REST call is blocked. Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR (POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`
+      `agentic-workflow: the loop must never mutate an existing pull request \u2014 this Azure DevOps REST call is blocked. Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR (POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`
     );
   }
   if (tool === "Bash" && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
     return block2(
-      `agentic-loop: the loop must never mutate an existing pull request \u2014 this az CLI call is blocked. Only reads, thread-comment replies (az devops invoke POST to a pullRequestThreads/pullRequestThreadComments resource), and creating a new DRAFT PR (az repos pr create --draft) are permitted; completing, abandoning, voting, reviewer changes, and pipeline runs stay a human call.`
+      `agentic-workflow: the loop must never mutate an existing pull request \u2014 this az CLI call is blocked. Only reads, thread-comment replies (az devops invoke POST to a pullRequestThreads/pullRequestThreadComments resource), and creating a new DRAFT PR (az repos pr create --draft) are permitted; completing, abandoning, voting, reviewer changes, and pipeline runs stay a human call.`
     );
   }
   const planTaskId = marker && marker.stage === "plan" && typeof marker.taskId === "string" ? marker.taskId : null;
@@ -568,38 +568,38 @@ var main = async () => {
   if (!marker) return allow();
   if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpMutationTool(tool)) {
     return block2(
-      `agentic-loop: the loop must never mutate an existing pull request \u2014 this Azure DevOps MCP tool looks state-mutating and is blocked. Only reads, thread-comment replies, and creating a new DRAFT PR are permitted; completing, abandoning, approving, voting, and reviewer changes stay a human call.`
+      `agentic-workflow: the loop must never mutate an existing pull request \u2014 this Azure DevOps MCP tool looks state-mutating and is blocked. Only reads, thread-comment replies, and creating a new DRAFT PR are permitted; completing, abandoning, approving, voting, and reviewer changes stay a human call.`
     );
   }
   if (tool === "Bash" && chainedGithubPrMutation(String(ti.command ?? ""))) {
     return block2(
-      `agentic-loop: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`
+      `agentic-workflow: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`
     );
   }
   if (tool === "Bash" && chainedGitPushViolation(String(ti.command ?? ""))) {
     return block2(
-      `agentic-loop: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
+      `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );
   }
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
     if (tool === "Bash" || WRITE_TOOLS.includes(tool)) {
       return block2(
-        `agentic-loop: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline \u2014 stop working, summarize what you have, and return control so the loop can stop cleanly.`
+        `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline \u2014 stop working, summarize what you have, and return control so the loop can stop cleanly.`
       );
     }
   }
   const stageWorktree = typeof marker.worktree === "string" && marker.worktree ? marker.worktree : null;
-  const loopWorktree = stageWorktree ?? (typeof marker.loopWorktree === "string" && marker.loopWorktree ? marker.loopWorktree : null);
+  const workflowWorktree = stageWorktree ?? (typeof marker.workflowWorktree === "string" && marker.workflowWorktree ? marker.workflowWorktree : null);
   const rawCommand = String(ti.command ?? "");
   let effectiveCommand = rawCommand;
   let commandRewritten = false;
-  if (tool === "Bash" && loopWorktree) {
-    const pinVerdict = pinBash(rawCommand, loopWorktree);
+  if (tool === "Bash" && workflowWorktree) {
+    const pinVerdict = pinBash(rawCommand, workflowWorktree);
     if (pinVerdict.action === "block") return block2(pinVerdict.reason);
     if (pinVerdict.action === "rewrite") {
       if (!stageWorktree) {
         return block2(
-          `agentic-loop: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 "${rawCommand}" would mutate the main tree. Only read-only commands are available here; code changes belong to the BUILD stage, inside ${loopWorktree}.`
+          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 "${rawCommand}" would mutate the main tree. Only read-only commands are available here; code changes belong to the BUILD stage, inside ${workflowWorktree}.`
         );
       }
       effectiveCommand = pinVerdict.value;
@@ -611,24 +611,24 @@ var main = async () => {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW);
     if (!commandAllowed(effectiveCommand, list)) {
       return block2(
-        `agentic-loop: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${rawCommand}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`
+        `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${rawCommand}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`
       );
     }
   }
   if (commandRewritten) return rewriteInput({ ...ti, command: effectiveCommand });
-  if (loopWorktree && WRITE_TOOLS.includes(tool)) {
+  if (workflowWorktree && WRITE_TOOLS.includes(tool)) {
     const fp = ti.file_path ?? ti.path ?? ti.notebook_path;
     if (typeof fp !== "string") {
       return block2(
-        `agentic-loop: this loop is isolated to its worktree ${loopWorktree}, but ${tool}'s target path could not be determined \u2014 pass an absolute path under the worktree.`
+        `agentic-workflow: this loop is isolated to its worktree ${workflowWorktree}, but ${tool}'s target path could not be determined \u2014 pass an absolute path under the worktree.`
       );
     }
-    const verdict = pinEditPath(fp, loopWorktree, cwd, tasksDir);
+    const verdict = pinEditPath(fp, workflowWorktree, cwd, tasksDir);
     if (verdict.action === "block") return block2(verdict.reason);
     if (verdict.action === "rewrite") {
       if (!stageWorktree) {
         return block2(
-          `agentic-loop: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 it must not write ${fp}. Code changes belong to the BUILD stage, inside the loop's worktree ${loopWorktree}.`
+          `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage does not build \u2014 it must not write ${fp}. Code changes belong to the BUILD stage, inside the loop's worktree ${workflowWorktree}.`
         );
       }
       const key = ti.file_path !== void 0 ? "file_path" : ti.path !== void 0 ? "path" : "notebook_path";

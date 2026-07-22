@@ -7,7 +7,7 @@ import { HubSectionSchema, loadHubSettings } from "./config.js"
 
 const userFile = (content: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hub-config-"))
-  const file = path.join(dir, ".agentic-loop.json")
+  const file = path.join(dir, ".agentic-workflow.json")
   fs.writeFileSync(file, content)
   return file
 }

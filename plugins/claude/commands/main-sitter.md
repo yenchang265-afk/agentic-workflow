@@ -4,34 +4,34 @@ argument-hint: claim | status | stop
 ---
 
 You are about to work the **main sitter agentic loop** (typed as
-`/agentic-loop:main-sitter`) — it sits on the watched branch's CI: when the
+`/agentic-workflow:main-sitter`) — it sits on the watched branch's CI: when the
 newest head goes red it diagnoses (bisecting when needed) and publishes a
-verified draft fix or revert PR. Read the `loop-orchestration` skill now;
+verified draft fix or revert PR. Read the `workflow-orchestration` skill now;
 then act on the argument below.
 
 **Argument:** `$ARGUMENTS`
 
 Dispatch:
 
-- **`claim`** — call `mcp__agentic-loop__loop_claim({kind: "main-sitter"})`
+- **`claim`** — call `mcp__agentic-workflow__workflow_claim({kind: "main-sitter"})`
   to judge the watched branch's newest head and, when it is red and
-  unhandled, drive it per the main-sitter manifest: `loop_stage` before
-  spawning each stage subagent (`loop-main-diagnose` / `loop-main-remedy` /
-  `loop-verify` / `loop-main-publish` — diagnose → remedy → verify → publish
+  unhandled, drive it per the main-sitter manifest: `workflow_stage` before
+  spawning each stage subagent (`workflow-main-diagnose` / `workflow-main-remedy` /
+  `workflow-verify` / `workflow-main-publish` — diagnose → remedy → verify → publish
   — via the Task tool, passing the response's `model` as the Task tool's
-  `model` when present) and `loop_advance` after each returns, until a
+  `model` when present) and `workflow_advance` after each returns, until a
   terminal action. A green or in-flight head claims nothing; a handled head
   waits for the next push.
-- **`status`** (or bare) — call `mcp__agentic-loop__loop_status` and report
+- **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.
-- **`stop`** (alias: `abort`) — call `mcp__agentic-loop__loop_stop` to abort
+- **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 
-The kind must be enabled in `.agentic-loop.json`:
+The kind must be enabled in `.agentic-workflow.json`:
 
 ```json
-{ "loops": { "main-sitter": { "enabled": true, "branch": "main" } } }
+{ "workflows": { "main-sitter": { "enabled": true, "branch": "main" } } }
 ```
 
 `branch` overrides the watched branch (default: the remote default branch);
@@ -42,4 +42,4 @@ remedy lands as a DRAFT PR on a `main-sitter/*` branch (enforced by the
 branch-scoped push allowlist), and merging stays a human call.
 
 Task authoring and the engineering backlog live in the sibling command:
-`/agentic-loop:engineering`.
+`/agentic-workflow:engineering`.

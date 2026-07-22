@@ -18,8 +18,8 @@ import "./theme.css"
 type Tab = "monitor" | "creator" | "config"
 
 const TABS: readonly { id: Tab; label: string }[] = [
-  { id: "monitor", label: "Loop monitor" },
-  { id: "creator", label: "Loop creator" },
+  { id: "monitor", label: "Workflow monitor" },
+  { id: "creator", label: "Workflow creator" },
   { id: "config", label: "Config" },
 ]
 
@@ -45,7 +45,7 @@ const HeaderStatus = () => {
 }
 
 /**
- * The monitor, one sub-tab per enabled loop kind (from the repo's config +
+ * The monitor, one sub-tab per enabled workflow kind (from the repo's config +
  * manifests): backlog kinds render the board, PR-shaped kinds the ledger
  * panel. Selection persists per repo in localStorage.
  */
@@ -83,7 +83,7 @@ const Monitor = () => {
           ))}
         </nav>
       )}
-      {!active && <div className="placeholder">No enabled loop kinds — check .agentic-loop.json and the loops dir.</div>}
+      {!active && <div className="placeholder">No enabled workflow kinds — check .agentic-workflow.json and the workflows dir.</div>}
       {active && (active.sourceType === "backlog" ? <Board info={active} /> : <PrKindPanel info={active} />)}
       <h2 className="section-title">Run history</h2>
       <Runs />
@@ -97,7 +97,7 @@ const App = () => {
     <div className="hub">
       <header className="hub-header">
         <h1>
-          agentic-loop hub <span className="beta-badge">beta</span>
+          agentic-workflow hub <span className="beta-badge">beta</span>
         </h1>
         <nav className="hub-tabs">
           {TABS.map((t) => (

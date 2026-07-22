@@ -1,7 +1,7 @@
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveClaimPredicate } from "../manifest/registry.js"
-import type { LoopState } from "../loop/state.js"
+import type { WorkflowState } from "../workflow/state.js"
 import type { Task } from "../task/schema.js"
 import {
   claimFirst,
@@ -78,7 +78,7 @@ export const claimSkipReason = (
     return {
       message:
         `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
-        `${startedIds.join(", ")} (run /agentic-loop:engineering recover <id>)`,
+        `${startedIds.join(", ")} (run /agentic-workflow:engineering recover <id>)`,
       actionable: true,
     }
   }
@@ -86,19 +86,19 @@ export const claimSkipReason = (
     return {
       message:
         `watch: 0 claimable — ${queuedCount} task(s) awaiting a plan in queued/ ` +
-        `(run /agentic-loop:engineering plan <id>)`,
+        `(run /agentic-workflow:engineering plan <id>)`,
       actionable: true,
     }
   }
   return {
     message:
-      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agentic-loop:engineering replan <id>)",
+      "watch: 0 claimable — in-progress task(s) have no persisted plan (send them back with /agentic-workflow:engineering replan <id>)",
     actionable: true,
   }
 }
 
-/** The entry LoopState for a task claimed from a pool. Pure. */
-const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): LoopState => {
+/** The entry WorkflowState for a task claimed from a pool. Pure. */
+const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): WorkflowState => {
   const plan = extractPlan(task)
   return {
     kind: loaded.manifest.kind,
@@ -118,13 +118,13 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
   const { $, client, directory, tasksDir, log, loaded, isDriving } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "backlog") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a backlog work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a backlog work source`)
   }
   const pools: readonly Pool[] = binding.pools
 
   const item = (pool: Pool, task: Task): WorkItem => ({
     id: task.id,
-    loopKind: loaded.manifest.kind,
+    workflowKind: loaded.manifest.kind,
     title: task.title,
     entryStage: pool.entryStage,
     state: entryState(loaded, pool, task),
@@ -133,7 +133,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
   })
 
   return {
-    loopKind: loaded.manifest.kind,
+    workflowKind: loaded.manifest.kind,
 
     async claimNext() {
       const heldIds: string[] = []
@@ -159,8 +159,8 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
           // without one (planless pools), a stale undriven marker is always
           // safe to release.
           isOrphaned: predicate
-            ? (task, opts) => predicate(task) && !opts.drivenByLiveLoop && opts.markerStale
-            : (_task, opts) => !opts.drivenByLiveLoop && opts.markerStale,
+            ? (task, opts) => predicate(task) && !opts.drivenByLiveWorkflow && opts.markerStale
+            : (_task, opts) => !opts.drivenByLiveWorkflow && opts.markerStale,
           // The candidate came from the client index, which can lag the real FS
           // (a just-finished run's mv + marker release may not be reflected yet)
           // — confirm on the real FS before handing the claim out, and hand out

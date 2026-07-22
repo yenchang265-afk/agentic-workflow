@@ -8,10 +8,10 @@ test("knownNames maps inventories and tolerates a missing one", () => {
 })
 
 test("isUnknownAsset flags only non-empty values absent from the inventory", () => {
-  const names = ["loop-build", "loop-verify"]
-  assert.equal(isUnknownAsset(names, "loop-build"), false)
-  assert.equal(isUnknownAsset(names, " loop-build "), false)
-  assert.equal(isUnknownAsset(names, "loop-nope"), true)
+  const names = ["workflow-build", "workflow-verify"]
+  assert.equal(isUnknownAsset(names, "workflow-build"), false)
+  assert.equal(isUnknownAsset(names, " workflow-build "), false)
+  assert.equal(isUnknownAsset(names, "workflow-nope"), true)
   assert.equal(isUnknownAsset(names, ""), false)
   assert.equal(isUnknownAsset(names, "   "), false)
   assert.equal(isUnknownAsset([], "anything"), true)

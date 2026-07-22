@@ -1,4 +1,4 @@
-import { defaultLoopsDir } from "../manifest/dir.js"
+import { defaultWorkflowsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
@@ -18,8 +18,8 @@ import { claimSkipReason, makeBacklogSource, taskGoal } from "./backlog.js"
 
 registerEngineeringHooks()
 
-const LOOPS_DIR = defaultLoopsDir()
-const eng = loadManifest(LOOPS_DIR, "engineering")
+const WORKFLOWS_DIR = defaultWorkflowsDir()
+const eng = loadManifest(WORKFLOWS_DIR, "engineering")
 
 type FakeFile = { readonly name: string; readonly content: string }
 

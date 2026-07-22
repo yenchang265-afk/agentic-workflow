@@ -1,4 +1,4 @@
-import { defaultLoopsDir } from "../manifest/dir.js"
+import { defaultWorkflowsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
@@ -12,8 +12,8 @@ import { depKey, detectEcosystems, makeDependencyScanSource, semverImpact, upgra
  * ledger dedup, claim mechanics, and terminal ledger writes.
  */
 
-const LOOPS_DIR = defaultLoopsDir()
-const sitter = loadManifest(LOOPS_DIR, "dep-sitter")
+const WORKFLOWS_DIR = defaultWorkflowsDir()
+const sitter = loadManifest(WORKFLOWS_DIR, "dep-sitter")
 
 // Ledger/claim/work-item keys, derived exactly as the source derives them.
 const LODASH = depKey("lodash")

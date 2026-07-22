@@ -1,4 +1,4 @@
-import type { Effect, LoopManifest, StageDef, Transition } from "@agentic-loop/core/manifest/schema"
+import type { Effect, WorkflowManifest, StageDef, Transition } from "@agentic-workflow/core/manifest/schema"
 
 /**
  * The creator's graph model — pure, no React Flow imports (the component
@@ -40,14 +40,14 @@ export interface GraphEdge {
 /** Everything that lives on the manifest but not in the graph shape. */
 export interface GraphMeta {
   readonly kind: string
-  readonly version: LoopManifest["version"]
+  readonly version: WorkflowManifest["version"]
   readonly description: string
-  readonly workSource: LoopManifest["workSource"]
+  readonly workSource: WorkflowManifest["workSource"]
   readonly maxIterations?: number
-  readonly hooks: LoopManifest["hooks"]
+  readonly hooks: WorkflowManifest["hooks"]
 }
 
-export interface LoopGraph {
+export interface WorkflowGraph {
   readonly nodes: readonly GraphNode[]
   readonly edges: readonly GraphEdge[]
   readonly meta: GraphMeta
@@ -70,12 +70,12 @@ export const sameTerminalSpec = (a: TerminalSpec, b: TerminalSpec): boolean =>
   a.outcome === b.outcome && (a.outcome === "stop" || (a.toStatus ?? "") === (b.toStatus ?? ""))
 
 /** Status choices for the terminal picker: backlog exposes its lifecycle statuses, other sources have none. Pure. */
-export const terminalStatusOptions = (ws: LoopManifest["workSource"]): readonly string[] =>
+export const terminalStatusOptions = (ws: WorkflowManifest["workSource"]): readonly string[] =>
   ws.type === "backlog" ? ws.statuses : []
 
 const effectTarget = (effect: Effect): string => (effect.kind === "fire" ? effect.stage : terminalId(effect))
 
-export const manifestToGraph = (manifest: LoopManifest): LoopGraph => {
+export const manifestToGraph = (manifest: WorkflowManifest): WorkflowGraph => {
   const nodes: GraphNode[] = manifest.stages.map((stage) => ({ id: stage.name, type: "stage", stage }))
   const edges: GraphEdge[] = []
   const terminals = new Map<string, TerminalNode>()
@@ -114,7 +114,7 @@ export const manifestToGraph = (manifest: LoopManifest): LoopGraph => {
   }
 }
 
-export const graphToManifest = (graph: LoopGraph): LoopManifest => {
+export const graphToManifest = (graph: WorkflowGraph): WorkflowManifest => {
   const stages = graph.nodes.flatMap((n) => (n.type === "stage" ? [n.stage] : []))
   const transitions: Record<string, Transition> = {}
   for (const stage of stages) transitions[stage.name] = {}

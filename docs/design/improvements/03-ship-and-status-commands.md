@@ -118,7 +118,7 @@ Driver fetches, `summarizeBacklog` computes, driver formats.
 - `README.md` + `.opencode/commands/agent-loop.md` — add `ship <id>` and the
   richer `status` to the command list; replace "move the task to
   completed/" phrasing with `/agent-loop ship <id>`.
-- `skills/loop-orchestration/SKILL.md` — termination section: `/agent-loop ship`
+- `skills/workflow-orchestration/SKILL.md` — termination section: `/agent-loop ship`
   as the recommended final-gate action.
 - `skills/task-backlog-management/SKILL.md` — lifecycle table
   `in-review → completed` row: "you, via `/agent-loop ship <id>` (or a manual

@@ -10,7 +10,7 @@ import { DoctorPanel } from "./DoctorPanel.js"
 import { GateActions } from "./GateActions.js"
 
 /**
- * The backlog board for one loop kind: one column per manifest status, task
+ * The backlog board for one workflow kind: one column per manifest status, task
  * cards from frontmatter, gate columns (park/done targets from the manifest's
  * transitions) highlighted — those are where the loop is waiting on a human.
  * Engineering-only lifecycle chips render when the server sends its summary.

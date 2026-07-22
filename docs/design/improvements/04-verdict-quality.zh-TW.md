@@ -9,7 +9,7 @@ B 更頻繁操練的回饋迴圈變得更犀利）。
 
 ### 背景
 
-`loop_verdict`（`src/index.ts:95-111`）只會記錄 `stage + PASS/FAIL/ERROR`。
+`workflow_verdict`（`src/index.ts:95-111`）只會記錄 `stage + PASS/FAIL/ERROR`。
 *原因*則存在於階段的自由文字中，`composeArgs`（`state.ts:122`）會把它們當作
 一整團原始散文（`Verify failure to address:` / `Review feedback to
 address:`）串接進下一次疊代。重新規劃的 agent 得重新解析散文才能找出究竟
@@ -43,12 +43,12 @@ args: {
   `VERIFY verdict: FAIL — 2/4 criteria unmet: "returns 429 over limit", … (iteration 2)`。
   維持在同一行（依照 `auditNote` 的契約，備註格式是按尾碼做 grep 比對——
   文字在前，時間戳尾碼在後）。
-- 傳遞方式：`LoopState.artifacts` 維持 `string`（讓狀態機保持簡單）。取而
+- 傳遞方式：`WorkflowState.artifacts` 維持 `string`（讓狀態機保持簡單）。取而
   代之的是，driver 會在 `advanceOnIdle` 把檢查階段的輸出存成 artifact
   *之前*，先在前面加上一個結構化區塊：
 
   ```
-  FAILED CRITERIA (from loop_verdict):
+  FAILED CRITERIA (from workflow_verdict):
   - returns 429 over the limit
   - limit configurable per route
 
@@ -82,7 +82,7 @@ args: {
 ### 背景
 
 REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自 repo 內容的
-提示詞注入，說服*那一個 agent* 呼叫 `loop_verdict` PASS。目前的後盾是
+提示詞注入，說服*那一個 agent* 呼叫 `workflow_verdict` PASS。目前的後盾是
 疊代上限和人工 diff 把關。用 N 個具有不同視角、彼此獨立的審查輪次，能
 大幅降低單一注入翻轉結果的機率——多元視角同時也能抓到不同類別的真實
 缺陷（這正是 `references/orchestration-patterns.md` 建議採用視角多元化
@@ -131,7 +131,7 @@ REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自
 
 - 某一輪 lens 逾時 → 該輪拋出例外，迴圈進入錯誤狀態（和現行的審查逾時
   行為相同）。這比部分 lens 裁定要來得簡單也更安全。
-- 在各輪之間執行 `/agent-loop stop` → 現有的 `!getLoop(sessionID)` 檢查
+- 在各輪之間執行 `/agent-loop stop` → 現有的 `!getWorkflow(sessionID)` 檢查
   （`driver.ts:304`）會逐輪執行；把它加進 lens 迴圈中。
 - 設定了 `reviewLenses` 但達到了 `maxIterations` —— 互動方式不變；lens
   改變的是裁定品質，不是疊代計數方式。
@@ -149,7 +149,7 @@ REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自
 
 - `README.md` + `.opencode/commands/agent-loop.md` —— `reviewLenses`
   設定項、成本備註；裁定工具更豐富的參數。
-- `skills/loop-orchestration/SKILL.md` —— 裁定契約章節（reason/criteria）、
+- `skills/workflow-orchestration/SKILL.md` —— 裁定契約章節（reason/criteria）、
   多視角審查說明。
 - `.opencode/agents/{verify,review}.md` —— 裁定契約更新（A）以及 lens
   聚焦行為（B）。

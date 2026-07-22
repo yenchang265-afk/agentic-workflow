@@ -62,7 +62,7 @@ interface GithubPrDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
-  /** Override of the manifest's search query (config `loops.pr-sitter.query`). */
+  /** Override of the manifest's search query (config `workflows.pr-sitter.query`). */
   readonly query?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
   readonly now?: () => string
@@ -72,7 +72,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
   const { $, client, directory, tasksDir, log, loaded } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "pull-request") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a pull-request work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a pull-request work source`)
   }
   const kind = loaded.manifest.kind
   const query = deps.query ?? binding.query
@@ -89,7 +89,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
   const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       const fields =

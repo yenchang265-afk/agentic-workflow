@@ -2,7 +2,7 @@ import type { Hooks, PluginInput } from "@opencode-ai/plugin"
 
 /**
  * The fail-loud fallback for a plugin whose impl.ts could not be imported
- * (stale/missing @agentic-loop/core build). Lives OUTSIDE index.ts on
+ * (stale/missing @agentic-workflow/core build). Lives OUTSIDE index.ts on
  * purpose: opencode treats every export of the plugin entry module as a
  * plugin factory and calls it with (input, options) — exporting these from
  * index.ts registered `loadFailureHooks` itself as a second "plugin" whose
@@ -12,12 +12,12 @@ import type { Hooks, PluginInput } from "@opencode-ai/plugin"
  * plugin factories.
  */
 
-const REBUILD_HINT = "Rebuild it: run `npm install` at the agentic-loop repo root (or `npm run build -w @agentic-loop/core`), then restart opencode."
+const REBUILD_HINT = "Rebuild it: run `npm install` at the agentic-workflow repo root (or `npm run build -w @agentic-workflow/core`), then restart opencode."
 
 /** The user-facing load-failure message: first error line + rebuild hint. Pure. */
 export const loadFailureMessage = (err: unknown): string => {
   const detail = (err instanceof Error ? err.message : String(err)).split("\n")[0]?.trim() || "unknown error"
-  return `agentic-loop plugin failed to load: ${detail}. ${REBUILD_HINT}`
+  return `agentic-workflow plugin failed to load: ${detail}. ${REBUILD_HINT}`
 }
 
 /**
@@ -31,8 +31,8 @@ export const loadFailureHooks = (err: unknown, client: PluginInput["client"]): H
   const message = loadFailureMessage(err)
   return {
     "command.execute.before": async (input) => {
-      if (!/^agentic-loop:/.test(input.command)) return
-      await client.app.log({ body: { service: "agentic-loop", level: "error", message } }).catch(() => {})
+      if (!/^agentic-workflow:/.test(input.command)) return
+      await client.app.log({ body: { service: "agentic-workflow", level: "error", message } }).catch(() => {})
       await client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
     },
   }

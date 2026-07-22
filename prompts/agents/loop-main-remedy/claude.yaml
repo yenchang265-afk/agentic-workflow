@@ -1,3 +1,0 @@
-name: loop-main-remedy
-description: Implementer for the main sitter's REMEDY stage. Writes the smallest forward fix — or constructs the revert — that turns the diagnosed red head green, with clear local commits. Never pushes (publish's job) and never touches the watched branch.
-tools: Read, Edit, Write, Grep, Glob, Bash

@@ -2,8 +2,8 @@ import type { ClaimSkipReason, WorkItem, WorkSource } from "../source/types.js"
 
 /**
  * The unified scheduler step both hosts' triggers call (OpenCode: idle events
- * + the watch timer; Claude Code: `loop_claim`). One tick: walk the enabled
- * loop kinds' work sources in priority order and claim the first available
+ * + the watch timer; Claude Code: `workflow_claim`). One tick: walk the enabled
+ * workflow kinds' work sources in priority order and claim the first available
  * item. Sources own atomicity (claim markers, ledgers); the scheduler owns
  * only ordering. Host-agnostic and side-effect-free beyond the sources' own
  * claims.

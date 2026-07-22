@@ -3,7 +3,7 @@ import path from "node:path"
 import { z } from "zod"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, LoopState } from "../loop/state.js"
+import type { AdoAccessMethod, CodePlatform, WorkflowState } from "../workflow/state.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import { osvCandidates, OsvReportSchema } from "./osv.js"
 import { slugify } from "../task/schema.js"
@@ -33,7 +33,7 @@ import type { ClaimSkipReason, TerminalOutcome, WorkItem, WorkSource } from "./t
  * `<tasksDir>/runs/<kind>/dep-<pkg>.json` so a published or failed upgrade
  * is never re-claimed until its target version moves.
  *
- * Policy lives in the manifest (config `loops.<kind>` may override it): only
+ * Policy lives in the manifest (config `workflows.<kind>` may override it): only
  * upgrades whose semver impact is within `autoFix` are claimed; a major bump
  * is never auto-fixed — it is logged and left for a human, keeping "majors
  * stay a human call" a structural guarantee rather than prompt guidance.
@@ -197,10 +197,10 @@ interface DependencyScanDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
-  /** Config overrides of the manifest policy (`loops.<kind>.severityFloor` …). */
+  /** Config overrides of the manifest policy (`workflows.<kind>.severityFloor` …). */
   readonly severityFloor?: string
   readonly includeOutdated?: boolean
-  /** Config override of the manifest's ecosystem binding (`loops.<kind>.ecosystem`). */
+  /** Config override of the manifest's ecosystem binding (`workflows.<kind>.ecosystem`). */
   readonly ecosystem?: string
   /** The resolved code platform (`platformFor(config, kind)`) stamped onto entry state; defaults to `github`. */
   readonly platform?: CodePlatform
@@ -214,7 +214,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
   const { $, client, directory, tasksDir, log, loaded } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "dependency-scan") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a dependency-scan work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a dependency-scan work source`)
   }
   const kind = loaded.manifest.kind
   const policy = {
@@ -419,14 +419,14 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
             `version in \`gradle/libs.versions.toml\` (version catalog) or the dependency string in \`build.gradle(.kts)\`, ` +
             `refresh the lockfile with \`./gradlew dependencies --write-locks\`, and verify with \`./gradlew check\` (or \`build\`).`
           : ""
-    // The first line seeds `loopId` → the loop's feature/<slug> branch name.
+    // The first line seeds `workflowId` → the loop's feature/<slug> branch name.
     const goal =
       `Upgrade ${c.pkg} to ${c.target}\n\n` +
       `${c.current ? `Currently on ${c.current} — a` : "A"} ${c.impact} bump closing a ${advisory}. ` +
       `Apply the upgrade (lockfile included), fix any fallout, verify the suite is green, then push the branch ` +
       `and open a DRAFT pull request. Never merge it, and never touch versions this work order doesn't name.` +
       guidance
-    const state: LoopState = {
+    const state: WorkflowState = {
       kind,
       goal,
       stage: loaded.manifest.stages[0]?.name ?? "scan",
@@ -437,7 +437,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
     }
     return {
       id: depKey(c.pkg),
-      loopKind: kind,
+      workflowKind: kind,
       title: `Upgrade ${c.pkg} ${c.current || "?"} → ${c.target}`,
       entryStage: state.stage,
       state,
@@ -447,7 +447,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
   }
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       // Resolve the active ecosystems: an explicit binding names one adapter;

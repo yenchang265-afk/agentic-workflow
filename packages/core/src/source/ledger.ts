@@ -5,7 +5,7 @@ import type { Client, Shell } from "../host.js"
 
 /**
  * The hosted-PR kinds' dedup ledger: one JSON file per PR under
- * `<tasksDir>/runs/<kind>/pr-<n>.json` (namespaced per loop kind, so two
+ * `<tasksDir>/runs/<kind>/pr-<n>.json` (namespaced per workflow kind, so two
  * PR-shaped kinds — pr-sitter and review-sitter — never judge each other's
  * bookkeeping), recording what the kind has already handled so it never
  * reacts to its own pushes or replies, never retries a failed attempt on the
@@ -32,7 +32,7 @@ export type PrLedger = z.infer<typeof LedgerSchema>
 export const emptyLedger = (pr: number, now: string): PrLedger => ({ pr, failedAttempts: [], updatedAt: now })
 
 /** Where a kind's per-PR ledgers live: `<tasksDir>/runs/<kind>/`. Keyed by kind so
- *  a second PR-shaped loop kind never collides with the pr-sitter's ledgers. */
+ *  a second PR-shaped workflow kind never collides with the pr-sitter's ledgers. */
 export const ledgerDir = (kind: string): string => `runs/${kind}`
 
 export const ledgerPath = (directory: string, tasksDir: string, kind: string, pr: number): string =>

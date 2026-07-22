@@ -1,7 +1,7 @@
 import { z } from "zod"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoConfig } from "../loop/state.js"
+import type { AdoConfig } from "../workflow/state.js"
 import { attentionTriggers, loadLedger, saveLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js"
 import { azInvokeArgs, azToHttp, execAz, type AzExec } from "./ado-az.js"
@@ -25,7 +25,7 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
 /**
  * The Azure DevOps PR work source: the `gh`-backed `github-pr.ts` mirrored onto
  * the Azure DevOps REST API. Selected at wiring time when config `codePlatform`
- * resolves to `"ado"` for a `pull-request`-bound loop kind.
+ * resolves to `"ado"` for a `pull-request`-bound workflow kind.
  *
  * Raw ADO output is normalized into the same `PrSnapshot` shape the ledger
  * judges (`conflicts` → `CONFLICTING`, a negative reviewer vote →
@@ -92,7 +92,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   const { $, client, directory, tasksDir, log, loaded, ado } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "pull-request") {
-    throw new Error(`loop kind "${loaded.manifest.kind}" does not use a pull-request work source`)
+    throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a pull-request work source`)
   }
   const kind = loaded.manifest.kind
   const role = binding.role
@@ -103,7 +103,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   const org = ado.organization.replace(/\/+$/, "")
   const project = encodeURIComponent(ado.project)
   const login = ado.selfLogin ?? ""
-  // Config headers as a base, env `AGENTIC_LOOP_ADO_HEADERS` overriding (env wins, like the PAT).
+  // Config headers as a base, env `AGENTIC_WORKFLOW_ADO_HEADERS` overriding (env wins, like the PAT).
   const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
 
   const markers = makeClaimMarkers($, directory, tasksDir, kind)
@@ -203,7 +203,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   }
 
   return {
-    loopKind: kind,
+    workflowKind: kind,
 
     async claimNext() {
       // az mode needs no PAT check — the pre-provisioned CLI carries its own
@@ -227,7 +227,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           skip: {
             message:
               `${kind}: could not resolve the sitter's own ADO identity (a PAT cannot) — ` +
-              `set ado.selfLogin in .agentic-loop.json so the sitter claims only the PRs its role names.`,
+              `set ado.selfLogin in .agentic-workflow.json so the sitter claims only the PRs its role names.`,
             actionable: true,
           } satisfies ClaimSkipReason,
         }

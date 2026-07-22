@@ -9,7 +9,7 @@ import path from "node:path"
  * every loop repo directly under ~/work.
  *
  * Explicit paths are trusted verbatim (the user named them); wildcard matches
- * are filtered to directories that look like loop repos (.agentic-loop.json or
+ * are filtered to directories that look like loop repos (.agentic-workflow.json or
  * docs/tasks) so a parent full of unrelated checkouts stays quiet.
  */
 
@@ -41,8 +41,8 @@ const isFile = (p: string): boolean => {
   }
 }
 
-const looksLikeLoopRepo = (dir: string): boolean =>
-  isFile(path.join(dir, ".agentic-loop.json")) || isDir(path.join(dir, "docs", "tasks"))
+const looksLikeWorkflowRepo = (dir: string): boolean =>
+  isFile(path.join(dir, ".agentic-workflow.json")) || isDir(path.join(dir, "docs", "tasks"))
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
@@ -102,7 +102,7 @@ const collectDirs = (patterns: readonly string[], cwd: string): { dirs: string[]
       continue
     }
     const matched = expandPattern(abs).filter(isDir)
-    const repos = matched.filter(looksLikeLoopRepo)
+    const repos = matched.filter(looksLikeWorkflowRepo)
     if (repos.length === 0) notes.push(`${pattern}: no loop repos matched`)
     else if (matched.length > repos.length) {
       const n = matched.length - repos.length

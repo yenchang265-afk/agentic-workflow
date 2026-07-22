@@ -9,7 +9,7 @@ nothing from A, but A sharpens the feedback loop B exercises harder).
 
 ### Context
 
-`loop_verdict` (`src/index.ts:95-111`) records only
+`workflow_verdict` (`src/index.ts:95-111`) records only
 `stage + PASS/FAIL/ERROR`. The *reasons* live in the stage's free text,
 which `composeArgs` (`state.ts:122`) threads into the next iteration as a
 raw prose blob (`Verify failure to address:` / `Review feedback to
@@ -46,12 +46,12 @@ Carry them through:
   `VERIFY verdict: FAIL — 2/4 criteria unmet: "returns 429 over limit", … (iteration 2)`.
   Keep it on one line (the note format is grep-matched by suffix, per
   `auditNote`'s contract — text first, timestamp suffix last).
-- Threading: `LoopState.artifacts` stays `string` (keep the state machine
+- Threading: `WorkflowState.artifacts` stays `string` (keep the state machine
   simple). Instead, the driver prepends a structured block to the check
   stage's output *before* `advanceOnIdle` stores it as the artifact:
 
   ```
-  FAILED CRITERIA (from loop_verdict):
+  FAILED CRITERIA (from workflow_verdict):
   - returns 429 over the limit
   - limit configurable per route
 
@@ -87,7 +87,7 @@ remains `verdict` alone.
 ### Context
 
 REVIEW is one agent, one pass. Threat model T1's residual: repo-content
-prompt injection persuading *that one agent* to call `loop_verdict` PASS.
+prompt injection persuading *that one agent* to call `workflow_verdict` PASS.
 The current backstops are the iteration cap and the human diff gate. N
 independent review passes with distinct lenses make a single injection much
 less likely to flip the outcome — diverse perspectives also catch different
@@ -139,7 +139,7 @@ recommends perspective-diverse verification).
 
 - A lens pass times out → that pass throws, the loop errors (same as a
   review timeout today). Simpler and safer than partial-lens verdicts.
-- `/agent-loop stop` between passes → the existing `!getLoop(sessionID)` check
+- `/agent-loop stop` between passes → the existing `!getWorkflow(sessionID)` check
   (`driver.ts:304`) runs per pass; add it to the lens loop.
 - `reviewLenses` set but `maxIterations` reached — unchanged interaction;
   lenses change verdict quality, not iteration accounting.
@@ -157,7 +157,7 @@ recommends perspective-diverse verification).
 
 - `README.md` + `.opencode/commands/agent-loop.md` — `reviewLenses` knob, cost
   note; verdict tool's richer args.
-- `skills/loop-orchestration/SKILL.md` — verdict contract section
+- `skills/workflow-orchestration/SKILL.md` — verdict contract section
   (reason/criteria), multi-lens review description.
 - `.opencode/agents/{verify,review}.md` — verdict-contract updates (A) and
   lens-focus behavior (B).

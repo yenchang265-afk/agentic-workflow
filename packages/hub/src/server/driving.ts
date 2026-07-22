@@ -1,13 +1,13 @@
 import { z } from "zod"
-import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-loop/core/scheduler/lease"
-import { listClaimIds } from "@agentic-loop/core/task/store"
+import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
+import { listClaimIds } from "@agentic-workflow/core/task/store"
 import type { StageMarker } from "../shared/api.js"
 import type { HubDeps } from "./deps.js"
 
 /**
  * "Is something already driving this task?" — the question every hub write must
  * answer before it moves a task file. Core's gate takes it as `GateCtx.isDriving`
- * and refuses a replan when it says yes (see `loop/gate.ts`); the OpenCode host
+ * and refuses a replan when it says yes (see `workflow/gate.ts`); the OpenCode host
  * answers from its in-memory session map, the Claude host from its active loop.
  * The hub has neither, so it reads the same filesystem substrate the hosts write.
  *

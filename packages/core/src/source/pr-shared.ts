@@ -1,6 +1,6 @@
 import type { Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, LoopState } from "../loop/state.js"
+import type { AdoAccessMethod, CodePlatform, WorkflowState } from "../workflow/state.js"
 import type { PrLedger, PrSnapshot, PrTrigger } from "./ledger.js"
 import type { TerminalOutcome, WorkItem } from "./types.js"
 
@@ -117,7 +117,7 @@ export const prWorkItem = (
       : `PR #${snapshot.number} "${snapshot.title}" — address what needs attention and get it back to green ` +
         `(${triggerSummary(triggers, snapshot)}). Base: ${snapshot.baseRefName}, head: ${snapshot.headRefName}. ` +
         `Never merge the PR; that stays a human call.`
-  const state: LoopState = {
+  const state: WorkflowState = {
     kind: loaded.manifest.kind,
     goal,
     stage: loaded.manifest.stages[0]?.name ?? "triage",
@@ -129,7 +129,7 @@ export const prWorkItem = (
   }
   return {
     id: `pr-${snapshot.number}`,
-    loopKind: loaded.manifest.kind,
+    workflowKind: loaded.manifest.kind,
     title: `PR #${snapshot.number}: ${snapshot.title}`,
     entryStage: state.stage,
     state,

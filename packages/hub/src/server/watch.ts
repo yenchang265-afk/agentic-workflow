@@ -20,7 +20,7 @@ export interface WatchSnapshot {
   /** watch-lease owner.json key, or null */
   readonly lease: string | null
   /**
-   * `.agentic-loop.json` key, or null when absent. It lives outside `tasksDir`,
+   * `.agentic-workflow.json` key, or null when absent. It lives outside `tasksDir`,
    * so the recursive `fs.watch` never sees it — the poll is what delivers this
    * one, which is exactly the guarantee the poll exists for.
    */
@@ -76,7 +76,7 @@ export const scanSnapshot = (directory: string, tasksDir: string, statuses: read
     runs,
     stageMarker: statKey(path.join(runsDir, ".stage.json")),
     lease: statKey(path.join(runsDir, ".watch-lease", "owner.json")),
-    config: statKey(path.join(directory, ".agentic-loop.json")),
+    config: statKey(path.join(directory, ".agentic-workflow.json")),
   }
 }
 

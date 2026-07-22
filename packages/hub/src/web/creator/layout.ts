@@ -1,4 +1,4 @@
-import type { LoopGraph } from "./graphmodel.js"
+import type { WorkflowGraph } from "./graphmodel.js"
 
 /**
  * Hand-rolled layered layout — these graphs are ≤10 nodes, dagre/elk would be
@@ -15,7 +15,7 @@ export interface Position {
 const COL_W = 280
 const ROW_H = 140
 
-export const layoutGraph = (graph: LoopGraph): Readonly<Record<string, Position>> => {
+export const layoutGraph = (graph: WorkflowGraph): Readonly<Record<string, Position>> => {
   const stageIds = graph.nodes.filter((n) => n.type === "stage").map((n) => n.id)
   const rank = new Map<string, number>()
 
