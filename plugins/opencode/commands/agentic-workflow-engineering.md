@@ -15,6 +15,14 @@ command: `/agentic-workflow:pr-sitter`.)
 
 **$ARGUMENTS**
 
+**Read the verb from the FIRST whitespace-delimited token of the argument;
+everything after it is that verb's literal payload.** Match only that first
+token against the verb list below. A verb-like word (`plan`, `status`,
+`approve`, `replan`, `claim`, `doctor`, `retask`, `new`, …) appearing *inside*
+the payload is part of the idea/note/reason, never the verb — e.g.
+`new add a status dashboard` is the `new` verb with idea "add a status
+dashboard", not `status`.
+
 Dispatch:
 
 ## Authoring (you run the interview)
