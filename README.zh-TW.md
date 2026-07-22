@@ -185,7 +185,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
   agentic-workflow 驅動的專案中的起始 `AGENTS.md`/`CLAUDE.md`（迴圈工作流程 +
   skill 對應）
 - [docs/migration.md](docs/migration.md) —— 從早期版本遷移（單一的
-  `/agent-loop` 指令、`/agent-workflow-plan`、`in-planning/`、阻塞式 PLAN 把關）
+  `/agent-loop` 指令、`/agent-loop-plan`、`in-planning/`、阻塞式 PLAN 把關）
 - [docs/design/](docs/design/) —— 威脅模型、強化設計紀錄
   （包括 [07 — 多迴圈排程器](docs/design/improvements/07-multi-workflow-scheduler.md)）
 - [packages/hub/README.md](packages/hub/README.md) —— **管理面板（admin

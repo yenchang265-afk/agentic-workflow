@@ -15,9 +15,9 @@ backlog。
 
 | # | 計畫 | 帶來了什麼 | 現在位於何處 |
 |---|------|----------------|--------------------|
-| 01 | [Worktree isolation（工作樹隔離）](./01-worktree-isolation.md) | 人類的 checkout 永遠不會被動到；同一個實體中可安全地並行執行多個 watch 工作階段 | `packages/core/src/workflow/git.ts`、`packages/core/src/workflow/isolate.ts` 中的 `ensureIsolation`、`src/index.ts` 中的編輯守衛；`git.test.ts` |
+| 01 | [Worktree isolation（工作樹隔離）](./01-worktree-isolation.md) | 人類的 checkout 永遠不會被動到；同一個實體中可安全地並行執行多個 watch 工作階段 | `packages/core/src/workflow/git.ts`、`packages/core/src/workflow/isolate.ts` 中的 `ensureIsolation`、`plugins/opencode/src/index.ts` 中的編輯守衛；`git.test.ts` |
 | 02 | [State persistence（狀態持久化）](./02-state-persistence.md) | 崩潰／重啟後能在確切的階段連同產出物一起恢復，而不必重新規劃 | `packages/core/src/workflow/persist.ts`；`persist.test.ts` |
-| 03 | [Ship + status commands（發布與狀態指令）](./03-ship-and-status-commands.md) | 有稽核記錄的 `in-review → completed` 移動；待辦儀表板 | `src/workflow/driver.ts` 中的 `/agent-loop ship` + status、`packages/core/src/task/store.ts` 中的 `summarizeBacklog`；`store.test.ts` |
+| 03 | [Ship + status commands（發布與狀態指令）](./03-ship-and-status-commands.md) | 有稽核記錄的 `in-review → completed` 移動；待辦儀表板 | `plugins/opencode/src/workflow/driver.ts` 中的 `/agent-loop ship` + status、`packages/core/src/task/store.ts` 中的 `summarizeBacklog`；`store.test.ts` |
 | 04 | [Verdict quality（裁定品質）](./04-verdict-quality.md) | 結構化的失敗原因回饋給重新建置；可選的多視角審查 | `packages/core/src/workflow/verdict.ts`；`verdict.test.ts` |
 | 05 | [Secret redaction（機密資訊遮罩）](./05-secret-redaction.md) | 在寫入持久化產出物之前先清除機密資訊 | `packages/core/src/task/redact.ts`，接線於 `packages/core/src/task/store.ts`；`redact.test.ts` |
 | 06 | [Run metrics（執行指標）](./06-run-metrics.md) | 每次執行的階段耗時 + 裁定歷史記錄寫入執行日誌 | `packages/core/src/workflow/metrics.ts`；`metrics.test.ts` |

@@ -34,13 +34,6 @@ PLAN/BUILD/VERIFY/REVIEW, the gates, park-at-gate, the verdict protocol —
 describes the engineering kind, whose behavior is identical to the original
 hardcoded loop.
 
-(Historical note: an earlier design had planning fully outside the loop in a
-`/agent-workflow-plan` command, and before that an in-loop PLAN with a blocking
-`go` gate. The current shape keeps planning in the loop for
-freshness but replaces the blocking gate with the plan-review park. Earlier
-still there were DEFINE and SHIP stages; a REVIEW PASS finishes the loop
-directly — ship the diff yourself.)
-
 ## When to Use
 
 - Use when a backlog task should run the whole BUILD→REVIEW lifecycle
