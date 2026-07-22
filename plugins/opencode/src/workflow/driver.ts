@@ -1295,6 +1295,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
         deps.$,
         state.task,
         auditNote(`Loop error: ${message}`, new Date(), await gitActor(deps.$, deps.directory)),
+        deps.log,
       )
     }
     // A claim that died before its first "> BUILD started" note leaves the
@@ -1660,6 +1661,7 @@ export const handleCommand = async (
           new Date(),
           await gitActor(deps.$, deps.directory),
         ),
+        deps.log,
       )
     }
     const existed = clearWorkflow(sessionID)
@@ -1766,6 +1768,7 @@ export const handleCommand = async (
         deps.$,
         task,
         auditNote(`Recovered by recover — resuming from snapshot at ${snap.stage}.`, new Date(), actor),
+        deps.log,
       )
       await setPending(deps, sessionID, { kind: "recover-state", state })
       await toast(
@@ -1779,6 +1782,7 @@ export const handleCommand = async (
       deps.$,
       task,
       auditNote("Recovered by recover — resuming BUILD from the persisted plan.", new Date(), actor),
+      deps.log,
     )
     await setPending(deps, sessionID, { kind: "recover", task })
     await toast(
@@ -1817,7 +1821,7 @@ export const handleCommand = async (
       for (const stray of anomalies.strayFiles) {
         try {
           const { id, path: newPath } = await rescueStray(deps.$, deps.directory, config.tasksDir, stray)
-          await appendNote(deps.$, { id, path: newPath }, auditNote(`Rescued from ${stray} — was outside every status folder`, new Date(), actor))
+          await appendNote(deps.$, { id, path: newPath }, auditNote(`Rescued from ${stray} — was outside every status folder`, new Date(), actor), deps.log)
           rescued.push(stray)
         } catch (err) {
           await deps.log("warn", `doctor: could not rescue ${stray}: ${(err as Error).message}`)

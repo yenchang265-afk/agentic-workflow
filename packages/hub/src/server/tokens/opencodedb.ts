@@ -41,14 +41,17 @@ const cache = new Map<string, SessionUsage>()
 
 export const readSessionUsage = async (dbPath: string, sessionID: string): Promise<DbResult> => {
   if (!fs.existsSync(dbPath)) return { available: false, reason: "opencode.db not found" }
-  const key = `${sessionID}:${(() => {
-    try {
-      return fs.statSync(dbPath).mtimeMs
-    } catch {
-      return 0
-    }
-  })()}`
-  const cached = cache.get(key)
+  // Cache keyed on mtime; a failed stat means we cannot tell whether the DB
+  // changed, so BYPASS the cache entirely — a fixed fallback key would serve
+  // stale usage under `<session>:0` every time stat hiccups.
+  let mtime: number | null = null
+  try {
+    mtime = fs.statSync(dbPath).mtimeMs
+  } catch {
+    mtime = null
+  }
+  const key = mtime === null ? null : `${sessionID}:${mtime}`
+  const cached = key === null ? undefined : cache.get(key)
   if (cached) return { available: true, usage: cached }
 
   const sqlite = await loadSqlite()
@@ -85,7 +88,7 @@ export const readSessionUsage = async (dbPath: string, sessionID: string): Promi
         }
       }
       const usage: SessionUsage = { tokens, cost, messages }
-      cache.set(key, usage)
+      if (key !== null) cache.set(key, usage)
       return { available: true, usage }
     } finally {
       db.close()

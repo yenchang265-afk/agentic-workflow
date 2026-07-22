@@ -38,6 +38,22 @@ const EXTRA_FROM: Partial<Record<GateAction, readonly TaskStatus[]>> = { replan:
 
 const isGateAction = (s: string): s is GateAction => Object.hasOwn(ACTIONS, s)
 
+/**
+ * Serialize gate moves per repo: two concurrent POSTs (double-click, two tabs)
+ * both passing the stale-board check before either moves is a TOCTOU — the
+ * second would act on a board state the first just invalidated. A promise
+ * chain per directory makes confirm+move atomic across THIS hub's requests;
+ * the race against the loop (a separate process) stays closed by core's own
+ * guards (`moveTask` refuses when the file left its folder). Exported for tests.
+ */
+const gateLocks = new Map<string, Promise<unknown>>()
+export const withGateLock = async <T>(dir: string, fn: () => Promise<T>): Promise<T> => {
+  const prev = gateLocks.get(dir) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  gateLocks.set(dir, next.catch(() => undefined))
+  return next
+}
+
 const statusOf = async (deps: HubDeps, id: string): Promise<TaskStatus | null> => {
   for (const s of STATUSES) {
     if (await findByIdIn(deps.sh, deps.directory, deps.tasksDir, s, id)) return s
@@ -77,20 +93,23 @@ export const postGate = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
    * the loop moved the task on. Without this check a click on a stale board
    * performs a gate the human did not actually see — shipping a task that had
    * already moved. One `cat` to confirm the task is still where the client
-   * thought, before anything commits.
+   * thought, before anything commits — inside the per-repo lock, so a second
+   * concurrent request re-checks AFTER the first one's move, not beside it.
    */
-  const here = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, expectStatus, id, deps.log)
-  if (!here) {
-    const actual = await statusOf(deps, id)
-    return json(409, {
-      error: actual
-        ? `"${id}" is in ${actual}, not ${expectStatus} — the board was stale. It has been refreshed.`
-        : `"${id}" is no longer in ${expectStatus} — the board was stale. It has been refreshed.`,
-      ...(actual ? { actual } : {}),
-    })
-  }
+  return withGateLock(deps.directory, async () => {
+    const here = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, expectStatus, id, deps.log)
+    if (!here) {
+      const actual = await statusOf(deps, id)
+      return json(409, {
+        error: actual
+          ? `"${id}" is in ${actual}, not ${expectStatus} — the board was stale. It has been refreshed.`
+          : `"${id}" is no longer in ${expectStatus} — the board was stale. It has been refreshed.`,
+        ...(actual ? { actual } : {}),
+      })
+    }
 
-  const ctx = await gateCtx(deps)
-  const result = await spec.run(ctx, id, body as GateRequest)
-  return ok(result)
+    const ctx = await gateCtx(deps)
+    const result = await spec.run(ctx, id, body as GateRequest)
+    return ok(result)
+  })
 }

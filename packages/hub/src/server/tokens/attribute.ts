@@ -66,11 +66,15 @@ export const windowsFromSamples = (samples: readonly MetricsSample[]): StageWind
 export const windowsFromSummary = (summary: RunLogSummary): StageWindow[] => {
   const end = Date.parse(summary.at)
   if (Number.isNaN(end)) return []
-  const totalMs = summary.rows.reduce((sum, r) => sum + r.seconds * 1000, 0)
+  // A NaN/negative `seconds` row would poison the whole reconstructed
+  // timeline (every cursor after it goes NaN) — clamp it to a zero-length
+  // window instead so the other rows still attribute.
+  const rowMs = (r: RunLogSummary["rows"][number]): number => (Number.isFinite(r.seconds) && r.seconds > 0 ? r.seconds * 1000 : 0)
+  const totalMs = summary.rows.reduce((sum, r) => sum + rowMs(r), 0)
   let cursor = end - totalMs
   return summary.rows.map((r) => {
     const startMs = cursor
-    cursor += r.seconds * 1000
+    cursor += rowMs(r)
     return {
       stage: r.stage,
       ...(r.lens ? { lens: r.lens } : {}),

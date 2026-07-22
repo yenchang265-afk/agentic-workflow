@@ -293,6 +293,20 @@ export const scaffoldSkill = async (deps: HubDeps, req: ParsedRequest): Promise<
 export const postGenPrompts = async (deps: HubDeps): Promise<JsonResponse> => {
   const script = path.join(deps.directory, "scripts", "gen-prompts.mjs")
   if (!fs.existsSync(script)) return badRequest("this repo has no scripts/gen-prompts.mjs")
+  // This executes repo-controlled code with the hub's privileges off a
+  // header-only-auth POST. Two rails before running it: the resolved script
+  // must live INSIDE the monitored repo (no symlink pointing elsewhere), and
+  // it must be a regular file.
+  try {
+    const real = fs.realpathSync(script)
+    const root = fs.realpathSync(deps.directory)
+    if (real !== script && !real.startsWith(root + path.sep)) {
+      return badRequest("scripts/gen-prompts.mjs resolves outside the repo — refusing to run it")
+    }
+    if (!fs.statSync(real).isFile()) return badRequest("scripts/gen-prompts.mjs is not a regular file")
+  } catch {
+    return badRequest("scripts/gen-prompts.mjs could not be resolved")
+  }
 
   return new Promise((resolve) => {
     execFile(

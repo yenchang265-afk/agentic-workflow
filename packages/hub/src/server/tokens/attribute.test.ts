@@ -58,6 +58,23 @@ test("attribute sums records inside each window and drops windows with no hits",
   assert.equal(rows[1]?.tokens.input, 500)
 })
 
+test("windowsFromSummary treats bogus row seconds as zero-length instead of skewing every window", () => {
+  // One NaN/negative `seconds` must not poison the reconstructed timeline —
+  // every other window would silently mis-attribute.
+  const windows = windowsFromSummary({
+    outcome: "done",
+    at: "2026-07-06T10:01:30.000Z",
+    rows: [
+      { stage: "build", iteration: 1, duration: "60s", seconds: 60, extra: {} },
+      { stage: "verify", iteration: 1, duration: "?", seconds: Number.NaN, extra: {} },
+    ],
+  })
+  assert.equal(windows.length, 2)
+  assert.equal(windows[0]?.startMs, Date.parse("2026-07-06T10:00:30.000Z"))
+  assert.equal(windows[0]?.endMs, Date.parse("2026-07-06T10:01:30.000Z"))
+  assert.equal(windows[1]?.startMs, windows[1]?.endMs, "the bogus row becomes a zero-length window")
+})
+
 test("addTokens sums componentwise from zero", () => {
   const t = addTokens(ZERO_TOKENS, { input: 1, output: 2, reasoning: 3, cacheRead: 4, cacheWrite: 5 })
   assert.deepEqual(t, { input: 1, output: 2, reasoning: 3, cacheRead: 4, cacheWrite: 5 })

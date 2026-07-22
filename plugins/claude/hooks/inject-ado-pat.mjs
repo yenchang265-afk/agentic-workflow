@@ -55,6 +55,14 @@ const main = async () => {
   const envFile = process.env.CLAUDE_ENV_FILE
   if (!envFile) return // not Claude Code / capability unavailable — nothing to do
   if (process.env.AZURE_DEVOPS_EXT_PAT) return // the env var always wins; already set
+  // The harness creates the env file before hooks run. A CLAUDE_ENV_FILE that
+  // does not already exist as a regular file is not that channel — appending
+  // would write the secret to an arbitrary path.
+  try {
+    if (!fs.statSync(envFile).isFile()) return
+  } catch {
+    return
+  }
 
   let input = {}
   try {

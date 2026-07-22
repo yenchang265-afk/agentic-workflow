@@ -19,6 +19,10 @@ const isRaw = (v: unknown): v is RawExpr => typeof v === "object" && v !== null 
 /** Single-quote-escape a value for safe shell interpolation (Bun `$` auto-escapes too). */
 const esc = (v: unknown): string => `'${String(v).replace(/'/g, "'\\''")}'`
 
+/** Per-stream capture cap (10 MiB). Loop commands read task files and git
+ *  output — never legitimately more than this; past it the stream is dropped. */
+const MAX_CAPTURE = 10 * 1024 * 1024
+
 const render = (strings: TemplateStringsArray, exprs: unknown[]): string => {
   let cmd = ""
   strings.forEach((s, i) => {
@@ -53,9 +57,16 @@ class ShellPromise implements PromiseLike<ShellOutput> {
       const child = spawn("bash", ["-c", this.#cmd], { cwd: this.#cwd })
       let out = ""
       let err = ""
-      child.stdout.on("data", (d) => (out += d))
-      child.stderr.on("data", (d) => (err += d))
-      child.on("error", () => resolve({ exitCode: 127, stdout: strOut(out), stderr: strOut(err || "spawn error") }))
+      // Cap accumulation: a runaway `git log`/`cat` must not balloon the server's
+      // memory. Callers get the head of the stream plus a truncation marker.
+      const append = (buf: string, d: unknown): string =>
+        buf.length >= MAX_CAPTURE ? buf : (buf + String(d)).slice(0, MAX_CAPTURE)
+      child.stdout.on("data", (d) => (out = append(out, d)))
+      child.stderr.on("data", (d) => (err = append(err, d)))
+      // A spawn failure (bash missing, EPERM) is NOT command-not-found: keep the
+      // 127 contract for callers, but name the real cause in stderr so the two
+      // are distinguishable in logs.
+      child.on("error", (e) => resolve({ exitCode: 127, stdout: strOut(out), stderr: strOut(`spawn failed (not a command error): ${e.message}`) }))
       child.on("close", (code) => resolve({ exitCode: code ?? 0, stdout: strOut(out), stderr: strOut(err) }))
     }))
   }

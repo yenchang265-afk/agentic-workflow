@@ -33,9 +33,13 @@ export interface RunMetricsInput {
 
 const BUCKET_EDGES = [0, 0.25, 0.5, 0.75] as const
 
-const mean = (xs: readonly number[]): number => xs.reduce((sum, x) => sum + x, 0) / xs.length
+// Total on empty input (0, not NaN/undefined): today's callers all guard, but
+// the guard is an implicit invariant — a refactor that seeds an empty bucket
+// must not push NaN into /api/metrics.
+const mean = (xs: readonly number[]): number => (xs.length === 0 ? 0 : xs.reduce((sum, x) => sum + x, 0) / xs.length)
 
 const median = (xs: readonly number[]): number => {
+  if (xs.length === 0) return 0
   const sorted = [...xs].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 1 ? (sorted[mid] as number) : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
@@ -135,7 +139,9 @@ const stageDurations = (passes: readonly RunLogSummary[]): StageDuration[] => {
       rows: seconds.length,
       meanSeconds: mean(seconds),
       medianSeconds: median(seconds),
-      maxSeconds: Math.max(...seconds),
+      // reduce, not Math.max(...seconds): a spread call-stacks on huge arrays,
+      // and reduce stays 0 (not -Infinity) if the bucket is ever empty.
+      maxSeconds: seconds.reduce((m, s) => (s > m ? s : m), 0),
     }))
     .sort((a, b) => b.meanSeconds * b.rows - a.meanSeconds * a.rows)
 }

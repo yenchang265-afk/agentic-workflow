@@ -9,7 +9,7 @@ import type { GateResult, KindBoardInfo } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
 import type { JsonResponse } from "../http.js"
-import { postGate } from "./gate.js"
+import { postGate, withGateLock } from "./gate.js"
 
 /**
  * The gate routes, against a real git repo and real task files — these ops
@@ -244,4 +244,43 @@ test("replan also accepts a cap-tripped in-progress task — its second valid or
   assert.equal((res.body as GateResult).ok, true)
   assert.ok(at(dir, "queued", "iii9-thing"))
   cleanup(dir)
+})
+
+test("two concurrent gates on one task: the second re-checks after the first moved and 409s", async () => {
+  // The double-click TOCTOU: both requests pass the stale-board check, both
+  // move. The per-repo lock forces the second confirm to run AFTER the first
+  // move, so it sees the new folder and refuses.
+  const dir = makeRepo()
+  place(dir, "draft", "ddd1-thing")
+  const deps = depsFor(dir)
+  const [a, b] = await Promise.all([
+    gate(deps, "approve-task", { id: "ddd1-thing", expectStatus: "draft" }),
+    gate(deps, "approve-task", { id: "ddd1-thing", expectStatus: "draft" }),
+  ])
+  const statuses = [a.status, b.status].sort()
+  assert.deepEqual(statuses, [200, 409], `expected exactly one winner, got ${a.status}/${b.status}`)
+  assert.ok(at(dir, "queued", "ddd1-thing"))
+  cleanup(dir)
+})
+
+test("withGateLock serializes per directory and keeps different directories concurrent", async () => {
+  const order: string[] = []
+  const step = (name: string, ms: number) => () =>
+    new Promise<string>((resolve) =>
+      setTimeout(() => {
+        order.push(name)
+        resolve(name)
+      }, ms),
+    )
+  await Promise.all([withGateLock("/same", step("first", 30)), withGateLock("/same", step("second", 1))])
+  assert.deepEqual(order, ["first", "second"], "same repo: the later call waits despite being faster")
+
+  order.length = 0
+  await Promise.all([withGateLock("/one", step("slow", 30)), withGateLock("/two", step("fast", 1))])
+  assert.deepEqual(order, ["fast", "slow"], "different repos stay concurrent")
+
+  await assert.rejects(withGateLock("/same", () => Promise.reject(new Error("veto"))))
+  order.length = 0
+  await withGateLock("/same", step("after-reject", 1))
+  assert.deepEqual(order, ["after-reject"], "a rejected gate does not wedge the chain")
 })

@@ -54,7 +54,9 @@ export const StageDefSchema = z.object({
    * Confined to one filename under `stages/` — manifests are user-authored and
    * hub-writable, so a free-form path would read arbitrary files at load time.
    */
-  prompt: z.string().regex(/^stages\/[A-Za-z0-9._-]+\.md$/, 'prompt must be a "stages/<name>.md" path inside the kind directory'),
+  prompt: z
+    .string()
+    .regex(/^stages\/[A-Za-z0-9_-][A-Za-z0-9._-]*\.md$/, 'prompt must be a "stages/<name>.md" path inside the kind directory'),
   /** `worktree` stages run in the loop's isolated checkout and snapshot; `none` stages run in the main tree and don't. */
   isolation: z.enum(["worktree", "none"]).default("worktree"),
   /** Wall-clock cap override; defaults to `config.stageTimeoutMinutes`. */

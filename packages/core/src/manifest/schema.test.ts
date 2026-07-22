@@ -54,6 +54,7 @@ test("rejects a stage prompt outside stages/ — manifests are user-authored and
   assert.throws(() => parseManifest(withPrompt("stages/../../secrets.md")), /prompt/)
   assert.throws(() => parseManifest(withPrompt("/etc/passwd")), /prompt/)
   assert.throws(() => parseManifest(withPrompt("stages/nested/dir.md")), /prompt/)
+  assert.throws(() => parseManifest(withPrompt("stages/.md")), /prompt/, "dot-leading names are rejected")
   assert.equal(parseManifest(withPrompt("stages/work-2.md")).stages[0]?.prompt, "stages/work-2.md")
 })
 
