@@ -199,7 +199,8 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
         .nothrow()
       let head = snapshot.headRefOid
       let lastCommentAt = ledger.lastCommentAtHandled ?? ""
-      if (fresh.exitCode === 0) {
+      let reReadFailed = fresh.exitCode !== 0
+      if (!reReadFailed) {
         try {
           const data = FreshHeadSchema.parse(JSON.parse(fresh.stdout.toString()))
           head = data.headRefOid ?? head
@@ -207,8 +208,17 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
             if (c.createdAt && c.createdAt > lastCommentAt) lastCommentAt = c.createdAt
           }
         } catch {
-          /* keep snapshot values */
+          reReadFailed = true
         }
+      }
+      if (reReadFailed) {
+        // Falling back to the snapshot records the PRE-RUN head as handled, so
+        // a publish push may re-trigger next poll — recoverable (the next run
+        // sees its own comments), but never silent.
+        await log(
+          "warn",
+          `${kind}: could not re-read PR #${snapshot.number} after the run — recording the pre-run head as handled; the sitter's own push may re-trigger one poll`,
+        )
       }
       const updated = terminalLedgerUpdate(ledger, outcome, triggers, snapshot.headRefOid, head, lastCommentAt, now())
       // A retryable stop returns the ledger unchanged (C2) — skip the write so the head stays claimable.

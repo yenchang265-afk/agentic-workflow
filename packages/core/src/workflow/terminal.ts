@@ -172,6 +172,7 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
     await releaseWorktreeAt($, log, directory, state.git.worktree, state.git.branch)
   }
   let moved = false
+  let moveError: string | null = null
   if (state.task) {
     // Re-resolve the real current path (shell-authoritative) rather than trust the
     // claim-time state.task.path, which goes stale if the file moved since the claim.
@@ -183,10 +184,33 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         await commitBacklog(ctx, `loop(${state.task.id}): done — parked in in-review`)
         moved = true
       } catch (err) {
-        await log("warn", `loop done but task move failed: ${(err as Error).message}`)
+        moveError = (err as Error).message
+        await log("warn", `loop done but task move failed: ${moveError}`)
+        // moveTask releases the claim only on success — release it here or the
+        // marker wedges (the orphan sweep refuses bodies carrying a BUILD note,
+        // and the body's BUILD note already blocks a redundant auto re-claim).
+        await releaseClaim($, cur)
       }
     } else {
+      moveError = `task ${state.task.id} is not in in-progress/`
       await log("warn", `loop done but task ${state.task.id} not in in-progress/ — not moved`)
+      // Best-effort via the claim-time path — the marker lives in the folder
+      // the claim was taken in, which state.task.path still locates.
+      await releaseClaim($, state.task)
+    }
+  }
+  if (state.task && moveError) {
+    // Review passed but the park failed: reporting done would announce the ship
+    // gate for a task still sitting in in-progress/, with metrics calling the
+    // run clean. Surface a retryable stop instead (environment fault, not a
+    // failed attempt) and KEEP the snapshot so `recover` can finish the park.
+    await ctx.writeMetrics("error", `review passed but parking failed: ${moveError}`)
+    return {
+      kind: "stop",
+      message: `✗ Review passed but parking in in-review/ failed: ${moveError} — the work is committed on the branch; fix the backlog, then recover the task.`,
+      retryable: true,
+      taskId: state.task.id,
+      ...(state.git ? { branch: state.git.branch } : {}),
     }
   }
   await ctx.writeMetrics("done", "review passed")

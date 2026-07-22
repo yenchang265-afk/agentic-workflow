@@ -389,6 +389,38 @@ export const readUserLayer = (userPath: string): unknown => {
 }
 
 /**
+ * Config keys whose value is shell the loop executes verbatim (isolate.ts runs
+ * `worktreeSetup` via raw interpolation). The repo layer rides along with any
+ * cloned repo, so honoring these from `.agentic-workflow.json` would let a
+ * merely-watched repo run arbitrary shell on first claim — npm-postinstall
+ * class risk, silently. They are honored from the user-scope layer only.
+ */
+const SHELL_BEARING_KEYS = ["worktreeSetup"] as const
+
+/** Drop shell-bearing keys from the repo layer, warning loudly per key. */
+const dropShellBearingRepoKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {
+  if (!isPlainObject(repoRaw)) return repoRaw
+  let out = repoRaw
+  for (const key of SHELL_BEARING_KEYS) {
+    if (!(key in out)) continue
+    const { [key]: _dropped, ...rest } = out
+    out = rest
+    try {
+      await client.app.log({
+        body: {
+          service: "agentic-workflow",
+          level: "warn",
+          message: `${CONFIG_FILE} sets "${key}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`,
+        },
+      })
+    } catch {
+      /* the drop matters, the log is best-effort */
+    }
+  }
+  return out
+}
+
+/**
  * Load a host config by layering the user-scope file (if any) under the repo's
  * `.agentic-workflow.json` (repo wins field by field), falling back to the
  * schema's defaults when both are absent.
@@ -412,6 +444,7 @@ export const loadConfigWith = async <T>(
       throw new Error(`Invalid ${CONFIG_FILE}: not valid JSON (${(err as Error).message})`)
     }
   }
+  repoRaw = await dropShellBearingRepoKeys(repoRaw, client)
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`

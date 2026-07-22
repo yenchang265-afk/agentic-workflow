@@ -51,7 +51,7 @@ import {
   type GateCtx,
   type GateResult,
 } from "@agentic-workflow/core/workflow/gate"
-import { runTerminal as coreRunTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
+import { runTerminal as coreRunTerminal, type TerminalCtx, type TerminalReport } from "@agentic-workflow/core/workflow/terminal"
 import { loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { type Task } from "@agentic-workflow/core/task/schema"
 import {
@@ -415,6 +415,10 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
   pending = null
   verdictRetried = false
   verdictRejected = false
+  // Only workflow_claim sets activeClaim; a stale one left by a claim flow that
+  // died mid-setup would fire onTerminal against the WRONG work item at this
+  // loop's end. A workflow_start loop has no scheduler claim behind it.
+  activeClaim = null
   // Durable claim evidence BEFORE isolation cuts feature/<id>: everything after
   // this commits onto the loop branch, so without it the human branch's task
   // file looks untouched after teardown and the watcher re-claims a task whose
@@ -447,6 +451,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   pending = null
   verdictRetried = false
   verdictRejected = false
+  activeClaim = null // see startTask — a workflow_start loop has no scheduler claim behind it
   const state = planEntryState(t)
   active = state
   // Arm the PreToolUse carve-out for the whole PLAN window: {stage:"plan", taskId}
@@ -579,13 +584,15 @@ server.registerTool(
     verdictRejected = false
     const loaded = manifestFor(claim.item.workflowKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
-      // Task-backed claims get the durable CLAIMED note on the human branch
-      // before feature/<id> is cut — same as startTask (see store.ts CLAIMED_MARKER).
-      if (state.task) {
-        await markClaimed(sh, state.task, await gitActor(sh, directory), log)
-        await commitPaths(sh, directory, [config.tasksDir], `loop(${state.task.id}): claimed`)
-      }
       try {
+        // Task-backed claims get the durable CLAIMED note on the human branch
+        // before feature/<id> is cut — same as startTask (see store.ts CLAIMED_MARKER).
+        // Inside the try: a throw here must not strand activeClaim, or the NEXT
+        // loop's terminal would fire onTerminal against this stale item.
+        if (state.task) {
+          await markClaimed(sh, state.task, await gitActor(sh, directory), log)
+          await commitPaths(sh, directory, [config.tasksDir], `loop(${state.task.id}): claimed`)
+        }
         state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
       } catch (err) {
         await claim.source.release(claim.item)
@@ -914,10 +921,16 @@ server.registerTool(
     // terminal: done / stop
     const taskId = active.task?.id ?? null // runTerminal nulls `active`
     await snapshot()
-    await runTerminal(action)
+    const report = await runTerminal(action)
+    // A done whose park failed (core reports stop: the move to in-review/ was
+    // blocked) must not announce the ship gate — the task is still in
+    // in-progress/. Surface core's failure message instead.
+    const parked = action.kind !== "done" || report?.kind === "done"
     return ok({
-      action: { kind: action.kind, message: (action as { message: string }).message },
-      ...(action.kind === "done" && taskId
+      action: parked
+        ? { kind: action.kind, message: (action as { message: string }).message }
+        : { kind: "stop", message: report?.message ?? (action as { message: string }).message },
+      ...(action.kind === "done" && parked && taskId
         ? {
             taskId,
             gate: { kind: "ship", id: taskId },
@@ -1003,8 +1016,8 @@ server.registerTool(
  * the human's main tree). This host owns only the presentation: clear the stage
  * marker, fire the work source's `onTerminal`, and null the in-memory loop.
  */
-const runTerminal = async (action: Action) => {
-  if (!active || (action.kind !== "done" && action.kind !== "stop")) return
+const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
+  if (!active || (action.kind !== "done" && action.kind !== "stop")) return null
   const actor = await gitActor(sh, directory)
   const report = await coreRunTerminal(terminalCtx(active, actor), action)
   writeStageMarker(null)
@@ -1020,6 +1033,7 @@ const runTerminal = async (action: Action) => {
     activeClaim = null
   }
   active = null
+  return report
 }
 
 server.registerTool(

@@ -55,6 +55,16 @@ test("a missing stage prompt throws with the offending path", () => {
   assert.throws(() => loadManifest(workflows, "engineering"), /could not load stage prompt/)
 })
 
+test("a stage prompt that escapes the kind directory is rejected, never read", () => {
+  // Manifests round-trip through the hub's HTTP surface — a traversal prompt
+  // must fail loud at load, not read an arbitrary file into a stage prompt.
+  const workflows = scratchKind((_dir, manifest) => {
+    const stages = manifest.stages as { prompt: string }[]
+    stages[0]!.prompt = "../../../../../../etc/hostname"
+  })
+  assert.throws(() => loadManifest(workflows, "engineering"), /could not load workflow manifest/)
+})
+
 test("a manifest that fails schema validation throws through the manifest-path error", () => {
   const workflows = scratchKind((_dir, manifest) => {
     delete manifest.transitions

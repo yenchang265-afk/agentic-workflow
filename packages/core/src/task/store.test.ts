@@ -6,6 +6,8 @@ import {
   canTransition,
   claimFirst,
   claimOlderThan,
+  claimTask,
+  releaseClaim,
   extractPlan,
   findByIdIn,
   hasPlan,
@@ -593,6 +595,21 @@ test("selectNext equals the head of selectOrder", () => {
 const planned = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING}\n\n1. Go.`)
 const started = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)`)
 
+test("a marker quoted mid-line in the body is not lifecycle state", () => {
+  // A task ABOUT this system (or a pasted log) can quote the literal note
+  // text; only whole audit-note lines appended by appendNote count.
+  const quoted = task("a", 0, `${PLAN_HEADING}\n\n1. Grep for "> BUILD started" and "> CLAIMED" in store.ts.`)
+  assert.equal(isClaimable(quoted), true)
+  assert.equal(isRecoverable(quoted), false)
+  assert.equal(wasInterrupted(quoted), false)
+})
+
+test("a quoted plan-approval phrase does not reset the lifecycle window", () => {
+  const body = `${PLAN_HEADING}\n\n1. Go.\n\n> BUILD started (iteration 1)\n\nNote: docs mention "> Plan approved" inline here.`
+  assert.equal(isClaimable(task("a", 0, body)), false, "the real BUILD note must stay visible to the window")
+  assert.equal(isRecoverable(task("a", 0, body)), true)
+})
+
 test("isOrphanedClaim requires claimable body, no live loop, and a stale marker", () => {
   const ok = { drivenByLiveWorkflow: false, markerStale: true }
   assert.equal(isOrphanedClaim(planned("a"), ok), true)
@@ -608,6 +625,53 @@ test("claimOlderThan is true only when find exits 0 and prints the marker path",
   assert.equal(await claimOlderThan(absent, task("a", 0), 15), false)
   const fresh = makeShell(() => ({ exitCode: 0, stdout: "" }))
   assert.equal(await claimOlderThan(fresh, task("a", 0), 15), false)
+})
+
+test("claimOlderThan trusts a fresh claim stamp over a stale-looking mtime", async () => {
+  // DrvFS/WSL mtime is untrustworthy (scheduler/lease.ts): find claims the
+  // marker is old, but the stamp says the claim is 5 minutes young — held.
+  const now = new Date("2026-01-01T12:00:00Z")
+  const stamp = JSON.stringify({ claimedAt: "2026-01-01T11:55:00Z" })
+  const $ = makeShell((cmd) =>
+    cmd.startsWith("cat ") ? { exitCode: 0, stdout: stamp } : { exitCode: 0, stdout: "/r/docs/tasks/in-progress/.claims/a\n" },
+  )
+  assert.equal(await claimOlderThan($, task("a", 0), 15, now), false)
+})
+
+test("claimOlderThan reads staleness from an old claim stamp even when find says fresh", async () => {
+  const now = new Date("2026-01-01T12:00:00Z")
+  const stamp = JSON.stringify({ claimedAt: "2026-01-01T11:00:00Z" })
+  const $ = makeShell((cmd) => (cmd.startsWith("cat ") ? { exitCode: 0, stdout: stamp } : { exitCode: 0, stdout: "" }))
+  assert.equal(await claimOlderThan($, task("a", 0), 15, now), true)
+})
+
+test("claimOlderThan falls back to find -mmin when the stamp is absent or garbled", async () => {
+  const noStamp = makeShell((cmd) => (cmd.startsWith("cat ") ? { exitCode: 1 } : { exitCode: 0, stdout: ".claims/a\n" }))
+  assert.equal(await claimOlderThan(noStamp, task("a", 0), 15), true)
+  const garbled = makeShell((cmd) => (cmd.startsWith("cat ") ? { exitCode: 0, stdout: "not json" } : { exitCode: 0, stdout: "" }))
+  assert.equal(await claimOlderThan(garbled, task("a", 0), 15), false)
+})
+
+test("claimTask stamps claimedAt inside a won marker and skips the stamp on a lost race", async () => {
+  const wonLog: string[] = []
+  const win = makeShell(() => ({ exitCode: 0 }), wonLog)
+  assert.equal(await claimTask(win, task("a", 0)), true)
+  assert.ok(wonLog.some((c) => c.startsWith("printf") && c.includes("claim.json") && c.includes("claimedAt")))
+  const lostLog: string[] = []
+  const lose = makeShell((cmd) => ({ exitCode: cmd.startsWith("mkdir -p") ? 0 : cmd.startsWith("mkdir ") ? 1 : 0 }), lostLog)
+  assert.equal(await claimTask(lose, task("a", 0)), false)
+  assert.ok(!lostLog.some((c) => c.includes("claim.json")))
+})
+
+test("releaseClaim removes the stamp before rmdir so the marker dir can fall", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await releaseClaim($, task("a", 0))
+  const rmIdx = log.findIndex((c) => c.startsWith("rm -f") && c.includes("claim.json"))
+  const rmdirIdx = log.findIndex((c) => c.startsWith("rmdir"))
+  assert.ok(rmIdx !== -1, "expected an rm -f of the claim stamp")
+  assert.ok(rmdirIdx !== -1, "expected an rmdir of the marker")
+  assert.ok(rmIdx < rmdirIdx, "stamp must be removed before the rmdir")
 })
 
 test("listClaimIds parses ls output and returns [] when the folder is absent", async () => {

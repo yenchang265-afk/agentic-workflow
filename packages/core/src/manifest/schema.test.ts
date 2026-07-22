@@ -45,6 +45,18 @@ test("a pool can opt out of auto-claiming with manual: true", () => {
   assert.equal(m.workSource.type === "backlog" && m.workSource.pools[0]?.manual, true)
 })
 
+test("rejects a stage prompt outside stages/ — manifests are user-authored and hub-writable", () => {
+  const withPrompt = (prompt: string) => ({
+    ...base,
+    stages: [{ ...base.stages[0]!, prompt }, base.stages[1]!],
+  })
+  assert.throws(() => parseManifest(withPrompt("../../../../etc/passwd")), /prompt/)
+  assert.throws(() => parseManifest(withPrompt("stages/../../secrets.md")), /prompt/)
+  assert.throws(() => parseManifest(withPrompt("/etc/passwd")), /prompt/)
+  assert.throws(() => parseManifest(withPrompt("stages/nested/dir.md")), /prompt/)
+  assert.equal(parseManifest(withPrompt("stages/work-2.md")).stages[0]?.prompt, "stages/work-2.md")
+})
+
 test("rejects a stage with no transitions entry", () => {
   const raw = { ...base, transitions: { work: base.transitions.work } }
   assert.throws(() => parseManifest(raw), /"check" has no transitions entry/)

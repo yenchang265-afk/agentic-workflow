@@ -59,10 +59,27 @@ export const markClaimed = async ($: Shell, task: FileRef, actor?: string | null
  */
 export const PLAN_APPROVED_MARKER = "> Plan approved"
 
+/**
+ * Index of the LAST occurrence of `marker` at the start of a line, or -1.
+ * Audit notes are whole lines (`appendNote` writes `\n> …\n`), so body text
+ * merely QUOTING a marker mid-line — a pasted log, a task about this system —
+ * must not read as lifecycle state. (A pasted full audit line still would;
+ * markers-as-text is inherently heuristic, this closes the common case.) Pure.
+ */
+const lastMarkerIndex = (body: string, marker: string): number => {
+  for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
+    if (idx === 0 || body[idx - 1] === "\n") return idx
+  }
+  return -1
+}
+
+/** Whether `marker` appears as an audit-note line (see `lastMarkerIndex`). Pure. */
+const hasMarkerLine = (body: string, marker: string): boolean => lastMarkerIndex(body, marker) !== -1
+
 /** The body of the task's current lifecycle: everything after the last
  *  plan-approval note; the whole body when none exists (legacy tasks). Pure. */
 const lifecycleWindow = (body: string): string => {
-  const idx = body.lastIndexOf(PLAN_APPROVED_MARKER)
+  const idx = lastMarkerIndex(body, PLAN_APPROVED_MARKER)
   return idx === -1 ? body : body.slice(idx)
 }
 
@@ -75,7 +92,7 @@ const lifecycleWindow = (body: string): string => {
  * either case. Pure.
  */
 export const isClaimable = (task: Task): boolean =>
-  isReleasableClaim(task) && !lifecycleWindow(task.body).includes(CLAIMED_MARKER)
+  isReleasableClaim(task) && !hasMarkerLine(lifecycleWindow(task.body), CLAIMED_MARKER)
 
 /**
  * The claim on this task may be handed back by the claimer that took it: the
@@ -91,7 +108,7 @@ export const isClaimable = (task: Task): boolean =>
  * run; that case is recovered by hand via `recover <id>`. Pure.
  */
 export const isReleasableClaim = (task: Task): boolean =>
-  hasPlan(task) && !lifecycleWindow(task.body).includes("> BUILD started")
+  hasPlan(task) && !hasMarkerLine(lifecycleWindow(task.body), "> BUILD started")
 
 /** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
 export const extractPlan = (task: Task): string | undefined => {
@@ -108,7 +125,7 @@ export const extractPlan = (task: Task): string | undefined => {
  */
 export const isRecoverable = (task: Task): boolean => {
   const window = lifecycleWindow(task.body)
-  return hasPlan(task) && (window.includes("> BUILD started") || window.includes(CLAIMED_MARKER))
+  return hasPlan(task) && (hasMarkerLine(window, "> BUILD started") || hasMarkerLine(window, CLAIMED_MARKER))
 }
 
 /**
@@ -120,9 +137,9 @@ export const isRecoverable = (task: Task): boolean => {
  */
 export const wasInterrupted = (task: Task): boolean => {
   const window = lifecycleWindow(task.body)
-  const lastStart = window.lastIndexOf("> BUILD started")
+  const lastStart = lastMarkerIndex(window, "> BUILD started")
   if (lastStart === -1) return false
-  const lastFinish = window.lastIndexOf("> BUILD finished")
+  const lastFinish = lastMarkerIndex(window, "> BUILD finished")
   return lastFinish < lastStart
 }
 
@@ -351,19 +368,34 @@ export const resolveTaskIdAnywhere = async (
 const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
 
 /**
+ * The stamp written inside a won claim marker. Staleness is judged from its
+ * `claimedAt`, never from fs mtime — DrvFS/WSL mtime is unreliable, the same
+ * rule `scheduler/lease.ts` applies to watch-lease liveness.
+ */
+const claimStampPath = (task: FileRef): string => path.join(claimsDir(task.path), task.id, "claim.json")
+
+/**
  * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
  * the marker either succeeds — claim won — or fails because another watcher
  * on this filesystem already holds it. Closes the window between listing
  * claimable tasks and appending the `> BUILD started` note.
  */
-export const claimTask = async ($: Shell, task: FileRef): Promise<boolean> => {
+export const claimTask = async ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> => {
   await $`mkdir -p ${claimsDir(task.path)}`.quiet().nothrow()
   const out = await $`mkdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
-  return out.exitCode === 0
+  if (out.exitCode !== 0) return false
+  // Best-effort, deliberately non-atomic: a torn or missing stamp only degrades
+  // claimOlderThan to its mtime fallback, never to a wrong verdict from garbage.
+  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${claimStampPath(task)}`.quiet().nothrow()
+  return true
 }
 
-/** Release a task's claim marker, if present. Best-effort. */
+/** Release a task's claim marker, if present. Best-effort. The stamp goes
+ *  first — `rmdir` (kept over `rm -rf` for blast-radius reasons) needs the
+ *  marker empty; a crash in between leaves a stamp-less marker the mtime
+ *  fallback still sweeps. */
 export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
+  await $`rm -f ${claimStampPath(task)}`.quiet().nothrow()
   await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
 }
 
@@ -377,12 +409,27 @@ export const STALE_CLAIM_MINUTES = 15
 
 /**
  * Whether a `FileRef`'s claim marker exists and is older than `minutes`.
- * `find -mmin +N` prints the path only when strictly older (GNU and BSD).
- * Any failure — marker absent, or a `find` without `-mmin` semantics — reads
- * as "not stale", degrading safely to "marker stays held".
+ * Judged from the marker's `claim.json` stamp when present (fs mtime is
+ * unreliable on DrvFS/WSL — see `claimTask`); markers from older versions
+ * carry no stamp and fall back to `find -mmin +N`, which prints the path only
+ * when strictly older (GNU and BSD). Any failure — marker absent, or a `find`
+ * without `-mmin` semantics — reads as "not stale", degrading safely to
+ * "marker stays held".
  */
-export const claimOlderThan = async ($: Shell, task: FileRef, minutes: number): Promise<boolean> => {
+export const claimOlderThan = async ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> => {
   const marker = path.join(claimsDir(task.path), task.id)
+  const stamp = await $`cat ${claimStampPath(task)}`.quiet().nothrow()
+  if (stamp.exitCode === 0) {
+    try {
+      const { claimedAt } = JSON.parse(stamp.stdout.toString()) as { claimedAt?: unknown }
+      if (typeof claimedAt === "string") {
+        const at = Date.parse(claimedAt)
+        if (!Number.isNaN(at)) return now.getTime() - at > minutes * 60_000
+      }
+    } catch {
+      /* garbled stamp — fall through to the mtime check */
+    }
+  }
   const out = await $`find ${marker} -maxdepth 0 -mmin +${String(minutes)}`.quiet().nothrow()
   return out.exitCode === 0 && out.stdout.toString().trim().length > 0
 }

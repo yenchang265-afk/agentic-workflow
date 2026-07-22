@@ -52,8 +52,14 @@ export const loadManifest = (workflowsDir: string, kind: string): LoadedManifest
     throw new Error(`workflow manifest ${manifestPath} declares kind "${manifest.kind}" but lives in workflows/${kind}/`)
   }
   const prompts: Record<string, string> = {}
+  const root = path.resolve(dir)
   for (const stage of manifest.stages) {
-    const promptPath = path.join(dir, stage.prompt)
+    const promptPath = path.resolve(dir, stage.prompt)
+    // Braces behind the schema's `stages/<name>.md` belt: never read outside
+    // the kind directory even if a future schema change loosens the shape.
+    if (!promptPath.startsWith(root + path.sep)) {
+      throw new Error(`stage prompt ${stage.prompt} escapes workflows/${kind}/ — refusing to read ${promptPath}`)
+    }
     try {
       prompts[stage.name] = fs.readFileSync(promptPath, "utf8")
     } catch (err) {

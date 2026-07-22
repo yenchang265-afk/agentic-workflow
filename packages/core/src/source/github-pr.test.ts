@@ -76,7 +76,7 @@ const pr = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-const source = (prs: unknown[], opts: { ledgers?: Record<string, string>; script?: Cmd[]; log?: string[] } = {}) =>
+const source = (prs: unknown[], opts: { ledgers?: Record<string, string>; script?: Cmd[]; log?: string[]; warns?: string[] } = {}) =>
   makeGithubPrSource({
     $: scriptedShell(
       [
@@ -89,7 +89,7 @@ const source = (prs: unknown[], opts: { ledgers?: Record<string, string>; script
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",
     tasksDir: "docs/tasks",
-    log: () => {},
+    log: async (level, message) => void (level === "warn" && opts.warns?.push(message)),
     loaded: sitter,
     now: () => "2026-07-05T00:00:00Z",
   })
@@ -203,6 +203,31 @@ test("onTerminal(done) records the post-push head + comment watermark, ending th
   assert.match(write ?? "", /sha-own-push/)
   assert.match(write ?? "", /2026-07-05T01:00:00Z/)
   assert.ok(log.some((c) => c.startsWith("rmdir") && c.includes("pr-7")))
+})
+
+test("onTerminal(done) warns loudly when the post-push head re-read fails or is garbled", async () => {
+  // A silent fallback to the pre-run head means the sitter's own push may not
+  // be recorded as handled — the exact self-trigger loop the ledger prevents.
+  const prs = [pr({ statusCheckRollup: [{ name: "ci", conclusion: "FAILURE" }] })]
+  const failed: string[] = []
+  const srcFail = source(prs, { script: [{ cmd: "gh pr view 7", result: { exitCode: 1 } }], warns: failed })
+  const { item } = await srcFail.claimNext()
+  assert.ok(item)
+  await srcFail.onTerminal?.(item, { kind: "done", message: "pushed" })
+  assert.ok(
+    failed.some((m) => /pre-run head/.test(m)),
+    `the failed re-read must be loud, got: ${JSON.stringify(failed)}`,
+  )
+
+  const garbled: string[] = []
+  const srcGarbled = source(prs, { script: [{ cmd: "gh pr view 7", result: { stdout: "not json" } }], warns: garbled })
+  const { item: item2 } = await srcGarbled.claimNext()
+  assert.ok(item2)
+  await srcGarbled.onTerminal?.(item2, { kind: "done", message: "pushed" })
+  assert.ok(
+    garbled.some((m) => /pre-run head/.test(m)),
+    `the garbled re-read must be loud, got: ${JSON.stringify(garbled)}`,
+  )
 })
 
 test("onTerminal(stop) records a failed attempt pinned to the claimed head", async () => {

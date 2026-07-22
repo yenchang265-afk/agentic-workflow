@@ -29,6 +29,20 @@ test("every spawn instruction in the server's notes names the `model` field, not
   }
 })
 
+// A done whose park failed (core's TerminalReport says stop — the task never
+// left in-progress/) must not announce the ship gate. Source-level for the same
+// reason as above: the advance handler is an inline literal in a module that
+// only boots as an MCP transport.
+test("workflow_advance gates the ship-gate payload on the terminal report, not the action alone", () => {
+  const src = fs.readFileSync(path.join(pkgDir, "src", "server.ts"), "utf8")
+  assert.match(src, /const report = await runTerminal\(action\)/, "the advance handler must consume runTerminal's report")
+  assert.match(
+    src,
+    /action\.kind !== "done" \|\| report\?\.kind === "done"/,
+    "the ship gate must require the report to confirm the park landed",
+  )
+})
+
 // Boot the server from source over stdio with an immediately-closed stdin: it
 // must announce readiness on stderr (stdout stays clean for the MCP protocol)
 // and exit on its own when the transport sees EOF.

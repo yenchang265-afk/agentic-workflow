@@ -141,6 +141,27 @@ test("done parks the task in in-review and commits the backlog when not isolated
   assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
 })
 
+test("done with a blocked move reports a retryable stop, keeps the snapshot, and releases the claim", async () => {
+  const state: WorkflowState = { goal: "Do it", stage: "review", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  // A duplicate already sits at the destination — moveTask refuses to clobber
+  // it. The loop must NOT report done: the task is still in in-progress/.
+  const { ctx, log, metrics } = makeCtx({ "in-progress/t.md": body(true), "in-review/t.md": "dup" }, state)
+  const report = await runTerminal(ctx, done)
+  assert.equal(report.kind, "stop")
+  assert.ok(report.kind === "stop" && report.retryable === true, "environment fault, not a failed attempt")
+  assert.match(report.kind === "stop" ? report.message : "", /review passed/i)
+  assert.deepEqual(
+    metrics.map((m) => m.outcome),
+    ["error"],
+    "metrics must not record a clean done",
+  )
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes(".claims/t")),
+    "claim marker released so the task is not wedged",
+  )
+  assert.ok(!log.some((c) => c.includes("t.state.json")), "resume snapshot kept for recover")
+})
+
 test("done on an isolated shared-tree loop checkpoints and tears down BEFORE the backlog move + commit", async () => {
   // The stranding regression: a backlog write made before teardown would be
   // committed onto feature/<id> and vanish from the human branch at checkout.
