@@ -26,6 +26,22 @@
   設定過 `worktreesDir`,不需要變更;如果你依賴預設值且用該名稱
   `.gitignore` 過它,請更新被忽略的路徑。
 
+## 遷移到預設不追蹤的待辦清單（`ignoreBacklog`）
+
+- **既有儲存庫的行為變更**：任務待辦（`tasksDir`，預設為
+  `"docs/tasks"`）不再自動被提交。新增的 `ignoreBacklog` 欄位預設為
+  **`true`**：迴圈不會再把每次任務移動（approve、plan、ship、park、
+  done、stop）都提交為稽核紀錄，而是把 `tasksDir` 登記進
+  `<git-common-dir>/info/exclude`——一份僅限本機、未被追蹤的排除
+  清單，與 `worktreesDir` 使用的機制相同——並讓該次移動保留為未提交
+  的工作樹變更。
+- **想保留舊行為**，設定 `"ignoreBacklog": false`——每次任務移動就會
+  恢復成跟以前一樣被提交。
+- **磁碟上的內容不受任何一種設定影響**：任務檔案仍然會照常在狀態
+  資料夾之間移動；改變的只是迴圈是否提交這些移動。共用、被追蹤的
+  `.gitignore` 在兩種設定下都不會被碰到。見
+  [configuration.md](configuration.md#optional-hardening)。
+
 ## 遷移到 Azure DevOps 的 az CLI 預設值（`ado.access`）
 
 - **既有 ADO 設定的行為變更**：階段代理人的 ADO 存取方式現在由

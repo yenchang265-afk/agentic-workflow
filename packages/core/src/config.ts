@@ -64,6 +64,16 @@ const BaseConfigSchema = z.object({
   maxIterations: z.number().int().positive().default(3),
   /** Repo-relative root of the task backlog; its subfolders are task statuses. */
   tasksDir: z.string().min(1).default("docs/tasks"),
+  /**
+   * On by default: keep `tasksDir` out of git the same way `worktreesDir`
+   * does — an idempotent append to `<git-common-dir>/info/exclude` (a
+   * per-clone, untracked list), never the shared, tracked `.gitignore`. The
+   * loop skips its usual backlog auto-commit on every task move and instead
+   * just re-asserts the exclude entry. Set to `false` to restore the old
+   * behavior: every task move (approve, plan, ship, park, done, stop) is
+   * committed as the audit trail. See docs/migration.md.
+   */
+  ignoreBacklog: z.boolean().default(true),
   /** Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. */
   stageTimeoutMinutes: z.number().int().positive().default(60),
   /**

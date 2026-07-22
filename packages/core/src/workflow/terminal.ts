@@ -3,6 +3,7 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
 import { appendNote, auditNote, findByIdIn, hasPlan, moveTask, releaseClaim } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
+import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
 import { loopId, releaseWorktreeAt, teardownIsolation } from "./isolate.js"
 import type { Action, Config, LoopState } from "./state.js"
@@ -101,6 +102,19 @@ const closeIsolation = async (ctx: TerminalCtx, checkpointMessage: string): Prom
   await teardownIsolation($, log, directory, state)
 }
 
+/**
+ * Commit the backlog via the host's strategy, unless `config.ignoreBacklog`
+ * (the default) says to leave it alone — then just re-assert the
+ * `.git/info/exclude` entry instead of touching either host's commit path.
+ */
+const commitBacklog = async (ctx: TerminalCtx, message: string): Promise<void> => {
+  if (ctx.config.ignoreBacklog) {
+    await ensureExcluded(ctx.$, ctx.directory, ctx.config.tasksDir)
+    return
+  }
+  await ctx.commitBacklog(message)
+}
+
 /** park: PLAN finished — validate the plan landed, move the task to plan-review/, or veto. */
 const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
@@ -138,7 +152,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   }
   await appendNote($, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), log)
   const newPath = await moveTask($, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
-  await ctx.commitBacklog(`loop(${id}): plan written — parked for review`)
+  await commitBacklog(ctx, `loop(${id}): plan written — parked for review`)
   await ctx.writeMetrics("done", "plan parked for review")
   return { kind: "park", taskId: id, path: newPath, message: action.message }
 }
@@ -166,7 +180,7 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
       try {
         await appendNote($, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
         await moveTask($, cur, (action.toStatus ?? "in-review") as TaskStatus)
-        await ctx.commitBacklog(`loop(${state.task.id}): done — parked in in-review`)
+        await commitBacklog(ctx, `loop(${state.task.id}): done — parked in in-review`)
         moved = true
       } catch (err) {
         await log("warn", `loop done but task move failed: ${(err as Error).message}`)
@@ -196,7 +210,7 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
       // A loop stopped mid-PLAN leaves the task in queued/ — release its claim marker
       // or no later claim can pick it up (there is no staleness sweep on every substrate).
       if (state.stage === "plan") await releaseClaim($, cur)
-      await ctx.commitBacklog(`loop(${state.task.id}): stopped — ${action.message}`)
+      await commitBacklog(ctx, `loop(${state.task.id}): stopped — ${action.message}`)
     } else {
       // The file left its folder mid-run (human move/delete). Never write to the stale
       // path — but still release the plan-claim marker best-effort: it lives in the

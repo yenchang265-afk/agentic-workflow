@@ -26,6 +26,22 @@ English | [繁體中文](migration.zh-TW.md)
   `worktreesDir` explicitly, no change needed; if you relied on the default
   and have it `.gitignore`d by name, update the ignored path.
 
+## To an untracked backlog by default (`ignoreBacklog`)
+
+- **Behavior change for existing repos**: the task backlog (`tasksDir`,
+  `"docs/tasks"` by default) is no longer committed automatically. A new
+  `ignoreBacklog` field defaults to **`true`**: instead of committing every
+  task move (approve, plan, ship, park, done, stop) as an audit trail, the
+  loop registers `tasksDir` in `<git-common-dir>/info/exclude` — a per-clone,
+  untracked list, the same mechanism `worktreesDir` uses — and leaves the move
+  as an uncommitted working-tree change.
+- **To keep the old behavior**, set `"ignoreBacklog": false` — every task move
+  goes back to being committed exactly as before.
+- **Nothing on disk changes either way**: task files still move between
+  status folders normally; only whether the loop commits those moves is
+  affected. The shared, tracked `.gitignore` is never touched by either
+  setting. See [configuration.md](configuration.md#optional-hardening).
+
 ## To the az-CLI default for Azure DevOps (`ado.access`)
 
 - **Behavior change for existing ADO configs**: the stage agents' ADO access

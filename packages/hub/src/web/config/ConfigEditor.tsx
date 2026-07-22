@@ -152,6 +152,18 @@ export const ConfigEditor = () => {
             <Field label="tasks dir" path="tasksDir" provenance={prov("tasksDir")} hint="changing this re-points the watcher">
               <input value={str("tasksDir")} onChange={(e) => setOrClear("tasksDir", e.target.value)} />
             </Field>
+            <Field
+              label="ignore backlog in git"
+              path="ignoreBacklog"
+              provenance={prov("ignoreBacklog")}
+              hint="on by default — excludes tasksDir via .git/info/exclude instead of auto-committing it; uncheck to restore committed backlog history"
+            >
+              <input
+                type="checkbox"
+                checked={pending("ignoreBacklog") !== false}
+                onChange={(e) => (e.target.checked ? clear("ignoreBacklog") : set("ignoreBacklog", false))}
+              />
+            </Field>
             <Field label="stage timeout (minutes)" path="stageTimeoutMinutes" provenance={prov("stageTimeoutMinutes")}>
               <input type="number" value={str("stageTimeoutMinutes")} onChange={(e) => setOrClear("stageTimeoutMinutes", e.target.value, Number)} />
             </Field>

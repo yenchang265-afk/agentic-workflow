@@ -4,7 +4,7 @@ import type { Config } from "./state.js"
 import { parseTask, type Task } from "../task/schema.js"
 import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
-import { commitPaths, gitActor } from "./git.js"
+import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
 import { shipPr } from "./ship-pr.js"
 
@@ -45,6 +45,18 @@ export type GateVariant = "info" | "warning"
 export type GateResult =
   | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown> }
   | { readonly ok: false; readonly message: string; readonly variant?: GateVariant }
+
+/**
+ * Commit the backlog move, unless `config.ignoreBacklog` (the default) says to
+ * leave it alone — then just re-assert the `.git/info/exclude` entry instead.
+ */
+const commitBacklog = async ($: Shell, directory: string, config: Config, message: string): Promise<void> => {
+  if (config.ignoreBacklog) {
+    await ensureExcluded($, directory, config.tasksDir)
+    return
+  }
+  await commitPaths($, directory, [config.tasksDir], message)
+}
 
 /** Locate which status folder a task id lives in (searches all statuses). */
 export const findAnyStatus = async (ctx: GateCtx, id: string): Promise<Task | null> => {
@@ -138,7 +150,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
   const actor = await gitActor($, directory)
   await appendNote($, draft, auditNote("Task approved — queued for planning", new Date(), actor), log)
   const newPath = await moveTask($, draft, "queued")
-  await commitPaths($, directory, [config.tasksDir], `loop(${id}): task approved — queued for planning`)
+  await commitBacklog($, directory, config, `loop(${id}): task approved — queued for planning`)
   return {
     ok: true,
     message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
@@ -199,7 +211,7 @@ export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
   const actor = await gitActor($, directory)
   await appendNote($, queued, auditNote("Sent back to draft for re-shaping — approval withdrawn", new Date(), actor), log)
   const newPath = await moveTask($, queued, "draft")
-  await commitPaths($, directory, [config.tasksDir], `loop(${id}): sent back to draft for re-shaping`)
+  await commitBacklog($, directory, config, `loop(${id}): sent back to draft for re-shaping`)
   return {
     ok: true,
     message: `"${queued.title}" sent back to ${config.tasksDir}/draft/ — reshape it, then approve it again.`,
@@ -245,7 +257,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
   const actor = await gitActor($, directory)
   await appendNote($, task, auditNote("Plan approved — parked for execution", new Date(), actor), log)
   const newPath = await moveTask($, task, "in-progress")
-  await commitPaths($, directory, [config.tasksDir], `loop(${id}): plan approved — parked for execution`)
+  await commitBacklog($, directory, config, `loop(${id}): plan approved — parked for execution`)
   return {
     ok: true,
     message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.`,
@@ -290,7 +302,7 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   const why = reason ? ` — ${reason}` : ""
   await appendNote($, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor), log)
   const newPath = await moveTask($, task, "queued")
-  await commitPaths($, directory, [config.tasksDir], `loop(${id}): plan rejected — re-queued for planning`)
+  await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)
   return {
     ok: true,
     message: `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
@@ -320,17 +332,17 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   }
   await appendNote($, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor($, directory)), log)
   const newPath = await moveTask($, { id, path: t.path }, "completed")
-  await commitPaths($, directory, [config.tasksDir], `loop(${id}): shipped — completed`)
+  await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
   const pr = await shipPr($, log, directory, config, kind, id, t.title)
   const data: Record<string, unknown> = { completed: newPath }
   if (pr.url) {
     data.pr = { url: pr.url }
     await appendNote($, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
-    await commitPaths($, directory, [config.tasksDir], `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
+    await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
   } else if (pr.attempted) {
     await appendNote($, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
-    await commitPaths($, directory, [config.tasksDir], `loop(${id}): PR not opened`)
+    await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
   }
   // The task is done: its worktree — kept across every earlier run so retries
   // and recoveries build on prior iterations — is finally disposable. The

@@ -47,6 +47,12 @@ test("parseConfig rejects an empty worktreeSetup", () => {
   assert.throws(() => parseConfig({ worktreeSetup: "" }), /Invalid .*worktreeSetup/)
 })
 
+test("the backlog is untracked by git by default; ignoreBacklog: false opts back into committing it", () => {
+  assert.equal(DEFAULT_CONFIG.ignoreBacklog, true)
+  assert.equal(parseConfig({}).ignoreBacklog, true)
+  assert.equal(parseConfig({ ignoreBacklog: false }).ignoreBacklog, false)
+})
+
 test("parseConfig accepts review lenses and rejects more than five", () => {
   assert.deepEqual(parseConfig({ reviewLenses: ["correctness", "security"] }).reviewLenses, [
     "correctness",

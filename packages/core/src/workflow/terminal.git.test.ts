@@ -99,7 +99,9 @@ test("shared-tree done lands the in-review move on the base branch, not the loop
       $: sh,
       log: () => {},
       directory: repo,
-      config: DEFAULT_CONFIG,
+      // ignoreBacklog defaults to true; this test asserts the backlog commit
+      // strategy itself, so opt back into committing.
+      config: { ...DEFAULT_CONFIG, ignoreBacklog: false },
       state,
       manifest: { manifest: { hooks: { validateBeforeTransition: {} } } } as unknown as LoadedManifest,
       actor: "tester",
