@@ -6,6 +6,7 @@ import {
   Controls,
   applyEdgeChanges,
   applyNodeChanges,
+  MarkerType,
   type Connection,
   type Edge,
   type EdgeChange,
@@ -53,6 +54,25 @@ const edgeLabel = (slot: TransitionSlot, data: EdgeFormValue): string => {
   return data.countIteration ? `${verb} (counted)` : verb
 }
 
+// Arrowheads make edge direction readable; a single default marker is shared
+// (and CSS-recoloured per theme via .react-flow__arrowhead).
+const EDGE_MARKER = { type: MarkerType.ArrowClosed, width: 16, height: 16 } as const
+
+// Colour edges by slot (mirrors the source-handle colours) and single out the
+// loop — a counted iteration edge firing back to an earlier stage — so the
+// cycle is identifiable at a glance rather than blending into the forward flow.
+const edgeClass = (slot: TransitionSlot, data: EdgeFormValue): string => {
+  const base = `edge-${slot.replace(/^on/, "").toLowerCase()}`
+  return data.countIteration ? `${base} edge-loop` : base
+}
+
+// The shared visual props every edge (loaded or newly connected) carries.
+const edgeVisual = (slot: TransitionSlot, data: EdgeFormValue) => ({
+  className: edgeClass(slot, data),
+  markerEnd: EDGE_MARKER,
+  animated: Boolean(data.countIteration),
+})
+
 const toFlow = (manifest: WorkflowManifest): { nodes: Node[]; edges: Edge[]; meta: GraphMeta } => {
   const graph = manifestToGraph(manifest)
   const pos = layoutGraph(graph)
@@ -73,7 +93,15 @@ const toFlow = (manifest: WorkflowManifest): { nodes: Node[]; edges: Edge[]; met
       ...(e.effect.kind === "fire" && e.effect.capMessage ? { capMessage: e.effect.capMessage } : {}),
       ...(e.effect.kind === "fire" && e.effect.dropArtifacts ? { dropArtifacts: e.effect.dropArtifacts } : {}),
     }
-    return { id: e.id, source: e.from, target: e.to, sourceHandle: e.slot, data, label: edgeLabel(e.slot, data) }
+    return {
+      id: e.id,
+      source: e.from,
+      target: e.to,
+      sourceHandle: e.slot,
+      data,
+      label: edgeLabel(e.slot, data),
+      ...edgeVisual(e.slot, data),
+    }
   })
   return { nodes, edges, meta: graph.meta }
 }
@@ -211,6 +239,7 @@ export const Creator = () => {
           sourceHandle: slot,
           data,
           label: edgeLabel(slot, data),
+          ...edgeVisual(slot, data),
         }
         // one effect per slot — a new connection replaces the slot's edge
         return [...es.filter((e) => !(e.source === conn.source && slotOf(e) === slot)), next]
@@ -259,7 +288,11 @@ export const Creator = () => {
 
   const updateEdge = (edgeId: string, data: EdgeFormValue): void =>
     setEdges((es) =>
-      es.map((e) => (e.id === edgeId ? { ...e, data: data as EdgeData, label: edgeLabel(slotOf(e), data) } : e)),
+      es.map((e) =>
+        e.id === edgeId
+          ? { ...e, data: data as EdgeData, label: edgeLabel(slotOf(e), data), ...edgeVisual(slotOf(e), data) }
+          : e,
+      ),
     )
 
   const validateOnServer = async (): Promise<void> => {

@@ -1256,6 +1256,32 @@ body {
 .creator-canvas .react-flow__edge-path {
   stroke: var(--border-strong);
 }
+/* Arrowheads (shared default marker): theme-aware, direction always visible. */
+.creator-canvas .react-flow__arrowhead {
+  fill: var(--border-strong);
+  stroke: var(--border-strong);
+}
+/* Colour edges by transition slot, mirroring the source-handle colours so the
+   graph reads the same way from the node out as along the wire. onDone keeps
+   the neutral base — only the branching outcomes are tinted. */
+.creator-canvas .react-flow__edge.edge-pass .react-flow__edge-path {
+  stroke: var(--ok);
+}
+.creator-canvas .react-flow__edge.edge-fail .react-flow__edge-path {
+  stroke: var(--gate);
+}
+.creator-canvas .react-flow__edge.edge-error .react-flow__edge-path {
+  stroke: var(--warn);
+}
+/* The loop: a counted iteration edge firing back to an earlier stage. Thicker
+   stroke plus the built-in .animated marching dashes make the cycle the most
+   salient wire on the canvas. */
+.creator-canvas .react-flow__edge.edge-loop .react-flow__edge-path {
+  stroke: var(--gate);
+  stroke-width: 2.5;
+}
+/* selected/hover keep equal specificity but come later, so they win the tie
+   and still highlight a coloured edge on interaction. */
 .creator-canvas .react-flow__edge.selected .react-flow__edge-path,
 .creator-canvas .react-flow__edge:hover .react-flow__edge-path {
   stroke: var(--accent);
