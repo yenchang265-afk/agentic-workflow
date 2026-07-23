@@ -1,4 +1,4 @@
-import fs from "node:fs"
+import fsp from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
@@ -51,14 +51,15 @@ const remember = (key: string, usage: SessionUsage): void => {
 }
 
 export const readSessionUsage = async (dbPath: string, sessionID: string): Promise<DbResult> => {
-  if (!fs.existsSync(dbPath)) return { available: false, reason: "opencode.db not found" }
-  // Cache keyed on mtime; a failed stat means we cannot tell whether the DB
-  // changed, so BYPASS the cache entirely — a fixed fallback key would serve
-  // stale usage under `<session>:0` every time stat hiccups.
+  // One stat answers both "is it there" and "did it change". A failed stat on
+  // an existing file means we cannot tell whether the DB changed, so BYPASS
+  // the cache entirely — a fixed fallback key would serve stale usage under
+  // `<session>:0` every time stat hiccups.
   let mtime: number | null = null
   try {
-    mtime = fs.statSync(dbPath).mtimeMs
-  } catch {
+    mtime = (await fsp.stat(dbPath)).mtimeMs
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { available: false, reason: "opencode.db not found" }
     mtime = null
   }
   const key = mtime === null ? null : `${sessionID}:${mtime}`

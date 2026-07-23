@@ -29,7 +29,13 @@ const HeaderStatus = () => {
   const { connected, notifications, requestNotifications } = useEvents()
   return (
     <div className="header-status">
-      <span className={`live-dot${connected ? " on" : ""}`} title={connected ? "live updates on" : "reconnecting…"} />
+      <span
+        className={`live-dot${connected ? " on" : ""}`}
+        title={connected ? "live updates on" : "reconnecting…"}
+        role="status"
+        aria-live="polite"
+        aria-label={connected ? "live updates on" : "reconnecting"}
+      />
       {notifications !== "unsupported" && notifications !== "granted" && (
         <Button
           variant="ghost"
@@ -69,12 +75,14 @@ const Monitor = () => {
     <div>
       <ActivePanel />
       {kinds.length > 1 && (
-        <nav className="kind-tabs">
+        <nav className="kind-tabs" role="tablist" aria-label="Workflow kinds">
           {kinds.map((k) => (
             <button
               key={k.kind}
               className={`kind-tab${active?.kind === k.kind ? " active" : ""}`}
               title={k.description}
+              role="tab"
+              aria-selected={active?.kind === k.kind}
               onClick={() => {
                 setKind(k.kind)
                 localStorage.setItem(storageKey, k.kind)
@@ -101,11 +109,13 @@ const App = () => {
         <h1>
           agentic-workflow hub <span className="beta-badge">beta</span>
         </h1>
-        <nav className="hub-tabs">
+        <nav className="hub-tabs" role="tablist" aria-label="Hub sections">
           {TABS.map((t) => (
             <button
               key={t.id}
               className={`hub-tab${tab === t.id ? " active" : ""}`}
+              role="tab"
+              aria-selected={tab === t.id}
               onClick={() => setTab(t.id)}
             >
               {t.label}
@@ -115,7 +125,7 @@ const App = () => {
         <RepoPicker />
         <HeaderStatus />
       </header>
-      <main className="hub-main">
+      <main className="hub-main" role="tabpanel">
         {tab === "monitor" && <Monitor />}
         {tab === "creator" && <Creator />}
         {tab === "metrics" && <MetricsTab />}

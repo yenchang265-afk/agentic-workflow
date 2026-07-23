@@ -2,6 +2,8 @@ import { z } from "zod"
 import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
 import type { RunDetailResponse, RunListItem, RunsResponse, SnapshotView } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
+import { readStageMarker } from "../driving.js"
+import { mapBounded, readText } from "../io.js"
 import { isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 
 /** Run history: the durable `runs/<id>.md` logs plus display-only snapshot views. */
@@ -20,38 +22,10 @@ const SnapshotSchema = z.object({
   git: z.object({ branch: z.string().optional(), worktree: z.string().optional() }).optional(),
 })
 
-/**
- * The task id of the loop driving a stage RIGHT NOW, from the Claude host's
- * live `runs/.stage.json` marker, or null (no live loop, opencode host, or an
- * unreadable/task-less marker). Parsed permissively — display only, same spirit
- * as `readSnapshot`. Only `taskId` is needed here, so the rest is ignored.
- */
-const readActiveTaskId = async (deps: HubDeps): Promise<string | null> => {
-  const read = await deps.client.file
-    .read({ query: { path: `${deps.tasksDir}/runs/.stage.json`, directory: deps.directory } })
-    .catch(() => null)
-  const content = read?.data?.content
-  if (!content) return null
-  try {
-    const parsed = z.object({ taskId: z.string().nullable().optional() }).safeParse(JSON.parse(content))
-    return parsed.success ? (parsed.data.taskId ?? null) : null
-  } catch {
-    return null
-  }
-}
-
-const readRunLog = async (deps: HubDeps, id: string): Promise<string | null> => {
-  const read = await deps.client.file
-    .read({ query: { path: `${deps.tasksDir}/runs/${id}.md`, directory: deps.directory } })
-    .catch(() => null)
-  return read?.data?.content ?? null
-}
+const readRunLog = (deps: HubDeps, id: string): Promise<string | null> => readText(deps, `${deps.tasksDir}/runs/${id}.md`)
 
 const readSnapshot = async (deps: HubDeps, id: string): Promise<SnapshotView | null> => {
-  const read = await deps.client.file
-    .read({ query: { path: `${deps.tasksDir}/runs/${id}.state.json`, directory: deps.directory } })
-    .catch(() => null)
-  const content = read?.data?.content
+  const content = await readText(deps, `${deps.tasksDir}/runs/${id}.state.json`)
   if (!content) return null
   try {
     const parsed = SnapshotSchema.safeParse(JSON.parse(content))
@@ -78,23 +52,30 @@ export const getRuns = async (deps: HubDeps): Promise<JsonResponse> => {
   const ids = (listed?.data ?? [])
     .filter((n) => n.type === "file" && n.name.endsWith(".md"))
     .map((n) => n.name.replace(/\.md$/, ""))
-  const activeTaskId = await readActiveTaskId(deps)
-  const runs: RunListItem[] = []
-  for (const id of ids) {
-    const content = await readRunLog(deps, id)
-    if (content === null) continue
-    const { summaries } = parseRunLog(content)
-    const latest = summaries[summaries.length - 1]
-    runs.push({
-      id,
-      ...(latest ? { outcome: latest.outcome, at: latest.at } : {}),
-      ...(latest?.detail ? { detail: latest.detail } : {}),
-      runs: summaries.length,
-      // A run whose task is currently being driven is live — the last summary
-      // (e.g. the plan pass's "done") describes a PRIOR pass, not this one.
-      ...(id === activeTaskId ? { active: true } : {}),
+  // The one parser of the live `.stage.json` marker lives in driving.ts; this
+  // route only wants the task id it names (null covers: no live loop, the
+  // opencode host, an unreadable marker). Display only, same spirit as
+  // `readSnapshot`.
+  const activeTaskId = (await readStageMarker(deps))?.taskId ?? null
+  const runs: RunListItem[] = (
+    await mapBounded(ids, 16, async (id): Promise<RunListItem[]> => {
+      const content = await readRunLog(deps, id)
+      if (content === null) return []
+      const { summaries } = parseRunLog(content)
+      const latest = summaries[summaries.length - 1]
+      return [
+        {
+          id,
+          ...(latest ? { outcome: latest.outcome, at: latest.at } : {}),
+          ...(latest?.detail ? { detail: latest.detail } : {}),
+          runs: summaries.length,
+          // A run whose task is currently being driven is live — the last summary
+          // (e.g. the plan pass's "done") describes a PRIOR pass, not this one.
+          ...(id === activeTaskId ? { active: true } : {}),
+        },
+      ]
     })
-  }
+  ).flat()
   runs.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""))
   const response: RunsResponse = { runs }
   return ok(response)

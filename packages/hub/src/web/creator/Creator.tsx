@@ -75,7 +75,7 @@ const toFlow = (manifest: WorkflowManifest): { nodes: Node[]; edges: Edge[]; met
     }
     return { id: e.id, source: e.from, target: e.to, sourceHandle: e.slot, data, label: edgeLabel(e.slot, data) }
   })
-  return { nodes, edges, meta: manifestToGraph(manifest).meta }
+  return { nodes, edges, meta: graph.meta }
 }
 
 const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMeta): WorkflowManifest => {

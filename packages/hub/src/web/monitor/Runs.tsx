@@ -99,12 +99,13 @@ export const Runs = () => {
   const { repoId } = useRepo()
   // Refetch on `versions.active` too: the live `.stage.json` marker flips a
   // run's `active` flag when a loop starts/ends, without touching any run `.md`.
-  const { data } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, versions.active, repoId])
+  const { data, error } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, versions.active, repoId])
 
   // Collapse the open run whenever the list refreshes or the repo changes — the
   // selected id may no longer exist.
   useEffect(() => setSelected(null), [versions.run, repoId])
 
+  if (error) return <div className="error-banner">Could not load run history: {error}</div>
   if (!data) return null
   if (data.runs.length === 0) return <div className="placeholder">No run logs yet.</div>
 

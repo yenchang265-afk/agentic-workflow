@@ -5,6 +5,7 @@ import type { GateAction, GateRequest } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { gateCtx } from "../gatectx.js"
 import { badRequest, isSafeId, json, ok, type JsonResponse, type ParsedRequest } from "../http.js"
+import { withLock } from "../lock.js"
 
 /**
  * The human gate moves, from a browser click. This is the hub's first real
@@ -41,18 +42,12 @@ const isGateAction = (s: string): s is GateAction => Object.hasOwn(ACTIONS, s)
 /**
  * Serialize gate moves per repo: two concurrent POSTs (double-click, two tabs)
  * both passing the stale-board check before either moves is a TOCTOU — the
- * second would act on a board state the first just invalidated. A promise
- * chain per directory makes confirm+move atomic across THIS hub's requests;
+ * second would act on a board state the first just invalidated. The shared
+ * `withLock` chain makes confirm+move atomic across THIS hub's requests;
  * the race against the loop (a separate process) stays closed by core's own
  * guards (`moveTask` refuses when the file left its folder). Exported for tests.
  */
-const gateLocks = new Map<string, Promise<unknown>>()
-export const withGateLock = async <T>(dir: string, fn: () => Promise<T>): Promise<T> => {
-  const prev = gateLocks.get(dir) ?? Promise.resolve()
-  const next = prev.then(fn, fn)
-  gateLocks.set(dir, next.catch(() => undefined))
-  return next
-}
+export const withGateLock = <T>(dir: string, fn: () => Promise<T>): Promise<T> => withLock(`gate:${dir}`, fn)
 
 const statusOf = async (deps: HubDeps, id: string): Promise<TaskStatus | null> => {
   for (const s of STATUSES) {

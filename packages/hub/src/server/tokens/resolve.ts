@@ -2,6 +2,7 @@ import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
 import { parseRunMetrics, type RunEntry } from "@agentic-workflow/core/workflow/metrics-file"
 import type { RunTokensResponse, TokenRow } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
+import { readText } from "../io.js"
 import { addTokens, attribute, windowsFromSamples, windowsFromSummary, ZERO_TOKENS, type StageWindow } from "./attribute.js"
 import { readUsageRecords } from "./transcripts.js"
 import { readSessionUsage } from "./opencodedb.js"
@@ -17,11 +18,6 @@ import { readSessionUsage } from "./opencodedb.js"
 
 /** Slack around reconstructed windows — stage stamps trail the LLM turns slightly. */
 const WINDOW_SLACK_MS = 60_000
-
-const read = async (deps: HubDeps, rel: string): Promise<string | null> => {
-  const res = await deps.client.file.read({ query: { path: rel, directory: deps.directory } }).catch(() => null)
-  return res?.data?.content ?? null
-}
 
 const attributedRows = async (
   deps: HubDeps,
@@ -96,7 +92,7 @@ export const resolveRunTokens = async (deps: HubDeps, runId: string): Promise<Ru
   const notes: string[] = []
   const rows: TokenRow[] = []
 
-  const sidecarRaw = await read(deps, `${deps.tasksDir}/runs/${runId}.metrics.json`)
+  const sidecarRaw = await readText(deps, `${deps.tasksDir}/runs/${runId}.metrics.json`)
   const sidecar = sidecarRaw !== null ? parseRunMetrics(sidecarRaw) : null
   if (sidecarRaw !== null && sidecar === null) notes.push("metrics sidecar unreadable — ignored")
 
@@ -105,7 +101,7 @@ export const resolveRunTokens = async (deps: HubDeps, runId: string): Promise<Ru
     for (const entry of sidecar.runs) rows.push(...(await entryRows(deps, entry, notes)))
     if (inProgress) notes.push("run in progress — usage may still be accruing")
   } else {
-    const logRaw = await read(deps, `${deps.tasksDir}/runs/${runId}.md`)
+    const logRaw = await readText(deps, `${deps.tasksDir}/runs/${runId}.md`)
     if (logRaw === null) return null
     notes.push("run predates the metrics sidecar — stage windows reconstructed from the run-log summary")
     const { summaries } = parseRunLog(logRaw)

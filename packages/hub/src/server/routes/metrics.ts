@@ -2,6 +2,7 @@ import { parseRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
 import type { HubDeps } from "../deps.js"
 import { ok, type JsonResponse } from "../http.js"
+import { mapBounded, readText } from "../io.js"
 import { aggregateMetrics, type RunMetricsInput } from "../metrics/aggregate.js"
 
 /**
@@ -18,11 +19,6 @@ import { aggregateMetrics, type RunMetricsInput } from "../metrics/aggregate.js"
  * the cache ratio a quotient of two correlated estimates.
  */
 
-const read = async (deps: HubDeps, rel: string): Promise<string | null> => {
-  const res = await deps.client.file.read({ query: { path: rel, directory: deps.directory } }).catch(() => null)
-  return res?.data?.content ?? null
-}
-
 export const getMetrics = async (deps: HubDeps): Promise<JsonResponse> => {
   const listed = await deps.client.file
     .list({ query: { path: `${deps.tasksDir}/runs`, directory: deps.directory } })
@@ -31,34 +27,24 @@ export const getMetrics = async (deps: HubDeps): Promise<JsonResponse> => {
     .filter((n) => n.type === "file" && n.name.endsWith(".md"))
     .map((n) => n.name.replace(/\.md$/, ""))
 
-  // Every run's two files fetched with bounded concurrency: this is the one
-  // route that touches the whole of runs/, so a serial loop would scale its
-  // latency with the backlog's whole history — but an unbounded fan-out
-  // materializes every log in memory at once. Each batch is parsed as it
-  // lands so the raw content is released before the next batch is read.
-  const CONCURRENCY = 16
-  const inputs: RunMetricsInput[] = []
-  const skipped: string[] = []
-  for (let i = 0; i < ids.length; i += CONCURRENCY) {
-    const batch = await Promise.all(
-      ids.slice(i, i + CONCURRENCY).map(async (id) => {
-        const [log, sidecar] = await Promise.all([
-          read(deps, `${deps.tasksDir}/runs/${id}.md`),
-          read(deps, `${deps.tasksDir}/runs/${id}.metrics.json`),
-        ])
-        return { id, log, sidecar }
-      }),
-    )
-    for (const { id, log, sidecar } of batch) {
-      if (log === null) {
-        // Listed but unreadable. Reported rather than dropped, so a permission
-        // problem or a dangling link shows up instead of shrinking the denominator.
-        skipped.push(id)
-        continue
-      }
-      inputs.push({ id, log: parseRunLog(log), sidecar: sidecar === null ? null : parseRunMetrics(sidecar) })
-    }
-  }
+  // Every run's two files fetched with bounded concurrency: this route touches
+  // the whole of runs/, so a serial loop would scale its latency with the
+  // backlog's whole history — but an unbounded fan-out materializes every log
+  // in memory at once. Each run is parsed as it lands so the raw content is
+  // released before the next read.
+  const results = await mapBounded(ids, 16, async (id) => {
+    const [log, sidecar] = await Promise.all([
+      readText(deps, `${deps.tasksDir}/runs/${id}.md`),
+      readText(deps, `${deps.tasksDir}/runs/${id}.metrics.json`),
+    ])
+    if (log === null) return { id, input: null }
+    const input: RunMetricsInput = { id, log: parseRunLog(log), sidecar: sidecar === null ? null : parseRunMetrics(sidecar) }
+    return { id, input }
+  })
+  const inputs = results.flatMap((r) => (r.input ? [r.input] : []))
+  // Listed but unreadable runs are reported rather than dropped, so a permission
+  // problem or a dangling link shows up instead of shrinking the denominator.
+  const skipped = results.flatMap((r) => (r.input ? [] : [r.id]))
 
   return ok(aggregateMetrics(inputs, skipped))
 }

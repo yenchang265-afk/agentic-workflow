@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react"
 import {
+  PLATFORMS,
   REDACTED,
   type ConfigEdit,
   type ConfigLayer,
   type ConfigLayerResponse,
   type ConfigProvenance,
   type MonitorKindsResponse,
+  type Platform,
   type SaveConfigResponse,
 } from "../../shared/api.js"
 import { postJson } from "../api.js"
@@ -24,6 +26,11 @@ import { useJson } from "../useJson.js"
  * repo file would flatten the user layer into it — writing `ado.pat` out of
  * `~/.agentic-workflow.json` and into a file that may well be committed.
  */
+
+const PLATFORM_LABEL: Readonly<Record<Platform, string>> = {
+  github: "github (gh CLI)",
+  ado: "ado (Azure DevOps REST)",
+}
 
 const PROV_TITLE: Readonly<Record<ConfigProvenance, string>> = {
   repo: "set by this repo's .agentic-workflow.json",
@@ -200,8 +207,11 @@ export const ConfigEditor = () => {
             <h3>Code platform</h3>
             <Field label="platform" path="codePlatform" provenance={prov("codePlatform")}>
               <select value={str("codePlatform") || "github"} onChange={(e) => set("codePlatform", e.target.value)}>
-                <option value="github">github (gh CLI)</option>
-                <option value="ado">ado (Azure DevOps REST)</option>
+                {PLATFORMS.map((p) => (
+                  <option key={p} value={p}>
+                    {PLATFORM_LABEL[p]}
+                  </option>
+                ))}
               </select>
             </Field>
             {["organization", "project", "repository", "selfLogin"].map((k) => (

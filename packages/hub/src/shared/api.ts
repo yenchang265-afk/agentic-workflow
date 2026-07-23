@@ -422,6 +422,10 @@ export interface GateRequest {
  * `{{#worktree}}`, `{{#platform.ado}}`) fire or vanish — the point of the
  * preview is watching them do so, not reading the text once.
  */
+/** The code platforms core supports — the one list every platform `<select>` renders from. */
+export const PLATFORMS = ["github", "ado"] as const
+export type Platform = (typeof PLATFORMS)[number]
+
 export interface PreviewSample {
   /** Loop started from a backlog task → `{{#task.id}}` / `{{#acceptance}}` render. */
   readonly task: boolean
@@ -430,7 +434,7 @@ export interface PreviewSample {
   /** Worktree isolation (implies git) → `{{#worktree}}` renders. */
   readonly worktree: boolean
   /** Code platform the prompt renders for → `{{#platform.ado}}` vs `{{#platform.github}}`. */
-  readonly platform: "github" | "ado"
+  readonly platform: Platform
 }
 
 export interface PreviewRequest {

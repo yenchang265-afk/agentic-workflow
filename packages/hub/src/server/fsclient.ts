@@ -3,6 +3,7 @@ import fs from "node:fs"
 import fsp from "node:fs/promises"
 import path from "node:path"
 import type { Client, FileNode, Shell, ShellOutput } from "@agentic-workflow/core/host"
+import { containedIn } from "./paths.js"
 
 /**
  * Node implementations of the `@agentic-workflow/core` host interfaces so the hub
@@ -76,11 +77,7 @@ export const sh: Shell = (strings, ...exprs) => new ShellPromise(render(strings,
  * inherit a traversal primitive (`..` or an absolute path would escape the
  * repo silently, since `path.resolve` honors both).
  */
-const contained = (directory: string, rel: string): string | null => {
-  const root = path.resolve(directory)
-  const abs = path.resolve(root, rel)
-  return abs === root || abs.startsWith(root + path.sep) ? abs : null
-}
+const contained = containedIn
 
 /**
  * Refuse to materialize any single file larger than this (a runaway run log,

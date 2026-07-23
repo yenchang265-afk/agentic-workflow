@@ -5,6 +5,7 @@ import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
+import { failedSuffix } from "./PrKindPanel.js"
 
 /** Live activity strip: current stage (Claude host), watch lease, resumable snapshots, PR ledgers. */
 
@@ -23,8 +24,9 @@ const Deadline = ({ deadline }: { deadline: number | null | undefined }) => {
 export const ActivePanel = () => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
-  const { data } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+  const { data, error } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
 
+  if (error) return <div className="error-banner">Could not load loop activity: {error}</div>
   if (!data) return null
   const idle = !data.stage && !data.lease && data.snapshotIds.length === 0 && data.prLedgers.length === 0
 
@@ -51,7 +53,7 @@ export const ActivePanel = () => {
       {data.prLedgers.map((l) => (
         <Chip key={l.pr}>
           PR #{l.pr}
-          {l.failedAttempts > 0 ? ` · ${l.failedAttempts} failed attempts` : ""}
+          {failedSuffix(l.failedAttempts)}
         </Chip>
       ))}
     </div>
