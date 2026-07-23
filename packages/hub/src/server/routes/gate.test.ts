@@ -223,6 +223,57 @@ test("a refusal keeps its variant — the info-vs-warning distinction survives t
   cleanup(dir2)
 })
 
+test("remove hard-deletes a draft and commits the removal — the file is gone, not moved", async () => {
+  const dir = makeRepo()
+  place(dir, "draft", "rrr1-thing")
+  const res = await gate(depsFor(dir), "remove", { id: "rrr1-thing", expectStatus: "draft" })
+
+  assert.equal(res.status, 200)
+  assert.equal((res.body as GateResult).ok, true)
+  assert.ok(!at(dir, "draft", "rrr1-thing"), "the file is deleted")
+  assert.ok(
+    !["queued", "plan-review", "in-progress", "in-review", "completed"].some((s) => at(dir, s, "rrr1-thing")),
+    "and NOT relocated to another folder",
+  )
+  assert.match(headMessage(dir), /removed from backlog/)
+  cleanup(dir)
+})
+
+test("remove works from any folder — a finished in-review task deletes too", async () => {
+  const dir = makeRepo()
+  place(dir, "in-review", "rrr2-thing", true)
+  const res = await gate(depsFor(dir), "remove", { id: "rrr2-thing", expectStatus: "in-review" })
+
+  assert.equal(res.status, 200)
+  assert.equal((res.body as GateResult).ok, true)
+  assert.ok(!at(dir, "in-review", "rrr2-thing"))
+  cleanup(dir)
+})
+
+test("remove is refused while the task holds a claim — a live loop may be driving it", async () => {
+  const dir = makeRepo()
+  place(dir, "in-progress", "rrr3-thing", true)
+  fs.mkdirSync(path.join(dir, "docs", "tasks", "in-progress", ".claims", "rrr3-thing"), { recursive: true })
+
+  const res = await gate(depsFor(dir), "remove", { id: "rrr3-thing", expectStatus: "in-progress" })
+  assert.equal(res.status, 200)
+  const body = res.body as GateResult
+  assert.equal(body.ok, false)
+  // The hub's driving oracle counts a live claim as "driving", so the refusal
+  // may cite the live loop or the claim marker — either way it must not delete.
+  assert.match(body.message, /live loop|driven|claim marker/i)
+  assert.ok(at(dir, "in-progress", "rrr3-thing"), "the task must not be deleted")
+  cleanup(dir)
+})
+
+test("remove on a stale board (task already gone) is refused with 409", async () => {
+  const dir = makeRepo()
+  // The client thinks it's a draft, but it was already removed elsewhere.
+  const res = await gate(depsFor(dir), "remove", { id: "rrr4-thing", expectStatus: "draft" })
+  assert.equal(res.status, 409)
+  cleanup(dir)
+})
+
 test("malformed requests are rejected before anything touches the filesystem", async () => {
   const dir = makeRepo()
   const deps = depsFor(dir)

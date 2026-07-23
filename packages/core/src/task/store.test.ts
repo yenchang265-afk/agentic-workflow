@@ -23,6 +23,7 @@ import {
   pairingCoverage,
   PLAN_HEADING,
   releaseOrphanedClaims,
+  removeTaskFile,
   resolveTaskIdAnywhere,
   resolveTaskIdIn,
   selectNext,
@@ -450,6 +451,36 @@ test("moveTask throws when mv reports success but the file did not land", async 
     () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued"),
     /did not land at .*queued\/a\.md/,
   )
+})
+
+// --- removeTaskFile (hard-delete) ---
+
+test("removeTaskFile deletes the file and confirms it is gone", async () => {
+  const log: string[] = []
+  // rm succeeds; the post-delete `test -e path` fails (it's gone).
+  const $ = makeShell((cmd) => (cmd.startsWith("test -e") ? { exitCode: 1 } : { exitCode: 0 }), log)
+  const removed = await removeTaskFile($, { id: "a", path: "/r/docs/tasks/draft/a.md" })
+  assert.equal(removed, "/r/docs/tasks/draft/a.md")
+  assert.ok(log.some((cmd) => cmd.startsWith("rm -f ")), "the file is rm'd")
+})
+
+test("removeTaskFile throws when rm reports success but the file is still there", async () => {
+  // rm exits 0, but the post-delete `test -e path` succeeds — a false removal must throw.
+  const $ = makeShell(() => ({ exitCode: 0 }))
+  await assert.rejects(
+    () => removeTaskFile($, { id: "a", path: "/r/docs/tasks/draft/a.md" }),
+    /removal of a did not take effect/,
+  )
+})
+
+test("removeTaskFile refuses an unsafe id before any filesystem work", async () => {
+  const log: string[] = []
+  const $ = makeShell(() => ({ exitCode: 0 }), log)
+  await assert.rejects(
+    () => removeTaskFile($, { id: "../evil", path: "/repo/docs/tasks/in-review/x.md" }),
+    /unsafe id/,
+  )
+  assert.deepEqual(log, [], "nothing touched the shell")
 })
 
 // --- findByIdIn: shell-authoritative resolution (reads the real FS via `cat`) ---

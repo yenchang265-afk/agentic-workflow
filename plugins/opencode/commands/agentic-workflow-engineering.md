@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | remove <id> | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -106,6 +106,14 @@ Dispatch:
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning; the reason is recorded in the audit note and the next PLAN
   pass must address it.
+- **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
+  replan/retask this does **not** move the task: the file is deleted and the
+  removal committed, so the task is gone for good (git history retains it if
+  the backlog is tracked). Works from **any** status folder. Handled in the
+  plugin like the gates above; the toast reports the outcome. The plugin
+  refuses a task a live loop is driving or one holding a claim marker, and
+  releases any worktree the task owned. **Destructive and cannot be undone
+  from the working tree** — only run it when the user wants the task gone.
 
 **Verify before you report a gate — `approve` and `replan` ONLY.** Their move
 happens in the plugin's command hook *before* your turn, so by the time you

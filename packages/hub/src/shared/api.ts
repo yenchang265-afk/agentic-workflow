@@ -420,7 +420,7 @@ export interface SaveConfigResponse {
  * `workflow/gate.ts` — never core's `*Any` shortcuts, which infer the gate from
  * wherever the task sits. A button knows its own column.
  */
-export type GateAction = "approve-task" | "approve-plan" | "replan" | "ship"
+export type GateAction = "approve-task" | "approve-plan" | "replan" | "ship" | "remove"
 
 export interface GateRequest {
   /** The full task id (not a short-hash prefix) — the board has it. */

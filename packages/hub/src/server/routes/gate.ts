@@ -1,4 +1,4 @@
-import { approvePlan, approveTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { approvePlan, approveTask, removeTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { findByIdIn, STATUSES } from "@agentic-workflow/core/task/store"
 import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 import type { GateAction, GateRequest } from "../../shared/api.js"
@@ -32,10 +32,18 @@ const ACTIONS: Readonly<Record<GateAction, { from: TaskStatus; run: (ctx: GateCt
   "approve-plan": { from: "plan-review", run: (ctx, id) => approvePlan(ctx, id) },
   replan: { from: "plan-review", run: (ctx, id, body) => replanTask(ctx, id, body.reason?.trim() || undefined) },
   ship: { from: "in-review", run: (ctx, id, body) => shipTask(ctx, id, body.kind ?? "engineering") },
+  // remove hard-deletes the task; its button lives on every column, so it has
+  // no single origin — `from` is nominal and every status is a valid origin
+  // (see `allowedFrom`). Core refuses a live-driven or claim-held task.
+  remove: { from: "draft", run: (ctx, id) => removeTask(ctx, id) },
 }
 
-/** `replan` also accepts a cap-tripped in-progress task — the only action with two valid origins. */
+/** `replan` also accepts a cap-tripped in-progress task — the only forward action with two valid origins. */
 const EXTRA_FROM: Partial<Record<GateAction, readonly TaskStatus[]>> = { replan: ["in-progress"] }
+
+/** The statuses an action may run from: every folder for `remove`, else its declared origins. */
+const allowedFrom = (action: GateAction): readonly TaskStatus[] =>
+  action === "remove" ? STATUSES : [ACTIONS[action].from, ...(EXTRA_FROM[action] ?? [])]
 
 const isGateAction = (s: string): s is GateAction => Object.hasOwn(ACTIONS, s)
 
@@ -77,7 +85,7 @@ export const postGate = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
   if (!isSafeId(id)) return badRequest(`invalid task id "${id}"`)
 
   const spec = ACTIONS[action]
-  const allowed: readonly TaskStatus[] = [spec.from, ...(EXTRA_FROM[action] ?? [])]
+  const allowed = allowedFrom(action)
   const expectStatus = body.expectStatus
   if (!expectStatus || !allowed.includes(expectStatus)) {
     return badRequest(`${action} needs expectStatus to be one of ${allowed.join(", ")}`)

@@ -45,6 +45,7 @@ import {
   approveTask as coreApproveTask,
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
+  removeTask as coreRemoveTask,
   replanTask as coreReplanTask,
   retaskTask as coreRetaskTask,
   shipAny as coreShipAny,
@@ -1178,6 +1179,8 @@ const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> 
   coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
 const retaskTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
   coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
+const removeTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
+  coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
@@ -1232,6 +1235,20 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     const r = await retaskTask(id, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
+  "workflow_remove",
+  {
+    description:
+      "Deterministic /agentic-workflow:engineering remove <id> — hard-delete a task from the backlog entirely. Unlike replan/retask this does NOT move the task to another folder: the file is removed and the removal committed, so the task leaves the backlog for good (git history retains it if the backlog is tracked). Works from ANY status folder — a stale draft, a rejected plan, a finished task. Refuses a task a live loop is driving or one holding a claim marker; releases any worktree the task owned. Idempotent: an id that no longer resolves reports success (alreadyDone). This is destructive and cannot be undone from the working tree — reserve it for tasks the human explicitly wants gone.",
+    inputSchema: { id: z.string().min(1) },
+  },
+  async ({ id }) => {
+    await loadCfg()
+    const r = await removeTask(id, active?.task?.id ?? null)
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )
@@ -1401,14 +1418,15 @@ async function runGate(argv: string[]): Promise<number> {
     const [id, ...reasonParts] = rest
     const reason = reasonParts.join(" ").trim() || undefined
     if (!id) {
-      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask> <id> [reason]" })
+      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|remove> <id> [reason]" })
       return 1
     }
     if (verb === "approve") result = await approveTask(id)
     else if (verb === "approve-plan") result = await approvePlan(id)
     else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
     else if (verb === "retask") result = await retaskTask(id, readStageTaskId())
-    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, or retask.` }
+    else if (verb === "remove") result = await removeTask(id, readStageTaskId())
+    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, or remove.` }
   }
   emit(result)
   return result.ok ? 0 : 1

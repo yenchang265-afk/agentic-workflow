@@ -660,6 +660,34 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
 }
 
 /**
+ * Hard-delete a task file from its status folder. Unlike `moveTask` this does
+ * not relocate the task — the file is removed outright, so the task leaves the
+ * active backlog entirely (git history retains it if the backlog is tracked).
+ *
+ * The `isSafeTaskId` guard is the same last-write-boundary check `moveTask`
+ * makes: an unsafe id (`../…`) would reach outside the backlog. Any held claim
+ * marker is released first (its `.claims/<id>` dir would otherwise be orphaned),
+ * then the file is removed and the removal confirmed on the real FS — a caller
+ * must never be told a file is gone when a stale `task.path` made `rm` a no-op.
+ * Returns the removed absolute path.
+ */
+export const removeTaskFile = async ($: Shell, task: FileRef): Promise<string> => {
+  if (!isSafeTaskId(task.id)) {
+    throw new Error(`cannot remove task: unsafe id ${JSON.stringify(task.id)}`)
+  }
+  await releaseClaim($, task) // drop the marker before the file it belongs to goes
+  const out = await $`rm -f ${task.path}`.quiet().nothrow()
+  if (out.exitCode !== 0) {
+    throw new Error(`could not remove ${task.id}: ${out.stderr.toString().trim()}`)
+  }
+  const check = await $`test -e ${task.path}`.quiet().nothrow()
+  if (check.exitCode === 0) {
+    throw new Error(`removal of ${task.id} did not take effect at ${task.path}`)
+  }
+  return task.path
+}
+
+/**
  * Rescue a stray task file (found by `auditBacklog` outside every status
  * folder — e.g. `docs/tasks/run/x.md`) back into `draft/`, the human-review
  * inbox. Deliberately bypasses `canTransition`: `statusOf` throws on unknown

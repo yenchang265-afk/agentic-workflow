@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | remove <id> | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as
@@ -132,6 +132,17 @@ Dispatch:
   re-planning. **Handled by the same hook**; the reason is recorded in the
   audit note. (Fallback: `mcp__agentic-workflow__workflow_reject({id, reason})`, id
   optional.)
+- **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
+  replan/retask this does **not** move the task to another folder: the file is
+  deleted and the removal committed, so the task is gone from the backlog for
+  good (git history retains it if the backlog is tracked). Works from **any**
+  status folder — a stale draft, a rejected plan, a finished task. **Handled by
+  the same hook** as approve/replan; an id is required (a bare `remove` never
+  guesses which task to delete). Core refuses a task a live loop is driving or
+  one holding a claim marker, and releases any worktree the task owned.
+  (Fallback: `mcp__agentic-workflow__workflow_remove({id})`.) **Destructive and
+  cannot be undone from the working tree** — only run it when the user
+  explicitly wants the task gone; confirm the id first.
 
 **Verify before you report a gate.** A gate verb reaching you means the hook
 failed open — run the MCP fallback tool; if it is unavailable, the plugin's

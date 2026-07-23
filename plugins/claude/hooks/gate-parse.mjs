@@ -8,6 +8,7 @@
  * Claude Code offers for plugin commands):
  *   approve [id]           → gate approve-any [id]   (unified folder-driven gate)
  *   replan [id] [reason]   → gate reject-any [id] [reason...]
+ *   remove <id>            → gate remove <id>        (hard-delete; id required)
  * plus the `GATE-DISPATCH:` sentinel a command template may emit once
  * expanded — covering both possible UserPromptSubmit interception points
  * (pre- or post-expansion). Longest alternative first inside VERB —
@@ -33,6 +34,11 @@ const REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im")
 // run. So it dispatches like a gate verb and then, on success, hands the turn
 // back instead of blocking it — see `continueTurn` below.
 const RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im")
+// remove hard-deletes a task. Fully deterministic like approve (nothing for the
+// model to do after), so it BLOCKS the turn — but it always requires an explicit
+// id: there is no folder-driven "remove the awaiting one" (too easy to delete
+// the wrong task), so a bare `remove` passes through for the model to report.
+const REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im")
 
 /**
  * Build the `gate` CLI argv from the prompt, or null when it is not a gate
@@ -68,6 +74,14 @@ export const gateArgsFor = (prompt) => {
     const id = (retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
     if (!id) return { passThrough: true }
     return { argv: ["gate", "retask", id], continueTurn: true }
+  }
+  const remove = prompt.match(REMOVE)
+  if (remove) {
+    // remove always names its target; a bare one is malformed — never guess
+    // which task to delete. Blocks the turn: the CLI does the whole move.
+    const id = (remove[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
+    if (!id) return { passThrough: true }
+    return { argv: ["gate", "remove", id] }
   }
   return null
 }

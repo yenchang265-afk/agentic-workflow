@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
@@ -217,6 +217,58 @@ export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
     message: `"${queued.title}" sent back to ${config.tasksDir}/draft/ — reshape it, then approve it again.`,
     path: newPath,
     data: { retask: true, path: newPath, id, next: `/agentic-workflow:engineering approve ${id} re-queues it once reshaped` },
+  }
+}
+
+/**
+ * remove: hard-delete a task from the backlog entirely.
+ *
+ * Unlike every other gate this does NOT move the task to another folder — the
+ * file is removed and the removal committed, so the task leaves the active
+ * backlog for good (git history retains it if the backlog is tracked). Works
+ * from ANY status folder: cleaning up a stale draft, a rejected plan, or a
+ * finished task is all the same delete.
+ *
+ * Refuses a task a live loop is driving, or one still holding a claim marker —
+ * deleting the file out from under a run would strand its worktree/marker.
+ * Idempotent by design: an id that resolves to nothing is reported as success
+ * (`alreadyDone`), matching `rm -f`, so a double-click or a retry after a prior
+ * success stays harmless. Any worktree the task owned is released best-effort.
+ */
+export const removeTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+  const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
+  if (ctx.isDriving?.(id)) {
+    return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agentic-workflow:engineering stop).`, variant: "warning" }
+  }
+  const task = await findAnyStatus(ctx, id)
+  if (!task) {
+    // Genuinely gone → idempotent success. But an id-named file that merely
+    // fails to parse is still removable — surface that so a broken task can be
+    // deleted rather than reported "already removed".
+    const unparseable = await unparseableAt(ctx, id)
+    if (unparseable) return { ok: false, message: `Can't remove "${id}": ${unparseable}`, variant: "warning" }
+    return { ok: true, message: `No task "${id}" — nothing to remove.`, path: "", data: { removed: true, alreadyDone: true, id } }
+  }
+  const from = statusFolder(task)
+  // A claim marker means a loop may be mid-run on it; refuse rather than orphan
+  // the marker (mirrors retask's guard). A stale one is cleared by doctor fix.
+  const held = await listClaimIds($, directory, config.tasksDir, from)
+  if (held.includes(id)) {
+    return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
+  }
+  const removed = await removeTaskFile($, { id, path: task.path })
+  await commitBacklog($, directory, config, `loop(${id}): task removed from backlog`)
+  // A parked in-progress/in-review task can own a worktree; free it so the
+  // delete doesn't leave an orphan tree behind (best-effort, never throws).
+  await releaseWorktree($, log, directory, config, id)
+  return {
+    ok: true,
+    message: `"${task.title}" removed from ${config.tasksDir}/${from}/.`,
+    path: removed,
+    data: { removed: true, path: removed, id, from },
   }
 }
 

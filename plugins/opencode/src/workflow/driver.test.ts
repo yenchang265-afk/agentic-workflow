@@ -12,6 +12,7 @@ import {
   drive,
   handleApprove,
   handleCommand,
+  handleRemove,
   handleReplan,
   manifestFor,
   onInterrupt,
@@ -311,6 +312,10 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
       } else {
         out = { exitCode: 1, stdout: "", stderr: `mv: cannot stat '${src}'` }
       }
+    } else if (parts[0] === "rm") {
+      // rm [-f] <path…> — drop any listed paths from the fake fs (missing is fine).
+      for (const p of parts.slice(1)) if (p !== "-f" && p in fs) delete fs[p]
+      out = { exitCode: 0, stdout: "", stderr: "" }
     } else if (parts[0] === "ls" && parts[1]) {
       // Short-id resolution lists a status folder — serve the fake fs's basenames.
       const dir = parts[1]!
@@ -806,6 +811,32 @@ test("/reject with no plan awaiting is a harmless info toast", async () => {
   assert.equal(toasts[0]?.variant, "info")
   assert.match(toasts[0]?.message ?? "", /No plan awaiting rejection/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when nothing awaits")
+})
+
+test("/remove <id> hard-deletes the task file — rm, no mv", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleRemove(deps, "sess", "my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(toasts[0]?.message ?? "", /removed/)
+  assert.ok(log.some((cmd) => cmd.startsWith("rm ")), "the file is deleted")
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "and never moved")
+})
+
+test("/remove with no id is a usage warning, not a delete", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleRemove(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Usage/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("rm ")), "nothing deleted")
 })
 
 test("approve routes the gate move (subcommand, not top-level)", async () => {

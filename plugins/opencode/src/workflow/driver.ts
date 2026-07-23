@@ -71,7 +71,7 @@ import {
   worktreeForBranch,
 } from "@agentic-workflow/core/workflow/git"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { approveAny, rejectAny, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
+import { approveAny, rejectAny, removeTask, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -1604,6 +1604,26 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
 }
 
 /**
+ * Handle `remove <id>` — hard-delete a task from the backlog entirely. Unlike
+ * every other gate this deletes the file rather than moving it: the task leaves
+ * the backlog for good (git history retains it if the backlog is tracked). Core
+ * refuses a task a live loop is driving or one holding a claim marker. An id is
+ * required — there is no folder-driven "remove the awaiting one" (too easy to
+ * delete the wrong task).
+ */
+export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id>.`, "warning"))
+  try {
+    const r = await removeTask(gateCtx(deps, config), id)
+    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+  } catch (err) {
+    await toast(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
  * Plan one approved task now (`plan <id>`): claims a `queued/` task and runs
  * the PLAN stage (writes the plan, parks in `plan-review/`, exits). Building
  * is deliberately NOT reachable from here — `claim`/`watch` drive builds — so
@@ -1697,6 +1717,7 @@ export const handleCommand = async (
     // replan (the sole rejection verb). Both parse the post-verb remainder.
     if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
     if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
+    if (verb === "remove") return handleRemove(deps, sessionID, rest, config)
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {

@@ -57,6 +57,16 @@ test("a bare retask is malformed — passed through so the model reports usage",
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering retask"), { passThrough: true })
 })
 
+test("remove routes to the gate remove CLI verb and blocks the turn", () => {
+  const d = gateArgsFor("/agentic-workflow:engineering remove my-task")
+  assert.deepEqual(d.argv, ["gate", "remove", "my-task"])
+  assert.ok(!d.continueTurn, "the CLI does the whole delete — nothing left for the model")
+})
+
+test("a bare remove is malformed — never guess which task to delete", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove"), { passThrough: true })
+})
+
 test("prose containing the plain word 'engineering' never fires a gate", () => {
   for (const prompt of [
     "the engineering approve step happens at the plan gate",

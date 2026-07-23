@@ -20,7 +20,10 @@ sections below cover each.
    first), `approve [id]` is the one folder-driven gate (draft →
    queued, parked plan → in-progress, finished review parked in `in-review/`
    → completed), and
-   `replan [id]` sends a parked plan back;
+   `replan [id]` sends a parked plan back, and `remove <id>` hard-deletes a
+   task from the backlog entirely (from any folder — the file is deleted and
+   the removal committed, not moved; refused while a loop drives it or a claim
+   is held);
    the loop claims build-ready work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
    engineering kind; `unwatch` takes this session back out) and drives

@@ -71,6 +71,19 @@ const MOVES: Partial<Record<TaskStatus, readonly Move[]>> = {
   ],
 }
 
+/**
+ * Remove is offered on every column, so it lives outside MOVES: it hard-deletes
+ * the task file rather than moving it, and the delete is committed. Danger copy
+ * names the irreversibility; core still refuses a live-driven or claim-held task.
+ */
+const REMOVE_MOVE: Move = {
+  action: "remove",
+  label: "Remove",
+  title: "Remove this task?",
+  detail: "Deletes the task file from the backlog and commits the removal. This cannot be undone from your working tree (git history keeps it if the backlog is tracked).",
+  danger: true,
+}
+
 const GateButton = ({
   move,
   task,
@@ -152,8 +165,8 @@ export const GateActions = ({
   kind: string
   claimed: boolean
 }) => {
-  const moves = MOVES[status as TaskStatus]
-  if (!moves) return null
+  // Remove is available on every column; the forward moves are column-specific.
+  const moves = [...(MOVES[status as TaskStatus] ?? []), REMOVE_MOVE]
   return (
     <div className="gate-actions">
       {moves.map((m) => (

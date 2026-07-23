@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { approveAny, approvePlan, approveTask, rejectAny, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
+import { approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -38,8 +38,11 @@ const makeCtx = (
         fs[dest!] = fs[src!]!
         delete fs[src!]
       } else out = { exitCode: 1, stdout: "" }
+    } else if (parts[0] === "rm") {
+      // rm [-f] <path…> — drop any listed paths (missing is fine under -f).
+      for (const p of parts.slice(1)) if (p !== "-f" && p in fs) delete fs[p]
     } else if (parts[0] === "ls") {
-      const dir = parts[1]!
+      const dir = parts.slice(1).find((p) => !p.startsWith("-"))! // skip flags like `-1`
       const names = Object.keys(fs)
         .filter((p) => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes("/"))
         .map((p) => p.slice(dir.length + 1))
@@ -122,6 +125,50 @@ test("retaskTask reports a missing id rather than inventing one", async () => {
   const { ctx } = makeCtx({})
   const r = await retaskTask(ctx, "nope")
   assert.equal(r.ok, false)
+})
+
+// --- removeTask: hard-delete a task from the backlog entirely ---
+
+test("removeTask deletes a draft outright — the file is gone, not moved", async () => {
+  const { ctx, fs, log } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.removed === true && r.data.from === "draft")
+  assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "the file is removed")
+  assert.ok(!Object.keys(fs).some((p) => p.includes("/t.md")), "and NOT relocated to another folder")
+  assert.ok(log.some((c) => c.startsWith("rm ")), "the delete goes through rm")
+})
+
+test("removeTask works from any folder — a finished in-review task deletes too", async () => {
+  const { ctx, fs } = makeCtx({ "in-review/t.md": task("Built", `${PLAN_HEADING}\n\n1. Step.`) })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.from === "in-review")
+  assert.ok(!("/repo/docs/tasks/in-review/t.md" in fs))
+})
+
+test("removeTask refuses a task a live loop is driving — the file survives", async () => {
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Building", `${PLAN_HEADING}\n\n1. Step.`) }, { driving: "t" })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /live loop/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in fs, "never deleted out from under a running loop")
+})
+
+test("removeTask refuses a claim-held task and names doctor fix", async () => {
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Claimed"), "in-progress/.claims/t": "" })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /claim marker/)
+  assert.match(r.message, /doctor fix/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in fs, "untouched while a claim is held")
+})
+
+test("removeTask on a missing id is an idempotent success (rm -f semantics)", async () => {
+  const { ctx } = makeCtx({})
+  const r = await removeTask(ctx, "gone")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.alreadyDone === true)
 })
 
 test("approveTask moves a draft to queued and returns a structured result", async () => {
