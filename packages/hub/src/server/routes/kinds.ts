@@ -1,4 +1,4 @@
-import fs from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 import { promptContext } from "@agentic-workflow/core/workflow/engine"
 import type { WorkflowState } from "@agentic-workflow/core/workflow/state"
@@ -22,6 +22,11 @@ import { readRawLayer } from "../configfile.js"
 import { valueAt } from "../configlayers.js"
 import type { HubDeps } from "../deps.js"
 import { badRequest, json, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
+import { withLock } from "../lock.js"
+import { containedIn } from "../paths.js"
+
+/** Async exists — kinds/assets check many paths per request; sync stats would block the loop. */
+export const exists = (p: string): Promise<boolean> => fsp.access(p).then(() => true, () => false)
 
 /** Loop-kind manifest views + the creator's validate/save/preview surface. */
 
@@ -173,30 +178,34 @@ const STUB = (kind: string, stage: string): string =>
     "",
   ].join("\n")
 
-/** Remaining manual steps for a saved kind, computed against the repo on disk. Pure given fs. */
-const buildChecklist = (deps: HubDeps, manifest: WorkflowManifest): ChecklistItem[] => {
+/** Remaining manual steps for a saved kind, computed against the repo on disk. */
+const buildChecklist = async (deps: HubDeps, manifest: WorkflowManifest): Promise<ChecklistItem[]> => {
   const items: ChecklistItem[] = []
   const repo = deps.directory
   const agents = [...new Set(manifest.stages.map((s) => s.agent))]
+  const agentExists = new Map(
+    await Promise.all(
+      agents.map(async (a) => [a, await exists(path.join(repo, "prompts", "agents", a))] as const),
+    ),
+  )
   for (const agent of agents) {
-    const dir = path.join(repo, "prompts", "agents", agent)
-    items.push({ done: fs.existsSync(dir), label: `agent persona prompts/agents/${agent}/ (body.md + opencode.yaml + claude.yaml)` })
+    items.push({ done: agentExists.get(agent) === true, label: `agent persona prompts/agents/${agent}/ (body.md + opencode.yaml + claude.yaml)` })
   }
-  const missingAgent = agents.some((a) => !fs.existsSync(path.join(repo, "prompts", "agents", a)))
+  const missingAgent = agents.some((a) => agentExists.get(a) !== true)
   items.push({ done: !missingAgent, label: "run `npm run gen:prompts` after authoring the personas", action: "gen-prompts" })
   for (const command of [...new Set(manifest.stages.map((s) => s.command))]) {
     const file = path.join(repo, "plugins", "opencode", "commands", `${command}.md`)
-    items.push({ done: fs.existsSync(file), label: `opencode command wrapper plugins/opencode/commands/${command}.md` })
+    items.push({ done: await exists(file), label: `opencode command wrapper plugins/opencode/commands/${command}.md` })
   }
   const claudeCmd = path.join(repo, "plugins", "claude", "commands", `${manifest.kind}.md`)
-  items.push({ done: fs.existsSync(claudeCmd), label: `Claude command plugins/claude/commands/${manifest.kind}.md (/agentic-workflow:${manifest.kind})` })
+  items.push({ done: await exists(claudeCmd), label: `Claude command plugins/claude/commands/${manifest.kind}.md (/agentic-workflow:${manifest.kind})` })
   const hookRefs = [...Object.values(manifest.hooks.compose ?? {}), ...Object.values(manifest.hooks.validateBeforeTransition ?? {})]
   for (const ref of hookRefs) {
     items.push({ done: false, label: `register hook "${ref}" at host startup (pattern: packages/core/src/kinds/)` })
   }
   // Read through the same layer reader the config editor uses, rather than a
-  // second raw fs.readFileSync + JSON.parse that could drift from it.
-  const cfg = readRawLayer(deps, "repo").raw
+  // second raw readFile + JSON.parse that could drift from it.
+  const cfg = (await readRawLayer(deps, "repo")).raw
   const enabled = valueAt(cfg, ["workflows", manifest.kind, "enabled"]) === true
   if (manifest.kind !== "engineering") {
     // No longer "go hand-edit the file" — the Config tab writes this.
@@ -216,7 +225,7 @@ export const checklistKind = async (deps: HubDeps, req: ParsedRequest): Promise<
   const issues = issuesOf(body.manifest)
   if (issues) return json(400, { error: "manifest invalid", issues })
   const manifest = WorkflowManifestSchema.parse(body.manifest)
-  const response: ChecklistResponse = { checklist: buildChecklist(deps, manifest) }
+  const response: ChecklistResponse = { checklist: await buildChecklist(deps, manifest) }
   return ok(response)
 }
 
@@ -239,28 +248,32 @@ export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
       return badRequest(`hub-authored kinds keep prompts at stages/<stage>.md — stage "${stage.name}" declares "${stage.prompt}"`)
   }
 
-  const workflowsRoot = path.resolve(deps.workflowsDir)
-  const dir = path.resolve(workflowsRoot, kind)
-  if (dir !== path.join(workflowsRoot, kind) || !dir.startsWith(workflowsRoot + path.sep)) return badRequest("bad kind path")
-  const exists = fs.existsSync(path.join(dir, "workflow.json"))
-  if (exists && !body.overwrite) return json(409, { error: `workflow kind "${kind}" already exists — pass overwrite to update it` })
+  const dir = containedIn(deps.workflowsDir, kind)
+  if (!dir) return badRequest("bad kind path")
 
-  const written: string[] = []
-  fs.mkdirSync(path.join(dir, "stages"), { recursive: true })
-  fs.writeFileSync(path.join(dir, "workflow.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  written.push(`workflows/${kind}/workflow.json`)
-  for (const stage of manifest.stages) {
-    const file = path.join(dir, "stages", `${stage.name}.md`)
-    const provided = body.prompts?.[stage.name]
-    if (provided !== undefined && (body.overwrite || !fs.existsSync(file))) {
-      fs.writeFileSync(file, provided.endsWith("\n") ? provided : `${provided}\n`)
-      written.push(`workflows/${kind}/stages/${stage.name}.md`)
-    } else if (!fs.existsSync(file)) {
-      fs.writeFileSync(file, STUB(kind, stage.name))
-      written.push(`workflows/${kind}/stages/${stage.name}.md (stub)`)
+  // Exists-check + multi-file write: serialized so two concurrent saves of the
+  // same kind can't interleave their stage files (same TOCTOU shape as gate).
+  return withLock(`kind:${dir}`, async () => {
+    if ((await exists(path.join(dir, "workflow.json"))) && !body.overwrite)
+      return json(409, { error: `workflow kind "${kind}" already exists — pass overwrite to update it` })
+
+    const written: string[] = []
+    await fsp.mkdir(path.join(dir, "stages"), { recursive: true })
+    await fsp.writeFile(path.join(dir, "workflow.json"), `${JSON.stringify(manifest, null, 2)}\n`)
+    written.push(`workflows/${kind}/workflow.json`)
+    for (const stage of manifest.stages) {
+      const file = path.join(dir, "stages", `${stage.name}.md`)
+      const provided = body.prompts?.[stage.name]
+      if (provided !== undefined && (body.overwrite || !(await exists(file)))) {
+        await fsp.writeFile(file, provided.endsWith("\n") ? provided : `${provided}\n`)
+        written.push(`workflows/${kind}/stages/${stage.name}.md`)
+      } else if (!(await exists(file))) {
+        await fsp.writeFile(file, STUB(kind, stage.name))
+        written.push(`workflows/${kind}/stages/${stage.name}.md (stub)`)
+      }
     }
-  }
 
-  const response: SaveKindResponse = { written, checklist: buildChecklist(deps, manifest) }
-  return ok(response)
+    const response: SaveKindResponse = { written, checklist: await buildChecklist(deps, manifest) }
+    return ok(response)
+  })
 }

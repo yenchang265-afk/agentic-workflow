@@ -1,4 +1,4 @@
-import fs from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 import { ConfigSchema, resolveUserConfigPath } from "@agentic-workflow/core/config"
 import type { Shell } from "@agentic-workflow/core/host"
@@ -40,12 +40,12 @@ export const layerPath = (deps: HubDeps, layer: ConfigLayer): string | null =>
  * Read one layer's raw JSON. A malformed file is reported, not thrown: the whole
  * point of the editor is to fix exactly that, so it has to be able to render it.
  */
-export const readRawLayer = (deps: HubDeps, layer: ConfigLayer): RawLayer => {
+export const readRawLayer = async (deps: HubDeps, layer: ConfigLayer): Promise<RawLayer> => {
   const file = layerPath(deps, layer)
   if (!file) return { path: null, raw: null }
   let content: string
   try {
-    content = fs.readFileSync(file, "utf8")
+    content = await fsp.readFile(file, "utf8")
   } catch {
     return { path: file, raw: null }
   }
@@ -98,11 +98,14 @@ export const isGitIgnored = async ($: Shell, directory: string, file: string): P
 /**
  * Write raw JSON back, pretty-printed with a trailing newline (how the repo's
  * own config is formatted). Temp + rename so a loop process running
- * `loadConfig` concurrently never reads a torn file.
+ * `loadConfig` concurrently never reads a torn file. The temp name carries a
+ * counter as well as the pid: two saves from THIS process would otherwise
+ * share a temp file and interleave.
  */
-export const writeRawLayer = (file: string, raw: unknown): void => {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  const tmp = `${file}.tmp-${process.pid}`
-  fs.writeFileSync(tmp, `${JSON.stringify(raw, null, 2)}\n`)
-  fs.renameSync(tmp, file)
+let writeSeq = 0
+export const writeRawLayer = async (file: string, raw: unknown): Promise<void> => {
+  await fsp.mkdir(path.dirname(file), { recursive: true })
+  const tmp = `${file}.tmp-${process.pid}-${writeSeq++}`
+  await fsp.writeFile(tmp, `${JSON.stringify(raw, null, 2)}\n`)
+  await fsp.rename(tmp, file)
 }

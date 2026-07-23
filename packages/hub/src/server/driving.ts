@@ -3,6 +3,7 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflo
 import { listClaimIds } from "@agentic-workflow/core/task/store"
 import type { StageMarker } from "../shared/api.js"
 import type { HubDeps } from "./deps.js"
+import { readText } from "./io.js"
 
 /**
  * "Is something already driving this task?" — the question every hub write must
@@ -45,10 +46,7 @@ const StageMarkerSchema = z.object({
  * keeping a second parser that could drift.
  */
 export const readStageMarker = async (deps: HubDeps): Promise<StageMarker | null> => {
-  const read = await deps.client.file
-    .read({ query: { path: `${deps.tasksDir}/runs/.stage.json`, directory: deps.directory } })
-    .catch(() => null)
-  const content = read?.data?.content
+  const content = await readText(deps, `${deps.tasksDir}/runs/.stage.json`)
   if (!content) return null
   try {
     const parsed = StageMarkerSchema.safeParse(JSON.parse(content))

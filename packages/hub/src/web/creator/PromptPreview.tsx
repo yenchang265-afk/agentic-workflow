@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import type { WorkflowManifest } from "@agentic-workflow/core/manifest/schema"
-import type { PreviewResponse, PreviewSample } from "../../shared/api.js"
+import { PLATFORMS, type PreviewResponse, type PreviewSample } from "../../shared/api.js"
 import { postJson } from "../api.js"
 import { Button } from "../ui/Button.js"
 
@@ -81,8 +81,11 @@ export const PromptPreview = ({
                 value={sample.platform}
                 onChange={(e) => setSample((s) => ({ ...s, platform: e.target.value as PreviewSample["platform"] }))}
               >
-                <option value="github">github</option>
-                <option value="ado">ado</option>
+                {PLATFORMS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
               </select>
             </label>
           </div>

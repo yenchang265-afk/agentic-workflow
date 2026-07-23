@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import fsp from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import readline from "node:readline"
@@ -25,7 +26,7 @@ const cache = new Map<string, { size: number; records: UsageRecord[] }>()
 const readFileRecords = async (file: string): Promise<UsageRecord[]> => {
   let size: number
   try {
-    size = fs.statSync(file).size
+    size = (await fsp.stat(file)).size
   } catch {
     return []
   }
@@ -93,7 +94,7 @@ export const readUsageRecords = async (
   const dir = path.join(projectsDir, projectSlug(directory))
   let files: string[]
   try {
-    files = fs.readdirSync(dir).filter((f) => f.endsWith(".jsonl"))
+    files = (await fsp.readdir(dir)).filter((f) => f.endsWith(".jsonl"))
   } catch {
     return []
   }
@@ -101,7 +102,7 @@ export const readUsageRecords = async (
   for (const name of files) {
     const file = path.join(dir, name)
     try {
-      if (fs.statSync(file).mtimeMs < fromMs) continue
+      if ((await fsp.stat(file)).mtimeMs < fromMs) continue
     } catch {
       continue
     }

@@ -1,11 +1,12 @@
 /** Minimal typed fetch client for the hub API. */
 
+/** The server's `{ error }` body when present, else the HTTP status text. */
+const errorOf = (body: unknown, res: Response): string =>
+  typeof body === "object" && body !== null && "error" in body ? String((body as { error: unknown }).error) : res.statusText
+
 const parse = async <T>(res: Response): Promise<T> => {
   const body: unknown = await res.json()
-  if (!res.ok) {
-    const message = typeof body === "object" && body !== null && "error" in body ? String(body.error) : res.statusText
-    throw new Error(message)
-  }
+  if (!res.ok) throw new Error(errorOf(body, res))
   return body as T
 }
 
@@ -35,10 +36,6 @@ export const postJson = async <T>(path: string, body: unknown): Promise<T> => pa
 export const postAction = async <T>(path: string, body: unknown): Promise<T> => {
   const res = await post(path, body)
   const parsed: unknown = await res.json()
-  if (!res.ok) {
-    const message =
-      typeof parsed === "object" && parsed !== null && "error" in parsed ? String(parsed.error) : res.statusText
-    throw new Error(message)
-  }
+  if (!res.ok) throw new Error(errorOf(parsed, res))
   return parsed as T
 }

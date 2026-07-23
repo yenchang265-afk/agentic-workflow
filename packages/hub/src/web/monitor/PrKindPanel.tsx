@@ -4,8 +4,8 @@ import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
 import { Chip } from "../ui/Chip.js"
 
-/** " · N failed attempts" suffix, or "" when none — shared across the ledger chips. */
-const failedSuffix = (n: number) => (n > 0 ? ` · ${n} failed attempt${n === 1 ? "" : "s"}` : "")
+/** " · N failed attempts" suffix, or "" when none — shared across the ledger chips (here and ActivePanel). */
+export const failedSuffix = (n: number) => (n > 0 ? ` · ${n} failed attempt${n === 1 ? "" : "s"}` : "")
 
 /**
  * Monitor view for a non-backlog kind (workSource "pull-request", "dependency-scan",
@@ -18,7 +18,9 @@ const failedSuffix = (n: number) => (n > 0 ? ` · ${n} failed attempt${n === 1 ?
 export const PrKindPanel = ({ info }: { info: KindBoardInfo }) => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
-  const { data } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+  const { data, error } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+
+  if (error) return <div className="error-banner">Could not load ledgers: {error}</div>
 
   const prLedgers = (data?.prLedgers ?? []).filter((l) => l.kind === info.kind)
   const depLedgers = (data?.depLedgers ?? []).filter((l) => l.kind === info.kind)

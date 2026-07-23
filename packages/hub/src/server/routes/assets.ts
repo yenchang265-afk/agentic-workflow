@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process"
-import fs from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 import type {
   AgentPreset,
@@ -15,7 +15,12 @@ import type {
 } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { badRequest, json, ok, type JsonResponse, type ParsedRequest } from "../http.js"
-import { SLUG_RE } from "./kinds.js"
+import { withLock } from "../lock.js"
+import { containedIn } from "../paths.js"
+import { exists, SLUG_RE } from "./kinds.js"
+
+// Re-exported for existing importers/tests; the implementation lives in paths.ts.
+export { containedIn }
 
 /**
  * The creator's asset surface: an inventory of the repo's agent personas,
@@ -42,75 +47,70 @@ const fmField = (src: string, key: string): string | undefined => {
   return value.split("\n")[0]
 }
 
-const readIfExists = (file: string): string | undefined =>
-  fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined
+const readIfExists = (file: string): Promise<string | undefined> =>
+  fsp.readFile(file, "utf8").then(
+    (s) => s,
+    () => undefined,
+  )
 
-const listDirs = (dir: string): string[] => {
-  if (!fs.existsSync(dir)) return []
-  return fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .map((e) => e.name)
-    .sort()
+const listDirs = async (dir: string): Promise<string[]> => {
+  try {
+    return (await fsp.readdir(dir, { withFileTypes: true }))
+      .filter((e) => e.isDirectory())
+      .map((e) => e.name)
+      .sort()
+  } catch {
+    return []
+  }
 }
 
 export const getAssets = async (deps: HubDeps): Promise<JsonResponse> => {
   const repo = deps.directory
 
-  const agents: AssetAgent[] = listDirs(path.join(repo, "prompts", "agents")).flatMap((name) => {
-    try {
+  const agents: AssetAgent[] = await Promise.all(
+    (await listDirs(path.join(repo, "prompts", "agents"))).map(async (name) => {
       const src =
-        readIfExists(path.join(repo, "prompts", "agents", name, "claude.yaml")) ??
-        readIfExists(path.join(repo, "prompts", "agents", name, "opencode.yaml")) ??
+        (await readIfExists(path.join(repo, "prompts", "agents", name, "claude.yaml"))) ??
+        (await readIfExists(path.join(repo, "prompts", "agents", name, "opencode.yaml"))) ??
         ""
       const description = fmField(src, "description")
-      return [{ name, ...(description ? { description } : {}) }]
-    } catch {
-      return [{ name }]
-    }
-  })
+      return { name, ...(description ? { description } : {}) }
+    }),
+  )
 
   const commandsDir = path.join(repo, "plugins", "opencode", "commands")
-  const commands: AssetCommand[] = (fs.existsSync(commandsDir) ? fs.readdirSync(commandsDir).sort() : [])
-    .filter((f) => f.endsWith(".md"))
-    .flatMap((f) => {
-      const name = f.slice(0, -3)
-      try {
-        const fm = frontmatter(fs.readFileSync(path.join(commandsDir, f), "utf8"))
+  const commandFiles = await fsp.readdir(commandsDir).then(
+    (fs) => fs.sort(),
+    () => [] as string[],
+  )
+  const commands: AssetCommand[] = await Promise.all(
+    commandFiles
+      .filter((f) => f.endsWith(".md"))
+      .map(async (f) => {
+        const name = f.slice(0, -3)
+        const fm = frontmatter((await readIfExists(path.join(commandsDir, f))) ?? "")
         const description = fmField(fm, "description")
         const agent = fmField(fm, "agent")
-        return [{ name, ...(agent ? { agent } : {}), ...(description ? { description } : {}) }]
-      } catch {
-        return [{ name }]
-      }
-    })
+        return { name, ...(agent ? { agent } : {}), ...(description ? { description } : {}) }
+      }),
+  )
 
-  const skills: AssetSkill[] = listDirs(path.join(repo, "skills")).flatMap((name) => {
-    const file = path.join(repo, "skills", name, "SKILL.md")
-    if (!fs.existsSync(file)) return []
-    try {
-      const description = fmField(frontmatter(fs.readFileSync(file, "utf8")), "description")
-      return [{ name, ...(description ? { description } : {}) }]
-    } catch {
-      return [{ name }]
-    }
-  })
+  const skills: AssetSkill[] = (
+    await Promise.all(
+      (await listDirs(path.join(repo, "skills"))).map(async (name) => {
+        const src = await readIfExists(path.join(repo, "skills", name, "SKILL.md"))
+        if (src === undefined) return []
+        const description = fmField(frontmatter(src), "description")
+        return [{ name, ...(description ? { description } : {}) }]
+      }),
+    )
+  ).flat()
 
   const response: AssetsResponse = { agents, commands, skills }
   return ok(response)
 }
 
 // --- scaffolds ---------------------------------------------------------------
-
-/**
- * Resolve repo-root/<...segments> with the same prefix-confinement rail saveKind
- * uses. SLUG_RE already excludes `/` and `.` so this is belt-and-braces.
- */
-export const containedIn = (root: string, ...segments: string[]): string | null => {
-  const base = path.resolve(root)
-  const abs = path.resolve(base, ...segments)
-  return abs.startsWith(base + path.sep) ? abs : null
-}
 
 /** A yaml scalar on one line: plain when safe, JSON-quoted when yaml-active. */
 export const yamlValue = (s: string): string => (/[:#'"\n\\]|^\s|\s$/.test(s) ? JSON.stringify(s) : s)
@@ -197,24 +197,28 @@ export const scaffoldAgent = async (deps: HubDeps, req: ParsedRequest): Promise<
   if (!description) return badRequest("description is required")
   if (preset !== "builder" && preset !== "checker") return badRequest(`preset must be "builder" or "checker"`)
   for (const skill of skills) {
-    if (!SLUG_RE.test(skill) || !fs.existsSync(path.join(deps.directory, "skills", skill, "SKILL.md")))
+    if (!SLUG_RE.test(skill) || !(await exists(path.join(deps.directory, "skills", skill, "SKILL.md"))))
       return badRequest(`unknown skill "${skill}" — pick skills that exist in skills/`)
   }
 
   const dir = containedIn(deps.directory, "prompts", "agents", name)
   if (!dir) return badRequest("bad agent path")
-  if (fs.existsSync(dir)) return json(409, { error: `agent persona "${name}" already exists at prompts/agents/${name}/` })
 
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, "body.md"), agentBody(name, description, skills))
-  fs.writeFileSync(path.join(dir, "opencode.yaml"), OPENCODE_PRESET[preset](description))
-  fs.writeFileSync(path.join(dir, "claude.yaml"), claudeYaml(name, description, preset))
+  // Exists-check + multi-file write, serialized per target (same shape as saveKind).
+  return withLock(`scaffold:${dir}`, async () => {
+    if (await exists(dir)) return json(409, { error: `agent persona "${name}" already exists at prompts/agents/${name}/` })
 
-  const response: ScaffoldResponse = {
-    written: [`prompts/agents/${name}/body.md`, `prompts/agents/${name}/opencode.yaml`, `prompts/agents/${name}/claude.yaml`],
-    ...(preset === "checker" ? { notes: [CHECKER_NOTE] } : {}),
-  }
-  return ok(response)
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(path.join(dir, "body.md"), agentBody(name, description, skills))
+    await fsp.writeFile(path.join(dir, "opencode.yaml"), OPENCODE_PRESET[preset](description))
+    await fsp.writeFile(path.join(dir, "claude.yaml"), claudeYaml(name, description, preset))
+
+    const response: ScaffoldResponse = {
+      written: [`prompts/agents/${name}/body.md`, `prompts/agents/${name}/opencode.yaml`, `prompts/agents/${name}/claude.yaml`],
+      ...(preset === "checker" ? { notes: [CHECKER_NOTE] } : {}),
+    }
+    return ok(response)
+  })
 }
 
 export const scaffoldCommand = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
@@ -230,7 +234,6 @@ export const scaffoldCommand = async (deps: HubDeps, req: ParsedRequest): Promis
 
   const file = containedIn(deps.directory, "plugins", "opencode", "commands", `${name}.md`)
   if (!file) return badRequest("bad command path")
-  if (fs.existsSync(file)) return json(409, { error: `command "${name}" already exists at plugins/opencode/commands/${name}.md` })
 
   const content = [
     "---",
@@ -247,8 +250,13 @@ export const scaffoldCommand = async (deps: HubDeps, req: ParsedRequest): Promis
     "with its input and how it reports its result.",
     "",
   ].join("\n")
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.writeFileSync(file, content)
+  await fsp.mkdir(path.dirname(file), { recursive: true })
+  // `wx` refuses an existing file atomically — no exists-check race to close.
+  try {
+    await fsp.writeFile(file, content, { flag: "wx" })
+  } catch {
+    return json(409, { error: `command "${name}" already exists at plugins/opencode/commands/${name}.md` })
+  }
 
   const response: ScaffoldResponse = { written: [`plugins/opencode/commands/${name}.md`] }
   return ok(response)
@@ -263,7 +271,6 @@ export const scaffoldSkill = async (deps: HubDeps, req: ParsedRequest): Promise<
 
   const dir = containedIn(deps.directory, "skills", name)
   if (!dir) return badRequest("bad skill path")
-  if (fs.existsSync(dir)) return json(409, { error: `skill "${name}" already exists at skills/${name}/` })
 
   const content = [
     "---",
@@ -276,11 +283,14 @@ export const scaffoldSkill = async (deps: HubDeps, req: ParsedRequest): Promise<
     "TODO: describe when to invoke this skill and the workflow it prescribes.",
     "",
   ].join("\n")
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, "SKILL.md"), content)
+  return withLock(`scaffold:${dir}`, async () => {
+    if (await exists(dir)) return json(409, { error: `skill "${name}" already exists at skills/${name}/` })
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(path.join(dir, "SKILL.md"), content)
 
-  const response: ScaffoldResponse = { written: [`skills/${name}/SKILL.md`] }
-  return ok(response)
+    const response: ScaffoldResponse = { written: [`skills/${name}/SKILL.md`] }
+    return ok(response)
+  })
 }
 
 // --- gen:prompts -------------------------------------------------------------
@@ -292,18 +302,18 @@ export const scaffoldSkill = async (deps: HubDeps, req: ParsedRequest): Promise<
  */
 export const postGenPrompts = async (deps: HubDeps): Promise<JsonResponse> => {
   const script = path.join(deps.directory, "scripts", "gen-prompts.mjs")
-  if (!fs.existsSync(script)) return badRequest("this repo has no scripts/gen-prompts.mjs")
+  if (!(await exists(script))) return badRequest("this repo has no scripts/gen-prompts.mjs")
   // This executes repo-controlled code with the hub's privileges off a
   // header-only-auth POST. Two rails before running it: the resolved script
   // must live INSIDE the monitored repo (no symlink pointing elsewhere), and
   // it must be a regular file.
   try {
-    const real = fs.realpathSync(script)
-    const root = fs.realpathSync(deps.directory)
+    const real = await fsp.realpath(script)
+    const root = await fsp.realpath(deps.directory)
     if (real !== script && !real.startsWith(root + path.sep)) {
       return badRequest("scripts/gen-prompts.mjs resolves outside the repo — refusing to run it")
     }
-    if (!fs.statSync(real).isFile()) return badRequest("scripts/gen-prompts.mjs is not a regular file")
+    if (!(await fsp.stat(real)).isFile()) return badRequest("scripts/gen-prompts.mjs is not a regular file")
   } catch {
     return badRequest("scripts/gen-prompts.mjs could not be resolved")
   }

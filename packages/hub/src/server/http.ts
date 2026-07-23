@@ -1,6 +1,7 @@
-import fs from "node:fs"
+import fsp from "node:fs/promises"
 import path from "node:path"
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { containedIn } from "./paths.js"
 
 /**
  * A tiny router + static file server over node:http — no framework. Route
@@ -98,9 +99,7 @@ export const isLocalHost = (host: string | undefined): boolean => {
  */
 export const safeStaticPath = (webRoot: string, urlPath: string): string | null => {
   const rel = urlPath === "/" ? "index.html" : urlPath.replace(/^\/+/, "")
-  const abs = path.resolve(webRoot, rel)
-  if (abs !== webRoot && !abs.startsWith(webRoot + path.sep)) return null
-  return abs
+  return containedIn(webRoot, rel)
 }
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -243,7 +242,10 @@ const handleRequest = async (
   const file = safeStaticPath(root, url.pathname)
   if (file) {
     try {
-      const content = fs.readFileSync(file)
+      // Async read: readFileSync here would serialize every concurrent asset
+      // request (and the SSE heartbeats) behind each other — same rationale
+      // as fsclient.ts.
+      const content = await fsp.readFile(file)
       const type = CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream"
       res.writeHead(200, { "content-type": type, "cache-control": "no-store" })
       res.end(content)

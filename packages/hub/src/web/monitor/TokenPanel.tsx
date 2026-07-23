@@ -26,6 +26,20 @@ const Bar = ({ tokens, max }: { tokens: StageTokens; max: number }) => {
   )
 }
 
+const PanelHeader = ({ inProgress }: { inProgress?: boolean }) => (
+  <h3>
+    Token usage
+    {inProgress && (
+      <>
+        {" "}
+        <Badge tone="gate" title="run in progress — usage still accruing">
+          live
+        </Badge>
+      </>
+    )}
+  </h3>
+)
+
 export const TokenPanel = ({ runId }: { runId: string }) => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
@@ -35,22 +49,18 @@ export const TokenPanel = ({ runId }: { runId: string }) => {
     versions.tokens,
   ])
 
-  if (error) return null
+  if (error)
+    return (
+      <div className="token-panel">
+        <PanelHeader />
+        <div className="error-banner">Could not load token usage: {error}</div>
+      </div>
+    )
   if (!data) return <div className="placeholder">Loading token usage…</div>
   if (data.rows.length === 0)
     return (
       <div className="token-panel">
-        <h3>
-        Token usage
-        {data.inProgress && (
-          <>
-            {" "}
-            <Badge tone="gate" title="run in progress — usage still accruing">
-              live
-            </Badge>
-          </>
-        )}
-      </h3>
+        <PanelHeader inProgress={data.inProgress} />
         <div className="muted">No usage data for this run.{data.notes.length > 0 && ` ${data.notes.join(" · ")}`}</div>
       </div>
     )
@@ -58,17 +68,7 @@ export const TokenPanel = ({ runId }: { runId: string }) => {
   const max = Math.max(...data.rows.map((r) => inTotal(r.tokens) + outTotal(r.tokens)))
   return (
     <div className="token-panel">
-      <h3>
-        Token usage
-        {data.inProgress && (
-          <>
-            {" "}
-            <Badge tone="gate" title="run in progress — usage still accruing">
-              live
-            </Badge>
-          </>
-        )}
-      </h3>
+      <PanelHeader inProgress={data.inProgress} />
       <table className="stage-table">
         <thead>
           <tr>
