@@ -45,8 +45,9 @@ token 用量的執行歷史。
 或 `docs/tasks`）才會保留，因此一個裝滿無關檢出的父目錄會保持安靜。
 被略過的比對結果會在啟動時列印到 stderr。
 
-除了旗標之外，你也可以在**使用者層級**的 `~/.agentic-workflow.json`
-（或 `$AGENTIC_WORKFLOW_USER_CONFIG` 所指向的檔案）中加入一個 `hub` 區塊。
+除了旗標之外，你也可以在**使用者層級**的 `~/.config/agentic-workflow/agentic-workflow.json`
+（遵循 `$XDG_CONFIG_HOME`，且當此檔案不存在時仍會讀取舊有的
+`~/.agentic-workflow.json` 作為後備；或 `$AGENTIC_WORKFLOW_USER_CONFIG` 所指向的檔案）中加入一個 `hub` 區塊。
 它只有在沒有給出 `--dir` 時才會被使用；`--port` 仍然優先。管理面板
 橫跨多個儲存庫，因此任何單一儲存庫 `.agentic-workflow.json` 中的 `hub`
 鍵都會被忽略：

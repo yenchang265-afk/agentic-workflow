@@ -395,8 +395,9 @@ echo "== next: authenticate (not automated) =="
 echo "  - GitHub:       gh auth login"
 if [ "$WANT_ADO" -eq 1 ]; then
   echo "  - Azure DevOps: export AZURE_DEVOPS_EXT_PAT=<pat>   (Code read + Pull Request contribute scopes)"
-  echo "    (or put \"pat\" — with organization/selfLogin — in a user-scope ~/.agentic-workflow.json,"
-  echo "     shared across repos; the env var wins if both are set)"
+  echo "    (or put \"pat\" — with organization/selfLogin — in a user-scope config"
+  echo "     (\${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json), shared"
+  echo "     across repos; the env var wins if both are set)"
 fi
 if [ "$WANT_BROWSER" -eq 1 ]; then
   echo "  - chrome-devtools MCP launches its own isolated Chrome profile on first use."

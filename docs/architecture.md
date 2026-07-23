@@ -61,8 +61,9 @@ flowchart TB
   both plugins share: the pure engine and state, the manifest layer, work
   sources + scheduler, the task store, git helpers + worktree isolation,
   snapshots, verdict handling, metrics, and config (resolved by layering an
-  optional user-scope `~/.agentic-workflow.json` under the repo's
-  `.agentic-workflow.json` — see
+  optional user-scope `~/.config/agentic-workflow/agentic-workflow.json`
+  (honoring `$XDG_CONFIG_HOME`, with the legacy `~/.agentic-workflow.json` still
+  read as a fallback) under the repo's `.agentic-workflow.json` — see
   [configuration.md](configuration.md#layers--precedence)). Core never imports a host
   SDK; the entire host surface is the interfaces in
   `packages/core/src/host.ts` (Shell, Client, Log, …). The OpenCode plugin

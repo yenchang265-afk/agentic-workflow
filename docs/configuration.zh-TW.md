@@ -53,7 +53,9 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
 
 設定從兩個可選的層解析而來：
 
-1. **使用者層級**——`~/.agentic-workflow.json`，套用到你執行迴圈的每一個
+1. **使用者層級**——`~/.config/agentic-workflow/agentic-workflow.json`（遵循
+   `$XDG_CONFIG_HOME`；當此檔案不存在時，仍會讀取舊有的
+   `~/.agentic-workflow.json` 作為後備），套用到你執行迴圈的每一個
    儲存庫。用 `AGENTIC_WORKFLOW_USER_CONFIG` 覆寫路徑；設成 `""` 可完全
    停用這一層（例如在 CI 中）。
 2. **儲存庫層級**——儲存庫根目錄的 `.agentic-workflow.json`，會**逐欄位
@@ -75,7 +77,7 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
 
 依慣例把 `codePlatform` 和 `workflows` 留在儲存庫檔案裡：使用者層級的值
 會悄悄套用到*每一個*儲存庫。如果使用者檔案裡放了 PAT，請保護它
-（`chmod 600 ~/.agentic-workflow.json`）；`AZURE_DEVOPS_EXT_PAT` 環境
+（`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`）；`AZURE_DEVOPS_EXT_PAT` 環境
 變數仍然會贏過這兩層。在混合 Windows/WSL 的環境中，注意這兩個世界
 有不同的家目錄——在 WSL 內執行的 host 會解析 WSL 的家目錄；如果你
 橫跨兩者，就把 `AGENTIC_WORKFLOW_USER_CONFIG` 指向同一份檔案。
@@ -89,7 +91,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   在執行期讀取設定的那個目錄（`$AGENTIC_WORKFLOW_DIR`，否則就是目前
   目錄），它會詢問你這個路徑。專案專屬的設定放這裡。
 - **使用者層級**——共用的使用者層級檔案（`$AGENTIC_WORKFLOW_USER_CONFIG`，
-  否則就是 `~/.agentic-workflow.json`），你驅動的每一個儲存庫都會讀取
+  否則就是 `~/.config/agentic-workflow/agentic-workflow.json`），你驅動的每一個儲存庫都會讀取
   它。跨儲存庫共用的設定（`ado` 區塊、審查視角）屬於這裡；儲存庫
   檔案會逐欄位覆寫它（見上方[分層與優先順序](#layers--precedence)）。
 
@@ -214,7 +216,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 ## 管理面板（`hub`——僅限使用者層級）
 
 管理面板只從**使用者層級**設定的 `hub` 區段讀取它的設定
-（`~/.agentic-workflow.json` / `AGENTIC_WORKFLOW_USER_CONFIG`）。管理面板
+（`~/.config/agentic-workflow/agentic-workflow.json` / `AGENTIC_WORKFLOW_USER_CONFIG`）。管理面板
 會同時監看多個儲存庫，所以某個儲存庫 `.agentic-workflow.json` 中的
 `hub` 鍵會被忽略而不是合併：
 
@@ -352,7 +354,7 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
 - **`ado.pat`**——選填；明碼存放的 PAT，作為 `AZURE_DEVOPS_EXT_PAT`
   環境變數未設定時的備援。兩者都設定時**環境變數優先**。優先使用
   環境變數；如果你要用 `ado.pat`，使用者層級的
-  `~/.agentic-workflow.json` 是自然的歸屬（從不提交、跨儲存庫共用）——
+  `~/.config/agentic-workflow/agentic-workflow.json` 是自然的歸屬（從不提交、跨儲存庫共用）——
   在儲存庫檔案中，保持 `.agentic-workflow.json` 加入 gitignore（預設
   就是如此），這樣密鑰就永遠不會被提交。它會傳達到每一個消費者：
   工作來源直接讀取它，而 triage/publish 階段 agent（透過
@@ -373,7 +375,7 @@ id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: tr
   密鑰的代理 token 可以來自你的密鑰管理系統，而非密鑰的路由標頭則
   留在設定裡。一個格式錯誤的環境變數值會被忽略（→ 不覆寫），而
   不是造成致命錯誤。和 `ado.pat` 一樣，攜帶密鑰的標頭該放在使用者
-  層級的 `~/.agentic-workflow.json`（或環境變數）裡，而不是一份會被
+  層級的 `~/.config/agentic-workflow/agentic-workflow.json`（或環境變數）裡，而不是一份會被
   提交的儲存庫檔案裡。注意這只會傳達到驅動程式自己的 `fetch`
   呼叫；階段 agent 自己的原始 `curl`（透過 `$AZURE_DEVOPS_EXT_PAT`
   驗證）不會繼承它——如果它們也需要，就用代理伺服器自己的環境變數
@@ -516,7 +518,7 @@ issue 的 key/id 複製進任務裡。
 有一個變數適用於**每一個 host**：
 
 - **`AGENTIC_WORKFLOW_USER_CONFIG`**——使用者層級設定檔的路徑（預設
-  `~/.agentic-workflow.json`）；設成 `""` 可停用這一層。見
+  `~/.config/agentic-workflow/agentic-workflow.json`）；設成 `""` 可停用這一層。見
   [分層與優先順序](#layers--precedence)。
 
 Claude Code MCP 伺服器額外會讀取兩個目錄指標。這兩者都不適用於

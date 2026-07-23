@@ -11,7 +11,8 @@
  *    channel for persisting env into subsequent Bash executions);
  *  - never overrides a PAT the user already exported (the env var wins);
  *  - a no-op when there is no `ado.pat` in the repo's `.agentic-workflow.json` or
- *    the user-scope `~/.agentic-workflow.json` (repo wins, mirroring the core
+ *    the user-scope config (`${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json`,
+ *    or the legacy `~/.agentic-workflow.json`) — repo wins, mirroring the core
  *    loader's layering; $AGENTIC_WORKFLOW_USER_CONFIG overrides the user path,
  *    "" disables the layer).
  *
@@ -31,12 +32,24 @@ const read = () =>
 /** Single-quote for a POSIX shell (the env file is sourced): wrap in '…', escaping embedded quotes. */
 const shellSingleQuote = (s) => `'${s.replace(/'/g, `'\\''`)}'`
 
-/** User-scope config path: $AGENTIC_WORKFLOW_USER_CONFIG ("" disables), else ~/.agentic-workflow.json. */
+/**
+ * User-scope config path, mirroring core's resolveUserConfigPath:
+ * $AGENTIC_WORKFLOW_USER_CONFIG ("" disables) wins; else
+ * `${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json`,
+ * falling back on read to the pre-XDG `~/.agentic-workflow.json` when only that exists.
+ */
 const userConfigPath = () => {
   const env = process.env.AGENTIC_WORKFLOW_USER_CONFIG
   if (env !== undefined) return env === "" ? null : env
   const home = os.homedir()
-  return home ? path.join(home, ".agentic-workflow.json") : null
+  if (!home) return null
+  const xdg = process.env.XDG_CONFIG_HOME
+  const configHome = xdg && xdg.trim() ? xdg : path.join(home, ".config")
+  const primary = path.join(configHome, "agentic-workflow", "agentic-workflow.json")
+  if (fs.existsSync(primary)) return primary
+  const legacy = path.join(home, ".agentic-workflow.json")
+  if (fs.existsSync(legacy)) return legacy
+  return primary
 }
 
 /** Best-effort `ado.pat` from a config file; undefined when absent/unreadable/malformed. */

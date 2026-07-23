@@ -14,27 +14,31 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./install.sh                    # install both plugins (OpenCode + Claude Code)
+  ./install.sh                    # interactive: detect installed hosts and let you pick
+                                  #   (non-interactive with no target defaults to both)
   ./install.sh opencode           # OpenCode only: symlink into $OPENCODE_CONFIG_DIR or ~/.config/opencode
   ./install.sh claude             # Claude Code only: build mcp-server + link shared skills/references
-  ./install.sh all                # explicit both (same as no target)
+  ./install.sh all                # explicit both (OpenCode + Claude Code)
+  ./install.sh config             # config only: run the wizard, install no plugin files
   ./install.sh [opencode] --copy  # copy instead of symlink (OpenCode half only)
   ./install.sh [opencode] /dir    # install the OpenCode half into an arbitrary config dir
-                                  # (a dir literally named "claude"/"opencode"/"all" needs a slash, e.g. ./claude)
+                                  # (a dir literally named "claude"/"opencode"/"all"/"config" needs a slash, e.g. ./claude)
 
 After installing, a short wizard offers to write an initial .agentic-workflow.json
 into the project the loop will drive (interactive terminals only):
   --config                        # force the config wizard on
   --no-config                     # skip the config wizard (also skips the
                                    # user-scope defaults file below)
-  --user                          # write config to the user scope (~/.agentic-workflow.json), not the repo
+  --user                          # write config to the user scope (see path below), not the repo
   --repo                          # write config to the project's .agentic-workflow.json (default)
   -y, --yes                       # non-interactive: seed a defaults .agentic-workflow.json, no prompts
 
-Every run (regardless of the above) also seeds a fully-expanded user-scope
-~/.agentic-workflow.json — every field at its default, every sitter listed with
-enabled:false — if one doesn't already exist there, so every knob is visible
-without reading docs/configuration.md. Never overwrites an existing file.
+Every run (regardless of the above) also seeds a fully-expanded user-scope config
+at ${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json — every
+field at its default, every sitter listed with enabled:false — if one doesn't
+already exist there, so every knob is visible without reading docs/configuration.md.
+Never overwrites an existing file; a pre-XDG ~/.agentic-workflow.json is still read
+as a fallback and left untouched.
 
 To reverse an install: ./uninstall.sh [opencode|claude|all].
 To clear local run state / backlog / config: ./scripts/clean.sh (see --help).
@@ -43,6 +47,9 @@ EOF
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET=all
+# 1 once a positional target (opencode/claude/all/both/config) is given, so the
+# host-selection menu only runs when the user let the target default.
+TARGET_EXPLICIT=0
 MODE=symlink
 CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
 WANT_CONFIG=1
@@ -56,23 +63,35 @@ CONFIG_SCOPE=""
 TARGET_DIR="${AGENTIC_WORKFLOW_DIR:-$PWD}"
 
 # Where the user-scope config lives, mirroring core's resolveUserConfigPath:
-# $AGENTIC_WORKFLOW_USER_CONFIG when set non-empty, else ~/.agentic-workflow.json.
-# ("" disables the layer for the runtime; for the wizard we fall back to $HOME
-# so a scoped write still has a home, and warn.) Echoes the path, or "" if none.
+# $AGENTIC_WORKFLOW_USER_CONFIG when set non-empty wins; else
+# ${XDG_CONFIG_HOME:-$HOME/.config}/agentic-workflow/agentic-workflow.json,
+# falling back on read to the pre-XDG ~/.agentic-workflow.json when only that
+# exists (so we never shadow a customized legacy file; the XDG path is the write
+# target for new installs). ("" disables the layer for the runtime; for the
+# wizard we still resolve a path so a scoped write has a home, and warn.)
+# Echoes the path, or "" if none.
 user_config_path() {
   if [ -n "${AGENTIC_WORKFLOW_USER_CONFIG-}" ]; then
     printf '%s' "$AGENTIC_WORKFLOW_USER_CONFIG"
-  elif [ -n "${HOME-}" ]; then
-    printf '%s' "$HOME/.agentic-workflow.json"
+    return
+  fi
+  [ -n "${HOME-}" ] || { printf ''; return; }
+  local config_home="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local primary="$config_home/agentic-workflow/agentic-workflow.json"
+  local legacy="$HOME/.agentic-workflow.json"
+  if [ -f "$primary" ]; then
+    printf '%s' "$primary"
+  elif [ -f "$legacy" ]; then
+    printf '%s' "$legacy"
   else
-    printf ''
+    printf '%s' "$primary"
   fi
 }
 
 for arg in "$@"; do
   case "$arg" in
-    opencode|claude|all) TARGET="$arg" ;;
-    both) TARGET=all ;;  # tolerate the historical alias; never let it fall to the config-dir catch-all
+    opencode|claude|all|config) TARGET="$arg"; TARGET_EXPLICIT=1 ;;
+    both) TARGET=all; TARGET_EXPLICIT=1 ;;  # tolerate the historical alias; never let it fall to the config-dir catch-all
     --copy) MODE=copy ;;
     --config) WANT_CONFIG=1 ;;
     --no-config) WANT_CONFIG=0 ;;
@@ -215,6 +234,40 @@ confirm() {
   case "$reply" in [yY] | [yY][eE][sS]) return 0 ;; *) return 1 ;; esac
 }
 
+# Host detection. Claude Code ships a `claude` CLI (and a ~/.claude dir); OpenCode
+# ships an `opencode` CLI. We detect the CLI — the OpenCode config dir is an
+# unreliable signal because this installer creates it.
+has_claude()   { command -v claude   >/dev/null 2>&1 || [ -d "$HOME/.claude" ]; }
+has_opencode() { command -v opencode >/dev/null 2>&1; }
+
+# Interactive host-selection menu, run only when no positional target was given.
+# Sets TARGET to claude|opencode|all|config, defaulting to whatever was detected.
+select_host() {
+  local c_mark o_mark default
+  if has_claude;   then c_mark="✓"; else c_mark="✗"; fi
+  if has_opencode; then o_mark="✓"; else o_mark="✗"; fi
+
+  # Default the choice to the detected host(s): both → 3, one → that one, else 3.
+  if has_claude && has_opencode; then default="3"
+  elif has_claude;   then default="1"
+  elif has_opencode; then default="2"
+  else default="3"; fi
+
+  echo
+  echo "Detected hosts: Claude Code $c_mark   OpenCode $o_mark"
+  echo "Install agentic-workflow for which?"
+  echo "  [1] Claude Code"
+  echo "  [2] OpenCode"
+  echo "  [3] Both (default)"
+  echo "  [4] Config only — no plugin files, just the .agentic-workflow.json wizard"
+  case "$(ask "Choice" "$default")" in
+    1) TARGET=claude ;;
+    2) TARGET=opencode ;;
+    4) TARGET=config ;;
+    *) TARGET=all ;;
+  esac
+}
+
 # Escape a string's inner text for embedding in a JSON double-quoted value.
 # Backslash MUST be replaced first. ${var//old/new} is available in bash 3.2.
 json_escape() {
@@ -305,22 +358,24 @@ configure() {
 
   if [ "$platform" = "ado" ]; then
     local org project repo login
-    org="$(ask_required "Azure DevOps organization URL (e.g. https://dev.azure.com/acme)")"
-    project="$(ask_required "Azure DevOps project name")"
-    if [ -z "$org" ] || [ -z "$project" ]; then
-      skip "config wizard — Azure DevOps organization and project are required (aborted, nothing written)"
-      return
-    fi
-    # A PAT carries no reliable email identity, so selfLogin is required for ado.
+    # organization/project/repository are optional here — they can be set later
+    # in the project's own .agentic-workflow.json. Only selfLogin is required: a
+    # PAT carries no reliable email identity, so comment filtering needs it.
+    org="$(ask "Azure DevOps organization URL (blank = set later in the project's .agentic-workflow.json)" "")"
+    project="$(ask "Azure DevOps project name (blank = set later in the project's .agentic-workflow.json)" "")"
+    repo="$(ask "Repository name (blank = all repos / set later in the project)" "")"
     login="$(ask_required "Your ADO login/email for comment filtering (ado.selfLogin)")"
     if [ -z "$login" ]; then
       skip "config wizard — ado.selfLogin is required for ado (a PAT cannot resolve it; aborted, nothing written)"
       return
     fi
-    repo="$(ask "Repository name (blank = all repos in the project)" "")"
-    local ado="\"organization\":\"$(json_escape "$org")\",\"project\":\"$(json_escape "$project")\""
-    [ -n "$repo" ] && ado="$ado,\"repository\":\"$(json_escape "$repo")\""
-    ado="$ado,\"selfLogin\":\"$(json_escape "$login")\""
+    # Emit only the fields the user supplied; an ado section with just selfLogin
+    # is valid (org/project/repo set in the repo file later).
+    local ado=""
+    [ -n "$org" ]     && ado="${ado:+$ado,}\"organization\":\"$(json_escape "$org")\""
+    [ -n "$project" ] && ado="${ado:+$ado,}\"project\":\"$(json_escape "$project")\""
+    [ -n "$repo" ]    && ado="${ado:+$ado,}\"repository\":\"$(json_escape "$repo")\""
+    ado="${ado:+$ado,}\"selfLogin\":\"$(json_escape "$login")\""
     add_member "\"ado\":{$ado}"
     echo
     echo "  → Azure DevOps auth: a PAT scoped to Code (read) + Pull Request (contribute)."
@@ -466,6 +521,7 @@ configure() {
   fi
 
   flush_workflows
+  mkdir -p "$(dirname "$target_config")"
   printf '{\n  %s\n}\n' "$MEMBERS" > "$target_config"
 
   # Safety net: confirm the file parses. We author it deterministically, so a
@@ -508,6 +564,7 @@ maybe_configure() {
     if [ -f "$target_config" ]; then
       skip "$target_config already exists — leaving it untouched"
     else
+      mkdir -p "$(dirname "$target_config")"
       printf '{}\n' > "$target_config"
       ok "wrote defaults $target_config ($scope scope)"
     fi
@@ -547,6 +604,7 @@ ensure_user_defaults() {
     echo "note: \$AGENTIC_WORKFLOW_USER_CONFIG is set to \"\" (user layer disabled at runtime);" >&2
     echo "      writing to $target_config anyway — unset it to have the loop read this file." >&2
   fi
+  mkdir -p "$(dirname "$target_config")"
   cat <<'EOF' > "$target_config"
 {
   "maxIterations": 3,
@@ -588,6 +646,12 @@ EOF
   echo "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
 }
 
+# No positional target given: in an interactive shell, let the user pick a host
+# (defaulting to what's detected). Non-interactive keeps today's `all` default.
+if [ "$TARGET_EXPLICIT" -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ -z "${CI:-}" ]; then
+  select_host
+fi
+
 case "$TARGET" in
   opencode) install_opencode ;;
   claude) install_claude ;;
@@ -596,6 +660,7 @@ case "$TARGET" in
     echo
     install_claude
     ;;
+  config) echo "Config only — skipping plugin install (OpenCode + Claude Code)." ;;
 esac
 
 maybe_configure

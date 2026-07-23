@@ -17,6 +17,7 @@ import {
   unreviewedAxes,
   parseConfig,
   platformFor,
+  resolveUserConfigPath,
   trackerUrl,
   triggerFor,
 } from "./config.js"
@@ -561,4 +562,82 @@ test("review-sitter is opt-in like every non-engineering kind; its query knob ri
   const c = parseConfig({ workflows: { "review-sitter": { enabled: true, query: "is:open review-requested:@me" } } })
   assert.deepEqual(enabledWorkflowKinds(c), ["engineering", "review-sitter"])
   assert.equal(c.workflows["review-sitter"]?.["query"], "is:open review-requested:@me")
+})
+
+
+// --- resolveUserConfigPath: XDG location + legacy read-fallback -------------
+
+// Run `fn` with os.homedir stubbed to `home` and the two config env vars in a
+// known state, restoring everything afterward. Node's test runner shares the
+// process env, so save/restore keeps these cases isolated.
+const withUserConfigEnv = (
+  home: string,
+  env: { XDG_CONFIG_HOME?: string; AGENTIC_WORKFLOW_USER_CONFIG?: string },
+  fn: () => void,
+) => {
+  const origHome = os.homedir
+  const origXdg = process.env.XDG_CONFIG_HOME
+  const origUser = process.env.AGENTIC_WORKFLOW_USER_CONFIG
+  os.homedir = () => home
+  if ("XDG_CONFIG_HOME" in env) process.env.XDG_CONFIG_HOME = env.XDG_CONFIG_HOME
+  else delete process.env.XDG_CONFIG_HOME
+  if ("AGENTIC_WORKFLOW_USER_CONFIG" in env) process.env.AGENTIC_WORKFLOW_USER_CONFIG = env.AGENTIC_WORKFLOW_USER_CONFIG!
+  else delete process.env.AGENTIC_WORKFLOW_USER_CONFIG
+  try {
+    fn()
+  } finally {
+    os.homedir = origHome
+    if (origXdg === undefined) delete process.env.XDG_CONFIG_HOME
+    else process.env.XDG_CONFIG_HOME = origXdg
+    if (origUser === undefined) delete process.env.AGENTIC_WORKFLOW_USER_CONFIG
+    else process.env.AGENTIC_WORKFLOW_USER_CONFIG = origUser
+  }
+}
+
+test("resolveUserConfigPath defaults to the XDG location on a clean home", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "wf-home-"))
+  withUserConfigEnv(home, {}, () => {
+    assert.equal(
+      resolveUserConfigPath(),
+      path.join(home, ".config", "agentic-workflow", "agentic-workflow.json"),
+    )
+  })
+})
+
+test("resolveUserConfigPath honors $XDG_CONFIG_HOME", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "wf-home-"))
+  const xdg = fs.mkdtempSync(path.join(os.tmpdir(), "wf-xdg-"))
+  withUserConfigEnv(home, { XDG_CONFIG_HOME: xdg }, () => {
+    assert.equal(resolveUserConfigPath(), path.join(xdg, "agentic-workflow", "agentic-workflow.json"))
+  })
+})
+
+test("resolveUserConfigPath falls back to the legacy ~/.agentic-workflow.json when only it exists", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "wf-home-"))
+  const legacy = path.join(home, ".agentic-workflow.json")
+  fs.writeFileSync(legacy, "{}")
+  withUserConfigEnv(home, {}, () => {
+    assert.equal(resolveUserConfigPath(), legacy)
+  })
+})
+
+test("resolveUserConfigPath prefers the XDG path over legacy when both exist", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "wf-home-"))
+  fs.writeFileSync(path.join(home, ".agentic-workflow.json"), "{}")
+  const xdgPath = path.join(home, ".config", "agentic-workflow", "agentic-workflow.json")
+  fs.mkdirSync(path.dirname(xdgPath), { recursive: true })
+  fs.writeFileSync(xdgPath, "{}")
+  withUserConfigEnv(home, {}, () => {
+    assert.equal(resolveUserConfigPath(), xdgPath)
+  })
+})
+
+test("resolveUserConfigPath: $AGENTIC_WORKFLOW_USER_CONFIG wins, and \"\" disables the layer", () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "wf-home-"))
+  withUserConfigEnv(home, { AGENTIC_WORKFLOW_USER_CONFIG: "/custom/wf.json" }, () => {
+    assert.equal(resolveUserConfigPath(), "/custom/wf.json")
+  })
+  withUserConfigEnv(home, { AGENTIC_WORKFLOW_USER_CONFIG: "" }, () => {
+    assert.equal(resolveUserConfigPath(), null)
+  })
 })

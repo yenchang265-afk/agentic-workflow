@@ -218,7 +218,9 @@ push to any branch, comment anywhere, sometimes merge.
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
   static YAML and deliberately carries **both** platforms' globs. PAT at-rest
   note: besides the env var, the PAT may sit as `ado.pat` in the (gitignored)
-  repo `.agentic-workflow.json` or the user-scope `~/.agentic-workflow.json` — the
+  repo `.agentic-workflow.json` or the user-scope
+  `~/.config/agentic-workflow/agentic-workflow.json` (honoring `$XDG_CONFIG_HOME`,
+  with the legacy `~/.agentic-workflow.json` still read as a fallback) — the
   user file lives outside every repo so it can never be committed, but it is
   plaintext on disk; keep it `chmod 600`. The env var wins over both files.
 

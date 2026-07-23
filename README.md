@@ -208,7 +208,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   monitor (backlog board, live gate notifications, run history, per-stage
   token usage) and visual loop creator; monitors one or many repos (`--dir`
   is repeatable and takes `*` wildcards, or set `hub.repos` in the user-scope
-  `~/.agentic-workflow.json` — no repos configured, no watching)
+  `~/.config/agentic-workflow/agentic-workflow.json` — no repos configured, no watching)
 
 Each topic is canonical in one file — see [docs/README.md](docs/README.md)
 for the full index of which doc owns which topic. Update the canonical file

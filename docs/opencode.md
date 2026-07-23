@@ -37,8 +37,9 @@ for the Claude Code variant, which offers the same choices inline instead.
 
 All of the above (and the optional hardening: worktrees, review lenses,
 secret redaction, run summaries) is configured in `.agentic-workflow.json`,
-layered over an optional user-scope `~/.agentic-workflow.json` (repo wins) —
-see [configuration.md](configuration.md).
+layered over an optional user-scope `~/.config/agentic-workflow/agentic-workflow.json`
+(honoring `$XDG_CONFIG_HOME`, with the legacy `~/.agentic-workflow.json` still read
+as a fallback; repo wins) — see [configuration.md](configuration.md).
 
 ## Commands
 

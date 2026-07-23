@@ -68,8 +68,10 @@ English | [繁體中文](migration.zh-TW.md)
 ## To layered configuration (user scope + repo scope)
 
 - Config is now resolved from **two layers**: an optional user-scope
-  `~/.agentic-workflow.json` (all repos) merged under the repo's
-  `.agentic-workflow.json`, repo winning field by field — see
+  `~/.config/agentic-workflow/agentic-workflow.json` (all repos; honoring
+  `$XDG_CONFIG_HOME`, with the legacy `~/.agentic-workflow.json` still read as a
+  fallback) merged under the repo's `.agentic-workflow.json`, repo winning field
+  by field — see
   [configuration.md](configuration.md#layers--precedence). Nothing to migrate:
   a repo-only setup behaves exactly as before.
 - **Heads-up**: a stray `~/.agentic-workflow.json` left over from experimentation

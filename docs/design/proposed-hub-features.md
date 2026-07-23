@@ -324,10 +324,12 @@ writing a key nothing reads.
 
 **Edit one named layer; compute provenance in hub, not core.**
 
-`mergeConfigLayers:248` merges the user layer (`~/.agentic-workflow.json`) **under**
+`mergeConfigLayers:248` merges the user layer
+(`~/.config/agentic-workflow/agentic-workflow.json`, honoring `$XDG_CONFIG_HOME`,
+with the legacy `~/.agentic-workflow.json` still read as a fallback) **under**
 the repo layer, *before* the parse. An editor that showed the *effective* merged
 config and saved it back to the repo file would **flatten the user layer into
-the repo file** — writing `ado.pat` out of `~/.agentic-workflow.json` and into a
+the repo file** — writing `ado.pat` out of `~/.config/agentic-workflow/agentic-workflow.json` and into a
 file that `config.ts:121-126` explicitly warns must stay gitignored.
 
 **That is secret exfiltration, and it is the single worst thing this feature

@@ -66,7 +66,9 @@
 ## 遷移到分層設定（使用者層級 + 儲存庫層級）
 
 - 設定現在從**兩個層**解析而來：一個可選的使用者層級
-  `~/.agentic-workflow.json`（適用所有儲存庫），疊放在儲存庫的
+  `~/.config/agentic-workflow/agentic-workflow.json`（適用所有儲存庫；遵循
+  `$XDG_CONFIG_HOME`，且當此檔案不存在時仍會讀取舊有的
+  `~/.agentic-workflow.json` 作為後備），疊放在儲存庫的
   `.agentic-workflow.json` 之下，儲存庫層級逐欄位優先——見
   [configuration.md](configuration.md#layers--precedence)。不需要
   遷移任何東西：一個只有儲存庫層級的設定行為和之前完全一樣。

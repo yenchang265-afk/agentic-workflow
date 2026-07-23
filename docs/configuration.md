@@ -54,7 +54,9 @@ its tradeoffs.
 
 Config is resolved from two optional layers:
 
-1. **User scope** — `~/.agentic-workflow.json`, applied to every repo you run the
+1. **User scope** — `~/.config/agentic-workflow/agentic-workflow.json` (honoring
+   `$XDG_CONFIG_HOME`; the legacy `~/.agentic-workflow.json` is still read as a
+   fallback when this file is absent), applied to every repo you run the
    loop in. Override the path with `AGENTIC_WORKFLOW_USER_CONFIG`; set it to `""`
    to disable the layer entirely (e.g. in CI).
 2. **Repo scope** — `.agentic-workflow.json` at the repo root, which **overrides
@@ -75,7 +77,7 @@ combined view — the intended split being:
 
 Keep `codePlatform` and `workflows` in the repo file by convention: a user-scope
 value silently applies to *every* repo. If the user file holds a PAT, protect
-it (`chmod 600 ~/.agentic-workflow.json`); the `AZURE_DEVOPS_EXT_PAT` env var
+it (`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`); the `AZURE_DEVOPS_EXT_PAT` env var
 still wins over both layers. On a mixed Windows/WSL setup note the two worlds
 have different home directories — hosts running inside WSL resolve the WSL
 home; point `AGENTIC_WORKFLOW_USER_CONFIG` at one file if you straddle both.
@@ -89,7 +91,7 @@ Its first question is the **scope** — where to write:
   plugin reads config from at runtime (`$AGENTIC_WORKFLOW_DIR`, else the current
   directory), which it prompts for. Per-project settings live here.
 - **user scope** — the shared user-scope file (`$AGENTIC_WORKFLOW_USER_CONFIG`, else
-  `~/.agentic-workflow.json`), read for every repo you drive. Settings shared across
+  `~/.config/agentic-workflow/agentic-workflow.json`), read for every repo you drive. Settings shared across
   repos (the `ado` block, review lenses) belong here; a repo file overrides it
   field by field (see [Layers & precedence](#layers--precedence) above).
 
@@ -243,7 +245,7 @@ it. The warnings are advisory: they annotate a save, never block it. See
 ## Admin hub (`hub` — user scope only)
 
 The hub reads its settings from the `hub` section of the **user-scope**
-config only (`~/.agentic-workflow.json` / `AGENTIC_WORKFLOW_USER_CONFIG`). The hub
+config only (`~/.config/agentic-workflow/agentic-workflow.json` / `AGENTIC_WORKFLOW_USER_CONFIG`). The hub
 monitors many repos at once, so a `hub` key in a repo's `.agentic-workflow.json`
 is ignored rather than merged:
 
@@ -388,7 +390,7 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
 - **`ado.pat`** — optional; the PAT in plaintext, as a fallback for when the
   `AZURE_DEVOPS_EXT_PAT` env var is unset. **The env var wins** when both are
   set. Prefer the env var; if you use `ado.pat`, the user-scope
-  `~/.agentic-workflow.json` is the natural home (never committed, shared across
+  `~/.config/agentic-workflow/agentic-workflow.json` is the natural home (never committed, shared across
   repos) — in the repo file, keep `.agentic-workflow.json` gitignored (it is by
   default) so the secret is never committed. It reaches
   every consumer: the work source reads it directly, and the triage/publish
@@ -408,7 +410,7 @@ kind or stage; mutating-looking ADO MCP tool names are blocked best-effort.
   `AZURE_DEVOPS_EXT_PAT` overrides `ado.pat`), so a secret proxy token can come
   from your secret manager while non-secret routing headers stay in config. A
   malformed env value is ignored (→ no override), never fatal. Like `ado.pat`,
-  a header that carries a secret belongs in the user-scope `~/.agentic-workflow.json`
+  a header that carries a secret belongs in the user-scope `~/.config/agentic-workflow/agentic-workflow.json`
   (or the env var), not a committed repo file. Note this reaches only the
   driver's own `fetch` calls; the stage agents' raw `curl` (which authenticate
   via `$AZURE_DEVOPS_EXT_PAT`) do not inherit it — front those with the proxy's
@@ -547,7 +549,7 @@ Impact on the commands:
 One variable applies to **every host**:
 
 - **`AGENTIC_WORKFLOW_USER_CONFIG`** — path of the user-scope config file
-  (default `~/.agentic-workflow.json`); set to `""` to disable the layer. See
+  (default `~/.config/agentic-workflow/agentic-workflow.json`); set to `""` to disable the layer. See
   [Layers & precedence](#layers--precedence).
 
 The Claude Code MCP server additionally reads two directory pointers.

@@ -58,7 +58,9 @@ flowchart TB
 - **核心套件**——`@agentic-workflow/core`（npm workspace）承載兩個外掛共用
   的一切：純粹的引擎與狀態、清單層、工作來源 + 排程器、任務儲存、git
   輔助工具 + worktree 隔離、快照、裁定處理、指標，以及設定（透過把可選
-  的使用者層級 `~/.agentic-workflow.json` 疊放在儲存庫的
+  的使用者層級 `~/.config/agentic-workflow/agentic-workflow.json`（遵循
+  `$XDG_CONFIG_HOME`，且當此檔案不存在時仍會讀取舊有的
+  `~/.agentic-workflow.json` 作為後備）疊放在儲存庫的
   `.agentic-workflow.json` 之下解析出來——見
   [configuration.md](configuration.md#layers--precedence)）。核心套件
   從不匯入 host 的 SDK；整個 host 介面就是 `packages/core/src/host.ts`

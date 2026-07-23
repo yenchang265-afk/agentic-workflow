@@ -302,16 +302,34 @@ const CONFIG_FILE = ".agentic-workflow.json"
 /** Env override for the user-scope config path; set to "" to disable the layer (e.g. in CI). */
 export const USER_CONFIG_ENV = "AGENTIC_WORKFLOW_USER_CONFIG"
 
+/** New user-scope location, under the XDG config home: `<xdg>/agentic-workflow/agentic-workflow.json`. */
+const USER_CONFIG_SUBPATH = ["agentic-workflow", "agentic-workflow.json"] as const
+/** Pre-XDG location read as a fallback so existing installs keep working: `~/.agentic-workflow.json`. */
+const LEGACY_USER_CONFIG_FILE = ".agentic-workflow.json"
+
+/** $XDG_CONFIG_HOME when set to a non-blank value, else `~/.config`. */
+const xdgConfigHome = (home: string): string => {
+  const xdg = process.env.XDG_CONFIG_HOME
+  return xdg && xdg.trim() ? xdg : path.join(home, ".config")
+}
+
 /**
  * Where the user-scope config lives: $AGENTIC_WORKFLOW_USER_CONFIG when set ("" →
- * layer disabled), else `~/.agentic-workflow.json`. Returns null when the layer is
- * disabled or no home directory can be resolved.
+ * layer disabled) wins. Otherwise `${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json`,
+ * falling back on read to the pre-XDG `~/.agentic-workflow.json` when only that
+ * exists (so existing installs keep working; the XDG path is the write target for
+ * new installs). Returns null when the layer is disabled or no home resolves.
  */
 export const resolveUserConfigPath = (): string | null => {
   const env = process.env[USER_CONFIG_ENV]
   if (env !== undefined) return env === "" ? null : env
   const home = os.homedir()
-  return home ? path.join(home, CONFIG_FILE) : null
+  if (!home) return null
+  const primary = path.join(xdgConfigHome(home), ...USER_CONFIG_SUBPATH)
+  if (fs.existsSync(primary)) return primary
+  const legacy = path.join(home, LEGACY_USER_CONFIG_FILE)
+  if (fs.existsSync(legacy)) return legacy
+  return primary
 }
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>

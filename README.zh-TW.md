@@ -192,7 +192,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
   hub，測試版）**（`npm run hub -- --dir /path/to/repo` → http://127.0.0.1:4317）：
   工作流程監視器（待辦看板、即時把關點通知、執行歷史、按階段的 token 用量）和
   視覺化工作流程建立器；可以監看一個或多個儲存庫（`--dir` 可重複且支援 `*`
-  萬用字元，或者在使用者層級 `~/.agentic-workflow.json` 中設定 `hub.repos` —— 不設定
+  萬用字元，或者在使用者層級 `~/.config/agentic-workflow/agentic-workflow.json` 中設定 `hub.repos` —— 不設定
   儲存庫就不會監看）
 
 每個主題只在一份檔案中是權威的——完整的「哪份文件擁有哪個主題」索引見

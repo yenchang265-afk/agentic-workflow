@@ -47,7 +47,9 @@ unrelated checkouts stays quiet. Skipped matches are listed on stderr at
 startup.
 
 Instead of flags you can add a `hub` section to the **user-scope**
-`~/.agentic-workflow.json` (or the file `$AGENTIC_WORKFLOW_USER_CONFIG` points at).
+`~/.config/agentic-workflow/agentic-workflow.json` (honoring `$XDG_CONFIG_HOME`,
+with the legacy `~/.agentic-workflow.json` still read as a fallback; or the file
+`$AGENTIC_WORKFLOW_USER_CONFIG` points at).
 It is used only when no `--dir` is given; `--port` still wins. The hub spans
 repos, so a `hub` key inside any single repo's `.agentic-workflow.json` is
 ignored:

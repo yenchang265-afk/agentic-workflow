@@ -156,7 +156,9 @@ sitter 在 `/agentic-workflow:pr-sitter` 上。
 ## Configuration
 
 儲存庫根目錄下可選的 `.agentic-workflow.json`，疊加在使用者層級的
-`~/.agentic-workflow.json` 之上（逐欄位比較時儲存庫層級勝出；所有欄位
+`~/.config/agentic-workflow/agentic-workflow.json` 之上（遵循 `$XDG_CONFIG_HOME`；
+當此檔案不存在時，仍會讀取舊有的 `~/.agentic-workflow.json` 作為後備）
+（逐欄位比較時儲存庫層級勝出；所有欄位
 都有預設值）——完整的欄位參考見
 [`docs/configuration.md`](../../docs/configuration.md)。schema 與
 OpenCode 外掛相同，**只是少了** `watchIntervalMinutes`（這裡沒有 watch

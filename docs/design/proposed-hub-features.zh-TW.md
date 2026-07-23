@@ -313,10 +313,12 @@ bug。
 
 **編輯一個具名的層；在管理面板端計算來源歸屬，而不是在核心端。**
 
-`mergeConfigLayers:248` 會在解析*之前*，把使用者層（`~/.agentic-workflow.json`）
+`mergeConfigLayers:248` 會在解析*之前*，把使用者層
+（`~/.config/agentic-workflow/agentic-workflow.json`，遵循 `$XDG_CONFIG_HOME`，
+且當此檔案不存在時仍會讀取舊有的 `~/.agentic-workflow.json` 作為後備）
 合併到儲存庫層**之下**。如果編輯器顯示*生效後*的合併設定，並把它存回儲存
 庫的檔案，就會**把使用者層攤平寫進儲存庫的檔案**——把 `ado.pat` 從
-`~/.agentic-workflow.json` 寫進一個 `config.ts:121-126` 明確警告過必須保持
+`~/.config/agentic-workflow/agentic-workflow.json` 寫進一個 `config.ts:121-126` 明確警告過必須保持
 gitignore 的檔案。
 
 **那就是機密外洩，也是這個功能可能做出最糟的一件事。**四道防護欄：

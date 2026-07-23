@@ -158,7 +158,9 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
 ## Configuration
 
 Optional `.agentic-workflow.json` at the repo root, layered over a user-scope
-`~/.agentic-workflow.json` (repo wins field by field; all fields default) — full
+`~/.config/agentic-workflow/agentic-workflow.json` — honoring `$XDG_CONFIG_HOME`,
+with the legacy `~/.agentic-workflow.json` still read as a fallback (repo wins
+field by field; all fields default) — full
 field reference in [`docs/configuration.md`](../../docs/configuration.md). Same
 schema as the OpenCode plugin **minus** `watchIntervalMinutes` (no watch mode
 here — see below); `workflows.<kind>.trigger` parses but is a no-op on this
