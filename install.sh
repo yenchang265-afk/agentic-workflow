@@ -15,7 +15,8 @@ usage() {
   cat <<'EOF'
 Usage:
   ./install.sh                    # interactive: detect installed hosts and let you pick
-                                  #   (non-interactive with no target defaults to both)
+                                  #   (non-interactive with no target installs only the
+                                  #    detected host(s); both when neither CLI is found)
   ./install.sh opencode           # OpenCode only: symlink into $OPENCODE_CONFIG_DIR or ~/.config/opencode
   ./install.sh claude             # Claude Code only: build mcp-server + link shared skills/references
   ./install.sh all                # explicit both (OpenCode + Claude Code)
@@ -646,10 +647,34 @@ EOF
   echo "         See docs/configuration.md for every constraint and the ado/projectManagement sections."
 }
 
+# Pick a target from the detected hosts when the user didn't name one. Echoes
+# claude|opencode|all: both detected (or neither) → all; exactly one → that one.
+detect_default_target() {
+  if has_claude && has_opencode; then printf 'all'
+  elif has_claude;   then printf 'claude'
+  elif has_opencode; then printf 'opencode'
+  else printf 'all'; fi
+}
+
 # No positional target given: in an interactive shell, let the user pick a host
-# (defaulting to what's detected). Non-interactive keeps today's `all` default.
-if [ "$TARGET_EXPLICIT" -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ -z "${CI:-}" ]; then
-  select_host
+# (defaulting to what's detected). Non-interactive installs only the detected
+# host(s) instead of blindly doing both — falling back to `all` only when
+# neither CLI is found (fresh machine; better to install both than nothing).
+if [ "$TARGET_EXPLICIT" -eq 0 ]; then
+  if [ -t 0 ] && [ -t 1 ] && [ -z "${CI:-}" ]; then
+    select_host
+  else
+    TARGET="$(detect_default_target)"
+    if [ "$TARGET" = all ] && ! has_claude && ! has_opencode; then
+      echo "note: no 'claude' or 'opencode' CLI detected — installing both halves." >&2
+    else
+      echo "note: no target given; installing for detected host(s): $TARGET" >&2
+    fi
+  fi
+elif [ "$TARGET" = claude ] && ! has_claude; then
+  echo "note: installing the Claude Code half, but no 'claude' CLI / ~/.claude was detected." >&2
+elif [ "$TARGET" = opencode ] && ! has_opencode; then
+  echo "note: installing the OpenCode half, but no 'opencode' CLI was detected." >&2
 fi
 
 case "$TARGET" in
