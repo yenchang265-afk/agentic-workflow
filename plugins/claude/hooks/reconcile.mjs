@@ -34,9 +34,9 @@ var listDir = async (client, directory, rel) => {
     return [];
   }
 };
-var auditBacklog = async (client, directory, tasksDir) => {
+var auditBacklog = async (client, directory, tasksDir, statuses = STATUSES) => {
   const root = await listDir(client, directory, tasksDir);
-  const unknownDirs = root.filter((n) => n.type === "directory" && !n.name.startsWith(".")).map((n) => n.name).filter((name) => !STATUSES.includes(name) && !KNOWN_NON_STATUS_DIRS.includes(name)).sort();
+  const unknownDirs = root.filter((n) => n.type === "directory" && !n.name.startsWith(".")).map((n) => n.name).filter((name) => !statuses.includes(name) && !KNOWN_NON_STATUS_DIRS.includes(name)).sort();
   const strayFiles = root.filter((n) => n.type === "file" && isMarkdown(n.name)).map((n) => `${tasksDir}/${n.name}`);
   for (const dir of unknownDirs) {
     const nodes = await listDir(client, directory, `${tasksDir}/${dir}`);
@@ -46,7 +46,7 @@ var auditBacklog = async (client, directory, tasksDir) => {
     }
   }
   const seen = /* @__PURE__ */ new Map();
-  for (const status of STATUSES) {
+  for (const status of statuses) {
     const nodes = await listDir(client, directory, `${tasksDir}/${status}`);
     for (const n of nodes) {
       if (n.type !== "file" || !isMarkdown(n.name))
@@ -55,7 +55,7 @@ var auditBacklog = async (client, directory, tasksDir) => {
       seen.set(id, [...seen.get(id) ?? [], status]);
     }
   }
-  const duplicates = [...seen.entries()].filter(([, statuses]) => statuses.length > 1).map(([id, statuses]) => ({ id, statuses })).sort((a, b) => a.id.localeCompare(b.id));
+  const duplicates = [...seen.entries()].filter(([, statuses2]) => statuses2.length > 1).map(([id, statuses2]) => ({ id, statuses: statuses2 })).sort((a, b) => a.id.localeCompare(b.id));
   return { unknownDirs, strayFiles, duplicates };
 };
 
