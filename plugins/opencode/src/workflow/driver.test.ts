@@ -8,6 +8,7 @@ import type { Config } from "../config.ts"
 import {
   abortedSessionID,
   claimSkipReason,
+  deriveActivity,
   drive,
   handleApprove,
   handleCommand,
@@ -1092,6 +1093,37 @@ test("a timed-out stage aborts the orphaned session turn before unwinding", asyn
 })
 
 /**
+ * Activity instrumentation: the response's tool parts are aggregated per tool
+ * (count + errors) and the files write-tools touched are collected — the "what
+ * did the agent DO" signal the captured text can't answer.
+ */
+test("deriveActivity aggregates tool calls and collects written files", () => {
+  const activity = deriveActivity([
+    { type: "text", text: "ignored" },
+    { type: "tool", tool: "bash", state: { status: "completed" } },
+    { type: "tool", tool: "bash", state: { status: "error" } },
+    { type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "src/a.ts" } } },
+    { type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "src/a.ts" } } },
+    { type: "tool", tool: "write", state: { status: "completed", input: { path: "src/b.ts" } } },
+    { type: "tool", tool: "read", state: { status: "completed", input: { filePath: "src/never.ts" } } },
+  ])
+  // bash first (highest count), then edit, then write/read tie broken by name.
+  assert.deepEqual(activity?.tools, [
+    { tool: "bash", count: 2, errors: 1 },
+    { tool: "edit", count: 2, errors: 0 },
+    { tool: "read", count: 1, errors: 0 },
+    { tool: "write", count: 1, errors: 0 },
+  ])
+  // read is not a write tool — its path is NOT collected; edit dedups a.ts.
+  assert.deepEqual(activity?.files, ["src/a.ts", "src/b.ts"])
+})
+
+test("deriveActivity returns undefined when no tool parts are present", () => {
+  assert.equal(deriveActivity([{ type: "text", text: "just text" }]), undefined)
+  assert.equal(deriveActivity([]), undefined)
+})
+
+/**
  * Token instrumentation: the assistant message's usage totals (tokens/cost/
  * model) must land in the run metrics — the summary table gains token/cost
  * columns and the structured sidecar (`runs/<id>.metrics.json`) records the
@@ -1112,7 +1144,11 @@ test("drive records stage token usage into the run summary and metrics sidecar",
               cost: 0.1234,
               modelID: "claude-sonnet-5",
             },
-            parts: [{ type: "text", text: "triaged: nothing to do" }],
+            parts: [
+              { type: "text", text: "triaged: nothing to do" },
+              { type: "tool", tool: "bash", state: { status: "completed" } },
+              { type: "tool", tool: "edit", state: { status: "completed", input: { filePath: "src/x.ts" } } },
+            ],
           },
         }
       },
@@ -1142,6 +1178,11 @@ test("drive records stage token usage into the run summary and metrics sidecar",
   assert.match(sidecarWrite ?? "", /"sessionID": "sess-tokens"/)
   assert.match(sidecarWrite ?? "", /"input": 10000/)
   assert.match(sidecarWrite ?? "", /"model": "claude-sonnet-5"/)
+  // Per-stage tool/file activity landed alongside the tokens.
+  assert.match(sidecarWrite ?? "", /"tool": "bash"/)
+  assert.match(sidecarWrite ?? "", /"tool": "edit"/)
+  assert.match(sidecarWrite ?? "", /"files"/)
+  assert.match(sidecarWrite ?? "", /src\/x\.ts/)
 })
 
 /**

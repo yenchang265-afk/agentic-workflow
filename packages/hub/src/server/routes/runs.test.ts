@@ -31,6 +31,24 @@ const makeFixture = (): string => {
   fs.writeFileSync(path.join(runs, "fix-bar.md"), SUMMARY)
   fs.writeFileSync(path.join(runs, "no-summary.md"), "\n## build · iteration 1 · 2026-07-06T10:00:00.000Z\n\nbuilt it\n")
   fs.writeFileSync(
+    path.join(runs, "fix-bar.metrics.json"),
+    JSON.stringify({
+      version: 1,
+      runs: [
+        {
+          endedAt: "2026-07-05T13:16:25.138Z",
+          outcome: "done",
+          detail: "",
+          host: "opencode",
+          samples: [
+            { stage: "build", iteration: 0, ms: 20_000, tools: [{ tool: "edit", count: 3, errors: 0 }], files: ["src/x.ts"] },
+            { stage: "verify", iteration: 0, ms: 16_000, verdict: "PASS" }, // no tools → no activity row
+          ],
+        },
+      ],
+    }),
+  )
+  fs.writeFileSync(
     path.join(runs, "fix-bar.state.json"),
     JSON.stringify({
       kind: "engineering",
@@ -105,6 +123,21 @@ test("getRunDetail returns parsed log + display snapshot", async () => {
   assert.equal(body.snapshot?.taskId, "fix-bar")
   assert.equal(body.snapshot?.branch, "feature/fix-bar")
   assert.deepEqual(body.snapshot?.artifactStages, ["plan", "build"])
+  // Per-stage activity joined from the sidecar, keyed 1-based to match log sections.
+  // Only the build sample carried tools; the verify sample (no tools) yields no row.
+  assert.equal(body.activity?.length, 1)
+  assert.equal(body.activity?.[0]?.stage, "build")
+  assert.equal(body.activity?.[0]?.iteration, 1)
+  assert.deepEqual(body.activity?.[0]?.tools, [{ tool: "edit", count: 3, errors: 0 }])
+  assert.deepEqual(body.activity?.[0]?.files, ["src/x.ts"])
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("getRunDetail omits activity for a run with no metrics sidecar", async () => {
+  const dir = makeFixture()
+  const res = await getRunDetail(depsFor(dir), { params: { id: "no-summary" }, query: new URLSearchParams() })
+  const body = res.body as RunDetailResponse
+  assert.equal(body.activity, undefined)
   fs.rmSync(dir, { recursive: true, force: true })
 })
 

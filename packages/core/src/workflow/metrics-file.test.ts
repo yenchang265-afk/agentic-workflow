@@ -41,6 +41,35 @@ test("appendRunMetrics appends to existing content and recovers from corrupt fil
   assert.equal(recovered?.runs.length, 1)
 })
 
+test("per-stage tool/file activity round-trips through the sidecar", () => {
+  const withActivity: RunEntry = {
+    ...entry,
+    samples: [
+      {
+        stage: "build",
+        iteration: 0,
+        ms: 20_000,
+        tools: [
+          { tool: "bash", count: 12, errors: 1 },
+          { tool: "edit", count: 3, errors: 0 },
+        ],
+        files: ["src/a.ts", "src/b.ts"],
+      },
+    ],
+  }
+  const parsed = parseRunMetrics(appendRunMetrics(null, withActivity))
+  assert.deepEqual(parsed?.runs[0]?.samples[0]?.tools, withActivity.samples[0]?.tools)
+  assert.deepEqual(parsed?.runs[0]?.samples[0]?.files, withActivity.samples[0]?.files)
+})
+
+test("negative tool/file counts fail the schema closed", () => {
+  const bad = {
+    version: 1,
+    runs: [{ endedAt: "t", detail: "", host: "opencode", samples: [{ stage: "build", iteration: 0, ms: 1, tools: [{ tool: "bash", count: -1, errors: 0 }] }] }],
+  }
+  assert.equal(parseRunMetrics(JSON.stringify(bad)), null)
+})
+
 test("parseRunMetrics fails closed on invalid shape or version", () => {
   assert.equal(parseRunMetrics("null"), null)
   assert.equal(parseRunMetrics('{"version":2,"runs":[]}'), null)

@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
-import type { RunDetailResponse, RunListItem, RunsResponse, SnapshotView } from "../../shared/api.js"
+import { parseRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import type { RunDetailResponse, RunListItem, RunsResponse, SnapshotView, StageActivity } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { readStageMarker } from "../driving.js"
 import { mapBounded, readText } from "../io.js"
@@ -26,6 +27,35 @@ const SnapshotSchema = z.object({
 })
 
 const readRunLog = (deps: HubDeps, id: string): Promise<string | null> => readText(deps, `${deps.tasksDir}/runs/${id}.md`)
+
+/**
+ * Per-stage tool/file activity from the metrics sidecar, keyed to match the
+ * run-log section headers (iteration rendered 1-based, as `runlog` writes it).
+ * Only samples that actually carry tool activity produce a row — a run whose
+ * host observed no tool parts (or that predates capture) yields none, so the
+ * UI simply shows no activity chips. Unreadable sidecar → no activity, never an
+ * error (parity with `readSnapshot`).
+ */
+const readActivity = async (deps: HubDeps, id: string): Promise<readonly StageActivity[]> => {
+  const raw = await readText(deps, `${deps.tasksDir}/runs/${id}.metrics.json`)
+  if (raw === null) return []
+  const parsed = parseRunMetrics(raw)
+  if (!parsed) return []
+  const activity: StageActivity[] = []
+  for (const entry of parsed.runs) {
+    for (const s of entry.samples) {
+      if (!s.tools?.length && !s.files?.length) continue
+      activity.push({
+        stage: s.stage,
+        ...(s.lens ? { lens: s.lens } : {}),
+        iteration: s.iteration + 1,
+        tools: s.tools ?? [],
+        ...(s.files?.length ? { files: s.files } : {}),
+      })
+    }
+  }
+  return activity
+}
 
 const readSnapshot = async (deps: HubDeps, id: string): Promise<SnapshotView | null> => {
   const content = await readText(deps, `${deps.tasksDir}/runs/${id}.state.json`)
@@ -91,10 +121,12 @@ export const getRunDetail = async (deps: HubDeps, req: ParsedRequest): Promise<J
   if (!isSafeId(id)) return notFound(`run ${id}`)
   const content = await readRunLog(deps, id)
   if (content === null) return notFound(`run ${id}`)
+  const activity = await readActivity(deps, id)
   const response: RunDetailResponse = {
     id,
     log: parseRunLog(content),
     snapshot: await readSnapshot(deps, id),
+    ...(activity.length ? { activity } : {}),
   }
   return ok(response)
 }

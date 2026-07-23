@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import type { RunDetailResponse, RunsResponse } from "../../shared/api.js"
+import type { RunDetailResponse, RunsResponse, StageActivity } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
@@ -11,6 +11,30 @@ import { TokenPanel } from "./TokenPanel.js"
 
 const outcomeTone = (outcome?: string): "neutral" | "ok" | "gate" =>
   outcome === "done" ? "ok" : outcome === "error" || outcome === "stopped" ? "gate" : "neutral"
+
+/** The activity row (if any) captured for a given run-log stage section. */
+const activityFor = (
+  activity: readonly StageActivity[] | undefined,
+  sec: { stage: string; iteration: number; lens?: string },
+): StageActivity | undefined =>
+  activity?.find((a) => a.stage === sec.stage && a.iteration === sec.iteration && a.lens === sec.lens)
+
+/** Compact "what this stage did" line — tool call counts and files written. */
+const StageActivityLine = ({ activity }: { activity: StageActivity }) => (
+  <div className="stage-activity">
+    {activity.tools.map((t) => (
+      <Chip key={t.tool}>
+        {t.tool} ×{t.count}
+        {t.errors > 0 ? ` · ${t.errors} err` : ""}
+      </Chip>
+    ))}
+    {activity.files && activity.files.length > 0 && (
+      <span className="stage-files muted">
+        wrote {activity.files.length === 1 ? activity.files[0] : `${activity.files.length} files: ${activity.files.join(", ")}`}
+      </span>
+    )}
+  </div>
+)
 
 const RunDetail = ({ id }: { id: string }) => {
   const { repoId } = useRepo()
@@ -81,15 +105,19 @@ const RunDetail = ({ id }: { id: string }) => {
           )}
         </div>
       ))}
-      {detail.log.sections.map((sec, i) => (
-        <details key={i} className="stage-section">
-          <summary>
-            {sec.lens ? `${sec.stage} (${sec.lens})` : sec.stage} · iteration {sec.iteration}{" "}
-            <span className="muted">{sec.at}</span>
-          </summary>
-          <pre>{sec.body}</pre>
-        </details>
-      ))}
+      {detail.log.sections.map((sec, i) => {
+        const activity = activityFor(detail.activity, sec)
+        return (
+          <details key={i} className="stage-section">
+            <summary>
+              {sec.lens ? `${sec.stage} (${sec.lens})` : sec.stage} · iteration {sec.iteration}{" "}
+              <span className="muted">{sec.at}</span>
+            </summary>
+            {activity && <StageActivityLine activity={activity} />}
+            <pre>{sec.body}</pre>
+          </details>
+        )
+      })}
       {detail.log.sections.length === 0 && detail.log.summaries.length === 0 && (
         <div className="placeholder">Run log is empty.</div>
       )}

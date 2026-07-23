@@ -860,6 +860,17 @@ body {
   font-size: var(--fs-xs);
   line-height: var(--lh);
 }
+.stage-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.stage-activity .stage-files {
+  font-size: var(--fs-xs);
+  word-break: break-all;
+}
 
 /* --- token panel (hand-rolled SVG bars) ------------------------------------ */
 

@@ -5,8 +5,8 @@ import { z } from "zod"
  * The structured metrics sidecar, `<tasksDir>/runs/<id>.metrics.json` — the
  * machine-readable twin of the run log's summary table. One entry is appended
  * per terminal event (done/stopped/error), mirroring the run-log convention.
- * Durable telemetry like the run logs themselves: numbers and stage names
- * only, no captured output, no secrets.
+ * Durable telemetry like the run logs themselves: numbers, stage names, tool
+ * names and the paths a stage wrote — never captured output, never secrets.
  *
  * `host` makes the observation asymmetry explicit: the opencode driver sees
  * per-stage tokens/cost (and records its sessionID so host storage can be
@@ -24,6 +24,12 @@ const StageTokensSchema = z.object({
   cacheWrite: z.number(),
 })
 
+const StageToolUsageSchema = z.object({
+  tool: z.string(),
+  count: z.number().int().min(0),
+  errors: z.number().int().min(0),
+})
+
 const MetricsSampleSchema = z.object({
   stage: z.string(),
   iteration: z.number().int().min(0),
@@ -34,6 +40,9 @@ const MetricsSampleSchema = z.object({
   tokens: StageTokensSchema.optional(),
   cost: z.number().optional(),
   model: z.string().optional(),
+  // Readonly so the driver's `StageSample` (readonly arrays) assigns to `RunEntry`.
+  tools: z.array(StageToolUsageSchema).readonly().optional(),
+  files: z.array(z.string()).readonly().optional(),
 })
 
 const RunEntrySchema = z.object({

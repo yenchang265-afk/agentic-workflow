@@ -73,7 +73,7 @@ import {
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { approveAny, rejectAny, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
-import { type Outcome, renderRunSummary, type StageSample, type StageTokens } from "@agentic-workflow/core/workflow/metrics"
+import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
   admitVerdict,
@@ -588,6 +588,50 @@ const ABORT_GRACE_MS = 30_000
  * files and running git WHILE onIdle's catch checkpoints and tears down
  * isolation in the same tree.
  */
+/** Tools whose invocation means the pass wrote to a file (path lives in the tool input). */
+const WRITE_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
+
+/** Pull a file path from a tool call's input, tolerant of the key the tool uses. Pure. */
+const filePathOf = (input: unknown): string | null => {
+  if (!input || typeof input !== "object") return null
+  const rec = input as Record<string, unknown>
+  for (const key of ["filePath", "path", "file"]) {
+    const v = rec[key]
+    if (typeof v === "string" && v.length > 0) return v
+  }
+  return null
+}
+
+/** What a stage pass DID: per-tool call counts (+ errors) and the files it wrote.
+ *  Undefined when the response carried no tool parts (e.g. the Claude host, or a
+ *  no-tool pass) so the sample stays as slim as before. Pure. */
+export const deriveActivity = (
+  parts: readonly unknown[],
+): { tools: readonly StageToolUsage[]; files?: readonly string[] } | undefined => {
+  const counts = new Map<string, { count: number; errors: number }>()
+  const files = new Set<string>()
+  for (const p of parts) {
+    if (!p || typeof p !== "object") continue
+    const part = p as { type?: unknown; tool?: unknown; state?: unknown }
+    if (part.type !== "tool" || typeof part.tool !== "string") continue
+    const state = (part.state ?? {}) as { status?: unknown; input?: unknown }
+    const prev = counts.get(part.tool) ?? { count: 0, errors: 0 }
+    counts.set(part.tool, {
+      count: prev.count + 1,
+      errors: prev.errors + (state.status === "error" ? 1 : 0),
+    })
+    if (WRITE_TOOLS.has(part.tool.toLowerCase())) {
+      const fp = filePathOf(state.input)
+      if (fp) files.add(fp)
+    }
+  }
+  if (counts.size === 0) return undefined
+  const tools = [...counts.entries()]
+    .map(([tool, c]) => ({ tool, count: c.count, errors: c.errors }))
+    .sort((a, b) => b.count - a.count || a.tool.localeCompare(b.tool))
+  return { tools, ...(files.size ? { files: [...files].sort() } : {}) }
+}
+
 const runStage = async (
   client: Client,
   sessionID: string,
@@ -595,7 +639,7 @@ const runStage = async (
   args: string,
   timeoutMinutes: number,
   model?: string,
-): Promise<{ text: string; usage?: StageUsage }> => {
+): Promise<{ text: string; usage?: StageUsage; activity?: { tools: readonly StageToolUsage[]; files?: readonly string[] } }> => {
   const command = client.session.command({
     path: { id: sessionID },
     body: { command: stage, arguments: args, ...(model ? { model } : {}) },
@@ -630,7 +674,8 @@ const runStage = async (
           model: info.modelID,
         }
       : undefined
-    return { text, ...(usage ? { usage } : {}) }
+    const activity = deriveActivity(parts)
+    return { text, ...(usage ? { usage } : {}), ...(activity ? { activity } : {}) }
   } catch (err) {
     if (timedOut) {
       // Kill the orphaned turn before the timeout unwinds into teardown, and
@@ -738,7 +783,7 @@ export const runStageWithLenses = async (
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
-      const { text: out, usage } = await runStage(
+      const { text: out, usage, activity } = await runStage(
         client,
         sessionID,
         stageCommand(loaded, stage),
@@ -763,6 +808,7 @@ export const runStageWithLenses = async (
         ...(lens ? { lens } : {}),
         startedAt: new Date(t0).toISOString(),
         ...(usage ? { tokens: usage.tokens, cost: usage.cost, model: usage.model } : {}),
+        ...(activity ? { tools: activity.tools, ...(activity.files ? { files: activity.files } : {}) } : {}),
       })
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
       // terminal event finalizes the sidecar).

@@ -124,10 +124,29 @@ export interface SnapshotView {
   readonly artifactStages?: readonly string[]
 }
 
+/** Per-tool call counts for one stage pass (mirrors core's StageToolUsage). */
+export interface StageToolUsage {
+  readonly tool: string
+  readonly count: number
+  readonly errors: number
+}
+
+/** What one stage pass DID — joined from the metrics sidecar onto a run-log section by (stage, iteration, lens). */
+export interface StageActivity {
+  readonly stage: string
+  readonly lens?: string
+  /** 1-based, to match the run-log section header. */
+  readonly iteration: number
+  readonly tools: readonly StageToolUsage[]
+  readonly files?: readonly string[]
+}
+
 export interface RunDetailResponse {
   readonly id: string
   readonly log: ParsedRunLog
   readonly snapshot: SnapshotView | null
+  /** Per-stage tool/file activity from the metrics sidecar; absent for runs that predate capture. */
+  readonly activity?: readonly StageActivity[]
 }
 
 /** A host's live-stage marker: Claude's `runs/.stage.json`, or the OpenCode driver's sibling `runs/.stage-opencode.json`. */
