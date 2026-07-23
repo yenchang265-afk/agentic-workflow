@@ -18,6 +18,19 @@ export interface StageTokens {
   readonly cacheWrite: number
 }
 
+/**
+ * How often one tool was invoked in a stage pass, and how many of those calls
+ * failed — the "what did the agent DO" signal the captured text alone can't
+ * answer. Aggregated by tool name (not a per-call list) so a BUILD firing
+ * hundreds of edits stays a handful of rows, cheap to store and read.
+ */
+export interface StageToolUsage {
+  readonly tool: string
+  readonly count: number
+  /** Calls whose tool state ended in error. */
+  readonly errors: number
+}
+
 export interface StageSample {
   readonly stage: Stage
   readonly iteration: number
@@ -32,6 +45,10 @@ export interface StageSample {
   readonly tokens?: StageTokens
   readonly cost?: number
   readonly model?: string
+  /** Per-tool call counts for this pass — omitted when the host observes no tool parts. */
+  readonly tools?: readonly StageToolUsage[]
+  /** Distinct file paths the pass wrote/edited — omitted when none were touched. */
+  readonly files?: readonly string[]
 }
 
 export type Outcome = "done" | "stopped" | "error"
