@@ -106,19 +106,24 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 
-The sitters (**experimental** — the four commands below, their manifests, and
-their config keys may still change; `engineering` is the stable, default-on
-kind). **What each one does is documented once in
+The sitters (**`pr-sitter` and `review-sitter` are stable**, alongside
+`engineering`, the default-on kind; **`dep-sitter` and `main-sitter` are still
+experimental** — their manifests and config keys may still change).
+**What each one does is documented once in
 [`../../docs/sitters.md`](../../docs/sitters.md)** — on this host every
 sitter has the same command surface: `claim` (maps to
 `workflow_claim({kind: "<kind>"})`; no standing watch here, so `claim` is the
 pull) and `status` · `stop` (report / abort the active loop; bare
 `/agentic-workflow:<kind>` = status):
 
-- `/agentic-workflow:pr-sitter` — opt-in via `workflows.pr-sitter`.
-- `/agentic-workflow:review-sitter` — opt-in via `workflows.review-sitter.enabled`.
+- `/agentic-workflow:pr-sitter` — always on; cannot be disabled.
+- `/agentic-workflow:review-sitter` — always on; cannot be disabled.
 - `/agentic-workflow:dep-sitter` — opt-in via `workflows.dep-sitter.enabled`.
 - `/agentic-workflow:main-sitter` — opt-in via `workflows.main-sitter.enabled`.
+
+Both released sitters need no config at all. A bare `workflow_claim()` polls
+every enabled kind in claim-priority order, so it reaches them once nothing
+earlier is claimable; `workflow_claim({kind})` restricts the pull to one.
 
 Ancillary:
 
@@ -137,7 +142,7 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
   planner), the three build-phase stage subagents
   `workflow-build` / `workflow-verify` / `workflow-review`, the pr-sitter stage
   subagents `workflow-pr-triage` / `workflow-pr-fix` / `workflow-pr-publish`, and the
-  sitter stage subagents for the opt-in kinds: review-sitter's
+  sitter stage subagents for the remaining kinds: review-sitter's
   `workflow-review-fetch` / `workflow-review-assess` / `workflow-review-publish`,
   dep-sitter's `workflow-dep-scan` / `workflow-dep-upgrade` / `workflow-dep-publish`, and
   main-sitter's `workflow-main-diagnose` / `workflow-main-remedy` / `workflow-main-publish`

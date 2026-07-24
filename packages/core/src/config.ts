@@ -104,10 +104,11 @@ const BaseConfigSchema = z.object({
       z.string(),
       z.looseObject({
         /**
-         * Deliberately NOT defaulted: `enabledWorkflowKinds` discriminates on
-         * `=== true` for non-engineering kinds, so a default would make every
-         * mentioned kind opt-OUT and a knob-only section would silently start a
-         * workflow. Engineering reads it as `!== false`, so undefined keeps it on.
+         * Deliberately NOT defaulted: `enabledWorkflowKinds` reads it as
+         * `!== false` for `engineering` (undefined keeps it on) and `=== true`
+         * for opt-in kinds, so a knob-only section never silently starts one.
+         * A schema default would collapse both. On an `ALWAYS_ENABLED_KINDS`
+         * sitter the key is meaningless and `false` is rejected outright.
          */
         enabled: z.boolean().optional(),
         /** Per-kind override of the global `codePlatform`. */
@@ -198,18 +199,52 @@ export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
       message: "codePlatform 'ado' requires ado.selfLogin (a PAT cannot resolve the sitter's identity)",
     })
   }
+  // The released sitters have no off switch. Someone who wrote `enabled: false`
+  // expects it to take effect, so say it doesn't rather than honoring the key
+  // (wrong) or dropping it in silence (worse — the setting reads as applied and
+  // the kind keeps running, with nothing to connect the two).
+  for (const kind of ALWAYS_ENABLED_KINDS) {
+    if (c.workflows[kind]?.enabled === false) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["workflows", kind, "enabled"],
+        message: `"${kind}" is always enabled and cannot be disabled — remove this key. Its other knobs still apply.`,
+      })
+    }
+  }
 })
 
 /**
- * The workflow kinds this config activates, in claim-priority order: engineering
- * first (unless disabled), then any opted-in kinds in config order. Pure.
+ * Kinds that are always live and cannot be switched off — the released sitters
+ * are part of the product, not a feature to opt into, so they carry no off
+ * switch at all. `workflows.<kind>.enabled: false` on one of these is rejected
+ * at load rather than ignored (see `ConfigSchema`): silently dropping a setting
+ * someone wrote is the worst of the three options.
+ *
+ * Note what this does NOT mean: an always-enabled sitter still only runs when
+ * a claim or watch actually pulls it, and every terminal call (merge, approve,
+ * close) stays human. See docs/design/threat-model.md T7-T11.
+ */
+export const ALWAYS_ENABLED_KINDS: readonly string[] = ["pr-sitter", "review-sitter"]
+
+/**
+ * Kinds live without any configuration: the always-on sitters plus
+ * `engineering`, which unlike them may still be turned off with
+ * `enabled: false`. Everything else (`dep-sitter`, `main-sitter`, any local
+ * kind) stays opt-in via `enabled: true`.
+ */
+export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering", ...ALWAYS_ENABLED_KINDS]
+
+/**
+ * The workflow kinds this config activates, in claim-priority order: the
+ * default-on kinds first in `DEFAULT_ENABLED_KINDS` order, then any opted-in
+ * kinds in config order. Pure.
  */
 export const enabledWorkflowKinds = (config: Config): string[] => {
   const sections = config.workflows
-  const kinds: string[] = []
-  if (sections["engineering"]?.enabled !== false) kinds.push("engineering")
+  const kinds = DEFAULT_ENABLED_KINDS.filter((kind) => ALWAYS_ENABLED_KINDS.includes(kind) || sections[kind]?.enabled !== false)
   for (const [kind, section] of Object.entries(sections)) {
-    if (kind !== "engineering" && section.enabled === true) kinds.push(kind)
+    if (!DEFAULT_ENABLED_KINDS.includes(kind) && section.enabled === true) kinds.push(kind)
   }
   return kinds
 }

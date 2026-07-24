@@ -13,10 +13,11 @@ gates, git isolation, trusted verdicts, and audit trail.
 
 Five workflow kinds ship today. **engineering** (default-on) drives a goal through
 PLAN → BUILD → VERIFY → REVIEW over the `docs/tasks/` backlog, with human task
-and plan gates. Four **experimental**, opt-in **sitters** — `pr-sitter`,
-`review-sitter`, `dep-sitter`, `main-sitter` — watch a hosted surface (open
-PRs, review requests, vulnerable deps, red CI) and drive a fix, keeping every
-terminal call human. See [The sitters](#the-sitters-experimental) below.
+and plan gates. Four **sitters** watch a hosted surface (open PRs,
+review requests, vulnerable deps, red CI) and drive a fix, keeping every
+terminal call human: `pr-sitter` and `review-sitter` are **stable**;
+`dep-sitter` and `main-sitter` are still **experimental**. See
+[The sitters](#the-sitters) below.
 
 Authoring a new kind is a `workflow.json` + stage prompts away — see
 [`packages/core/workflows/README.md`](packages/core/workflows/README.md).
@@ -57,24 +58,31 @@ reuses) a **draft** PR (GitHub or Azure DevOps, per `codePlatform`) as part of
 shipping. Full execution model (watch mode, iteration caps, recovery):
 [docs/opencode.md](docs/opencode.md).
 
-## The sitters (experimental)
+## The sitters
 
-Four opt-in sitters watch a hosted surface and drive a fix, each on its own
+Four sitters watch a hosted surface and drive a fix, each on its own
 `/agentic-workflow:<kind>` command sharing the `claim` / `status` / `stop` verbs
-(plus `watch [trigger]` / `unwatch` on OpenCode). They are **experimental** —
-the manifests, config keys, and defaults may still change. Enable per repo in
-`.agentic-workflow.json`:
+(plus `watch [trigger]` / `unwatch` on OpenCode). **`pr-sitter` and
+`review-sitter` are stable and need no configuration** — like `engineering`
+they run unless you turn them off, and their manifests, config keys, and
+defaults follow the same compatibility bar. **`dep-sitter` and `main-sitter`
+are still experimental** and stay opt-in; theirs may still change.
 
 ```json
 {
   "workflows": {
-    "pr-sitter":     { "enabled": true, "query": "is:open author:@me" },
-    "review-sitter": { "enabled": true },
-    "dep-sitter":    { "enabled": true, "severityFloor": "high" },
-    "main-sitter":   { "enabled": true, "branch": "main" }
+    "pr-sitter":  { "query": "is:open author:@me" },
+    "dep-sitter": { "enabled": true, "severityFloor": "high" },
+    "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```
+
+All of it is optional: `pr-sitter` here only narrows a query, and the two
+experimental kinds need `"enabled": true` to start at all. `pr-sitter` and
+`review-sitter` have **no off switch** — `"enabled": false` on either is a
+config error, not a toggle. They still only act when a claim or watch pulls
+them, and every terminal call stays human.
 
 Every sitter treats the PR/comment/diff/CI text it reads as untrusted input,
 stays behind per-stage bash + platform allowlists, and keeps the terminal call
@@ -165,8 +173,9 @@ local state a running loop leaves behind:
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
   `/agentic-workflow:main-sitter` — the same `claim` / `watch` (OpenCode) /
-  `unwatch` / `stop` / `status` verbs, each scoped to its own kind (opt-in via
-  `workflows.<kind>.enabled`)
+  `unwatch` / `stop` / `status` verbs, each scoped to its own kind
+  (`review-sitter` needs no config; `dep-sitter` and `main-sitter` are opt-in
+  via `workflows.<kind>.enabled`)
 
 Full command reference: [docs/opencode.md](docs/opencode.md) (OpenCode) ·
 [`plugins/claude/README.md`](plugins/claude/README.md) (Claude Code — no
@@ -184,8 +193,8 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 - [docs/architecture.md](docs/architecture.md) — the framework only (core
   package, manifest engine, scheduler, work sources, the watch lease) and
   how the Claude Code variant differs
-- [docs/sitters.md](docs/sitters.md) — what the four experimental sitters
-  have in common, indexing into their individual files under `docs/workflows/`
+- [docs/sitters.md](docs/sitters.md) — what the four sitters have in common,
+  indexing into their individual files under `docs/workflows/`
 - [packages/core/workflows/README.md](packages/core/workflows/README.md) — how to author a new workflow kind
   (manifest schema, prompt templates, hooks, work sources)
 - [docs/opencode.md](docs/opencode.md) — OpenCode execution model, commands,

@@ -80,27 +80,53 @@ test("a config still carrying removed keys parses (silent deprecation)", () => {
   assert.ok(!("gateBeforeBuild" in c))
 })
 
-test("workflows section defaults to empty and enabledWorkflowKinds keeps engineering on", () => {
+test("the three stable kinds are on with an empty config; the experimental sitters are not", () => {
   assert.deepEqual(DEFAULT_CONFIG.workflows, {})
-  assert.deepEqual(enabledWorkflowKinds(DEFAULT_CONFIG), ["engineering"])
+  assert.deepEqual(enabledWorkflowKinds(DEFAULT_CONFIG), ["engineering", "pr-sitter", "review-sitter"])
 })
 
-test("other workflow kinds are opt-in; engineering can be disabled", () => {
-  const c = parseConfig({ workflows: { "pr-sitter": { enabled: true, query: "author:@me" } } })
-  assert.deepEqual(enabledWorkflowKinds(c), ["engineering", "pr-sitter"])
-  // A section with no explicit `enabled` must NOT activate the kind — otherwise
-  // merely tuning a knob silently starts a loop that opens PRs on the user's repo.
-  const offByDefault = parseConfig({ workflows: { "pr-sitter": {} } })
-  assert.deepEqual(enabledWorkflowKinds(offByDefault), ["engineering"])
-  const knobOnly = parseConfig({ workflows: { "dep-sitter": { severityFloor: "critical" } } })
-  assert.deepEqual(enabledWorkflowKinds(knobOnly), ["engineering"])
-  const explicitlyOff = parseConfig({ workflows: { "pr-sitter": { enabled: false } } })
-  assert.deepEqual(enabledWorkflowKinds(explicitlyOff), ["engineering"])
-  // Engineering keeps the opposite default: on unless explicitly disabled.
-  const engImplicit = parseConfig({ workflows: { engineering: {} } })
-  assert.deepEqual(enabledWorkflowKinds(engImplicit), ["engineering"])
-  const disabled = parseConfig({ workflows: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } })
-  assert.deepEqual(enabledWorkflowKinds(disabled), ["pr-sitter"])
+test("the stable kinds are on without config; every other kind stays opt-in", () => {
+  const DEFAULT_ON = ["engineering", "pr-sitter", "review-sitter"]
+
+  // A knob-only section must not decide enablement either way: it leaves a
+  // default-on kind on, and must NOT activate an opt-in one — otherwise merely
+  // tuning a knob silently starts a loop that opens PRs on the user's repo.
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { query: "author:@me" } } })), DEFAULT_ON)
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { "dep-sitter": { severityFloor: "critical" } } })), DEFAULT_ON)
+
+  // engineering is default-on and can be turned off; the sitters are always-on
+  // and `enabled: false` on them does not parse at all (covered below).
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { engineering: { enabled: false } } })), [
+    "pr-sitter",
+    "review-sitter",
+  ])
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { engineering: {} } })), DEFAULT_ON)
+
+  // The experimental sitters still need `enabled: true`, and land after the
+  // default-on kinds in claim-priority order.
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { "dep-sitter": { enabled: true } } })), [
+    ...DEFAULT_ON,
+    "dep-sitter",
+  ])
+})
+
+test("the always-on sitters cannot be disabled — `enabled: false` is rejected, not ignored", () => {
+  // Honoring the key would contradict "always on"; dropping it in silence is
+  // worse, since the setting reads as applied while the kind keeps running.
+  assert.throws(() => parseConfig({ workflows: { "pr-sitter": { enabled: false } } }), /pr-sitter.*cannot be disabled/)
+  assert.throws(() => parseConfig({ workflows: { "review-sitter": { enabled: false } } }), /review-sitter.*cannot be disabled/)
+
+  // A redundant `enabled: true` and knob-only sections stay valid.
+  assert.ok(enabledWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { enabled: true } } })).includes("pr-sitter"))
+  const knobs = parseConfig({ workflows: { "pr-sitter": { query: "author:@me" } } })
+  assert.ok(enabledWorkflowKinds(knobs).includes("pr-sitter"))
+  assert.equal(knobs.workflows["pr-sitter"]?.["query"], "author:@me")
+
+  // engineering keeps its off switch — it is default-on, not always-on.
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { engineering: { enabled: false } } })), [
+    "pr-sitter",
+    "review-sitter",
+  ])
 })
 
 test("kind-specific knobs ride along in the workflows section", () => {
@@ -500,11 +526,19 @@ test("a kind enabled ONLY in the user layer is enabled, whatever the repo layer 
 })
 
 test("the repo layer can still disable a kind the user layer enabled (repo wins field by field)", async () => {
-  const userPath = tempUserFile(JSON.stringify({ workflows: { "pr-sitter": { enabled: true } } }))
-  const c = await loadConfig(stubClient(JSON.stringify({ workflows: { "pr-sitter": { enabled: false } } })), "/repo", {
+  // dep-sitter, not pr-sitter: the released sitters have no off switch at all.
+  const userPath = tempUserFile(JSON.stringify({ workflows: { "dep-sitter": { enabled: true } } }))
+  const c = await loadConfig(stubClient(JSON.stringify({ workflows: { "dep-sitter": { enabled: false } } })), "/repo", {
     userConfigPath: userPath,
   })
-  assert.ok(!enabledWorkflowKinds(c).includes("pr-sitter"))
+  assert.ok(!enabledWorkflowKinds(c).includes("dep-sitter"))
+})
+
+test("a repo layer cannot disable an always-on sitter the user layer never touched", async () => {
+  await assert.rejects(
+    () => loadConfig(stubClient(JSON.stringify({ workflows: { "pr-sitter": { enabled: false } } })), "/repo", { userConfigPath: null }),
+    /pr-sitter.*cannot be disabled/,
+  )
 })
 
 test("loadConfig: user-only, repo-only, and neither", async () => {
@@ -583,10 +617,10 @@ test("trackerUrl appends the key to baseUrl, or returns undefined without one", 
 })
 
 
-test("review-sitter is opt-in like every non-engineering kind; its query knob rides the open record", () => {
-  assert.deepEqual(enabledWorkflowKinds(parseConfig({})), ["engineering"])
+test("review-sitter is on with no config; its query knob rides the open record", () => {
+  assert.ok(enabledWorkflowKinds(parseConfig({})).includes("review-sitter"))
   const c = parseConfig({ workflows: { "review-sitter": { enabled: true, query: "is:open review-requested:@me" } } })
-  assert.deepEqual(enabledWorkflowKinds(c), ["engineering", "review-sitter"])
+  assert.ok(enabledWorkflowKinds(c).includes("review-sitter"))
   assert.equal(c.workflows["review-sitter"]?.["query"], "is:open review-requested:@me")
 })
 

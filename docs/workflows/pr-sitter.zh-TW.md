@@ -9,13 +9,14 @@ TRIAGE → FIX → VERIFY → PUBLISH（最多 3 次疊代）
 
 ## 啟用
 
-加進 `.agentic-workflow.json`：
+永遠開啟——不需要在 `.agentic-workflow.json` 加任何東西就能使用，也無法
+關閉（在這裡寫 `"enabled": false` 會是設定錯誤）。若要縮小它認領的 PR
+範圍：
 
 ```jsonc
 {
   "workflows": {
     "pr-sitter": {
-      "enabled": true,
       "query": "is:open author:@me"
     }
   }

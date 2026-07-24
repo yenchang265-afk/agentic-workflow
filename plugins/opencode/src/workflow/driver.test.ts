@@ -915,7 +915,11 @@ test("kinds lists known kinds with their enabled state", async () => {
 
   assert.equal(toasts[0]?.variant, "info")
   assert.match(toasts[0]?.message ?? "", /engineering \(enabled\)/)
-  assert.match(toasts[0]?.message ?? "", /pr-sitter \(disabled\)/)
+  assert.match(toasts[0]?.message ?? "", /dep-sitter \(disabled\)/)
+  // The released sitters read as "always on", not "enabled" — otherwise the
+  // reader goes looking for a toggle that does not exist.
+  assert.match(toasts[0]?.message ?? "", /pr-sitter \(always on\)/)
+  assert.match(toasts[0]?.message ?? "", /review-sitter \(always on\)/)
 })
 
 test("an unknown verb gets the engineering usage toast", async () => {

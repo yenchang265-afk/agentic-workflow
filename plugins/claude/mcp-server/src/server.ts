@@ -567,7 +567,7 @@ server.registerTool(
   "workflow_claim",
   {
     description:
-      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order; pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with workflow_start({id}). Returns null when nothing is claimable.",
+      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order (engineering, then the always-on pr-sitter and review-sitter, then any opted-in kind); pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with workflow_start({id}). Returns null when nothing is claimable.",
     inputSchema: { kind: z.string().optional().describe("Restrict the pull to one enabled workflow kind (e.g. pr-sitter).") },
   },
   async ({ kind }) => {

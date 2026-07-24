@@ -9,7 +9,11 @@ const WORKFLOWS_DIR = path.resolve(import.meta.dirname, "..", "..", "..", "core"
 
 test("kindBoards derives the engineering board from its manifest", () => {
   const boards = kindBoards(WORKFLOWS_DIR, parseConfig({}))
-  assert.equal(boards.length, 1)
+  // The three stable kinds are on with no config; only engineering is a board.
+  assert.deepEqual(
+    boards.map((b) => b.kind),
+    ["engineering", "pr-sitter", "review-sitter"],
+  )
   const eng = boards[0]!
   assert.equal(eng.kind, "engineering")
   assert.equal(eng.sourceType, "backlog")
@@ -21,24 +25,25 @@ test("kindBoards derives the engineering board from its manifest", () => {
 })
 
 test("kindBoards includes opted-in kinds and excludes disabled ones", () => {
-  const both = kindBoards(WORKFLOWS_DIR, parseConfig({ workflows: { "pr-sitter": { enabled: true } } }))
+  const withDep = kindBoards(WORKFLOWS_DIR, parseConfig({ workflows: { "dep-sitter": { enabled: true } } }))
   assert.deepEqual(
-    both.map((b) => [b.kind, b.sourceType]),
+    withDep.map((b) => [b.kind, b.sourceType]),
     [
       ["engineering", "backlog"],
       ["pr-sitter", "pull-request"],
+      ["review-sitter", "pull-request"],
+      ["dep-sitter", "dependency-scan"],
     ],
   )
-  const sitter = both[1]!
+  const sitter = withDep[1]!
   assert.deepEqual(sitter.statuses, [])
   assert.deepEqual(sitter.pools, [])
-  const sitterOnly = kindBoards(
-    WORKFLOWS_DIR,
-    parseConfig({ workflows: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } }),
-  )
+  // engineering is the only one of the three with an off switch; the released
+  // sitters cannot be disabled, so they always have a board.
+  const sitterOnly = kindBoards(WORKFLOWS_DIR, parseConfig({ workflows: { engineering: { enabled: false } } }))
   assert.deepEqual(
     sitterOnly.map((b) => b.kind),
-    ["pr-sitter"],
+    ["pr-sitter", "review-sitter"],
   )
 })
 
@@ -49,7 +54,7 @@ test("kindBoards skips (with a warning) an enabled kind whose manifest doesn't l
   })
   assert.deepEqual(
     boards.map((b) => b.kind),
-    ["engineering"],
+    ["engineering", "pr-sitter", "review-sitter"],
   )
   assert.equal(warnings.length, 1)
   assert.match(warnings[0]!, /ghost/)

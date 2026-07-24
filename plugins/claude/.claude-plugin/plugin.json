@@ -1,6 +1,6 @@
 {
   "name": "agentic-workflow",
-  "description": "Drives tasks through PLAN → BUILD → VERIFY → REVIEW as a supervised, main-agent-driven loop with git isolation, trusted verdicts, a task backlog, and an audit trail. Tasks are authored and gated by the /agentic-workflow:engineering verbs (interview → draft → approve; the loop plans right before execution and parks the plan for the approve gate). Four experimental sitter kinds (/agentic-workflow:pr-sitter, review-sitter, dep-sitter, main-sitter) watch hosted surfaces and drive fixes with every terminal call human.",
+  "description": "Drives tasks through PLAN → BUILD → VERIFY → REVIEW as a supervised, main-agent-driven loop with git isolation, trusted verdicts, a task backlog, and an audit trail. Tasks are authored and gated by the /agentic-workflow:engineering verbs (interview → draft → approve; the loop plans right before execution and parks the plan for the approve gate). Four sitter kinds watch hosted surfaces and drive fixes with every terminal call human: the stable /agentic-workflow:pr-sitter and review-sitter, plus the experimental dep-sitter and main-sitter.",
   "version": "0.0.1",
   "author": { "name": "agentic-workflow" },
   "keywords": ["agentic", "workflow", "loop", "plan-build-verify-review", "tdd"]

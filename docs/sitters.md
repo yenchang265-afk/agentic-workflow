@@ -1,17 +1,20 @@
 English | [繁體中文](sitters.zh-TW.md)
 
-# Sitters (experimental)
+# Sitters
 
-Four opt-in kinds that watch a hosted surface and drive a fix, always
+Four kinds that watch a hosted surface and drive a fix, always
 leaving the terminal call — merge, approve, close — to a human.
 `engineering` (the reference kind — PLAN/BUILD → VERIFY → REVIEW) is
 documented in [architecture.md](architecture.md) and
 [`docs/workflows/engineering.md`](workflows/engineering.md); this file covers only
 `pr-sitter`, `review-sitter`, `dep-sitter`, and `main-sitter`.
 
-> **All four sitters are experimental** — their manifests, config keys, and
-> defaults may still change between releases. `engineering` is the stable,
-> default-on kind.
+> **`pr-sitter` and `review-sitter` are stable** — their manifests, config
+> keys, and defaults are settled, and changes follow the same compatibility
+> bar as `engineering`, the default-on kind.
+>
+> **`dep-sitter` and `main-sitter` are still experimental** — their manifests,
+> config keys, and defaults may still change between releases.
 
 Each sitter's own architecture — stage pipeline, mermaid diagram, authority
 limits, and `.agentic-workflow.json` config keys — now lives in its own file:
@@ -26,8 +29,9 @@ limits, and `.agentic-workflow.json` config keys — now lives in its own file:
 Each sitter follows the same shape: a **check** stage decides whether there
 is claimable work, one or more **work** stages run behind git worktree
 isolation, and a terminal **publish** stage writes through a narrow,
-manifest-declared bash/platform allowlist. Every kind is opt-in
-(`workflows.<kind>.enabled`), resolves GitHub vs. Azure DevOps from the global
+manifest-declared bash/platform allowlist. `pr-sitter` and `review-sitter` are
+always on and cannot be disabled; `dep-sitter` and `main-sitter` are opt-in via
+`workflows.<kind>.enabled`. Each resolves GitHub vs. Azure DevOps from the global
 `codePlatform` (or its own `workflows.<kind>.codePlatform` override) at wiring
 time, and treats whatever diff/comment/CI text it reads as **untrusted
 input** — never instructions. `workflows.<kind>.trigger` controls how a watching

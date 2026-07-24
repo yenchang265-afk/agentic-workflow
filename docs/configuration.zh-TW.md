@@ -11,19 +11,19 @@
 就完成了——其餘一切都維持預設值。本頁其餘部分是逐欄位參考；第一次
 設定通常用不到。
 
-**GitHub**（預設平台——這份檔案等同於完全沒有 `.agentic-workflow.json`，
-外加開啟 `pr-sitter`）：
+**GitHub**（預設平台——空檔案，或完全沒有 `.agentic-workflow.json`，就已經
+給你 `engineering`、`pr-sitter` 和 `review-sitter`）：
 
 ```json
 {
   "workflows": {
-    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
+    "pr-sitter": { "query": "is:open author:@me" }
   }
 }
 ```
 
-把 `query` 換成你想讓 sitter 監看的 PR 搜尋條件，或者如果你只想要
-engineering 迴圈（它的預設值），就整段刪掉 `workflows` 區塊。
+把 `query` 換成你想讓 sitter 監看的 PR 搜尋條件，或者想全部採用預設值
+就整段刪掉 `workflows` 區塊。
 
 **Azure DevOps：**
 
@@ -36,7 +36,7 @@ engineering 迴圈（它的預設值），就整段刪掉 `workflows` 區塊。
     "selfLogin": "<your-login-or-service-account-email>"
   },
   "workflows": {
-    "pr-sitter": { "enabled": true }
+    "pr-sitter": { "query": "is:open author:@me" }
   }
 }
 ```
@@ -124,10 +124,20 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 ## 工作流程類型（`workflows`）
 
 `workflows` 底下的每一個鍵會啟用並設定一種工作流程類型（一份
-`packages/core/workflows/<kind>/` 清單）。**`engineering` 除非被明確
-停用，否則都會執行**；其他每一種類型都是可選啟用的，需要
-`"enabled": true`。已啟用的類型依認領優先順序輪詢：engineering
-優先，接著是設定中依序排列的已啟用類型。
+`packages/core/workflows/<kind>/` 清單）。有三種類型完全不需要任何設定
+就是啟用的：
+
+- **`pr-sitter` 和 `review-sitter` 永遠開啟。** 它們是產品的一部分，而不是
+  可選加購的功能，因此**沒有開關**：在它們身上寫 `"enabled": false` 會在
+  載入時被拒絕並指出該鍵，而不是被採納、也不是被默默忽略。它們其他的旋鈕
+  （`query`、`codePlatform`、`trigger`、`stageModels`）仍然有效。
+- **`engineering` 除非以 `"enabled": false` 明確停用，否則都會執行。**
+
+其他每一種類型（`dep-sitter`、`main-sitter`，以及你自行編寫的類型）都是
+可選啟用的，需要 `"enabled": true`。已啟用的類型依認領優先順序輪詢：
+`engineering`、接著 `pr-sitter` 和 `review-sitter`、再來是設定中依序排列
+的已啟用類型——所以沒有指名類型的認領，在排在前面的都沒有可認領的工作時，
+也會觸及這兩個 sitter。
 
 類型專屬的旋鈕就放在同一個區段裡。**它們不會被驗證**：`workflows` 依
 設計是一個鬆散的記錄（各類型可由使用者自行編寫——見
@@ -152,19 +162,18 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 這些警告只是提示：它們會註記在儲存動作上，但從不阻擋儲存。見下方
 [管理面板](#admin-hub-hub--user-scope-only)。
 
-> **四個 sitter（`pr-sitter`、`review-sitter`、`dep-sitter`、
-> `main-sitter`）都是實驗性的**——它們下面的旋鈕和預設值在各版本
-> 之間可能還會變動。`engineering` 是穩定的、預設開啟的類型。
+> **`pr-sitter` 和 `review-sitter` 已穩定**，與預設開啟的 `engineering`
+> 並列——它們下面的旋鈕和預設值都已定案。
+> **`dep-sitter` 和 `main-sitter` 仍是實驗性的**——它們的則在各版本
+> 之間可能還會變動。
 
 ```json
 {
   "workflows": {
     "engineering": { "enabled": true },
     "pr-sitter": {
-      "enabled": true,
       "query": "is:open author:@me"
     },
-    "review-sitter": { "enabled": true },
     "dep-sitter": { "enabled": true, "severityFloor": "high" },
     "main-sitter": { "enabled": true, "branch": "main" }
   }
@@ -175,6 +184,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   只執行其他類型（例如一個專用的 PR-sitter watcher）。
 - **`workflows.pr-sitter`**、**`workflows.review-sitter`**、
   **`workflows.dep-sitter`**、**`workflows.main-sitter`**——每一個預設都是
+  永遠開啟（`pr-sitter`、`review-sitter`，在它們身上寫 `enabled: false`
+  會是設定錯誤），`dep-sitter` 和 `main-sitter` 則預設
   `enabled: false`。每個 sitter 做什麼、它的階段流水線，以及它完整
   的類型專屬鍵集合（`query`、`ecosystem`、`severityFloor`、
   `includeOutdated`、`branch`……）都只在一個地方權威記載，就是

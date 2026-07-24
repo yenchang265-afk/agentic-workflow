@@ -10,7 +10,7 @@
 |-----|---------------|
 | [workflows/](workflows/README.md) | 每種類型的完整全貌（engineering、pr-sitter、review-sitter、dep-sitter、main-sitter）——架構（階段流水線、mermaid 圖、設定項）、啟用片段、指令面，以及 1-2 個實戰範例，每種類型都收在同一份檔案裡 |
 | [architecture.md](architecture.md) | 僅框架本身（核心套件、清單引擎、排程器、工作來源、watch 租約），以及 Claude Code 版本 + 管理面板有何不同——各類型的架構收在 `workflows/` 下 |
-| [sitters.md](sitters.md) | 四個實驗性 sitter 的共同點（形狀、可選啟用、不可信輸入的處理方式），並索引到 `workflows/` 下它們各自的檔案 |
+| [sitters.md](sitters.md) | 四個 sitter 的共同點（形狀、可選啟用、不可信輸入的處理方式）、哪些已穩定哪些仍屬實驗性，並索引到 `workflows/` 下它們各自的檔案 |
 | [configuration.md](configuration.md) | 每一個 `.agentic-workflow.json` 欄位（分層/優先順序、`workflows`、`codePlatform`/`ado`、`projectManagement`、強化項、環境變數） |
 | [opencode.md](opencode.md) | OpenCode 特有的執行細節（watch 觸發、ESC/recover）以及完整的 OpenCode 指令面 |
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code 安裝、MCP 伺服器指令面，以及已知限制 |

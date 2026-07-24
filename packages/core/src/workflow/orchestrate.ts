@@ -72,7 +72,8 @@ export interface WorkSourceDeps {
 /**
  * The work sources the scheduler polls, in claim-priority order (config
  * order). An `only` kind restricts the poll to that one kind (the claim/watch
- * kind filter). A typo'd or unavailable `workflows.<kind>` (the config schema is
+ * kind filter); without it every enabled kind is polled, the always-on sitters
+ * included. A typo'd or unavailable `workflows.<kind>` (the config schema is
  * an open record) must not throw here — that would abort the whole build and
  * take every OTHER enabled source (engineering included) down with it, so no
  * work ever gets claimed. Skip-and-warn the bad kind instead.

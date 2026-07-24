@@ -6,12 +6,13 @@
 以及一個工作來源排程器——對工程任務或 pull request 一無所知。**工作流程類型**（`packages/core/workflows/<kind>/`）是宣告式的清單加上階段提示詞，
 由框架解讀執行。目前已發布五種：`engineering` 是參考類型（原本的
 PLAN / BUILD → VERIFY → REVIEW 工作流程，行為和它還是寫死的程式碼時
-完全一致），以及四個可選啟用的**sitter**，監看一個代管的目標面並驅動
+完全一致），以及四個**sitter**，監看一個代管的目標面並驅動
 修復——`pr-sitter`（你開啟中的 PR）、`review-sitter`（等待你審查的
 PR）、`dep-sitter`（有漏洞或已過期的相依套件），以及 `main-sitter`
 （預設分支的 CI）。每個 sitter 都把終端呼叫——合併、核准、關閉——留給
-人類。**四個 sitter 都是實驗性的**——它們的清單、設定項和預設值都可能
-還會變動；`engineering` 才是穩定的、預設開啟的類型。
+人類。**`pr-sitter` 和 `review-sitter` 已穩定**，與預設開啟的
+`engineering` 並列；**`dep-sitter` 和 `main-sitter` 仍是實驗性的**——
+它們的清單、設定項和預設值都可能還會變動。
 
 ## 框架——一個引擎，多種類型
 
@@ -128,10 +129,11 @@ tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種
 的認領（`workflow_claim`/`workflow_start`）在有外部存活租約時只會警告——而
 不會阻擋。
 
-## sitter 類型——實驗性
+## sitter 類型
 
-四個可選啟用的 sitter（`pr-sitter`、`review-sitter`、`dep-sitter`、
-`main-sitter`）監看一個代管的目標面（開啟中的 PR、審查請求、相依套件
+四個 sitter——已穩定且永遠開啟的 `pr-sitter` 和 `review-sitter`，加上
+仍屬實驗性的 `dep-sitter` 和 `main-sitter`——監看一個代管的目標面
+（開啟中的 PR、審查請求、相依套件
 的安全公告、CI），並在 git worktree 隔離之下驅動修復，永遠把終端
 呼叫——合併、核准、關閉——留給人類。每一個都綁定自己的工作來源，並
 遵循相同的 check → work → publish 形狀。**[`docs/sitters.md`](sitters.md)
