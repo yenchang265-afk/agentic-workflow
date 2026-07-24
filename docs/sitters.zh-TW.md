@@ -27,8 +27,8 @@ PLAN/BUILD → VERIFY → REVIEW）記載於 [architecture.md](architecture.md)
 每個 sitter 都遵循相同的形狀：一個 **check** 階段判斷是否有可認領
 的工作，一個或多個 **work** 階段在 git worktree 隔離之下執行，一個
 終端的 **publish** 階段透過一份窄的、清單宣告的 bash/平台白名單
-寫入。`pr-sitter` 和 `review-sitter` 除非被停用否則都會執行，`dep-sitter`
-和 `main-sitter` 則是可選啟用（四者都透過 `workflows.<kind>.enabled`）。每一種類型會在
+寫入。`pr-sitter` 和 `review-sitter` 永遠開啟且無法停用，`dep-sitter`
+和 `main-sitter` 則透過 `workflows.<kind>.enabled` 可選啟用。每一種類型會在
 接線時從全域的 `codePlatform`（或自己的 `workflows.<kind>.codePlatform`
 覆寫值）解析出 GitHub 還是 Azure DevOps，並把它讀到的任何 diff/
 留言/CI 文字都當成**不可信輸入**——絕不當成指令。`workflows.<kind>.trigger`

@@ -38,13 +38,12 @@ test("kindBoards includes opted-in kinds and excludes disabled ones", () => {
   const sitter = withDep[1]!
   assert.deepEqual(sitter.statuses, [])
   assert.deepEqual(sitter.pools, [])
-  const sitterOnly = kindBoards(
-    WORKFLOWS_DIR,
-    parseConfig({ workflows: { engineering: { enabled: false }, "review-sitter": { enabled: false } } }),
-  )
+  // engineering is the only one of the three with an off switch; the released
+  // sitters cannot be disabled, so they always have a board.
+  const sitterOnly = kindBoards(WORKFLOWS_DIR, parseConfig({ workflows: { engineering: { enabled: false } } }))
   assert.deepEqual(
     sitterOnly.map((b) => b.kind),
-    ["pr-sitter"],
+    ["pr-sitter", "review-sitter"],
   )
 })
 

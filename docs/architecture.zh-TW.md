@@ -131,7 +131,7 @@ tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種
 
 ## sitter 類型
 
-四個 sitter——已穩定且預設開啟的 `pr-sitter` 和 `review-sitter`，加上
+四個 sitter——已穩定且永遠開啟的 `pr-sitter` 和 `review-sitter`，加上
 仍屬實驗性的 `dep-sitter` 和 `main-sitter`——監看一個代管的目標面
 （開啟中的 PR、審查請求、相依套件
 的安全公告、CI），並在 git worktree 隔離之下驅動修復，永遠把終端

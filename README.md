@@ -71,20 +71,18 @@ are still experimental** and stay opt-in; theirs may still change.
 ```json
 {
   "workflows": {
-    "pr-sitter":     { "query": "is:open author:@me" },
-    "review-sitter": { "enabled": false },
-    "dep-sitter":    { "enabled": true, "severityFloor": "high" },
-    "main-sitter":   { "enabled": true, "branch": "main" }
+    "pr-sitter":  { "query": "is:open author:@me" },
+    "dep-sitter": { "enabled": true, "severityFloor": "high" },
+    "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```
 
-Everything above is optional: `pr-sitter` here only narrows a query,
-`review-sitter` shows how to turn a default-on sitter off, and the two
-experimental kinds need their `"enabled": true` to start at all. One nuance —
-a sitter that is merely on by default is claimed only when you name it
-(`/agentic-workflow:pr-sitter claim`); giving it `"enabled": true` also lets an
-unscoped claim pull it.
+All of it is optional: `pr-sitter` here only narrows a query, and the two
+experimental kinds need `"enabled": true` to start at all. `pr-sitter` and
+`review-sitter` have **no off switch** — `"enabled": false` on either is a
+config error, not a toggle. They still only act when a claim or watch pulls
+them, and every terminal call stays human.
 
 Every sitter treats the PR/comment/diff/CI text it reads as untrusted input,
 stays behind per-stage bash + platform allowlists, and keeps the terminal call

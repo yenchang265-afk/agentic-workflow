@@ -9,7 +9,6 @@ import {
   bareModel,
   DEFAULT_CONFIG,
   defaultTrackerSystem,
-  autoClaimWorkflowKinds,
   enabledWorkflowKinds,
   ignoredUserConfigPaths,
   loadConfig,
@@ -86,7 +85,7 @@ test("the three stable kinds are on with an empty config; the experimental sitte
   assert.deepEqual(enabledWorkflowKinds(DEFAULT_CONFIG), ["engineering", "pr-sitter", "review-sitter"])
 })
 
-test("default-on kinds are off only when explicitly disabled; every other kind stays opt-in", () => {
+test("the stable kinds are on without config; every other kind stays opt-in", () => {
   const DEFAULT_ON = ["engineering", "pr-sitter", "review-sitter"]
 
   // A knob-only section must not decide enablement either way: it leaves a
@@ -95,11 +94,8 @@ test("default-on kinds are off only when explicitly disabled; every other kind s
   assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { query: "author:@me" } } })), DEFAULT_ON)
   assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { "dep-sitter": { severityFloor: "critical" } } })), DEFAULT_ON)
 
-  // `enabled: false` is the only way to turn a default-on kind off, one at a time.
-  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { enabled: false } } })), [
-    "engineering",
-    "review-sitter",
-  ])
+  // engineering is default-on and can be turned off; the sitters are always-on
+  // and `enabled: false` on them does not parse at all (covered below).
   assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { engineering: { enabled: false } } })), [
     "pr-sitter",
     "review-sitter",
@@ -114,24 +110,23 @@ test("default-on kinds are off only when explicitly disabled; every other kind s
   ])
 })
 
-test("an unscoped claim draws only from engineering plus kinds explicitly turned on", () => {
-  // A sitter reachable by name must not also be claimed by a poll that never
-  // named it — it acts on text strangers write, and pr-sitter pushes.
-  assert.deepEqual(autoClaimWorkflowKinds(DEFAULT_CONFIG), ["engineering"])
-  assert.deepEqual(autoClaimWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { query: "author:@me" } } })), ["engineering"])
+test("the always-on sitters cannot be disabled — `enabled: false` is rejected, not ignored", () => {
+  // Honoring the key would contradict "always on"; dropping it in silence is
+  // worse, since the setting reads as applied while the kind keeps running.
+  assert.throws(() => parseConfig({ workflows: { "pr-sitter": { enabled: false } } }), /pr-sitter.*cannot be disabled/)
+  assert.throws(() => parseConfig({ workflows: { "review-sitter": { enabled: false } } }), /review-sitter.*cannot be disabled/)
 
-  // Writing `enabled: true` on a default-on sitter is the deliberate act that
-  // opts it into unscoped claims.
-  assert.deepEqual(autoClaimWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { enabled: true } } })), [
-    "engineering",
+  // A redundant `enabled: true` and knob-only sections stay valid.
+  assert.ok(enabledWorkflowKinds(parseConfig({ workflows: { "pr-sitter": { enabled: true } } })).includes("pr-sitter"))
+  const knobs = parseConfig({ workflows: { "pr-sitter": { query: "author:@me" } } })
+  assert.ok(enabledWorkflowKinds(knobs).includes("pr-sitter"))
+  assert.equal(knobs.workflows["pr-sitter"]?.["query"], "author:@me")
+
+  // engineering keeps its off switch — it is default-on, not always-on.
+  assert.deepEqual(enabledWorkflowKinds(parseConfig({ workflows: { engineering: { enabled: false } } })), [
     "pr-sitter",
+    "review-sitter",
   ])
-  // Disabling a kind removes it from both sets.
-  assert.deepEqual(autoClaimWorkflowKinds(parseConfig({ workflows: { engineering: { enabled: false } } })), [])
-  assert.deepEqual(
-    autoClaimWorkflowKinds(parseConfig({ workflows: { engineering: { enabled: false }, "pr-sitter": { enabled: true } } })),
-    ["pr-sitter"],
-  )
 })
 
 test("kind-specific knobs ride along in the workflows section", () => {
@@ -531,11 +526,19 @@ test("a kind enabled ONLY in the user layer is enabled, whatever the repo layer 
 })
 
 test("the repo layer can still disable a kind the user layer enabled (repo wins field by field)", async () => {
-  const userPath = tempUserFile(JSON.stringify({ workflows: { "pr-sitter": { enabled: true } } }))
-  const c = await loadConfig(stubClient(JSON.stringify({ workflows: { "pr-sitter": { enabled: false } } })), "/repo", {
+  // dep-sitter, not pr-sitter: the released sitters have no off switch at all.
+  const userPath = tempUserFile(JSON.stringify({ workflows: { "dep-sitter": { enabled: true } } }))
+  const c = await loadConfig(stubClient(JSON.stringify({ workflows: { "dep-sitter": { enabled: false } } })), "/repo", {
     userConfigPath: userPath,
   })
-  assert.ok(!enabledWorkflowKinds(c).includes("pr-sitter"))
+  assert.ok(!enabledWorkflowKinds(c).includes("dep-sitter"))
+})
+
+test("a repo layer cannot disable an always-on sitter the user layer never touched", async () => {
+  await assert.rejects(
+    () => loadConfig(stubClient(JSON.stringify({ workflows: { "pr-sitter": { enabled: false } } })), "/repo", { userConfigPath: null }),
+    /pr-sitter.*cannot be disabled/,
+  )
 })
 
 test("loadConfig: user-only, repo-only, and neither", async () => {

@@ -65,10 +65,9 @@ OpenCode 上還有 `watch [trigger]` / `unwatch`）。**`pr-sitter` 和
 ```json
 {
   "workflows": {
-    "pr-sitter":     { "query": "is:open author:@me" },
-    "review-sitter": { "enabled": false },
-    "dep-sitter":    { "enabled": true, "severityFloor": "high" },
-    "main-sitter":   { "enabled": true, "branch": "main" }
+    "pr-sitter":   { "query": "is:open author:@me" },
+    "dep-sitter":  { "enabled": true, "severityFloor": "high" },
+    "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```

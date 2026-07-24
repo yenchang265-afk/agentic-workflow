@@ -22,9 +22,8 @@
 }
 ```
 
-把 `query` 換成你想讓 sitter 監看的 PR 搜尋條件。想全部採用預設值就整段
-刪掉 `workflows` 區塊；想關掉某個穩定的 sitter，就寫
-`"review-sitter": { "enabled": false }`。
+把 `query` 換成你想讓 sitter 監看的 PR 搜尋條件，或者想全部採用預設值
+就整段刪掉 `workflows` 區塊。
 
 **Azure DevOps：**
 
@@ -125,18 +124,20 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 ## 工作流程類型（`workflows`）
 
 `workflows` 底下的每一個鍵會啟用並設定一種工作流程類型（一份
-`packages/core/workflows/<kind>/` 清單）。**三種穩定類型——`engineering`、
-`pr-sitter`、`review-sitter`——除非以 `"enabled": false` 明確停用，否則
-都會執行**；其他每一種類型（`dep-sitter`、`main-sitter`，以及你自行編寫
-的類型）都是可選啟用的，需要 `"enabled": true`。已啟用的類型依認領優先
-順序輪詢：穩定類型優先，接著是設定中依序排列的已啟用類型。
+`packages/core/workflows/<kind>/` 清單）。有三種類型完全不需要任何設定
+就是啟用的：
 
-**指名類型**的認領（`/agentic-workflow:pr-sitter claim`，或
-`workflow_claim({kind})`）可以拉取任何已啟用的類型。沒有指名類型的認領則
-取自一個較窄的集合：`engineering` 加上被明確設為 `"enabled": true` 的類型。
-sitter 會讀取陌生人可以寫入的文字，而 `pr-sitter` 還會推送，所以「預設開啟」
-只代表**可被指名使用**，不代表**會自動被認領**——寫下 `"enabled": true`
-才會讓未指名的認領也拉取它。
+- **`pr-sitter` 和 `review-sitter` 永遠開啟。** 它們是產品的一部分，而不是
+  可選加購的功能，因此**沒有開關**：在它們身上寫 `"enabled": false` 會在
+  載入時被拒絕並指出該鍵，而不是被採納、也不是被默默忽略。它們其他的旋鈕
+  （`query`、`codePlatform`、`trigger`、`stageModels`）仍然有效。
+- **`engineering` 除非以 `"enabled": false` 明確停用，否則都會執行。**
+
+其他每一種類型（`dep-sitter`、`main-sitter`，以及你自行編寫的類型）都是
+可選啟用的，需要 `"enabled": true`。已啟用的類型依認領優先順序輪詢：
+`engineering`、接著 `pr-sitter` 和 `review-sitter`、再來是設定中依序排列
+的已啟用類型——所以沒有指名類型的認領，在排在前面的都沒有可認領的工作時，
+也會觸及這兩個 sitter。
 
 類型專屬的旋鈕就放在同一個區段裡。**它們不會被驗證**：`workflows` 依
 設計是一個鬆散的記錄（各類型可由使用者自行編寫——見
@@ -171,10 +172,8 @@ sitter 會讀取陌生人可以寫入的文字，而 `pr-sitter` 還會推送，
   "workflows": {
     "engineering": { "enabled": true },
     "pr-sitter": {
-      "enabled": true,
       "query": "is:open author:@me"
     },
-    "review-sitter": { "enabled": true },
     "dep-sitter": { "enabled": true, "severityFloor": "high" },
     "main-sitter": { "enabled": true, "branch": "main" }
   }
@@ -185,6 +184,8 @@ sitter 會讀取陌生人可以寫入的文字，而 `pr-sitter` 還會推送，
   只執行其他類型（例如一個專用的 PR-sitter watcher）。
 - **`workflows.pr-sitter`**、**`workflows.review-sitter`**、
   **`workflows.dep-sitter`**、**`workflows.main-sitter`**——每一個預設都是
+  永遠開啟（`pr-sitter`、`review-sitter`，在它們身上寫 `enabled: false`
+  會是設定錯誤），`dep-sitter` 和 `main-sitter` 則預設
   `enabled: false`。每個 sitter 做什麼、它的階段流水線，以及它完整
   的類型專屬鍵集合（`query`、`ecosystem`、`severityFloor`、
   `includeOutdated`、`branch`……）都只在一個地方權威記載，就是

@@ -8,12 +8,14 @@ FETCH → ASSESS → PUBLISH (no retry loop)
 
 ## Enable
 
-Add to `.agentic-workflow.json`:
+Always on — nothing to add to `.agentic-workflow.json` to use it, and no way
+to turn it off (`"enabled": false` here is a config error). To narrow what it
+claims:
 
 ```jsonc
 {
   "workflows": {
-    "review-sitter": { "enabled": true }
+    "review-sitter": { "query": "is:open review-requested:@me" }
   }
 }
 ```

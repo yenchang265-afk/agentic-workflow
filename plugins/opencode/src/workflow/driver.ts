@@ -90,6 +90,7 @@ import {
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
 import {
+  ALWAYS_ENABLED_KINDS,
   enabledWorkflowKinds,
   ignoredUserConfigPaths,
   modelFor,
@@ -1766,13 +1767,12 @@ export const handleCommand = async (
       } catch {
         known = enabled
       }
-      // Three states, not two: a kind can be live because it is stable and
-      // default-on, or because someone wrote `enabled: true`. They differ —
-      // only the explicit one joins an unscoped claim — so the toast that
-      // people read to answer "is this on?" must not blur them.
+      // The released sitters have no off switch, and "is this on?" is exactly
+      // the question `kinds` gets asked — so mark them, rather than letting
+      // someone read `(enabled)` and go hunting for the toggle.
       const parts = known.map((k) => {
-        if (!enabled.includes(k)) return `${k} (disabled)`
-        return config.workflows[k]?.enabled === true ? `${k} (enabled)` : `${k} (on by default)`
+        if (ALWAYS_ENABLED_KINDS.includes(k)) return `${k} (always on)`
+        return enabled.includes(k) ? `${k} (enabled)` : `${k} (disabled)`
       })
       // `kinds` is where someone lands when a kind they enabled reads as
       // disabled, and the usual cause is that the file they edited is not one

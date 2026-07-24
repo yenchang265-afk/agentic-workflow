@@ -42,12 +42,11 @@ sections below cover each.
    declarative kinds under `packages/core/workflows/<kind>/` (manifest + stage prompts) run by
    the shared `@agentic-workflow/core` engine. Other kinds are enabled via
    `workflows.<kind>` in `.agentic-workflow.json`. `pr-sitter` and
-   `review-sitter` are **stable and on by default** alongside `engineering`
-   (turn one off with `enabled: false`); `dep-sitter` and `main-sitter` are
-   **experimental** and opt-in via `enabled: true` (their manifests and config
-   keys may still change). A default-on sitter is claimed only when a command
-   or `workflow_claim` names its kind — a claim naming none draws from
-   `engineering` plus kinds explicitly `enabled: true`. The four: `pr-sitter` (agents
+   `review-sitter` are **stable and always on** — no off switch, and
+   `enabled: false` on either is a config error; `engineering` is on unless
+   disabled; `dep-sitter` and `main-sitter` are **experimental** and opt-in via
+   `enabled: true` (their manifests and config keys may still change). The
+   four: `pr-sitter` (agents
    `workflow-pr-triage` / `workflow-pr-fix` / `workflow-pr-publish`, plus
    the shared `workflow-verify`) sits on open PRs — triages, fixes, verifies, and pushes
    replies, but never merges; `review-sitter` sits on PRs where your review is

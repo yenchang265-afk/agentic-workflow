@@ -116,16 +116,14 @@ sitter has the same command surface: `claim` (maps to
 pull) and `status` · `stop` (report / abort the active loop; bare
 `/agentic-workflow:<kind>` = status):
 
-- `/agentic-workflow:pr-sitter` — on by default; turn off with
-  `workflows.pr-sitter.enabled: false`.
-- `/agentic-workflow:review-sitter` — on by default; turn off with
-  `workflows.review-sitter.enabled: false`.
+- `/agentic-workflow:pr-sitter` — always on; cannot be disabled.
+- `/agentic-workflow:review-sitter` — always on; cannot be disabled.
 - `/agentic-workflow:dep-sitter` — opt-in via `workflows.dep-sitter.enabled`.
 - `/agentic-workflow:main-sitter` — opt-in via `workflows.main-sitter.enabled`.
 
-A default-on sitter answers `workflow_claim({kind: "pr-sitter"})` with no
-config. A bare `workflow_claim()` names no kind and stays narrower — it pulls
-`engineering` plus kinds explicitly given `"enabled": true`.
+Both released sitters need no config at all. A bare `workflow_claim()` polls
+every enabled kind in claim-priority order, so it reaches them once nothing
+earlier is claimable; `workflow_claim({kind})` restricts the pull to one.
 
 Ancillary:
 

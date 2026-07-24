@@ -90,12 +90,10 @@ flowchart TB
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
   `"ado"`; how they talk to ADO — `az` CLI (default), REST, or MCP —
   follows `ado.access`.
-  `pollOnce(sources)` walks the given sources in claim-priority order (the
-  stable default-on kinds first unless disabled, then opted-in kinds in config
-  order — `enabledWorkflowKinds` in core config). A poll that names no kind is
-  narrower still: `autoClaimWorkflowKinds` drops sitters that are merely
-  default-on, so being on without configuration makes a sitter reachable, not
-  automatic. The first successful claim wins, and
+  `pollOnce(sources)` walks the given sources in claim-priority order
+  (`engineering` unless disabled, then the always-on `pr-sitter` and
+  `review-sitter`, then opted-in kinds in config order —
+  `enabledWorkflowKinds` in core config); the first successful claim wins, and
   each kind's command scopes the poll to its own kind's source. Both
   hosts' triggers delegate to it: OpenCode's `session.idle` + the per-kind
   `watch` timer, and the Claude Code MCP server's `workflow_claim`. A source may

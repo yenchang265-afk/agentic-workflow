@@ -98,8 +98,8 @@ The loop (`/agentic-workflow:engineering`):
   early — a crash/restart, or a user **interrupt (ESC)** — from its state
   snapshot (or its persisted plan), at the exact stage it reached
 - `/agentic-workflow:engineering kinds` — list the workflow kinds this repo ships and their
-  state: `(on by default)` for a stable kind nobody configured, `(enabled)`
-  for an explicit `workflows.<kind>.enabled: true`, `(disabled)` otherwise.
+  state: `(always on)` for the two released sitters, which have no off switch,
+  `(enabled)` / `(disabled)` for everything else.
   Each enabled kind has its own `/agentic-workflow:<kind>` command. The toast
   also names the config files actually in effect
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort, clear state, and exit watch
@@ -109,22 +109,22 @@ The loop (`/agentic-workflow:engineering`):
   plus a whole-backlog roll-up (counts, awaiting-approval/claimable/
   interrupted/in-review). Bare `/agentic-workflow:engineering` does the same
 
-The sitters (**`pr-sitter` and `review-sitter` are stable**, alongside
-`engineering`, the default-on kind; **`dep-sitter` and `main-sitter` are still
-experimental** — their manifests and config keys may still change). Each has
+The sitters (**`pr-sitter` and `review-sitter` are stable and always on**,
+alongside `engineering`, which is on unless disabled; **`dep-sitter` and
+`main-sitter` are still experimental** and opt-in — their manifests and config
+keys may still change). Each has
 the identical command surface —
 `claim` (one-shot pull), `watch [trigger]` / `unwatch` (standing worker,
 same trigger/interval syntax and one-watcher-per-clone lease as
 engineering's `watch`, scoped to that kind), and `stop` (alias `abort`) /
 `status` (bare command = status). **What each one does is documented once in
 [`docs/sitters.md`](sitters.md)** — the four commands are:
-`/agentic-workflow:pr-sitter` (on by default; disable via
-`workflows.pr-sitter.enabled: false`),
-`/agentic-workflow:review-sitter` (also on by default),
+`/agentic-workflow:pr-sitter` (always on — no off switch),
+`/agentic-workflow:review-sitter` (likewise),
 `/agentic-workflow:dep-sitter` (opt-in via `workflows.dep-sitter.enabled`), and
 `/agentic-workflow:main-sitter` (opt-in via `workflows.main-sitter.enabled`).
-Every verb here names its own kind, so a default-on sitter is fully usable
-with no `.agentic-workflow.json` at all.
+Every verb here names its own kind, and the released sitters are always on, so
+both are fully usable with no `.agentic-workflow.json` at all.
 
 The old umbrella `/agent-loop` command is gone — its free-text mode and its
 `task <id>`, `run`, `ship`, `approve-plan`, `reject`, and `go`/`ok` verbs with

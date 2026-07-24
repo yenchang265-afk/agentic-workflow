@@ -1,5 +1,5 @@
 import type { Client, Log, Shell } from "../host.js"
-import { adoAccessFor, autoClaimWorkflowKinds, enabledWorkflowKinds, platformFor } from "../config.js"
+import { adoAccessFor, enabledWorkflowKinds, platformFor } from "../config.js"
 import { loadManifest } from "../manifest/load.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { makeAdoCiRunsSource } from "../source/ado-ci-runs.js"
@@ -72,14 +72,8 @@ export interface WorkSourceDeps {
 /**
  * The work sources the scheduler polls, in claim-priority order (config
  * order). An `only` kind restricts the poll to that one kind (the claim/watch
- * kind filter) and may name any ENABLED kind, including a default-on sitter.
- *
- * Without `only` the poll is unscoped — nobody named a kind — so it draws from
- * `autoClaimWorkflowKinds`, which excludes sitters that are merely default-on.
- * Being reachable by name is not consent to be claimed by a poll that never
- * asked; see that helper for why.
- *
- * A typo'd or unavailable `workflows.<kind>` (the config schema is
+ * kind filter); without it every enabled kind is polled, the always-on sitters
+ * included. A typo'd or unavailable `workflows.<kind>` (the config schema is
  * an open record) must not throw here — that would abort the whole build and
  * take every OTHER enabled source (engineering included) down with it, so no
  * work ever gets claimed. Skip-and-warn the bad kind instead.
@@ -90,7 +84,8 @@ export const buildWorkSources = (
   manifestFor: (kind: string) => LoadedManifest,
   only?: string,
 ): WorkSource[] =>
-  (only ? enabledWorkflowKinds(config).filter((kind) => kind === only) : autoClaimWorkflowKinds(config))
+  enabledWorkflowKinds(config)
+    .filter((kind) => !only || kind === only)
     .flatMap((kind): WorkSource[] => {
       let loaded: LoadedManifest
       try {

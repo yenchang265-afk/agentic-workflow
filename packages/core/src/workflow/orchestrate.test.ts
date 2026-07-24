@@ -57,43 +57,41 @@ test("makeManifestCache loads eagerly, caches, and serves lazy kinds", () => {
   assert.equal(manifestFor("pr-sitter").manifest.kind, "pr-sitter")
 })
 
-test("an unscoped poll skips a sitter that is only default-on; naming it still works", () => {
-  // pr-sitter and review-sitter are live with no config, but "reachable by
-  // name" must not mean "claimed by a poll that never named a kind" â€” that
-  // loop reads text strangers write and pushes to a branch.
+test("an unscoped poll includes the always-on sitters; naming one still works", () => {
+  // pr-sitter and review-sitter are part of the product, so a bare poll on a
+  // default config reaches them with no configuration at all.
   const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
 
   assert.deepEqual(
     buildWorkSources(deps, DEFAULT_CONFIG, manifestFor).map((s) => s.workflowKind),
-    ["engineering"],
-    "a bare claim on a default config must not reach a sitter",
+    ["engineering", "pr-sitter", "review-sitter"],
   )
-  // Asking for it by name works with no config at all.
   assert.deepEqual(
     buildWorkSources(deps, DEFAULT_CONFIG, manifestFor, "pr-sitter").map((s) => s.workflowKind),
     ["pr-sitter"],
   )
-  // `enabled: true` is the deliberate act that opts it into unscoped polls.
-  const optedIn = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: true } } })
+  // Disabling engineering leaves the two that cannot be turned off.
+  const noEng = parseConfigWith(ConfigSchema, { workflows: { engineering: { enabled: false } } })
   assert.deepEqual(
-    buildWorkSources(deps, optedIn, manifestFor).map((s) => s.workflowKind),
-    ["engineering", "pr-sitter"],
+    buildWorkSources(deps, noEng, manifestFor).map((s) => s.workflowKind),
+    ["pr-sitter", "review-sitter"],
   )
-  // A disabled kind stays unreachable even when named outright.
-  const off = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: false } } })
-  assert.deepEqual(buildWorkSources(deps, off, manifestFor, "pr-sitter"), [])
 })
 
 test("buildWorkSources yields one source per enabled kind, in order", () => {
-  const config = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: true } } })
+  const config = parseConfigWith(ConfigSchema, { workflows: { "dep-sitter": { enabled: true } } })
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
   const sources = buildWorkSources(
     { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false },
     config,
     manifestFor,
   )
-  assert.equal(sources.length, 2)
+  // The three stable kinds plus the opted-in one, in claim-priority order.
+  assert.deepEqual(
+    sources.map((s) => s.workflowKind),
+    ["engineering", "pr-sitter", "review-sitter", "dep-sitter"],
+  )
 })
 
 test("an unloadable kind is skipped with a warning, not fatal", () => {
@@ -105,7 +103,11 @@ test("an unloadable kind is skipped with a warning, not fatal", () => {
     config,
     manifestFor,
   )
-  assert.equal(sources.length, 1, "engineering survives the bad kind")
+  assert.deepEqual(
+    sources.map((s) => s.workflowKind),
+    ["engineering", "pr-sitter", "review-sitter"],
+    "the stable kinds survive the bad kind",
+  )
   assert.ok(warnings.some((w) => w.includes('no-such-kind')))
 })
 
@@ -164,7 +166,7 @@ test("buildWorkSources wires dep-sitter and main-sitter on both github and ado â
   const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
   assert.deepEqual(
     buildWorkSources(deps, config, manifestFor).map((s) => s.workflowKind),
-    ["engineering", "dep-sitter", "main-sitter"],
+    ["engineering", "pr-sitter", "review-sitter", "dep-sitter", "main-sitter"],
   )
   const warnings: string[] = []
   const ado = parseConfigWith(ConfigSchema, {
@@ -179,7 +181,7 @@ test("buildWorkSources wires dep-sitter and main-sitter on both github and ado â
   )
   assert.deepEqual(
     sources.map((s) => s.workflowKind),
-    ["engineering", "dep-sitter", "main-sitter"],
+    ["engineering", "pr-sitter", "review-sitter", "dep-sitter", "main-sitter"],
   )
   assert.deepEqual(warnings, [])
 })
@@ -220,12 +222,15 @@ test("the workflows.dep-sitter.ecosystem override reaches the source through bui
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any
   const config = parseConfigWith(ConfigSchema, {
-    workflows: { engineering: { enabled: false }, "dep-sitter": { enabled: true, ecosystem: "maven" } },
+    workflows: { "dep-sitter": { enabled: true, ecosystem: "maven" } },
   })
+  // Scope to the one kind under test â€” the always-on sitters would otherwise
+  // sit ahead of dep-sitter in claim-priority order.
   const sources = buildWorkSources(
     { $: shell, client, directory: "/repo", log: () => {}, isDriving: () => false },
     config,
     makeManifestCache(defaultWorkflowsDir()),
+    "dep-sitter",
   )
   assert.deepEqual(
     sources.map((s) => s.workflowKind),

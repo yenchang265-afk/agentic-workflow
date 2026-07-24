@@ -160,13 +160,15 @@ The `pr-sitter` workflow kind (`workflows/pr-sitter/`) adds two things the
 engineering loop deliberately lacks: it reads text strangers can write, and
 it pushes.
 
-`pr-sitter` is on by default (`enabled: false` turns it off), so these threats
-are reachable without any config — but only when someone **names the kind**:
-`/agentic-workflow:pr-sitter claim`, `watch`, or `workflow_claim({kind})`. A
-claim that names no kind does not pull it; that set (`autoClaimWorkflowKinds`)
-is `engineering` plus kinds explicitly given `enabled: true`. So entering this
-loop stays a deliberate act, and `enabled: true` is what additionally opts the
-sitter into unscoped claims.
+`pr-sitter` is **always on and cannot be disabled**, so unlike T1-T6 these
+threats apply to every install — there is no configuration that removes them.
+What still bounds them is that the sitter never runs on its own: it acts only
+when a claim or watch pulls it (`/agentic-workflow:pr-sitter claim`/`watch`, or
+a `workflow_claim` that reaches it in claim-priority order), it stays behind
+the per-stage bash and platform allowlists below, and every terminal call —
+merge, approve, close — remains human. Operators who cannot accept T7-T10 must
+control it at the credential layer (scope or withhold the `gh`/ADO token the
+publish stage needs), not with a config flag.
 
 ### T7. PR comment/diff text prompt-injects the sitter
 
@@ -264,9 +266,10 @@ attacker-authored end to end.
 ## Sitter-family surfaces (T11–T13)
 
 Three further kinds reuse the T7–T10 posture with narrower or
-differently-shaped authority. `review-sitter` is on by default under the same
-named-claim rule as T7–T10 above; `dep-sitter` and `main-sitter` are opt-in, so
-their threats apply only when `workflows.<kind>.enabled` is set.
+differently-shaped authority. `review-sitter` is always on like the PR sitter,
+so T11 applies to every install (its authority is comment-only, which is what
+bounds it); `dep-sitter` and `main-sitter` are opt-in, so their threats apply
+only when `workflows.<kind>.enabled` is set.
 
 ### T11. review-sitter — strictly less authority than the PR sitter
 

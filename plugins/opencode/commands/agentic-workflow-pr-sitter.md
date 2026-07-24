@@ -33,10 +33,12 @@ Dispatch:
 - **`status`** — print the current loop (stage, iteration, watch state and
   cadence). Bare `/agentic-workflow:pr-sitter` (no arguments) does the same.
 
-The kind must be enabled in `.agentic-workflow.json`:
+This kind is **always on** — it needs no configuration and has no off
+switch (`"enabled": false` on it is a config error). Narrow which PRs it
+watches with:
 
 ```json
-{ "workflows": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
+{ "workflows": { "pr-sitter": { "query": "is:open author:@me" } } }
 ```
 
 `query` (GitHub) narrows which PRs are polled; on Azure DevOps set

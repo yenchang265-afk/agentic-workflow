@@ -24,9 +24,8 @@ and `review-sitter`):
 }
 ```
 
-Replace `query` with the PR search you want the sitter to watch. Delete the
-whole `workflows` block to take every default, or set
-`"review-sitter": { "enabled": false }` to turn a stable sitter off.
+Replace `query` with the PR search you want the sitter to watch, or delete the
+whole `workflows` block to take every default.
 
 **Azure DevOps:**
 
@@ -126,19 +125,21 @@ it can honor (today: OpenCode's `watchIntervalMinutes` — see
 ## Workflow kinds (`workflows`)
 
 Each key under `workflows` enables and configures one workflow kind (a
-`packages/core/workflows/<kind>/` manifest). **The three stable kinds —
-`engineering`, `pr-sitter`, `review-sitter` — run unless explicitly disabled**
-with `"enabled": false`; every other kind (`dep-sitter`, `main-sitter`, and any
-kind you author) is opt-in with `"enabled": true`. Enabled kinds are polled in
-claim-priority order: the stable kinds first, then opted-in kinds in config
-order.
+`packages/core/workflows/<kind>/` manifest). Three kinds are live with no
+configuration at all:
 
-A claim that **names a kind** (`/agentic-workflow:pr-sitter claim`, or
-`workflow_claim({kind})`) can pull any enabled kind. A claim that names none
-draws from a narrower set: `engineering` plus kinds explicitly given
-`"enabled": true`. A sitter reads text strangers can write and `pr-sitter`
-pushes, so being on by default makes it *reachable*, not *automatic* — write
-`"enabled": true` to also let an unscoped claim pull it.
+- **`pr-sitter` and `review-sitter` are always on.** They are part of the
+  product, not a feature to opt into, and have **no off switch**:
+  `"enabled": false` on either is rejected at load with a message naming the
+  key, rather than honored or silently dropped. Their other knobs (`query`,
+  `codePlatform`, `trigger`, `stageModels`) still apply.
+- **`engineering` runs unless explicitly disabled** with `"enabled": false`.
+
+Every other kind (`dep-sitter`, `main-sitter`, and any kind you author) is
+opt-in with `"enabled": true`. Enabled kinds are polled in claim-priority
+order: `engineering`, then `pr-sitter` and `review-sitter`, then opted-in
+kinds in config order — so a claim that names no kind reaches the sitters too,
+once nothing earlier in the order is claimable.
 
 Kind-specific knobs ride along in the same section. **They are not validated**:
 `workflows` is a loose record by design (kinds are user-authorable — see
@@ -173,10 +174,8 @@ it. The warnings are advisory: they annotate a save, never block it. See
   "workflows": {
     "engineering": { "enabled": true },
     "pr-sitter": {
-      "enabled": true,
       "query": "is:open author:@me"
     },
-    "review-sitter": { "enabled": true },
     "dep-sitter": { "enabled": true, "severityFloor": "high" },
     "main-sitter": { "enabled": true, "branch": "main" }
   }
@@ -185,8 +184,10 @@ it. The warnings are advisory: they annotate a save, never block it. See
 
 - **`workflows.engineering.enabled`** — default `true`; set `false` to run only
   other kinds (e.g. a dedicated PR-sitter watcher).
-- **`workflows.pr-sitter`**, **`workflows.review-sitter`**, **`workflows.dep-sitter`**,
-  **`workflows.main-sitter`** — each `enabled: false` by default. What each sitter
+- **`workflows.pr-sitter`**, **`workflows.review-sitter`** — always on; these
+  sections carry knobs only, and `enabled: false` in one is a config error.
+- **`workflows.dep-sitter`**, **`workflows.main-sitter`** — `enabled: false` by
+  default. What each sitter
   does, its stage pipeline, and its full set of kind-specific keys
   (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
   documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —

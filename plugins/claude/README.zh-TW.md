@@ -113,17 +113,14 @@ host 上，每個 sitter 的指令面都相同：`claim`（對應到
 就是拉取動作）以及 `status` · `stop`（回報／中止目前執行中的迴圈；
 單獨的 `/agentic-workflow:<kind>` = status）：
 
-- `/agentic-workflow:pr-sitter` —— 預設開啟；用
-  `workflows.pr-sitter.enabled: false` 關閉。
-- `/agentic-workflow:review-sitter` —— 預設開啟；用
-  `workflows.review-sitter.enabled: false` 關閉。
+- `/agentic-workflow:pr-sitter` —— 永遠開啟，無法停用。
+- `/agentic-workflow:review-sitter` —— 永遠開啟，無法停用。
 - `/agentic-workflow:dep-sitter` —— 透過 `workflows.dep-sitter.enabled` 選擇啟用。
 - `/agentic-workflow:main-sitter` —— 透過 `workflows.main-sitter.enabled` 選擇啟用。
 
-預設開啟的 sitter 不需要任何設定就能回應
-`workflow_claim({kind: "pr-sitter"})`。而裸的 `workflow_claim()` 沒有指名
-類型，範圍較窄——它只拉取 `engineering` 加上被明確設為 `"enabled": true`
-的類型。
+兩個已發布的 sitter 完全不需要設定。裸的 `workflow_claim()` 會依認領優先
+順序輪詢每一種已啟用的類型，所以當排在前面的都沒有可認領的工作時就會觸及
+它們；`workflow_claim({kind})` 則把拉取範圍限定在一種類型。
 
 附帶指令：
 
