@@ -134,6 +134,20 @@ flowchart LR
    (crash/restart) — from its **state snapshot** at the exact stage it
    reached, or from the persisted plan when no valid snapshot exists. Plugin
    startup logs any interrupted tasks and leftover snapshots it finds.
+8. Backlog maintenance: `/agentic-workflow:engineering remove <id>`
+   **hard-deletes** a task from **any** folder — unlike replan/retask it does
+   not move the file, it deletes it and commits the removal (gone for good;
+   git history retains it if the backlog is tracked). The plugin refuses a task
+   a live loop is driving or one holding a claim marker, and releases any
+   worktree the task owned — destructive, so only when the user wants the task
+   gone. `/agentic-workflow:engineering doctor [fix]` audits the backlog for
+   structural damage (stray folders, files outside every status folder,
+   duplicate ids, held claim markers); with `fix` it applies the unambiguous
+   repairs (rescue strays to `draft/`, remove emptied stray folders, release
+   stale claim markers) and always leaves duplicate ids for a human.
+   `/agentic-workflow:engineering kinds` lists the workflow kinds this repo
+   ships and which are enabled (toggle via `workflows.<kind>.enabled` in
+   `.agentic-workflow.json`).
 
 ## The gates are a command, planning and execution are the loop
 

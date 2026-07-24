@@ -96,24 +96,21 @@ Dispatch:
     `## Implementation Plan` required);
   - a finished `in-review/` task → `completed/` (ship — do this only after
     reviewing the branch diff).
-  A task lives in exactly one folder, so the gate is never ambiguous; the
-  toast names which move happened. Without an id it advances the single task
-  at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
-  `draft/` task only when neither has anything waiting — loop gates outrank the
-  authoring gate, and never-approved epic tracking drafts are skipped, so the
-  loop never guesses.
+  A task lives in exactly one folder, so the gate is never ambiguous. Without
+  an id it advances the single task at a loop wait-gate (`plan-review/` or
+  `in-review/`), falling back to a lone `draft/` task only when neither has
+  anything waiting — loop gates outrank the authoring gate, and never-approved
+  epic tracking drafts are skipped, so the loop never guesses.
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
-  re-planning; the reason is recorded in the audit note and the next PLAN
-  pass must address it.
-- **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
-  replan/retask this does **not** move the task: the file is deleted and the
-  removal committed, so the task is gone for good (git history retains it if
-  the backlog is tracked). Works from **any** status folder. Handled in the
-  plugin like the gates above; the toast reports the outcome. The plugin
-  refuses a task a live loop is driving or one holding a claim marker, and
-  releases any worktree the task owned. **Destructive and cannot be undone
-  from the working tree** — only run it when the user wants the task gone.
+  re-planning; the reason is audited and the next PLAN pass must address it.
+- **`remove <id>`** — hard-delete a task from **any** folder. Unlike
+  replan/retask it does **not** move the file: it deletes it and commits the
+  removal, so the task is gone for good (git history retains it if the backlog
+  is tracked). The plugin refuses a task a live loop is driving or one holding
+  a claim marker, and releases any worktree it owned. **Destructive and cannot
+  be undone from the working tree** — only run it when the user wants the task
+  gone.
 
 **Verify before you report a gate — `approve` and `replan` ONLY.** Their move
 happens in the plugin's command hook *before* your turn, so by the time you
@@ -130,97 +127,22 @@ still sitting in its folder right after them is EXPECTED, not a plugin
 failure. For those verbs report the toast's outcome and stop; never prescribe
 a rebuild from an unmoved file on an execution verb.
 
-## Execution
+## Everything else is deterministic plugin work
 
-- **`plan <id>`** — plan one approved task now: claims the `queued/` task and
-  runs the PLAN stage (writes the `## Implementation Plan` onto the task
-  file, parks it in `plan-review/` for your gate, exits). Building is not
-  reachable from here — `claim`/`watch` drive builds.
-- **`claim`** — one-shot pull: claim the next build-ready `in-progress/` task
-  (lowest priority number first) and drive it once this turn settles. Planless
-  `queued/` tasks are never auto-planned — plan them with `plan <id>`.
-- **`watch [trigger]`** — put **this** session into engineering worker mode.
-  Each tick polls the backlog for one build-ready `in-progress/` task to drive
-  BUILD → VERIFY → REVIEW; planless `queued/` tasks are left for `plan <id>`
-  (a tick that finds only those says so). Bare `watch` uses the kind's configured trigger
-  (`workflows.engineering.trigger`, default poll); an argument overrides it for
-  this session only: `poll [interval]` / a bare interval (`30s`, `5m`, `2h`,
-  or a bare number of minutes; default `watchIntervalMinutes`, 5m; floor:
-  10s) claims on idle events plus the timer, `cron <schedule>` claims only
-  when the 5-field schedule fires, `idle` chains a new loop the moment the
-  session goes idle. The poll timer only claims work
-  while the session is actually idle, so a task approved elsewhere gets
-  picked up even if this session generates no events. A tick that claims
-  nothing always logs why (empty queue, tasks awaiting a plan, tasks already
-  started, claim marker held); actionable reasons are toasted once. An
-  `in-progress/` claim marker orphaned by a crashed run auto-releases after 15
-  minutes; a stale `queued/` marker (a crashed `plan <id>`) is released by
-  `doctor fix`.
-  **One watcher process per clone:** watch takes an on-disk lease
-  (`<tasksDir>/runs/.watch-lease/`, heartbeat every tick); a second opencode
-  process watching the same clone is refused — run it in its own
-  clone/worktree, or unwatch the first. A dead watcher's lease is taken over
-  automatically once its heartbeat goes stale.
-- **`unwatch`** — take this session out of watch mode and stop its polling
-  timer (a build already in progress still finishes). Pressing **ESC**
-  mid-drive also unwatches *and* interrupts the running loop (see `recover`).
-- **`recover <id>`** — resume an in-progress task whose run stopped early — a
-  crash/restart, or a user **interrupt (ESC)** mid-drive: re-claims it and
-  resumes from its state snapshot at the exact stage it reached (or, with no
-  valid snapshot, re-enters at BUILD from the persisted plan). ESC is a pause
-  — it halts after the in-flight stage settles and keeps the snapshot; `stop`
-  ends the run and drops it. Check `git status`/`git diff` first.
-- **`stop`** (alias: `abort`) — abort the loop and exit watch mode (timer
-  included), in this session. Drops the run's snapshot — a deliberate end,
-  nothing to recover (unlike an ESC pause).
+`plan <id>` · `claim` · `watch [trigger]` · `unwatch` · `recover <id>` ·
+`stop` (alias `abort`) · `status` · `kinds` · `doctor [fix]` — the plugin runs
+each of these itself and reports a toast; on these verbs you **invoke nothing
+and write nothing**. If the plugin ran, you'll receive an override carrying the
+real outcome — report exactly that and stop. If instead you're reading this
+text, the plugin did not intercept the command (not loaded, or a stale
+`@agentic-workflow/core` build): say so, with the fix (`npm install` at the
+agentic-workflow repo root, then restart opencode), and do **not** improvise
+any of the work these verbs describe.
 
-## Introspection
-
-- **`status`** — print the current loop (stage, iteration, watch state and
-  cadence) plus a whole-backlog roll-up: counts per folder and the actionable
-  flags (awaiting approval, claimable, claim-held, interrupted, awaiting
-  review). Bare `/agentic-workflow:engineering` (no arguments) does the same.
-- **`kinds`** — list the workflow kinds this repo ships (`packages/core/workflows/<kind>/`) and
-  which are enabled. Toggle them via `workflows.<kind>.enabled` in
-  `.agentic-workflow.json`; each enabled kind has its own
-  `/agentic-workflow:<kind>` command.
-- **`doctor [fix]`** — audit the backlog for structural damage (stray folders
-  like `run/`, task files outside every status folder, duplicate ids, held
-  claim markers). With `fix`, applies the unambiguous repairs: rescues strays
-  to `draft/`, removes emptied stray folders, and releases stale claim
-  markers. Duplicates are always left for you. Never repair the backlog by
-  hand — the folder a task lives in IS its state, and the plugin blocks raw
-  `mv`/`mkdir`/`rm`/writes against `docs/tasks/`.
-
-## The pipeline
-
-A queued task enters at PLAN — it writes the plan onto the task file in the
-main tree (no branch, no worktree) and parks. An approved-plan task enters at
-BUILD with the plan persisted on the task file (`## Implementation Plan`).
-Build execution is isolated on a `feature/<id>` git branch with a commit
-checkpoint per build iteration. On a VERIFY FAIL within the
-iteration cap it **re-builds** with the failure feedback; on a REVIEW FAIL
-within the cap it re-builds with the review's feedback; on a VERIFY/REVIEW
-ERROR (the check itself couldn't run) it stops for a human instead of
-iterating. If the iteration cap trips, the plan itself is suspect — send it
-back with `replan <id> <why>` and the next PLAN pass addresses the failure.
-On a REVIEW PASS the loop is done and the task parks in `in-review/` — it
-never pushes or opens a PR itself; review the branch diff yourself,
-push/open the PR, then `approve <id>` to complete it. That is the final
-human gate.
-
-When `worktreesDir` is configured, execution runs in a per-task `git
-worktree` instead of the shared checkout — the stage prompts carry a
-`Worktree:` line pinning all reads/edits/tests there. When `reviewLenses` is
-configured, REVIEW runs once per lens and the loop takes the worst verdict.
-
-The flow: `new` (interview → draft) → human reviews the draft (reshape with
-`retask <id>` if it's off) → `approve <id>` queues it → the loop (plan,
-claim, or watch) plans it and parks the plan in `plan-review/` → human
-reviews the plan → `approve` (or `replan <why>`) → the loop builds it →
-`in-review/` → `approve` ships it. The loop plans, but never approves its
-own plans, so a watcher can plan a whole queue overnight for you to
-batch-review in the morning.
+Their full behavior — the PLAN → BUILD → VERIFY → REVIEW pipeline, the
+`feature/<id>` branch isolation, the iteration cap and re-build feedback loop,
+the `in-review/` diff gate, watch cadence/triggers and the one-watcher-per-clone
+lease, and the `doctor` repairs — lives in the `workflow-orchestration` skill.
 
 Never move, create, or delete files under `docs/tasks/` yourself — no bash
 `mv`/`mkdir`/`rm`, no direct writes into status folders (the plugin blocks

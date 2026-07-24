@@ -203,10 +203,9 @@ human reviews the plan → approve (asked inline, or `replan <why>`) → build i
 (asked inline as a separate question, or `claim` later) → `in-review/` →
 `approve` ships it.
 
-On a VERIFY or REVIEW FAIL the loop re-**builds** with the feedback threaded
-in, within the iteration cap; when the cap trips, the plan itself is suspect
-— a human sends it back with `/agentic-workflow:engineering replan <id> <why>`
-and the next PLAN pass addresses the failure.
+A VERIFY/REVIEW FAIL re-**builds** with the feedback threaded in until the
+iteration cap trips (then `replan <id> <why>`); the `workflow-orchestration`
+skill holds the full verdict and termination contract.
 
 When a loop you are driving hits a gate live (a draft just written, a plan
 just parked, or a build just finished), offer the gate choices inline via
