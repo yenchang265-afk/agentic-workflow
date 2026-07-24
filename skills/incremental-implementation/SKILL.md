@@ -90,13 +90,7 @@ If Slice 1 fails, you discover it before investing in Slices 2 and 3.
 
 ### Rule 0: Simplicity First
 
-Before writing any code, ask: "What is the simplest thing that could work?"
-
-After writing code, review it against these checks:
-- Can this be done in fewer lines?
-- Are these abstractions earning their complexity?
-- Would a staff engineer look at this and say "why didn't you just..."?
-- Am I building for hypothetical future requirements, or the current task?
+Before writing any code, ask: "What is the simplest thing that could work?" After writing it, run the simplicity checks from `using-agent-skills` → Enforce Simplicity.
 
 ```
 SIMPLICITY CHECK:
@@ -114,16 +108,7 @@ Three similar lines of code is better than a premature abstraction. Implement th
 
 ### Rule 0.5: Scope Discipline
 
-Touch only what the task requires.
-
-Do NOT:
-- "Clean up" code adjacent to your change
-- Refactor imports in files you're not modifying
-- Remove comments you don't fully understand
-- Add features not in the spec because they "seem useful"
-- Modernize syntax in files you're only reading
-
-If you notice something worth improving outside your task scope, note it — don't fix it:
+Touch only what the task requires (`using-agent-skills` → Maintain Scope Discipline). If you notice something worth improving outside your task scope, note it — don't fix it:
 
 ```
 NOTICED BUT NOT TOUCHING:
@@ -208,7 +193,7 @@ After each increment, verify:
 - [ ] The new functionality works as expected
 - [ ] The change is committed with a descriptive message
 
-**Note:** Run each verification command after a change that could affect it. After a successful run, don't repeat the same command unless the code has changed since — re-running on unchanged code adds no information.
+One clean run per code state — see `references/definition-of-done.md` → Verification Discipline.
 
 ## Common Rationalizations
 
@@ -219,7 +204,6 @@ After each increment, verify:
 | "These changes are too small to commit separately" | Small commits are free. Large commits hide bugs and make rollbacks painful. |
 | "I'll add the feature flag later" | If the feature isn't complete, it shouldn't be user-visible. Add the flag now. |
 | "This refactor is small enough to include" | Refactors mixed with features make both harder to review and debug. Separate them. |
-| "Let me run the build command again just to be sure" | After a successful run, repeating the same command adds nothing unless the code has changed since. Run it again after subsequent edits, not as reassurance. |
 
 ## Red Flags
 
@@ -232,7 +216,6 @@ After each increment, verify:
 - Building abstractions before the third use case demands it
 - Touching files outside the task scope "while I'm here"
 - Creating new utility files for one-time operations
-- Running the same build/test command twice in a row without any intervening code change
 
 ## Verification
 

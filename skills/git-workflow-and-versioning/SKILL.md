@@ -110,13 +110,7 @@ git commit -m "refactor validation and add phone number field"
 
 ### 5. Size Your Changes
 
-Target ~100 lines per commit/PR. Changes over ~1000 lines should be split. See the splitting strategies in `code-review-and-quality` for how to break down large changes.
-
-```
-~100 lines  → Easy to review, easy to revert
-~300 lines  → Acceptable for a single logical change
-~1000 lines → Split into smaller changes
-```
+Target ~100 lines per commit/PR; split changes over ~1000. The size thresholds and splitting strategies live in `code-review-and-quality` → Change Sizing.
 
 ## Branching Strategy
 
@@ -250,11 +244,8 @@ Automate this with git hooks:
 ## Using Git for Debugging
 
 ```bash
-# Find which commit introduced a bug
-git bisect start
-git bisect bad HEAD
-git bisect good <known-good-commit>
-# Git checkouts midpoints; run your test at each to narrow down
+# Find which commit introduced a bug: git bisect — full recipe in
+# debugging-and-error-recovery → Localize
 
 # View what changed recently
 git log --oneline -20

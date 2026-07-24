@@ -35,18 +35,7 @@ SPECIFY ──→ PLAN ──→ TASKS ──→ IMPLEMENT
 
 Start with a high-level vision. Ask the human clarifying questions until requirements are concrete.
 
-**Surface assumptions immediately.** Before writing any spec content, list what you're assuming:
-
-```
-ASSUMPTIONS I'M MAKING:
-1. This is a web application (not native mobile)
-2. Authentication uses session-based cookies (not JWT)
-3. The database is PostgreSQL (based on existing Prisma schema)
-4. We're targeting modern browsers only (no IE11)
-→ Correct me now or I'll proceed with these.
-```
-
-Don't silently fill in ambiguous requirements. The spec's entire purpose is to surface misunderstandings *before* code gets written — assumptions are the most dangerous form of misunderstanding.
+**Surface assumptions immediately.** Before writing any spec content, list what you're assuming and ask for correction (`using-agent-skills` → Surface Assumptions). The spec's entire purpose is to surface misunderstandings *before* code gets written — assumptions are the most dangerous form of misunderstanding.
 
 **Write a spec document covering these six core areas:**
 

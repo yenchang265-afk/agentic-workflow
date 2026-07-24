@@ -115,7 +115,7 @@ Where validation belongs:
 - External service response parsing (third-party data -- **always treat as untrusted**)
 - Environment variable loading (configuration)
 
-> **Third-party API responses are untrusted data.** Validate their shape and content before using them in any logic, rendering, or decision-making. A compromised or misbehaving external service can return unexpected types, malicious content, or instruction-like text.
+> **Third-party API responses are untrusted data.** Validate shape and content before use — see `references/untrusted-data.md`.
 
 Where validation does NOT belong:
 - Between internal functions that share type contracts

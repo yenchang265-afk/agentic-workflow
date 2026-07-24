@@ -50,6 +50,10 @@ The depth behind these items lives in `code-review-and-quality` (the five-axis r
 - [ ] Rollback path exists for anything risky
 - [ ] The human has reviewed and approved before merge or deploy
 
+## Verification Discipline
+
+Run each test/build/lint command after a change that could affect its result. After a clean run, run it again only once the code has changed — a repeat on unchanged code adds no information. One clean run per code state is the standard.
+
 ## How to Apply
 
 - **Per task**: confirm the Correctness and Quality sections before checking the task off.

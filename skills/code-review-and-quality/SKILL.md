@@ -125,7 +125,7 @@ Small, focused changes are easier to review, faster to merge, and safer to deplo
 
 **When large changes are acceptable:** Complete file deletions and automated refactoring where the reviewer only needs to verify intent, not every line.
 
-**Separate refactoring from feature work.** A change that refactors existing code and adds new behavior is two changes — submit them separately. Small cleanups (variable renaming) can be included at reviewer discretion.
+**Separate refactoring from feature work** — a refactor plus new behavior is two changes; see `git-workflow-and-versioning` → Keep Concerns Separate.
 
 ## Change Descriptions
 

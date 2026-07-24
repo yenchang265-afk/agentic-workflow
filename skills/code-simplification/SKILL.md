@@ -100,7 +100,7 @@ Simplification has a failure mode: over-simplification. Watch for these traps:
 
 ### 5. Scope to What Changed
 
-Default to simplifying recently modified code. Avoid drive-by refactors of unrelated code unless explicitly asked to broaden scope. Unscoped simplification creates noise in diffs and risks unintended regressions.
+Default to simplifying recently modified code (`using-agent-skills` → Maintain Scope Discipline). Unscoped simplification creates noise in diffs and risks unintended regressions.
 
 ## The Simplification Process
 
