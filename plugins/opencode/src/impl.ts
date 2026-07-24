@@ -268,8 +268,23 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       const verb = input.arguments.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
       const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
       if (!gateFirst) await reconcileOnce()
-      await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
+      const outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
       if (gateFirst) await reconcileOnce()
+      // The command markdown renders to the model whether or not the plugin
+      // handled the verb. For the report-and-stop verbs (claim/watch/status/…)
+      // handleCommand did all the work and only toasted — but toasts are
+      // invisible to the model, and the rendered template is a DESCRIPTION of
+      // the loop, so the model reads it as information and never reports the
+      // action. Feed the real outcome back in (same mechanism as the refusal
+      // paths). Pass-through verbs (new/retask/approve/replan/remove) return
+      // undefined here, so their markdown reaches the model untouched.
+      if (outcome) {
+        overrideCommandPrompt(
+          output,
+          `The agentic-workflow plugin already ran /agentic-workflow:${kind} "${verb}" for you. Result:\n\n${outcome}\n\n` +
+            `Report exactly that result to the user and stop. Do NOT perform any work described in this command's body — the plugin already did it.`,
+        )
+      }
     },
 
     "tool.execute.before": async (input, output) => {

@@ -192,3 +192,38 @@ test("no live loop → no session walk, edits pass through", async () => {
   const hooks = await makeHooks({}, { failSessionApi: true }) // API failure must not matter when nothing is live
   await hooks["tool.execute.before"]({ sessionID: "any", tool: "write", callID: "c1" }, { args: { filePath: "/anywhere/x.ts" } })
 })
+
+/**
+ * The command-hook success-path override: a report-and-stop verb (watch, claim,
+ * status, unwatch, …) is fully handled in the plugin, but its only signal is a
+ * toast the model can't see, while the descriptive command template still
+ * renders. The hook must replace that template with the plugin's outcome so the
+ * model reports the action instead of reading it as information. Pass-through
+ * verbs (new/retask/approve/replan/remove) must be left untouched.
+ */
+type CmdHooks = {
+  "command.execute.before": (
+    input: { command: string; sessionID: string; arguments: string },
+    output: { parts?: Array<{ type?: string; text?: string }> },
+  ) => Promise<void>
+}
+
+const TEMPLATE = "ORIGINAL RENDERED COMMAND TEMPLATE — a description of the loop."
+
+test("command hook overrides the rendered template with the outcome for a report-and-stop verb", async () => {
+  const hooks = (await makeHooks({})) as unknown as CmdHooks
+  const output = { parts: [{ type: "text", text: TEMPLATE }] }
+  // `unwatch` on the default-enabled engineering kind completes deterministically
+  // and returns its outcome; the hook must feed that back into the prompt.
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_c", arguments: "unwatch" }, output)
+  assert.notEqual(output.parts[0]!.text, TEMPLATE, "the descriptive template must be replaced")
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
+})
+
+test("command hook leaves the template intact for a pass-through verb", async () => {
+  const hooks = (await makeHooks({})) as unknown as CmdHooks
+  const output = { parts: [{ type: "text", text: TEMPLATE }] }
+  // `new` needs the model's interview turn — its markdown must reach the model.
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_c", arguments: "new add rate limiting" }, output)
+  assert.equal(output.parts[0]!.text, TEMPLATE, "an authoring verb's template must pass through untouched")
+})

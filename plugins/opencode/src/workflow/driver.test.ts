@@ -918,6 +918,35 @@ test("kinds lists known kinds with their enabled state", async () => {
   assert.match(toasts[0]?.message ?? "", /pr-sitter \(disabled\)/)
 })
 
+test("report-and-stop verbs return their outcome for the command hook to surface", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  // A sitter verb: the toast is invisible to the model, so handleCommand must
+  // hand the outcome back for the hook to override the rendered template with.
+  const claimed = await handleCommand(deps, "sess", "claim", testConfig, "pr-sitter")
+  const unwatched = await handleCommand(deps, "sess", "unwatch", testConfig, "pr-sitter")
+
+  assert.equal(claimed, toasts[0]?.message, "claim returns exactly what it toasted")
+  assert.match(claimed ?? "", /Claiming the next pr-sitter item/)
+  assert.equal(unwatched, toasts[1]?.message, "unwatch returns exactly what it toasted")
+  assert.match(unwatched ?? "", /watching/i)
+})
+
+test("authoring/gate verbs return undefined so their command markdown reaches the model", async () => {
+  const draft = serializeTask({ title: "Do the thing", body: "x" })
+  const files = { "docs/tasks/draft/my-task.md": draft }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  // new/approve intentionally pass through: overriding them would strip the
+  // interview turn / the approve glob-verify flow the markdown drives.
+  assert.equal(await handleCommand(deps, "sess", "new add rate limiting", testConfig), undefined)
+  assert.equal(await handleCommand(deps, "sess", "approve my-task", testConfig), undefined)
+})
+
 test("an unknown verb gets the engineering usage toast", async () => {
   const { client, toasts } = makeClientFS({})
   const log: string[] = []
