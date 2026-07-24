@@ -319,7 +319,7 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
 
       <div class="pillrow">
         <span class="pill"><b>engineering</b> · default-on · PLAN→BUILD→VERIFY→REVIEW</span>
-        <span class="pill"><b>pr-sitter</b> · opt-in · watches your open PRs</span>
+        <span class="pill"><b>pr-sitter</b> · on by default · watches your open PRs</span>
         <span class="pill">ships as 2 plugins · OpenCode + Claude Code</span>
       </div>
 
@@ -432,7 +432,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <details class="q"><summary><span class="step">Q2</span> Enable the PR-sitter loop?</summary>
         <div class="body">
           <p>Default <b>No</b>. If yes on GitHub, also asks for a <em>"PR search query"</em> (default <code>is:open author:@me</code>). On ADO the sitter watches its own PRs, so no query is asked.</p>
-          <div class="kv">writes → <b>workflows.pr-sitter</b>: { enabled: true, query? }</div>
+          <div class="kv">writes → <b>workflows.pr-sitter</b>: { enabled?, query? }</div>
         </div>
       </details>
 
@@ -484,12 +484,12 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <span class="f">VERIFY <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f term">PUBLISH</span>
         </div>
-        <p style="margin:8px 0 0;font-size:14px">Opt-in. Read-only <code>gh</code>/<code>az</code> triage turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
+        <p style="margin:8px 0 0;font-size:14px">On by default; claimed only when you name the kind. Read-only <code>gh</code>/<code>az</code> triage turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
       </div>
       <div class="note warn">Read <code>docs/design/threat-model.md</code> before enabling the PR sitter — it documents the security posture for acting on untrusted PR content.</div>
 
       <h3>The other sitter kinds</h3>
-      <p>Three more opt-in sitters ship on the same engine, each watching a different signal. Enable one with <code>workflows.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
+      <p>Three more sitters ship on the same engine, each watching a different signal. <code>review-sitter</code> is on by default like the PR sitter; <code>dep-sitter</code> and <code>main-sitter</code> are opt-in via <code>workflows.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
       <div class="card" style="margin-top:10px">
         <h4 style="margin-top:0">review-sitter <span class="def">stable</span> <span style="text-transform:none;color:var(--ink-2)">— sits on PRs where your review is requested</span></h4>
         <div class="flow" style="margin:2px 0">
@@ -595,7 +595,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>tasksDir</code></td><td><span class="def">"docs/tasks"</span></td><td>Root of the task backlog; subfolders are statuses. Also hosts the ephemeral <code>runs/</code> machine state.</td></tr>
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
             <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>watch</code> (either kind's command). <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
-            <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
+            <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. The stable kinds (<code>engineering</code>, <code>pr-sitter</code>, <code>review-sitter</code>) run unless disabled with <code>"enabled": false</code>; every other kind is opt-in with <code>"enabled": true</code>. A claim naming no kind pulls only <code>engineering</code> plus kinds explicitly enabled.</td></tr>
             <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (Azure DevOps REST API, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
             <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
             <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
@@ -612,7 +612,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
   <span class="p">"reviewLenses"</span>: ["correctness", "security", "test-adequacy"],
   <span class="p">"workflows"</span>: {
     <span class="p">"engineering"</span>: { "enabled": true },
-    <span class="p">"pr-sitter"</span>: { "enabled": true, "query": "is:open author:@me" }
+    <span class="p">"pr-sitter"</span>: { "query": "is:open author:@me" }
   }
 }</pre></div>
     </section>

@@ -104,10 +104,13 @@ const BaseConfigSchema = z.object({
       z.string(),
       z.looseObject({
         /**
-         * Deliberately NOT defaulted: `enabledWorkflowKinds` discriminates on
-         * `=== true` for non-engineering kinds, so a default would make every
-         * mentioned kind opt-OUT and a knob-only section would silently start a
-         * workflow. Engineering reads it as `!== false`, so undefined keeps it on.
+         * Deliberately NOT defaulted, and the three readers each need the
+         * undefined case intact: `enabledWorkflowKinds` reads it as `!== false`
+         * for `DEFAULT_ENABLED_KINDS` (undefined keeps them on) and `=== true`
+         * for everything else (so a knob-only section never silently starts an
+         * opt-in workflow), while `autoClaimWorkflowKinds` needs `=== true` to
+         * still mean "deliberately turned on" for a default-on sitter. A schema
+         * default would collapse all three.
          */
         enabled: z.boolean().optional(),
         /** Per-kind override of the global `codePlatform`. */
@@ -201,18 +204,43 @@ export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
 })
 
 /**
- * The workflow kinds this config activates, in claim-priority order: engineering
- * first (unless disabled), then any opted-in kinds in config order. Pure.
+ * Kinds that are live without any configuration, disabled only by an explicit
+ * `enabled: false`. The stable kinds: `engineering` plus the two released
+ * sitters. Everything else (`dep-sitter`, `main-sitter`, any local kind) stays
+ * opt-in via `enabled: true`.
+ */
+export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering", "pr-sitter", "review-sitter"]
+
+/**
+ * The workflow kinds this config activates — the kinds whose command surface
+ * answers and whose work may be claimed *when asked for by name*. Default-on
+ * kinds first in `DEFAULT_ENABLED_KINDS` order, then any opted-in kinds in
+ * config order (claim priority). Pure.
  */
 export const enabledWorkflowKinds = (config: Config): string[] => {
   const sections = config.workflows
-  const kinds: string[] = []
-  if (sections["engineering"]?.enabled !== false) kinds.push("engineering")
+  const kinds = DEFAULT_ENABLED_KINDS.filter((kind) => sections[kind]?.enabled !== false)
   for (const [kind, section] of Object.entries(sections)) {
-    if (kind !== "engineering" && section.enabled === true) kinds.push(kind)
+    if (!DEFAULT_ENABLED_KINDS.includes(kind) && section.enabled === true) kinds.push(kind)
   }
   return kinds
 }
+
+/**
+ * The kinds an **unscoped** claim may pull from — a poll that names no kind,
+ * i.e. the Claude host's `workflow_claim()` with no argument.
+ *
+ * Deliberately narrower than `enabledWorkflowKinds`: a sitter being available
+ * with no config must not also mean it gets claimed by a poll that never asked
+ * for it. A sitter acts on text strangers can write and (pr-sitter) pushes to a
+ * branch, so entering that loop stays a decision someone made — by naming the
+ * kind, or by writing `enabled: true`. Without this, merely installing the
+ * plugin would let a bare claim fall through to a PR the user never mentioned;
+ * see docs/design/threat-model.md T7-T11, which scope those threats to kinds
+ * that were turned on deliberately. Pure.
+ */
+export const autoClaimWorkflowKinds = (config: Config): string[] =>
+  enabledWorkflowKinds(config).filter((kind) => kind === "engineering" || config.workflows[kind]?.enabled === true)
 
 /** The code platform a workflow kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config: Config, kind: string): CodePlatform =>

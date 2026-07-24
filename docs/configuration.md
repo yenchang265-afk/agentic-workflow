@@ -12,19 +12,21 @@ Copy the block for your platform into `.agentic-workflow.json`, replace the
 placeholders, done — everything else keeps its default. The rest of this
 page is the field-by-field reference; you shouldn't need it for a first setup.
 
-**GitHub** (the default platform — this file is equivalent to having no
-`.agentic-workflow.json` at all, plus `pr-sitter` turned on):
+**GitHub** (the default platform — an empty file, or no
+`.agentic-workflow.json` at all, already gives you `engineering`, `pr-sitter`,
+and `review-sitter`):
 
 ```json
 {
   "workflows": {
-    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
+    "pr-sitter": { "query": "is:open author:@me" }
   }
 }
 ```
 
-Replace `query` with the PR search you want the sitter to watch, or delete
-the whole `workflows` block if you only want the engineering loop (its default).
+Replace `query` with the PR search you want the sitter to watch. Delete the
+whole `workflows` block to take every default, or set
+`"review-sitter": { "enabled": false }` to turn a stable sitter off.
 
 **Azure DevOps:**
 
@@ -37,7 +39,7 @@ the whole `workflows` block if you only want the engineering loop (its default).
     "selfLogin": "<your-login-or-service-account-email>"
   },
   "workflows": {
-    "pr-sitter": { "enabled": true }
+    "pr-sitter": { "query": "is:open author:@me" }
   }
 }
 ```
@@ -124,9 +126,19 @@ it can honor (today: OpenCode's `watchIntervalMinutes` — see
 ## Workflow kinds (`workflows`)
 
 Each key under `workflows` enables and configures one workflow kind (a
-`packages/core/workflows/<kind>/` manifest). **`engineering` runs unless explicitly disabled**;
-every other kind is opt-in with `"enabled": true`. Enabled kinds are polled in
-claim-priority order: engineering first, then opted-in kinds in config order.
+`packages/core/workflows/<kind>/` manifest). **The three stable kinds —
+`engineering`, `pr-sitter`, `review-sitter` — run unless explicitly disabled**
+with `"enabled": false`; every other kind (`dep-sitter`, `main-sitter`, and any
+kind you author) is opt-in with `"enabled": true`. Enabled kinds are polled in
+claim-priority order: the stable kinds first, then opted-in kinds in config
+order.
+
+A claim that **names a kind** (`/agentic-workflow:pr-sitter claim`, or
+`workflow_claim({kind})`) can pull any enabled kind. A claim that names none
+draws from a narrower set: `engineering` plus kinds explicitly given
+`"enabled": true`. A sitter reads text strangers can write and `pr-sitter`
+pushes, so being on by default makes it *reachable*, not *automatic* — write
+`"enabled": true` to also let an unscoped claim pull it.
 
 Kind-specific knobs ride along in the same section. **They are not validated**:
 `workflows` is a loose record by design (kinds are user-authorable — see

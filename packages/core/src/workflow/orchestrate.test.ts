@@ -57,6 +57,34 @@ test("makeManifestCache loads eagerly, caches, and serves lazy kinds", () => {
   assert.equal(manifestFor("pr-sitter").manifest.kind, "pr-sitter")
 })
 
+test("an unscoped poll skips a sitter that is only default-on; naming it still works", () => {
+  // pr-sitter and review-sitter are live with no config, but "reachable by
+  // name" must not mean "claimed by a poll that never named a kind" — that
+  // loop reads text strangers write and pushes to a branch.
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const manifestFor = makeManifestCache(defaultWorkflowsDir())
+
+  assert.deepEqual(
+    buildWorkSources(deps, DEFAULT_CONFIG, manifestFor).map((s) => s.workflowKind),
+    ["engineering"],
+    "a bare claim on a default config must not reach a sitter",
+  )
+  // Asking for it by name works with no config at all.
+  assert.deepEqual(
+    buildWorkSources(deps, DEFAULT_CONFIG, manifestFor, "pr-sitter").map((s) => s.workflowKind),
+    ["pr-sitter"],
+  )
+  // `enabled: true` is the deliberate act that opts it into unscoped polls.
+  const optedIn = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: true } } })
+  assert.deepEqual(
+    buildWorkSources(deps, optedIn, manifestFor).map((s) => s.workflowKind),
+    ["engineering", "pr-sitter"],
+  )
+  // A disabled kind stays unreachable even when named outright.
+  const off = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: false } } })
+  assert.deepEqual(buildWorkSources(deps, off, manifestFor, "pr-sitter"), [])
+})
+
 test("buildWorkSources yields one source per enabled kind, in order", () => {
   const config = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: true } } })
   const manifestFor = makeManifestCache(defaultWorkflowsDir())

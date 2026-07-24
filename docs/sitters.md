@@ -2,7 +2,7 @@ English | [繁體中文](sitters.zh-TW.md)
 
 # Sitters
 
-Four opt-in kinds that watch a hosted surface and drive a fix, always
+Four kinds that watch a hosted surface and drive a fix, always
 leaving the terminal call — merge, approve, close — to a human.
 `engineering` (the reference kind — PLAN/BUILD → VERIFY → REVIEW) is
 documented in [architecture.md](architecture.md) and
@@ -29,8 +29,9 @@ limits, and `.agentic-workflow.json` config keys — now lives in its own file:
 Each sitter follows the same shape: a **check** stage decides whether there
 is claimable work, one or more **work** stages run behind git worktree
 isolation, and a terminal **publish** stage writes through a narrow,
-manifest-declared bash/platform allowlist. Every kind is opt-in
-(`workflows.<kind>.enabled`), resolves GitHub vs. Azure DevOps from the global
+manifest-declared bash/platform allowlist. `pr-sitter` and `review-sitter`
+run unless disabled; `dep-sitter` and `main-sitter` are opt-in (all four via
+`workflows.<kind>.enabled`). Each resolves GitHub vs. Azure DevOps from the global
 `codePlatform` (or its own `workflows.<kind>.codePlatform` override) at wiring
 time, and treats whatever diff/comment/CI text it reads as **untrusted
 input** — never instructions. `workflows.<kind>.trigger` controls how a watching

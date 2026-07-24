@@ -914,8 +914,15 @@ test("kinds lists known kinds with their enabled state", async () => {
   await handleCommand(deps, "sess", "kinds", testConfig)
 
   assert.equal(toasts[0]?.variant, "info")
-  assert.match(toasts[0]?.message ?? "", /engineering \(enabled\)/)
-  assert.match(toasts[0]?.message ?? "", /pr-sitter \(disabled\)/)
+  // Three distinct states — "on by default" is not the same as "enabled",
+  // since only the explicit one joins an unscoped claim.
+  assert.match(toasts[0]?.message ?? "", /engineering \(on by default\)/)
+  assert.match(toasts[0]?.message ?? "", /pr-sitter \(on by default\)/)
+  assert.match(toasts[0]?.message ?? "", /dep-sitter \(disabled\)/)
+
+  const optedIn = { ...testConfig, workflows: { "pr-sitter": { enabled: true } } } as typeof testConfig
+  await handleCommand(deps, "sess", "kinds", optedIn)
+  assert.match(toasts[1]?.message ?? "", /pr-sitter \(enabled\)/)
 })
 
 test("an unknown verb gets the engineering usage toast", async () => {

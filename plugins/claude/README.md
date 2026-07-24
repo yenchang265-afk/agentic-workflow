@@ -116,10 +116,16 @@ sitter has the same command surface: `claim` (maps to
 pull) and `status` · `stop` (report / abort the active loop; bare
 `/agentic-workflow:<kind>` = status):
 
-- `/agentic-workflow:pr-sitter` — opt-in via `workflows.pr-sitter`.
-- `/agentic-workflow:review-sitter` — opt-in via `workflows.review-sitter.enabled`.
+- `/agentic-workflow:pr-sitter` — on by default; turn off with
+  `workflows.pr-sitter.enabled: false`.
+- `/agentic-workflow:review-sitter` — on by default; turn off with
+  `workflows.review-sitter.enabled: false`.
 - `/agentic-workflow:dep-sitter` — opt-in via `workflows.dep-sitter.enabled`.
 - `/agentic-workflow:main-sitter` — opt-in via `workflows.main-sitter.enabled`.
+
+A default-on sitter answers `workflow_claim({kind: "pr-sitter"})` with no
+config. A bare `workflow_claim()` names no kind and stays narrower — it pulls
+`engineering` plus kinds explicitly given `"enabled": true`.
 
 Ancillary:
 
@@ -138,7 +144,7 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
   planner), the three build-phase stage subagents
   `workflow-build` / `workflow-verify` / `workflow-review`, the pr-sitter stage
   subagents `workflow-pr-triage` / `workflow-pr-fix` / `workflow-pr-publish`, and the
-  sitter stage subagents for the opt-in kinds: review-sitter's
+  sitter stage subagents for the remaining kinds: review-sitter's
   `workflow-review-fetch` / `workflow-review-assess` / `workflow-review-publish`,
   dep-sitter's `workflow-dep-scan` / `workflow-dep-upgrade` / `workflow-dep-publish`, and
   main-sitter's `workflow-main-diagnose` / `workflow-main-remedy` / `workflow-main-publish`

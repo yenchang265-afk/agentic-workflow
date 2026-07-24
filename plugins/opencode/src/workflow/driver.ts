@@ -1766,7 +1766,14 @@ export const handleCommand = async (
       } catch {
         known = enabled
       }
-      const parts = known.map((k) => (enabled.includes(k) ? `${k} (enabled)` : `${k} (disabled)`))
+      // Three states, not two: a kind can be live because it is stable and
+      // default-on, or because someone wrote `enabled: true`. They differ —
+      // only the explicit one joins an unscoped claim — so the toast that
+      // people read to answer "is this on?" must not blur them.
+      const parts = known.map((k) => {
+        if (!enabled.includes(k)) return `${k} (disabled)`
+        return config.workflows[k]?.enabled === true ? `${k} (enabled)` : `${k} (on by default)`
+      })
       // `kinds` is where someone lands when a kind they enabled reads as
       // disabled, and the usual cause is that the file they edited is not one
       // of the two being read. Naming the actual sources answers that directly.

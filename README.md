@@ -13,7 +13,7 @@ gates, git isolation, trusted verdicts, and audit trail.
 
 Five workflow kinds ship today. **engineering** (default-on) drives a goal through
 PLAN → BUILD → VERIFY → REVIEW over the `docs/tasks/` backlog, with human task
-and plan gates. Four opt-in **sitters** watch a hosted surface (open PRs,
+and plan gates. Four **sitters** watch a hosted surface (open PRs,
 review requests, vulnerable deps, red CI) and drive a fix, keeping every
 terminal call human: `pr-sitter` and `review-sitter` are **stable**;
 `dep-sitter` and `main-sitter` are still **experimental**. See
@@ -60,24 +60,31 @@ shipping. Full execution model (watch mode, iteration caps, recovery):
 
 ## The sitters
 
-Four opt-in sitters watch a hosted surface and drive a fix, each on its own
+Four sitters watch a hosted surface and drive a fix, each on its own
 `/agentic-workflow:<kind>` command sharing the `claim` / `status` / `stop` verbs
 (plus `watch [trigger]` / `unwatch` on OpenCode). **`pr-sitter` and
-`review-sitter` are stable** — their manifests, config keys, and defaults are
-settled, and changes to them follow the same compatibility bar as
-`engineering`. **`dep-sitter` and `main-sitter` are still experimental** —
-theirs may still change. Enable per repo in `.agentic-workflow.json`:
+`review-sitter` are stable and need no configuration** — like `engineering`
+they run unless you turn them off, and their manifests, config keys, and
+defaults follow the same compatibility bar. **`dep-sitter` and `main-sitter`
+are still experimental** and stay opt-in; theirs may still change.
 
 ```json
 {
   "workflows": {
-    "pr-sitter":     { "enabled": true, "query": "is:open author:@me" },
-    "review-sitter": { "enabled": true },
+    "pr-sitter":     { "query": "is:open author:@me" },
+    "review-sitter": { "enabled": false },
     "dep-sitter":    { "enabled": true, "severityFloor": "high" },
     "main-sitter":   { "enabled": true, "branch": "main" }
   }
 }
 ```
+
+Everything above is optional: `pr-sitter` here only narrows a query,
+`review-sitter` shows how to turn a default-on sitter off, and the two
+experimental kinds need their `"enabled": true` to start at all. One nuance —
+a sitter that is merely on by default is claimed only when you name it
+(`/agentic-workflow:pr-sitter claim`); giving it `"enabled": true` also lets an
+unscoped claim pull it.
 
 Every sitter treats the PR/comment/diff/CI text it reads as untrusted input,
 stays behind per-stage bash + platform allowlists, and keeps the terminal call
@@ -168,8 +175,9 @@ local state a running loop leaves behind:
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
   `/agentic-workflow:main-sitter` — the same `claim` / `watch` (OpenCode) /
-  `unwatch` / `stop` / `status` verbs, each scoped to its own kind (opt-in via
-  `workflows.<kind>.enabled`)
+  `unwatch` / `stop` / `status` verbs, each scoped to its own kind
+  (`review-sitter` needs no config; `dep-sitter` and `main-sitter` are opt-in
+  via `workflows.<kind>.enabled`)
 
 Full command reference: [docs/opencode.md](docs/opencode.md) (OpenCode) ·
 [`plugins/claude/README.md`](plugins/claude/README.md) (Claude Code — no

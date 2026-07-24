@@ -156,9 +156,17 @@ committed.
 
 ## PR sitter surfaces (T7–T10)
 
-The opt-in `pr-sitter` workflow kind (`workflows/pr-sitter/`) adds two things the
+The `pr-sitter` workflow kind (`workflows/pr-sitter/`) adds two things the
 engineering loop deliberately lacks: it reads text strangers can write, and
-it pushes. These threats apply only when `workflows.pr-sitter.enabled` is set.
+it pushes.
+
+`pr-sitter` is on by default (`enabled: false` turns it off), so these threats
+are reachable without any config — but only when someone **names the kind**:
+`/agentic-workflow:pr-sitter claim`, `watch`, or `workflow_claim({kind})`. A
+claim that names no kind does not pull it; that set (`autoClaimWorkflowKinds`)
+is `engineering` plus kinds explicitly given `enabled: true`. So entering this
+loop stays a deliberate act, and `enabled: true` is what additionally opts the
+sitter into unscoped claims.
 
 ### T7. PR comment/diff text prompt-injects the sitter
 
@@ -255,9 +263,10 @@ attacker-authored end to end.
 
 ## Sitter-family surfaces (T11–T13)
 
-Three further opt-in kinds reuse the T7–T10 posture with narrower or
-differently-shaped authority. Each threat applies only when its
-`workflows.<kind>.enabled` is set.
+Three further kinds reuse the T7–T10 posture with narrower or
+differently-shaped authority. `review-sitter` is on by default under the same
+named-claim rule as T7–T10 above; `dep-sitter` and `main-sitter` are opt-in, so
+their threats apply only when `workflows.<kind>.enabled` is set.
 
 ### T11. review-sitter — strictly less authority than the PR sitter
 

@@ -97,9 +97,11 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering recover <id>` — resume an in-progress task whose run stopped
   early — a crash/restart, or a user **interrupt (ESC)** — from its state
   snapshot (or its persisted plan), at the exact stage it reached
-- `/agentic-workflow:engineering kinds` — list the workflow kinds this repo ships and which are
-  enabled (`workflows.<kind>.enabled` in `.agentic-workflow.json`); each enabled kind
-  has its own `/agentic-workflow:<kind>` command
+- `/agentic-workflow:engineering kinds` — list the workflow kinds this repo ships and their
+  state: `(on by default)` for a stable kind nobody configured, `(enabled)`
+  for an explicit `workflows.<kind>.enabled: true`, `(disabled)` otherwise.
+  Each enabled kind has its own `/agentic-workflow:<kind>` command. The toast
+  also names the config files actually in effect
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort, clear state, and exit watch
   mode; **drops the snapshot** (deliberate end — nothing to recover, unlike an
   ESC pause)
@@ -116,10 +118,13 @@ same trigger/interval syntax and one-watcher-per-clone lease as
 engineering's `watch`, scoped to that kind), and `stop` (alias `abort`) /
 `status` (bare command = status). **What each one does is documented once in
 [`docs/sitters.md`](sitters.md)** — the four commands are:
-`/agentic-workflow:pr-sitter` (opt-in via `workflows.pr-sitter`),
-`/agentic-workflow:review-sitter` (`workflows.review-sitter`),
-`/agentic-workflow:dep-sitter` (`workflows.dep-sitter`), and
-`/agentic-workflow:main-sitter` (`workflows.main-sitter`).
+`/agentic-workflow:pr-sitter` (on by default; disable via
+`workflows.pr-sitter.enabled: false`),
+`/agentic-workflow:review-sitter` (also on by default),
+`/agentic-workflow:dep-sitter` (opt-in via `workflows.dep-sitter.enabled`), and
+`/agentic-workflow:main-sitter` (opt-in via `workflows.main-sitter.enabled`).
+Every verb here names its own kind, so a default-on sitter is fully usable
+with no `.agentic-workflow.json` at all.
 
 The old umbrella `/agent-loop` command is gone — its free-text mode and its
 `task <id>`, `run`, `ship`, `approve-plan`, `reject`, and `go`/`ok` verbs with

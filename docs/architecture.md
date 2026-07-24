@@ -7,7 +7,7 @@ workflow engine, and a work-source scheduler — knows nothing about engineering
 tasks or pull requests. The **workflow kinds** (`packages/core/workflows/<kind>/`) are declarative
 manifests plus stage prompts that the framework interprets. Five ship today:
 `engineering` is the reference kind (the original PLAN / BUILD → VERIFY →
-REVIEW workflow, behavior-identical to when it was hardcoded), and four opt-in
+REVIEW workflow, behavior-identical to when it was hardcoded), and four
 **sitters** watch a hosted surface and drive a fix — `pr-sitter` (your open
 PRs), `review-sitter` (PRs awaiting your review), `dep-sitter` (vulnerable or
 outdated dependencies), and `main-sitter` (the default branch's CI). Each
@@ -90,9 +90,12 @@ flowchart TB
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
   `"ado"`; how they talk to ADO — `az` CLI (default), REST, or MCP —
   follows `ado.access`.
-  `pollOnce(sources)` walks the given sources in claim-priority order
-  (engineering first unless disabled, then opted-in kinds in config order —
-  `enabledWorkflowKinds` in core config); the first successful claim wins, and
+  `pollOnce(sources)` walks the given sources in claim-priority order (the
+  stable default-on kinds first unless disabled, then opted-in kinds in config
+  order — `enabledWorkflowKinds` in core config). A poll that names no kind is
+  narrower still: `autoClaimWorkflowKinds` drops sitters that are merely
+  default-on, so being on without configuration makes a sitter reachable, not
+  automatic. The first successful claim wins, and
   each kind's command scopes the poll to its own kind's source. Both
   hosts' triggers delegate to it: OpenCode's `session.idle` + the per-kind
   `watch` timer, and the Claude Code MCP server's `workflow_claim`. A source may
@@ -136,8 +139,8 @@ exists.
 
 ## The sitter kinds
 
-Four opt-in sitters — the stable `pr-sitter` and `review-sitter`, plus the
-still-experimental `dep-sitter` and `main-sitter` — watch a hosted surface
+Four sitters — the stable, default-on `pr-sitter` and `review-sitter`, plus
+the opt-in, still-experimental `dep-sitter` and `main-sitter` — watch a hosted surface
 (open PRs, review requests, dependency advisories, CI) and drive a fix behind
 git worktree isolation, always leaving the terminal call — merge, approve,
 close — to a human. Each
