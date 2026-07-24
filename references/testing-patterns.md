@@ -234,3 +234,52 @@ test('user can create and complete a task', async ({ page }) => {
 | Using `test.skip` permanently | Dead code | Remove or fix it |
 | Overly broad assertions | Doesn't catch regressions | Be specific |
 | No async error handling | Swallowed errors, false passes | Always `await` async tests |
+| Flaky tests (timing, order-dependent) | Erode trust in the suite | Deterministic assertions, isolated state |
+| Mocking everything | Tests pass, production breaks | Real > fake > stub > mock; mock only slow/non-deterministic boundaries |
+
+## State-Based vs Interaction-Based, and DAMP
+
+### Test State, Not Interactions
+
+Assert on the *outcome* of an operation, not on which methods were called internally. Tests that verify method call sequences break when you refactor, even if the behavior is unchanged.
+
+```typescript
+// Good: Tests what the function does (state-based)
+it('returns tasks sorted by creation date, newest first', async () => {
+  const tasks = await listTasks({ sortBy: 'createdAt', sortOrder: 'desc' });
+  expect(tasks[0].createdAt.getTime())
+    .toBeGreaterThan(tasks[1].createdAt.getTime());
+});
+
+// Bad: Tests how the function works internally (interaction-based)
+it('calls db.query with ORDER BY created_at DESC', async () => {
+  await listTasks({ sortBy: 'createdAt', sortOrder: 'desc' });
+  expect(db.query).toHaveBeenCalledWith(
+    expect.stringContaining('ORDER BY created_at DESC')
+  );
+});
+```
+
+### DAMP Over DRY in Tests
+
+In production code, DRY (Don't Repeat Yourself) is usually right. In tests, **DAMP (Descriptive And Meaningful Phrases)** is better. A test should read like a specification — each test should tell a complete story without requiring the reader to trace through shared helpers.
+
+```typescript
+// DAMP: Each test is self-contained and readable
+it('rejects tasks with empty titles', () => {
+  const input = { title: '', assignee: 'user-1' };
+  expect(() => createTask(input)).toThrow('Title is required');
+});
+
+it('trims whitespace from titles', () => {
+  const input = { title: '  Buy groceries  ', assignee: 'user-1' };
+  const task = createTask(input);
+  expect(task.title).toBe('Buy groceries');
+});
+
+// Over-DRY: Shared setup obscures what each test actually verifies
+// (Don't do this just to avoid repeating the input shape)
+```
+
+Duplication in tests is acceptable when it makes each test independently understandable.
+

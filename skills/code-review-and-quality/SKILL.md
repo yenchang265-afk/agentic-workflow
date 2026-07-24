@@ -19,6 +19,71 @@ Multi-dimensional code review with quality gates. Every change gets reviewed bef
 - When refactoring existing code
 - After any bug fix (review both the fix and the regression test)
 
+## Review Process
+
+### Step 1: Understand the Context
+
+Before looking at code, understand the intent:
+
+```
+- What is this change trying to accomplish?
+- What spec or task does it implement?
+- What is the expected behavior change?
+```
+
+### Step 2: Review the Tests First
+
+Tests reveal intent and coverage:
+
+```
+- Do tests exist for the change?
+- Do they test behavior (not implementation details)?
+- Are edge cases covered?
+- Do tests have descriptive names?
+- Would the tests catch a regression if the code changed?
+```
+
+### Step 3: Review the Implementation
+
+Walk through the code with the five axes in mind:
+
+```
+For each file changed:
+1. Correctness: Does this code do what the test says it should?
+2. Readability: Can I understand this without help?
+3. Architecture: Does this fit the system?
+4. Security: Any vulnerabilities?
+5. Performance: Any bottlenecks?
+```
+
+### Step 4: Categorize Findings
+
+Label every comment with its severity so the author knows what's required vs optional:
+
+| Prefix | Meaning | Author Action |
+|--------|---------|---------------|
+| *(no prefix)* | Required change | Must address before merge |
+| **Critical:** | Blocks merge | Security vulnerability, data loss, broken functionality |
+| **Nit:** | Minor, optional | Author may ignore — formatting, style preferences |
+| **Optional:** / **Consider:** | Suggestion | Worth considering but not required |
+| **FYI** | Informational only | No action needed — context for future reference |
+
+This prevents authors from treating all feedback as mandatory and wasting time on optional suggestions.
+
+**Lead with what matters.** Order findings by leverage: correctness and security first, then structural regressions and missed simplifications, then everything else. Don't bury a real issue under cosmetic nits — a few high-conviction comments beat a long list. If you have one structural problem and ten nits, the structural problem *is* the review.
+
+### Step 5: Verify the Verification
+
+Check the author's verification story:
+
+```
+- What tests were run?
+- Did the build pass?
+- Was the change tested manually?
+- Are there screenshots for UI changes?
+- Is there a before/after comparison?
+```
+
 ## The Five-Axis Review
 
 Every review evaluates code across these dimensions:
@@ -137,71 +202,6 @@ Every change needs a description that stands alone in version control history.
 
 **Anti-patterns:** "Fix bug," "Fix build," "Add patch," "Moving code from A to B," "Phase 1," "Add convenience functions."
 
-## Review Process
-
-### Step 1: Understand the Context
-
-Before looking at code, understand the intent:
-
-```
-- What is this change trying to accomplish?
-- What spec or task does it implement?
-- What is the expected behavior change?
-```
-
-### Step 2: Review the Tests First
-
-Tests reveal intent and coverage:
-
-```
-- Do tests exist for the change?
-- Do they test behavior (not implementation details)?
-- Are edge cases covered?
-- Do tests have descriptive names?
-- Would the tests catch a regression if the code changed?
-```
-
-### Step 3: Review the Implementation
-
-Walk through the code with the five axes in mind:
-
-```
-For each file changed:
-1. Correctness: Does this code do what the test says it should?
-2. Readability: Can I understand this without help?
-3. Architecture: Does this fit the system?
-4. Security: Any vulnerabilities?
-5. Performance: Any bottlenecks?
-```
-
-### Step 4: Categorize Findings
-
-Label every comment with its severity so the author knows what's required vs optional:
-
-| Prefix | Meaning | Author Action |
-|--------|---------|---------------|
-| *(no prefix)* | Required change | Must address before merge |
-| **Critical:** | Blocks merge | Security vulnerability, data loss, broken functionality |
-| **Nit:** | Minor, optional | Author may ignore — formatting, style preferences |
-| **Optional:** / **Consider:** | Suggestion | Worth considering but not required |
-| **FYI** | Informational only | No action needed — context for future reference |
-
-This prevents authors from treating all feedback as mandatory and wasting time on optional suggestions.
-
-**Lead with what matters.** Order findings by leverage: correctness and security first, then structural regressions and missed simplifications, then everything else. Don't bury a real issue under cosmetic nits — a few high-conviction comments beat a long list. If you have one structural problem and ten nits, the structural problem *is* the review.
-
-### Step 5: Verify the Verification
-
-Check the author's verification story:
-
-```
-- What tests were run?
-- Did the build pass?
-- Was the change tested manually?
-- Are there screenshots for UI changes?
-- Is there a before/after comparison?
-```
-
 ## Multi-Model Review Pattern
 
 Use different models for different review perspectives:
@@ -289,53 +289,6 @@ Part of code review is dependency review:
 
 **Rule:** Prefer standard library and existing utilities over new dependencies. Every dependency is a liability.
 
-## The Review Checklist
-
-```markdown
-## Review: [PR/Change title]
-
-### Context
-- [ ] I understand what this change does and why
-
-### Correctness
-- [ ] Change matches spec/task requirements
-- [ ] Edge cases handled
-- [ ] Error paths handled
-- [ ] Tests cover the change adequately
-
-### Readability
-- [ ] Names are clear and consistent
-- [ ] Logic is straightforward
-- [ ] No unnecessary complexity
-
-### Architecture
-- [ ] Follows existing patterns
-- [ ] No unnecessary coupling or dependencies
-- [ ] Appropriate abstraction level
-- [ ] Refactors reduce complexity rather than relocate it
-- [ ] No feature logic in shared modules; file stays within a healthy size
-
-### Security
-- [ ] No secrets in code
-- [ ] Input validated at boundaries
-- [ ] No injection vulnerabilities
-- [ ] Auth checks in place
-- [ ] External data sources treated as untrusted
-
-### Performance
-- [ ] No N+1 patterns
-- [ ] No unbounded operations
-- [ ] Pagination on list endpoints
-
-### Verification
-- [ ] Tests pass
-- [ ] Build succeeds
-- [ ] Manual verification done (if applicable)
-
-### Verdict
-- [ ] **Approve** — Ready to merge
-- [ ] **Request changes** — Issues must be addressed
-```
 ## See Also
 
 - For detailed security review guidance, see `references/security-checklist.md`

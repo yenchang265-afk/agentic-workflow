@@ -158,3 +158,23 @@ npx pa11y             # CLI accessibility checker
 | Removing focus outlines | Users can't see where they are | Style outlines, don't remove them |
 | Empty links/buttons | "Link" announced with no description | Add text or `aria-label` |
 | `tabindex > 0` | Breaks natural tab order | Use `tabindex="0"` or `-1` only |
+
+## Focus Management (Dialogs)
+
+```tsx
+// Move focus when content changes; trap it inside an open dialog
+function Dialog({ isOpen, onClose }: DialogProps) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (isOpen) closeRef.current?.focus();
+  }, [isOpen]);
+
+  return (
+    <dialog open={isOpen}>
+      <button ref={closeRef} onClick={onClose}>Close</button>
+      {/* dialog content */}
+    </dialog>
+  );
+}
+```
