@@ -501,6 +501,18 @@ export const findDrivingWorkflow = async (
 const toast = (client: Client, message: string, variant: "info" | "success" | "warning" | "error") =>
   client.tui.showToast({ body: { message, variant } }).catch(() => {})
 
+/** Toast a terminal outcome AND return it, so the command hook can replace the
+ *  rendered command template with what actually happened — otherwise the model
+ *  reads the descriptive template as information and never reports the action. */
+const report = async (
+  client: Client,
+  message: string,
+  variant: "info" | "success" | "warning" | "error",
+): Promise<string> => {
+  await toast(client, message, variant)
+  return message
+}
+
 /** Git isolation lives in core (`@agentic-workflow/core/workflow/isolate`); these
  *  wrappers thread this plugin's `Deps` into its host-agnostic signatures. */
 const ensureIsolation = (deps: Deps, config: Config, state: WorkflowState): Promise<WorkflowState> =>
@@ -1653,19 +1665,19 @@ export const handleRemove = async (deps: Deps, _sessionID: string, args: string,
  * an `in-progress/` id gets pointed there instead. The drive itself is
  * deferred to the next idle via `setPending`, after atomically claiming.
  */
-const startPlanById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<void> => {
+const startPlanById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string | undefined> => {
   const { client } = deps
   // Same busy guard as `claim`: this session may already be driving a
   // DIFFERENT task (watch-claimed) — the unconditional clearWorkflow below would
   // null that run's state and silently abandon it mid-stage.
   if (driving.has(sessionID) || getWorkflow(sessionID)) {
-    return void (await toast(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning"))
+    return report(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning")
   }
   // Accept the short-hash handle (`plan f7k3`) the UIs surface as the copyable
   // id — the same resolution the gate verbs do.
   const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
   if (resolved && "ambiguous" in resolved) {
-    return void (await toast(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning"))
+    return report(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning")
   }
   if (resolved) id = resolved.id
   const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
@@ -1681,17 +1693,17 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
             : elsewhere
               ? `it's in ${elsewhere}`
               : `no task "${id}" found`
-    return void (await toast(client, `Can't plan "${id}": ${detail}.`, "warning"))
+    return report(client, `Can't plan "${id}": ${detail}.`, "warning")
   }
   if (findSessionDriving(id)) {
-    return void (await toast(client, `Task "${id}" is already being driven by a live loop.`, "warning"))
+    return report(client, `Task "${id}" is already being driven by a live loop.`, "warning")
   }
   if (!(await claimTask(deps.$, queued))) {
-    return void (await toast(client, `Task "${id}" was just claimed by another watcher.`, "warning"))
+    return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
   }
   clearWorkflow(sessionID)
   await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
-  await toast(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
+  return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
 }
 
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
@@ -1735,7 +1747,7 @@ export const handleCommand = async (
   args: string,
   config: Config,
   kind: string = "engineering",
-): Promise<void> => {
+): Promise<string | undefined> => {
   const { client } = deps
   const arg = args.trim()
   const lower = arg.toLowerCase()
@@ -1744,27 +1756,29 @@ export const handleCommand = async (
 
   // Engineering-only verbs on another kind's command → that kind's usage.
   if (!engineering && !["claim", "watch", "unwatch", "stop", "abort", "status", ""].includes(verb)) {
-    return void (await toast(client, `Unknown /agentic-workflow:${kind} mode "${arg}". ${kindUsage(kind)}.`, "warning"))
+    return report(client, `Unknown /agentic-workflow:${kind} mode "${arg}". ${kindUsage(kind)}.`, "warning")
   }
 
   if (engineering) {
-    // `new` is pure agent work (interview + draft write) — pass through
-    // untouched so the command template's turn runs. `retask` also needs that
-    // turn, but its deterministic half (queued/ → draft/, or a refusal) is a
-    // plugin move, so it runs first and then still falls through.
+    // `new`/`retask`/`approve`/`replan`/`remove` return undefined so the command
+    // hook leaves the rendered markdown in place: `new`/`retask` need the model's
+    // turn (interview), and the gate/remove verbs already have a working
+    // markdown-driven flow (approve/replan glob-verify the folder move). Only
+    // the report-and-stop verbs below return an outcome string for the hook to
+    // surface — a toast alone is invisible to the model.
     if (verb === "new") return
     if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
 
     // The two deterministic gate verbs: the unified folder-driven approve, and
     // replan (the sole rejection verb). Both parse the post-verb remainder.
-    if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
-    if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
-    if (verb === "remove") return handleRemove(deps, sessionID, rest, config)
+    if (verb === "approve") return void (await handleApprove(deps, sessionID, rest, config))
+    if (verb === "replan") return void (await handleReplan(deps, sessionID, rest, config))
+    if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {
       const id = rest
-      if (!id) return void (await toast(client, `Usage: ${ECMD} plan <id>.`, "warning"))
+      if (!id) return report(client, `Usage: ${ECMD} plan <id>.`, "warning")
       return startPlanById(deps, sessionID, id, config)
     }
 
@@ -1791,8 +1805,7 @@ export const handleCommand = async (
       // `kinds` is where someone lands when a kind they enabled reads as
       // disabled, and the usual cause is that the file they edited is not one
       // of the two being read. Naming the actual sources answers that directly.
-      await toast(client, `Workflow kinds: ${parts.join(" · ")}. Toggle via workflows.<kind>.enabled. ${configSources()}`, "info")
-      return
+      return report(client, `Workflow kinds: ${parts.join(" · ")}. Toggle via workflows.<kind>.enabled. ${configSources()}`, "info")
     }
   }
 
@@ -1801,11 +1814,10 @@ export const handleCommand = async (
   // gets. The pull equivalent of `watch`.
   if (verb === "claim") {
     if (driving.has(sessionID) || getWorkflow(sessionID)) {
-      return void (await toast(client, `A loop is already driving in this session — /agentic-workflow:${kind} stop it first.`, "warning"))
+      return report(client, `A loop is already driving in this session — /agentic-workflow:${kind} stop it first.`, "warning")
     }
     claimRequested.set(sessionID, kind)
-    await toast(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
-    return
+    return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
   }
 
   if (lower === "stop" || lower === "abort") {
@@ -1827,13 +1839,12 @@ export const handleCommand = async (
     }
     const existed = clearWorkflow(sessionID)
     const message = existed ? "Loop stopped." : wasWatching ? "Stopped watching." : "No active loop to stop."
-    await toast(client, message, "info")
-    return
+    return report(client, message, "info")
   }
 
   if (lower === "watch" || lower.startsWith("watch ")) {
     const parsed = parseWatchArgs(arg.slice("watch".length))
-    if ("error" in parsed) return void (await toast(client, parsed.error, "warning"))
+    if ("error" in parsed) return report(client, parsed.error, "warning")
     // The kind's configured trigger (workflows.<kind>.trigger) is the default; any
     // `watch` argument — poll [interval], cron <schedule>, idle, or a bare
     // interval — overrides it for this session only.
@@ -1844,7 +1855,7 @@ export const handleCommand = async (
     // arming (a re-arm by an already-watching session keeps its share).
     if (!watching.has(sessionID)) {
       const lease = await acquireWatchLease(deps, config)
-      if (!lease.ok) return void (await toast(client, lease.message, "warning"))
+      if (!lease.ok) return report(client, lease.message, "warning")
     }
     watching.add(sessionID)
     watchKindFilter.set(sessionID, kind) // the command IS the kind — every tick scopes to it
@@ -1877,44 +1888,44 @@ export const handleCommand = async (
       parsed.trigger !== undefined && parsed.trigger.type !== configured.type
         ? ` (this session only — config default is ${configured.type})`
         : ""
-    await toast(client, `Watching for ${scope} (${handle.describe})${overrideNote}.`, "info")
+    const message = `Watching for ${scope} (${handle.describe})${overrideNote}.`
+    await toast(client, message, "info")
     // Immediate first pull — don't make the user wait for the next idle event
     // or timer tick. watchTick self-guards: it claims only when the session is
     // actually idle, and never throws. Cron kinds wait for their schedule.
     if (mode !== "cron") void watchTick(deps, sessionID, config)
-    return
+    return message
   }
 
   if (lower === "unwatch") {
     const was = await stopWatching(deps, sessionID)
-    await toast(client, was ? "Stopped watching." : "Not watching.", "info")
-    return
+    return report(client, was ? "Stopped watching." : "Not watching.", "info")
   }
 
   if (lower === "recover" || lower.startsWith("recover ")) {
     let id = arg.slice("recover".length).trim()
-    if (!id) return void (await toast(client, `Usage: ${ECMD} recover <id>.`, "warning"))
+    if (!id) return report(client, `Usage: ${ECMD} recover <id>.`, "warning")
     // Same busy guard as `claim`: recovering while this session drives a
     // DIFFERENT task would clearWorkflow that run's state and abandon it mid-stage.
     if (driving.has(sessionID) || getWorkflow(sessionID)) {
-      return void (await toast(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning"))
+      return report(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning")
     }
     // Accept the short-hash handle, same as the gate verbs and `plan <id>`.
     const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
     if (resolved && "ambiguous" in resolved) {
-      return void (await toast(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning"))
+      return report(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning")
     }
     if (resolved) id = resolved.id
     const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
-    if (!task) return void (await toast(client, `No in-progress task "${id}".`, "warning"))
+    if (!task) return report(client, `No in-progress task "${id}".`, "warning")
     if (findSessionDriving(id)) {
-      return void (await toast(client, `Task "${id}" is being driven by a live loop — nothing to recover.`, "warning"))
+      return report(client, `Task "${id}" is being driven by a live loop — nothing to recover.`, "warning")
     }
     if (isClaimable(task)) {
-      return void (await toast(client, `Task "${id}" was never started — ${ECMD} watch will claim it.`, "info"))
+      return report(client, `Task "${id}" was never started — ${ECMD} watch will claim it.`, "info")
     }
     if (!isRecoverable(task)) {
-      return void (await toast(client, `Task "${id}" has no persisted plan — send it back with ${ECMD} replan ${id}.`, "warning"))
+      return report(client, `Task "${id}" has no persisted plan — send it back with ${ECMD} replan ${id}.`, "warning")
     }
     await claimTask(deps.$, task) // re-mark; the marker may already exist from the dead run
     // Prefer an exact-stage resume from the state snapshot; fall back to
@@ -1932,12 +1943,11 @@ export const handleCommand = async (
         deps.log,
       )
       await setPending(deps, sessionID, { kind: "recover-state", state })
-      await toast(
+      return report(
         client,
         `Recovering "${task.title}" from snapshot at ${snap.stage} — check git status/diff for leftovers; resuming…`,
         "info",
       )
-      return
     }
     await appendNote(
       deps.$,
@@ -1946,12 +1956,11 @@ export const handleCommand = async (
       deps.log,
     )
     await setPending(deps, sessionID, { kind: "recover", task })
-    await toast(
+    return report(
       client,
       `Recovering "${task.title}" — check git status/diff for leftovers from the interrupted run; building…`,
       "info",
     )
-    return
   }
 
   if (lower === "doctor" || lower.startsWith("doctor ")) {
@@ -1965,14 +1974,13 @@ export const handleCommand = async (
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
       const findings = formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length
       if (!fix) {
-        await toast(
+        return report(
           client,
           findings
             ? `Backlog doctor: ${findings} finding(s) — see the log. /agentic-workflow:engineering doctor fix applies the unambiguous repairs.`
             : "Backlog doctor: clean.",
           findings ? "warning" : "success",
         )
-        return
       }
       // Unambiguous repairs only: rescue strays to draft/, remove now-empty
       // stray folders, release stale orphaned claim markers. Duplicates are a
@@ -2013,11 +2021,10 @@ export const handleCommand = async (
         released.length ? `released ${released.length} stale claim marker(s)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
       ].filter(Boolean)
-      await toast(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")
+      return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")
     } catch (err) {
-      await toast(client, `Backlog doctor failed: ${(err as Error).message}`, "error")
+      return report(client, `Backlog doctor failed: ${(err as Error).message}`, "error")
     }
-    return
   }
 
   if (lower === "status" || lower === "") {
@@ -2047,16 +2054,14 @@ export const handleCommand = async (
       const why = lastSkipReason.get(sessionID)
       const idle = engineering ? "no claimable task right now." : `no claimable ${kind} item right now.`
       const head = isWatching ? `${watchLabel} — ${why ?? idle}` : "No active loop."
-      await toast(client, `${head}${backlogLine}${kindsLine}`, "info")
-      return
+      return report(client, `${head}${backlogLine}${kindsLine}`, "info")
     }
     const what = state.task ? `task ${state.task.id}` : state.goal
     const prefix = isWatching ? `${watchLabel}. ` : ""
-    await toast(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${kindsLine}`, "info")
-    return
+    return report(client, `${prefix}Loop: ${state.stage} · iteration ${state.iteration + 1} · ${what}${backlogLine}${kindsLine}`, "info")
   }
 
   // The loop is a pure executor — there is no free-text mode. Anything
   // unrecognized gets usage help instead of silently becoming a goal.
-  await toast(client, `Unknown /agentic-workflow:${kind} mode "${arg}". ${engineering ? USAGE : kindUsage(kind)}.`, "warning")
+  return report(client, `Unknown /agentic-workflow:${kind} mode "${arg}". ${engineering ? USAGE : kindUsage(kind)}.`, "warning")
 }
