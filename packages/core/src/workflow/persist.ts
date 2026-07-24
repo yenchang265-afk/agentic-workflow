@@ -3,7 +3,7 @@ import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import { z } from "zod"
 import { isSafeTaskId, SAFE_TASK_ID_RE } from "../task/schema.js"
-import { ADO_ACCESS_METHODS, CODE_PLATFORMS, STAGES, type WorkflowState } from "./state.js"
+import { CODE_PLATFORMS, STAGES, type WorkflowState } from "./state.js"
 
 /**
  * Durable snapshots of a task-driven loop's `WorkflowState`, so a crash or opencode
@@ -54,8 +54,9 @@ const WorkflowStateSchema = z.object({
   git: GitRefSchema.optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */
   platform: z.enum(CODE_PLATFORMS).optional(),
-  /** ADO access method stamped at claim; absent (old snapshots) ⇒ rest (curl-era claim). */
-  platformAccess: z.enum(ADO_ACCESS_METHODS).optional(),
+  // A pre-az-only snapshot may still carry `platformAccess`; zod strips unknown
+  // keys, so it loads fine and simply loses the stamp — which is what makes
+  // coercing a legacy `ado.access` config safe mid-loop.
 })
 
 /** Absolute path of a task's state snapshot. Pure. */

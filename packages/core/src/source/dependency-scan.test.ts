@@ -269,7 +269,6 @@ test("the claimed item is stamped with the resolved platform; defaults to github
     })
     const ado = await adoSrc.claimNext()
     assert.equal(ado.item?.state.platform, "ado")
-    assert.equal(ado.item?.state.platformAccess, "az") // adoAccessFor default, stamped at claim
   })()
 })
 

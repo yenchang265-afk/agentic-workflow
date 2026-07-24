@@ -97,15 +97,6 @@ export interface WorkflowState {
   readonly isolationWarning?: string
   /** The code platform the claiming work source talks to; absent ⇒ `github`. */
   readonly platform?: CodePlatform
-  /**
-   * How stage agents talk to ADO, stamped at claim time from `ado.access` so a
-   * mid-loop config flip can't contradict the rendered prompt or the frozen
-   * stage allowlist. Absent (github, or a pre-`access` snapshot) ⇒ `rest` —
-   * legacy states were claimed under the curl-only regime and their stage
-   * markers allowlist curl, so rendering az/mcp commands there would
-   * contradict the marker.
-   */
-  readonly platformAccess?: AdoAccessMethod
 }
 
 /** What the driver should do next. All state changes are returned, not applied. */
@@ -126,31 +117,22 @@ export type Action =
 
 /**
  * The code-management platforms PR-shaped work sources can talk to — the single
- * source of truth. `ado` reaches Azure DevOps through its REST API with a PAT
- * (see `source/ado-pr.ts`), using the `ado` config section.
+ * source of truth. `ado` reaches Azure DevOps through the `az` CLI with the
+ * azure-devops extension (see `source/ado-az.ts`, `source/ado-pr.ts`),
+ * authenticated by `AZURE_DEVOPS_EXT_PAT`, using the `ado` config section.
+ *
+ * The az CLI is the ONLY Azure DevOps path: stage prompts, the stage bash
+ * allowlist, and the driver's own poll/ship transport all speak it, so there is
+ * one set of commands to keep in agreement instead of one per access mode.
  */
 export const CODE_PLATFORMS = ["github", "ado"] as const
 export type CodePlatform = (typeof CODE_PLATFORMS)[number]
-
-/**
- * How Azure DevOps is reached: the `az` CLI (the default), raw REST over
- * `curl`/fetch with a PAT, or an Azure DevOps MCP server. Selects the command
- * examples rendered into stage prompts, the stage bash allowlist, AND the
- * driver's own data transport — under `az` the poll sources and ship gate
- * shell the az CLI too (`source/ado-az.ts`); under `rest` they fetch REST with
- * the PAT. `mcp` covers only the stage agents (an MCP server is unreachable
- * from the host process), so its driver side polls REST+PAT.
- */
-export const ADO_ACCESS_METHODS = ["az", "rest", "mcp"] as const
-export type AdoAccessMethod = (typeof ADO_ACCESS_METHODS)[number]
 
 /** Azure DevOps coordinates, required when any effective platform is `ado`. */
 export interface AdoConfig {
   /** Organization URL, e.g. "https://dev.azure.com/acme". */
   readonly organization: string
   readonly project: string
-  /** How stage agents talk to ADO: `az` CLI (default), `rest` (curl + PAT), or `mcp`. */
-  readonly access?: AdoAccessMethod
   /** Repository name; omitted → all repositories in the project. */
   readonly repository?: string
   /**
@@ -166,26 +148,6 @@ export interface AdoConfig {
    * never committed.
    */
   readonly pat?: string
-  /**
-   * Extra HTTP headers attached to every ADO REST call the driver makes (the PR
-   * work source and the ship gate) — e.g. `Proxy-Authorization` or a routing
-   * header for a corporate proxy in front of Azure DevOps. Merged over the
-   * built-in `Authorization`/`Accept`/`Content-Type` headers, so a key here can
-   * override one of those (rarely wanted, but yours to decide). The
-   * `AGENTIC_WORKFLOW_ADO_HEADERS` env var (a JSON object) overrides this key by
-   * key, mirroring how `AZURE_DEVOPS_EXT_PAT` overrides `pat`.
-   */
-  readonly customHeaders?: Readonly<Record<string, string>>
-  /**
-   * Skip TLS certificate verification on every ADO REST call the driver makes
-   * (the PR/CI-runs work sources and the ship gate). Off by default — only for
-   * a self-hosted Azure DevOps Server behind a self-signed or internal-CA
-   * certificate the runtime doesn't trust; never enable this against the
-   * hosted `dev.azure.com` service. Scoped to these calls only (a dedicated
-   * `undici` dispatcher), so it never weakens TLS for unrelated requests
-   * (GitHub, npm, …) in the same process.
-   */
-  readonly insecureSkipTlsVerify?: boolean
 }
 
 /** Project-management setup: the team's tracker and how tasks pair to it. */

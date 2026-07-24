@@ -170,26 +170,23 @@ test("platformAllowlist defaults empty and effectiveAllowlist merges the platfor
   assert.deepEqual(effectiveAllowlist(def, "other"), ["ls*"])
 })
 
-test("effectiveAllowlist resolves ado access methods via composite keys, fail-closed when absent", () => {
-  const withAccess = parseManifest({
+test("effectiveAllowlist merges the platform key onto the base list, fail-closed on an unknown platform", () => {
+  const withAdo = parseManifest({
     ...base,
     stages: [
       {
         ...base.stages[0],
         bashAllowlist: ["ls*"],
-        platformAllowlist: { ado: ["curl*"], "ado:az": ["az repos pr show*"] },
+        platformAllowlist: { ado: ["az repos pr show*"] },
       },
       base.stages[1],
     ],
   })
-  const def = withAccess.stages[0]!
-  // rest (and no access at all) stays the plain platform key.
-  assert.deepEqual(effectiveAllowlist(def, "ado", "rest"), ["ls*", "curl*"])
-  assert.deepEqual(effectiveAllowlist(def, "ado"), ["ls*", "curl*"])
-  // az looks up the composite key; no inheritance from plain "ado".
-  assert.deepEqual(effectiveAllowlist(def, "ado", "az"), ["ls*", "az repos pr show*"])
-  // A missing composite key yields only the base list — fail-closed.
-  assert.deepEqual(effectiveAllowlist(def, "ado", "mcp"), ["ls*"])
+  const def = withAdo.stages[0]!
+  // ado resolves to its az-CLI globs — one key per platform, no composite scheme.
+  assert.deepEqual(effectiveAllowlist(def, "ado"), ["ls*", "az repos pr show*"])
+  // An unknown platform yields only the base list — fail-closed.
+  assert.deepEqual(effectiveAllowlist(def, "mcp"), ["ls*"])
 })
 
 test("rejects an empty glob inside platformAllowlist", () => {

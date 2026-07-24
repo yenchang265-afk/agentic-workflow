@@ -47,20 +47,32 @@
   `.gitignore` 在兩種設定下都不會被碰到。見
   [configuration.md](configuration.md#optional-hardening)。
 
-## 遷移到 Azure DevOps 的 az CLI 預設值（`ado.access`）
+## 遷移到僅用 az CLI 的 Azure DevOps（移除 `ado.access`）
 
-- **既有 ADO 設定的行為變更**：階段代理人的 ADO 存取方式現在由
-  `ado.access` 選擇，而它的預設值是 **`"az"`**（帶 `azure-devops`
-  擴充的 az CLI）——不再是 sitter 先前寫死的原生 `curl` + PAT。從
-  下一個*新認領*的迴圈開始，ADO 階段提示會渲染 az 指令、階段拿到
-  的是 az 的 bash 允許清單。想保留舊行為，固定
-  `"ado": { "access": "rest" }`。
-- **進行中的迴圈不受影響**：在這次變更前認領的狀態快照沒有存取
-  戳記，會繼續渲染它被認領時的 curl/REST 分支。
-- **輪詢與 ship 把關點跟隨同一個選擇**——在 `"az"` 下 driver 自己的
-  呼叫也走 az CLI；你既有的 `AZURE_DEVOPS_EXT_PAT` 原樣繼續生效
-  （azure-devops 擴充直接採用它）。`"rest"` 維持 fetch+PAT。
-  `"mcp"` 只涵蓋階段代理人——driver 的輪詢仍需要 PAT。見
+Azure DevOps 現在**只**透過 `az` CLI（`azure-devops` 擴充）觸達,端
+到端——階段提示、階段 bash 允許清單,以及 driver 自己的輪詢／ship
+把關點呼叫。三選一的 `ado.access` 旋鈕（`az` | `rest` | `mcp`）以及
+它所把關的兩個只在原生 fetch 下作用的旋鈕都已移除。這把每個 ADO
+階段過去必須手動維持一致的三套平行指令集,收斂成一套。
+
+- **`ado.access` 已移除。** 它本就預設 `"az"`,所以若你從未設定過
+  (或設為 `"az"`),什麼都不會變——刪掉這個鍵即可。若你固定了
+  `"rest"` 或 `"mcp"`,那條路徑已不存在;移除該鍵並改用 az CLI。
+  殘留的 `access` 值會被**忽略並附一行警告**,不是硬性錯誤,所以
+  進行中的迴圈仍會繼續——但它已無作用,請刪除。
+- **`ado.customHeaders` 與 `ado.insecureSkipTlsVerify` 已移除。**
+  它們只作用於被 az CLI 取代的原生 fetch 傳輸。兩者都會被同樣的
+  警告忽略。對於坐落在自簽／內部 CA 憑證後面的自架 Azure DevOps
+  Server,改為設定 CLI 自身的信任——環境中的
+  `REQUESTS_CA_BUNDLE=<ca.pem>`,或 `az devops configure`。自訂
+  proxy/路由標頭沒有 az CLI 的對應項;用 proxy 自己的環境變數
+  （`HTTPS_PROXY` 等）去對接 CLI。`AGENTIC_WORKFLOW_ADO_HEADERS`
+  同樣不再被讀取。
+- **先決條件**:必須安裝並認證帶 `azure-devops` 擴充的 `az` CLI——
+  `AZURE_DEVOPS_EXT_PAT`（和之前相同的環境變數;擴充直接採用它）、
+  `ado.pat`,或互動式的 `az login`。既有的 PAT 設定原樣繼續生效。
+- **進行中的迴圈不受影響**:在這次變更前認領的狀態快照載入時會失去
+  已無作用的存取戳記並渲染 az 指令,而它們與 az 允許清單相符。見
   [configuration.md](configuration.md#code-platform-codeplatform--ado)。
 
 ## 遷移到分層設定（使用者層級 + 儲存庫層級）

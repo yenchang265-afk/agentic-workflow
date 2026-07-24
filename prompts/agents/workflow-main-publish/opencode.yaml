@@ -1,4 +1,4 @@
-description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR (gh on GitHub, the ADO REST API via curl+PAT on Azure DevOps). Never pushes the watched branch, never merges, never marks ready.
+description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR (gh on GitHub, the az CLI on Azure DevOps). Never pushes the watched branch, never merges, never marks ready.
 mode: subagent
 permission:
   edit: deny
@@ -13,14 +13,11 @@ permission:
     "gh pr list*": allow
     "gh pr comment *": allow
     # Both platforms are allowed here (static frontmatter can't switch); config
-    # codePlatform decides which the stage prompt actually uses. ADO writes go to
-    # the REST API via curl+PAT — the Claude-side backstop hook (not expressible
-    # in this static allowlist) additionally restricts writes to reads, thread
-    # replies, and creating a brand-new PR, so complete/abandon/vote can't get
-    # through even via a broader curl call.
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
-    # ado.access "az": draft-PR creation, reads, and thread comments only.
+    # codePlatform decides which the stage prompt actually uses. ADO is reached
+    # through the az CLI: draft-PR creation, reads, and thread comments only. The
+    # Claude-side backstop hook (not expressible in this static allowlist)
+    # additionally restricts writes to reads, thread replies, and creating a
+    # brand-new PR, so complete/abandon/vote can't get through.
     "az repos pr create --draft*": allow
     "az repos pr show*": allow
     "az repos pr list*": allow

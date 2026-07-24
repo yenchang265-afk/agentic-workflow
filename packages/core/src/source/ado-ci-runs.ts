@@ -4,16 +4,7 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import type { AdoConfig } from "../workflow/state.js"
 import { newestHeadVerdict, shortSha, type CiRun } from "./ci-runs.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger } from "./ci-runs-shared.js"
-import {
-  ADO_HEADERS_ENV,
-  adoFetch,
-  AdoBuildListSchema,
-  buildAdoHeaders,
-  makeAdoAuthHeader,
-  normalizeAdoBuild,
-  resolveAdoHeaders,
-} from "./ado-shared.js"
-import type { AdoHttp } from "./ado-pr.js"
+import { AdoBuildListSchema, normalizeAdoBuild } from "./ado-shared.js"
 import { azInvokeArgs, azToHttp, execAz, type AzExec } from "./ado-az.js"
 import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
 
@@ -28,16 +19,11 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
  * both platforms identically, and the ledger/claim/WorkItem mechanics are
  * shared verbatim via `ci-runs-shared.ts`.
  *
- * Transport and auth follow config `ado.access` (same rules as `ado-pr.ts`):
- * `"az"` (the default) shells the az CLI, authenticated by the
- * pre-provisioned `AZURE_DEVOPS_EXT_PAT`; otherwise raw REST
- * with the PAT (env, falling back to config `ado.pat`) as HTTP Basic. Unlike
- * the PR sources, no `ado.selfLogin` is needed — CI status isn't scoped to an
- * identity, only to the watched branch.
+ * Transport is the az CLI (same as `ado-pr.ts`), which carries its own auth —
+ * the pre-provisioned `AZURE_DEVOPS_EXT_PAT`, or an interactive `az login`.
+ * Unlike the PR sources, no `ado.selfLogin` is needed — CI status isn't scoped
+ * to an identity, only to the watched branch.
  */
-
-const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
-const API_VERSION = "api-version=7.1"
 
 interface AdoCiRunsDeps {
   readonly $: Shell
@@ -48,12 +34,8 @@ interface AdoCiRunsDeps {
   readonly loaded: LoadedManifest
   /** Azure DevOps coordinates (config `ado`). */
   readonly ado: AdoConfig
-  /** HTTP transport for ADO REST calls; defaults to `adoFetch(ado.insecureSkipTlsVerify)`. */
-  readonly http?: AdoHttp
-  /** az CLI runner for the `ado.access: "az"` data transport; defaults to the real CLI. */
+  /** az CLI runner; defaults to the real CLI. Tests script this instead of touching the network. */
   readonly azExec?: AzExec
-  /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
-  readonly pat?: string
   /** Config override of the manifest's watched branch (`workflows.<kind>.branch`). */
   readonly branch?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
@@ -68,33 +50,12 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
   }
   const kind = loaded.manifest.kind
   const now = deps.now ?? (() => new Date().toISOString())
-  const http = deps.http ?? adoFetch(ado.insecureSkipTlsVerify)
-  // Precedence: explicit dep (tests) → env var → config `ado.pat`.
-  const pat = deps.pat ?? process.env[PAT_ENV] ?? ado.pat ?? ""
   const org = ado.organization.replace(/\/+$/, "")
-  const project = encodeURIComponent(ado.project)
-  const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   let resolvedBranch: string | null = null
 
-  // Data transport per config `ado.access`: "az" shells the az CLI (its own
-  // auth); anything else is REST fetch with a PAT (see ado-az.ts).
-  const useAz = ado.access === "az"
+  // Every data call shells the az CLI, which carries its own auth (see ado-az.ts).
   const az = deps.azExec ?? execAz
-  const authHeader = makeAdoAuthHeader({ pat })
-
-  /** One authenticated GET. Never throws — a network error (or missing credential) reads as a non-ok response, like the CLI's `nothrow()`. */
-  const get = async (url: string): Promise<{ ok: boolean; status: number; statusText: string; body: string }> => {
-    try {
-      const res = await http(url, {
-        headers: buildAdoHeaders({ Authorization: await authHeader(), Accept: "application/json" }, customHeaders),
-      })
-      const body = await res.text().catch(() => "")
-      return { ok: res.ok, status: res.status, statusText: res.statusText, body }
-    } catch (err) {
-      return { ok: false, status: 0, statusText: (err as Error).message, body: "" }
-    }
-  }
 
   const branch = async (): Promise<string> => {
     if (resolvedBranch) return resolvedBranch
@@ -114,44 +75,31 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
     workflowKind: kind,
 
     async claimNext() {
-      // az mode needs no PAT check — the pre-provisioned CLI carries its own
-      // auth; a broken environment surfaces as a failed list below.
-      if (!pat && !useAz) {
-        return {
-          item: null,
-          skip: {
-            message:
-              `${kind}: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Build (read) scope so the ` +
-              `sitter can call the ADO REST API.`,
-            actionable: true,
-          } satisfies ClaimSkipReason,
-        }
-      }
+      // No credential pre-check: the az CLI owns auth (AZURE_DEVOPS_EXT_PAT or
+      // an interactive `az login`), so testing for a PAT here would refuse to
+      // claim in a working `az login` environment. A genuinely broken one
+      // surfaces as the failed list call below, with the CLI's own message.
       const b = await branch()
-      const out = useAz
-        ? azToHttp(
-            await az(
-              azInvokeArgs({
-                area: "build",
-                resource: "builds",
-                organization: org,
-                routeParameters: { project: ado.project },
-                queryParameters: { branchName: `refs/heads/${b}`, $top: "30", queryOrder: "queueTimeDescending" },
-              }),
-            ),
-          )
-        : await get(
-            `${org}/${project}/_apis/build/builds?branchName=${encodeURIComponent(`refs/heads/${b}`)}&$top=30&queryOrder=queueTimeDescending&${API_VERSION}`,
-          )
+      const out = azToHttp(
+        await az(
+          azInvokeArgs({
+            area: "build",
+            resource: "builds",
+            organization: org,
+            routeParameters: { project: ado.project },
+            queryParameters: { branchName: `refs/heads/${b}`, $top: "30", queryOrder: "queueTimeDescending" },
+          }),
+        ),
+      )
       if (!out.ok) {
         return {
           item: null,
           skip: {
-            message: useAz
-              ? `${kind}: Azure DevOps build list failed (az CLI) — ${out.statusText}. ` +
-                `Are ado.organization/project correct?`
-              : `${kind}: Azure DevOps build list failed — HTTP ${out.status} ${out.statusText}. ` +
-                `Is ${PAT_ENV} a valid token with Build (read) scope, and are ado.organization/project correct?`,
+            message:
+              `${kind}: Azure DevOps build list failed (az CLI) — ${out.statusText}. ` +
+              `Is the az CLI installed with the azure-devops extension and authenticated ` +
+              `(AZURE_DEVOPS_EXT_PAT with Build (read) scope, or \`az login\`), and are ` +
+              `ado.organization/project correct?`,
             actionable: true,
           } satisfies ClaimSkipReason,
         }
@@ -219,7 +167,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
           return { item: null, skip: { message: `${kind}: could not pin the red head locally`, actionable: true } }
         }
       }
-      return { item: redHeadWorkItem(loaded, "ado", b, judged.sha, judged.failing, deps.ado.access), skip: null }
+      return { item: redHeadWorkItem(loaded, "ado", b, judged.sha, judged.failing), skip: null }
     },
 
     async release(work) {

@@ -37,22 +37,16 @@ export const promptContext = (state: WorkflowState): TemplateContext => {
       ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
       : `git diff ${state.git.base}...${state.git.branch}`
     : ""
-  // Absent platformAccess falls back to "rest", NOT the config default "az":
-  // a snapshot without the stamp was claimed by curl-era code whose stage
-  // markers allowlist curl — rendering az/mcp commands would contradict them.
-  const access = state.platformAccess ?? "rest"
   return {
     goal: state.goal,
     iteration: String(state.iteration),
     // Code-platform switches for prompt templates ({{#platform.ado}}…); absent platform ⇒ github.
+    // ADO has exactly one access path (the az CLI), so there is no sub-branch
+    // here: a stage's prompt and its bash allowlist name the same commands by
+    // construction, and cannot drift apart the way three parallel sets could.
     platform: {
       github: state.platform !== "ado",
       ado: state.platform === "ado",
-      adoAccess: {
-        rest: access === "rest",
-        az: access === "az",
-        mcp: access === "mcp",
-      },
     },
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,

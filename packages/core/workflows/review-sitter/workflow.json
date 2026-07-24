@@ -26,10 +26,6 @@
           "gh pr view*", "gh pr diff*", "gh pr checks*"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
-        ],
-        "ado:az": [
           "az repos pr show*",
           "az repos pr list*",
           "az devops invoke *"
@@ -73,10 +69,6 @@
           "gh pr comment *", "gh pr view*"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
-        ],
-        "ado:az": [
           "az repos pr show*",
           "az repos pr list*",
           "az devops invoke *"

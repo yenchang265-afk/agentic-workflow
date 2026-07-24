@@ -6,6 +6,6 @@ permission:
   bash:
     "*": deny
     # Both platforms are allowed here (static frontmatter can't switch); config
-    # codePlatform decides which the stage prompt actually uses. ADO is the REST
-    # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
+    # codePlatform decides which the stage prompt actually uses. ADO is reached
+    # through the az CLI (read-only commands for this stage).
     # {{allowlist}} — globs generated from the stage's allowlists in workflows/*/workflow.json; edit the manifest, not here

@@ -173,8 +173,8 @@ export const isAdoAz = (cmd: string): boolean => /^az\s+(?:repos|pipelines|board
 
 /**
  * An `az` CLI call that mutates Azure DevOps state beyond what the sitter family
- * is allowed — the az mirror of `isAdoWriteBackstopViolation` (config
- * `ado.access: "az"`). Allowed writes: `az repos pr create` ONLY with `--draft`,
+ * is allowed — the az mirror of `isAdoWriteBackstopViolation` (the loop reaches
+ * ADO only through the az CLI). Allowed writes: `az repos pr create` ONLY with `--draft`,
  * and `az devops invoke` POSTs to a thread resource (thread-comment reply / new
  * thread) or the bare pull-request collection (PR creation — ADO drafts via
  * `isDraft` in the body, not a separate verb). Everything else that writes —

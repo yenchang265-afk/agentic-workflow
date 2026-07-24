@@ -4,16 +4,17 @@ import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
 import { shortSha } from "./ci-runs.js"
-import { makeAdoCiRunsSource, type AdoHttp } from "./ado-ci-runs.js"
-import type { AzExec } from "./ado-az.js"
+import { makeAdoCiRunsSource } from "./ado-ci-runs.js"
+import type { AzExec, AzResult } from "./ado-az.js"
 
 /**
  * The ado-ci-runs source over the real main-sitter manifest, against a
- * scripted ADO REST transport (`http`) plus a scripted git/claim shell (`$`)
- * — the mirror of ci-runs.test.ts and ado-pr.test.ts. The build→CiRun
- * normalization is covered in ado-shared.test.ts; these cover polling,
- * ledger dedup, claim/pin mechanics (shared with the GitHub source via
- * ci-runs-shared.ts), and terminal writes.
+ * scripted `az` CLI (`azExec`) plus a scripted git/claim shell (`$`) — the
+ * mirror of ci-runs.test.ts and ado-pr.test.ts. ADO is reached only through
+ * the az CLI, whose `az devops invoke` returns the same `{ value: [...] }`
+ * build envelopes the REST API would. The build→CiRun normalization is covered
+ * in ado-shared.test.ts; these cover polling, ledger dedup, claim/pin mechanics
+ * (shared with the GitHub source via ci-runs-shared.ts), and terminal writes.
  */
 
 const WORKFLOWS_DIR = defaultWorkflowsDir()
@@ -52,15 +53,20 @@ const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-type Route = { match: string; status?: number; body?: string }
-
-/** Scripted ADO REST transport: first route whose `match` is a substring of the URL wins. */
-const scriptedHttp = (routes: Route[], log: string[] = []): AdoHttp => async (url) => {
-  log.push(url)
-  const hit = routes.find((r) => url.includes(r.match))
-  const status = hit?.status ?? 200
-  const body = hit?.body ?? ""
-  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
+/**
+ * Scripted `az` CLI: the build-list `az devops invoke` returns `listResult`
+ * (default: the given builds as a `{ value: [...] }` envelope, `ok:true`);
+ * `azFail` forces that call to fail, standing in for a broken CLI / auth.
+ */
+const scriptedAz = (builds: unknown[], log: string[] = [], opts: { azFail?: boolean } = {}): AzExec => async (args) => {
+  const cmd = args.join(" ")
+  log.push(cmd)
+  if (cmd.includes("--resource builds")) {
+    return opts.azFail
+      ? ({ ok: false, statusText: "az CLI not authenticated", body: "" } satisfies AzResult)
+      : ({ ok: true, statusText: "OK", body: listBody(builds) } satisfies AzResult)
+  }
+  return { ok: false, statusText: `unexpected az call: ${cmd}`, body: "" }
 }
 
 /** Client whose reads serve ledger files from an in-memory map. */
@@ -90,11 +96,10 @@ const listBody = (builds: unknown[]) => JSON.stringify({ value: builds })
 
 type Opts = {
   ledgers?: Record<string, string>
-  routes?: Route[]
+  azFail?: boolean
   shellScript?: Cmd[]
   shellLog?: string[]
-  httpLog?: string[]
-  pat?: string
+  azLog?: string[]
   branch?: string
 }
 
@@ -112,32 +117,32 @@ const source = (builds: unknown[], opts: Opts = {}) =>
       ],
       opts.shellLog,
     ),
-    http: scriptedHttp([...(opts.routes ?? []), { match: "/build/builds?", body: listBody(builds) }], opts.httpLog),
+    azExec: scriptedAz(builds, opts.azLog, { azFail: opts.azFail }),
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
     loaded: sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
-    pat: opts.pat ?? "test-pat",
     ...(opts.branch ? { branch: opts.branch } : {}),
     now: () => "2026-07-05T00:00:00Z",
   })
 
-test("claims the red newest head: default branch resolved via git, head pinned to a main-sitter/ branch, platform stamped ado", async () => {
+test("claims the red newest head over the az CLI: default branch resolved via git, head pinned to a main-sitter/ branch, platform stamped ado", async () => {
   const shellLog: string[] = []
-  const httpLog: string[] = []
-  const { item, skip } = await source([build()], { shellLog, httpLog }).claimNext()
+  const azLog: string[] = []
+  const { item, skip } = await source([build()], { shellLog, azLog }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, `${SHA.slice(0, 6)}-main`) // display id: short sha + readable branch
   assert.equal(item?.entryStage, "diagnose")
   assert.equal(item?.state.kind, "main-sitter")
   assert.equal(item?.state.platform, "ado")
-  assert.equal(item?.state.platformAccess, "az") // config default, stamped at claim
   assert.deepEqual(item?.state.git, { base: "main", branch: `main-sitter/${shortSha(SHA)}` })
   assert.match(item?.state.goal ?? "", /^Red CI on main at abcdef123456/)
   assert.match(item?.state.goal ?? "", /Failing workflow\(s\): CI/)
-  assert.ok(httpLog.some((u) => u.includes("branchName=refs%2Fheads%2Fmain")))
+  const list = azLog.find((c) => c.includes("--resource builds"))
+  assert.match(list ?? "", /devops invoke --area build/)
+  assert.match(list ?? "", /branchName=refs\/heads\/main/)
   assert.ok(shellLog.some((c) => c.includes("runs/main-sitter/.claims/head-abcdef123456")))
   assert.ok(shellLog.some((c) => c.startsWith(`git -C /r branch -f main-sitter/abcdef123456 ${SHA}`)))
 })
@@ -183,16 +188,10 @@ test("a handled or failed head is never re-claimed — a new push makes a new ju
   assert.match(skip?.message ?? "", /already handled — waiting for a new push/)
 })
 
-test("no PAT set is an actionable skip", async () => {
-  const { item, skip } = await source([build()], { pat: "" }).claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /Azure DevOps PAT not set/)
-  assert.equal(skip?.actionable, true)
-})
-
-test("a build-list HTTP failure is an actionable skip", async () => {
-  const { skip } = await source([], { routes: [{ match: "/build/builds?", status: 500 }] }).claimNext()
-  assert.match(skip?.message ?? "", /Azure DevOps build list failed — HTTP 500/)
+test("a build-list az failure is an actionable skip naming the CLI setup", async () => {
+  const { skip } = await source([], { azFail: true }).claimNext()
+  assert.match(skip?.message ?? "", /Azure DevOps build list failed \(az CLI\)/)
+  assert.match(skip?.message ?? "", /azure-devops extension/)
   assert.equal(skip?.actionable, true)
 })
 
@@ -249,47 +248,16 @@ test("a non-retryable stop records a failed attempt", async () => {
 
 test("a configured branch override skips default-branch detection", async () => {
   const shellLog: string[] = []
-  const httpLog: string[] = []
-  const { skip } = await source([build({ result: "succeeded" })], { branch: "release/v2", shellLog, httpLog }).claimNext()
+  const azLog: string[] = []
+  const { skip } = await source([build({ result: "succeeded" })], { branch: "release/v2", shellLog, azLog }).claimNext()
   assert.match(skip?.message ?? "", /release\/v2 is green/)
   assert.ok(shellLog.every((c) => !c.startsWith("git -C /r symbolic-ref")))
-  assert.ok(httpLog.some((u) => u.includes("branchName=refs%2Fheads%2Frelease%2Fv2")))
+  assert.ok(azLog.some((c) => c.includes("branchName=refs/heads/release/v2")))
 })
 
-// --- the az-CLI data transport (config ado.access "az") ---
-
-test("access az: polls builds over the az CLI with no PAT — REST transport never touched", async () => {
+test("the build-list az invoke carries the branch and ordering query parameters", async () => {
   const azLog: string[] = []
-  const httpLog: string[] = []
-  const azExec: AzExec = async (args) => {
-    const cmd = args.join(" ")
-    azLog.push(cmd)
-    return cmd.includes("--resource builds")
-      ? { ok: true, statusText: "OK", body: listBody([build()]) }
-      : { ok: false, statusText: "unexpected az call", body: "" }
-  }
-  const src = makeAdoCiRunsSource({
-    $: scriptedShell([
-      { cmd: "git -C /r symbolic-ref refs/remotes/origin/HEAD", result: { stdout: "refs/remotes/origin/main\n" } },
-      { cmd: "git -C /r rev-parse refs/remotes/origin/main", result: { stdout: `${SHA}\n` } },
-    ]),
-    http: scriptedHttp([], httpLog),
-    azExec,
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", access: "az" },
-    pat: "",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { item, skip } = await src.claimNext()
-  assert.equal(skip, null)
-  assert.equal(item?.state.platform, "ado")
-  assert.equal(item?.state.platformAccess, "az")
-  assert.equal(httpLog.length, 0)
+  await source([build()], { azLog }).claimNext()
   const list = azLog.find((c) => c.includes("--resource builds"))
-  assert.match(list ?? "", /devops invoke --area build/)
   assert.match(list ?? "", /--query-parameters branchName=refs\/heads\/main \$top=30 queryOrder=queueTimeDescending/)
 })

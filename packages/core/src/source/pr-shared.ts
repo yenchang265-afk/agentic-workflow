@@ -1,6 +1,6 @@
 import type { Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { AdoAccessMethod, CodePlatform, WorkflowState } from "../workflow/state.js"
+import type { CodePlatform, WorkflowState } from "../workflow/state.js"
 import type { PrLedger, PrSnapshot, PrTrigger } from "./ledger.js"
 import type { TerminalOutcome, WorkItem } from "./types.js"
 
@@ -96,13 +96,12 @@ export const terminalLedgerUpdate = (
           updatedAt: now,
         }
 
-/** Build the WorkItem a claimed PR enters the loop as, stamped with its code platform (and, for ado, its access method). */
+/** Build the WorkItem a claimed PR enters the loop as, stamped with its code platform. */
 export const prWorkItem = (
   loaded: LoadedManifest,
   platform: CodePlatform,
   snapshot: PrSnapshot,
   triggers: readonly PrTrigger[],
-  access?: AdoAccessMethod,
 ): WorkItem => {
   const binding = loaded.manifest.workSource
   const role = binding.type === "pull-request" ? binding.role : "author"
@@ -125,7 +124,6 @@ export const prWorkItem = (
     artifacts: {},
     git: { base: snapshot.baseRefName, branch: snapshot.headRefName },
     platform,
-    ...(platform === "ado" ? { platformAccess: access ?? "az" } : {}),
   }
   return {
     id: `pr-${snapshot.number}`,

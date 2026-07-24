@@ -28,7 +28,7 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO (az·REST·MCP) + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO via az CLI + dedup ledger<br/>(pr-sitter, review-sitter)"]
             depscan["dependency-scan.ts<br/>advisory reports"]
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
@@ -87,8 +87,9 @@ flowchart TB
   fully-constructed entry `WorkflowState`, so drivers stay source-agnostic.
   The PR and CI sources have Azure DevOps twins (`ado-pr.ts`,
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
-  `"ado"`; how they talk to ADO — `az` CLI (default), REST, or MCP —
-  follows `ado.access`.
+  `"ado"`; they talk to ADO through the `az` CLI (`az devops invoke` is a REST
+  passthrough, so the response parsing is shared with what a raw call would
+  return).
   `pollOnce(sources)` walks the given sources in claim-priority order
   (engineering first unless disabled, then opted-in kinds in config order —
   `enabledWorkflowKinds` in core config); the first successful claim wins, and

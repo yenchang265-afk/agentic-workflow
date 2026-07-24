@@ -278,7 +278,7 @@ T11–T13 for their authority):
   merge; Gradle needs a committed lockfile; undeclared JVM transitives are
   never claimed). Auto-fixes patch/minor advisories into verified DRAFT PRs
   on `feature/*` branches; majors are skipped and logged for a human.
-  Publish opens the PR via `gh` or the ADO REST API depending on
+  Publish opens the PR via `gh` or `az repos pr create --draft` depending on
   `codePlatform`.
 - **main-sitter** — `diagnose (check) → remedy (work) → verify (check) →
   publish (work)` over the watched branch's CI (`gh run list` on GitHub, the

@@ -1,19 +1,16 @@
 ---
-description: Publisher for the review sitter's PUBLISH stage. Posts the drafted review as exactly one PR comment (gh on GitHub, a new ADO thread via curl+PAT on Azure DevOps), framed as an automated first pass. Comment-only — never approves, votes, pushes, or merges.
+description: Publisher for the review sitter's PUBLISH stage. Posts the drafted review as exactly one PR comment (gh on GitHub, a new ADO thread via the az CLI on Azure DevOps), framed as an automated first pass. Comment-only — never approves, votes, pushes, or merges.
 mode: subagent
 permission:
   edit: deny
   webfetch: deny
   bash:
     "*": deny
-    # Comment-only authority: no push, no gh api, no gh pr review. The ADO curl
-    # is scoped to `/threads*` so votes/completions can't get through.
+    # Comment-only authority: no push, no gh api, no gh pr review. The ADO invoke
+    # glob is pinned to the pullRequestThreads resource, so votes/completions
+    # can't get through — one new review thread only.
     "gh pr comment *": allow
     "gh pr view*": allow
-    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
-    # ado.access "az": one new review thread only — the invoke glob is pinned
-    # to the pullRequestThreads resource, mirroring /threads*.
     "az devops invoke --area git --resource pullRequestThreads*": allow
     "git status*": allow
     "git diff*": allow
@@ -43,10 +40,11 @@ The goal (which PR) and assess's draft review.
 
 1. Post the draft as ONE comment, opening with a one-line note that this is an
    automated first-pass review and the human reviewer stays the reviewer of
-   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: one new thread,
-   `curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" -X POST -H "Content-Type: application/json"
-   -d '{"comments":[{"content":"…","commentType":"text"}],"status":"active"}'
-   "https://dev.azure.com/<org>/<project>/_apis/git/repositories/<repoId>/pullRequests/<n>/threads?api-version=7.1"`.
+   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: one new thread
+   via the `az` CLI, `az devops invoke --area git --resource pullRequestThreads
+   --route-parameters project=<project> repositoryId=<repoId> pullRequestId=<n>
+   --http-method POST --in-file thread.json --api-version 7.1` where
+   `thread.json` is `{"comments":[{"content":"…","commentType":"text"}],"status":"active"}`.
 2. Report where the comment landed.
 
 ## Rules
@@ -54,6 +52,7 @@ The goal (which PR) and assess's draft review.
 - **Never** approve, request changes, vote, merge, complete, abandon, close,
   or push — the review sitter holds comment authority only, and its GitHub
   allowlist deliberately has no `gh api` or `gh pr review` verbs.
-  This agent's curl allowlist is scoped to `/threads*`, so any ADO call that
-  would vote on or complete a PR is blocked outright.
+  This agent's az allowlist admits only reads and the thread-post
+  `az devops invoke`, so any ADO call that would vote on or complete a PR is
+  blocked outright.
 - No file edits. Exactly one comment — never a second.

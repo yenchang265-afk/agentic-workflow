@@ -220,7 +220,7 @@ watermarks, own-login filter) keeps it from reacting to its own pushes, and
 a failed attempt parks the PR until a human pushes a new head.
 
 The PR sitter reaches its platform per `codePlatform`: `github` (`gh`) or
-`ado` (Azure DevOps via its REST API, PAT in `AZURE_DEVOPS_EXT_PAT`). In both
+`ado` (Azure DevOps via the `az` CLI, PAT in `AZURE_DEVOPS_EXT_PAT`). In both
 modes the stages behave identically; only the inspect/reply tools differ, and
 the stage prompt says which to use.
 
@@ -236,8 +236,8 @@ Three further opt-in kinds drive the same way (`workflow_claim({kind})` →
   binding default `auto`): **scan** (check; `workflow-dep-scan`) → **upgrade**
   (work; `workflow-dep-upgrade`) → **verify** (check; reuses `workflow-verify`,
   cap 2) → **publish** (work; `workflow-dep-publish`, DRAFT PR on a `feature/*`
-  branch — `gh pr create` or the ADO REST API depending on `codePlatform`;
-  majors and undeclared JVM transitives are never claimed).
+  branch — `gh pr create` or `az repos pr create --draft` depending on
+  `codePlatform`; majors and undeclared JVM transitives are never claimed).
 - **main-sitter** — red CI on the watched branch's newest head (`gh run
   list` or the Azure Pipelines Build API): **diagnose** (check;
   `workflow-main-diagnose`, bisects) → **remedy** (work;

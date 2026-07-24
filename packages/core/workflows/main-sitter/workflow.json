@@ -81,10 +81,6 @@
           "gh pr view*"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
-        ],
-        "ado:az": [
           "az pipelines runs list*",
           "az pipelines runs show*",
           "az repos pr show*",
@@ -232,10 +228,6 @@
           "gh pr comment *"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
-        ],
-        "ado:az": [
           "az repos pr create*",
           "az repos pr show*",
           "az repos pr list*",

@@ -212,7 +212,7 @@ test("chainedGitPushViolation catches a bad push hidden behind an allowlisted pu
   assert.equal(chainedGitPushViolation("git push origin feature/x"), false)
 })
 
-// --- az CLI write backstop (config ado.access "az") — mirror of the curl rules ---
+// --- az CLI write backstop (the loop reaches ADO only through the az CLI) — mirror of the curl rules ---
 
 test("isAdoAzWriteViolation allows reads, draft creation, and thread-resource invoke POSTs", () => {
   assert.equal(isAdoAzWriteViolation("az repos pr show --id 123"), false)
@@ -259,7 +259,7 @@ test("chainedAdoAzWriteViolation catches a mutation hidden behind an allowed seg
   assert.equal(chainedAdoAzWriteViolation("az repos pr show --id 1 && az repos pr list"), false)
 })
 
-// --- ADO MCP mutation-tool name blocklist (best-effort, config ado.access "mcp") ---
+// --- ADO MCP mutation-tool name blocklist (best-effort; guards a user-connected ADO MCP server) ---
 
 test("isAdoMcpMutationTool blocks mutating ADO tool names and passes reads/creation/non-ADO servers", () => {
   assert.equal(isAdoMcpMutationTool("mcp__azure-devops__repo_update_pull_request"), true)

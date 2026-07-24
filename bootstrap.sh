@@ -194,51 +194,24 @@ ensure_gh() {
 # ---------------------------------------------------------------------------
 # Azure DevOps prerequisites (ADO mode only)
 # ---------------------------------------------------------------------------
-# codePlatform "ado" reaches Azure DevOps per config `ado.access`:
-#   az   (default) — the az CLI with the azure-devops extension; stage agents
-#                    AND the engine's own polling/ship calls go through it.
-#                    Install and auth (AZURE_DEVOPS_EXT_PAT) are provisioned
-#                    beforehand — only a presence check here.
-#   rest           — raw curl/fetch + AZURE_DEVOPS_EXT_PAT (nothing to install)
-#   mcp            — an Azure DevOps MCP server configured in the agent host;
-#                    covers stage agents only — polling still needs the PAT
-ado_access() {
-  # Best-effort read of ado.access from .agentic-workflow.json; defaults to "az".
-  local cfg=".agentic-workflow.json"
-  if [ -f "$cfg" ] && command -v node >/dev/null 2>&1; then
-    node -e 'const c=JSON.parse(require("fs").readFileSync(".agentic-workflow.json","utf8"));process.stdout.write(c.ado?.access??"az")' 2>/dev/null || echo "az"
-  else
-    echo "az"
-  fi
-}
-
+# codePlatform "ado" reaches Azure DevOps through the az CLI with the
+# azure-devops extension — stage agents AND the engine's own polling/ship
+# calls go through it. Install and auth (AZURE_DEVOPS_EXT_PAT, or `az login`)
+# are provisioned beforehand — only a presence check here.
 ensure_ado() {
   if [ "$WANT_ADO" -eq 0 ]; then
     skip "Azure DevOps (--no-ado)"
     return 0
   fi
-  local access
-  access="$(ado_access)"
-  case "$access" in
-    rest)
-      if command -v curl >/dev/null 2>&1; then
-        ok "Azure DevOps (rest): REST API over curl (auth via AZURE_DEVOPS_EXT_PAT)"
-      else
-        todo "Azure DevOps (rest) needs curl (see the curl step above)"
-      fi
-      ;;
-    mcp)
-      ok "Azure DevOps (mcp): configure an Azure DevOps MCP server in your agent host"
-      note_manual "ado.access \"mcp\": covers stage agents only — the engine's polling still needs AZURE_DEVOPS_EXT_PAT"
-      ;;
-    *)
-      if command -v az >/dev/null 2>&1; then
-        ok "Azure DevOps (az): az CLI present"
-      else
-        todo "az CLI not found (expected pre-provisioned for ado.access \"az\")"
-      fi
-      ;;
-  esac
+  if command -v az >/dev/null 2>&1; then
+    if az extension show --name azure-devops >/dev/null 2>&1; then
+      ok "Azure DevOps: az CLI + azure-devops extension present"
+    else
+      todo "az CLI present but the azure-devops extension is missing (\`az extension add --name azure-devops\`)"
+    fi
+  else
+    todo "az CLI not found (install it and \`az extension add --name azure-devops\`; auth via AZURE_DEVOPS_EXT_PAT or \`az login\`)"
+  fi
 }
 
 # ---------------------------------------------------------------------------

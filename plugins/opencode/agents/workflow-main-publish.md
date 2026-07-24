@@ -1,5 +1,5 @@
 ---
-description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR (gh on GitHub, the ADO REST API via curl+PAT on Azure DevOps). Never pushes the watched branch, never merges, never marks ready.
+description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR (gh on GitHub, the az CLI on Azure DevOps). Never pushes the watched branch, never merges, never marks ready.
 mode: subagent
 permission:
   edit: deny
@@ -14,14 +14,11 @@ permission:
     "gh pr list*": allow
     "gh pr comment *": allow
     # Both platforms are allowed here (static frontmatter can't switch); config
-    # codePlatform decides which the stage prompt actually uses. ADO writes go to
-    # the REST API via curl+PAT — the Claude-side backstop hook (not expressible
-    # in this static allowlist) additionally restricts writes to reads, thread
-    # replies, and creating a brand-new PR, so complete/abandon/vote can't get
-    # through even via a broader curl call.
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
-    # ado.access "az": draft-PR creation, reads, and thread comments only.
+    # codePlatform decides which the stage prompt actually uses. ADO is reached
+    # through the az CLI: draft-PR creation, reads, and thread comments only. The
+    # Claude-side backstop hook (not expressible in this static allowlist)
+    # additionally restricts writes to reads, thread replies, and creating a
+    # brand-new PR, so complete/abandon/vote can't get through.
     "az repos pr create --draft*": allow
     "az repos pr show*": allow
     "az repos pr list*": allow
@@ -58,18 +55,17 @@ The goal (which branch/head was red), the diagnosis, and verify's result.
    `gh pr create --draft --base <watched>` — the body carries the diagnosis,
    the failing workflow(s), and the verification result. If a PR for this
    branch already exists (`gh pr list --head <branch>`), comment the update on
-   it instead. Azure DevOps (`ado`): the REST API via `curl -sS -u
-   :"$AZURE_DEVOPS_EXT_PAT"` — `POST _apis/git/repositories/<repo>/pullrequests
-   ?api-version=7.1` with `{"sourceRefName":"refs/heads/<branch>",
-   "targetRefName":"refs/heads/<watched>","title":"…","description":"…",
-   "isDraft":true}`; if a PR for this branch already exists (`GET
-   .../pullrequests?searchCriteria.sourceRefName=refs/heads/<branch>&
-   searchCriteria.status=active`), post a thread comment with the update
-   instead.
+   it instead. Azure DevOps (`ado`): the `az` CLI — `az repos pr create --draft
+   --source-branch <branch> --target-branch <watched> --title "…" --description
+   "…"`; if a PR for this branch already exists (`az repos pr list
+   --source-branch <branch> --status active`), post a thread comment with the
+   update instead (`az devops invoke --area git --resource pullRequestThreads
+   … --http-method POST`).
 3. When the diagnosis identifies the culprit PR, post ONE comment on it
    linking the remedy PR — informational, not an assignment. GitHub:
-   `gh pr comment`. Azure DevOps: `POST
-   _apis/git/repositories/<repo>/pullRequests/<culpritId>/threads?api-version=7.1`.
+   `gh pr comment`. Azure DevOps: a thread on the culprit via
+   `az devops invoke --area git --resource pullRequestThreads --route-parameters
+   project=<project> repositoryId=<repo> pullRequestId=<culpritId> --http-method POST`.
 4. Report the PR URL.
 
 ## Rules
@@ -77,10 +73,8 @@ The goal (which branch/head was red), the diagnosis, and verify's result.
 - **NEVER** push the watched branch — the push allowlist is scoped to
   `main-sitter/*` remedy branches, so it cannot be pushed from this stage.
 - **Never** merge, close, or mark the remedy ready for review — human calls
-  (`gh pr merge`/`gh pr ready`; on ADO a `PATCH` to
-  `_apis/git/pullrequests/<id>`).
-  This agent's curl allowlist is scoped to the ADO hosts, not any specific
-  verb — the bash allowlist itself is the control (create-new-PR, thread
-  replies, and reads only; no `-X PATCH`/`PUT`/`DELETE` glob is ever
-  granted).
+  (`gh pr merge`/`gh pr ready`; on ADO the mutating `az repos pr update` verb).
+  This agent's az allowlist grants only reads, `az repos pr create`, and the
+  thread `az devops invoke` — no verb that could complete or vote on a PR is
+  ever granted.
 - No file edits; the remedy is already committed and verified.

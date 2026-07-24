@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
-import { ADO_ACCESS_METHODS, CODE_PLATFORMS, type AdoAccessMethod, type Config, type WorkflowTrigger } from "./workflow/state.js"
+import { CODE_PLATFORMS, type Config, type WorkflowTrigger } from "./workflow/state.js"
 import type { StageDef } from "./manifest/schema.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
@@ -121,31 +121,26 @@ const BaseConfigSchema = z.object({
     .default({}),
   /**
    * Which platform PR-shaped work sources talk to: `github` (the `gh` CLI, the
-   * default) or `ado` (Azure DevOps via its REST API). GitHub auth is delegated
-   * to `gh auth login`; ADO auth is a Personal Access Token in the
-   * `AZURE_DEVOPS_EXT_PAT` env var. Overridable per kind via
+   * default) or `ado` (Azure DevOps via the `az` CLI with the azure-devops
+   * extension). GitHub auth is delegated to `gh auth login`; ADO auth is a
+   * Personal Access Token in the `AZURE_DEVOPS_EXT_PAT` env var, which the az
+   * extension honors directly. Overridable per kind via
    * `workflows.<kind>.codePlatform`.
    */
   codePlatform: CodePlatformSchema.default("github"),
-  /** Azure DevOps coordinates; required when any effective platform is `ado`. */
+  /**
+   * Azure DevOps coordinates; required when any effective platform is `ado`.
+   *
+   * Deliberately `looseObject`: the removed `access`/`customHeaders`/
+   * `insecureSkipTlsVerify` keys must survive parsing so `deprecatedAdoKeys`
+   * can name them in a warning. A strict object would strip them silently and
+   * a user who set `access: "mcp"` would get az behavior with no explanation.
+   */
   ado: z
-    .object({
+    .looseObject({
       /** Organization URL, e.g. "https://dev.azure.com/acme". */
       organization: z.string().min(1),
       project: z.string().min(1),
-      /**
-       * How ADO is reached: `az` (the CLI with the azure-devops extension —
-       * the default), `rest` (raw curl/fetch + `AZURE_DEVOPS_EXT_PAT`, the
-       * pre-`access` behavior), or `mcp` (an Azure DevOps MCP server in the
-       * agent session). Selects the stage prompts' command examples, the
-       * stage bash allowlist, and the driver's own data transport: under
-       * `az` the poll sources and ship gate shell the az CLI too (auth via
-       * the pre-provisioned AZURE_DEVOPS_EXT_PAT, which the extension
-       * honors); under `rest` they fetch REST with the PAT; `mcp` covers
-       * stage agents only (out of the host process's reach), so its driver
-       * side polls REST+PAT.
-       */
-      access: z.enum(ADO_ACCESS_METHODS).default("az"),
       /** Repository name; omitted → all repositories in the project. */
       repository: z.string().min(1).optional(),
       /** The sitter's own login for comment/author filtering — a PAT can't resolve identity. */
@@ -154,20 +149,9 @@ const BaseConfigSchema = z.object({
        * The PAT in plaintext — a fallback for when AZURE_DEVOPS_EXT_PAT is unset
        * (the env var wins). Prefer the env var; if set here, keep
        * `.agentic-workflow.json` gitignored so the secret is never committed.
+       * The az CLI's azure-devops extension reads this env var directly.
        */
       pat: z.string().min(1).optional(),
-      /**
-       * Extra HTTP headers sent on every ADO REST call (e.g. a proxy auth or
-       * routing header). Keys and values must be non-empty. The
-       * `AGENTIC_WORKFLOW_ADO_HEADERS` env var (JSON) overrides these key by key.
-       */
-      customHeaders: z.record(z.string().min(1), z.string().min(1)).optional(),
-      /**
-       * Skip TLS certificate verification on every ADO REST call. Off by
-       * default; only for a self-hosted ADO Server behind a self-signed or
-       * internal-CA cert — never for the hosted `dev.azure.com` service.
-       */
-      insecureSkipTlsVerify: z.boolean().optional(),
     })
     .optional(),
   /**
@@ -218,8 +202,28 @@ export const enabledWorkflowKinds = (config: Config): string[] => {
 export const platformFor = (config: Config, kind: string): CodePlatform =>
   config.workflows[kind]?.codePlatform ?? config.codePlatform ?? "github"
 
-/** How stage agents talk to ADO: config `ado.access`, else the `az` default. Pure. */
-export const adoAccessFor = (config: Config): AdoAccessMethod => config.ado?.access ?? "az"
+/**
+ * Azure DevOps config keys that no longer do anything, in config order.
+ *
+ * ADO used to be reachable three ways (`ado.access`: `az` | `rest` | `mcp`);
+ * it is now only ever the az CLI, so `access` is inert, and `customHeaders` /
+ * `insecureSkipTlsVerify` went with the raw-fetch transport that was the only
+ * thing reading them (the az CLI cannot consume either). Left in place they
+ * would be config that lies about what it does, so hosts surface this as a
+ * one-line warning — the same treatment `unknownStageModelKeys` gets, and for
+ * the same reason: silently ignoring a key the user deliberately set reads as
+ * "the setting doesn't work".
+ *
+ * Reported rather than rejected so an in-flight loop keeps running; the values
+ * are ignored either way. Pure.
+ */
+export const DEPRECATED_ADO_KEYS = ["access", "customHeaders", "insecureSkipTlsVerify"] as const
+
+export const deprecatedAdoKeys = (config: Config): string[] => {
+  const ado = config.ado as Record<string, unknown> | undefined
+  if (!ado) return []
+  return DEPRECATED_ADO_KEYS.filter((key) => ado[key] !== undefined).map((key) => `ado.${key}`)
+}
 
 /** How a watching host schedules claims for a workflow kind: configured trigger, else poll. Pure. */
 export const triggerFor = (config: Config, kind: string): WorkflowTrigger =>

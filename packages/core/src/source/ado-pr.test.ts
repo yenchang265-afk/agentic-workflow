@@ -4,18 +4,19 @@ import { test } from "node:test"
 import path from "node:path"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { makeAdoPrSource, type AdoHttp } from "./ado-pr.js"
-import type { AzExec } from "./ado-az.js"
-import type { AdoHttpResponse } from "./ado-pr.js"
+import { makeAdoPrSource } from "./ado-pr.js"
+import type { AzExec, AzResult } from "./ado-az.js"
 
 /**
- * The ado-pr source over the real pr-sitter manifest, against a scripted ADO
- * REST transport (`http`) plus a scripted git/claim shell (`$`) — the mirror of
- * github-pr.test.ts. Covers the normalization (ref stripping, conflicts →
- * CONFLICTING, negative vote → CHANGES_REQUESTED, policy failures →
- * failingChecks), the filtering (drafts, forks, other authors, own/system
- * comments), PAT/identity preconditions, claim/fetch mechanics, and terminal
- * ledger writes.
+ * The ado-pr source over the real pr-sitter manifest, against a scripted `az`
+ * CLI (`azExec`) plus a scripted git/claim shell (`$`) — the mirror of
+ * github-pr.test.ts. ADO is reached only through the az CLI, whose
+ * `az devops invoke` returns the same `{ value: [...] }` envelopes the REST API
+ * would, so the normalizers are shared. Covers the normalization (ref
+ * stripping, conflicts → CONFLICTING, negative vote → CHANGES_REQUESTED, policy
+ * failures → failingChecks), the filtering (drafts, forks, other authors,
+ * own/system comments), the identity precondition, claim/fetch mechanics, and
+ * terminal ledger writes.
  */
 
 const WORKFLOWS_DIR = defaultWorkflowsDir()
@@ -52,15 +53,21 @@ const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-type Route = { match: string; status?: number; body?: string }
+/** A scripted az route: `match` is a substring of the joined `az` argv; first hit wins. */
+type Route = { match: string; ok?: boolean; statusText?: string; body?: string }
 
-/** Scripted ADO REST transport: first route whose `match` is a substring of the URL wins. */
-const scriptedHttp = (routes: Route[], log: string[] = []): AdoHttp => async (url) => {
-  log.push(url)
-  const hit = routes.find((r) => url.includes(r.match))
-  const status = hit?.status ?? 200
-  const body = hit?.body ?? ""
-  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
+/**
+ * Scripted `az` CLI: first route whose `match` is a substring of the joined argv
+ * wins, so callers route by resource (`--resource pullRequestThreads`) or a
+ * route parameter (`pullRequestId=7`). Order the routes most-specific-first —
+ * the threads call also carries `pullRequestId=`, so it must precede the by-id
+ * PR re-read, which must precede the generic list route.
+ */
+const scriptedAz = (routes: Route[], log: string[] = []): AzExec => async (args) => {
+  const cmd = args.join(" ")
+  log.push(cmd)
+  const hit = routes.find((r) => cmd.includes(r.match))
+  return { ok: hit?.ok ?? true, statusText: hit?.statusText ?? "OK", body: hit?.body ?? "" } satisfies AzResult
 }
 
 /** Client whose reads serve ledger files from an in-memory map. */
@@ -93,7 +100,7 @@ const pr = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-/** The ADO PR-list REST response wraps the array in `{ value: [...] }`. */
+/** `az devops invoke` returns the array wrapped in `{ value: [...] }`. */
 const listBody = (prs: unknown[]) => JSON.stringify({ value: prs })
 const threads = (comments: unknown[]) => JSON.stringify({ value: [{ isDeleted: false, comments }] })
 
@@ -102,8 +109,7 @@ type Opts = {
   routes?: Route[]
   shellScript?: Cmd[]
   shellLog?: string[]
-  httpLog?: string[]
-  pat?: string
+  azLog?: string[]
   /** The kind under test; defaults to pr-sitter (author role). */
   loaded?: ReturnType<typeof loadManifest>
 }
@@ -111,22 +117,19 @@ type Opts = {
 const source = (prs: unknown[], opts: Opts = {}) =>
   makeAdoPrSource({
     $: scriptedShell(opts.shellScript ?? [], opts.shellLog),
-    http: scriptedHttp(
-      [{ match: "/pullrequests?searchCriteria", body: listBody(prs) }, ...(opts.routes ?? [])],
-      opts.httpLog,
-    ),
+    // Caller routes come first (most-specific), then the generic list default.
+    azExec: scriptedAz([...(opts.routes ?? []), { match: "--resource pullrequests", body: listBody(prs) }], opts.azLog),
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
     loaded: opts.loaded ?? sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    pat: opts.pat ?? "test-pat",
     now: () => "2026-07-05T00:00:00Z",
   })
 
 const failingPolicy: Route = {
-  match: "/policy/evaluations",
+  match: "--resource evaluations",
   body: JSON.stringify({
     value: [
       { status: "rejected", configuration: { isBlocking: true, type: { displayName: "Build" } } },
@@ -143,7 +146,6 @@ test("claims a PR with a failing policy: refs stripped, goal names the failure, 
   assert.equal(item?.id, "pr-7")
   assert.equal(item?.entryStage, "triage")
   assert.equal(item?.state.platform, "ado")
-  assert.equal(item?.state.platformAccess, "az") // config default, stamped at claim
   assert.deepEqual(item?.state.git, { base: "main", branch: "feat/rate-limit" })
   assert.match(item?.state.goal ?? "", /failing checks: Build/)
   assert.doesNotMatch(item?.state.goal ?? "", /Optional Build/) // non-blocking policies don't gate the merge
@@ -177,7 +179,7 @@ test("skips drafts, fork PRs, other authors' PRs, and system/own comments", asyn
     },
   ])
   const { item, skip } = await source(prs, {
-    routes: [{ match: "/threads", body: ownAndSystem }],
+    routes: [{ match: "--resource pullRequestThreads", body: ownAndSystem }],
   }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /no PRs need attention \(4 active/)
@@ -197,12 +199,12 @@ test("a human comment newer than the ledger watermark triggers a claim; an older
     threads([{ commentType: "text", publishedDate: at, author: { uniqueName: "alice@acme.com" } }])
   const old = await source([pr()], {
     ledgers,
-    routes: [{ match: "/threads", body: comment("2026-07-03T00:00:00Z") }],
+    routes: [{ match: "--resource pullRequestThreads", body: comment("2026-07-03T00:00:00Z") }],
   }).claimNext()
   assert.equal(old.item, null)
   const fresh = await source([pr()], {
     ledgers,
-    routes: [{ match: "/threads", body: comment("2026-07-05T00:00:00Z") }],
+    routes: [{ match: "--resource pullRequestThreads", body: comment("2026-07-05T00:00:00Z") }],
   }).claimNext()
   assert.match(fresh.item?.state.goal ?? "", /1 unanswered comment/)
 })
@@ -216,75 +218,35 @@ test("a held claim marker reports actionably and claims nothing", async () => {
   assert.equal(skip?.actionable, true)
 })
 
-test("a REST list failure surfaces as an actionable skip naming the PAT and scope", async () => {
-  const src = makeAdoPrSource({
-    $: scriptedShell([]),
-    http: scriptedHttp([{ match: "/pullrequests?searchCriteria", status: 401 }]),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    pat: "test-pat",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { skip } = await src.claimNext()
-  assert.match(skip?.message ?? "", /pull-request list failed — HTTP 401/)
-  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
-  assert.match(skip?.message ?? "", /Code \(read\) scope/)
+test("a failed az list surfaces as an actionable skip carrying the CLI's stderr and setup hint", async () => {
+  // The az CLI owns auth, so a broken environment (missing extension, expired
+  // login) surfaces here as a failed list call — not a pre-flight PAT check.
+  const { skip } = await source([], {
+    routes: [{ match: "--resource pullrequests", ok: false, statusText: "ERROR: Please run 'az login'" }],
+  }).claimNext()
+  assert.match(skip?.message ?? "", /pull-request list failed \(az CLI\).*ERROR: Please run 'az login'/s)
+  assert.match(skip?.message ?? "", /azure-devops extension/)
   assert.equal(skip?.actionable, true)
 })
 
-test("a missing PAT skips actionably, naming the env var to set", async () => {
-  const { item, skip } = await source([pr({ mergeStatus: "conflicts" })], { pat: "" }).claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /Azure DevOps PAT not set/)
-  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
-  assert.equal(skip?.actionable, true)
-})
-
-test("config ado.pat is a fallback when neither a dep nor the env var supplies a PAT", async () => {
-  const saved = process.env.AZURE_DEVOPS_EXT_PAT
-  delete process.env.AZURE_DEVOPS_EXT_PAT
-  try {
-    const src = makeAdoPrSource({
-      $: scriptedShell([]),
-      http: scriptedHttp([{ match: "/pullrequests?searchCriteria", body: listBody([pr({ mergeStatus: "conflicts" })]) }]),
-      client: ledgerClient({}),
-      directory: "/r",
-      tasksDir: "docs/tasks",
-      log: () => {},
-      loaded: sitter,
-      // No `pat` dep and no env var → resolution must fall through to ado.pat.
-      ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com", pat: "cfg-pat" },
-      now: () => "2026-07-05T00:00:00Z",
-    })
-    const { item, skip } = await src.claimNext()
-    assert.doesNotMatch(skip?.message ?? "", /PAT not set/) // the config pat satisfied the requirement
-    assert.equal(item?.id, "pr-7") // and it proceeded to a real claim
-  } finally {
-    if (saved === undefined) delete process.env.AZURE_DEVOPS_EXT_PAT
-    else process.env.AZURE_DEVOPS_EXT_PAT = saved
-  }
-})
-
-test("onTerminal(done) records the post-push head + comment watermark from the REST API", async () => {
+test("onTerminal(done) records the post-push head + comment watermark, re-read over the az CLI", async () => {
   const log: string[] = []
   const src = source([pr({ mergeStatus: "conflicts" })], {
+    // Threads first: that call also carries pullRequestId=7, so it must match
+    // before the by-id PR re-read (itself before the generic list default).
     routes: [
       {
-        match: "/pullrequests/7?",
+        match: "--resource pullRequestThreads",
+        body: threads([
+          { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
+        ]),
+      },
+      {
+        match: "pullRequestId=7",
         body: JSON.stringify({
           lastMergeSourceCommit: { commitId: "sha-own-push" },
           repository: { id: "repo-guid" },
         }),
-      },
-      {
-        match: "/threads",
-        body: threads([
-          { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
-        ]),
       },
     ],
     shellLog: log,
@@ -314,14 +276,13 @@ test("onTerminal(stop) records a failed attempt pinned to the claimed head", asy
 test("unresolvable identity (no selfLogin) skips actionably instead of sitting on everyone's PRs", async () => {
   const src = makeAdoPrSource({
     $: scriptedShell([]),
-    http: scriptedHttp([{ match: "/pullrequests?searchCriteria", body: listBody([pr({ mergeStatus: "conflicts" })]) }]),
+    azExec: scriptedAz([{ match: "--resource pullrequests", body: listBody([pr({ mergeStatus: "conflicts" })]) }]),
     client: ledgerClient({}),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
     loaded: sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
-    pat: "test-pat",
     now: () => "2026-07-05T00:00:00Z",
   })
   const { item, skip } = await src.claimNext()
@@ -329,45 +290,6 @@ test("unresolvable identity (no selfLogin) skips actionably instead of sitting o
   assert.match(skip?.message ?? "", /could not resolve the sitter's own ADO identity/)
   assert.match(skip?.message ?? "", /ado\.selfLogin/)
   assert.equal(skip?.actionable, true)
-})
-
-test("ado.customHeaders ride every REST call, with AGENTIC_WORKFLOW_ADO_HEADERS overriding them", async () => {
-  const seen: Array<Readonly<Record<string, string>>> = []
-  const capturingHttp: AdoHttp = async (_url, init): Promise<AdoHttpResponse> => {
-    seen.push(init.headers)
-    return { ok: true, status: 200, statusText: "ok", text: async () => listBody([]) }
-  }
-  const prevEnv = process.env.AGENTIC_WORKFLOW_ADO_HEADERS
-  process.env.AGENTIC_WORKFLOW_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
-  try {
-    const src = makeAdoPrSource({
-      $: scriptedShell([]),
-      http: capturingHttp,
-      client: ledgerClient({}),
-      directory: "/r",
-      tasksDir: "docs/tasks",
-      log: () => {},
-      loaded: sitter,
-      ado: {
-        organization: "https://dev.azure.com/acme",
-        project: "widgets",
-        selfLogin: "sitter@acme.com",
-        customHeaders: { "Proxy-Authorization": "cfg-token", "X-Route": "internal" },
-      },
-      pat: "test-pat",
-      now: () => "2026-07-05T00:00:00Z",
-    })
-    await src.claimNext()
-    assert.ok(seen.length >= 1, "at least the PR-list call was made")
-    for (const headers of seen) {
-      assert.ok(headers.Authorization?.startsWith("Basic ")) // built-in auth preserved
-      assert.equal(headers["X-Route"], "internal") // config-only header present
-      assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
-    }
-  } finally {
-    if (prevEnv === undefined) delete process.env.AGENTIC_WORKFLOW_ADO_HEADERS
-    else process.env.AGENTIC_WORKFLOW_ADO_HEADERS = prevEnv
-  }
 })
 
 test("a PR without a head SHA (merge evaluation queued) is skipped, not claimed with a poisoned ledger key", async () => {
@@ -390,7 +312,7 @@ test("variable-precision ADO timestamps compare numerically against the watermar
   ])
   const { item } = await source([pr()], {
     ledgers,
-    routes: [{ match: "/threads", body: older }],
+    routes: [{ match: "--resource pullRequestThreads", body: older }],
   }).claimNext()
   assert.equal(item, null)
 })
@@ -413,8 +335,8 @@ test("review-sitter on ADO claims another author's PR where selfLogin's vote is 
   assert.equal(item?.entryStage, "fetch")
   assert.equal(item?.state.kind, "review-sitter")
   assert.equal(item?.state.platform, "ado")
-  assert.equal(item?.state.platformAccess, "az") // config default, stamped at claim
   assert.match(item?.state.goal ?? "", /one structured review comment/)
+  // The reviewer's vote is read off the PR the az list returned.
   // The reviewer kind's bookkeeping lives in its own runs/ namespace.
   assert.ok(log.some((c) => c.includes("runs/review-sitter/.claims/pr-7")))
 })
@@ -433,45 +355,13 @@ test("review-sitter on ADO skips its own PRs, PRs it isn't a reviewer on, and PR
   assert.match(skip?.message ?? "", /^review-sitter: no PRs need attention \(3 active/)
 })
 
-// --- the az-CLI data transport (config ado.access "az") ---
+// --- the az-CLI invoke argv shape ---
 
-const scriptedAz =
-  (routes: { match: string; ok?: boolean; body?: string; statusText?: string }[], log: string[] = []): AzExec =>
-  async (args) => {
-    const cmd = args.join(" ")
-    log.push(cmd)
-    const hit = routes.find((r) => cmd.includes(r.match))
-    return { ok: hit?.ok ?? true, statusText: hit?.statusText ?? "OK", body: hit?.body ?? "" }
-  }
-
-test("access az: claims over the az CLI with no PAT at all — REST transport never touched", async () => {
+test("the PR-list az invoke carries the org, project route parameter, and paging query parameters", async () => {
   const azLog: string[] = []
-  const httpLog: string[] = []
-  const src = makeAdoPrSource({
-    $: scriptedShell([]),
-    http: scriptedHttp([], httpLog),
-    azExec: scriptedAz(
-      [
-        { match: "--resource pullrequests", body: listBody([pr()]) },
-        { match: "--resource evaluations", body: failingPolicy.body ?? "" },
-        { match: "--resource pullRequestThreads", body: threads([]) },
-      ],
-      azLog,
-    ),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com", access: "az" },
-    pat: "",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { item, skip } = await src.claimNext()
+  const { item, skip } = await source([pr()], { routes: [failingPolicy], azLog }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, "pr-7")
-  assert.equal(item?.state.platformAccess, "az")
-  assert.equal(httpLog.length, 0) // every data call went through the CLI
   const list = azLog.find((c) => c.includes("--resource pullrequests"))
   assert.ok(list)
   assert.match(list ?? "", /devops invoke --area git/)
@@ -480,94 +370,25 @@ test("access az: claims over the az CLI with no PAT at all — REST transport ne
   assert.match(list ?? "", /--query-parameters searchCriteria\.status=active \$top=100/)
 })
 
-test("access az: onTerminal(done) re-reads the PR over the CLI too — REST transport never touched", async () => {
-  const azLog: string[] = []
-  const httpLog: string[] = []
-  const shellLog: string[] = []
-  const src = makeAdoPrSource({
-    $: scriptedShell([], shellLog),
-    http: scriptedHttp([], httpLog),
-    azExec: scriptedAz(
-      [
-        // Order matters: the threads call also carries pullRequestId=7 in its
-        // route parameters, so it must match before the by-id PR re-read; the
-        // by-id re-read in turn must match before the generic list route.
-        {
-          match: "--resource pullRequestThreads",
-          body: threads([
-            { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
-          ]),
-        },
-        {
-          match: "pullRequestId=7",
-          body: JSON.stringify({ lastMergeSourceCommit: { commitId: "sha-own-push" }, repository: { id: "repo-guid" } }),
-        },
-        { match: "--resource pullrequests", body: listBody([pr({ mergeStatus: "conflicts" })]) },
-        { match: "--resource evaluations", body: JSON.stringify({ value: [] }) },
-      ],
-      azLog,
-    ),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com", access: "az" },
-    pat: "",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { item } = await src.claimNext()
-  assert.ok(item)
-  await src.onTerminal?.(item, { kind: "done", message: "pushed" })
-  assert.equal(httpLog.length, 0) // the post-publish re-read must not fall back to REST+PAT
-  assert.ok(
-    azLog.some((c) => c.includes("pullRequestId=7")),
-    "the PR head re-read went through the CLI",
-  )
-  const write = shellLog.find((c) => c.startsWith("printf") && c.includes("pr-7.json"))
-  assert.ok(write, "ledger written")
-  assert.match(write ?? "", /sha-own-push/) // the sitter's own push recorded as handled
-  assert.match(write ?? "", /2026-07-05T01:00:00Z/) // comment watermark advanced over the CLI transport
-})
-
-test("access az: a failed az call surfaces as an actionable skip carrying the CLI's stderr", async () => {
-  const src = makeAdoPrSource({
-    $: scriptedShell([]),
-    http: scriptedHttp([]),
-    azExec: scriptedAz([{ match: "--resource pullrequests", ok: false, statusText: "ERROR: Please run 'az login'" }]),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com", access: "az" },
-    pat: "",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { item, skip } = await src.claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /az CLI.*ERROR: Please run 'az login'/s) // the CLI's own stderr, verbatim
-  assert.equal(skip?.actionable, true)
-})
-
 // --- paging: $top=100 with no $skip silently dropped every PR past the first page ---
 
-/** Build a source whose PR-list transport pages by `$skip`, serving `total` draft PRs. */
-const pagedSource = (total: number, warnings: string[] = [], httpLog: string[] = []) =>
+/** Build a source whose PR-list az invoke pages by `$skip`, serving `total` draft PRs. */
+const pagedSource = (total: number, warnings: string[] = [], azLog: string[] = []) =>
   makeAdoPrSource({
     $: scriptedShell([]),
-    http: async (url) => {
-      httpLog.push(url)
+    azExec: async (args) => {
+      const cmd = args.join(" ")
+      azLog.push(cmd)
       let body = ""
-      if (url.includes("/pullrequests?searchCriteria")) {
-        const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? "0")
-        const top = Number(/\$top=(\d+)/.exec(url)?.[1] ?? "100")
+      if (cmd.includes("--resource pullrequests") && cmd.includes("searchCriteria.status=active")) {
+        const skip = Number(/\$skip=(\d+)/.exec(cmd)?.[1] ?? "0")
+        const top = Number(/\$top=(\d+)/.exec(cmd)?.[1] ?? "100")
         const page = Array.from({ length: Math.max(0, Math.min(top, total - skip)) }, (_, i) =>
           pr({ pullRequestId: skip + i + 1, isDraft: true }),
         )
         body = JSON.stringify({ value: page })
       }
-      return { ok: true, status: 200, statusText: "ok", text: async () => body }
+      return { ok: true, statusText: "OK", body } satisfies AzResult
     },
     client: ledgerClient({}),
     directory: "/r",
@@ -575,26 +396,25 @@ const pagedSource = (total: number, warnings: string[] = [], httpLog: string[] =
     log: (_l, m) => void warnings.push(m),
     loaded: sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    pat: "test-pat",
     now: () => "2026-07-05T00:00:00Z",
   })
 
 test("the ADO PR list pages past the first 100 instead of truncating", async () => {
   // ADO has no server-side search, so role filtering happens client-side over the
   // WHOLE set — a PR at position 140 that needs attention was simply invisible.
-  const httpLog: string[] = []
-  const { skip } = await pagedSource(150, [], httpLog).claimNext()
-  const listCalls = httpLog.filter((u) => u.includes("/pullrequests?searchCriteria"))
+  const azLog: string[] = []
+  const { skip } = await pagedSource(150, [], azLog).claimNext()
+  const listCalls = azLog.filter((c) => c.includes("searchCriteria.status=active"))
   assert.ok(listCalls.length >= 2, `expected paging, got ${listCalls.length} list call(s)`)
-  assert.ok(listCalls.some((u) => /\$skip=100/.test(u)), "second page never requested")
+  assert.ok(listCalls.some((c) => /\$skip=100/.test(c)), "second page never requested")
   // The skip line must report the true total, not the first page's size.
   assert.match(skip?.message ?? "", /150/)
 })
 
 test("a single short page issues no extra request", async () => {
-  const httpLog: string[] = []
-  const { skip } = await pagedSource(3, [], httpLog).claimNext()
-  assert.equal(httpLog.filter((u) => u.includes("/pullrequests?searchCriteria")).length, 1)
+  const azLog: string[] = []
+  const { skip } = await pagedSource(3, [], azLog).claimNext()
+  assert.equal(azLog.filter((c) => c.includes("searchCriteria.status=active")).length, 1)
   assert.match(skip?.message ?? "", /3 active/)
 })
 

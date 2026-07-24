@@ -83,14 +83,19 @@ export const StageDefSchema = z.object({
 export type StageDef = z.infer<typeof StageDefSchema>
 
 /**
- * The bash globs a stage may run on the given code platform. For ado, a
- * non-`rest` access method looks up the composite key `"<platform>:<access>"`
- * (e.g. `"ado:az"`, `"ado:mcp"`); plain `"ado"` remains the rest/curl list.
- * A missing composite key yields only `bashAllowlist` — fail-closed. Pure.
+ * The bash globs a stage may run on the given code platform: the stage's own
+ * `bashAllowlist` plus that platform's extras. An unknown platform key yields
+ * only `bashAllowlist` — fail-closed. Pure.
+ *
+ * One key per platform, so `"ado"` names the az-CLI commands the ADO stage
+ * prompts actually tell the agent to run. (This used to be a composite
+ * `"<platform>:<access>"` scheme, where plain `"ado"` meant curl and `"ado:az"`
+ * meant the CLI — two lists per platform that had to stay in sync with three
+ * sets of prompt text.)
  */
-export const effectiveAllowlist = (def: StageDef, platform: string, access?: string): string[] => [
+export const effectiveAllowlist = (def: StageDef, platform: string): string[] => [
   ...def.bashAllowlist,
-  ...(def.platformAllowlist[access && access !== "rest" ? `${platform}:${access}` : platform] ?? []),
+  ...(def.platformAllowlist[platform] ?? []),
 ]
 
 const TransitionSchema = z.object({

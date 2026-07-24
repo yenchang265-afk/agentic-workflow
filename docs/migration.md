@@ -47,22 +47,36 @@ English | [繁體中文](migration.zh-TW.md)
   affected. The shared, tracked `.gitignore` is never touched by either
   setting. See [configuration.md](configuration.md#optional-hardening).
 
-## To the az-CLI default for Azure DevOps (`ado.access`)
+## To az-CLI-only Azure DevOps (`ado.access` removed)
 
-- **Behavior change for existing ADO configs**: the stage agents' ADO access
-  method is now selected by `ado.access`, and its default is **`"az"`** (the
-  az CLI with the `azure-devops` extension) — not the raw `curl` + PAT the
-  sitters previously hardcoded. On the next *newly claimed* loop, ADO stage
-  prompts render az commands and stages get az bash allowlists. To keep the
-  old behavior, pin `"ado": { "access": "rest" }`.
+Azure DevOps is now reached **only** through the `az` CLI (the `azure-devops`
+extension), end to end — stage prompts, stage bash allowlists, and the
+driver's own polling / ship-gate calls. The three-way `ado.access` knob
+(`az` | `rest` | `mcp`) and the two raw-fetch-only knobs it gated have been
+removed. This collapses what used to be three parallel command sets per ADO
+stage — which had to be kept in agreement by hand — down to one.
+
+- **`ado.access` is gone.** It defaulted to `"az"` already, so if you never
+  set it (or set `"az"`), nothing changes — delete the key. If you pinned
+  `"rest"` or `"mcp"`, that path no longer exists; remove the key and use the
+  az CLI. A stale `access` value is **ignored with a one-line warning**, not a
+  hard error, so an in-flight loop keeps running — but it does nothing, so
+  delete it.
+- **`ado.customHeaders` and `ado.insecureSkipTlsVerify` are gone.** They only
+  ever affected the raw-fetch transport, which the az CLI replaces. Both are
+  ignored with the same warning. For a self-hosted Azure DevOps Server behind
+  a self-signed / internal-CA certificate, configure the CLI's own trust
+  instead — `REQUESTS_CA_BUNDLE=<ca.pem>` in the environment, or `az devops
+  configure`. Custom proxy/routing headers have no az-CLI equivalent; front
+  the CLI with the proxy's own environment (`HTTPS_PROXY`, etc.).
+  `AGENTIC_WORKFLOW_ADO_HEADERS` is likewise no longer read.
+- **Prerequisite:** the `az` CLI with the `azure-devops` extension must be
+  installed and authenticated — `AZURE_DEVOPS_EXT_PAT` (the same env var as
+  before; the extension honors it directly), `ado.pat`, or an interactive `az
+  login`. Existing PAT setups keep working unchanged.
 - **In-flight loops are unaffected**: a state snapshot claimed before this
-  change carries no access stamp and keeps rendering the curl/REST branch it
-  was claimed under.
-- **Polling and the ship gate follow the same choice** — under `"az"` the
-  driver shells the az CLI for its own calls too; your existing
-  `AZURE_DEVOPS_EXT_PAT` keeps working unchanged (the azure-devops extension
-  honors it). `"rest"` keeps fetch+PAT. `"mcp"` covers stage agents only —
-  the driver's polling still needs the PAT. See
+  change loses its now-defunct access stamp on load and renders az commands,
+  which match the az allowlist. See
   [configuration.md](configuration.md#code-platform-codeplatform--ado).
 
 ## To layered configuration (user scope + repo scope)

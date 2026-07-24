@@ -26,7 +26,7 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO (az·REST·MCP) + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO via az CLI + dedup ledger<br/>(pr-sitter, review-sitter)"]
             depscan["dependency-scan.ts<br/>advisory reports"]
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
@@ -85,8 +85,8 @@ flowchart TB
   完整建構好的入口 `WorkflowState`，因此驅動程式不需要知道工作來源的細節。
   PR 與 CI 工作來源各有 Azure DevOps 對應版本（`ado-pr.ts`、
   `ado-ci-runs.ts`），當 `codePlatform` 為 `"ado"` 時在接線階段換入；
-  它們與 ADO 溝通的方式——`az` CLI（預設）、REST 或 MCP——則依
-  `ado.access` 而定。
+  它們透過 `az` CLI 與 ADO 溝通（`az devops invoke` 是 REST 直通，
+  所以回應解析與原生呼叫共用）。
   `pollOnce(sources)` 依認領優先順序走訪指定的工作來源（除非停用，
   否則 engineering 優先，接著是設定中依序排列的已啟用類型——核心設定
   中的 `enabledWorkflowKinds`）；第一次成功的認領勝出，且每種類型的指令

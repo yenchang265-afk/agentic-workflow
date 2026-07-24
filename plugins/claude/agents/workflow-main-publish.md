@@ -20,18 +20,17 @@ The goal (which branch/head was red), the diagnosis, and verify's result.
    `gh pr create --draft --base <watched>` — the body carries the diagnosis,
    the failing workflow(s), and the verification result. If a PR for this
    branch already exists (`gh pr list --head <branch>`), comment the update on
-   it instead. Azure DevOps (`ado`): the REST API via `curl -sS -u
-   :"$AZURE_DEVOPS_EXT_PAT"` — `POST _apis/git/repositories/<repo>/pullrequests
-   ?api-version=7.1` with `{"sourceRefName":"refs/heads/<branch>",
-   "targetRefName":"refs/heads/<watched>","title":"…","description":"…",
-   "isDraft":true}`; if a PR for this branch already exists (`GET
-   .../pullrequests?searchCriteria.sourceRefName=refs/heads/<branch>&
-   searchCriteria.status=active`), post a thread comment with the update
-   instead.
+   it instead. Azure DevOps (`ado`): the `az` CLI — `az repos pr create --draft
+   --source-branch <branch> --target-branch <watched> --title "…" --description
+   "…"`; if a PR for this branch already exists (`az repos pr list
+   --source-branch <branch> --status active`), post a thread comment with the
+   update instead (`az devops invoke --area git --resource pullRequestThreads
+   … --http-method POST`).
 3. When the diagnosis identifies the culprit PR, post ONE comment on it
    linking the remedy PR — informational, not an assignment. GitHub:
-   `gh pr comment`. Azure DevOps: `POST
-   _apis/git/repositories/<repo>/pullRequests/<culpritId>/threads?api-version=7.1`.
+   `gh pr comment`. Azure DevOps: a thread on the culprit via
+   `az devops invoke --area git --resource pullRequestThreads --route-parameters
+   project=<project> repositoryId=<repo> pullRequestId=<culpritId> --http-method POST`.
 4. Report the PR URL.
 
 ## Rules
@@ -39,9 +38,8 @@ The goal (which branch/head was red), the diagnosis, and verify's result.
 - **NEVER** push the watched branch — the push allowlist is scoped to
   `main-sitter/*` remedy branches, so it cannot be pushed from this stage.
 - **Never** merge, close, or mark the remedy ready for review — human calls
-  (`gh pr merge`/`gh pr ready`; on ADO a `PATCH` to
-  `_apis/git/pullrequests/<id>`).
-  A backstop hook blocks every ADO call except GET reads, thread-comment
+  (`gh pr merge`/`gh pr ready`; on ADO the mutating `az repos pr update` verb).
+  A backstop hook blocks every ADO call except reads, thread-comment
   replies, and creating a brand-new PR, so completing/abandoning/voting
   can't get through even if attempted.
 - No file edits; the remedy is already committed and verified.
