@@ -1,6 +1,6 @@
 ---
 name: using-agent-skills
-description: Discovers and invokes agent skills. Use when starting a session or when you need to discover which skill applies to the current task. This is the meta-skill that governs how all other skills are discovered and invoked.
+description: Routes any task to the right skill and carries the cross-skill operating behaviors. Use when starting a session or deciding which skill applies.
 ---
 
 # Using Agent Skills

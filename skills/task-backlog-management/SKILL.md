@@ -1,6 +1,6 @@
 ---
 name: task-backlog-management
-description: Explains the filesystem task backlog under docs/tasks/ that feeds the agentic loop. Use when writing, filing, or moving a task file, when running the /agentic-workflow:engineering authoring or execution verbs, or when you need the task file schema and the folder-as-status lifecycle (draft/queued/plan-review/in-progress/in-review/completed/abandoned).
+description: Explains the filesystem task backlog under docs/tasks/ — the folder-as-status lifecycle and task file schema. Use when writing, filing, or moving a task file, or running the /agentic-workflow:engineering authoring verbs.
 ---
 
 # The task backlog

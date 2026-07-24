@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: Explains the automatic agentic loop driven by the OpenCode `/agentic-workflow:engineering` plugin command — declarative workflow kinds under `packages/core/workflows/<kind>/`, with the engineering kind (plan → build → verify → review) as the default — including the authoring verbs (new, retask) and the human gates (the unified folder-driven approve, replan). Use when you need to understand how /agentic-workflow:engineering plans and executes stages, how the park-at-gate plan review works, the workflow_verdict contracts, how workflow kinds and the scheduler work (e.g. the pr-sitter kind), or how the loop terminates.
+description: Explains the automatic agentic loop behind /agentic-workflow:engineering — declarative workflow kinds under packages/core/workflows/<kind>/, the stages, human gates (approve/replan), and workflow_verdict contracts. Use when you need how the loop plans, builds, parks at gates, schedules other kinds (e.g. pr-sitter), or terminates.
 ---
 
 # The agentic loop
