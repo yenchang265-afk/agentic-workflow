@@ -238,6 +238,40 @@ test("global codePlatform ado requires the ado section and a selfLogin", () => {
   assert.equal(platformFor(c, "pr-sitter"), "ado")
 })
 
+test("ado.customHeaders parses as a string map and rejects empty keys or values", () => {
+  const c = parseConfig({
+    codePlatform: "ado",
+    ado: {
+      organization: "https://dev.azure.com/acme",
+      project: "widgets",
+      selfLogin: "sitter@acme.com",
+      customHeaders: { "Proxy-Authorization": "Bearer proxy-token", "X-Route": "internal" },
+    },
+  })
+  assert.deepEqual(c.ado?.customHeaders, { "Proxy-Authorization": "Bearer proxy-token", "X-Route": "internal" })
+  const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, customHeaders: { "": "value" } } }),
+    /Invalid .*customHeaders/,
+  )
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, customHeaders: { "X-Route": "" } } }),
+    /Invalid .*customHeaders/,
+  )
+})
+
+test("ado.insecureSkipTlsVerify parses as an optional boolean, off by default", () => {
+  const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
+  const unset = parseConfig({ codePlatform: "ado", ado: base })
+  assert.equal(unset.ado?.insecureSkipTlsVerify, undefined)
+  const on = parseConfig({ codePlatform: "ado", ado: { ...base, insecureSkipTlsVerify: true } })
+  assert.equal(on.ado?.insecureSkipTlsVerify, true)
+  assert.throws(
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, insecureSkipTlsVerify: "yes" } }),
+    /Invalid .*insecureSkipTlsVerify/,
+  )
+})
+
 test("per-loop codePlatform overrides the global default and also requires the ado section and selfLogin", () => {
   assert.throws(
     () => parseConfig({ workflows: { "pr-sitter": { enabled: true, codePlatform: "ado" } } }),
@@ -273,22 +307,16 @@ test("ado section fields are validated", () => {
   )
 })
 
-test("legacy ado.access/customHeaders/insecureSkipTlsVerify parse, are ignored, and are reported by deprecatedAdoKeys", () => {
+test("a stale ado.access key parses, is ignored, and is named by deprecatedAdoKeys", () => {
   const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
-  // A clean config has no deprecated keys to report.
+  // No access key → nothing deprecated.
   assert.deepEqual(deprecatedAdoKeys(parseConfig({ codePlatform: "ado", ado: base })), [])
+  // A stale access value survives parsing (looseObject) so it can be named, but
+  // ADO is reached only over REST regardless of what it says.
+  const stale = parseConfig({ codePlatform: "ado", ado: { ...base, access: "az" } })
+  assert.deepEqual(deprecatedAdoKeys(stale), ["ado.access"])
+  // No ado section at all (github config) → nothing deprecated.
   assert.deepEqual(deprecatedAdoKeys(DEFAULT_CONFIG), [])
-  // A legacy value still PARSES (the ado object is loose so it survives to be
-  // named) — the removed keys must not hard-fail an in-flight config — but is
-  // reported so a host can warn, and never surfaces as a typed `access`.
-  const legacy = parseConfig({
-    codePlatform: "ado",
-    ado: { ...base, access: "mcp", customHeaders: { "X-Route": "internal" }, insecureSkipTlsVerify: true },
-  })
-  assert.equal((legacy.ado as Record<string, unknown>).access, "mcp")
-  assert.deepEqual(deprecatedAdoKeys(legacy), ["ado.access", "ado.customHeaders", "ado.insecureSkipTlsVerify"])
-  // Only the keys actually present are reported, in config order.
-  assert.deepEqual(deprecatedAdoKeys(parseConfig({ codePlatform: "ado", ado: { ...base, access: "rest" } })), ["ado.access"])
 })
 
 test("ado.pat is an accepted optional config field", () => {

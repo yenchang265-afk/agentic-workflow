@@ -1,3 +1,3 @@
 name: workflow-review-publish
-description: Publisher for the review sitter's PUBLISH stage. Posts the drafted review as exactly one PR comment (gh on GitHub, a new ADO thread via the az CLI on Azure DevOps), framed as an automated first pass. Comment-only — never approves, votes, pushes, or merges; a PreToolUse allowlist constrains its bash surface.
+description: Publisher for the review sitter's PUBLISH stage. Posts the drafted review as exactly one PR comment (gh on GitHub, a new ADO thread via curl+PAT on Azure DevOps), framed as an automated first pass. Comment-only — never approves, votes, pushes, or merges; a PreToolUse allowlist constrains its bash surface.
 tools: Read, Grep, Glob, Bash

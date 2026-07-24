@@ -109,8 +109,8 @@ hand-edited afterward.
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-workflow:engineering watch`; overridable per session via `/agentic-workflow:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `workflows` | `{}` | Per-workflow-kind sections — see below. |
-| `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the `az` CLI with the azure-devops extension). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
-| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `pat`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). ADO is reached only through the `az` CLI; the former `access`/`customHeaders`/`insecureSkipTlsVerify` keys are removed (ignored with a warning — see [migration](migration.md)). |
+| `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via its REST API + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
+| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`, `insecureSkipTlsVerify`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
@@ -309,29 +309,28 @@ reviewer vote is still pending.
 
 All four sitter kinds support Azure DevOps. The `dependency-scan`
 (dep-sitter) source is platform-agnostic (npm reports don't care which forge
-the repo lives on); its publish stage opens the draft PR with `az repos pr
-create --draft` instead of `gh pr create` when the platform resolves to `ado`.
-The `ci-runs` (main-sitter) source has a genuine ADO sibling
-(`ado-ci-runs.ts`) that polls the Azure Pipelines Build API via `az devops
-invoke --area build` (`_apis/build/builds`) instead of `gh run list`,
-normalizing build results into the same judged shape the GitHub source
-produces — the "only the newest head, never mid-run" logic is identical either
-way. Neither `dependency-scan` nor `ci-runs` needs `ado.selfLogin` (unlike the
-PR-shaped sources, they aren't scoped to an identity), but the `az` CLI's auth
-(`AZURE_DEVOPS_EXT_PAT`, or `az login`) is still required.
+the repo lives on); its publish stage opens the draft PR via the ADO REST
+API instead of `gh pr create` when the platform resolves to `ado`. The
+`ci-runs` (main-sitter) source has a genuine ADO sibling
+(`ado-ci-runs.ts`) that polls the Azure Pipelines Build REST API
+(`_apis/build/builds`) instead of `gh run list`, normalizing build results
+into the same judged shape the GitHub source produces — the "only the newest
+head, never mid-run" logic is identical either way. Neither `dependency-scan`
+nor `ci-runs` needs `ado.selfLogin` (unlike the PR-shaped sources, they
+aren't scoped to an identity), but the PAT (`AZURE_DEVOPS_EXT_PAT`) is still
+required.
 
 Every sitter kind's publish stage — on ADO — opens PRs and posts thread
 comments through the Claude host's write backstop hook (`check-stage-guard`),
 which permits exactly three ADO write shapes: a read, a thread-comment
-reply, and creating a brand-new draft pull request. The envelope is enforced
-on the `az repos pr`/`az pipelines`/`az devops invoke` commands the loop runs
-(`create` only with `--draft`, `invoke` POSTs only to thread/PR-collection
-resources). Two extra rails cover paths the az allowlist can't: a mutating
-`curl` to dev.azure.com is refused (the allowlist already forbids curl, but a
-chained command can't smuggle one past this), and mutating-looking tools on
-any Azure DevOps MCP server you have connected are blocked best-effort. Every
-mutation of an *existing* PR — completing, abandoning, voting, adding
-reviewers — is blocked outright, regardless of loop kind or stage.
+reply, and creating a brand-new draft pull request. Over REST that means a
+GET, a POST to a `/threads` resource, and a POST to `.../pullrequests` with
+no id segment (how ADO drafts a PR — `isDraft: true` in the body, the same
+call as any other). Every mutation of an *existing* PR — completing,
+abandoning, voting, adding reviewers, or any PATCH/PUT/DELETE — is blocked
+outright, regardless of loop kind or stage; mutating-looking ADO MCP tool
+names (should you have an Azure DevOps MCP server connected) are blocked
+best-effort as defense-in-depth.
 
 ```json
 {
@@ -346,20 +345,12 @@ reviewers — is blocked outright, regardless of loop kind or stage.
 }
 ```
 
-- **How Azure DevOps is reached** — the `az` CLI with the `azure-devops`
-  extension, end to end: stage agents run `az repos pr …` / `az pipelines
-  runs …` (and the generic `az devops invoke` for what the CLI lacks a verb
-  for, e.g. thread-comment replies), and the driver's polling and ship-gate
-  calls shell the same CLI (`az devops invoke` is a REST passthrough, so
-  responses parse identically). Auth is `AZURE_DEVOPS_EXT_PAT`, set up
-  beforehand — the extension honors it directly — or an interactive `az
-  login`. There is no access-mode knob: one path means a stage's prompt text
-  and its bash allowlist name the same commands by construction and can't
-  drift apart. (Earlier versions had an `ado.access` knob with `rest`/`mcp`
-  alternatives; it, along with the raw-fetch-only `ado.customHeaders` and
-  `ado.insecureSkipTlsVerify`, has been removed — see
-  [`docs/migration.md`](migration.md). A stale `access` key is ignored with a
-  one-line warning, so an in-flight loop keeps running.)
+Azure DevOps is reached **only through its REST API** — `curl` (with the PAT
+as HTTP Basic auth) in the stage prompts, `fetch` in the driver's own poll
+sources and ship gate. There is no `az` CLI and no MCP transport; the
+`ado.customHeaders` and `ado.insecureSkipTlsVerify` knobs below always apply
+to the driver's calls.
+
 - **`ado.organization` / `ado.project`** — required ADO coordinates.
 - **`ado.repository`** — optional for the `pr-sitter`/`review-sitter`/
   `main-sitter` kinds (omitted → `pr-sitter`/`review-sitter` see all active
@@ -377,18 +368,71 @@ reviewers — is blocked outright, regardless of loop kind or stage.
   `~/.config/agentic-workflow/agentic-workflow.json` is the natural home (never committed, shared across
   repos) — in the repo file, keep `.agentic-workflow.json` gitignored (it is by
   default) so the secret is never committed. It reaches
-  every consumer: the work source and ship gate shell the `az` CLI (which
-  reads `$AZURE_DEVOPS_EXT_PAT` directly), and the triage/publish stage agents
-  get it exported for them — on OpenCode at plugin init (`applyAdoPatEnv`), on
-  Claude Code via a `SessionStart` hook (`inject-ado-pat.mjs`) that writes it
-  to `$CLAUDE_ENV_FILE`. Neither ever overrides a PAT you exported yourself.
-- **Prerequisites for `"ado"`**: the `az` CLI with the `azure-devops`
-  extension installed, authenticated by a Personal Access Token in
+  every consumer: the work source reads it directly, and the triage/publish
+  stage agents (which authenticate via `$AZURE_DEVOPS_EXT_PAT`) get it exported
+  for them — on OpenCode at plugin init (`applyAdoPatEnv`), on Claude Code via a
+  `SessionStart` hook (`inject-ado-pat.mjs`) that writes it to `$CLAUDE_ENV_FILE`.
+  Neither ever overrides a PAT you exported yourself.
+- **`ado.customHeaders`** — optional; extra HTTP headers attached to every ADO
+  REST call the driver makes (the `pr-sitter` work source and the engineering
+  ship gate). Its home is a corporate proxy in front of Azure DevOps — e.g. a
+  `Proxy-Authorization` token or a routing header. It's a plain string→string
+  object; keys and values must be non-empty. The headers are merged **over** the
+  built-in `Authorization`/`Accept`/`Content-Type`, so a key here can override
+  one of those (rarely wanted, but yours to decide). The
+  `AGENTIC_WORKFLOW_ADO_HEADERS` env var — a JSON object of the same shape —
+  **overrides `customHeaders` key by key** (env wins, mirroring how
+  `AZURE_DEVOPS_EXT_PAT` overrides `ado.pat`), so a secret proxy token can come
+  from your secret manager while non-secret routing headers stay in config. A
+  malformed env value is ignored (→ no override), never fatal. Like `ado.pat`,
+  a header that carries a secret belongs in the user-scope `~/.config/agentic-workflow/agentic-workflow.json`
+  (or the env var), not a committed repo file. Note this reaches only the
+  driver's own `fetch` calls; the stage agents' raw `curl` (which authenticate
+  via `$AZURE_DEVOPS_EXT_PAT`) do not inherit it — front those with the proxy's
+  own environment (`HTTPS_PROXY` etc.) if they need it.
+
+  ```json
+  {
+    "ado": {
+      "organization": "https://dev.azure.com/acme",
+      "project": "widgets",
+      "repository": "widgets-api",
+      "selfLogin": "sitter@acme.com",
+      "customHeaders": { "X-Route": "internal-network" }
+    }
+  }
+  ```
+
+  ```bash
+  # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
+  export AGENTIC_WORKFLOW_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
+  ```
+- **`ado.insecureSkipTlsVerify`** — optional, `false` by default; skip TLS
+  certificate verification on every ADO REST call the driver makes (the
+  PR/CI-runs work sources and the ship gate). It's for a self-hosted Azure
+  DevOps Server sitting behind a self-signed or internal-CA certificate the
+  runtime doesn't trust — never enable it against the hosted `dev.azure.com`
+  service, since it drops protection against a MITM'd token. The calls go
+  through a dedicated `undici` dispatcher, so this only weakens TLS for these
+  ADO calls, not for unrelated requests (GitHub, npm, …) in the same process.
+  Like `customHeaders`, it reaches only the driver's own `fetch` calls; the
+  stage agents' raw `curl` does not inherit it — pass `-k`/`--insecure` (or
+  point `curl` at your internal CA bundle) yourself if they need it too.
+
+  ```json
+  {
+    "ado": {
+      "organization": "https://ado.internal.acme.com/tfs/DefaultCollection",
+      "project": "widgets",
+      "selfLogin": "sitter@acme.com",
+      "insecureSkipTlsVerify": true
+    }
+  }
+  ```
+- **Prerequisites for `"ado"`**: a Personal Access Token — in
   `AZURE_DEVOPS_EXT_PAT` (preferred) or `ado.pat` — scoped to Code (read) +
-  Pull Request contribute (comment) — or an interactive `az login`. For a
-  self-hosted Azure DevOps Server behind a self-signed / internal-CA
-  certificate, configure the CLI's own trust (`REQUESTS_CA_BUNDLE`, or `az
-  devops configure`); there is no in-config TLS-skip knob.
+  Pull Request contribute (comment), and `curl`. The token is sent as HTTP Basic
+  auth (`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`); no `az` CLI is needed.
 - **Semantics on ADO**: failing checks come from blocking branch policy
   evaluations (`_apis/policy/evaluations`) — a repo with no build policy never
   fires `failing-checks`; comments come from PR threads; a negative reviewer
@@ -396,10 +440,9 @@ reviewers — is blocked outright, regardless of loop kind or stage.
   merge-conflict.
 - Stage bash allowlists are platform-scoped: the manifest's
   `platformAllowlist.github` / `.ado` globs are merged into the stage's
-  `bashAllowlist` for the resolved platform (the `.ado` list is the `az` CLI
-  commands the stage needs). The OpenCode agent frontmatter (static YAML)
-  carries both platforms' CLI allowlists as a deliberate breadth tradeoff —
-  the workflow.json/stage-marker path stays platform-narrow.
+  `bashAllowlist` for the resolved platform. The OpenCode agent frontmatter
+  (static YAML) carries both platforms' CLI allowlists as a deliberate
+  breadth tradeoff — the workflow.json/stage-marker path stays platform-narrow.
 
 See [`workflows/README.md`](../packages/core/workflows/README.md) for authoring new kinds and
 [`docs/design/threat-model.md`](design/threat-model.md) for the PR sitter's

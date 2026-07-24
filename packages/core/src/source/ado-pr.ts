@@ -4,14 +4,18 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import type { AdoConfig } from "../workflow/state.js"
 import { attentionTriggers, loadLedger, saveLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js"
-import { azInvokeArgs, azToHttp, execAz, type AzExec } from "./ado-az.js"
 import {
+  ADO_HEADERS_ENV,
+  adoFetch,
   AdoPolicySchema,
   AdoPrListSchema,
   AdoThreadsSchema,
+  buildAdoHeaders,
   failingPolicyNames,
   flattenThreadComments,
+  makeAdoAuthHeader,
   newerThan,
+  resolveAdoHeaders,
   sameLogin,
   stripRef,
 } from "./ado-shared.js"
@@ -19,27 +23,39 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
 
 /**
  * The Azure DevOps PR work source: the `gh`-backed `github-pr.ts` mirrored onto
- * Azure DevOps. Selected at wiring time when config `codePlatform` resolves to
- * `"ado"` for a `pull-request`-bound workflow kind.
+ * the Azure DevOps REST API. Selected at wiring time when config `codePlatform`
+ * resolves to `"ado"` for a `pull-request`-bound workflow kind.
  *
  * Raw ADO output is normalized into the same `PrSnapshot` shape the ledger
  * judges (`conflicts` → `CONFLICTING`, a negative reviewer vote →
  * `CHANGES_REQUESTED`), so the dedup decision (`attentionTriggers`) and the
  * claim/fetch/terminal mechanics (`pr-shared.ts`) are shared verbatim.
  *
- * Every call goes through the `az` CLI's `devops invoke` REST passthrough (see
- * `ado-az.ts`), which carries its own auth — the pre-provisioned
- * `AZURE_DEVOPS_EXT_PAT` that the azure-devops extension honors, or an
- * interactive `az login`. Because the CLI owns auth, this source never handles
- * the PAT itself and never gates a claim on one being set; a broken
- * environment surfaces as a failed list call, with the CLI's own message.
- *
- * A PAT carries no reliable email identity, so the sitter's own login is
- * config-supplied (`ado.selfLogin`, required for this platform — enforced in
- * `config.ts`). Unlike GitHub's `statusCheckRollup`, check state comes from a
- * per-PR `policy/evaluations` call, and comments from the `pullRequestThreads`
- * resource.
+ * Auth is a Personal Access Token sent as HTTP Basic (`Authorization: Basic
+ * base64(":" + PAT)`), read from `AZURE_DEVOPS_EXT_PAT`, falling back to config
+ * `ado.pat` when that env var is unset (the env var wins). A PAT carries no
+ * reliable email identity, so the sitter's own login is config-supplied
+ * (`ado.selfLogin`, required for this platform — enforced in `config.ts`).
+ * Unlike GitHub's `statusCheckRollup`, check state comes from a per-PR
+ * `policy/evaluations` call, and comments from the `pullRequestThreads` resource.
  */
+
+/** Minimal HTTP response the source reads — structurally satisfied by the global `fetch` `Response`. */
+export interface AdoHttpResponse {
+  readonly ok: boolean
+  readonly status: number
+  readonly statusText: string
+  text(): Promise<string>
+}
+
+/** GET-only HTTP transport, injected so tests can script responses without touching the network. */
+export type AdoHttp = (
+  url: string,
+  init: { readonly headers: Readonly<Record<string, string>> },
+) => Promise<AdoHttpResponse>
+
+/** The env var holding the Azure DevOps PAT — the same name the `az` extension used, for continuity. */
+const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
 
 /** The post-run PR re-read — validated so a type-confused body degrades to the
  *  snapshot fallback like a parse failure, never flows on as a trusted head. */
@@ -57,6 +73,7 @@ const AdoFreshPrSchema = z.object({
  */
 const PR_PAGE_SIZE = 100
 const PR_MAX_PAGES = 10
+const API_VERSION = "api-version=7.1"
 
 interface AdoPrDeps {
   readonly $: Shell
@@ -67,8 +84,10 @@ interface AdoPrDeps {
   readonly loaded: LoadedManifest
   /** Azure DevOps coordinates (config `ado`); `selfLogin` is required for this platform. */
   readonly ado: AdoConfig
-  /** az CLI runner; defaults to the real CLI. Tests script this instead of touching the network. */
-  readonly azExec?: AzExec
+  /** HTTP transport for ADO REST calls; defaults to `adoFetch(ado.insecureSkipTlsVerify)`. */
+  readonly http?: AdoHttp
+  /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
+  readonly pat?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
   readonly now?: () => string
 }
@@ -82,45 +101,46 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   const kind = loaded.manifest.kind
   const role = binding.role
   const now = deps.now ?? (() => new Date().toISOString())
+  const http = deps.http ?? adoFetch(ado.insecureSkipTlsVerify)
+  // Precedence: explicit dep (tests) → env var → config `ado.pat`.
+  const pat = deps.pat ?? process.env[PAT_ENV] ?? ado.pat ?? ""
   const org = ado.organization.replace(/\/+$/, "")
+  const project = encodeURIComponent(ado.project)
   const login = ado.selfLogin ?? ""
+  // Config headers as a base, env `AGENTIC_WORKFLOW_ADO_HEADERS` overriding (env wins, like the PAT).
+  const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
 
   const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
-  // Every data call shells the az CLI, which carries its own auth. `az devops
-  // invoke` is a REST passthrough, so responses arrive in the same JSON
-  // envelopes the service returns and share `ado-shared.ts`'s schema parsing.
-  const az = deps.azExec ?? execAz
+  const authHeader = makeAdoAuthHeader({ pat })
 
-  /** One page of the active-PR list. */
+  /** One authenticated GET. Never throws — a network error (or missing credential) reads as a non-ok response, like the CLI's `nothrow()`. */
+  const get = async (url: string): Promise<{ ok: boolean; status: number; statusText: string; body: string }> => {
+    try {
+      const res = await http(url, {
+        headers: buildAdoHeaders({ Authorization: await authHeader(), Accept: "application/json" }, customHeaders),
+      })
+      const body = await res.text().catch(() => "")
+      return { ok: res.ok, status: res.status, statusText: res.statusText, body }
+    } catch (err) {
+      return { ok: false, status: 0, statusText: (err as Error).message, body: "" }
+    }
+  }
+
+  /** One page of the active-PR list over the ADO REST API. */
   const listPrsPage = (skip: number): Promise<{ ok: boolean; status: number; statusText: string; body: string }> =>
-    az(
-      azInvokeArgs({
-        area: "git",
-        resource: "pullrequests",
-        organization: org,
-        routeParameters: {
-          project: ado.project,
-          ...(ado.repository ? { repositoryId: ado.repository } : {}),
-        },
-        queryParameters: { "searchCriteria.status": "active", $top: String(PR_PAGE_SIZE), $skip: String(skip) },
-      }),
-    ).then(azToHttp)
+    get(
+      ado.repository
+        ? `${org}/${project}/_apis/git/repositories/${encodeURIComponent(ado.repository)}/pullrequests?searchCriteria.status=active&$top=${PR_PAGE_SIZE}&$skip=${skip}&${API_VERSION}`
+        : `${org}/${project}/_apis/git/pullrequests?searchCriteria.status=active&$top=${PR_PAGE_SIZE}&$skip=${skip}&${API_VERSION}`,
+    )
 
   /** Names of blocking policies currently failing on the PR (ADO's nearest equivalent of failing checks). */
   const failingPolicies = async (projectId: string, pr: number): Promise<string[]> => {
     if (!projectId) return []
     const artifactId = `vstfs:///CodeReview/CodeReviewId/${projectId}/${pr}`
-    const out = azToHttp(
-      await az(
-        azInvokeArgs({
-          area: "policy",
-          resource: "evaluations",
-          organization: org,
-          routeParameters: { project: ado.project },
-          queryParameters: { artifactId },
-        }),
-      ),
+    const out = await get(
+      `${org}/${project}/_apis/policy/evaluations?artifactId=${encodeURIComponent(artifactId)}&${API_VERSION}`,
     )
     if (!out.ok) return []
     try {
@@ -134,15 +154,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   /** Non-system PR thread comments, flattened to `{ author, at }`, from the `pullRequestThreads` resource. */
   const threadComments = async (repositoryId: string, pr: number): Promise<{ author: string; at: string }[]> => {
     if (!repositoryId) return []
-    const out = azToHttp(
-      await az(
-        azInvokeArgs({
-          area: "git",
-          resource: "pullRequestThreads",
-          organization: org,
-          routeParameters: { project: ado.project, repositoryId, pullRequestId: String(pr) },
-        }),
-      ),
+    const out = await get(
+      `${org}/${project}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/pullRequests/${pr}/threads?${API_VERSION}`,
     )
     if (!out.ok) return []
     try {
@@ -157,10 +170,17 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
     workflowKind: kind,
 
     async claimNext() {
-      // No credential pre-check: the az CLI owns auth (AZURE_DEVOPS_EXT_PAT or
-      // an interactive `az login`), so testing for a PAT here would refuse to
-      // claim in a perfectly working `az login` environment. A genuinely broken
-      // one surfaces as a failed list call below, carrying the CLI's own message.
+      if (!pat) {
+        return {
+          item: null,
+          skip: {
+            message:
+              `${kind}: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Code (read) scope so the ` +
+              `sitter can call the ADO REST API.`,
+            actionable: true,
+          } satisfies ClaimSkipReason,
+        }
+      }
       if (!login) {
         // A PAT can't resolve the sitter's own identity; config.ts enforces this,
         // and this is the defensive guard for direct construction.
@@ -187,10 +207,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
             item: null,
             skip: {
               message:
-                `${kind}: Azure DevOps pull-request list failed (az CLI) — ${out.statusText}. ` +
-                `Is the az CLI installed with the azure-devops extension and authenticated ` +
-                `(AZURE_DEVOPS_EXT_PAT with Code (read) scope, or \`az login\`), and are ` +
-                `ado.organization/project correct?`,
+                `${kind}: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
+                `Is ${PAT_ENV} a valid token with Code (read) scope, and are ado.organization/project correct?`,
               actionable: true,
             } satisfies ClaimSkipReason,
           }
@@ -295,20 +313,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
       const { snapshot, triggers } = work.ref as { snapshot: PrSnapshot; triggers: PrTrigger[] }
       const ledger = await loadLedger(client, directory, tasksDir, kind, snapshot.number, now())
       // Re-read the PR head: after a publish it is the sitter's own push, and
-      // recording it as handled is exactly what prevents self-triggering. A
-      // failure here leaves a stale ledger head, which turns the sitter's own
-      // push into a fresh trigger — so this goes over the same az transport as
-      // every other data call rather than a second one that could fail alone.
-      const fresh = azToHttp(
-        await az(
-          azInvokeArgs({
-            area: "git",
-            resource: "pullrequests",
-            organization: org,
-            routeParameters: { project: ado.project, pullRequestId: String(snapshot.number) },
-          }),
-        ),
-      )
+      // recording it as handled is exactly what prevents self-triggering.
+      const fresh = await get(`${org}/${project}/_apis/git/pullrequests/${snapshot.number}?${API_VERSION}`)
       let head = snapshot.headRefOid
       let repositoryId = ""
       if (fresh.ok) {

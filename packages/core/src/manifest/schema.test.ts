@@ -170,24 +170,6 @@ test("platformAllowlist defaults empty and effectiveAllowlist merges the platfor
   assert.deepEqual(effectiveAllowlist(def, "other"), ["ls*"])
 })
 
-test("effectiveAllowlist merges the platform key onto the base list, fail-closed on an unknown platform", () => {
-  const withAdo = parseManifest({
-    ...base,
-    stages: [
-      {
-        ...base.stages[0],
-        bashAllowlist: ["ls*"],
-        platformAllowlist: { ado: ["az repos pr show*"] },
-      },
-      base.stages[1],
-    ],
-  })
-  const def = withAdo.stages[0]!
-  // ado resolves to its az-CLI globs — one key per platform, no composite scheme.
-  assert.deepEqual(effectiveAllowlist(def, "ado"), ["ls*", "az repos pr show*"])
-  // An unknown platform yields only the base list — fail-closed.
-  assert.deepEqual(effectiveAllowlist(def, "mcp"), ["ls*"])
-})
 
 test("rejects an empty glob inside platformAllowlist", () => {
   assert.throws(

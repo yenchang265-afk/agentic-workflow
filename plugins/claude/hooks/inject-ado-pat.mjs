@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
  * SessionStart hook: make config `ado.pat` available to Bash tool runs as
- * AZURE_DEVOPS_EXT_PAT, so the PR sitter's stage-agent `az` CLI calls can
- * authenticate to Azure DevOps on Claude Code — the azure-devops extension
- * reads that env var directly. A stage's Bash runs in the client, not the MCP
- * server, so the server's in-process env export can't reach it (the OpenCode
- * plugin covers its own stages via applyAdoPatEnv).
+ * AZURE_DEVOPS_EXT_PAT, so the PR sitter's stage-agent `curl` calls can
+ * authenticate to Azure DevOps on Claude Code — where a stage's Bash runs in
+ * the client, not the MCP server, so the server's in-process env export can't
+ * reach it (the OpenCode plugin covers its own stages via applyAdoPatEnv).
  *
  * Only fills the gap:
  *  - writes only when Claude Code provides $CLAUDE_ENV_FILE (the supported

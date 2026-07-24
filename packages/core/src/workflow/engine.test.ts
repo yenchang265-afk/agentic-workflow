@@ -408,7 +408,7 @@ test("pr-sitter: a missing triage verdict reads as FAIL (nothing to do), never a
 
 // --- code-platform prompt switching (additive; the oracle above is untouched) ---
 
-test("pr-sitter prompts render gh guidance by default and az-CLI guidance when the state is stamped ado", () => {
+test("pr-sitter prompts render gh guidance by default and ADO REST guidance when the state is stamped ado", () => {
   const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
   const state: WorkflowState = {
     kind: "pr-sitter",
@@ -420,19 +420,18 @@ test("pr-sitter prompts render gh guidance by default and az-CLI guidance when t
   }
   const gh = composePrompt(sitter, state, "triage")
   assert.match(gh, /gh pr view/)
-  assert.doesNotMatch(gh, /az repos/)
-  // ADO is reached only through the az CLI — one branch, no access sub-switch,
-  // and never a raw curl (the stage's allowlist forbids curl by construction).
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
+  // An ado state renders the REST/curl branch — the only way the loop reaches ADO.
   const ado = composePrompt(sitter, { ...state, platform: "ado" }, "triage")
-  assert.match(ado, /az repos pr show --id <n>/)
-  assert.match(ado, /az repos pr policy list/)
+  assert.match(ado, /_apis\/git\/pullrequests/)
+  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
   assert.doesNotMatch(ado, /gh pr view/)
-  assert.doesNotMatch(ado, /curl/)
+  assert.doesNotMatch(ado, /az repos/) // no az CLI transport
   const publish = composePrompt(sitter, { ...state, platform: "ado", stage: "publish" }, "publish")
-  assert.match(publish, /az devops invoke --area git --resource pullRequestThreadComments/)
+  assert.match(publish, /threads\/<threadId>\/comments/)
   assert.match(publish, /NEVER complete, abandon, or approve/)
   assert.doesNotMatch(publish, /gh pr comment/)
-  assert.doesNotMatch(publish, /curl/)
+  assert.doesNotMatch(publish, /az devops invoke/)
 })
 
 // --- the review-sitter manifest walks end-to-end through the same engine ---
@@ -486,17 +485,16 @@ test("review-sitter: a missing fetch verdict reads as FAIL (done), never as PASS
   assert.equal(action.kind, "done")
 })
 
-test("review-sitter prompts render gh guidance by default and az-CLI guidance when stamped ado", () => {
+test("review-sitter prompts render gh guidance by default and ADO REST guidance when stamped ado", () => {
   const state = reviewState("fetch")
   const gh = composePrompt(reviewer, state, "fetch")
   assert.match(gh, /gh pr view/)
-  assert.doesNotMatch(gh, /az repos/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
   const ado = composePrompt(reviewer, { ...state, platform: "ado" }, "fetch")
-  assert.match(ado, /az repos pr show --id <n>/)
+  assert.match(ado, /_apis\/git\/pullrequests/)
   assert.doesNotMatch(ado, /gh pr view/)
-  assert.doesNotMatch(ado, /curl/)
   const publish = composePrompt(reviewer, { ...state, platform: "ado", stage: "publish" }, "publish")
-  assert.match(publish, /az devops invoke --area git --resource pullRequestThreads/)
+  assert.match(publish, /pullRequests\/<n>\/threads/)
   assert.match(publish, /NEVER vote, approve, complete, abandon, or push/)
   assert.doesNotMatch(publish, /gh pr comment/)
 })
@@ -543,15 +541,11 @@ test("pr-sitter and review-sitter allowlists carry no open gh api glob — comme
     }
   }
   // The pr-sitter publish ADO globs are thread-scoped, mirroring the agent
-  // frontmatter's long-standing promise (comment replies only): the only
-  // mutating `az devops invoke` granted targets the thread-comment resource,
-  // and no raw curl is allowed at all.
+  // frontmatter's long-standing promise (comment replies only).
   const publish = prSitter.manifest.stages.find((s) => s.name === "publish")
   assert.ok(publish)
   const adoAllow = effectiveAllowlist(publish, "ado")
-  assert.ok(adoAllow.every((g) => !g.startsWith("curl")), `publish ADO allowlist must not grant curl: ${adoAllow.join(", ")}`)
-  const invokeGlobs = adoAllow.filter((g) => g.startsWith("az devops invoke"))
-  assert.ok(invokeGlobs.length > 0 && invokeGlobs.every((g) => g.includes("pullRequestThreadComments")), `publish az invoke must be thread-comment-scoped: ${adoAllow.join(", ")}`)
+  assert.ok(adoAllow.every((g) => !g.startsWith("curl") || g.includes("/threads")), `publish ADO curl must be /threads-scoped: ${adoAllow.join(", ")}`)
 })
 
 // --- the dep-sitter manifest walks end-to-end through the same engine ---
@@ -606,11 +600,10 @@ test("dep-sitter publish pushes only feature/ branches and opens draft PRs — n
   const prompt = composePrompt(depSitter, depState("publish", { scan: "W", verify: "OK" }), "publish")
   assert.match(prompt, /gh pr create --draft/)
   assert.match(prompt, /NEVER merge or close/)
-  // ADO is az-CLI only: the publish stage grants `az repos pr create` (the
-  // guard's backstop pins it to --draft) and no curl or gh globs.
   const adoAllow = effectiveAllowlist(publish, "ado")
-  assert.ok(adoAllow.includes("az repos pr create*"))
-  assert.ok(adoAllow.every((g) => !/curl|gh /.test(g)))
+  assert.ok(adoAllow.some((g) => g.includes("dev.azure.com")))
+  assert.ok(adoAllow.every((g) => !/gh /.test(g)))
+  assert.ok(adoAllow.every((g) => !/^az /.test(g))) // no az CLI globs
 })
 
 test("dep-sitter allowlists cover all three ecosystems' read/test verbs; publish stays unchanged", () => {
@@ -629,15 +622,16 @@ test("dep-sitter allowlists cover all three ecosystems' read/test verbs; publish
   assert.ok(publish?.bashAllowlist.every((g) => !/osv-scanner|mvn |gradle/.test(g)))
 })
 
-test("dep-sitter publish renders gh guidance by default and az PR-creation guidance when stamped ado", () => {
+test("dep-sitter publish renders gh guidance by default and ADO PR-creation guidance when stamped ado", () => {
   const state = depState("publish", { scan: "W", verify: "OK" })
   const gh = composePrompt(depSitter, state, "publish")
   assert.match(gh, /gh pr create --draft/)
-  assert.doesNotMatch(gh, /az repos/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
   const ado = composePrompt(depSitter, { ...state, platform: "ado" }, "publish")
-  assert.match(ado, /az repos pr create --draft/)
+  assert.match(ado, /_apis\/git\/repositories\/<repo>\/pullrequests\?api-version=7\.1/)
+  assert.match(ado, /"isDraft":true/)
+  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
   assert.doesNotMatch(ado, /gh pr create/)
-  assert.doesNotMatch(ado, /curl/)
 })
 
 // --- the main-sitter manifest walks end-to-end through the same engine ---
@@ -687,32 +681,28 @@ test("main-sitter can never push the watched branch: the push glob is scoped to 
   assert.match(prompt, /gh pr create --draft --base main/)
   assert.match(prompt, /NEVER push main/)
   const adoAllow = effectiveAllowlist(publish, "ado")
-  assert.ok(adoAllow.includes("az repos pr create*"))
-  assert.ok(adoAllow.every((g) => !/curl|gh /.test(g)))
+  assert.ok(adoAllow.some((g) => g.includes("dev.azure.com")))
+  assert.ok(adoAllow.every((g) => !/gh /.test(g)))
+  assert.ok(adoAllow.every((g) => !/^az /.test(g))) // no az CLI globs
 })
 
-test("main-sitter renders gh guidance by default and az-CLI guidance when stamped ado", () => {
+test("main-sitter renders gh guidance by default and ADO REST guidance when stamped ado", () => {
   const diagState = mainState("diagnose")
   const gh = composePrompt(mainSitter, diagState, "diagnose")
   assert.match(gh, /gh run view --log/)
-  assert.doesNotMatch(gh, /az pipelines/)
+  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
   const ado = composePrompt(mainSitter, { ...diagState, platform: "ado" }, "diagnose")
-  assert.match(ado, /az pipelines runs list --branch main/)
-  assert.match(ado, /az devops invoke --area build --resource logs/)
+  assert.match(ado, /_apis\/build\/builds\/<buildId>\/logs/)
+  assert.match(ado, /_apis\/git\/repositories\/<repo>\/commits\/<sha>\/pullrequests/)
+  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
   assert.doesNotMatch(ado, /gh run view/)
-  assert.doesNotMatch(ado, /curl/)
 
   const pubState = mainState("publish", { diagnose: "D", verify: "OK" })
   const ghPublish = composePrompt(mainSitter, pubState, "publish")
   assert.match(ghPublish, /gh pr create --draft --base main/)
   const adoPublish = composePrompt(mainSitter, { ...pubState, platform: "ado" }, "publish")
-  assert.match(adoPublish, /az repos pr create --draft --source-branch main-sitter\/abcdef123456 --target-branch main/)
+  assert.match(adoPublish, /_apis\/git\/repositories\/<repo>\/pullrequests\?api-version=7\.1/)
+  assert.match(adoPublish, /"isDraft":true/)
   assert.match(adoPublish, /NEVER push main/)
   assert.doesNotMatch(adoPublish, /gh pr create/)
-  assert.doesNotMatch(adoPublish, /curl/)
-
-  // dep-sitter's publish likewise renders az PR-creation with no curl.
-  const azDep = composePrompt(depSitter, { ...depState("publish", { scan: "W", verify: "OK" }), platform: "ado" }, "publish")
-  assert.match(azDep, /az repos pr create --draft/)
-  assert.doesNotMatch(azDep, /curl/)
 })

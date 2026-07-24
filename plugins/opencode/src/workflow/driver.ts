@@ -95,8 +95,8 @@ import {
   modelFor,
   resolveUserConfigPath,
   triggerFor,
-  deprecatedAdoKeys,
   unknownStageModelKeys,
+  deprecatedAdoKeys,
   unreviewedAxes,
 } from "@agentic-workflow/core/config"
 import type { Config } from "../config.ts"
@@ -988,17 +988,15 @@ const driveChain = async (
 ): Promise<TerminalOutcome | null> => {
   const { client } = deps
   const loaded = manifestFor(first.state.kind ?? "engineering")
-  // Azure DevOps is now reached only through the az CLI, so ado.access and the
-  // raw-fetch-only customHeaders/insecureSkipTlsVerify are inert — name any
-  // that are still set rather than ignore them silently.
+  // Azure DevOps is reached only through its REST API, so `ado.access` is inert
+  // — name it rather than ignore it silently.
   const deadAdo = deprecatedAdoKeys(config)
   if (deadAdo.length) {
     await deps.log(
       "warn",
       `${deadAdo.join(", ")} ${deadAdo.length > 1 ? "are" : "is"} no longer supported — Azure DevOps is reached only ` +
-        `through the az CLI (azure-devops extension, AZURE_DEVOPS_EXT_PAT). ${deadAdo.length > 1 ? "They are" : "It is"} ` +
-        `ignored; remove ${deadAdo.length > 1 ? "them" : "it"} from .agentic-workflow.json. For a self-signed Azure DevOps ` +
-        `Server, configure the CLI's own trust (REQUESTS_CA_BUNDLE / \`az devops configure\`) instead.`,
+        `through its REST API (curl/fetch + AZURE_DEVOPS_EXT_PAT). ${deadAdo.length > 1 ? "They are" : "It is"} ignored; ` +
+        `remove ${deadAdo.length > 1 ? "them" : "it"} from .agentic-workflow.json.`,
     )
   }
   // A stageModels key naming no stage of this kind resolves to nothing and the

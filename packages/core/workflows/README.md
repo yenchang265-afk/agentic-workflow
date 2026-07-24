@@ -127,9 +127,8 @@ command), `worktree.instructions` (the standard pinning paragraph — every
 kind gets isolation discipline for free by including it), and
 `platform.github`/`platform.ado` (exactly one is truthy, per the resolved
 code platform — pr-sitter stages branch on these to pick `gh` vs ADO
-guidance). An ADO block needs no further sub-branching: Azure DevOps is
-reached only through the `az` CLI, so a stage's prompt text and its
-`platformAllowlist.ado` globs name the same commands and cannot drift apart.
+guidance; the ADO sections render curl REST command examples, the only way
+the loop reaches Azure DevOps).
 
 ## Work sources
 

@@ -20,20 +20,22 @@ The goal (package + target), scan's work order, and verify's result.
    …` — the body names the advisory closed, the semver impact, the fallout
    fixed, and the verification result. If a PR for this branch already
    exists (`gh pr list --head <branch>`), comment the update on it instead.
-   Azure DevOps (`ado`): the `az` CLI — `az repos pr create --draft
-   --source-branch <branch> --target-branch <base> --title "…" --description
-   "…"`; if a PR for this branch already exists (`az repos pr list
-   --source-branch <branch> --status active`), post a thread comment with the
-   update instead (`az devops invoke --area git --resource pullRequestThreads
-   … --http-method POST`).
+   Azure DevOps (`ado`): the REST API via `curl -sS -u
+   :"$AZURE_DEVOPS_EXT_PAT"` — `POST _apis/git/repositories/<repo>/pullrequests
+   ?api-version=7.1` with `{"sourceRefName":"refs/heads/<branch>",
+   "targetRefName":"refs/heads/<base>","title":"…","description":"…",
+   "isDraft":true}`; if a PR for this branch already exists (`GET
+   .../pullrequests?searchCriteria.sourceRefName=refs/heads/<branch>&
+   searchCriteria.status=active`), post a thread comment with the update
+   instead.
 3. Report the PR URL.
 
 ## Rules
 
 - **Never** merge, close, or mark the PR ready for review — those are human
-  calls (`gh pr merge`/`gh pr ready`; on ADO the mutating `az repos pr update`
-  verb).
-  A backstop hook blocks every ADO call except reads, thread-comment
+  calls (`gh pr merge`/`gh pr ready`; on ADO a `PATCH` to
+  `_apis/git/pullrequests/<id>`).
+  A backstop hook blocks every ADO call except GET reads, thread-comment
   replies, and creating a brand-new PR, so completing/abandoning/voting
   can't get through even if attempted.
 - The push allowlist is scoped to `feature/*` branches — the default branch

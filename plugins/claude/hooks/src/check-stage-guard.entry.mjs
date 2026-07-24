@@ -27,18 +27,19 @@
  *     is the MAIN tree, so a command without the `cd <wt> && ` prefix is
  *     blocked unless it is read-only or a `git -C <wt> …`
  *     (@agentic-workflow/core/workflow/worktree-guard).
- *  3. Azure DevOps write backstop — ALWAYS ON: a sitter kind reaches ADO
- *     through the az CLI and may only read, POST a thread-comment reply, or
- *     create a brand-new DRAFT pull request (dep-sitter/main-sitter's publish —
- *     `az repos pr create --draft`). Any other write — the mutating
- *     `az repos pr`/`az pipelines` verbs, or an `az devops invoke` that isn't a
- *     GET / thread-reply / PR-create POST — is denied outright. Two extra rails
- *     cover paths the az allowlist can't: a mutating `curl` to dev.azure.com is
- *     blocked (the az allowlist already refuses curl, but a chained command
- *     could smuggle one), and — gated on a live ado loop marker — a BEST-EFFORT
- *     name-pattern blocklist of mutating tools on any Azure DevOps MCP server
- *     the user has connected. The stage prompts + host-pinned allowlist are the
- *     primary control; these are defense-in-depth (threat-model T8/T12/T13).
+ *  3. Azure DevOps write backstop — ALWAYS ON: a sitter kind reaches ADO over
+ *     its REST API (curl + PAT) and may only read, POST a thread-comment reply,
+ *     or create a brand-new DRAFT pull request (dep-sitter/main-sitter's
+ *     publish — drafts via `isDraft: true` in the body). Any other write —
+ *     PATCH/PUT/DELETE, or a POST to an EXISTING PR's resource
+ *     (complete/abandon/approve/reviewers/run-pipeline) — is denied outright.
+ *     Two extra rails cover paths the loop itself never takes but a user
+ *     environment might expose: the mutating `az repos pr`/`az pipelines` verbs
+ *     are denied (in case an az CLI is on PATH and slips into a command), and —
+ *     gated on a live ado loop marker — a BEST-EFFORT name-pattern blocklist of
+ *     mutating tools on any Azure DevOps MCP server the user has connected. The
+ *     stage prompts + host-pinned allowlist are the primary control; these are
+ *     defense-in-depth (threat-model T8/T12/T13).
  *
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
@@ -135,7 +136,9 @@ const main = async () => {
 
   // (3a) ADO az-CLI write backstop — always on, the az mirror of (3): the same
   // read/thread-reply/draft-PR-create envelope enforced over `az repos`/
-  // `az pipelines`/`az devops invoke` commands (the only way the loop reaches ADO).
+  // `az pipelines`/`az devops invoke` commands. The loop reaches ADO only over
+  // REST, so this never fires on loop-issued commands — it's defense-in-depth
+  // in case an az CLI is on PATH and slips into a chained command.
   if (tool === "Bash" && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
     return block(
       `agentic-workflow: the loop must never mutate an existing pull request — this az CLI call is blocked. ` +
@@ -163,13 +166,13 @@ const main = async () => {
   if (!marker) return allow() // no active loop stage — nothing else to enforce
 
   // (3d) ADO MCP write blocklist — on whenever an ado-platform loop stage is
-  // live. The loop drives ADO through the az CLI, not an MCP server, but a user
-  // may have an Azure DevOps MCP server connected for their own use; this keeps
-  // a stage agent from reaching through it to vote/complete/merge. BEST-EFFORT:
-  // third-party MCP tool names aren't ours to enumerate, so this pattern-matches
-  // conventional mutating names (update/complete/merge/vote/…); the stage
-  // prompt's NEVER clause stays the primary control. Creation tools pass —
-  // publish stages open draft PRs.
+  // live. The loop drives ADO through its REST API, not an MCP server, but a
+  // user may have an Azure DevOps MCP server connected for their own use; this
+  // keeps a stage agent from reaching through it to vote/complete/merge.
+  // BEST-EFFORT: third-party MCP tool names aren't ours to enumerate, so this
+  // pattern-matches conventional mutating names (update/complete/merge/vote/…);
+  // the stage prompt's NEVER clause stays the primary control. Creation tools
+  // pass — publish stages open draft PRs.
   if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpMutationTool(tool)) {
     return block(
       `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps MCP tool looks ` +

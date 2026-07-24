@@ -349,7 +349,7 @@ configure() {
   echo
   echo "Which code platform do your PRs live on?"
   echo "  [1] GitHub (default)"
-  echo "  [2] Azure DevOps (az CLI + PAT)"
+  echo "  [2] Azure DevOps (REST API + PAT)"
   choice="$(ask "Choice" "1")"
   case "$choice" in
     2) platform="ado" ;;
@@ -379,9 +379,7 @@ configure() {
     ado="${ado:+$ado,}\"selfLogin\":\"$(json_escape "$login")\""
     add_member "\"ado\":{$ado}"
     echo
-    echo "  → Azure DevOps needs the az CLI with the azure-devops extension"
-    echo "    (\`az extension add --name azure-devops\`), authenticated by a PAT scoped to"
-    echo "    Code (read) + Pull Request (contribute)."
+    echo "  → Azure DevOps auth: a PAT scoped to Code (read) + Pull Request (contribute)."
     echo "    Preferred: export AZURE_DEVOPS_EXT_PAT=<pat>. Or add \"pat\":\"<pat>\" to the"
     echo "    ado section of the (gitignored) .agentic-workflow.json — the env var wins if both are set."
     echo "    Tip: settings shared across repos (organization, selfLogin, pat) can live in a"

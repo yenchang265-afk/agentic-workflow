@@ -41,9 +41,6 @@ export const promptContext = (state: WorkflowState): TemplateContext => {
     goal: state.goal,
     iteration: String(state.iteration),
     // Code-platform switches for prompt templates ({{#platform.ado}}…); absent platform ⇒ github.
-    // ADO has exactly one access path (the az CLI), so there is no sub-branch
-    // here: a stage's prompt and its bash allowlist name the same commands by
-    // construction, and cannot drift apart the way three parallel sets could.
     platform: {
       github: state.platform !== "ado",
       ado: state.platform === "ado",

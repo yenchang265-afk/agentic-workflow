@@ -194,23 +194,18 @@ ensure_gh() {
 # ---------------------------------------------------------------------------
 # Azure DevOps prerequisites (ADO mode only)
 # ---------------------------------------------------------------------------
-# codePlatform "ado" reaches Azure DevOps through the az CLI with the
-# azure-devops extension — stage agents AND the engine's own polling/ship
-# calls go through it. Install and auth (AZURE_DEVOPS_EXT_PAT, or `az login`)
-# are provisioned beforehand — only a presence check here.
+# codePlatform "ado" reaches Azure DevOps only through its REST API: raw
+# curl/fetch authenticated with AZURE_DEVOPS_EXT_PAT (nothing to install beyond
+# curl), for both the stage agents and the engine's own polling/ship calls.
 ensure_ado() {
   if [ "$WANT_ADO" -eq 0 ]; then
     skip "Azure DevOps (--no-ado)"
     return 0
   fi
-  if command -v az >/dev/null 2>&1; then
-    if az extension show --name azure-devops >/dev/null 2>&1; then
-      ok "Azure DevOps: az CLI + azure-devops extension present"
-    else
-      todo "az CLI present but the azure-devops extension is missing (\`az extension add --name azure-devops\`)"
-    fi
+  if command -v curl >/dev/null 2>&1; then
+    ok "Azure DevOps: REST API over curl (auth via AZURE_DEVOPS_EXT_PAT)"
   else
-    todo "az CLI not found (install it and \`az extension add --name azure-devops\`; auth via AZURE_DEVOPS_EXT_PAT or \`az login\`)"
+    todo "Azure DevOps needs curl (see the curl step above)"
   fi
 }
 

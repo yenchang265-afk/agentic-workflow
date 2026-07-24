@@ -10,13 +10,10 @@ permission:
     "gh pr list*": allow
     "gh pr view*": allow
     # Both platforms are allowed here (static frontmatter can't switch); config
-    # codePlatform decides which the stage prompt actually uses. ADO is reached
-    # through the az CLI: read-only commands (invoke defaults to GET).
-    "az pipelines runs list*": allow
-    "az pipelines runs show*": allow
-    "az repos pr list*": allow
-    "az devops invoke --area build --resource logs*": allow
-    "az devops invoke --area git --resource pullRequests*": allow
+    # codePlatform decides which the stage prompt actually uses. ADO is the REST
+    # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
+    "curl -sS -u :* https://dev.azure.com/*": allow
+    "curl -sS -u :* https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow

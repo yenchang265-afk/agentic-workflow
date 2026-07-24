@@ -2,14 +2,13 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Shell } from "../host.js"
 import type { Config } from "./state.js"
-import type { AzExec, AzResult } from "../source/ado-az.js"
-import { shipPr } from "./ship-pr.js"
+import { shipPr, type ShipHttp } from "./ship-pr.js"
 
 /**
- * `shipPr` over a scripted git shell (`$`) and a scripted `az` CLI (`az`) —
- * mirrors the fake-shell convention of `git.test.ts` and `source/ado-pr.test.ts`.
- * `gh` and the ADO `az` calls both go through the injected runners; GitHub
- * coverage needs no ADO transport at all.
+ * `shipPr` over a scripted git shell (`$`) and a scripted ADO HTTP transport
+ * (`http`) — mirrors the fake-shell convention of `git.test.ts` and
+ * `source/ado-pr.test.ts`. `gh` calls go through the same `$`, so GitHub
+ * coverage needs no separate transport.
  */
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
@@ -60,14 +59,13 @@ const baseConfig: Config = {
   workflows: {},
 }
 
-/** A scripted az route: `match` is a substring of the joined `az` argv; first hit wins. */
-type Route = { match: string; ok?: boolean; statusText?: string; body?: string }
+type Route = { match: string; status?: number; body?: string }
 
-const scriptedAz = (routes: Route[], log: string[] = []): AzExec => async (args) => {
-  const cmd = args.join(" ")
-  log.push(cmd)
-  const hit = routes.find((r) => cmd.includes(r.match))
-  return { ok: hit?.ok ?? true, statusText: hit?.statusText ?? "OK", body: hit?.body ?? "" } satisfies AzResult
+const scriptedHttp = (routes: Route[]): ShipHttp => async (url) => {
+  const hit = routes.find((r) => url.includes(r.match))
+  const status = hit?.status ?? 200
+  const body = hit?.body ?? ""
+  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
 }
 
 test("shipPr is a no-op when there's no feature/<id> branch", async () => {
@@ -161,74 +159,122 @@ const adoConfig: Config = {
 test("shipPr (ado) fails clearly when ado.repository is not configured", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
   const cfg: Config = { ...adoConfig, ado: { ...adoConfig.ado!, repository: undefined } }
-  const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", scriptedAz([]))
+  const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", scriptedHttp([]))
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.match(result.reason ?? "", /ado.repository/)
 })
 
-test("shipPr (ado) opens a draft PR through the az CLI, using the repo's default branch", async () => {
+test("shipPr (ado) fails clearly when no PAT is available", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const azLog: string[] = []
-  const az = scriptedAz(
-    [
-      { match: "repos pr list", body: "[]" },
-      { match: "repos show", body: JSON.stringify({ defaultBranch: "refs/heads/main" }) },
-      { match: "repos pr create", body: JSON.stringify({ pullRequestId: 99 }) },
-    ],
-    azLog,
-  )
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", az)
+  const prevPat = process.env.AZURE_DEVOPS_EXT_PAT
+  delete process.env.AZURE_DEVOPS_EXT_PAT
+  try {
+    const cfg: Config = { ...adoConfig, ado: { ...adoConfig.ado!, pat: undefined } }
+    const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", scriptedHttp([]))
+    assert.equal(result.attempted, true)
+    assert.equal(result.created, false)
+    assert.match(result.reason ?? "", /AZURE_DEVOPS_EXT_PAT/)
+  } finally {
+    if (prevPat !== undefined) process.env.AZURE_DEVOPS_EXT_PAT = prevPat
+  }
+})
+
+test("shipPr (ado) reuses an existing active PR for the branch", async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
+  const http = scriptedHttp([{ match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [{ pullRequestId: 42 }] }) }])
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  assert.deepEqual(result, {
+    attempted: true,
+    created: false,
+    url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/42",
+  })
+})
+
+test("shipPr (ado) opens a new draft PR when none exists, using the repo's default branch", async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
+  const http = scriptedHttp([
+    { match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [] }) },
+    { match: "_apis/git/repositories/widgets?api-version", body: JSON.stringify({ defaultBranch: "refs/heads/main" }) },
+    { match: "pullrequests?api-version", body: JSON.stringify({ pullRequestId: 99 }) },
+  ])
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
   assert.deepEqual(result, {
     attempted: true,
     created: true,
     url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99",
   })
-  const create = azLog.find((c) => c.includes("repos pr create"))
-  assert.match(create ?? "", /--draft/)
-  assert.match(create ?? "", /--source-branch feature\/task-1 --target-branch main/)
-  assert.match(create ?? "", /--organization https:\/\/dev\.azure\.com\/acme --project Widgets --repository widgets/)
 })
 
-test("shipPr (ado) reuses an existing active PR and reports az create failures", async () => {
-  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const reuse = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "t",
-    scriptedAz([{ match: "repos pr list", body: JSON.stringify([{ pullRequestId: 42 }]) }]))
-  assert.deepEqual(reuse, {
-    attempted: true,
-    created: false,
-    url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/42",
-  })
-  const failed = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "t",
-    scriptedAz([
-      { match: "repos pr list", body: "[]" },
-      { match: "repos show", body: JSON.stringify({ defaultBranch: "refs/heads/main" }) },
-      { match: "repos pr create", ok: false, statusText: "ERROR: az login required" },
-    ]))
-  assert.equal(failed.created, false)
-  assert.match(failed.reason ?? "", /az CLI.*az login required/s)
-})
-
-test("shipPr (ado) ignores type-confused az bodies instead of acting on them", async () => {
+test("shipPr (ado) ignores type-confused API bodies instead of acting on them", async () => {
   // A string pullRequestId must never become a reuse URL, and a non-string
   // defaultBranch must fall back — malformed bodies degrade, never propagate.
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const az = scriptedAz([
-    { match: "repos pr list", body: JSON.stringify([{ pullRequestId: "42/../evil" }]) },
-    { match: "repos show", body: JSON.stringify({ defaultBranch: 7 }) },
-    { match: "repos pr create", body: JSON.stringify({ pullRequestId: 99 }) },
+  const http = scriptedHttp([
+    { match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [{ pullRequestId: "42/../evil" }] }) },
+    { match: "_apis/git/repositories/widgets?api-version", body: JSON.stringify({ defaultBranch: 7 }) },
+    { match: "pullrequests?api-version", body: JSON.stringify({ pullRequestId: 99 }) },
   ])
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", az)
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
   assert.equal(result.created, true)
   assert.equal(result.url, "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99")
 })
 
+test("shipPr (ado) reports a reason when PR creation fails", async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
+  const http = scriptedHttp([
+    { match: "pullrequests?searchCriteria", status: 200, body: JSON.stringify({ value: [] }) },
+    { match: "_apis/git/repositories/widgets?api-version", status: 200, body: JSON.stringify({}) },
+    { match: "pullrequests?api-version", status: 403, body: "" },
+  ])
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  assert.equal(result.attempted, true)
+  assert.equal(result.created, false)
+  assert.match(result.reason ?? "", /403/)
+})
+
+test("shipPr (ado) sends ado.customHeaders on every REST call, with the env var overriding them", async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
+  const seen: Array<Readonly<Record<string, string>>> = []
+  const capturingHttp: ShipHttp = async (url, init) => {
+    seen.push(init.headers)
+    const body = url.includes("searchCriteria")
+      ? JSON.stringify({ value: [] })
+      : url.includes("_apis/git/repositories/widgets?api-version")
+        ? JSON.stringify({ defaultBranch: "refs/heads/main" })
+        : JSON.stringify({ pullRequestId: 99 })
+    return { ok: true, status: 200, statusText: "ok", text: async () => body }
+  }
+  const cfg: Config = {
+    ...adoConfig,
+    ado: { ...adoConfig.ado!, customHeaders: { "Proxy-Authorization": "cfg-token", "X-Route": "internal" } },
+  }
+  const prevEnv = process.env.AGENTIC_WORKFLOW_ADO_HEADERS
+  process.env.AGENTIC_WORKFLOW_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
+  try {
+    const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", capturingHttp)
+    assert.equal(result.created, true)
+    assert.ok(seen.length >= 1)
+    for (const headers of seen) {
+      assert.ok(headers.Authorization?.startsWith("Basic ")) // built-in auth preserved
+      assert.equal(headers["X-Route"], "internal") // config-only header present
+      assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
+    }
+    // The POST create call also carries Content-Type alongside the custom headers.
+    const post = seen[seen.length - 1]
+    assert.equal(post["Content-Type"], "application/json")
+  } finally {
+    if (prevEnv === undefined) delete process.env.AGENTIC_WORKFLOW_ADO_HEADERS
+    else process.env.AGENTIC_WORKFLOW_ADO_HEADERS = prevEnv
+  }
+})
+
 test("shipPr never throws on an unexpected error", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const throwingAz: AzExec = async () => {
+  const throwingHttp: ShipHttp = async () => {
     throw new Error("ECONNRESET")
   }
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", throwingAz)
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", throwingHttp)
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.ok(result.reason)

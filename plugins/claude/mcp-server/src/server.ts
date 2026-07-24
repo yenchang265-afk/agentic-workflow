@@ -22,7 +22,7 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { bareModel, deprecatedAdoKeys, enabledWorkflowKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
+import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
   axisVerdict,
@@ -223,24 +223,6 @@ const stageModel = (kind: string, def: StageDef): string | undefined => {
  * user to conclude model selection is broken. Best-effort: an unreadable
  * manifest must never block a claim.
  */
-/**
- * Azure DevOps is now reached only through the az CLI, so `ado.access` and the
- * raw-fetch-only `customHeaders`/`insecureSkipTlsVerify` no longer do anything.
- * They still parse (the `ado` section is loose) precisely so this can name
- * them — a deliberately-set key that is silently ignored reads as a bug.
- */
-const adoDeprecationWarnings = (): string[] => {
-  const dead = deprecatedAdoKeys(config)
-  if (!dead.length) return []
-  return [
-    `${dead.join(", ")} ${dead.length > 1 ? "are" : "is"} no longer supported — Azure DevOps is reached only through ` +
-      `the az CLI (azure-devops extension, authenticated by AZURE_DEVOPS_EXT_PAT). ` +
-      `${dead.length > 1 ? "Those keys are" : "That key is"} ignored; remove ${dead.length > 1 ? "them" : "it"} from ` +
-      `.agentic-workflow.json. For a self-signed Azure DevOps Server, configure the CLI's own trust ` +
-      `(REQUESTS_CA_BUNDLE / \`az devops configure\`) instead.`,
-  ]
-}
-
 const stageModelWarnings = (): string[] =>
   enabledWorkflowKinds(config).flatMap((kind) => {
     let stageNames: string[]
@@ -323,9 +305,8 @@ const writeStageMarker = (stage: string | null) => {
         JSON.stringify({
           kind: m.manifest.kind,
           stage,
-          // The guard's ADO write-backstops key off this: on `ado` they refuse a
-          // mutating call whichever way it is attempted — az CLI, a stray curl,
-          // or an Azure DevOps MCP tool the user happens to have connected.
+          // The guard's ADO write-backstops key off this (curl to dev.azure.com,
+          // plus a best-effort ADO-MCP mutation blocklist).
           platform,
           // The subagent this stage binds, straight from the manifest — the driver
           // (workflow-orchestration SKILL) spawns whatever is named here, so a new kind
@@ -487,7 +468,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
  * backlog anomalies the reconciliation sweep finds. Best-effort; never blocks.
  */
 const claimWarnings = async (): Promise<string[]> => {
-  const warnings: string[] = [...adoDeprecationWarnings(), ...stageModelWarnings()]
+  const warnings: string[] = [...stageModelWarnings()]
   const owner = await readLeaseOwner(sh, directory, config.tasksDir)
   if (owner && !isLeaseStale(owner, new Date(), staleThresholdMs(owner.intervalMs))) {
     warnings.push(

@@ -84,14 +84,9 @@ export type StageDef = z.infer<typeof StageDefSchema>
 
 /**
  * The bash globs a stage may run on the given code platform: the stage's own
- * `bashAllowlist` plus that platform's extras. An unknown platform key yields
- * only `bashAllowlist` — fail-closed. Pure.
- *
- * One key per platform, so `"ado"` names the az-CLI commands the ADO stage
- * prompts actually tell the agent to run. (This used to be a composite
- * `"<platform>:<access>"` scheme, where plain `"ado"` meant curl and `"ado:az"`
- * meant the CLI — two lists per platform that had to stay in sync with three
- * sets of prompt text.)
+ * `bashAllowlist` plus that platform's extras (`"github"` or `"ado"`, the
+ * latter the REST/curl list). An unknown platform key yields only
+ * `bashAllowlist` — fail-closed. Pure.
  */
 export const effectiveAllowlist = (def: StageDef, platform: string): string[] => [
   ...def.bashAllowlist,

@@ -44,7 +44,7 @@ The `query` filters which PRs to claim (GitHub search syntax, e.g., `is:open aut
 Sits on your own open PRs. On GitHub (the default) it polls
 `gh pr list --search <query>` (default `is:open author:@me`, overridable
 with `workflows.pr-sitter.query`); on Azure DevOps (`codePlatform: "ado"`) it
-polls via the `az` CLI and watches active PRs authored by `ado.selfLogin`
+polls the REST API and watches active PRs authored by `ado.selfLogin`
 instead — **`query` is GitHub-only**, ignored on ADO. A PR is claimed when
 an enabled trigger fires: failing checks, changes requested, unanswered
 comments (its own login filtered out), or a merge conflict. Draft and fork

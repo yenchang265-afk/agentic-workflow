@@ -54,9 +54,6 @@ const WorkflowStateSchema = z.object({
   git: GitRefSchema.optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */
   platform: z.enum(CODE_PLATFORMS).optional(),
-  // A pre-az-only snapshot may still carry `platformAccess`; zod strips unknown
-  // keys, so it loads fine and simply loses the stamp — which is what makes
-  // coercing a legacy `ado.access` config safe mid-loop.
 })
 
 /** Absolute path of a task's state snapshot. Pure. */

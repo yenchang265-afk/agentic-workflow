@@ -50,10 +50,8 @@
           "gh run list*"
         ],
         "ado": [
-          "az repos pr show*",
-          "az repos pr list*",
-          "az repos pr policy list*",
-          "az devops invoke *"
+          "curl -sS -u :* https://dev.azure.com/*",
+          "curl -sS -u :* https://*.visualstudio.com/*"
         ]
       }
     },
@@ -196,9 +194,8 @@
           "gh api repos/*/pulls/*/comments*"
         ],
         "ado": [
-          "az repos pr show*",
-          "az repos pr list*",
-          "az devops invoke --area git --resource pullRequestThreadComments*"
+          "curl -sS -u :* https://dev.azure.com/*/threads*",
+          "curl -sS -u :* https://*.visualstudio.com/*/threads*"
         ]
       }
     }

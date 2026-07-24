@@ -117,13 +117,8 @@ export type Action =
 
 /**
  * The code-management platforms PR-shaped work sources can talk to — the single
- * source of truth. `ado` reaches Azure DevOps through the `az` CLI with the
- * azure-devops extension (see `source/ado-az.ts`, `source/ado-pr.ts`),
- * authenticated by `AZURE_DEVOPS_EXT_PAT`, using the `ado` config section.
- *
- * The az CLI is the ONLY Azure DevOps path: stage prompts, the stage bash
- * allowlist, and the driver's own poll/ship transport all speak it, so there is
- * one set of commands to keep in agreement instead of one per access mode.
+ * source of truth. `ado` reaches Azure DevOps through its REST API with a PAT
+ * (see `source/ado-pr.ts`), using the `ado` config section.
  */
 export const CODE_PLATFORMS = ["github", "ado"] as const
 export type CodePlatform = (typeof CODE_PLATFORMS)[number]
@@ -148,6 +143,26 @@ export interface AdoConfig {
    * never committed.
    */
   readonly pat?: string
+  /**
+   * Extra HTTP headers attached to every ADO REST call the driver makes (the PR
+   * work source and the ship gate) — e.g. `Proxy-Authorization` or a routing
+   * header for a corporate proxy in front of Azure DevOps. Merged over the
+   * built-in `Authorization`/`Accept`/`Content-Type` headers, so a key here can
+   * override one of those (rarely wanted, but yours to decide). The
+   * `AGENTIC_WORKFLOW_ADO_HEADERS` env var (a JSON object) overrides this key by
+   * key, mirroring how `AZURE_DEVOPS_EXT_PAT` overrides `pat`.
+   */
+  readonly customHeaders?: Readonly<Record<string, string>>
+  /**
+   * Skip TLS certificate verification on every ADO REST call the driver makes
+   * (the PR/CI-runs work sources and the ship gate). Off by default — only for
+   * a self-hosted Azure DevOps Server behind a self-signed or internal-CA
+   * certificate the runtime doesn't trust; never enable this against the
+   * hosted `dev.azure.com` service. Scoped to these calls only (a dedicated
+   * `undici` dispatcher), so it never weakens TLS for unrelated requests
+   * (GitHub, npm, …) in the same process.
+   */
+  readonly insecureSkipTlsVerify?: boolean
 }
 
 /** Project-management setup: the team's tracker and how tasks pair to it. */
