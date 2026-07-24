@@ -10,10 +10,10 @@
 
 目前已發布五種工作流程類型。**engineering**（預設開啟）在 `docs/tasks/` 任務待辦
 （backlog）上驅動一個目標經歷 PLAN → BUILD → VERIFY → REVIEW，包含人工任務把關和
-計畫把關。四個**實驗性**、可選啟用的 **sitter**——`pr-sitter`、
-`review-sitter`、`dep-sitter`、`main-sitter`——監看一個代管的目標面
-（開啟中的 PR、審查請求、有漏洞的相依套件、變紅的 CI）並驅動修復，同時把每一個
-終端呼叫都留給人類。詳見下方 [The sitters](#the-sitters-實驗性)。
+計畫把關。四個可選啟用的 **sitter** 監看一個代管的目標面（開啟中的 PR、
+審查請求、有漏洞的相依套件、變紅的 CI）並驅動修復，同時把每一個終端呼叫都
+留給人類：`pr-sitter` 和 `review-sitter` 已**穩定**；`dep-sitter` 和
+`main-sitter` 仍是**實驗性的**。詳見下方 [sitters](#sitters)。
 
 編寫一種新的工作流程類型只需要一個 `workflow.json` 加上階段提示詞——詳見
 [`packages/core/workflows/README.md`](packages/core/workflows/README.md)。
@@ -52,13 +52,14 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 部分。完整的執行模型（watch 模式、疊代上限、還原）：
 [docs/opencode.md](docs/opencode.md)。
 
-## sitters（實驗性）
+## sitters
 
 四個可選啟用的 sitter 會監看一個代管的目標面並驅動修復，每一個都有自己的
 `/agentic-workflow:<kind>` 指令，共用 `claim` / `status` / `stop` 動詞（在
-OpenCode 上還有 `watch [trigger]` / `unwatch`）。它們都是**實驗性的**——
-其清單、設定項和預設值都可能還會變動。依儲存庫在 `.agentic-workflow.json` 中
-啟用：
+OpenCode 上還有 `watch [trigger]` / `unwatch`）。**`pr-sitter` 和
+`review-sitter` 已穩定**——其清單、設定項和預設值都已定案，變更比照
+`engineering` 的相容性標準。**`dep-sitter` 和 `main-sitter` 仍是實驗性的**
+——它們的則仍可能變動。依儲存庫在 `.agentic-workflow.json` 中啟用：
 
 ```json
 {
@@ -171,7 +172,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
   mermaid 圖、設定項）、如何啟用、指令面，以及 1-2 個實戰範例
 - [docs/architecture.md](docs/architecture.md) —— 僅框架本身（核心套件、
   清單引擎、排程器、工作來源、watch 租約）以及 Claude Code 版本有何不同
-- [docs/sitters.md](docs/sitters.md) —— 四個實驗性 sitter 的共同點，
+- [docs/sitters.md](docs/sitters.md) —— 四個 sitter 的共同點，
   並索引到 `docs/workflows/` 下它們各自的檔案
 - [packages/core/workflows/README.md](packages/core/workflows/README.md) —— 如何編寫一種新的工作流程類型
   （清單結構描述、提示詞範本、hooks、工作來源）

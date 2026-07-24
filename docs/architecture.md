@@ -11,9 +11,10 @@ REVIEW workflow, behavior-identical to when it was hardcoded), and four opt-in
 **sitters** watch a hosted surface and drive a fix — `pr-sitter` (your open
 PRs), `review-sitter` (PRs awaiting your review), `dep-sitter` (vulnerable or
 outdated dependencies), and `main-sitter` (the default branch's CI). Each
-sitter keeps the terminal call — merge, approve, close — human. **The four
-sitters are experimental** — their manifests, config keys, and defaults may
-still change; `engineering` is the stable, default-on kind.
+sitter keeps the terminal call — merge, approve, close — human. **`pr-sitter`
+and `review-sitter` are stable**, alongside `engineering`, the default-on kind;
+**`dep-sitter` and `main-sitter` are still experimental** — their manifests,
+config keys, and defaults may still change.
 
 ## The framework — one engine, many kinds
 
@@ -133,12 +134,13 @@ heartbeat exceeds `max(3×interval, 2min)`. One-shot claims
 (`workflow_claim`/`workflow_start`) warn — not block — when a foreign live lease
 exists.
 
-## The sitter kinds — experimental
+## The sitter kinds
 
-Four opt-in sitters (`pr-sitter`, `review-sitter`, `dep-sitter`,
-`main-sitter`) watch a hosted surface (open PRs, review requests,
-dependency advisories, CI) and drive a fix behind git worktree isolation,
-always leaving the terminal call — merge, approve, close — to a human. Each
+Four opt-in sitters — the stable `pr-sitter` and `review-sitter`, plus the
+still-experimental `dep-sitter` and `main-sitter` — watch a hosted surface
+(open PRs, review requests, dependency advisories, CI) and drive a fix behind
+git worktree isolation, always leaving the terminal call — merge, approve,
+close — to a human. Each
 binds its own work source and follows the same check → work → publish
 shape. **[`docs/sitters.md`](sitters.md) is the canonical reference** for
 what each one does, its stage pipeline, its authority limits, and its

@@ -13,10 +13,11 @@ gates, git isolation, trusted verdicts, and audit trail.
 
 Five workflow kinds ship today. **engineering** (default-on) drives a goal through
 PLAN → BUILD → VERIFY → REVIEW over the `docs/tasks/` backlog, with human task
-and plan gates. Four **experimental**, opt-in **sitters** — `pr-sitter`,
-`review-sitter`, `dep-sitter`, `main-sitter` — watch a hosted surface (open
-PRs, review requests, vulnerable deps, red CI) and drive a fix, keeping every
-terminal call human. See [The sitters](#the-sitters-experimental) below.
+and plan gates. Four opt-in **sitters** watch a hosted surface (open PRs,
+review requests, vulnerable deps, red CI) and drive a fix, keeping every
+terminal call human: `pr-sitter` and `review-sitter` are **stable**;
+`dep-sitter` and `main-sitter` are still **experimental**. See
+[The sitters](#the-sitters) below.
 
 Authoring a new kind is a `workflow.json` + stage prompts away — see
 [`packages/core/workflows/README.md`](packages/core/workflows/README.md).
@@ -57,13 +58,15 @@ reuses) a **draft** PR (GitHub or Azure DevOps, per `codePlatform`) as part of
 shipping. Full execution model (watch mode, iteration caps, recovery):
 [docs/opencode.md](docs/opencode.md).
 
-## The sitters (experimental)
+## The sitters
 
 Four opt-in sitters watch a hosted surface and drive a fix, each on its own
 `/agentic-workflow:<kind>` command sharing the `claim` / `status` / `stop` verbs
-(plus `watch [trigger]` / `unwatch` on OpenCode). They are **experimental** —
-the manifests, config keys, and defaults may still change. Enable per repo in
-`.agentic-workflow.json`:
+(plus `watch [trigger]` / `unwatch` on OpenCode). **`pr-sitter` and
+`review-sitter` are stable** — their manifests, config keys, and defaults are
+settled, and changes to them follow the same compatibility bar as
+`engineering`. **`dep-sitter` and `main-sitter` are still experimental** —
+theirs may still change. Enable per repo in `.agentic-workflow.json`:
 
 ```json
 {
@@ -184,8 +187,8 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 - [docs/architecture.md](docs/architecture.md) — the framework only (core
   package, manifest engine, scheduler, work sources, the watch lease) and
   how the Claude Code variant differs
-- [docs/sitters.md](docs/sitters.md) — what the four experimental sitters
-  have in common, indexing into their individual files under `docs/workflows/`
+- [docs/sitters.md](docs/sitters.md) — what the four sitters have in common,
+  indexing into their individual files under `docs/workflows/`
 - [packages/core/workflows/README.md](packages/core/workflows/README.md) — how to author a new workflow kind
   (manifest schema, prompt templates, hooks, work sources)
 - [docs/opencode.md](docs/opencode.md) — OpenCode execution model, commands,

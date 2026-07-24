@@ -475,8 +475,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <h3>The trusted-verdict boundary</h3>
       <p>A check stage's outcome counts only when recorded through the dedicated <code>workflow_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
 
-      <h3>The pr-sitter kind <span class="def">experimental</span></h3>
-      <p>The four sitters (<code>pr-sitter</code>, <code>review-sitter</code>, <code>dep-sitter</code>, <code>main-sitter</code>) are <b>experimental</b> — their manifests, config keys, and defaults may still change. <code>engineering</code> is the stable, default-on kind.</p>
+      <h3>The pr-sitter kind <span class="def">stable</span></h3>
+      <p><code>pr-sitter</code> and <code>review-sitter</code> are <b>stable</b>, alongside <code>engineering</code>, the default-on kind — their manifests, config keys, and defaults are settled. <code>dep-sitter</code> and <code>main-sitter</code> are still <b>experimental</b> and theirs may change.</p>
       <div class="card" style="margin-top:10px">
         <div class="flow" style="margin:2px 0">
           <span class="f">TRIAGE <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
@@ -488,10 +488,10 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       </div>
       <div class="note warn">Read <code>docs/design/threat-model.md</code> before enabling the PR sitter — it documents the security posture for acting on untrusted PR content.</div>
 
-      <h3>The other sitter kinds <span class="def">experimental</span></h3>
+      <h3>The other sitter kinds</h3>
       <p>Three more opt-in sitters ship on the same engine, each watching a different signal. Enable one with <code>workflows.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
       <div class="card" style="margin-top:10px">
-        <h4 style="margin-top:0">review-sitter <span style="text-transform:none;color:var(--ink-2)">— sits on PRs where your review is requested</span></h4>
+        <h4 style="margin-top:0">review-sitter <span class="def">stable</span> <span style="text-transform:none;color:var(--ink-2)">— sits on PRs where your review is requested</span></h4>
         <div class="flow" style="margin:2px 0">
           <span class="f">FETCH <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f">ASSESS <span style="color:var(--accent-2)">work</span></span><span class="arr">→</span>
@@ -500,7 +500,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <p style="margin:8px 0 0;font-size:14px">Read-only FETCH pulls each PR awaiting your review; ASSESS reads the diff against surrounding code in a worktree (and may run the suite to sanity-check); PUBLISH posts <b>one structured review comment</b> per requested head. <b>Comment-only</b> — it never approves, requests changes, or merges, so you stay reviewer of record.</p>
       </div>
       <div class="card" style="margin-top:10px">
-        <h4 style="margin-top:0">dep-sitter <span style="text-transform:none;color:var(--ink-2)">— sits on vulnerable or outdated dependencies</span></h4>
+        <h4 style="margin-top:0">dep-sitter <span class="def">experimental</span> <span style="text-transform:none;color:var(--ink-2)">— sits on vulnerable or outdated dependencies</span></h4>
         <div class="flow" style="margin:2px 0">
           <span class="f">SCAN <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f">UPGRADE <span style="color:var(--accent-2)">work</span></span><span class="arr">→</span>
@@ -510,7 +510,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <p style="margin:8px 0 0;font-size:14px">SCAN confirms the advisory (npm, Maven &amp; Gradle); UPGRADE applies the patch/minor bump on a <code>dep-sitter/*</code> branch and fixes the fallout; VERIFY confirms the suite is green; PUBLISH pushes and opens a <b>draft PR</b>. <b>Major bumps are never auto-fixed</b> — they're logged for a human, and merging stays human.</p>
       </div>
       <div class="card" style="margin-top:10px">
-        <h4 style="margin-top:0">main-sitter <span style="text-transform:none;color:var(--ink-2)">— sits on the default branch's CI</span></h4>
+        <h4 style="margin-top:0">main-sitter <span class="def">experimental</span> <span style="text-transform:none;color:var(--ink-2)">— sits on the default branch's CI</span></h4>
         <div class="flow" style="margin:2px 0">
           <span class="f">DIAGNOSE <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f">REMEDY <span style="color:var(--accent-2)">work</span></span><span class="arr">→</span>
@@ -743,7 +743,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
     <a href="../plugins/claude/README.md">plugins/claude/README.md — Claude host</a>
     <a href="design/threat-model.md">design/threat-model.md — security</a>
   </div>
-  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: engineering (stable) plus the experimental pr-sitter, review-sitter, dep-sitter, and main-sitter.</p>
+  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: the stable engineering, pr-sitter, and review-sitter, plus the experimental dep-sitter and main-sitter.</p>
 </footer>
 
 <script>

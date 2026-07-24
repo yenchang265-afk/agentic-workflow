@@ -106,9 +106,10 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 
-The sitters (**experimental** — the four commands below, their manifests, and
-their config keys may still change; `engineering` is the stable, default-on
-kind). **What each one does is documented once in
+The sitters (**`pr-sitter` and `review-sitter` are stable**, alongside
+`engineering`, the default-on kind; **`dep-sitter` and `main-sitter` are still
+experimental** — their manifests and config keys may still change).
+**What each one does is documented once in
 [`../../docs/sitters.md`](../../docs/sitters.md)** — on this host every
 sitter has the same command surface: `claim` (maps to
 `workflow_claim({kind: "<kind>"})`; no standing watch here, so `claim` is the

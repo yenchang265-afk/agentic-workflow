@@ -5,7 +5,7 @@
     {
       "name": "agentic-workflow",
       "source": "./plugins/claude",
-      "description": "Supervised PLAN → BUILD → VERIFY → REVIEW engineering loop for Claude Code, plus experimental sitter kinds (pr-sitter, review-sitter, dep-sitter, main-sitter): human gates, git isolation, trusted verdicts, task backlog, audit trail."
+      "description": "Supervised PLAN → BUILD → VERIFY → REVIEW engineering loop for Claude Code, plus sitter kinds (the stable pr-sitter and review-sitter; the experimental dep-sitter and main-sitter): human gates, git isolation, trusted verdicts, task backlog, audit trail."
     }
   ]
 }

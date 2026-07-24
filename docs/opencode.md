@@ -107,9 +107,10 @@ The loop (`/agentic-workflow:engineering`):
   plus a whole-backlog roll-up (counts, awaiting-approval/claimable/
   interrupted/in-review). Bare `/agentic-workflow:engineering` does the same
 
-The sitters (**experimental** — the four `/agentic-workflow:<sitter>` commands
-below, their manifests, and their config keys may still change; `engineering`
-is the stable, default-on kind). Each has the identical command surface —
+The sitters (**`pr-sitter` and `review-sitter` are stable**, alongside
+`engineering`, the default-on kind; **`dep-sitter` and `main-sitter` are still
+experimental** — their manifests and config keys may still change). Each has
+the identical command surface —
 `claim` (one-shot pull), `watch [trigger]` / `unwatch` (standing worker,
 same trigger/interval syntax and one-watcher-per-clone lease as
 engineering's `watch`, scoped to that kind), and `stop` (alias `abort`) /

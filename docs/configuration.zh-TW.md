@@ -152,9 +152,10 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 這些警告只是提示：它們會註記在儲存動作上，但從不阻擋儲存。見下方
 [管理面板](#admin-hub-hub--user-scope-only)。
 
-> **四個 sitter（`pr-sitter`、`review-sitter`、`dep-sitter`、
-> `main-sitter`）都是實驗性的**——它們下面的旋鈕和預設值在各版本
-> 之間可能還會變動。`engineering` 是穩定的、預設開啟的類型。
+> **`pr-sitter` 和 `review-sitter` 已穩定**，與預設開啟的 `engineering`
+> 並列——它們下面的旋鈕和預設值都已定案。
+> **`dep-sitter` 和 `main-sitter` 仍是實驗性的**——它們的則在各版本
+> 之間可能還會變動。
 
 ```json
 {

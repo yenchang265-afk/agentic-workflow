@@ -151,9 +151,10 @@ a did-you-mean), wrong type, and a knob on a kind whose work source never reads
 it. The warnings are advisory: they annotate a save, never block it. See
 [the admin hub](#admin-hub-hub--user-scope-only) below.
 
-> **The four sitters (`pr-sitter`, `review-sitter`, `dep-sitter`,
-> `main-sitter`) are experimental** — their knobs and defaults below may still
-> change between releases. `engineering` is the stable, default-on kind.
+> **`pr-sitter` and `review-sitter` are stable**, alongside `engineering`, the
+> default-on kind — their knobs and defaults below are settled.
+> **`dep-sitter` and `main-sitter` are still experimental** — theirs may still
+> change between releases.
 
 ```json
 {

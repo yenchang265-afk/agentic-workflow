@@ -1,6 +1,6 @@
 [English](sitters.md) | 繁體中文
 
-# sitter（實驗性）
+# sitter
 
 四種可選啟用的類型，監看一個代管的目標面並驅動修復，永遠把終端
 呼叫——合併、核准、關閉——留給人類。`engineering`（參考類型——
@@ -8,8 +8,11 @@ PLAN/BUILD → VERIFY → REVIEW）記載於 [architecture.md](architecture.md)
 和 [`docs/workflows/engineering.md`](workflows/engineering.md)；本檔案只
 涵蓋 `pr-sitter`、`review-sitter`、`dep-sitter` 和 `main-sitter`。
 
-> **四個 sitter 都是實驗性的**——它們的清單、設定項和預設值在各版本
-> 之間都可能還會變動。`engineering` 是穩定的、預設開啟的類型。
+> **`pr-sitter` 和 `review-sitter` 已穩定**——它們的清單、設定項和
+> 預設值都已定案，變更比照預設開啟的 `engineering` 的相容性標準。
+>
+> **`dep-sitter` 和 `main-sitter` 仍是實驗性的**——它們的清單、設定項
+> 和預設值在各版本之間都可能還會變動。
 
 每個 sitter 自己的架構——階段流水線、mermaid 圖、授權界線，以及
 `.agentic-workflow.json` 設定項——現在都收在自己的檔案裡：
