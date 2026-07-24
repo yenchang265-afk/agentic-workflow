@@ -169,8 +169,9 @@ local state a running loop leaves behind:
   `plan` runs PLAN on one queued task and parks it (the only PLAN entry);
   `claim` pulls the next build-ready `in-progress/` task; `watch` is a
   standing worker scoped to the engineering kind
-- `/agentic-workflow:pr-sitter claim` · `watch [interval]` (OpenCode) · `unwatch` ·
+- `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [interval]` (OpenCode) · `unwatch` ·
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
+  (`claim` takes an optional PR number/URL to force a specific one)
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
   `/agentic-workflow:main-sitter` — the same `claim` / `watch` (OpenCode) /
   `unwatch` / `stop` / `status` verbs, each scoped to its own kind

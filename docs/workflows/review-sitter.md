@@ -27,16 +27,20 @@ The default query (`is:open review-requested:@me`) is overridable via `workflows
 **OpenCode**
 
 ```
-/agentic-workflow:review-sitter claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
+/agentic-workflow:review-sitter claim [<pr>] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:review-sitter claim | status | stop
+/agentic-workflow:review-sitter claim [<pr>] | status | stop
 ```
 
 (Claude Code has no standing watcher; call `claim` again to pull the next PR.)
+Pass a specific PR — a number (`42`), `#42`, or a PR URL — to **force** that
+one: it is fetched directly and reviewed even with no outstanding request and
+even if its head was already reviewed, overriding the query and dedup ledger.
+Fork PRs are still refused.
 
 ## Architecture
 
@@ -49,7 +53,10 @@ reads the diff in the context of the surrounding code, may run the suite) →
 **publish** posts **one structured review comment** per requested head.
 Authority is **comment-only** — it never approves, requests changes, or
 merges, so the human stays reviewer of record. Re-fires only when a human
-pushes a new head; fork and draft PRs are skipped.
+pushes a new head; fork and draft PRs are skipped. Passing a `target` PR
+bypasses both the review-requested query and the already-reviewed ledger — the
+PR is fetched directly and reviewed afresh even without a new head — but a fork
+head is still refused.
 
 - **`workflows.review-sitter.enabled`** — default off.
 - **`workflows.review-sitter.query`** — GitHub only; default

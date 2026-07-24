@@ -30,16 +30,19 @@ TRIAGE → FIX → VERIFY → PUBLISH（最多 3 次疊代）
 **OpenCode**
 
 ```
-/agentic-workflow:pr-sitter claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
+/agentic-workflow:pr-sitter claim [<pr>] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:pr-sitter claim | status | stop
+/agentic-workflow:pr-sitter claim [<pr>] | status | stop
 ```
 
 （Claude Code 沒有常駐的 watcher；再次呼叫 `claim` 以拉取下一個 PR。）
+傳入特定的 PR——編號（`42`）、`#42` 或 PR 網址——可**強制**處理該
+PR：即使沒有任何待處理訊號，也會直接取回並驅動它，繞過查詢與去重帳本。
+fork PR 仍會被拒絕。
 
 ## 架構
 
@@ -50,7 +53,8 @@ TRIAGE → FIX → VERIFY → PUBLISH（最多 3 次疊代）
 僅限 GitHub**，在 ADO 上會被忽略。當已啟用的觸發條件之一成立時，PR 就會
 被認領：檢查失敗、被要求修改（changes requested）、未回覆的留言（會過濾掉
 自己的帳號）、或合併衝突。draft 和 fork 的 PR 會被跳過（fork 的 head
-無法被推送）。
+無法被推送）。傳入 `target` PR 會繞過觸發條件檢查與去重帳本——即使沒有任何
+待處理訊號，也會直接取回並驅動該 PR——但 fork 的 head 仍會被拒絕。
 
 ```mermaid
 flowchart LR

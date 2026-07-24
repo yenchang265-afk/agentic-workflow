@@ -30,16 +30,19 @@ FETCH → ASSESS → PUBLISH（沒有重試迴圈）
 **OpenCode**
 
 ```
-/agentic-workflow:review-sitter claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
+/agentic-workflow:review-sitter claim [<pr>] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:review-sitter claim | status | stop
+/agentic-workflow:review-sitter claim [<pr>] | status | stop
 ```
 
 （Claude Code 沒有常駐的 watcher；再次呼叫 `claim` 以拉取下一個 PR。）
+傳入特定的 PR——編號（`42`）、`#42` 或 PR 網址——可**強制**審查該 PR：
+即使沒有任何待處理的審查請求、即使其 head 已被審查過，也會直接取回並
+重新審查，繞過查詢與去重帳本。fork PR 仍會被拒絕。
 
 ## 架構
 
@@ -51,7 +54,9 @@ FETCH → ASSESS → PUBLISH（沒有重試迴圈）
 執行測試套件）→ **publish** 為每個被請求審查的 head 張貼**一則結構化的
 審查留言**。權限**僅限留言**——它絕不核准、要求修改或合併，因此人類仍是
 正式的審查者。只有在人類推送一個新的 head 時才會再次觸發；fork 和 draft
-的 PR 會被跳過。
+的 PR 會被跳過。傳入 `target` PR 會同時繞過 review-requested 查詢與已審查
+帳本——即使沒有新的 head，也會直接取回並重新審查該 PR——但 fork 的 head
+仍會被拒絕。
 
 - **`workflows.review-sitter.enabled`** —— 預設關閉。
 - **`workflows.review-sitter.query`** —— 僅限 GitHub；預設為

@@ -114,7 +114,8 @@ alongside `engineering`, which is on unless disabled; **`dep-sitter` and
 `main-sitter` are still experimental** and opt-in — their manifests and config
 keys may still change). Each has
 the identical command surface —
-`claim` (one-shot pull), `watch [trigger]` / `unwatch` (standing worker,
+`claim` (one-shot pull; the PR sitters also take an optional `<pr>` number/URL
+to force a specific PR), `watch [trigger]` / `unwatch` (standing worker,
 same trigger/interval syntax and one-watcher-per-clone lease as
 engineering's `watch`, scoped to that kind), and `stop` (alias `abort`) /
 `status` (bare command = status). **What each one does is documented once in

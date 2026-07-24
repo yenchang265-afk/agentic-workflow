@@ -111,9 +111,10 @@ The sitters (**`pr-sitter` and `review-sitter` are stable**, alongside
 experimental** — their manifests and config keys may still change).
 **What each one does is documented once in
 [`../../docs/sitters.md`](../../docs/sitters.md)** — on this host every
-sitter has the same command surface: `claim` (maps to
+sitter has the same command surface: `claim [<pr>]` (maps to
 `workflow_claim({kind: "<kind>"})`; no standing watch here, so `claim` is the
-pull) and `status` · `stop` (report / abort the active loop; bare
+pull — the PR sitters also take an optional PR number/URL to force a specific
+one) and `status` · `stop` (report / abort the active loop; bare
 `/agentic-workflow:<kind>` = status):
 
 - `/agentic-workflow:pr-sitter` — always on; cannot be disabled.
@@ -123,7 +124,9 @@ pull) and `status` · `stop` (report / abort the active loop; bare
 
 Both released sitters need no config at all. A bare `workflow_claim()` polls
 every enabled kind in claim-priority order, so it reaches them once nothing
-earlier is claimable; `workflow_claim({kind})` restricts the pull to one.
+earlier is claimable; `workflow_claim({kind})` restricts the pull to one, and
+`workflow_claim({kind: "pr-sitter", target: 42})` forces a specific PR — fetched
+directly and driven even with no outstanding signal (fork PRs still refused).
 
 Ancillary:
 

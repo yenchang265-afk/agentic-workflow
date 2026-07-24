@@ -29,16 +29,19 @@ The `query` filters which PRs to claim (GitHub search syntax, e.g., `is:open aut
 **OpenCode**
 
 ```
-/agentic-workflow:pr-sitter claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
+/agentic-workflow:pr-sitter claim [<pr>] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | stop | status
 ```
 
 **Claude Code (MCP)**
 
 ```
-/agentic-workflow:pr-sitter claim | status | stop
+/agentic-workflow:pr-sitter claim [<pr>] | status | stop
 ```
 
 (Claude Code has no standing watcher; call `claim` again to pull the next PR.)
+Pass a specific PR — a number (`42`), `#42`, or a PR URL — to **force** that
+one: it is fetched directly and driven even with no outstanding signal,
+overriding the query and dedup ledger. Fork PRs are still refused.
 
 ## Architecture
 
@@ -49,7 +52,9 @@ polls the REST API and watches active PRs authored by `ado.selfLogin`
 instead — **`query` is GitHub-only**, ignored on ADO. A PR is claimed when
 an enabled trigger fires: failing checks, changes requested, unanswered
 comments (its own login filtered out), or a merge conflict. Draft and fork
-PRs are skipped (a fork head can't be pushed).
+PRs are skipped (a fork head can't be pushed). Passing a `target` PR bypasses
+the trigger check and the dedup ledger — the PR is fetched directly and driven
+even with no outstanding signal — but a fork head is still refused.
 
 ```mermaid
 flowchart LR
