@@ -94,6 +94,25 @@ creator tab is unaffected.
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
 
+  Clicking a card's title opens the **task drawer**: frontmatter, body, plan,
+  and the audit timeline. For a **planless** task — one in `draft/` or `queued/`
+  with no `## Implementation Plan` — the drawer is also an **editor**: change the
+  title, type, priority, labels, acceptance, and body, add a comment, and save.
+  This is the hub's answer to the CLI's `retask`, which reshapes a task through
+  an `interview-me` pass and a subagent rewrite; the hub has no agent, so the
+  human types the reshape. Saving a **`queued/`** task therefore also sends it
+  back to `draft/` and withdraws its task-gate approval — a goal the loop was
+  approved to plan is not one you may change quietly. The comment lands on the
+  audit note, where the next PLAN pass will read it. A task with a plan stays
+  read-only and points at Replan instead.
+
+  The audit trail is never round-tripped through the browser: the editor is
+  seeded with the body *minus* its trailing `> …` notes, and the server re-reads
+  the file and rejoins its own copy of the trail at save time. A note appended
+  while you were typing survives without the browser ever having seen it, and no
+  client can delete one. An edit that would drop a note the editor *could* reach
+  (one interleaved above later prose) is refused and names the line.
+
   ```mermaid
   sequenceDiagram
       actor Human
@@ -113,6 +132,42 @@ creator tab is unaffected.
           API->>Core: same entry point the CLI / slash commands call
           Core->>Git: move task file + audited commit
           Core-->>API: ok (ship: also opens a draft PR)
+          API-->>UI: 200, board updates via SSE
+      end
+  ```
+
+  Editing a planless task takes the same shape, with the drift checks an editor
+  needs on top of the gate's stale-board check:
+
+  ```mermaid
+  sequenceDiagram
+      actor Human
+      participant UI as Task drawer (browser)
+      participant API as Hub server (/api/tasks/:status/:id)
+      participant Core as @agentic-workflow/core (rewriteTask / retaskTask)
+      participant Git as Task backlog (git)
+
+      Human->>UI: edit fields, add a comment, save
+      UI->>API: POST prose only (never the audit tail) + baseHash
+      Note over API: everything below shares the gate's per-repo lock
+      alt task left its folder
+          API-->>UI: 409 stale board
+      else a plan appeared under the editor
+          API-->>UI: 409 use Replan instead
+      else the prose changed on disk (baseHash mismatch)
+          API-->>UI: 409 reopen and reapply
+      else frontmatter the editor can't preserve
+          API-->>UI: 409 names the keys
+      else a loop is driving it, or a secret is in the body
+          API-->>UI: 200 refused (rendered like a gate refusal)
+      else clear to save
+          API->>API: rejoin the server's own audit tail
+          API->>Core: rewriteTask (same id, filename, folder)
+          Core->>Git: rewrite + audited note
+          opt task was in queued/
+              API->>Core: retaskTask (approval withdrawn)
+              Core->>Git: move to draft/ + note, one commit
+          end
           API-->>UI: 200, board updates via SSE
       end
   ```
@@ -202,6 +257,7 @@ The hub's writes, none of which drive a loop:
 | Scaffold an asset stub (creator) | `prompts/agents/<name>/`, `plugins/opencode/commands/<name>.md`, or `skills/<name>/` — one-shot TODO stubs | `X-Hub-Client`; slug + prefix check; 409 if the target exists (never overwrites); agent-referenced skills must already exist |
 | Run the persona generator (creator checklist) | regenerates the checked-in `plugins/opencode/agents/*` + `plugins/claude/agents/*` files and normalizes opencode command `agent:` frontmatter — exactly what `npm run gen:prompts` does in a terminal | `X-Hub-Client`; a confirm naming the effect; failure is reported with the generator's output, never half-applied routes |
 | A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a draft pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
+| Edit a planless task (drawer) | the task file under `tasksDir` (rewritten in place — same id, filename, folder), plus a git commit; from **`queued/`** also the retask move back to `draft/` | `X-Hub-Client`; planless-only (a plan that appeared 409s); `expectStatus` **and** a content hash (a stale board or drifted prose 409s); frontmatter the schema can't preserve 409s rather than being stripped; the audit tail is rejoined server-side and re-verified; refused while a loop is driving the task or a claim is held; a body that scans as a secret is refused; a confirm naming the effect |
 | Save config | one layer of `.agentic-workflow.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
 | Backlog doctor fix | task files under `tasksDir` (rescue strays, remove empty stray folders, release **stale, undriven** claim markers), plus a git commit | `X-Hub-Client`; releases a claim only when stale and not driven; skips claim release entirely while a watch lease is live; never resolves duplicate ids |
 
@@ -225,6 +281,9 @@ Known beta caveats:
 - **Creator canvas UX** has not had interactive browser QA — drag/connect and
   form flows work by construction but need real-mouse mileage; report
   anything janky
+- **The task editor writes the schema's frontmatter fields only.** A task
+  carrying an unknown key (`sprint:`, a tracker sync's own field) is refused
+  with the key named rather than silently stripped — edit that file directly
 - **opencode.db token backfill** needs Node ≥ 22.5 (`node:sqlite`); on older
   runtimes the panel says so and shows sidecar/transcript data only
 - **Claude-host token numbers are estimates** (time-window attribution from

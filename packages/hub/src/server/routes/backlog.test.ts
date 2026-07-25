@@ -7,7 +7,10 @@ import { DEFAULT_CONFIG } from "@agentic-workflow/core/config"
 import type { BacklogResponse, KindBoardInfo, TaskDetailResponse } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { fsClient, sh } from "../fsclient.js"
-import { getBacklog, getTaskDetail } from "./backlog.js"
+import { getBacklog } from "./backlog.js"
+// The detail route moved to tasks.ts (it now backs a writing editor); its tests
+// stay here, sharing this file's fixture backlog.
+import { getTaskDetail } from "./tasks.js"
 
 /** Build a real on-disk fixture backlog — the routes run against the same substrate production uses. */
 const makeFixture = (): string => {

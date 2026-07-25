@@ -49,8 +49,12 @@ export type GateResult =
 /**
  * Commit the backlog move, unless `config.ignoreBacklog` (the default) says to
  * leave it alone — then just re-assert the `.git/info/exclude` entry instead.
+ *
+ * Exported for callers that write to a task file *outside* a gate move and must
+ * commit it the same way (the hub's task editor). They must not re-derive the
+ * `ignoreBacklog` policy — it lives here, once.
  */
-const commitBacklog = async ($: Shell, directory: string, config: Config, message: string): Promise<void> => {
+export const commitBacklog = async ($: Shell, directory: string, config: Config, message: string): Promise<void> => {
   if (config.ignoreBacklog) {
     await ensureExcluded($, directory, config.tasksDir)
     return
@@ -173,7 +177,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
  * From `plan-review/` onward a plan exists, so `replan` is the right verb and
  * this refuses.
  */
-export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
@@ -209,7 +213,10 @@ export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
     return { ok: false, message: `Task "${id}" holds a claim marker — release it first (/agentic-workflow:engineering doctor fix).`, variant: "warning" }
   }
   const actor = await gitActor($, directory)
-  await appendNote($, queued, auditNote("Sent back to draft for re-shaping — approval withdrawn", new Date(), actor), log)
+  // Same shape as replan's: the reason is why the goal was wrong, and the task
+  // file is the only place the next authoring pass will look for it.
+  const why = reason ? ` — ${reason}` : ""
+  await appendNote($, queued, auditNote(`Sent back to draft for re-shaping — approval withdrawn${why}`, new Date(), actor), log)
   const newPath = await moveTask($, queued, "draft")
   await commitBacklog($, directory, config, `loop(${id}): sent back to draft for re-shaping`)
   return {
