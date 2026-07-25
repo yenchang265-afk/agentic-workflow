@@ -150,12 +150,21 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
 - `skills/` — `workflow-orchestration` (Claude-specific driving protocol), plus
   the shared workflow-skill library (symlinked, including
   `task-backlog-management`).
+- `commands/` — the slash commands. `engineering.md` is a **router**: it carries
+  the preamble, a one-line index of the verbs, and the standing prohibitions,
+  but no verb's procedure.
+- `verbs/engineering.md` — those procedures, one `<!-- aw:verb … -->` block per
+  verb. The block for the verb you invoked is injected into the turn; the rest
+  never reaches the model. A `UserPromptSubmit` hook cannot rewrite a prompt, so
+  splitting the file is the only way to stop `new <idea>` from paying for
+  `claim`, `doctor`, and every gate verb it will not run.
 - `hooks/` — a PreToolUse guard enforcing the read-only bash allowlist during
   VERIFY/REVIEW, worktree pinning, the stage deadline, and the Azure DevOps
   write backstop; UserPromptSubmit hooks (`gate-command`/`gate-parse`) that
-  handle the deterministic `approve` gate before the agent's turn; and
-  SessionStart hooks that reconcile interrupted loops and export config
-  `ado.pat` into the session env for the sitter's ADO stages.
+  handle the deterministic `approve` gate before the agent's turn and inject the
+  invoked verb's instructions (`verb-slice`); and SessionStart hooks that
+  reconcile interrupted loops and export config `ado.pat` into the session env
+  for the sitter's ADO stages.
 - `mcp-server/` — the `agentic-workflow` MCP server (`mcp__agentic-workflow__workflow_*`
   tools), reusing the original pure state machine and porting its
   git/backlog/persistence IO.

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { overrideCommandPrompt, refusalPrompt } from "./command-prompt.ts"
+import { overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
 
 /**
  * opencode renders a `/agentic-workflow:*` command markdown whether or not the
@@ -41,6 +41,22 @@ test("a malformed or absent payload never throws (a refusal must not kill the tu
   assert.doesNotThrow(() => overrideCommandPrompt({ parts: [] }, "x"))
   assert.doesNotThrow(() => overrideCommandPrompt({ parts: [null, undefined] }, "x"))
   assert.doesNotThrow(() => overrideCommandPrompt({ parts: undefined }, "x"))
+})
+
+test("the rendered body is read back whole, so a split template can still be sliced", () => {
+  const output = { parts: [textPart("<!-- aw:shared -->\nrules\n"), textPart("<!-- /aw:shared -->")] }
+  // Joined bare: the parts are one template opencode split, not separate
+  // messages, so anything inserted between them would corrupt a marker line.
+  assert.equal(readCommandPrompt(output), "<!-- aw:shared -->\nrules\n<!-- /aw:shared -->")
+})
+
+test("reading a malformed, absent, or textless payload yields undefined rather than throwing", () => {
+  for (const payload of [undefined, {}, { parts: [] }, { parts: [null, undefined] }, { parts: undefined }]) {
+    assert.doesNotThrow(() => readCommandPrompt(payload))
+    assert.equal(readCommandPrompt(payload), undefined)
+  }
+  const fileOnly = { parts: [{ id: "p", sessionID: "s", messageID: "m", type: "file", filename: "a.ts" }] }
+  assert.equal(readCommandPrompt(fileOnly as never), undefined, "a file-only payload has no body to slice")
 })
 
 test("the refusal prompt forbids the improvisation it exists to stop", () => {

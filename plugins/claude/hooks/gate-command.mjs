@@ -7,8 +7,13 @@
  *
  * On a gate command it shells to `node mcp-server/dist/server.js gate <verb> <id>`
  * (the same core move logic the MCP tools call), then BLOCKS the turn so the model
- * never runs (no double-move). Anything else — including `new`, which needs the
- * model's interview — passes straight through untouched.
+ * never runs (no double-move).
+ *
+ * Anything else — including `new`, which needs the model's interview — runs, and
+ * gets the invoked verb's procedure injected as context (verb-slice.mjs). The
+ * command body is only a router on this host, because a UserPromptSubmit hook
+ * cannot rewrite the prompt it sees. Prompts that are not the engineering
+ * command pass straight through untouched: this hook's matcher is `""`.
  *
  * `retask` is the hybrid: its move IS deterministic, but the reshape after it is
  * an interview. It dispatches like a gate verb and then, on success, hands the
@@ -28,8 +33,9 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { gateArgsFor } from "./gate-parse.mjs"
+import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
+import { verbContext } from "./verb-slice.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -73,13 +79,23 @@ const main = async () => {
   const cwd = input.cwd || process.cwd()
   if (typeof prompt !== "string" || !prompt) return passThrough()
 
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+
+  // The engineering command body is a router; the invoked verb's procedure lives
+  // in verbs/engineering.md and is injected here (see verb-slice.mjs for why the
+  // model cannot just read it). Non-engineering prompts get nothing — this hook
+  // has matcher "" and sees every prompt in the session.
+  const injectVerb = () => {
+    const context = verbContext(pluginRoot, verbFor(prompt))
+    return context ? augment(context) : passThrough()
+  }
+
   const dispatch = gateArgsFor(prompt)
-  if (!dispatch) return passThrough() // not a gate command (new/anything else) — let the model handle it
-  if (dispatch.passThrough) return passThrough() // malformed — let the model report the usage error
+  if (!dispatch) return injectVerb() // not a gate command (new/plan/claim/status/…) — the model does the work
+  if (dispatch.passThrough) return injectVerb() // malformed gate verb — the model reports usage from its own block
   const args = dispatch.argv
   const label = args.slice(1).join(" ")
 
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
   const serverJs = path.join(pluginRoot, "mcp-server", "dist", "server.js")
 
   const distExists = fs.existsSync(serverJs)
@@ -95,7 +111,9 @@ const main = async () => {
     { distExists, spawnError: res.error, status: res.status, stdout: res.stdout },
     label,
   )
-  if (outcome.action === "pass") return passThrough()
+  // Fail-open: the CLI crashed without a verdict, so the model runs the verb via
+  // its MCP fallback — which is described in the verb's own block, not the router.
+  if (outcome.action === "pass") return injectVerb()
 
   const message = outcome.message || `Gate ${label} ${outcome.ok ? "done" : "failed — see the backlog"}.`
 
@@ -104,7 +122,10 @@ const main = async () => {
   // A refusal still blocks: there is nothing left for the model to do, and
   // letting it proceed is exactly how a second copy of a live task's id gets
   // authored into draft/.
-  if (dispatch.continueTurn && outcome.ok) return augment(message)
+  if (dispatch.continueTurn && outcome.ok) {
+    const context = verbContext(pluginRoot, verbFor(prompt))
+    return augment(context ? `${message}\n\n${context}` : message)
+  }
 
   // Either the move already happened deterministically (block with its
   // verdict so the model cannot double-move), or the plugin isn't built

@@ -40,6 +40,27 @@ const RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im")
 // the wrong task), so a bare `remove` passes through for the model to report.
 const REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im")
 
+// Any engineering verb, for the per-verb instruction injection (verb-slice.mjs)
+// rather than for a gate move. Shares CMD so the leading-slash requirement and
+// its rationale above are not re-derived: this hook has matcher "" and sees
+// EVERY prompt, so prose like "the engineering approve step" must not match.
+const ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i")
+
+/**
+ * The engineering verb a prompt invokes, or null when the prompt is not the
+ * engineering command at all.
+ *
+ * Mirrors the command body's own rule — the verb is the FIRST whitespace-
+ * delimited token and everything after it is that verb's payload, so
+ * `new add a status dashboard` is `new`, never `status`. A bare command is
+ * `status`, which is what it runs.
+ */
+export const verbFor = (prompt) => {
+  const match = String(prompt ?? "").match(ANY_VERB)
+  if (!match) return null
+  return (match[1] || "").trim().toLowerCase() || "status"
+}
+
 /**
  * Build the `gate` CLI argv from the prompt, or null when it is not a gate
  * command. The sentinel form requires an id (a bare one is malformed —

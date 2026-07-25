@@ -40,6 +40,26 @@ export const refusalPrompt = (reason: string, remedy: string): string =>
   ].join("\n")
 
 /**
+ * The rendered template as the model would receive it.
+ *
+ * The counterpart to `overrideCommandPrompt`: trimming the body to the invoked
+ * verb (see command-slice.ts) needs to READ what opencode rendered, and this
+ * payload is the plugin's only copy of it — it cannot reach its own
+ * `commands/` directory on disk. Text parts are joined bare because they are
+ * one template opencode happened to split, not separate messages; `undefined`
+ * means there was no text to work with.
+ */
+export const readCommandPrompt = (output: CommandPromptOutput | undefined): string | undefined => {
+  const parts = output?.parts
+  if (!Array.isArray(parts)) return undefined
+  const text = parts
+    .filter((p): p is { type?: string; text?: string } => !!p && p.type === "text" && typeof p.text === "string")
+    .map((p) => p.text!)
+    .join("")
+  return text.length > 0 ? text : undefined
+}
+
+/**
  * Replace the rendered command template with `text`.
  *
  * The first text part carries the message; any further text parts are blanked

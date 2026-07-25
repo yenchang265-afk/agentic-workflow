@@ -27,6 +27,7 @@ Dispatch:
 
 ## Authoring (you run the interview)
 
+<!-- aw:verb new -->
 - **`new <idea>`** — turn a rough idea into one or more **planless drafts** in
   `docs/tasks/draft/`. YOU (the current agent) run the interview — subagents
   cannot converse with the user:
@@ -64,6 +65,8 @@ Dispatch:
        un-approved draft is inert, so the loop never claims it. Close it by
        hand with the loop move tool (to `abandoned/` or `completed/`) once
        every child has shipped.
+<!-- /aw:verb new -->
+<!-- aw:verb retask -->
 - **`retask <id> [note]`** — reshape a planless task when the drafted goal or
   acceptance came out wrong: one still in `draft/`, or one already approved
   into `queued/` but not yet planned. YOU (the current agent) run the
@@ -85,9 +88,11 @@ Dispatch:
      **in place** — the id/filename never changes. Still no plan. The next step
      is unchanged: `/agentic-workflow:engineering approve <id>` (required again if
      the task came back from `queued/`).
+<!-- /aw:verb retask -->
 
 ## Human gates (deterministic — the plugin moves the file before your turn)
 
+<!-- aw:verb approve -->
 - **`approve [id]`** — THE gate verb, unified and folder-driven. With an
   explicit `<id>` it advances that task by the gate its folder implies:
   - a reviewed `draft/` → `queued/` (task gate, no plan needed — the loop
@@ -102,10 +107,14 @@ Dispatch:
   `draft/` task only when neither has anything waiting — loop gates outrank the
   authoring gate, and never-approved epic tracking drafts are skipped, so the
   loop never guesses.
+<!-- /aw:verb approve -->
+<!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning; the reason is recorded in the audit note and the next PLAN
   pass must address it.
+<!-- /aw:verb replan -->
+<!-- aw:verb remove -->
 - **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
   replan/retask this does **not** move the task: the file is deleted and the
   removal committed, so the task is gone for good (git history retains it if
@@ -114,7 +123,9 @@ Dispatch:
   refuses a task a live loop is driving or one holding a claim marker, and
   releases any worktree the task owned. **Destructive and cannot be undone
   from the working tree** — only run it when the user wants the task gone.
+<!-- /aw:verb remove -->
 
+<!-- aw:verb approve|replan -->
 **Verify before you report a gate — `approve` and `replan` ONLY.** Their move
 happens in the plugin's command hook *before* your turn, so by the time you
 run the file must ALREADY sit in its target folder — glob
@@ -129,17 +140,23 @@ This check applies to NOTHING but those two gate verbs. `claim`, `plan`,
 still sitting in its folder right after them is EXPECTED, not a plugin
 failure. For those verbs report the toast's outcome and stop; never prescribe
 a rebuild from an unmoved file on an execution verb.
+<!-- /aw:verb approve|replan -->
 
 ## Execution
 
+<!-- aw:verb plan -->
 - **`plan <id>`** — plan one approved task now: claims the `queued/` task and
   runs the PLAN stage (writes the `## Implementation Plan` onto the task
   file, parks it in `plan-review/` for your gate, exits). Building is not
   reachable from here — `claim`/`watch` drive builds.
+<!-- /aw:verb plan -->
+<!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next build-ready `in-progress/` task
   (lowest priority number first) and drive it once this turn settles. Planless
   `queued/` tasks are never auto-planned — plan them with `plan <id>`.
 - **`watch [trigger]`** — put **this** session into engineering worker mode.
+<!-- /aw:verb claim -->
+<!-- aw:verb watch -->
   Each tick polls the backlog for one build-ready `in-progress/` task to drive
   BUILD → VERIFY → REVIEW; planless `queued/` tasks are left for `plan <id>`
   (a tick that finds only those says so). Bare `watch` uses the kind's configured trigger
@@ -161,29 +178,41 @@ a rebuild from an unmoved file on an execution verb.
   process watching the same clone is refused — run it in its own
   clone/worktree, or unwatch the first. A dead watcher's lease is taken over
   automatically once its heartbeat goes stale.
+<!-- /aw:verb watch -->
+<!-- aw:verb unwatch -->
 - **`unwatch`** — take this session out of watch mode and stop its polling
   timer (a build already in progress still finishes). Pressing **ESC**
   mid-drive also unwatches *and* interrupts the running loop (see `recover`).
 - **`recover <id>`** — resume an in-progress task whose run stopped early — a
+<!-- /aw:verb unwatch -->
+<!-- aw:verb recover -->
   crash/restart, or a user **interrupt (ESC)** mid-drive: re-claims it and
   resumes from its state snapshot at the exact stage it reached (or, with no
   valid snapshot, re-enters at BUILD from the persisted plan). ESC is a pause
   — it halts after the in-flight stage settles and keeps the snapshot; `stop`
   ends the run and drops it. Check `git status`/`git diff` first.
+<!-- /aw:verb recover -->
+<!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — abort the loop and exit watch mode (timer
   included), in this session. Drops the run's snapshot — a deliberate end,
   nothing to recover (unlike an ESC pause).
+<!-- /aw:verb stop|abort -->
 
 ## Introspection
 
+<!-- aw:verb status -->
 - **`status`** — print the current loop (stage, iteration, watch state and
   cadence) plus a whole-backlog roll-up: counts per folder and the actionable
   flags (awaiting approval, claimable, claim-held, interrupted, awaiting
   review). Bare `/agentic-workflow:engineering` (no arguments) does the same.
+<!-- /aw:verb status -->
+<!-- aw:verb kinds -->
 - **`kinds`** — list the workflow kinds this repo ships (`packages/core/workflows/<kind>/`) and
   which are enabled. Toggle them via `workflows.<kind>.enabled` in
   `.agentic-workflow.json`; each enabled kind has its own
   `/agentic-workflow:<kind>` command.
+<!-- /aw:verb kinds -->
+<!-- aw:verb doctor -->
 - **`doctor [fix]`** — audit the backlog for structural damage (stray folders
   like `run/`, task files outside every status folder, duplicate ids, held
   claim markers). With `fix`, applies the unambiguous repairs: rescues strays
@@ -191,9 +220,11 @@ a rebuild from an unmoved file on an execution verb.
   markers. Duplicates are always left for you. Never repair the backlog by
   hand — the folder a task lives in IS its state, and the plugin blocks raw
   `mv`/`mkdir`/`rm`/writes against `docs/tasks/`.
+<!-- /aw:verb doctor -->
 
 ## The pipeline
 
+<!-- aw:verb plan|claim|watch|recover|replan -->
 A queued task enters at PLAN — it writes the plan onto the task file in the
 main tree (no branch, no worktree) and parks. An approved-plan task enters at
 BUILD with the plan persisted on the task file (`## Implementation Plan`).
@@ -214,6 +245,7 @@ worktree` instead of the shared checkout — the stage prompts carry a
 `Worktree:` line pinning all reads/edits/tests there. When `reviewLenses` is
 configured, REVIEW runs once per lens and the loop takes the worst verdict.
 
+<!-- /aw:verb plan|claim|watch|recover|replan -->
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
 `retask <id>` if it's off) → `approve <id>` queues it → the loop (plan,
 claim, or watch) plans it and parks the plan in `plan-review/` → human

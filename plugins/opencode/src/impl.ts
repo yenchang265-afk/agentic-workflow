@@ -5,7 +5,8 @@ import { DEFAULT_CONFIG, applyAdoPatEnv, loadConfig } from "./config.ts"
 import { enabledWorkflowKinds, ignoredUserConfigPaths, resolveUserConfigPath } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
-import { overrideCommandPrompt, refusalPrompt } from "./command-prompt.ts"
+import { overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
+import { sliceCommandPrompt } from "./command-slice.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWorkflow, hasWorkflow, planStageTaskId } from "@agentic-workflow/core/workflow/state"
@@ -266,6 +267,18 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // to run once, so later attempts were fast — the "works after a few
       // tries" symptom). Move first keeps the gate deterministic on attempt 1.
       const verb = input.arguments.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
+      // Trim the rendered body to the invoked verb BEFORE dispatching. The
+      // template describes every verb, but the ones whose template survives
+      // (new/retask/approve/replan/remove — handleCommand returns undefined so
+      // the model does the work) are exactly the ones that pay for the other
+      // ~190 lines, and those lines describe deterministic plugin work in the
+      // imperative. Slicing first means the trim holds even if reconcile or
+      // handleCommand throws; the `if (outcome)` override below still wins for
+      // the report-and-stop verbs, which is the right precedence. Markers
+      // missing or verb unknown -> keep the full body, never a partial one.
+      const rendered = readCommandPrompt(output)
+      const sliced = rendered === undefined ? undefined : sliceCommandPrompt(rendered, verb)
+      if (sliced) overrideCommandPrompt(output, sliced)
       const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
       if (!gateFirst) await reconcileOnce()
       const outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
