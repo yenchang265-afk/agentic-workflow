@@ -40,6 +40,11 @@ const MetricsSampleSchema = z.object({
   tokens: StageTokensSchema.optional(),
   cost: z.number().optional(),
   model: z.string().optional(),
+  // Optional, and it matters: `parseRunMetrics` fails closed and both writers
+  // treat a null parse as "start fresh", so a required field here would silently
+  // discard the history in every sidecar written before it existed.
+  promptChars: z.number().int().min(0).optional(),
+  promptElided: z.number().int().min(0).optional(),
   // Readonly so the driver's `StageSample` (readonly arrays) assigns to `RunEntry`.
   tools: z.array(StageToolUsageSchema).readonly().optional(),
   files: z.array(z.string()).readonly().optional(),

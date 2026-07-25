@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { barWidth, bucketLabel, pct } from "./format.js"
+import { barWidth, bucketLabel, formatChars, pct } from "./format.js"
 
 test("pct renders an unmeasurable rate differently from a genuine zero", () => {
   // The distinction the whole `number | null` convention exists to preserve:
@@ -29,4 +29,14 @@ test("barWidth keeps a single-run bucket visible beside a large one", () => {
   assert.equal(barWidth(1, 1000, 300), 1)
   assert.equal(barWidth(0, 100, 300), 0)
   assert.equal(barWidth(5, 0, 300), 0)
+})
+
+test("formatChars abbreviates at a thousand and keeps magnitudes distinguishable", () => {
+  assert.equal(formatChars(0), "0")
+  assert.equal(formatChars(999), "999")
+  assert.equal(formatChars(1_000), "1.0k")
+  assert.equal(formatChars(8_200), "8.2k")
+  assert.equal(formatChars(24_000), "24.0k")
+  // A mean is fractional; it must not render a decimal tail below 1k.
+  assert.equal(formatChars(666.6), "667")
 })

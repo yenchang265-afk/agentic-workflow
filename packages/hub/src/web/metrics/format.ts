@@ -27,3 +27,13 @@ export const bucketLabel = (bucket: BurnBucket): string =>
  */
 export const barWidth = (count: number, max: number, width: number): number =>
   max <= 0 || count <= 0 ? 0 : Math.max(1, (count / max) * width)
+
+/**
+ * A character count, abbreviated. Prompt sizes run to tens of thousands, where
+ * the exact digit is noise and the magnitude is the finding. Rounded to one
+ * decimal at `k` so 8.2k and 24.0k stay distinguishable at a glance.
+ */
+export const formatChars = (chars: number): string => {
+  const n = Math.round(chars)
+  return n < 1_000 ? String(n) : `${(n / 1_000).toFixed(1)}k`
+}

@@ -45,6 +45,12 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 | VERIFY | 執行測試；失敗則帶著失敗資訊重新建置 | 否 |
 | REVIEW | 檢查分支 diff；失敗則帶著回饋重新建置 | 否 |
 
+重新建置時會先收到結構化的失敗資訊——裁定理由、未通過的驗收條件、帶
+`file:line` 的發現——再加上一份有界的紀錄，說明先前幾次疊代已經試過什麼；
+`workflows.<kind>.stageContext` 可以限制階段提示還能帶上多少內容，當你把某個
+階段指向小模型時這一點很重要（見
+[docs/configuration.md](docs/configuration.md)）。
+
 執行是在 `feature/<id>` git 分支上隔離進行的，裁定（verdict）只透過外掛工具
 取信，每一次狀態轉換都會被稽核，迴圈本身從不推送或開啟 PR——由你審查 diff
 並執行 `/agentic-workflow:engineering approve`，它會推送分支並開啟（或重複使用）一個

@@ -2,7 +2,7 @@ import type { LoadedManifest, StageDef } from "../manifest/schema.js"
 import { stageDef } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
-import type { Action, Config, WorkflowState } from "./state.js"
+import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { clampWithStats } from "./budget.js"
 import { contextFor } from "../config.js"
 import {
@@ -92,6 +92,25 @@ const budgetedArtifacts = (
   return { artifacts, elided }
 }
 
+/** Longest a ledger reason may be; a verdict reason can be a paragraph. */
+const ATTEMPT_REASON_MAX = 200
+
+/** How many attempts the ledger keeps — covers any realistic `maxIterations`. */
+const ATTEMPTS_KEPT = 5
+
+/** First line of `reason`, truncated — the ledger must not itself blow the budget. Pure. */
+const attemptReason = (reason: string | undefined): string | undefined => {
+  const line = reason?.split("\n")[0]?.trim()
+  return line ? line.slice(0, ATTEMPT_REASON_MAX) : undefined
+}
+
+/** Append one counted iteration's outcome, keeping the last `ATTEMPTS_KEPT`. Pure. */
+const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, record: VerdictRecord | null): WorkflowState => {
+  const reason = attemptReason(record?.reason)
+  const entry: AttemptRecord = { stage, iteration: state.iteration, verdict, ...(reason ? { reason } : {}) }
+  return { ...state, attempts: [...(state.attempts ?? []), entry].slice(-ATTEMPTS_KEPT) }
+}
+
 /**
  * The template context a stage prompt renders against. Everything derivable
  * from the state is precomputed here (diff command, worktree pinning
@@ -119,6 +138,15 @@ export const promptContext = (
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: budgetedArtifacts(state, budgets).artifacts,
+    // Pre-rendered: TemplateValue has no arrays. Undefined when empty so
+    // `renderPrompt` drops the section and a first-iteration prompt is unchanged.
+    attempts: state.attempts?.length
+      ? {
+          lines: state.attempts
+            .map((a) => `- iteration ${a.iteration + 1} (${a.stage} ${a.verdict})${a.reason ? `: ${a.reason}` : ""}`)
+            .join("\n"),
+        }
+      : undefined,
     git: state.git
       ? { base: state.git.base, branch: state.git.branch, worktree: wt ?? "", diffCmd }
       : undefined,
@@ -263,7 +291,10 @@ export const advance = (
           )
           return { state: s, action: { kind: "stop", message } }
         }
-        const next = { ...withoutArtifacts(s, effect.dropArtifacts), iteration: s.iteration + 1 }
+        // Recorded here, on the counted re-fire, not on every check completion:
+        // a verdict-channel retry must not inflate the ledger.
+        const logged = withAttempt(s, s.stage, verdict ?? "FAIL", record)
+        const next = { ...withoutArtifacts(logged, effect.dropArtifacts), iteration: s.iteration + 1 }
         return fireAt(loaded, next, effect.stage, config)
       }
       return fireAt(loaded, withoutArtifacts(s, effect.dropArtifacts), effect.stage, config)

@@ -771,6 +771,7 @@ export const runStageWithLenses = async (
   stage: Stage,
   baseArgs: string,
   iteration: number,
+  promptElided?: number,
 ): Promise<{ output: string; verdict: Verdict | null; record: VerdictRecord | null }> => {
   const isCheck = stageDef(loaded.manifest, stage).kind === "check"
   const model = modelFor(config, loaded.manifest.kind, stageDef(loaded.manifest, stage))
@@ -831,6 +832,11 @@ export const runStageWithLenses = async (
         ...(isCheck ? { verdict: passRecord?.verdict ?? "none" } : {}),
         ...(lens ? { lens } : {}),
         startedAt: new Date(t0).toISOString(),
+        // The length of what was actually FIRED, not of what core composed: the
+        // lens instruction and the verdict-retry nag above are appended after
+        // composition, and the honest number is what the model received.
+        promptChars: passArgs.length,
+        ...(promptElided ? { promptElided } : {}),
         ...(usage ? { tokens: usage.tokens, cost: usage.cost, model: usage.model } : {}),
         ...(activity ? { tools: activity.tools, ...(activity.files ? { files: activity.files } : {}) } : {}),
       })
@@ -1096,6 +1102,7 @@ const driveChain = async (
       stage,
       args,
       iteration,
+      step.action.kind === "fire" ? step.action.promptElided : undefined,
     )
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD finished (iteration ${iteration + 1})`, new Date(), actor), deps.log)
     // Halt the chain when either a `stop` cleared this session's loop

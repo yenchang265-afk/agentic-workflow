@@ -26,6 +26,7 @@
  */
 
 import type { TrackerSystem } from "../task/schema.js"
+import type { Verdict } from "./verdict.js"
 
 /** A stage name. Workflow kinds define their own stage sets in their manifests;
  *  the engineering loop's are `plan | build | verify | review`. */
@@ -55,6 +56,20 @@ export interface GitRef {
   readonly worktree?: string
 }
 
+/**
+ * One counted iteration's outcome, kept so a re-build can see what earlier
+ * attempts already tried. Short by construction — the full text of every pass is
+ * in the run log.
+ */
+export interface AttemptRecord {
+  readonly stage: Stage
+  /** 0-based iteration the attempt ran in (rendered 1-based). */
+  readonly iteration: number
+  readonly verdict: Verdict
+  /** The verdict's one-line reason, flattened and truncated by `advance`. */
+  readonly reason?: string
+}
+
 export interface WorkflowState {
   /** The workflow kind driving this state (a manifest's `kind`); absent ⇒ `engineering`. */
   readonly kind?: string
@@ -78,6 +93,17 @@ export interface WorkflowState {
    * the whole artifact is subject to the budget.
    */
   readonly feedback?: Readonly<Record<string, string>>
+  /**
+   * Bounded ledger of what earlier counted iterations tried and how they failed.
+   *
+   * Without it a re-build sees the plan and the LATEST failure but nothing about
+   * iteration N−1, so a weak model can oscillate between two wrong fixes until
+   * the cap trips — and a capped run reports only that N iterations failed, not
+   * that all N tried the same thing. This is the one thing plan 09 ADDS to the
+   * prompt: a handful of lines is a far better use of the window than the
+   * transcript the budgets take out.
+   */
+  readonly attempts?: readonly AttemptRecord[]
   /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /**

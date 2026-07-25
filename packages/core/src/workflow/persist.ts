@@ -58,6 +58,21 @@ const WorkflowStateSchema = z.object({
    * resumes with the whole artifact subject to the budget: lossy, never missing.
    */
   feedback: z.record(z.string(), z.string()).optional(),
+  /**
+   * Bounded iteration ledger. Optional for the same fail-closed reason as
+   * `feedback`: a resumed run without it simply has no memory of earlier
+   * attempts, which is what every pre-upgrade snapshot has.
+   */
+  attempts: z
+    .array(
+      z.object({
+        stage: z.string().min(1),
+        iteration: z.number().int().min(0),
+        verdict: z.enum(["PASS", "FAIL", "ERROR"]),
+        reason: z.string().optional(),
+      }),
+    )
+    .optional(),
   task: TaskRefSchema.optional(),
   git: GitRefSchema.optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */

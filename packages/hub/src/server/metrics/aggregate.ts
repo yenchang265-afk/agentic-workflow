@@ -8,6 +8,7 @@ import type {
   StageDuration,
 } from "../../shared/api.js"
 import { cacheHit, countInProgress } from "./cache.js"
+import { promptSize } from "./prompt.js"
 import { isCheckRow, stageVerdicts, verdictFlips } from "./verdicts.js"
 
 /**
@@ -175,6 +176,7 @@ export const aggregateMetrics = (
     flips: verdictFlips(passes),
     durations: stageDurations(passes),
     cache: cacheHit(inputs),
+    prompt: promptSize(inputs),
     skippedRuns,
   }
 }
