@@ -124,6 +124,43 @@ test("extractPlan returns the text after the heading, trimmed", () => {
   assert.equal(extractPlan(task("a", 0, body)), "1. Do the thing.\n2. Test it.")
 })
 
+test("extractPlan stops at the audit tail — a plan does not accrete CLAIMED/BUILD/VERDICT notes", () => {
+  // `appendNote` writes `\n> %s\n` at EOF and `appendPlan` puts the plan there too,
+  // so every lifecycle note lands after the heading and used to read as plan text.
+  const body =
+    `Some description.\n\n${PLAN_HEADING}\n\n1. Do the thing.\n2. Test it.\n` +
+    `\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z by dev]\n` +
+    `\n> BUILD started (iteration 1) [2026-01-01T00:05:00.000Z by dev]\n` +
+    `\n> VERIFY verdict: FAIL — two tests red [2026-01-01T00:09:00.000Z by dev]\n`
+  assert.equal(extractPlan(task("a", 0, body)), "1. Do the thing.\n2. Test it.")
+})
+
+test("extractPlan returns the NEWEST plan when a task was replanned", () => {
+  // `rejectPlan` only appends a note; `appendPlan` appends a SECOND heading at EOF.
+  const body =
+    `Some description.\n\n${PLAN_HEADING}\n\nStale approach.\n` +
+    `\n> Plan rejected — wrong layer [2026-01-01T00:00:00.000Z by dev]\n` +
+    `\n${PLAN_HEADING}\n\nCorrect approach.\n`
+  assert.equal(extractPlan(task("a", 0, body)), "Correct approach.")
+})
+
+test("extractPlan keeps a legitimate blockquote inside a plan", () => {
+  // No `[…]` stamp ⇒ not an audit note, so a quoted requirement stays in the plan.
+  const body = `${PLAN_HEADING}\n\n1. Honor the ticket:\n> the export must stay idempotent\n2. Test it.`
+  assert.equal(extractPlan(task("a", 0, body)), "1. Honor the ticket:\n> the export must stay idempotent\n2. Test it.")
+})
+
+test("extractPlan on an actorless audit note still stops", () => {
+  // Some gate notes are written with no actor ⇒ `[<ISO>]`, no ` by `.
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.\n\n> Plan approved [2026-01-01T00:00:00.000Z]\n`
+  assert.equal(extractPlan(task("a", 0, body)), "1. Do the thing.")
+})
+
+test("extractPlan ignores a heading quoted mid-line — the marker must own its line", () => {
+  const body = `A task about the loop that mentions ${PLAN_HEADING} inline.\n\n${PLAN_HEADING}\n\nReal plan.`
+  assert.equal(extractPlan(task("a", 0, body)), "Real plan.")
+})
+
 test("wasInterrupted is false when there is no build marker", () => {
   assert.equal(wasInterrupted(task("a", 0, "Some description.")), false)
 })

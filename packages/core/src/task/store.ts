@@ -110,11 +110,46 @@ export const isClaimable = (task: Task): boolean =>
 export const isReleasableClaim = (task: Task): boolean =>
   hasPlan(task) && !hasMarkerLine(lifecycleWindow(task.body), "> BUILD started")
 
-/** The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure. */
+/**
+ * An audit-note line: `> …` closed by a bracketed stamp, the shape `auditNote`
+ * gives every note a host appends (`[<ISO>]` or `[<ISO> by <actor>]`).
+ *
+ * Deliberately tighter than "any `> …` line": a plan may legitimately quote a
+ * requirement as a blockquote, and treating that as the audit tail would silently
+ * truncate the plan. The hub's `extractAuditNotes` is permissive on purpose (it
+ * lists blockquotes for a timeline, where a false positive is cosmetic); this one
+ * is a boundary, where a false positive loses plan text. The two must not be
+ * merged. Pure.
+ */
+const AUDIT_NOTE_LINE_RE = /^> .*\[[^\]\n]+\]\s*$/
+
+/** Offset of the first audit-note line at or after `from`, else `body.length`. Pure. */
+const auditTailIndex = (body: string, from: number): number => {
+  for (let idx = from; idx < body.length; ) {
+    const end = body.indexOf("\n", idx)
+    const stop = end === -1 ? body.length : end
+    if (AUDIT_NOTE_LINE_RE.test(body.slice(idx, stop))) return idx
+    if (end === -1) break
+    idx = end + 1
+  }
+  return body.length
+}
+
+/**
+ * The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure.
+ *
+ * Reads the LAST heading, not the first: `rejectPlan` only appends a note, so a
+ * replanned task carries every superseded plan and the first heading is the stale
+ * one. Stops at the audit tail rather than running to end-of-body: `appendNote`
+ * and `appendPlan` both append at EOF, so a slice to the end accretes every
+ * CLAIMED/BUILD/verdict note into `artifacts.plan` — monotonically, across every
+ * iteration and every prior run.
+ */
 export const extractPlan = (task: Task): string | undefined => {
-  const idx = task.body.indexOf(PLAN_HEADING)
+  const idx = lastMarkerIndex(task.body, PLAN_HEADING)
   if (idx === -1) return undefined
-  return task.body.slice(idx + PLAN_HEADING.length).trim()
+  const from = idx + PLAN_HEADING.length
+  return task.body.slice(from, auditTailIndex(task.body, from)).trim()
 }
 
 /** A task body split into the prose a human may edit and the audit trail that must survive. */

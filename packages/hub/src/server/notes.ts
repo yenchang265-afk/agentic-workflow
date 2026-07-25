@@ -5,6 +5,11 @@ import type { AuditNote } from "../shared/api.js"
  * `> <event> [<ISO timestamp> by <actor>]` lines (task/store.ts auditNote);
  * plain `> <event>` blockquotes (no stamp) are kept too with empty at/by so
  * the timeline stays complete. Pure.
+ *
+ * Deliberately permissive, unlike core's `AUDIT_NOTE_LINE_RE` (task/store.ts),
+ * which requires the stamp because it marks where the plan text ends — there a
+ * stray blockquote would truncate the plan, here it only adds a timeline row.
+ * Keep the two separate.
  */
 
 const STAMPED = /^>\s+(.*?)\s+\[([^\]]+?)\s+by\s+([^\]]+)\]\s*$/
