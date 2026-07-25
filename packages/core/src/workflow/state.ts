@@ -228,6 +228,8 @@ export interface Config {
   readonly ado?: AdoConfig
   /** Per-workflow-kind sections; engineering is on unless explicitly disabled, other kinds are opt-in. */
   readonly workflows: Readonly<Record<string, WorkflowKindConfig>>
+  /** Agent name → model, for spawns that are not stage runs (draft authoring, ad-hoc plan). See the schema note in config.ts. */
+  readonly agentModels?: Readonly<Record<string, string>>
   /** Project-management setup; drives task-authoring defaults and the status pairing view. */
   readonly projectManagement?: ProjectManagementConfig
 }

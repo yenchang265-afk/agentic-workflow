@@ -46,6 +46,16 @@ const REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im")
 // EVERY prompt, so prose like "the engineering approve step" must not match.
 const ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i")
 
+// The ad-hoc plan command — not an engineering verb and not a gate move, but it
+// spawns `workflow-plan` outside any loop, so no MCP response ever carries a
+// model for it and `agentModels` is its only source. `(?![-\w])` keeps the
+// sibling `/plan-task` command out; the leading slash carries the same
+// "must not match prose" rationale as CMD above.
+const ADHOC_PLAN = /(?:^|\s)\/(?:agentic-workflow:)?plan(?![-\w])/i
+
+/** Whether a prompt invokes the ad-hoc `/agentic-workflow:plan` command. */
+export const isAdhocPlan = (prompt) => ADHOC_PLAN.test(String(prompt ?? ""))
+
 /**
  * The engineering verb a prompt invokes, or null when the prompt is not the
  * engineering command at all.

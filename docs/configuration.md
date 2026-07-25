@@ -256,6 +256,36 @@ it. The warnings are advisory: they annotate a save, never block it. See
   (the manifest isn't loaded yet), so it is accepted, ignored, and the stage
   runs the host default. Both hosts warn about such keys when a loop starts.
 
+- **`agentModels`** — agent name → the model that agent runs with, for the
+  spawns that are **not** stage runs and so have no `stageModels` entry to read:
+
+  ```json
+  {
+    "agentModels": {
+      "workflow-plan-author": "anthropic/claude-haiku-4-5",
+      "workflow-plan": "anthropic/claude-haiku-4-5"
+    }
+  }
+  ```
+
+  Two spawns qualify: the draft authoring `workflow-plan-author` does for
+  `/agentic-workflow:engineering new` and `retask` (it writes task files before
+  any loop exists), and the ad-hoc `/agentic-workflow:plan` command's
+  `workflow-plan`. Neither has a manifest stage behind it, so no fire payload
+  carries a model for them.
+
+  Top-level rather than per-kind: agent names are unique across kinds, and
+  `workflow-plan` belongs to no kind at all. The value takes the same
+  host-specific spelling as `stageModels` (a `provider/` prefix is stripped on
+  Claude Code), and an unset agent runs the host default.
+
+  Deliberately **separate from `stageModels`**, not folded into
+  `stageModels.plan`: drafting and the PLAN stage both run
+  `workflow-plan-author`, so one key for both would mean pointing drafting at a
+  cheap model silently retargets planning too, and vice versa. Setting
+  `agentModels` never affects a stage; setting `stageModels` never affects
+  drafting.
+
 ## Admin hub (`hub` — user scope only)
 
 The hub reads its settings from the `hub` section of the **user-scope**

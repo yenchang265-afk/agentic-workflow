@@ -13,6 +13,7 @@ import {
   ignoredUserConfigPaths,
   loadConfig,
   mergeConfigLayers,
+  agentModel,
   modelFor,
   unknownStageModelKeys,
   unreviewedAxes,
@@ -174,6 +175,31 @@ test("modelFor: config stageModels wins over the manifest stage's model, which w
   // A stageModels entry for a different stage leaves this one alone.
   const other = parseConfig({ workflows: { engineering: { stageModels: { review: "anthropic/claude-opus-4-5" } } } })
   assert.equal(modelFor(other, "engineering", stageWith()), undefined)
+})
+
+test("agentModel resolves a non-stage spawn's model, and is independent of stageModels", () => {
+  const c = parseConfig({ agentModels: { "workflow-plan-author": "haiku" } })
+  assert.equal(agentModel(c, "workflow-plan-author"), "haiku")
+  assert.equal(agentModel(c, "workflow-plan"), undefined)
+  assert.equal(agentModel(DEFAULT_CONFIG, "workflow-plan-author"), undefined)
+  // The two knobs must not bleed: drafting is not the PLAN stage, and pointing
+  // one at a cheap model must never silently retarget the other.
+  assert.equal(modelFor(c, "engineering", stageWith()), undefined)
+  const staged = parseConfig({ workflows: { engineering: { stageModels: { plan: "opus" } } } })
+  assert.equal(agentModel(staged, "workflow-plan-author"), undefined)
+})
+
+test("agentModels validates fail-fast, like stageModels", () => {
+  assert.throws(() => parseConfig({ agentModels: { "workflow-plan-author": 42 } }), /agentModels/)
+  assert.throws(() => parseConfig({ agentModels: { "workflow-plan-author": "" } }), /agentModels/)
+})
+
+test("mergeConfigLayers: agentModels merge per agent; repo wins per key", () => {
+  const user = { agentModels: { "workflow-plan-author": "a", "workflow-plan": "b" } }
+  const repo = { agentModels: { "workflow-plan-author": "c" } }
+  assert.deepEqual(mergeConfigLayers(user, repo), {
+    agentModels: { "workflow-plan-author": "c", "workflow-plan": "b" },
+  })
 })
 
 test("workflows.<kind>.stageModels validates fail-fast, unlike positional knobs", () => {

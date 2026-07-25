@@ -88,7 +88,8 @@ config `workflows.<kind>.stageModels`). When present, pass it as the Task tool's
    stage `prompt` comes back either way.
 2. **Plan (queued tasks only).** `workflow_stage({stage:"plan"})`, then spawn the
    stage's subagent — the response's `agent` field (**`workflow-plan-author`** for
-   engineering) — via the Task tool with the prompt. It runs in `task`
+   engineering) — via the Task tool with the prompt and the response's `model`
+   when present. It runs in `task`
    mode, reads the code, and writes the `## Implementation Plan` onto the
    task file named by the prompt's `Task file:` line. When it returns, call
    `workflow_advance({stageOutput: <plan summary>})` — the server validates the
@@ -132,7 +133,8 @@ config `workflows.<kind>.stageModels`). When present, pass it as the Task tool's
    when present, then `workflow_advance`. PASS → `{done}`. FAIL →
    `{fire, build}` if budget remains, else `{stop}`.
    - **Multi-lens review** (`reviewLenses` configured): spawn `workflow-review`
-     once per lens, each focused on that lens; each pass calls `workflow_verdict`.
+     once per lens (same `agent`/`model` fields as a single pass), each focused
+     on that lens; each pass calls `workflow_verdict`.
      The MCP server combines them worst-wins. Then a single `workflow_advance`.
 6. **Terminate.** On `{done}` the server has moved the task to `in-review/`,
    kept the worktree (it is released only when the task ships, so a `replan`
@@ -165,7 +167,7 @@ pr-sitter: `triage`/`verify`) and rejects anything else.
 **Missing verdict = broken channel, retried once.** When a check stage ends
 with no `workflow_verdict` call, `workflow_advance` does NOT burn an iteration: it
 re-fires the same check once (`note` says "check retry") — call `workflow_stage`
-and spawn the stage subagent again with the returned prompt. If the retry also
+and spawn the stage subagent again with the returned prompt and `model`. If the retry also
 records nothing, the loop stops with a retryable ERROR naming the wiring
 problem; report it and suggest `workflow_recover` after the fix. A SubagentStop
 hook also nags the check subagent once, in-session, when it tries to finish

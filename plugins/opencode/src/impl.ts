@@ -2,7 +2,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, applyAdoPatEnv, loadConfig } from "./config.ts"
-import { enabledWorkflowKinds, ignoredUserConfigPaths, resolveUserConfigPath } from "@agentic-workflow/core/config"
+import { agentModel, enabledWorkflowKinds, ignoredUserConfigPaths, resolveUserConfigPath } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
 import { overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
@@ -18,6 +18,34 @@ import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueu
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
+
+/**
+ * The agent a verb spawns OUTSIDE the loop. `new` step 4 and `retask` step 4
+ * invoke `workflow-plan-author` to write draft files before any loop exists, so
+ * there is no StageDef for `modelFor` to resolve and no stage fire to carry a
+ * model — `agentModels` is the only source. `plan` is deliberately absent: its
+ * spawn IS the PLAN stage, already governed by `stageModels.plan`.
+ */
+const VERB_DRAFT_AGENT: Record<string, string> = { new: "workflow-plan-author", retask: "workflow-plan-author" }
+
+/**
+ * The line appended to a sliced command body naming the drafting model, or null
+ * when nothing is configured (so a default install pays no tokens for the knob).
+ *
+ * Unlike a stage, this host cannot pass the model as a real parameter here: the
+ * draft author is invoked by the model reading the command body, not by
+ * `session.command`. Prose is the only channel — the same one the Claude host
+ * uses throughout. Kept pure for impl.test.ts.
+ */
+export const draftModelNote = (config: Config, kind: string, verb: string): string | null => {
+  if (kind !== "engineering") return null
+  const agent = VERB_DRAFT_AGENT[verb]
+  const model = agent ? agentModel(config, agent) : undefined
+  return model
+    ? `Invoke the \`${agent}\` subagent with the model \`${model}\` (config \`agentModels\`). ` +
+        "This covers the drafting invocation only — a PLAN stage runs on `stageModels.plan`."
+    : null
+}
 
 /**
  * agentic-workflow
@@ -278,7 +306,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // missing or verb unknown -> keep the full body, never a partial one.
       const rendered = readCommandPrompt(output)
       const sliced = rendered === undefined ? undefined : sliceCommandPrompt(rendered, verb)
-      if (sliced) overrideCommandPrompt(output, sliced)
+      // The drafting invocation has no stage behind it, so `agentModels` reaches it
+      // only by riding the body the model reads. Appended after the slice so it
+      // survives whichever half was kept, and emitted even when slicing was a
+      // no-op (markers missing) — otherwise a broken template silently drops it.
+      const draftNote = draftModelNote(config, kind, verb)
+      const base = sliced ?? rendered
+      if (base !== undefined && (sliced || draftNote)) {
+        overrideCommandPrompt(output, draftNote ? `${base}\n\n${draftNote}` : base)
+      }
       const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
       if (!gateFirst) await reconcileOnce()
       const outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
