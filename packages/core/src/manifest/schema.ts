@@ -75,6 +75,17 @@ export const StageDefSchema = z.object({
    * `workflow_verdict` serves every check stage of every kind.
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
+  /**
+   * Per-artifact character ceilings for this stage's composed prompt, keyed by the
+   * artifact's producing stage (`plan`, `build`, `verify`, `review`). Unset ⇒
+   * unbounded, which is byte-identical to having no budgets at all.
+   *
+   * A budget is a property of the CONSUMING stage, not the producing one: BUILD can
+   * afford a large plan while REVIEW wants the build transcript trimmed hard, and the
+   * same artifact is read by several stages with different needs. Config
+   * `workflows.<kind>.stageContext.<name>` replaces this map wholesale.
+   */
+  context: z.record(z.string(), z.number().int().positive()).optional(),
   /** Bash-command globs this stage may run (enforced by the Claude Code stage guard). */
   bashAllowlist: z.array(z.string().min(1)).default([]),
   /** Extra bash globs merged into `bashAllowlist` for the resolved code platform (config `codePlatform`). */
@@ -262,6 +273,14 @@ export const WorkflowManifestSchema = z
       }
       if (stage.kind === "check" && (!t.onPass || !t.onFail || !t.onError)) {
         ctx.addIssue({ code: "custom", message: `check stage "${stage.name}" needs onPass, onFail, and onError` })
+      }
+      for (const artifact of Object.keys(stage.context ?? {})) {
+        // Checkable here, unlike the config layer's `stageContext` (the manifest
+        // isn't loaded when config parses). A typo would otherwise resolve to
+        // "unbounded" and read as "budgets don't work".
+        if (!names.has(artifact)) {
+          ctx.addIssue({ code: "custom", message: `stage "${stage.name}" budgets unknown artifact "${artifact}"` })
+        }
       }
       if (stage.kind === "work" && stage.requiredAxes?.length) {
         // Only a verdict can carry axes, and only check stages record one.

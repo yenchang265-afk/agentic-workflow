@@ -67,6 +67,17 @@ export interface WorkflowState {
   /** Captured output text per completed stage, used to thread context forward.
    *  Also carries the approved plan under the `plan` key. */
   readonly artifacts: Readonly<Record<string, string>>
+  /**
+   * Per-stage structured verdict block (`verdictFeedbackBlock`) that `advance`
+   * fused onto the head of that stage's artifact — the seam between the bounded
+   * machine-readable channel and the unbounded prose.
+   *
+   * Recorded so a stage context budget can clamp the prose while leaving the
+   * block, which carries the failed criteria and `file:line` findings, intact. A
+   * missing entry (an older snapshot, a host that stopped prepending) only means
+   * the whole artifact is subject to the budget.
+   */
+  readonly feedback?: Readonly<Record<string, string>>
   /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /**
@@ -101,7 +112,13 @@ export interface WorkflowState {
 
 /** What the driver should do next. All state changes are returned, not applied. */
 export type Action =
-  | { readonly kind: "fire"; readonly stage: Stage; readonly arguments: string }
+  | {
+      readonly kind: "fire"
+      readonly stage: Stage
+      readonly arguments: string
+      /** Characters the stage's context budget elided from `arguments`; absent ⇒ none. */
+      readonly promptElided?: number
+    }
   | { readonly kind: "done"; readonly message: string; readonly toStatus?: string }
   /** A gate stage finished: the driver validates its output, moves the item to `toStatus`, and the loop exits. */
   | { readonly kind: "park"; readonly message: string; readonly toStatus?: string }
@@ -204,6 +221,8 @@ export interface WorkflowKindConfig {
   readonly trigger?: WorkflowTrigger
   /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */
   readonly stageModels?: Readonly<Record<string, string>>
+  /** Stage name → per-artifact character ceilings for that stage's composed prompt; replaces the manifest stage's `context`. */
+  readonly stageContext?: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

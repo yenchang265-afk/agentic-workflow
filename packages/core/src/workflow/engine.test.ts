@@ -4,10 +4,10 @@ import { test } from "node:test"
 import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
 import { effectiveAllowlist, stageDef } from "../manifest/schema.js"
-import { advance, composePrompt, composeStagePrompt, firstStep, promptContext } from "./engine.js"
+import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext } from "./engine.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -705,4 +705,112 @@ test("main-sitter renders gh guidance by default and ADO REST guidance when stam
   assert.match(adoPublish, /"isDraft":true/)
   assert.match(adoPublish, /NEVER push main/)
   assert.doesNotMatch(adoPublish, /gh pr create/)
+})
+
+// --- plan 09: context budgets -------------------------------------------------
+
+const budgetState = (artifacts: Record<string, string>, stage = "build"): WorkflowState => ({
+  ...mk("add foo"),
+  stage,
+  artifacts,
+})
+
+const budgeted = (stage: string, budgets: Record<string, number>): Config => ({
+  ...config,
+  workflows: { engineering: { stageContext: { [stage]: budgets } } },
+})
+
+test("promptContext clamps an artifact to the resolved stage budget, head and tail", () => {
+  const plan = `HEAD MARKER\n${"p".repeat(5_000)}\nTAIL MARKER`
+  const ctx = promptContext(budgetState({ plan }), { plan: 400 })
+  const out = (ctx.artifacts as Record<string, string>).plan as string
+  assert.ok(out.startsWith("HEAD MARKER"))
+  assert.ok(out.endsWith("TAIL MARKER"))
+  assert.ok(out.length <= 400)
+  // An unbudgeted artifact in the same context is untouched.
+  const both = promptContext(budgetState({ plan, build: "b".repeat(5_000) }), { plan: 400 })
+  assert.equal(((both.artifacts as Record<string, string>).build as string).length, 5_000)
+})
+
+test("composePrompt is byte-identical for a budget-less state — the unset-knob pin", () => {
+  // The whole backward-compatibility promise: config threaded but no stageContext set.
+  for (const [label, state] of Object.entries(PROMPT_STATES)) {
+    for (const stage of ["plan", "build", "verify", "review"]) {
+      assert.equal(
+        composePrompt(eng, state, stage, config),
+        composePrompt(eng, state, stage),
+        `${label} → ${stage}: threading config changed the prompt`,
+      )
+    }
+  }
+})
+
+test("the structured verdict block survives intact when the prose budget clamps to zero", () => {
+  const record = { verdict: "FAIL" as Verdict, reason: "two tests are red", criteria: [{ criterion: "tests pass", pass: false }] }
+  const { state } = advance(eng, { ...mk("add foo"), stage: "verify", artifacts: { plan: "P" } }, config, "x".repeat(20_000), "FAIL", record)
+  const block = verdictFeedbackBlock(record)
+  assert.ok(state.artifacts.verify?.startsWith(block), "the block is not at the head of the artifact")
+  assert.equal(state.feedback?.verify, block)
+  const ctx = promptContext(state, { verify: 1 })
+  const rendered = (ctx.artifacts as Record<string, string>).verify as string
+  assert.ok(rendered.startsWith(block), "the block was clamped away")
+  assert.match(rendered, /two tests are red/)
+  assert.match(rendered, /elided by the stage context budget/)
+})
+
+test("advance fuses the verdict block into the artifact byte-identically to the old host-side threading", () => {
+  const record = { verdict: "FAIL" as Verdict, reason: "red", axes: [{ axis: "correctness", verdict: "FAIL" as Verdict }] }
+  const base = { ...mk("add foo"), stage: "verify" as string, artifacts: { plan: "P" } }
+  const block = verdictFeedbackBlock(record)
+  // What the hosts used to build themselves, before `advance` owned the fusion.
+  const legacy = advance(eng, base, config, `${block}\n\nPROSE`, "FAIL")
+  const now = advance(eng, base, config, "PROSE", "FAIL", record)
+  assert.equal(now.state.artifacts.verify, legacy.state.artifacts.verify)
+  // A verdict with nothing to report adds nothing.
+  assert.equal(advance(eng, base, config, "PROSE", "FAIL", { verdict: "FAIL" }).state.artifacts.verify, "PROSE")
+  assert.equal(advance(eng, base, config, "PROSE", "FAIL").state.feedback, undefined)
+})
+
+test("withoutArtifacts drops the matching feedback seam", () => {
+  // engineering's review-onFail drops the stale verify artifact; a dangling seam
+  // would otherwise accrete into every snapshot from then on.
+  const record = { verdict: "FAIL" as Verdict, reason: "red" }
+  const withSeam = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "PROSE", "FAIL", record).state
+  assert.ok(withSeam.feedback?.verify)
+  const next = advance(eng, { ...withSeam, stage: "review" }, config, "findings", "FAIL", { verdict: "FAIL" }).state
+  assert.equal(next.artifacts.verify, undefined, "the artifact was not dropped")
+  assert.equal(next.feedback?.verify, undefined, "the seam outlived its artifact")
+})
+
+test("an artifact whose seam no longer matches is clamped whole — fails safe", () => {
+  const state = { ...budgetState({ verify: "REWRITTEN BY SOMETHING ELSE".repeat(200) }), feedback: { verify: "STALE BLOCK" } }
+  const out = (promptContext(state, { verify: 300 }).artifacts as Record<string, string>).verify as string
+  assert.ok(out.length <= 300)
+  assert.ok(!out.startsWith("STALE BLOCK"))
+})
+
+test("a verdict block over EXEMPT_MAX is itself clamped — the exemption cannot swallow the budget", () => {
+  const huge = { verdict: "FAIL" as Verdict, reason: "r".repeat(EXEMPT_MAX * 2) }
+  const { state } = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "PROSE", "FAIL", huge)
+  const out = (promptContext(state, { verify: 500 }).artifacts as Record<string, string>).verify as string
+  assert.ok(out.length <= EXEMPT_MAX + 500, `exempt prefix ran to ${out.length}`)
+})
+
+test("a configured stageContext reaches the composed prompt through advance's fire action", () => {
+  // Mitigation for the trailing-optional `config`: prove the real fire path honors it.
+  const state = { ...mk("g"), stage: "verify" as string, artifacts: { plan: "P".repeat(20_000) } }
+  const { action } = advance(eng, state, budgeted("build", { plan: 600 }), "prose", "FAIL")
+  assert.equal(action.kind, "fire")
+  assert.match((action as Extract<Action, { kind: "fire" }>).arguments, /elided by the stage context budget/)
+})
+
+test("firstStep honors a configured stageContext", () => {
+  const state = resumeAtBuild("add foo", task, "P".repeat(20_000))
+  const { action } = firstStep(eng, state, budgeted("build", { plan: 600 }))
+  assert.match((action as Extract<Action, { kind: "fire" }>).arguments, /elided by the stage context budget/)
+  // …and is byte-identical without one.
+  assert.equal(
+    (firstStep(eng, state, config).action as Extract<Action, { kind: "fire" }>).arguments,
+    (firstStep(eng, state).action as Extract<Action, { kind: "fire" }>).arguments,
+  )
 })

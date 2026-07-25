@@ -117,6 +117,16 @@ const BaseConfigSchema = z.object({
         trigger: WorkflowTriggerSchema.optional(),
         /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
         stageModels: z.record(z.string(), z.string().min(1)).optional(),
+        /**
+         * Stage name → per-artifact character ceilings for that stage's composed
+         * prompt; replaces the manifest stage's `context` map wholesale, mirroring
+         * `stageModels` over `model`. Absent ⇒ the manifest's, else unbounded.
+         *
+         * Honored from the repo layer, unlike `worktreeSetup`: the value space is
+         * positive integers — no shell, no path, no fs reach — so a merely-watched
+         * repo can shrink its own prompts and nothing else. See `SHELL_BEARING_KEYS`.
+         */
+        stageContext: z.record(z.string(), z.record(z.string(), z.number().int().positive())).optional(),
       }),
     )
     .default({}),
@@ -288,6 +298,36 @@ export const modelFor = (config: Config, kind: string, def: StageDef): string | 
  */
 export const unknownStageModelKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
   Object.keys(config.workflows[kind]?.stageModels ?? {}).filter((name) => !stageNames.includes(name))
+
+/**
+ * The per-artifact character ceilings for a stage's composed prompt: config
+ * `workflows.<kind>.stageContext.<stage>`, else the manifest stage's `context`,
+ * else `{}` (unbounded — byte-identical to having no budgets at all).
+ *
+ * Replaces the manifest's map wholesale rather than merging into it, exactly as
+ * `modelFor` replaces `model`. Note the deliberate asymmetry with the config
+ * LAYERS, which `mergeConfigLayers` merges per artifact — repo over user is a
+ * refinement of one setting, manifest-vs-config is an override of it. Pure.
+ */
+export const contextFor = (config: Config, kind: string, def: StageDef): Readonly<Record<string, number>> =>
+  config.workflows[kind]?.stageContext?.[def.name] ?? def.context ?? {}
+
+/**
+ * The `stageContext` keys that name no stage of `kind`, as `stage` or
+ * `stage.artifact` — the same silent-default trap `unknownStageModelKeys`
+ * closes, in both dimensions: a typo'd stage never applies, and a typo'd
+ * artifact inside a valid stage leaves that artifact unbounded. Neither is
+ * checkable at parse time (the manifest isn't loaded yet), so hosts warn once
+ * the kind's stages are known. Pure.
+ */
+export const unknownStageContextKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
+  Object.entries(config.workflows[kind]?.stageContext ?? {}).flatMap(([stage, budgets]) =>
+    stageNames.includes(stage)
+      ? Object.keys(budgets ?? {})
+          .filter((artifact) => !stageNames.includes(artifact))
+          .map((artifact) => `${stage}.${artifact}`)
+      : [stage],
+  )
 
 /**
  * The stage's `requiredAxes` that no configured review lens names — the axes

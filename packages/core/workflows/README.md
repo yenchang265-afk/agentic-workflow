@@ -67,6 +67,7 @@ fails loud at host startup). A minimal two-stage kind:
       "prompt": "stages/check.md",
       "isolation": "worktree",
       "requiredAxes": ["correctness", "security"],  // optional; check stages only — workflow_verdict rejects a verdict missing any of them
+      "context": { "work": 8000 },      // optional per-artifact character ceilings for THIS stage's prompt; config workflows.<kind>.stageContext.<name> replaces it, unset = unbounded
       "bashAllowlist": ["git diff*", "npm test*"]  // default-deny bash for this stage
     }
   ],
@@ -106,6 +107,18 @@ recorded verdict is also worsened to match its axes — a declared PASS carrying
 Critical or Important finding resolves as FAIL. `requiredAxes` on a `work` stage
 is a manifest error (there is no verdict to carry them), and OpenCode's
 `reviewLenses` mode suppresses the enforcement (see `docs/configuration.md`).
+
+Any stage may declare `context`: per-artifact **character** ceilings on the prompt
+this stage composes, keyed by the producing stage's name. Unset ⇒ unbounded, which
+is byte-identical to having no budgets. The budget belongs to the **consuming**
+stage because the same artifact is read by several stages with different needs — so
+`{"context": {"work": 8000}}` on the `check` stage caps what `check` reads of
+`work`'s output, not what `work` produces. A key naming no stage of the manifest is
+a manifest error (unlike the config layer, the stages are known here). Over-budget
+text is elided from the middle, keeping head and tail; the structured verdict block
+and the stage contract are never trimmed, and the run log keeps the full text
+regardless. Config `workflows.<kind>.stageContext.<name>` replaces this map
+wholesale — see `docs/configuration.md`.
 
 ## Stage prompt templates
 

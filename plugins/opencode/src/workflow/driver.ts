@@ -79,7 +79,6 @@ import {
   admitVerdict,
   effectiveVerdict,
   mergeAxes,
-  verdictFeedbackBlock,
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
   parseVerdict,
@@ -96,6 +95,7 @@ import {
   modelFor,
   resolveUserConfigPath,
   triggerFor,
+  unknownStageContextKeys,
   unknownStageModelKeys,
   deprecatedAdoKeys,
   unreviewedAxes,
@@ -1017,6 +1017,21 @@ const driveChain = async (
         `ignored; the stage runs the host default model. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
+  // Same trap for a stageContext key: a typo'd stage — or a typo'd artifact inside
+  // a valid stage — leaves that prompt unbounded, which reads as "the budget did
+  // nothing".
+  const unknownBudgets = unknownStageContextKeys(
+    config,
+    loaded.manifest.kind,
+    loaded.manifest.stages.map((s) => s.name),
+  )
+  if (unknownBudgets.length) {
+    await deps.log(
+      "warn",
+      `workflows.${loaded.manifest.kind}.stageContext names ${unknownBudgets.map((k) => `"${k}"`).join(", ")}, which is not a stage of this loop — ` +
+        `ignored; that prompt stays unbounded. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
+    )
+  }
   // reviewLenses suppresses per-pass axis-coverage enforcement, so turning it on
   // silently downgrades what a review guarantees — name the axes no lens covers.
   for (const def of loaded.manifest.stages) {
@@ -1127,16 +1142,17 @@ const driveChain = async (
         deps.log,
       )
     }
-    // Thread the machine-recorded failure reasons ahead of the stage's prose so
-    // the next PLAN/BUILD iteration leads with what actually failed.
-    const block = verdictFeedbackBlock(record)
-    const threaded = block ? `${block}\n\n${output}` : output
+    // `advance` threads the machine-recorded failure reasons ahead of the stage's
+    // prose itself (and records the seam, so a context budget can spare them), so
+    // the record goes in raw — the fused text is byte-identical to what this site
+    // used to build by hand.
+    //
     // Interpret transitions against the CLAIMED kind's manifest — `loaded`, not
     // the hardcoded engineering `eng`. A pr-sitter loop (stages triage/fix/
     // verify/publish) would otherwise crash on its first transition, as
     // `stageDef(eng.manifest, "triage")` throws. For engineering, `loaded` IS
     // `eng` (same map entry), so this is byte-identical there.
-    step = advance(loaded, step.state, config, threaded, verdict)
+    step = advance(loaded, step.state, config, output, verdict, record)
   }
 
   const { state, action } = step
@@ -1238,7 +1254,7 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
     await markClaimedOnHumanBranch(deps, config, item.state.task)
   }
   try {
-    const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.workflowKind), item.state))
+    const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.workflowKind), item.state, config))
     if (outcome && claim.source.onTerminal) await claim.source.onTerminal(item, outcome)
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
@@ -1398,15 +1414,15 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       // persisted plan. Only a fresh start writes the durable CLAIMED note —
       // a recovered task already carries one (or a BUILD marker).
       if (work.kind === "start-task") await markClaimedOnHumanBranch(deps, config, work.task)
-      await drive(deps, sessionID, config, firstStep(eng, buildEntryState(work.task)))
+      await drive(deps, sessionID, config, firstStep(eng, buildEntryState(work.task), config))
     } else if (work?.kind === "start-plan") {
       // A `plan <id>` / a claim claim on a queued (planless) task: run the PLAN
       // stage, which writes the plan and parks the task in plan-review/.
-      await drive(deps, sessionID, config, firstStep(eng, planEntryState(work.task)))
+      await drive(deps, sessionID, config, firstStep(eng, planEntryState(work.task), config))
     } else if (work?.kind === "recover-state") {
       // A snapshot-based resume: re-enter at the exact stage the crash caught,
       // with artifacts intact, re-firing that stage from its own inputs.
-      await drive(deps, sessionID, config, firstStep(eng, work.state))
+      await drive(deps, sessionID, config, firstStep(eng, work.state, config))
     } else {
       // No pending work — a watch session (or one-shot `claim`)
       // with nothing to resume; look for one claimable item across the

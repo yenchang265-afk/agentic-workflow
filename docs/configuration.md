@@ -256,6 +256,61 @@ it. The warnings are advisory: they annotate a save, never block it. See
   (the manifest isn't loaded yet), so it is accepted, ignored, and the stage
   runs the host default. Both hosts warn about such keys when a loop starts.
 
+- **`workflows.<kind>.stageContext`** — consuming stage name → per-artifact
+  **character** ceilings on that stage's composed prompt. Unset ⇒ unbounded,
+  which is byte-identical to having no budgets at all.
+
+  Each stage's prompt carries the earlier stages' captured output verbatim, so a
+  long BUILD transcript or a five-lens REVIEW lands whole in the next prompt.
+  That is fine on a frontier model and fatal on a small one — which is exactly
+  what `stageModels` invites. A budget is declared on the **consuming** stage,
+  because the same artifact is read by several stages with different needs:
+
+  ```jsonc
+  {
+    "workflows": {
+      "engineering": {
+        "stageModels": { "verify": "openrouter/qwen/qwen3-coder" },
+        "stageContext": {
+          "build":  { "plan": 24000, "verify": 8000, "review": 8000 },
+          "verify": { "plan": 16000, "build": 8000 },
+          "review": { "plan": 16000, "build": 8000 }
+        }
+      }
+    }
+  }
+  ```
+
+  This is a **small-context profile, not a default** — ship it only when you
+  point a stage at a small model. Convert with roughly 3.5–4 characters per
+  token for prose and code, so 24,000 characters is ~6–7k tokens.
+
+  Over-budget text is elided from the **middle**, keeping the head and the tail
+  and leaving an explicit `[… N characters elided …]` marker, because a check
+  stage opens with its verdict rationale and closes with the concrete failing
+  assertions — a plain head-truncate throws away the half that names the file
+  and line.
+
+  Two things are never trimmed. The **structured verdict block** (verdict
+  reason, failed criteria, blocking findings with `file:line`) is exempt: it is
+  bounded by construction and is the highest-signal content in the prompt. And
+  the stage's **contract** — goal, acceptance criteria, worktree instructions,
+  the verdict/scope block — is composed after the budget applies. A budget can
+  starve the history, never the contract.
+
+  Nothing is lost: the full text of every pass is written to the durable run log
+  before it becomes an artifact, so the run log and `runs/<id>.metrics.json`
+  stay complete regardless of what the prompt carried.
+
+  Precedence per stage: this key → the manifest stage's `context` field →
+  unbounded. Like `stageModels`, this key **replaces** the manifest's map rather
+  than merging into it. Keys must be stage names, and a key naming no stage — or
+  an artifact naming no stage inside a valid one — is accepted, ignored, and
+  warned about when a loop starts (the manifest isn't loaded when config
+  parses). Unlike `worktreeSetup`, this key **is** honored from a repo's
+  `.agentic-workflow.json`: the value space is positive integers, so a watched
+  repo can shrink its own prompts and nothing else.
+
 ## Admin hub (`hub` — user scope only)
 
 The hub reads its settings from the `hub` section of the **user-scope**

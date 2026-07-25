@@ -22,14 +22,13 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
+import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageContextKeys, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
   axisVerdict,
   effectiveVerdict,
   parseVerdict,
   stageDriftNote,
-  verdictFeedbackBlock,
   type AxisResult,
   type CriterionResult,
   type Verdict,
@@ -238,6 +237,16 @@ const stageModelWarnings = (): string[] =>
             `${unknown.length > 1 ? "those overrides are" : "that override is"} ignored and the stage runs the host default model. Valid stages: ${stageNames.join(", ")}.`,
         ]
       : []
+    // Same silent-default trap for a stageContext key: a typo'd stage — or a
+    // typo'd artifact inside a valid stage — leaves that prompt unbounded, which
+    // reads as "the budget did nothing".
+    const unbudgeted = unknownStageContextKeys(config, kind, stageNames)
+    if (unbudgeted.length) {
+      warnings.push(
+        `workflows.${kind}.stageContext names ${unbudgeted.map((k) => `"${k}"`).join(", ")}, which ${unbudgeted.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
+          `${unbudgeted.length > 1 ? "those budgets are" : "that budget is"} ignored and the prompt stays unbounded. Valid stages: ${stageNames.join(", ")}.`,
+      )
+    }
     // reviewLenses suppresses per-pass axis-coverage enforcement, so turning it
     // on silently downgrades what a review guarantees — name the axes no lens
     // covers rather than let the downgrade pass unremarked.
@@ -497,7 +506,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     agent: agentRef(def.agent),
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
-    prompt: composePrompt(manifest, state, state.stage),
+    prompt: composePrompt(manifest, state, state.stage, config),
     ...(state.stage === "plan"
       ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
       : {}),
@@ -642,7 +651,7 @@ server.registerTool(
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
     try {
-      return ok({ prompt: composePrompt(activeManifest(), active, stage) })
+      return ok({ prompt: composePrompt(activeManifest(), active, stage, config) })
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -867,7 +876,7 @@ server.registerTool(
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
           ...(retryModel ? { model: retryModel } : {}),
           prompt:
-            composePrompt(activeManifest(), active, stage) +
+            composePrompt(activeManifest(), active, stage, config) +
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
                 "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
@@ -885,10 +894,10 @@ server.registerTool(
           (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
       }
     }
-    // thread the structured feedback (reason, failed criteria, failing axes)
-    // ahead of the prose for the next iteration
-    const block = verdictFeedbackBlock(pending)
-    const threaded = block ? `${block}\n\n${stageOutput}` : stageOutput
+    // `advance` threads the structured feedback (reason, failed criteria, failing
+    // axes) ahead of the prose for the next iteration and records the seam, so a
+    // stage context budget can clamp the prose without touching the block. The
+    // fused artifact is byte-identical to what this site used to build by hand.
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
@@ -908,7 +917,7 @@ server.registerTool(
     // The derived verdict, not the declared one — an agent must not be able to
     // report PASS while flagging a Critical finding on an axis.
     const verdict = stageDef(activeManifest().manifest, stage).kind === "check" ? (pending ? effectiveVerdict(pending) : null) : null
-    const { state, action } = advance(activeManifest(), active, config, threaded, verdict)
+    const { state, action } = advance(activeManifest(), active, config, stageOutput, verdict, pending)
     active = state
     pending = null
     verdictRetried = false // the transition happened — the next check stage gets its own retry budget
@@ -922,7 +931,7 @@ server.registerTool(
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
-        prompt: composePrompt(activeManifest(), active, action.stage),
+        prompt: composePrompt(activeManifest(), active, action.stage, config),
         note:
           `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}` +
           (nextDef.kind === "check"
@@ -1356,7 +1365,7 @@ server.registerTool(
         return fail((err as Error).message)
       }
       await appendNote(sh, active.task as TaskRef, auditNote(`Recovered from snapshot at ${active.stage}`, new Date(), actor), log)
-      const step = firstStep(eng, active)
+      const step = firstStep(eng, active, config)
       const resumedDef = stageDef(eng.manifest, active.stage)
       const resumedModel = stageModel(eng.manifest.kind, resumedDef)
       return ok({
@@ -1383,7 +1392,7 @@ server.registerTool(
     return ok({
       resumedFrom: "plan",
       stage: "build",
-      prompt: composePrompt(eng, active, "build"),
+      prompt: composePrompt(eng, active, "build", config),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
       note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
