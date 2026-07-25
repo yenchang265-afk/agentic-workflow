@@ -147,10 +147,18 @@ sitter 在 `/agentic-workflow:pr-sitter` 上。
 - `skills/` —— `workflow-orchestration`（Claude 專屬的驅動協定），加上
   共用的工作流程 skill 庫（符號連結過來，包括
   `task-backlog-management`）。
+- `commands/` —— 斜線指令。`engineering.md` 是一份**路由表**：它帶著前言、
+  一行一個動詞的索引，以及那些長期有效的禁令，但不含任何動詞的實際流程。
+- `verbs/engineering.md` —— 那些流程，每個動詞一個 `<!-- aw:verb … -->` 區塊。
+  只有你所呼叫的那個動詞的區塊會被注入這一回合，其餘的永遠不會送到模型面前。
+  UserPromptSubmit hook 無法改寫 prompt，所以拆檔是唯一能讓
+  `new <idea>` 不必為它根本不會執行的 `claim`、`doctor` 和各個把關動詞
+  付出 context 代價的辦法。
 - `hooks/` —— 一個 PreToolUse 守衛，在 VERIFY/REVIEW 期間強制執行
   唯讀 bash 白名單、worktree 固定、階段期限，以及 Azure DevOps 寫入
   攔截；UserPromptSubmit hooks（`gate-command`/`gate-parse`）在 agent
-  的回合開始前處理確定性的 `approve` 把關；以及 SessionStart hooks，
+  的回合開始前處理確定性的 `approve` 把關，並注入所呼叫動詞的指示
+  （`verb-slice`）；以及 SessionStart hooks，
   負責調和被中斷的迴圈，並把設定中的 `ado.pat` 匯出到 session 環境
   變數中，供 sitter 的 ADO 階段使用。
 - `mcp-server/` —— `agentic-workflow` MCP 伺服器

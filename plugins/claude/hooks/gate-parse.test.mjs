@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { gateArgsFor } from "./gate-parse.mjs"
+import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 
 /**
  * The gate hook's prompt classifier. Gate verbs of /agentic-workflow:engineering
@@ -92,4 +92,41 @@ test("removed verbs no longer match — ok/go/reject/ship/approve-plan are not g
 
 test("verbs are matched as whole words — approver doesn't trigger a gate", () => {
   assert.equal(gateArgsFor("/agentic-workflow:engineering approver thing"), null)
+})
+
+/**
+ * `verbFor` drives the per-verb instruction injection (verb-slice.mjs), not a
+ * gate move, so it must recognise EVERY verb — including the ones gateArgsFor
+ * ignores. It shares the command regex, so the leading-slash rule that keeps
+ * the ordinary word "engineering" from matching applies here too.
+ */
+
+test("verbFor reads the verb from the first token, both command forms", () => {
+  assert.equal(verbFor("/agentic-workflow:engineering new add rate limiting"), "new")
+  assert.equal(verbFor("/engineering claim"), "claim")
+  assert.equal(verbFor("/agentic-workflow:engineering doctor fix"), "doctor")
+})
+
+test("verbFor never mistakes a verb-like word in the payload for the verb", () => {
+  // The exact confusion the command body warns about.
+  assert.equal(verbFor("/agentic-workflow:engineering new add a status dashboard"), "new")
+  assert.equal(verbFor("/agentic-workflow:engineering retask f7k3 approve it later"), "retask")
+})
+
+test("verbFor treats a bare command as status, which is what it runs", () => {
+  assert.equal(verbFor("/agentic-workflow:engineering"), "status")
+  assert.equal(verbFor("/agentic-workflow:engineering   "), "status")
+})
+
+test("verbFor lowercases the verb, so markup lookup is case-insensitive", () => {
+  assert.equal(verbFor("/agentic-workflow:engineering NEW an idea"), "new")
+})
+
+test("verbFor ignores prose and other kinds' commands", () => {
+  // This hook has matcher "" and sees every prompt in the session.
+  assert.equal(verbFor("the engineering approve step happens later"), null)
+  assert.equal(verbFor("/agentic-workflow:pr-sitter claim"), null)
+  assert.equal(verbFor("please review my PR"), null)
+  assert.equal(verbFor(""), null)
+  assert.equal(verbFor(undefined), null)
 })

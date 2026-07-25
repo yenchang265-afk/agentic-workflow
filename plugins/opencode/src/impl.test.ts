@@ -210,20 +210,71 @@ type CmdHooks = {
 
 const TEMPLATE = "ORIGINAL RENDERED COMMAND TEMPLATE — a description of the loop."
 
-test("command hook overrides the rendered template with the outcome for a report-and-stop verb", async () => {
+/** A body marked up the way the real engineering command is (see command-slice.ts). */
+const MARKED_TEMPLATE = [
+  "shared preamble",
+  "<!-- aw:verb new -->",
+  "interview the user, then spawn the plan author",
+  "<!-- /aw:verb new -->",
+  "<!-- aw:verb claim -->",
+  "claim the next build-ready task",
+  "<!-- /aw:verb claim -->",
+  "never touch docs/tasks yourself",
+].join("\n")
+
+const runCommand = async (args: string, output: { parts?: Array<{ type?: string; text?: string }> }) => {
   const hooks = (await makeHooks({})) as unknown as CmdHooks
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_c", arguments: args }, output)
+  return output
+}
+
+test("command hook overrides the rendered template with the outcome for a report-and-stop verb", async () => {
   const output = { parts: [{ type: "text", text: TEMPLATE }] }
   // `unwatch` on the default-enabled engineering kind completes deterministically
   // and returns its outcome; the hook must feed that back into the prompt.
-  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_c", arguments: "unwatch" }, output)
+  await runCommand("unwatch", output)
   assert.notEqual(output.parts[0]!.text, TEMPLATE, "the descriptive template must be replaced")
   assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
 })
 
-test("command hook leaves the template intact for a pass-through verb", async () => {
-  const hooks = (await makeHooks({})) as unknown as CmdHooks
+test("command hook passes an unmarked template through untouched", async () => {
   const output = { parts: [{ type: "text", text: TEMPLATE }] }
-  // `new` needs the model's interview turn — its markdown must reach the model.
-  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_c", arguments: "new add rate limiting" }, output)
-  assert.equal(output.parts[0]!.text, TEMPLATE, "an authoring verb's template must pass through untouched")
+  // The sitter commands carry no markers; their bodies must survive byte-identical.
+  await runCommand("new add rate limiting", output)
+  assert.equal(output.parts[0]!.text, TEMPLATE, "nothing to slice means nothing to change")
+})
+
+test("command hook slices a marked template to the invoked verb for a pass-through verb", async () => {
+  const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
+  // `new` needs the model's interview turn, so its instructions must survive —
+  // but every other verb's must not, and the markers must not reach the model.
+  await runCommand("new add rate limiting", output)
+  const text = output.parts[0]!.text!
+  assert.match(text, /interview the user/, "the invoked verb's block must survive")
+  assert.match(text, /shared preamble/)
+  assert.match(text, /never touch docs\/tasks yourself/, "shared prose must survive")
+  assert.doesNotMatch(text, /claim the next build-ready task/, "another verb's block must be gone")
+  assert.doesNotMatch(text, /aw:verb/, "markers must not reach the model")
+})
+
+test("the outcome override still wins over the slice for a report-and-stop verb", async () => {
+  const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
+  await runCommand("unwatch", output)
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
+  assert.doesNotMatch(output.parts[0]!.text!, /aw:verb/)
+})
+
+test("command hook slices a template split across text parts", async () => {
+  // opencode owns how it chunks the rendered body; a marker may straddle parts.
+  const half = MARKED_TEMPLATE.indexOf("<!-- aw:verb claim")
+  const output = {
+    parts: [
+      { type: "text", text: MARKED_TEMPLATE.slice(0, half) },
+      { type: "text", text: MARKED_TEMPLATE.slice(half) },
+    ],
+  }
+  await runCommand("new add rate limiting", output)
+  assert.match(output.parts[0]!.text!, /interview the user/)
+  assert.doesNotMatch(output.parts[0]!.text!, /claim the next build-ready task/)
+  assert.equal(output.parts[1]!.text, "", "no leftover template text may survive in a later part")
 })
