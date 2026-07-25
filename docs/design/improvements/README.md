@@ -6,7 +6,8 @@ English | [繁體中文](README.zh-TW.md)
 the shared `@agentic-workflow/core` package (`packages/core/`) consumed by both
 the OpenCode plugin and the Claude MCP server. They are kept as the design
 record for those features, not as a pending backlog. **Plan 08 is proposed** and
-not implemented — it is the only entry here that is still a backlog item.
+not implemented. **Plan 09 is partially shipped**: its four contract-surface
+changes are in, and the determinism gaps it audits are the remaining backlog.
 
 Sourced from: the current code (all cited paths and function names verified
 against source at time of writing), the residual risks in
@@ -25,11 +26,14 @@ against source at time of writing), the residual risks in
 | 06 | [Run metrics](./06-run-metrics.md) | Per-run stage timings + verdict history in the run log | `packages/core/src/workflow/metrics.ts`; `metrics.test.ts` |
 | 07 | [Multi-workflow kinds on a common scheduler](./07-multi-workflow-scheduler.md) | One scheduler drives many workflow kinds (engineering + PR sitter); `@agentic-workflow/core` extracted so both plugins share one implementation | `packages/core/src/manifest/` (schema, registry, template), `packages/core/src/scheduler/` (scheduler, lease), `packages/core/src/source/` (backlog, github-pr, ado-pr, ledger); `workflows/engineering/`, `workflows/pr-sitter/` |
 
+| 09 | [Determinism under a degraded model](./09-degraded-model-determinism.md) *(partial)* | A check stage on a weak model degrades instead of stopping: an opt-in nonce-fenced verdict block channel, axis coverage that accumulates across calls, normalized severity vocabulary, configurable verdict retries | `packages/core/src/workflow/verdict-block.ts`, `admitVerdict`/`normalizeSeverity` in `verdict.ts`, `verdictChannel`/`verdictRetries` in `config.ts`; `verdict-block.test.ts` |
+
 ## Proposed
 
 | # | Plan | What it would buy |
 |---|------|-------------------|
 | 08 | [Deterministic gate commands](./08-deterministic-gate-commands.md) | Declared test/typecheck/lint commands run driver-side; their exit codes become established fact for the check stage and floor its verdict, replacing today's self-reported "tests are green" |
+| 09 | [Determinism under a degraded model](./09-degraded-model-determinism.md) — remaining | Seven audited gaps where the loop asks a model for facts it already holds or could compute: VERIFY's self-reported test results (= 08), sitter triage re-deciding the work source's own gate, undefined numeric thresholds, unenforced skill invocation, a self-routing 3-mode plan prompt, re-derived sitter commands, and the missing degraded-model test harness |
 
 Residuals each plan explicitly deferred (bash worktree pinning, cross-process
 `index.lock` races, metrics export, redaction knobs) remain open — see

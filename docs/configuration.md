@@ -116,6 +116,8 @@ hand-edited afterward.
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
+| `verdictChannel` | `"tool"` | Which channels a check stage may record its verdict through. `"tool+block"` adds a nonce-fenced JSON fallback for models that can't call tools reliably — see [Running check stages on a weaker model](#running-check-stages-on-a-weaker-model). Overridable per kind with `workflows.<kind>.verdictChannel`. |
+| `verdictRetries` | `1` | Extra **uncounted** re-fires of a check stage that ended without recording any verdict. `1` is the long-standing behavior; `0` stops with ERROR on the first silence. Max 5. |
 
 Both plugins read the same file: the schema lives in the shared core package
 (`packages/core/src/config.ts`), and each host may extend it with fields only
@@ -255,6 +257,61 @@ it. The warnings are advisory: they annotate a save, never block it. See
   `BUILD`, or a stage from another kind — cannot be rejected at parse time
   (the manifest isn't loaded yet), so it is accepted, ignored, and the stage
   runs the host default. Both hosts warn about such keys when a loop starts.
+
+## Running check stages on a weaker model
+
+`stageModels` lets you point VERIFY or REVIEW at a small local model. The loop's
+verdict contract was written for models that call tools reliably, and a weaker
+one fails it in three specific ways. Each has a knob; all three default to
+today's behavior, so a strong model sees no change.
+
+**1. It never calls `workflow_verdict`.** The verdict tool is the trusted
+channel precisely because free text is not — a stage quoting its own contract,
+or repo content echoed into the output, must never flip control flow. A stage
+that records nothing is treated as a broken channel: re-fired once (no iteration
+consumed), then stopped with a recoverable ERROR. On a model that cannot call
+tools, that is *every* check stage, and the loop never runs unattended.
+
+`verdictChannel: "tool+block"` adds a second channel without giving up the rule.
+Before each check-stage attempt the loop mints a one-time **nonce** and puts it
+in that attempt's prompt; the stage may answer with a fenced block carrying it:
+
+````
+```workflow_verdict
+{"nonce": "wvn_7f3a91c2…", "stage": "verify", "verdict": "FAIL", "reason": "3 tests red"}
+```
+````
+
+Quoted repo content cannot carry the nonce — it is fresh per attempt and appears
+only in that attempt's prompt — so the untrusted-text hole stays closed. The
+tool still wins: a block is read only when the tool recorded nothing. The nonce
+is scrubbed from the run log and from the stage artifact, so a later stage
+cannot reuse it.
+
+```json
+{ "workflows": { "engineering": { "stageModels": { "verify": "ollama/qwen3.6" }, "verdictChannel": "tool+block" } } }
+```
+
+**2. It can't fit all five REVIEW axes in one payload.** A call missing an axis
+is still rejected, but the axes it *did* carry are now kept, so a follow-up call
+need only send the rest. This needs no configuration and applies to every model.
+A rejected FAIL's *verdict* is deliberately not kept — only its axes — so a
+malformed call can't wedge the stage into permanent rejection.
+
+**3. It emits severity words the schema doesn't know.** The REVIEW agent is told
+to invoke the `code-review-and-quality` skill, whose own table teaches Critical /
+Nit / Optional / Consider / FYI. Those are now mapped onto the enforced
+`critical` / `important` / `suggestion` rather than rejected. An **unrecognized**
+word maps to `important` — fail closed, so an unplanned severity blocks rather
+than silently vanishing.
+
+Raise `verdictRetries` (default `1`, max `5`) to give a flaky model more
+uncounted attempts before the stage gives up. These retries never consume a
+build iteration.
+
+**What this does not buy you.** A weak model still has to *do* the review. These
+knobs stop the loop from stalling on a broken verdict channel; they do not make
+a shallow verdict deep. Five empty PASS axes satisfy the check on any model.
 
 ## Admin hub (`hub` — user scope only)
 

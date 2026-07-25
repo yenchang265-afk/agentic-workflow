@@ -3,7 +3,7 @@ import os from "node:os"
 import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
-import { CODE_PLATFORMS, type Config, type WorkflowTrigger } from "./workflow/state.js"
+import { CODE_PLATFORMS, type Config, type VerdictChannel, type WorkflowTrigger } from "./workflow/state.js"
 import type { StageDef } from "./manifest/schema.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
@@ -94,6 +94,31 @@ const BaseConfigSchema = z.object({
    */
   reviewLenses: z.array(z.string().min(1)).max(5).default([]),
   /**
+   * How a check stage may record its verdict.
+   *
+   * - `tool` (default) — the `workflow_verdict` tool only. Free text never
+   *   reaches control flow; see `workflow/verdict.ts`.
+   * - `tool+block` — the tool still wins, but when a stage records nothing the
+   *   loop also reads a fenced ```workflow_verdict``` JSON block from that
+   *   stage's own output, provided it carries the per-attempt nonce the loop
+   *   injected into its prompt.
+   *
+   * Turn it on when a stage runs on a model that cannot be relied on to call
+   * tools (`stageModels` pointing at a small local model). On a model that
+   * calls tools properly it changes nothing but adds a prompt paragraph. The
+   * nonce is what keeps it safe — see `workflow/verdict-block.ts`.
+   * Overridable per kind via `workflows.<kind>.verdictChannel`.
+   */
+  verdictChannel: z.enum(["tool", "tool+block"]).default("tool"),
+  /**
+   * How many extra times a check stage is re-fired when it ends without
+   * recording any verdict. A missing verdict is a broken channel rather than a
+   * genuine FAIL, so these re-fires consume no loop iteration. `1` (the
+   * default) is the long-standing behavior; raise it for a model that needs
+   * more than one nudge, `0` to stop with ERROR immediately.
+   */
+  verdictRetries: z.number().int().min(0).max(5).default(1),
+  /**
    * Per-workflow-kind sections keyed by kind (a `workflows/<kind>/` manifest).
    * Engineering runs unless explicitly disabled; every other kind is opt-in
    * (`enabled: true`). Kind-specific knobs ride along and are validated by
@@ -117,6 +142,12 @@ const BaseConfigSchema = z.object({
         trigger: WorkflowTriggerSchema.optional(),
         /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
         stageModels: z.record(z.string(), z.string().min(1)).optional(),
+        /**
+         * Per-kind override of the global `verdictChannel` — the knob that
+         * usually travels with `stageModels`, since it is a specific kind's
+         * check stages that get pointed at a weak model.
+         */
+        verdictChannel: z.enum(["tool", "tool+block"]).optional(),
       }),
     )
     .default({}),
@@ -278,6 +309,20 @@ export const triggerFor = (config: Config, kind: string): WorkflowTrigger =>
  */
 export const modelFor = (config: Config, kind: string, def: StageDef): string | undefined =>
   config.workflows[kind]?.stageModels?.[def.name] ?? def.model
+
+/**
+ * Which verdict channels a kind's check stages may use: the per-kind
+ * `workflows.<kind>.verdictChannel`, else the global one, else `tool`. Same
+ * shape as `modelFor` because it is the setting that travels with it — a kind
+ * whose check stages run on a weak model is the kind that needs the fallback.
+ * Pure.
+ */
+export const verdictChannelFor = (config: Config, kind: string): VerdictChannel =>
+  (config.workflows[kind]?.verdictChannel as VerdictChannel | undefined) ?? config.verdictChannel
+
+/** Whether `kind` may fall back to the nonce-fenced block channel. Pure. */
+export const blockChannelEnabled = (config: Config, kind: string): boolean =>
+  verdictChannelFor(config, kind) === "tool+block"
 
 /**
  * The `stageModels` keys that name no stage of `kind` — a typo'd or

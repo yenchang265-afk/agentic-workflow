@@ -97,6 +97,15 @@ export interface WorkflowState {
   readonly isolationWarning?: string
   /** The code platform the claiming work source talks to; absent ⇒ `github`. */
   readonly platform?: CodePlatform
+  /**
+   * The one-time token this stage attempt's verdict block must carry, when the
+   * `tool+block` verdict channel is on. Set by the host immediately before it
+   * fires a CHECK stage, and REGENERATED for every attempt — a re-fire must not
+   * be satisfiable by the previous attempt's output. Absent ⇒ the block channel
+   * is off and `composeStagePrompt` renders exactly today's prompt.
+   * See `workflow/verdict-block.ts`.
+   */
+  readonly verdictNonce?: string
 }
 
 /** What the driver should do next. All state changes are returned, not applied. */
@@ -204,9 +213,20 @@ export interface WorkflowKindConfig {
   readonly trigger?: WorkflowTrigger
   /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */
   readonly stageModels?: Readonly<Record<string, string>>
+  /** Per-kind override of the global `verdictChannel`. */
+  readonly verdictChannel?: VerdictChannel
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }
+
+/**
+ * Which channels a check stage may record its verdict through. `tool` is the
+ * `workflow_verdict` tool alone (the default, and the only one that existed
+ * before); `tool+block` additionally reads a nonce-fenced JSON block out of a
+ * stage that recorded nothing, for models that cannot call tools reliably.
+ * See `workflow/verdict-block.ts`.
+ */
+export type VerdictChannel = "tool" | "tool+block"
 
 export interface Config {
   readonly maxIterations: number
@@ -222,6 +242,10 @@ export interface Config {
   readonly worktreeSetup?: string
   /** Extra REVIEW lenses; each runs one more focused review pass. */
   readonly reviewLenses: readonly string[]
+  /** Which channels a check stage may record its verdict through; per-kind override via `workflows.<kind>.verdictChannel`. */
+  readonly verdictChannel: VerdictChannel
+  /** Extra uncounted re-fires of a check stage that recorded no verdict at all. */
+  readonly verdictRetries: number
   /** Global code platform for PR-shaped work sources; per-kind override via `workflows.<kind>.codePlatform`. */
   readonly codePlatform?: CodePlatform
   /** Azure DevOps coordinates; required when any effective platform is `ado`. */

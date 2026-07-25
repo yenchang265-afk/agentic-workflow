@@ -5,7 +5,8 @@
 **計畫 01–07 已實作並測試完成**，目前存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
-backlog。**計畫 08 為提案中**、尚未實作——它是本頁唯一仍屬待辦事項的條目。
+backlog。**計畫 08 為提案中**、尚未實作。**計畫 09 為部分發布**：其四項合約
+介面變更已完成，而它所稽核出的決定性缺口則是剩下的待辦事項。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -23,11 +24,14 @@ backlog。**計畫 08 為提案中**、尚未實作——它是本頁唯一仍�
 | 06 | [Run metrics（執行指標）](./06-run-metrics.md) | 每次執行的階段耗時 + 裁定歷史記錄寫入執行日誌 | `packages/core/src/workflow/metrics.ts`；`metrics.test.ts` |
 | 07 | [在共用排程器上執行多種工作流程類型](./07-multi-workflow-scheduler.md) | 一個排程器驅動多種工作流程類型（engineering + PR sitter）；抽取出 `@agentic-workflow/core`，讓兩個外掛共用同一份實作 | `packages/core/src/manifest/`（結構描述、註冊表、範本）、`packages/core/src/scheduler/`（排程器、租約）、`packages/core/src/source/`（backlog、github-pr、ado-pr、帳本）；`workflows/engineering/`、`workflows/pr-sitter/` |
 
+| 09 | [降級模型下的決定性](./09-degraded-model-determinism.zh-TW.md)（部分） | 在弱模型上執行的檢查類階段會降級運作而非直接停止：可選用的 nonce 圍欄裁定區塊通道、可跨多次呼叫累積的軸涵蓋率、正規化的嚴重度詞彙、可設定的裁定重試次數 | `packages/core/src/workflow/verdict-block.ts`、`verdict.ts` 中的 `admitVerdict`／`normalizeSeverity`、`config.ts` 中的 `verdictChannel`／`verdictRetries`；`verdict-block.test.ts` |
+
 ## 提案中
 
 | # | 計畫 | 會帶來什麼 |
 |---|------|-------------------|
 | 08 | [決定性把關指令](./08-deterministic-gate-commands.zh-TW.md) | 已宣告的測試／型別檢查／lint 指令改由驅動程式端執行；其結束碼成為檢查類階段的既定事實並約束其裁定，取代今天由代理人自行回報的「測試是綠的」 |
+| 09 | [降級模型下的決定性](./09-degraded-model-determinism.zh-TW.md) —— 剩餘部分 | 稽核出的七項缺口，都是迴圈向模型詢問它其實已握有、或可自行計算的事實：VERIFY 自行回報的測試結果（＝08）、sitter 的 triage 重新判斷工作來源本身已把關過的事、未定義的數值門檻、未強制執行的技能呼叫、會自行分流的三模式規劃提示、sitter 重新推導的指令，以及缺少的降級模型測試框架 |
 
 每項計畫明確延後處理的殘留事項（bash 工作樹釘選、跨行程的 `index.lock`
 競速、指標匯出、遮罩選項）仍未解決——目前的殘餘風險見

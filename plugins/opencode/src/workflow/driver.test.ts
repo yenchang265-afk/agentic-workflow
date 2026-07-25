@@ -366,6 +366,8 @@ const testConfig: Config = {
   watchIntervalMinutes: 5,
   worktreesDir: false,
   reviewLenses: [],
+  verdictChannel: "tool",
+  verdictRetries: 1,
   workflows: {},
 }
 
@@ -1494,6 +1496,209 @@ const runSinglePassReview = async (sessionID: string, onCall: (deps: Deps) => vo
   }
 }
 
+// --- the backup verdict-block channel and the configurable retry budget ---
+
+/**
+ * Run VERIFY as one pass with a caller-supplied config, letting the test see
+ * each attempt's composed prompt and decide what the "model" replies. `reply`
+ * receives the prompt (so it can echo back the nonce the loop injected) and the
+ * 0-based attempt index.
+ */
+const runVerifyWith = async (
+  sessionID: string,
+  config: Config,
+  reply: (prompt: string, attempt: number, deps: Deps) => string,
+) => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  const state = {
+    kind: "engineering",
+    goal: "g",
+    stage: "verify",
+    iteration: 0,
+    artifacts: {},
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+  }
+  setWorkflow(sessionID, state)
+  const prompts: string[] = []
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async (req: { body: { arguments: string } }) => {
+        const prompt = req.body.arguments
+        prompts.push(prompt)
+        return { data: { parts: [{ type: "text", text: reply(prompt, prompts.length - 1, deps) }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
+  try {
+    const result = await runStageWithLenses(deps, sessionID, config, manifestFor("engineering"), state, "verify", "goal args", 0)
+    return { result, prompts }
+  } finally {
+    clearWorkflow(sessionID)
+  }
+}
+
+const NONCE_RE = /`(wvn_[a-z0-9]+)`/
+const blockFor = (prompt: string, verdict: string, stage = "verify") =>
+  "```workflow_verdict\n" + JSON.stringify({ nonce: prompt.match(NONCE_RE)?.[1], stage, verdict }) + "\n```"
+
+const blockConfig: Config = { ...testConfig, verdictChannel: "tool+block" }
+
+test("block channel off (the default): a verdict block is ignored and the stage takes the ERROR path", async () => {
+  const { result, prompts } = await runVerifyWith("sess-block-off", testConfig, () =>
+    "```workflow_verdict\n" + JSON.stringify({ nonce: "wvn_madeup", stage: "verify", verdict: "PASS" }) + "\n```",
+  )
+  assert.doesNotMatch(prompts[0]!, /BACKUP VERDICT CHANNEL/, "no backup contract is offered")
+  assert.equal(result.verdict, "ERROR", "an unarmed loop still treats a silent tool channel as unreachable")
+})
+
+test("block channel on: the prompt arms a nonce and a block echoing it records the verdict", async () => {
+  const { result, prompts } = await runVerifyWith("sess-block-on", blockConfig, (prompt) =>
+    `ran the suite\n\n${blockFor(prompt, "PASS")}`,
+  )
+  assert.match(prompts[0]!, /BACKUP VERDICT CHANNEL/)
+  assert.match(prompts[0]!, NONCE_RE)
+  assert.equal(result.verdict, "PASS")
+  assert.equal(result.record?.verdict, "PASS")
+})
+
+test("block channel on: a FAIL block routes to FAIL, not to the broken-channel ERROR", async () => {
+  const { result } = await runVerifyWith("sess-block-fail", blockConfig, (prompt) => blockFor(prompt, "FAIL"))
+  assert.equal(result.verdict, "FAIL")
+})
+
+test("block channel on: a block carrying the WRONG nonce is ignored", async () => {
+  const { result } = await runVerifyWith("sess-block-wrong", blockConfig, () =>
+    "```workflow_verdict\n" + JSON.stringify({ nonce: "wvn_notmine", stage: "verify", verdict: "PASS" }) + "\n```",
+  )
+  assert.equal(result.verdict, "ERROR")
+})
+
+test("block channel on: a block for another stage is ignored", async () => {
+  const { result } = await runVerifyWith("sess-block-stage", blockConfig, (prompt) => blockFor(prompt, "PASS", "review"))
+  assert.equal(result.verdict, "ERROR")
+})
+
+test("each attempt gets a FRESH nonce, so a re-fire cannot be satisfied by the previous attempt's block", async () => {
+  const seen: string[] = []
+  const { result } = await runVerifyWith("sess-block-fresh", { ...blockConfig, verdictRetries: 1 }, (prompt, attempt) => {
+    seen.push(prompt.match(NONCE_RE)?.[1] ?? "")
+    // Attempt 1 replays attempt 0's block verbatim — it must not count.
+    return attempt === 0 ? "no verdict here" : "```workflow_verdict\n" + JSON.stringify({ nonce: seen[0], stage: "verify", verdict: "PASS" }) + "\n```"
+  })
+  assert.equal(seen.length, 2)
+  assert.notEqual(seen[0], seen[1], "the retry is issued a different nonce")
+  assert.equal(result.verdict, "ERROR", "the replayed block does not count")
+})
+
+test("the nonce never reaches the captured output, so it cannot leak into the run log", async () => {
+  let issued = ""
+  const { result } = await runVerifyWith("sess-block-redact", blockConfig, (prompt) => {
+    issued = prompt.match(NONCE_RE)?.[1] ?? ""
+    return `here is my nonce ${issued} in prose\n\n${blockFor(prompt, "PASS")}`
+  })
+  assert.ok(issued)
+  assert.doesNotMatch(result.output, new RegExp(issued))
+  assert.match(result.output, /verdict-nonce redacted/)
+  assert.equal(result.verdict, "PASS", "redaction happens after the block is read")
+})
+
+test("verdictRetries: 0 stops on the first silent attempt; 2 fires three times", async () => {
+  const none = () => "no verdict at all"
+  const zero = await runVerifyWith("sess-retry-0", { ...testConfig, verdictRetries: 0 }, none)
+  assert.equal(zero.prompts.length, 1)
+  assert.equal(zero.result.verdict, "ERROR")
+  const two = await runVerifyWith("sess-retry-2", { ...testConfig, verdictRetries: 2 }, none)
+  assert.equal(two.prompts.length, 3)
+  assert.equal(two.result.verdict, "ERROR")
+})
+
+test("verdictRetries default of 1 preserves the long-standing two-attempt behavior", async () => {
+  const { prompts } = await runVerifyWith("sess-retry-default", testConfig, () => "no verdict at all")
+  assert.equal(prompts.length, 2)
+})
+
+test("a work stage never burns verdict retries, however high the budget", async () => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  const sessionID = "sess-work-noretry"
+  const state = { kind: "engineering", goal: "g", stage: "build", iteration: 0, artifacts: {} }
+  setWorkflow(sessionID, state)
+  let calls = 0
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async () => {
+        calls++
+        return { data: { parts: [{ type: "text", text: "built it" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
+  try {
+    await runStageWithLenses(deps, sessionID, { ...testConfig, verdictRetries: 3 }, manifestFor("engineering"), state, "build", "args", 0)
+  } finally {
+    clearWorkflow(sessionID)
+  }
+  assert.equal(calls, 1)
+})
+
+test("review: axes sent across two rejected calls accumulate into one admitted verdict", async () => {
+  // The degraded-model path: a model that cannot fit five axes in one payload.
+  const sessionID = "sess-axes-accumulate"
+  const rejections: string[] = []
+  const result = await runSinglePassReview(sessionID, () => {
+    for (const chunk of [FIVE.slice(0, 2), FIVE.slice(2, 4), FIVE.slice(4)]) {
+      const r = recordVerdict(sessionID, "review", {
+        verdict: "PASS",
+        axes: chunk.map((axis) => ({ axis, verdict: "PASS" as const })),
+      })
+      if (!r.accepted) rejections.push(r.message)
+    }
+  })
+  assert.equal(rejections.length, 2, "the first two calls were still rejected as incomplete")
+  assert.match(rejections[1]!, /Still missing: performance/)
+  assert.equal(result.verdict, "PASS", "the third call completes the set and is admitted")
+  assert.deepEqual(result.record?.axes?.map((a) => a.axis).sort(), [...FIVE].sort())
+})
+
+test("review: a blocking finding sent in an early rejected call survives into the admitted verdict", async () => {
+  const sessionID = "sess-axes-accumulate-fail"
+  const result = await runSinglePassReview(sessionID, () => {
+    recordVerdict(sessionID, "review", {
+      verdict: "FAIL",
+      axes: [{ axis: "security", verdict: "FAIL", findings: [{ severity: "critical", detail: "sql hole" }] }],
+    })
+    recordVerdict(sessionID, "review", { verdict: "PASS", axes: cleanAxes })
+  })
+  assert.equal(result.verdict, "FAIL", "the carried Critical finding derives the stage down")
+  assert.equal(result.record?.axes?.find((a) => a.axis === "security")?.verdict, "FAIL")
+})
+
+test("review: the skill's own severity vocabulary is accepted and still blocks", async () => {
+  const sessionID = "sess-severity-alias"
+  const result = await runSinglePassReview(sessionID, () => {
+    recordVerdict(sessionID, "review", {
+      verdict: "PASS",
+      axes: cleanAxes.map((a) =>
+        a.axis === "security" ? { ...a, findings: [{ severity: "Blocker", detail: "token logged" }] } : a,
+      ),
+    })
+  })
+  assert.equal(result.verdict, "FAIL")
+})
+
+test("review: a nit does not block, so the vocabulary mapping cannot manufacture failures", async () => {
+  const sessionID = "sess-severity-nit"
+  const result = await runSinglePassReview(sessionID, () => {
+    recordVerdict(sessionID, "review", {
+      verdict: "PASS",
+      axes: cleanAxes.map((a) => (a.axis === "readability" ? { ...a, findings: [{ severity: "Nit", detail: "naming" }] } : a)),
+    })
+  })
+  assert.equal(result.verdict, "PASS")
+})
+
 test("review: a verdict missing axes is rejected and records nothing", async () => {
   const sessionID = "sess-axes-missing"
   const rejections: string[] = []
@@ -1505,7 +1710,7 @@ test("review: a verdict missing axes is rejected and records nothing", async () 
     if (!r.accepted) rejections.push(r.message)
   })
   assert.ok(rejections.length, "the incomplete call was rejected")
-  assert.match(rejections[0]!, /Missing: readability, architecture, security, performance/)
+  assert.match(rejections[0]!, /Still missing: readability, architecture, security, performance/)
   // Nothing was recorded, so the stage takes the broken-channel ERROR path
   // rather than shipping a one-axis review as a PASS.
   assert.equal(result.verdict, "ERROR")

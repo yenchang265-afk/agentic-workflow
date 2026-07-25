@@ -293,12 +293,13 @@ T11–T13 for their authority):
 ## The verdict contracts
 
 VERIFY and REVIEW each record their verdict by calling the **`workflow_verdict`
-plugin tool** — the loop's only trusted verdict channel. The driver accepts
-a verdict only from the session whose loop is currently sitting in that
-exact check stage; a `WORKFLOW_VERIFY:`/`WORKFLOW_REVIEW:` line in the stage's text
-is a human-readable echo for the transcript and is deliberately **ignored**
-(free text is untrusted — a quoted contract or echoed repo content must
-never flip control flow):
+plugin tool** — the loop's primary trusted verdict channel, and the only one
+unless `verdictChannel` says otherwise (see *The backup verdict channel* below).
+The driver accepts a verdict only from the session whose loop is currently
+sitting in that exact check stage; a `WORKFLOW_VERIFY:`/`WORKFLOW_REVIEW:` line
+in the stage's text is a human-readable echo for the transcript and is
+deliberately **ignored** (free text is untrusted — a quoted contract or echoed
+repo content must never flip control flow):
 
 ```
 PASS     # verify: every criterion met, tests green → review; review: no Critical/Important findings → done
@@ -334,6 +335,42 @@ The tool also accepts optional `reason` (a one-line summary) and `criteria`
 stage's prose so the re-build leads with what actually failed — never
 control flow, which remains `verdict` alone. They arrive through the same
 trusted tool call as the verdict, so they carry no extra trust.
+
+### Axis coverage accumulates
+
+A stage declaring `requiredAxes` (engineering REVIEW: all five) rejects a call
+that misses one — but the axes that call *did* carry are kept, so a follow-up
+call need only send the ones still missing, and the rejection message names
+them. One complete call remains the contract; accumulation exists so a model
+that cannot fit five axes in one payload still converges. Merging is worst-wins,
+so a FAILing axis can never be replaced by a later PASS for the same axis. A
+rejected FAIL's *verdict* is not kept — only its axes — or a malformed call
+would wedge the stage into permanent rejection.
+
+Finding severities are normalized before admission: `critical` / `important` /
+`suggestion` are the enforced set, common synonyms (blocker, major, nit,
+optional, consider, fyi) map onto it, and an unrecognized word maps to
+`important` — fail closed.
+
+### The backup verdict channel
+
+With `verdictChannel: "tool+block"` (off by default; see
+[`docs/configuration.md`](../../docs/configuration.md#running-check-stages-on-a-weaker-model)),
+the loop mints a one-time **nonce** for each check-stage attempt and puts it in
+that attempt's prompt. The stage may then answer with a fenced
+` ```workflow_verdict ` JSON block carrying that nonce, and it is admitted
+through exactly the same seam as a tool call — same stage check, same axis
+requirement, same accumulation.
+
+This does not reopen the untrusted-text hole: quoted repo content cannot carry
+a nonce that is fresh per attempt and appears only in that attempt's prompt.
+The rules that make the argument hold: the nonce must match, the stage must
+match, only the last matching block counts, the tool always wins (a block is
+read only when the tool recorded nothing), and the nonce is scrubbed from the
+run log and the stage artifact so no later stage can reuse it.
+
+Exists for check stages pointed at a model that cannot call tools reliably. On
+a model that can, it changes nothing but adds a prompt paragraph.
 
 ## Termination
 

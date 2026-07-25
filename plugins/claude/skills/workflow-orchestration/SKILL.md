@@ -162,14 +162,30 @@ The `stage` names come from the running loop's **manifest** — `workflow_verdic
 accepts any of that kind's check stages (engineering: `verify`/`review`;
 pr-sitter: `triage`/`verify`) and rejects anything else.
 
-**Missing verdict = broken channel, retried once.** When a check stage ends
-with no `workflow_verdict` call, `workflow_advance` does NOT burn an iteration: it
-re-fires the same check once (`note` says "check retry") — call `workflow_stage`
-and spawn the stage subagent again with the returned prompt. If the retry also
-records nothing, the loop stops with a retryable ERROR naming the wiring
-problem; report it and suggest `workflow_recover` after the fix. A SubagentStop
-hook also nags the check subagent once, in-session, when it tries to finish
-without a verdict.
+**Missing verdict = broken channel, retried.** When a check stage ends with no
+`workflow_verdict` call, `workflow_advance` does NOT burn an iteration: it
+re-fires the same check (`note` says "check retry") — call `workflow_stage` and
+spawn the stage subagent again with the returned prompt. The budget is
+`verdictRetries` (default 1). Once it is exhausted the loop stops with a
+retryable ERROR naming the wiring problem; report it and suggest
+`workflow_recover` after the fix. A SubagentStop hook also nags the check
+subagent once, in-session, when it tries to finish without a verdict.
+
+**Axis coverage accumulates.** A REVIEW call missing one of the five axes is
+still rejected, but the axes it did carry are kept — a follow-up call need only
+send the ones the rejection message names. One complete call remains the
+contract. Merging is worst-wins, so a FAILing axis can never be replaced later.
+Finding severities are normalized (`blocker` → `critical`, `nit`/`optional`/
+`fyi` → `suggestion`, an unrecognized word → `important`).
+
+**The backup verdict channel.** With `verdictChannel: "tool+block"` (off by
+default), each check-stage prompt carries a one-time nonce and the stage may
+answer with a fenced ` ```workflow_verdict ` JSON block carrying it. It is
+admitted through the same seam as the tool call. This does not change your job:
+you still never record a verdict on a subagent's behalf, and you must **not**
+re-use a prompt from an earlier attempt — each attempt's nonce is fresh, so
+always spawn with the prompt the latest fire returned. `workflow_compose` is
+safe to call: it reuses the armed nonce rather than minting a new one.
 
 ## Between-stage bookkeeping (all via MCP tools — never by hand)
 

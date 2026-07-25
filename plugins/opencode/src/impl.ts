@@ -452,9 +452,20 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
                 findings: tool.schema
                   .array(
                     tool.schema.object({
+                      // A free string, not an enum: the review agent is told to
+                      // invoke the `code-review-and-quality` skill, whose own
+                      // table teaches Nit/Optional/Consider/FYI. A hard enum
+                      // rejects the call an agent makes by following its own
+                      // instructions — and a weak model abandons the rejected
+                      // call rather than repairing it. Core's `normalizeSeverity`
+                      // maps synonyms onto the three, unknown words failing
+                      // closed to `important`.
                       severity: tool.schema
-                        .enum(["critical", "important", "suggestion"])
-                        .describe("critical/important block the stage; suggestion never does."),
+                        .string()
+                        .describe(
+                          'One of "critical", "important" or "suggestion" — critical/important block the stage, ' +
+                            "suggestion never does. Common synonyms (blocker, major, nit, optional, consider, fyi) are mapped.",
+                        ),
                       detail: tool.schema.string().describe("What is wrong and what should change."),
                       location: tool.schema.string().optional().describe('"file:line" this finding is anchored to.'),
                     }),

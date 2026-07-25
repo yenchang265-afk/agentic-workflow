@@ -60,15 +60,21 @@ For each file changed:
 
 Label every comment with its severity so the author knows what's required vs optional:
 
-| Prefix | Meaning | Author Action |
-|--------|---------|---------------|
-| *(no prefix)* | Required change | Must address before merge |
-| **Critical:** | Blocks merge | Security vulnerability, data loss, broken functionality |
-| **Nit:** | Minor, optional | Author may ignore — formatting, style preferences |
-| **Optional:** / **Consider:** | Suggestion | Worth considering but not required |
-| **FYI** | Informational only | No action needed — context for future reference |
+| Prefix | Meaning | Author Action | Machine severity |
+|--------|---------|---------------|------------------|
+| **Critical:** | Blocks merge | Security vulnerability, data loss, broken functionality | `critical` |
+| *(no prefix)* | Required change | Must address before merge | `important` |
+| **Nit:** | Minor, optional | Author may ignore — formatting, style preferences | `suggestion` |
+| **Optional:** / **Consider:** | Suggestion | Worth considering but not required | `suggestion` |
+| **FYI** | Informational only | No action needed — context for future reference | `suggestion` |
 
 This prevents authors from treating all feedback as mandatory and wasting time on optional suggestions.
+
+The **Machine severity** column is the vocabulary the agentic loop enforces: when
+this skill is invoked from a REVIEW stage, `workflow_verdict` takes exactly
+`critical` / `important` / `suggestion`. Critical and important block the stage;
+suggestion never does. Emit those three — a word outside the set is treated as
+`important`, which fails a stage you may not have meant to fail.
 
 **Lead with what matters.** Order findings by leverage: correctness and security first, then structural regressions and missed simplifications, then everything else. Don't bury a real issue under cosmetic nits — a few high-conviction comments beat a long list. If you have one structural problem and ten nits, the structural problem *is* the review.
 

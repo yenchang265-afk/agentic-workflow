@@ -74,9 +74,16 @@ axes: [
 - An axis with no findings is a clean `PASS` — say so, don't omit it.
 - Use `ERROR` on an **axis** you genuinely could not assess (e.g. no hot path
   in this diff to judge performance against). Don't invent a finding to fill it.
-- A call that misses an axis is **rejected and not recorded**, and partial
-  submissions are **not** accumulated across calls — every call must carry all
-  five. The rejection message names what is missing.
+- A call that misses an axis is **rejected and not recorded**. The axes you
+  already sent in this stage *are* accumulated, so a follow-up call need only
+  carry the ones still missing — the rejection message names them. Do this only
+  if one complete call was not possible; one call carrying all five is the
+  contract.
+- `severity` is `critical`, `important` or `suggestion`. If you are following
+  the `code-review-and-quality` skill's own labels, they map: Critical →
+  `critical`; an unprefixed required change → `important`; Nit / Optional /
+  Consider / FYI → `suggestion`. A word the loop does not recognize is treated
+  as `important`, so use the three above and mean them.
 - Your overall verdict is worsened to match your axes: a Critical or Important
   finding anywhere makes the stage FAIL no matter what you declare.
 

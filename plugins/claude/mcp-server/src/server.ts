@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { randomUUID } from "node:crypto"
 import path from "node:path"
 import fs from "node:fs"
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
@@ -22,7 +23,15 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
+import {
+  bareModel,
+  blockChannelEnabled,
+  enabledWorkflowKinds,
+  modelFor,
+  platformFor,
+  unknownStageModelKeys,
+  unreviewedAxes,
+} from "@agentic-workflow/core/config"
 import {
   admitVerdict,
   axisVerdict,
@@ -32,9 +41,11 @@ import {
   verdictFeedbackBlock,
   type AxisResult,
   type CriterionResult,
+  type RawVerdictRecord,
   type Verdict,
   type VerdictRecord,
 } from "@agentic-workflow/core/workflow/verdict"
+import { parseVerdictBlock, redactNonce } from "@agentic-workflow/core/workflow/verdict-block"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
@@ -132,7 +143,17 @@ const log = (level: "info" | "warn" | "error", message: string) =>
 let active: WorkflowState | null = null
 let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when workflow_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
-let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
+/**
+ * Axes carried over from *rejected* `workflow_verdict` calls in the running
+ * check stage. A model too weak to emit all five axes in one payload sends them
+ * across calls; without this each call is judged in isolation and the stage can
+ * never satisfy its coverage requirement. Deliberately separate from `pending`:
+ * these axes were never admitted and must not read as a verdict.
+ */
+let pendingPartialAxes: readonly AxisResult[] = []
+let verdictRetries = 0 // how many no-verdict re-fires the current check stage has already been given
+/** The nonce this check-stage attempt's backup verdict block must carry ("" ⇒ channel off). */
+let verdictNonce = ""
 let verdictRejected = false // whether the current check stage had a verdict REJECTED (incomplete axis coverage) — changes the re-fire wording
 let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
@@ -412,8 +433,9 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
   pending = null
-  verdictRetried = false
+  verdictRetries = 0
   verdictRejected = false
+  pendingPartialAxes = []
   buildNoteFor = null
   // Only workflow_claim sets activeClaim; a stale one left by a claim flow that
   // died mid-setup would fire onTerminal against the WRONG work item at this
@@ -449,8 +471,9 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
   pending = null
-  verdictRetried = false
+  verdictRetries = 0
   verdictRejected = false
+  pendingPartialAxes = []
   buildNoteFor = null
   activeClaim = null // see startTask — a workflow_start loop has no scheduler claim behind it
   const state = planEntryState(t)
@@ -483,6 +506,26 @@ const claimWarnings = async (): Promise<string[]> => {
   return warnings
 }
 
+/**
+ * A one-time token for the backup verdict-block channel. Impure (randomness),
+ * so it lives host-side rather than in core's pure `verdict-block.ts`.
+ */
+const newVerdictNonce = (): string => `wvn_${randomUUID().replaceAll("-", "").slice(0, 16)}`
+
+/**
+ * Compose a stage's prompt AT THE FIRE BOUNDARY, arming a fresh backup-channel
+ * nonce for a check stage when the channel is on. Every fire site goes through
+ * this: a re-fire must be issued its own nonce, or the previous attempt's block
+ * — still sitting in the transcript — would satisfy it. `workflow_compose` is
+ * deliberately NOT routed here; it is an idempotent read and must reuse the
+ * nonce already armed rather than mint a new one the loop will not accept.
+ */
+const firePrompt = (loaded: LoadedManifest, state: WorkflowState, stage: string): string => {
+  const def = stageDef(loaded.manifest, stage)
+  verdictNonce = def.kind === "check" && blockChannelEnabled(config, loaded.manifest.kind) ? newVerdictNonce() : ""
+  return composePrompt(loaded, verdictNonce ? { ...state, verdictNonce } : state, stage)
+}
+
 /** The fire payload workflow_start/workflow_claim return for a fresh claim. */
 const firePayload = (state: WorkflowState, id: string) => {
   const manifest = manifestFor(state.kind ?? "engineering")
@@ -497,7 +540,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     agent: agentRef(def.agent),
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
-    prompt: composePrompt(manifest, state, state.stage),
+    prompt: firePrompt(manifest, state, state.stage),
     ...(state.stage === "plan"
       ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
       : {}),
@@ -595,8 +638,9 @@ server.registerTool(
     let state = claim.item.state
     samples = []
     pending = null
-    verdictRetried = false
+    verdictRetries = 0
     verdictRejected = false
+    pendingPartialAxes = []
     buildNoteFor = null
     const loaded = manifestFor(claim.item.workflowKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
@@ -642,7 +686,10 @@ server.registerTool(
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
     try {
-      return ok({ prompt: composePrompt(activeManifest(), active, stage) })
+      // Reuse the armed nonce — an idempotent read must never mint a new one,
+      // or the block the subagent then writes would be checked against a nonce
+      // that no longer matches.
+      return ok({ prompt: composePrompt(activeManifest(), verdictNonce ? { ...active, verdictNonce } : active, stage) })
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -669,7 +716,20 @@ server.registerTool(
             findings: z
               .array(
                 z.object({
-                  severity: z.enum(["critical", "important", "suggestion"]),
+                  // A free string, not an enum: the review agent is told to invoke
+                  // the `code-review-and-quality` skill, whose table teaches
+                  // Nit/Optional/Consider/FYI. A hard enum rejects the call an
+                  // agent makes by following its own instructions, and a weak
+                  // model abandons the rejected call rather than repairing it.
+                  // Core's `normalizeSeverity` maps synonyms onto the three,
+                  // unknown words failing closed to `important`.
+                  severity: z
+                    .string()
+                    .min(1)
+                    .describe(
+                      'One of "critical", "important" or "suggestion" — critical/important block the stage, suggestion never does. ' +
+                        "Common synonyms (blocker, major, nit, optional, consider, fyi) are mapped.",
+                    ),
                   detail: z.string().min(1),
                   location: z.string().optional().describe('"file:line" the finding is anchored to.'),
                 }),
@@ -679,7 +739,7 @@ server.registerTool(
         )
         .optional()
         .describe(
-          "Per-axis results. REQUIRED on a stage that declares requiredAxes (engineering review: all five axes) — a call missing an axis is REJECTED, and partial submissions are not accumulated across calls.",
+          "Per-axis results. REQUIRED on a stage that declares requiredAxes (engineering review: all five axes) — a call missing an axis is REJECTED, though axes already sent in this stage are accumulated, so a follow-up call need only carry the ones still missing. One complete call is preferred.",
         ),
     },
   },
@@ -699,21 +759,25 @@ server.registerTool(
     if (def?.kind !== "check") {
       return fail(`Stage ${stage} is not a check stage — verdict ignored.`)
     }
-    const rec: VerdictRecord = {
+    const rec: RawVerdictRecord = {
       verdict,
       ...(reason ? { reason } : {}),
       ...(criteria ? { criteria: criteria as CriterionResult[] } : {}),
-      ...(axes ? { axes: axes as AxisResult[] } : {}),
+      ...(axes ? { axes } : {}),
     }
     // The record can only be obtained from the `ok: true` branch, so a rejected
     // verdict CANNOT reach `stampVerdictRecorded` below — which would otherwise
     // mark the stage satisfied for the SubagentStop guard and burn its one-shot
     // nag sentinel, letting the subagent stop having recorded nothing valid.
-    const admission = admitVerdict(rec, def.requiredAxes, pending)
+    const admission = admitVerdict(rec, def.requiredAxes, pending, pendingPartialAxes)
     if (!admission.ok) {
       verdictRejected = true
+      // Keep the axes covered so far so the next call need only carry the rest —
+      // these were never admitted, so they stay out of `pending`.
+      pendingPartialAxes = admission.partialAxes
       return fail(admission.message)
     }
+    pendingPartialAxes = []
     pending = admission.record
     stampVerdictRecorded()
     // Report the DERIVED verdict: a declared PASS carrying a Critical finding on
@@ -842,10 +906,28 @@ server.registerTool(
     // burning build iterations on a stage that may have passed (the
     // theater-booking-0 failure mode: three rebuilds of an already-done task).
     if (stageDef(activeManifest().manifest, stage).kind === "check" && !pending) {
+      // The backup channel, when armed: a fenced block carrying THIS attempt's
+      // nonce is as authoritative as the tool call, and is admitted through the
+      // same seam so the axis requirement and accumulated partials still apply.
+      const fromBlock = verdictNonce ? parseVerdictBlock(stageOutput, stage, verdictNonce) : null
+      if (fromBlock) {
+        const def = stageDef(activeManifest().manifest, stage)
+        const admission = admitVerdict(fromBlock, def.requiredAxes, null, pendingPartialAxes)
+        if (admission.ok) {
+          pending = admission.record
+          stampVerdictRecorded()
+          await log("info", `${stage} recorded its verdict through the backup block channel: ${effectiveVerdict(pending)}`)
+        } else {
+          pendingPartialAxes = admission.partialAxes
+          await log("warn", `${stage}'s backup verdict block was rejected: ${admission.message}`)
+        }
+      }
+    }
+    if (stageDef(activeManifest().manifest, stage).kind === "check" && !pending) {
       // Diagnostic only — free text never flips control flow (verdict.ts).
       const prose = parseVerdict(stageOutput, `WORKFLOW_${stage.toUpperCase()}`)
-      if (!verdictRetried) {
-        verdictRetried = true
+      if (verdictRetries < config.verdictRetries) {
+        verdictRetries++
         if (active.task) {
           const noteActor = await gitActor(sh, directory)
           await appendNote(
@@ -860,6 +942,7 @@ server.registerTool(
           )
         }
         writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+        pendingPartialAxes = [] // a re-fire is a new attempt; the last one's partial axes do not carry
         lastFireAt = Date.now()
         const retryModel = stageModel(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
         return ok({
@@ -867,11 +950,11 @@ server.registerTool(
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
           ...(retryModel ? { model: retryModel } : {}),
           prompt:
-            composePrompt(activeManifest(), active, stage) +
+            firePrompt(activeManifest(), active, stage) +
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
-                "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
-                "COMPLETE axes array; partial submissions are not accumulated."
+                "or it declared FAIL without naming a critical/important finding. Call workflow_verdict with the " +
+                "COMPLETE axes array; a partial call is rejected, though axes already accepted this stage are kept."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
           note: `check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again${SPAWN_MODEL_NOTE}`,
@@ -880,7 +963,8 @@ server.registerTool(
       pending = {
         verdict: "ERROR",
         reason:
-          "no workflow_verdict recorded even after a retry — the verdict channel is unreachable from the stage subagent " +
+          `no workflow_verdict recorded after ${config.verdictRetries} ${config.verdictRetries === 1 ? "retry" : "retries"} — ` +
+          "the verdict channel is unreachable from the stage subagent " +
           "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
           (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
       }
@@ -888,7 +972,11 @@ server.registerTool(
     // thread the structured feedback (reason, failed criteria, failing axes)
     // ahead of the prose for the next iteration
     const block = verdictFeedbackBlock(pending)
-    const threaded = block ? `${block}\n\n${stageOutput}` : stageOutput
+    // The nonce must not survive into anything durable: the threaded output
+    // becomes this stage's artifact and is fed to later stages, so a nonce left
+    // in it would be reusable by a stage that was never issued one.
+    const safeOutput = redactNonce(stageOutput, verdictNonce)
+    const threaded = block ? `${block}\n\n${safeOutput}` : safeOutput
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
@@ -911,8 +999,10 @@ server.registerTool(
     const { state, action } = advance(activeManifest(), active, config, threaded, verdict)
     active = state
     pending = null
-    verdictRetried = false // the transition happened — the next check stage gets its own retry budget
+    verdictRetries = 0 // the transition happened — the next check stage gets its own retry budget
     verdictRejected = false
+    pendingPartialAxes = []
+    verdictNonce = "" // the stage is over; its nonce must never validate another stage's block
 
     if (action.kind === "fire") {
       await snapshot()
@@ -922,7 +1012,7 @@ server.registerTool(
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
-        prompt: composePrompt(activeManifest(), active, action.stage),
+        prompt: firePrompt(activeManifest(), active, action.stage),
         note:
           `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}` +
           (nextDef.kind === "check"
@@ -1342,8 +1432,9 @@ server.registerTool(
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     samples = []
     pending = null
-    verdictRetried = false
+    verdictRetries = 0
     verdictRejected = false
+    pendingPartialAxes = []
     buildNoteFor = null
     const actor = await gitActor(sh, directory)
     if (snap && snap.task?.id === id) {
@@ -1383,7 +1474,7 @@ server.registerTool(
     return ok({
       resumedFrom: "plan",
       stage: "build",
-      prompt: composePrompt(eng, active, "build"),
+      prompt: firePrompt(eng, active, "build"),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
       note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,

@@ -9,6 +9,8 @@ import {
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
   mergeAxes,
+  normalizeRecord,
+  normalizeSeverity,
   parseVerdict,
   stageDriftNote,
   verdictContractBlock,
@@ -81,7 +83,8 @@ test("verdictContractBlock names every required axis and the rejection rule", ()
   for (const axis of AXES) assert.match(block, new RegExp(axis))
   assert.match(block, /REJECTED/)
   assert.match(block, /severity/)
-  assert.match(block, /not accumulated across calls/)
+  assert.match(block, /accumulated/)
+  assert.match(block, /one complete call is preferred/)
 })
 
 // --- workScopeBlock (the prompt-carried scope fence for work stages) ---
@@ -254,15 +257,15 @@ test("axisCoverageIssue: names exactly the missing axes", () => {
   assert.ok(issue)
   // Assert on the extracted list, not the whole message — the payload-shape
   // example downstream names an axis too.
-  assert.equal(issue.match(/Missing: ([^.]+)\./)?.[1], "architecture, security, performance")
+  assert.equal(issue.match(/Still missing: ([^.]+)\./)?.[1], "architecture, security, performance")
 })
 
-test("axisCoverageIssue: the message tells the agent how to retry successfully in one call", () => {
+test("axisCoverageIssue: the message tells the agent it may finish the set across calls", () => {
   const issue = axisCoverageIssue({ verdict: "PASS" }, AXES)
   assert.ok(issue)
   assert.match(issue, /NOT recorded/)
-  assert.match(issue, /ONE call/)
-  assert.match(issue, /not\s+accumulated/)
+  assert.match(issue, /ARE accumulated/)
+  assert.match(issue, /one call is still\s+preferred/)
   assert.match(issue, /ERROR.*could not assess/s) // the escape hatch, or the model invents findings
   assert.match(issue, /no findings is a clean PASS/)
 })
@@ -318,7 +321,7 @@ test("admitVerdict rejects an incomplete payload and yields NO record to store",
   // The point of the return type: a rejected call cannot hand a host anything
   // to store or stamp. `record` is not reachable on this branch.
   assert.ok(!("record" in res))
-  assert.match(res.ok === false ? res.message : "", /Missing:/)
+  assert.match(res.ok === false ? res.message : "", /Still missing:/)
 })
 
 test("admitVerdict rejects a FAIL that names nothing to fix", () => {
@@ -346,6 +349,110 @@ test("admitVerdict combines repeat calls worst-wins — a FAIL cannot be replace
   const record = res.ok === true ? res.record : null
   assert.equal(record?.verdict, "FAIL")
   assert.equal(record?.axes?.find((a) => a.axis === "security")?.verdict, "FAIL")
+})
+
+// --- admitVerdict: partial axis accumulation (the degraded-model path) ---
+
+test("admitVerdict: a rejected partial call hands back every axis seen so far", () => {
+  const res = admitVerdict({ verdict: "PASS", axes: [{ axis: "correctness", verdict: "PASS" }] }, AXES, null)
+  assert.equal(res.ok, false)
+  assert.deepEqual(res.ok === false ? res.partialAxes.map((a) => a.axis) : [], ["correctness"])
+})
+
+test("admitVerdict: two partial calls converge into one complete, admitted record", () => {
+  const first = admitVerdict({ verdict: "PASS", axes: AXES.slice(0, 3).map((axis) => ({ axis, verdict: "PASS" as const })) }, AXES, null)
+  assert.equal(first.ok, false)
+  const carried = first.ok === false ? first.partialAxes : []
+  const second = admitVerdict(
+    { verdict: "PASS", axes: AXES.slice(3).map((axis) => ({ axis, verdict: "PASS" as const })) },
+    AXES,
+    null,
+    carried,
+  )
+  assert.equal(second.ok, true)
+  assert.deepEqual((second.ok === true ? second.record.axes : [])?.map((a) => a.axis).sort(), [...AXES].sort())
+})
+
+test("admitVerdict: accumulation is worst-wins — a FAILing axis survives a later PASS for the same axis", () => {
+  const first = admitVerdict(
+    {
+      verdict: "FAIL",
+      axes: [{ axis: "security", verdict: "FAIL", findings: [{ severity: "critical", detail: "sql hole" }] }],
+    },
+    AXES,
+    null,
+  )
+  assert.equal(first.ok, false) // incomplete coverage
+  const carried = first.ok === false ? first.partialAxes : []
+  const second = admitVerdict({ verdict: "PASS", axes: fiveAxes() }, AXES, null, carried)
+  assert.equal(second.ok, true)
+  const record = second.ok === true ? second.record : null
+  assert.equal(record?.axes?.find((a) => a.axis === "security")?.verdict, "FAIL")
+  // The declared PASS is derived down by the carried Critical finding.
+  assert.equal(effectiveVerdict(record!), "FAIL")
+})
+
+test("admitVerdict: a malformed FAIL does not poison the stage into permanent rejection", () => {
+  // A FAIL naming nothing to fix is rejected — but its verdict must not be
+  // carried forward, or the model could never recover by recording a clean PASS.
+  const bad = admitVerdict({ verdict: "FAIL", reason: "vibes", axes: fiveAxes() }, AXES, null)
+  assert.equal(bad.ok, false)
+  const carried = bad.ok === false ? bad.partialAxes : []
+  const good = admitVerdict({ verdict: "PASS", axes: fiveAxes() }, AXES, null, carried)
+  assert.equal(good.ok, true)
+  assert.equal(good.ok === true ? effectiveVerdict(good.record) : null, "PASS")
+})
+
+test("admitVerdict: an empty partialAxes changes nothing for a complete single call", () => {
+  const rec = { verdict: "PASS" as const, axes: fiveAxes() }
+  assert.deepEqual(admitVerdict(rec, AXES, null, []), admitVerdict(rec, AXES, null))
+})
+
+// --- normalizeSeverity / normalizeRecord (the skill's vocabulary vs the loop's) ---
+
+test("normalizeSeverity maps the code-review skill's own vocabulary onto the enforced three", () => {
+  assert.equal(normalizeSeverity("Critical:"), "critical")
+  assert.equal(normalizeSeverity("Nit"), "suggestion")
+  assert.equal(normalizeSeverity("Optional"), "suggestion")
+  assert.equal(normalizeSeverity("Consider"), "suggestion")
+  assert.equal(normalizeSeverity("FYI"), "suggestion")
+})
+
+test("normalizeSeverity is case-, space- and punctuation-insensitive", () => {
+  assert.equal(normalizeSeverity("  IMPORTANT  "), "important")
+  assert.equal(normalizeSeverity("**critical**"), "critical")
+  assert.equal(normalizeSeverity("nit-pick"), "suggestion")
+})
+
+test("normalizeSeverity fails closed: an unrecognized word blocks rather than vanishing", () => {
+  assert.equal(normalizeSeverity("catastrophic"), "important")
+  assert.equal(normalizeSeverity(""), "important")
+})
+
+test("normalizeSeverity leaves the canonical three untouched", () => {
+  for (const s of ["critical", "important", "suggestion"] as const) assert.equal(normalizeSeverity(s), s)
+})
+
+test("normalizeRecord canonicalizes findings and leaves an axis-less record alone", () => {
+  assert.deepEqual(normalizeRecord({ verdict: "FAIL", reason: "tests red" }), { verdict: "FAIL", reason: "tests red" })
+  const out = normalizeRecord({
+    verdict: "FAIL",
+    axes: [{ axis: "security", verdict: "FAIL", findings: [{ severity: "Blocker", detail: "x" }] }],
+  })
+  assert.equal(out.axes?.[0]?.findings?.[0]?.severity, "critical")
+})
+
+test("admitVerdict normalizes severities, so a skill-vocabulary finding still blocks", () => {
+  const res = admitVerdict(
+    {
+      verdict: "PASS",
+      axes: fiveAxes().map((a) => (a.axis === "security" ? { ...a, findings: [{ severity: "Blocker", detail: "sql hole" }] } : a)),
+    },
+    AXES,
+    null,
+  )
+  assert.equal(res.ok, true)
+  assert.equal(res.ok === true ? effectiveVerdict(res.record) : null, "FAIL")
 })
 
 test("admitVerdict enforces nothing where no axes are required (VERIFY keeps today's contract)", () => {

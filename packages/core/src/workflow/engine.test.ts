@@ -238,6 +238,54 @@ test("composePrompt appends the verdict contract to check stages only", () => {
   }
 })
 
+// --- the backup verdict block channel (opt-in; absent nonce ⇒ nothing changes) ---
+
+test("composePrompt is byte-identical to today when no verdict nonce is armed", () => {
+  // The backward-compatibility pin: every kind that never sets a nonce must
+  // render exactly the prompt it rendered before the channel existed.
+  const state = resumeAtBuild("add foo", task, "PLAN BODY")
+  for (const stage of ["plan", "build", "verify", "review"]) {
+    const withUndefined = composePrompt(eng, { ...state, stage, verdictNonce: undefined }, stage)
+    assert.equal(withUndefined, composePrompt(eng, { ...state, stage }, stage), `${stage}`)
+    assert.doesNotMatch(withUndefined, /BACKUP VERDICT CHANNEL/, `${stage} has no backup contract`)
+  }
+})
+
+test("an armed nonce adds the backup contract to check stages only, after the tool contract", () => {
+  const state = { ...resumeAtBuild("add foo", task, "PLAN BODY"), verdictNonce: "wvn_abc123" }
+  for (const stage of ["verify", "review"]) {
+    const prompt = composePrompt(eng, { ...state, stage }, stage)
+    assert.match(prompt, /BACKUP VERDICT CHANNEL/, `${stage} carries the backup contract`)
+    assert.match(prompt, /wvn_abc123/, `${stage} carries the nonce`)
+    // Order matters: the tool is still the primary and is stated first.
+    assert.ok(prompt.indexOf("MANDATORY VERDICT") < prompt.indexOf("BACKUP VERDICT CHANNEL"), `${stage} states the tool first`)
+  }
+  for (const stage of ["plan", "build"]) {
+    const prompt = composePrompt(eng, { ...state, stage }, stage)
+    assert.doesNotMatch(prompt, /BACKUP VERDICT CHANNEL/, `${stage} is a work stage`)
+    assert.doesNotMatch(prompt, /wvn_abc123/, `${stage} never sees the nonce`)
+  }
+})
+
+test("an empty-string nonce is treated as unarmed, not as a nonce nothing can match", () => {
+  const state = resumeAtBuild("add foo", task, "PLAN BODY")
+  assert.equal(
+    composePrompt(eng, { ...state, stage: "verify", verdictNonce: "" }, "verify"),
+    composePrompt(eng, { ...state, stage: "verify" }, "verify"),
+  )
+})
+
+test("composeStagePrompt stays byte-identical to composePrompt with a nonce armed", () => {
+  // Same guarantee as the hook-less parity test above — the hub preview must
+  // not diverge just because the block channel is on.
+  const state = { ...resumeAtBuild("add foo", task, "PLAN BODY"), verdictNonce: "wvn_preview" }
+  for (const stage of ["plan", "build", "verify", "review"]) {
+    const def = stageDef(eng.manifest, stage)
+    const lenient = composeStagePrompt(def, eng.prompts[stage] ?? "", promptContext({ ...state, stage }))
+    assert.equal(lenient, composePrompt(eng, { ...state, stage }, stage), stage)
+  }
+})
+
 test("composePrompt carries the five-axis payload contract on review, and none on verify", () => {
   const state = resumeAtBuild("add foo", task, "PLAN BODY")
   const review = composePrompt(eng, { ...state, stage: "review" }, "review")

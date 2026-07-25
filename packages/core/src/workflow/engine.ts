@@ -4,6 +4,7 @@ import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, Config, WorkflowState } from "./state.js"
 import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { verdictBlockContract } from "./verdict-block.js"
 
 /**
  * The manifest-interpreted state machine: given a workflow kind's manifest, the
@@ -51,6 +52,9 @@ export const promptContext = (state: WorkflowState): TemplateContext => {
     git: state.git
       ? { base: state.git.base, branch: state.git.branch, worktree: wt ?? "", diffCmd }
       : undefined,
+    // Only present when the host armed the block verdict channel for this
+    // attempt; absent keeps every composed prompt byte-identical to before.
+    verdict: state.verdictNonce ? { nonce: state.verdictNonce } : undefined,
     worktree: wt
       ? {
           path: wt,
@@ -80,9 +84,13 @@ export const promptContext = (state: WorkflowState): TemplateContext => {
  */
 export const composeStagePrompt = (def: StageDef, tpl: string, ctx: TemplateContext): string => {
   const rendered = renderPrompt(tpl, ctx)
-  return def.kind === "check"
-    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes)}`
-    : `${rendered}\n\n${workScopeBlock(def.name)}`
+  if (def.kind !== "check") return `${rendered}\n\n${workScopeBlock(def.name)}`
+  // The backup-channel paragraph is appended only when the host armed a nonce
+  // for this attempt (config `verdictChannel: "tool+block"`). Without one the
+  // output is byte-identical to the tool-only form every kind renders today.
+  const nonce = (ctx.verdict as TemplateContext | undefined)?.nonce
+  const backup = typeof nonce === "string" && nonce ? `\n\n${verdictBlockContract(def.name, nonce)}` : ""
+  return `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes)}${backup}`
 }
 
 /** Render the prompt threaded into `target`'s stage command. */

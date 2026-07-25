@@ -7,6 +7,8 @@ import {
   deprecatedAdoKeys,
   applyAdoPatEnv,
   bareModel,
+  blockChannelEnabled,
+  verdictChannelFor,
   DEFAULT_CONFIG,
   defaultTrackerSystem,
   enabledWorkflowKinds,
@@ -179,6 +181,40 @@ test("modelFor: config stageModels wins over the manifest stage's model, which w
 test("workflows.<kind>.stageModels validates fail-fast, unlike positional knobs", () => {
   assert.throws(() => parseConfig({ workflows: { engineering: { stageModels: { build: 42 } } } }), /stageModels/)
   assert.throws(() => parseConfig({ workflows: { engineering: { stageModels: { build: "" } } } }), /stageModels/)
+})
+
+// --- verdictChannel / verdictRetries (the degraded-model knobs) ---
+
+test("verdictChannel defaults to tool-only, and verdictRetries to today's single re-fire", () => {
+  assert.equal(DEFAULT_CONFIG.verdictChannel, "tool")
+  assert.equal(DEFAULT_CONFIG.verdictRetries, 1)
+  assert.equal(verdictChannelFor(DEFAULT_CONFIG, "engineering"), "tool")
+  assert.equal(blockChannelEnabled(DEFAULT_CONFIG, "engineering"), false)
+})
+
+test("verdictChannelFor: the per-kind key wins over the global one", () => {
+  const c = parseConfig({ verdictChannel: "tool", workflows: { engineering: { verdictChannel: "tool+block" } } })
+  assert.equal(verdictChannelFor(c, "engineering"), "tool+block")
+  assert.equal(blockChannelEnabled(c, "engineering"), true)
+  // A kind with no section falls back to the global setting.
+  assert.equal(verdictChannelFor(c, "pr-sitter"), "tool")
+  assert.equal(blockChannelEnabled(c, "pr-sitter"), false)
+})
+
+test("verdictChannelFor: a global setting reaches every kind that does not override it", () => {
+  const c = parseConfig({ verdictChannel: "tool+block", workflows: { "pr-sitter": { verdictChannel: "tool" } } })
+  assert.equal(verdictChannelFor(c, "engineering"), "tool+block")
+  assert.equal(verdictChannelFor(c, "pr-sitter"), "tool")
+})
+
+test("verdictChannel and verdictRetries reject out-of-contract values fail-fast", () => {
+  assert.throws(() => parseConfig({ verdictChannel: "block" }), /verdictChannel/)
+  assert.throws(() => parseConfig({ workflows: { engineering: { verdictChannel: "prose" } } }), /verdictChannel/)
+  assert.throws(() => parseConfig({ verdictRetries: -1 }), /verdictRetries/)
+  assert.throws(() => parseConfig({ verdictRetries: 1.5 }), /verdictRetries/)
+  assert.throws(() => parseConfig({ verdictRetries: 99 }), /verdictRetries/)
+  // 0 is legal: stop with ERROR immediately rather than re-firing.
+  assert.equal(parseConfig({ verdictRetries: 0 }).verdictRetries, 0)
 })
 
 const reviewStage = (requiredAxes?: string[]) =>

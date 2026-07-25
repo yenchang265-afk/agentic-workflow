@@ -43,6 +43,52 @@ test("workflow_advance gates the ship-gate payload on the terminal report, not t
   )
 })
 
+// --- the degraded-model channels, asserted source-level for the reason above ---
+
+test("every FIRE site composes through firePrompt, so each attempt is issued its own nonce", () => {
+  // A fire that called composePrompt directly would hand the subagent a prompt
+  // with no nonce (or, worse, the previous attempt's), silently disabling the
+  // backup channel for that stage. workflow_compose is the one deliberate
+  // exception: an idempotent read must reuse the armed nonce, never mint one.
+  const src = fs.readFileSync(path.join(pkgDir, "src", "server.ts"), "utf8")
+  const direct = src
+    .split("\n")
+    .filter((line) => /composePrompt\(/.test(line))
+    .filter((line) => !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//"))
+    .filter((line) => !/^import /.test(line.trimStart()))
+    .filter((line) => !/const firePrompt =/.test(line))
+  assert.deepEqual(
+    direct.map((l) => l.trim()),
+    ["return composePrompt(loaded, verdictNonce ? { ...state, verdictNonce } : state, stage)", "return ok({ prompt: composePrompt(activeManifest(), verdictNonce ? { ...active, verdictNonce } : active, stage) })"],
+    "only firePrompt's own body and workflow_compose may call composePrompt directly",
+  )
+  // The four fire sites: the fresh-claim payload, the no-verdict re-fire, the
+  // next-stage fire in workflow_advance, and workflow_recover's BUILD re-entry.
+  assert.ok(src.split("firePrompt(").length - 1 >= 4, "every fire site must route through firePrompt")
+})
+
+test("the backup block channel is read only after the tool channel came up empty, and the tool wins", () => {
+  const src = fs.readFileSync(path.join(pkgDir, "src", "server.ts"), "utf8")
+  assert.match(src, /kind === "check" && !pending\)\s*\{\s*\n[\s\S]{0,400}?parseVerdictBlock/, "the block is read only when `pending` is empty")
+  assert.match(src, /verdictNonce \? parseVerdictBlock\(/, "an unarmed stage must never read a block")
+})
+
+test("a rejected verdict keeps its axes in the partial slot, never in `pending`", () => {
+  const src = fs.readFileSync(path.join(pkgDir, "src", "server.ts"), "utf8")
+  assert.match(src, /if \(!admission\.ok\)\s*\{[\s\S]{0,300}?pendingPartialAxes = admission\.partialAxes/)
+  // `pending` may only ever be assigned from the ok branch's record.
+  for (const line of src.split("\n").filter((l) => /^\s*pending = /.test(l))) {
+    assert.match(line, /pending = (null|admission\.record|\{)/, `pending assigned from an unadmitted value:\n  ${line.trim()}`)
+  }
+})
+
+test("the retry budget comes from config, and the nonce is cleared when the stage ends", () => {
+  const src = fs.readFileSync(path.join(pkgDir, "src", "server.ts"), "utf8")
+  assert.match(src, /verdictRetries < config\.verdictRetries/, "the budget must be configurable, not hardcoded")
+  assert.match(src, /verdictNonce = "" \/\/ the stage is over/, "a finished stage's nonce must not validate a later block")
+  assert.match(src, /redactNonce\(stageOutput, verdictNonce\)/, "the nonce must be scrubbed from the durable artifact")
+})
+
 // Boot the server from source over stdio with an immediately-closed stdin: it
 // must announce readiness on stderr (stdout stays clean for the MCP protocol)
 // and exit on its own when the transport sees EOF.

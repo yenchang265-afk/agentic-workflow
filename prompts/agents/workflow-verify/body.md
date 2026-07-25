@@ -51,10 +51,15 @@ FAIL/ERROR), and `criteria` mirroring the acceptance criteria you were given
 `mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict` — if neither is present,
 say so explicitly in your final message and finish.
 {{/host}}
-The tool call is the loop's only trusted verdict channel; a verdict written in
-plain text is ignored and counts as FAIL. Use `ERROR` **only** when the check
+The tool call is the loop's trusted verdict channel; a verdict written in
+ordinary prose is ignored and counts as FAIL. Use `ERROR` **only** when the check
 itself could not run at all (missing test runner, broken environment) — failing
 tests are always `FAIL`, never `ERROR`.
+
+If — and only if — the loop's prompt offered you a **backup verdict channel**
+with a one-time nonce, and the tool is unavailable or its call fails, end your
+final message with the fenced block exactly as that paragraph describes. Without
+such a paragraph there is no backup: the tool call is the only way to be heard.
 {{#host opencode}}
 Also end your response with the matching human-readable line for the transcript:
 

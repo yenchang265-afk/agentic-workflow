@@ -56,6 +56,21 @@ persuading the agent the check passed.
   verdict, so a single persuaded reviewer can't flip the outcome — an
   injection would have to survive every lens's independent pass. Residual
   shrinks to N simultaneous persuasions.
+- **`verdictChannel: "tool+block"` (off by default)** adds a second admitted
+  channel — a fenced ` ```workflow_verdict ` JSON block — for check stages run
+  on a model that cannot call tools reliably. It does **not** widen T1: the
+  block must carry a nonce minted fresh for that stage attempt and present only
+  in that attempt's prompt, so injected file content cannot produce one. Only
+  the last matching block counts, the stage must match, and the tool channel
+  wins outright — the block is read only when no tool call was recorded. The
+  residual is unchanged: an injection that persuades the *agent*, which could
+  already call the tool.
+- **Residual introduced by that channel:** the nonce is a bearer token, so it
+  must not survive into anything a later stage can read. It is scrubbed
+  (`redactNonce`) from the run log and from the stage artifact threaded into the
+  next prompt, and cleared when the stage ends. A nonce leaked by some path not
+  covered by those three would let a later stage forge a verdict for an earlier
+  one — pin any new durable sink of stage output against this.
 
 ### T2. A "read-only" check stage mutates state or exfiltrates data
 

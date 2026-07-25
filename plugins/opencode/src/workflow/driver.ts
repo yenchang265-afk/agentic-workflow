@@ -1,4 +1,5 @@
 import type { PluginInput } from "@opencode-ai/plugin"
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
@@ -85,12 +86,15 @@ import {
   parseVerdict,
   stageDriftNote,
   type AxisResult,
+  type RawVerdictRecord,
   type Verdict,
   type VerdictRecord,
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
+import { parseVerdictBlock, redactNonce, verdictBlockContract } from "@agentic-workflow/core/workflow/verdict-block"
 import {
   ALWAYS_ENABLED_KINDS,
+  blockChannelEnabled,
   enabledWorkflowKinds,
   ignoredUserConfigPaths,
   modelFor,
@@ -365,6 +369,33 @@ type CheckStage = string
 const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly record: VerdictRecord }>()
 
 /**
+ * Axes carried over from *rejected* `workflow_verdict` calls in the running
+ * check stage, per session. A model too weak to emit all five axes in one
+ * payload sends them across calls; without this every such call is rejected in
+ * isolation and the stage can never satisfy its coverage requirement. Kept
+ * apart from `recordedVerdicts` on purpose — these axes were never admitted, so
+ * they must not be readable as a verdict by `takeVerdictRecord`.
+ */
+const partialAxes = new Map<string, { readonly stage: CheckStage; readonly axes: readonly AxisResult[] }>()
+
+/** The axes accumulated so far for this session's `stage`, or none. */
+const takePartialAxes = (sessionID: string, stage: CheckStage): readonly AxisResult[] => {
+  const held = partialAxes.get(sessionID)
+  return held?.stage === stage ? held.axes : []
+}
+
+/**
+ * A one-time token for the backup verdict-block channel. Impure (randomness),
+ * so it lives here rather than in core's pure `verdict-block.ts` — the same
+ * purity boundary `git.ts`/`isolate.ts` sit on the other side of.
+ */
+const newVerdictNonce = (): string => `wvn_${randomUUID().replaceAll("-", "").slice(0, 16)}`
+
+/** How the exhausted-retries message describes the budget it burned. Pure. */
+const attemptsFor = (config: Config): string =>
+  config.verdictRetries === 0 ? "its only attempt" : config.verdictRetries === 1 ? "a retry" : `${config.verdictRetries} retries`
+
+/**
  * Axes the running check stage's verdict must cover, per driving session.
  *
  * Published by `runStageWithLenses` rather than read from the manifest inside
@@ -415,7 +446,7 @@ const addSample = (sessionID: string, sample: StageSample): void => {
 export const recordVerdict = (
   sessionID: string,
   stage: CheckStage,
-  record: VerdictRecord,
+  record: RawVerdictRecord,
   deps?: Deps,
 ): { readonly accepted: boolean; readonly message: string } => {
   const reject = (message: string) => ({ accepted: false, message })
@@ -452,8 +483,19 @@ export const recordVerdict = (
   // Repeat calls combine worst-wins rather than overwrite — a FAIL must not be
   // replaceable by a later PASS from the same agent.
   const prev = recordedVerdicts.get(sessionID)
-  const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null)
-  if (!admission.ok) return reject(admission.message)
+  const admission = admitVerdict(
+    record,
+    axisRequirement.get(sessionID),
+    prev?.stage === stage ? prev.record : null,
+    takePartialAxes(sessionID, stage),
+  )
+  if (!admission.ok) {
+    // Keep the axes this attempt has covered so the agent's next call only has
+    // to carry what is still missing. The rejection itself still reaches it.
+    partialAxes.set(sessionID, { stage, axes: admission.partialAxes })
+    return reject(admission.message)
+  }
+  partialAxes.delete(sessionID) // admitted: the record now carries every axis
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
   return { accepted: true, message: `Recorded ${stage} verdict: ${effectiveVerdict(admission.record)}.` }
 }
@@ -793,18 +835,29 @@ export const runStageWithLenses = async (
       ? `${baseArgs}\n\nReview lens ${i + 1}/${passes.length}: focus exclusively on ${lens}. The other lenses ` +
         `run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.`
       : baseArgs
-    // One pass, plus at most one retry when a check stage ends with no
-    // workflow_verdict call — a broken verdict channel is not a genuine FAIL, and
-    // burning a build iteration on it re-built already-done work (the
-    // theater-booking-0 failure mode; parity with the Claude host's retry).
+    // One pass, plus `config.verdictRetries` uncounted retries when a check
+    // stage ends with no workflow_verdict call — a broken verdict channel is not
+    // a genuine FAIL, and burning a build iteration on it re-built already-done
+    // work (the theater-booking-0 failure mode; parity with the Claude host).
     let passRecord: VerdictRecord | null = null
-    for (let attempt = 0; attempt < 2; attempt++) {
+    const nonces: string[] = []
+    const attempts = 1 + (isCheck ? config.verdictRetries : 0)
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      // A fresh nonce per ATTEMPT: a re-fire must not be satisfiable by the
+      // previous attempt's block, which is still sitting in the transcript.
+      // Appended here rather than composed through the engine because `advance`
+      // already built `args` eagerly (and a lens pass has augmented it) — the
+      // text is identical to what `composeStagePrompt` would have produced.
+      const nonce = isCheck && blockChannelEnabled(config, loaded.manifest.kind) ? newVerdictNonce() : ""
+      nonces[attempt] = nonce
+      const base = nonce ? `${args}\n\n${verdictBlockContract(stage, nonce)}` : args
       const passArgs =
         attempt === 0
-          ? args
-          : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
+          ? base
+          : `${base}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
+      partialAxes.delete(sessionID) // …nor axes accumulated by the previous attempt
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
@@ -821,9 +874,27 @@ export const runStageWithLenses = async (
       const header = lens
         ? `${stage} (lens: ${lens}) · iteration ${iteration + 1}${retryTag} · ${stamp}`
         : `${stage} · iteration ${iteration + 1}${retryTag} · ${stamp}`
-      await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), header, out, deps.log)
-      outputs.push(lens ? `### Review lens: ${lens}\n${out}` : out)
+      // The nonce must never reach anything durable: the run log is threaded
+      // into later prompts, so a nonce surviving into it would be reusable by a
+      // stage that was never issued one.
+      const logged = redactNonce(out, nonce)
+      await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), header, logged, deps.log)
+      outputs.push(lens ? `### Review lens: ${lens}\n${logged}` : logged)
       passRecord = isCheck ? takeVerdictRecord(sessionID, stage as CheckStage) : null
+      // The tool channel always wins; the block is read only when it recorded
+      // nothing. Routed through `recordVerdict` so the stage check, the axis
+      // requirement and the accumulated partials all apply identically.
+      if (isCheck && !passRecord && nonce) {
+        const fromBlock = parseVerdictBlock(out, stage, nonce)
+        if (fromBlock) {
+          const res = recordVerdict(sessionID, stage as CheckStage, fromBlock, deps)
+          passRecord = takeVerdictRecord(sessionID, stage as CheckStage)
+          await deps.log(
+            res.accepted ? "info" : "warn",
+            `${stage}${lens ? ` (${lens})` : ""} recorded its verdict through the backup block channel — ${res.message}`,
+          )
+        }
+      }
       addSample(sessionID, {
         stage,
         iteration,
@@ -838,8 +909,12 @@ export const runStageWithLenses = async (
       // terminal event finalizes the sidecar).
       await flushMetrics(deps, sessionID, config, state)
       if (!isCheck || passRecord || halted(sessionID)) break
-      if (attempt === 0) {
-        await deps.log("warn", `${stage}${lens ? ` (${lens})` : ""} recorded no verdict via workflow_verdict — re-running the pass once`)
+      if (attempt + 1 < attempts) {
+        const left = attempts - attempt - 1
+        await deps.log(
+          "warn",
+          `${stage}${lens ? ` (${lens})` : ""} recorded no verdict via workflow_verdict — re-running the pass (${left} ${left === 1 ? "retry" : "retries"} left)`,
+        )
       }
     }
     records.push(passRecord)
@@ -854,7 +929,7 @@ export const runStageWithLenses = async (
   // unreachable verdict channel for a stage the user simply stopped.
   if (halted(sessionID)) return { output: outputs.join("\n\n"), verdict: null, record: null }
 
-  // Lenses that FIRED but recorded nothing even after their retry. A missing
+  // Lenses that FIRED but recorded nothing even after their retries. A missing
   // lens verdict is a broken channel, not a FAIL: worst-wins combining would
   // read it as FAIL and burn a rebuild iteration on possibly-done work, so it
   // must take the same ERROR→recoverable-stop path as the single-pass case —
@@ -878,12 +953,12 @@ export const runStageWithLenses = async (
     const lensTag = missingLenses.length ? ` (lens${missingLenses.length > 1 ? "es" : ""}: ${missingLenses.join(", ")})` : ""
     await deps.log(
       "warn",
-      `${stage} recorded no verdict via workflow_verdict even after a retry${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
+      `${stage} recorded no verdict via workflow_verdict even after ${attemptsFor(config)}${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
     )
     const errorRecord: VerdictRecord = {
       verdict: "ERROR",
       reason:
-        `no workflow_verdict recorded even after a retry${lensTag} — the verdict channel is unreachable from the stage subagent ` +
+        `no workflow_verdict recorded even after ${attemptsFor(config)}${lensTag} — the verdict channel is unreachable from the stage subagent ` +
         "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
         (inText ? ` (prose claimed ${inText}, ignored — free text is untrusted)` : ""),
     }
