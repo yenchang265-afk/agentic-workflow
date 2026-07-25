@@ -2,16 +2,16 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**狀態：以下七項計畫全數已實作並測試完成**，目前存放於共用的
+**計畫 01–07 已實作並測試完成**，目前存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
-backlog。
+backlog。**計畫 08 為提案中**、尚未實作——它是本頁唯一仍屬待辦事項的條目。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
 `README.md` / `skills/workflow-orchestration/SKILL.md` 中記載的已知限制。
 
-## 這些計畫（全數已發布）
+## 這些計畫（01–07 已發布）
 
 | # | 計畫 | 帶來了什麼 | 現在位於何處 |
 |---|------|----------------|--------------------|
@@ -22,6 +22,12 @@ backlog。
 | 05 | [Secret redaction（機密資訊遮罩）](./05-secret-redaction.md) | 在寫入持久化產出物之前先清除機密資訊 | `packages/core/src/task/redact.ts`，接線於 `packages/core/src/task/store.ts`；`redact.test.ts` |
 | 06 | [Run metrics（執行指標）](./06-run-metrics.md) | 每次執行的階段耗時 + 裁定歷史記錄寫入執行日誌 | `packages/core/src/workflow/metrics.ts`；`metrics.test.ts` |
 | 07 | [在共用排程器上執行多種工作流程類型](./07-multi-workflow-scheduler.md) | 一個排程器驅動多種工作流程類型（engineering + PR sitter）；抽取出 `@agentic-workflow/core`，讓兩個外掛共用同一份實作 | `packages/core/src/manifest/`（結構描述、註冊表、範本）、`packages/core/src/scheduler/`（排程器、租約）、`packages/core/src/source/`（backlog、github-pr、ado-pr、帳本）；`workflows/engineering/`、`workflows/pr-sitter/` |
+
+## 提案中
+
+| # | 計畫 | 會帶來什麼 |
+|---|------|-------------------|
+| 08 | [決定性把關指令](./08-deterministic-gate-commands.zh-TW.md) | 已宣告的測試／型別檢查／lint 指令改由驅動程式端執行；其結束碼成為檢查類階段的既定事實並約束其裁定，取代今天由代理人自行回報的「測試是綠的」 |
 
 每項計畫明確延後處理的殘留事項（bash 工作樹釘選、跨行程的 `index.lock`
 競速、指標匯出、遮罩選項）仍未解決——目前的殘餘風險見

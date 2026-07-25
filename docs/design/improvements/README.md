@@ -2,17 +2,18 @@ English | [繁體中文](README.zh-TW.md)
 
 # Agentic loop — engineering workflow improvement plans
 
-**Status: all seven plans below are implemented and tested**, now living in
+**Plans 01–07 are implemented and tested**, now living in
 the shared `@agentic-workflow/core` package (`packages/core/`) consumed by both
 the OpenCode plugin and the Claude MCP server. They are kept as the design
-record for those features, not as a pending backlog.
+record for those features, not as a pending backlog. **Plan 08 is proposed** and
+not implemented — it is the only entry here that is still a backlog item.
 
 Sourced from: the current code (all cited paths and function names verified
 against source at time of writing), the residual risks in
 [`../threat-model.md`](../threat-model.md), and the documented limitations in
 `README.md` / `skills/workflow-orchestration/SKILL.md`.
 
-## The plans (all shipped)
+## The plans (01–07 shipped)
 
 | # | Plan | What it bought | Where it lives now |
 |---|------|----------------|--------------------|
@@ -23,6 +24,12 @@ against source at time of writing), the residual risks in
 | 05 | [Secret redaction](./05-secret-redaction.md) | Secrets scrubbed from durable artifacts before write | `packages/core/src/task/redact.ts`, wired in `packages/core/src/task/store.ts`; `redact.test.ts` |
 | 06 | [Run metrics](./06-run-metrics.md) | Per-run stage timings + verdict history in the run log | `packages/core/src/workflow/metrics.ts`; `metrics.test.ts` |
 | 07 | [Multi-workflow kinds on a common scheduler](./07-multi-workflow-scheduler.md) | One scheduler drives many workflow kinds (engineering + PR sitter); `@agentic-workflow/core` extracted so both plugins share one implementation | `packages/core/src/manifest/` (schema, registry, template), `packages/core/src/scheduler/` (scheduler, lease), `packages/core/src/source/` (backlog, github-pr, ado-pr, ledger); `workflows/engineering/`, `workflows/pr-sitter/` |
+
+## Proposed
+
+| # | Plan | What it would buy |
+|---|------|-------------------|
+| 08 | [Deterministic gate commands](./08-deterministic-gate-commands.md) | Declared test/typecheck/lint commands run driver-side; their exit codes become established fact for the check stage and floor its verdict, replacing today's self-reported "tests are green" |
 
 Residuals each plan explicitly deferred (bash worktree pinning, cross-process
 `index.lock` races, metrics export, redaction knobs) remain open — see
