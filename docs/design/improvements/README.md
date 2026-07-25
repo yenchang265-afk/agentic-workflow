@@ -5,8 +5,9 @@ English | [繁體中文](README.zh-TW.md)
 **Plans 01–07 are implemented and tested**, now living in
 the shared `@agentic-workflow/core` package (`packages/core/`) consumed by both
 the OpenCode plugin and the Claude MCP server. They are kept as the design
-record for those features, not as a pending backlog. **Plan 08 is proposed** and
-not implemented — it is the only entry here that is still a backlog item.
+record for those features, not as a pending backlog. **Plans 08 and 09 are
+proposed** and not implemented — they are the only entries here that are still
+backlog items.
 
 Sourced from: the current code (all cited paths and function names verified
 against source at time of writing), the residual risks in
@@ -30,6 +31,7 @@ against source at time of writing), the residual risks in
 | # | Plan | What it would buy |
 |---|------|-------------------|
 | 08 | [Deterministic gate commands](./08-deterministic-gate-commands.md) | Declared test/typecheck/lint commands run driver-side; their exit codes become established fact for the check stage and floor its verdict, replacing today's self-reported "tests are green" |
+| 09 | [Context budgets for stage prompts](./09-context-management.md) | Per-stage, per-artifact ceilings on what a stage prompt carries, so a re-build leads with the structured findings instead of a full transcript; fixes `extractPlan` accreting the audit tail into every prompt, and makes prompt size visible in the metrics |
 
 Residuals each plan explicitly deferred (bash worktree pinning, cross-process
 `index.lock` races, metrics export, redaction knobs) remain open — see
