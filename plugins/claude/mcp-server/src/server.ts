@@ -1188,8 +1188,8 @@ const replanTask = (id: string, reason: string | undefined, liveTaskId: string |
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> =>
   coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
-const retaskTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
-  coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
+const retaskTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
+  coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 const removeTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
   coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
 
@@ -1240,12 +1240,12 @@ server.registerTool(
   "workflow_retask",
   {
     description:
-      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via workflow_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
-    inputSchema: { id: z.string().min(1) },
+      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. `reason` is recorded on that audit note, so why the task is being reshaped survives in the file rather than only in your turn's context. Refuses from plan-review/ onward (a task with a plan goes back via workflow_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
+    inputSchema: { id: z.string().min(1), reason: z.string().max(500).optional() },
   },
-  async ({ id }) => {
+  async ({ id, reason }) => {
     await loadCfg()
-    const r = await retaskTask(id, active?.task?.id ?? null)
+    const r = await retaskTask(id, reason, active?.task?.id ?? null)
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )
@@ -1435,7 +1435,7 @@ async function runGate(argv: string[]): Promise<number> {
     if (verb === "approve") result = await approveTask(id)
     else if (verb === "approve-plan") result = await approvePlan(id)
     else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
-    else if (verb === "retask") result = await retaskTask(id, readStageTaskId())
+    else if (verb === "retask") result = await retaskTask(id, reason, readStageTaskId())
     else if (verb === "remove") result = await removeTask(id, readStageTaskId())
     else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, or remove.` }
   }

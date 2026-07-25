@@ -1615,10 +1615,14 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
  */
 export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  // Split the id off the note verbatim rather than on whitespace — the note is
+  // the human's prose and reaches the task file's audit trail intact.
+  const parsed = /^(\S+)\s*([\s\S]*)$/.exec(args.trim())
+  const id = parsed?.[1] ?? ""
   if (!id) return void (await toast(client, `Usage: ${ECMD} retask <id> [note].`, "warning"))
+  const note = parsed?.[2]?.trim() || undefined
   try {
-    const r = await retaskTask(gateCtx(deps, config), id)
+    const r = await retaskTask(gateCtx(deps, config), id, note)
     // Success is silent unless the plugin actually moved something — the agent's
     // turn reports the reshape, and a toast per retask would double up.
     if (!r.ok) await toast(client, r.message, r.variant ?? "warning")

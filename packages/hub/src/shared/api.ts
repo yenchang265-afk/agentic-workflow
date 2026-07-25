@@ -4,6 +4,7 @@ import type { WorkflowManifest } from "@agentic-workflow/core/manifest/schema"
 import type { ParsedRunLog } from "@agentic-workflow/core/workflow/runlog"
 import type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
 import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
+import type { GateResult, GateVariant } from "@agentic-workflow/core/workflow/gate"
 
 export type { ParsedRunLog, RunLogStageSection, RunLogSummary, RunSummaryRow } from "@agentic-workflow/core/workflow/runlog"
 export type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
@@ -73,7 +74,65 @@ export interface TaskDetailResponse {
   readonly body: string
   readonly plan?: string
   readonly notes: readonly AuditNote[]
+  /**
+   * Present ONLY when this task can be edited in place: planless, and in
+   * `draft/` or `queued/`. The server decides, so the browser cannot invent an
+   * editable state for a task whose goal the loop already planned against.
+   */
+  readonly editable?: TaskEditable
 }
+
+/**
+ * The editable split of a task body. `tail` is display-only — the browser never
+ * sends it back; the server re-reads the file and rejoins its own tail at save
+ * time, so a note appended while the human was typing survives and no client
+ * can delete one.
+ */
+export interface TaskEditable {
+  /** The prose a human may edit — the body minus its trailing audit run. */
+  readonly prose: string
+  /** The trailing `> …` audit run, for display only. */
+  readonly tail: string
+  /** Hash of `prose` at read time; echoed back as `baseHash` so a drifted edit is refused. */
+  readonly hash: string
+}
+
+/** Body of `POST /api/tasks/:status/:id` — the whole editable task, not a patch. */
+export interface SaveTaskRequest {
+  /** Must equal the `:status` path param; the same stale-board guard the gate uses. */
+  readonly expectStatus: TaskStatus
+  /** Echoed from `TaskEditable.hash` — a mismatch means the file changed under the editor. */
+  readonly baseHash: string
+  readonly title: string
+  readonly type?: string
+  readonly priority: number
+  readonly labels: readonly string[]
+  readonly acceptance: readonly string[]
+  /** The edited PROSE only — never the audit tail. */
+  readonly body: string
+  /** Why the task was reshaped. Recorded on the edit's audit note, and on the retask's. */
+  readonly reason?: string
+}
+
+/**
+ * Deliberately `GateResult`-shaped: the drawer renders a refusal with the same
+ * `.gate-msg` code the gate buttons use.
+ */
+export type SaveTaskResponse =
+  | {
+      readonly ok: true
+      readonly message: string
+      readonly path: string
+      /** Which fields actually changed; empty means the save was a no-op. */
+      readonly changed: readonly string[]
+      /**
+       * Present only for a `queued/` task, where the save also withdraws the
+       * approval. Carries core's `GateResult` verbatim — and may be `ok: false`
+       * (the edit still landed; the task simply stayed in `queued/`).
+       */
+      readonly retask?: GateResult
+    }
+  | { readonly ok: false; readonly message: string; readonly variant?: GateVariant }
 
 export interface KindSummary {
   readonly kind: string

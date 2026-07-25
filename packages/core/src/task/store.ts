@@ -2,7 +2,7 @@ import path from "node:path"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
-import { buildTaskFile, isPaired, isSafeTaskId, parseTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
+import { buildTaskFile, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
 
 /**
  * Filesystem IO for the task backlog. **Impure**: reads via the host client
@@ -115,6 +115,51 @@ export const extractPlan = (task: Task): string | undefined => {
   const idx = task.body.indexOf(PLAN_HEADING)
   if (idx === -1) return undefined
   return task.body.slice(idx + PLAN_HEADING.length).trim()
+}
+
+/** A task body split into the prose a human may edit and the audit trail that must survive. */
+export interface TaskBodyParts {
+  /** Editable prose, trimmed. `""` for a body that is nothing but notes. */
+  readonly prose: string
+  /** The trailing `> …` run, verbatim and trimmed. `""` when there is none. */
+  readonly tail: string
+}
+
+/** A line that may belong to the trailing audit run: blank, or a `> ` blockquote. */
+const isTailLine = (line: string): boolean => line.trim() === "" || /^>(\s|$)/.test(line)
+
+/**
+ * Split a task body into the prose a human may edit and the audit tail that must
+ * survive the edit.
+ *
+ * `appendNote` only ever APPENDS `> …` lines, so a task's audit trail is the
+ * maximal suffix of blockquote-and-blank lines. That is the whole rule — purely
+ * positional, with no attempt to recognise a note by its text (the format is
+ * `auditNote`'s, and matching on it here would be a second parser that can
+ * drift). A blockquote a human wrote in the MIDDLE of the body stays in `prose`,
+ * exactly where it is; one they wrote at the very END is conservatively classed
+ * as tail, so it becomes read-only rather than editable. The bias runs that way
+ * on purpose: losing the ability to edit one line is recoverable, losing an
+ * audit note is not.
+ *
+ * Deliberately NOT plan-aware — `PLAN_HEADING` and its text land in `prose`,
+ * which is why a caller offering an editor gates on `hasPlan` first. Pure.
+ */
+export const splitTaskBody = (body: string): TaskBodyParts => {
+  const lines = body.split("\n")
+  let cut = lines.length
+  while (cut > 0 && isTailLine(lines[cut - 1]!)) cut--
+  return {
+    prose: lines.slice(0, cut).join("\n").trim(),
+    tail: lines.slice(cut).join("\n").trim(),
+  }
+}
+
+/** Rejoin the halves into a task body — the inverse of `splitTaskBody`. Pure. */
+export const joinTaskBody = (prose: string, tail: string): string => {
+  const p = prose.trim()
+  const t = tail.trim()
+  return p && t ? `${p}\n\n${t}` : p || t
 }
 
 /**
@@ -685,6 +730,61 @@ export const removeTaskFile = async ($: Shell, task: FileRef): Promise<string> =
     throw new Error(`removal of ${task.id} did not take effect at ${task.path}`)
   }
   return task.path
+}
+
+/**
+ * Rewrite an EXISTING task file in place: same id, same filename, same status
+ * folder.
+ *
+ * The counterweight to `writeTask` — that one CREATES and refuses to clobber;
+ * this one UPDATES and refuses to create. Together they are total, and neither
+ * can be talked into the other's job.
+ *
+ * It cannot move or rename by construction: there is no `TaskStatus` parameter
+ * to express a move, the write target is DERIVED (`dirname(task.path)/<id>.md`)
+ * rather than taken from the caller, and the derived path is asserted equal to
+ * `task.path`. Lifecycle moves stay `moveTask`'s alone — it, not this, owns
+ * `canTransition`.
+ *
+ * `input` is the WHOLE task, not a patch: `serializeTask` validates the entire
+ * frontmatter, so a partial patch would have to be merged against the parsed
+ * task anyway. The caller does that merge (`taskToInput` + spread), where it can
+ * also decide which fields a human may touch. Serialization runs BEFORE any
+ * write, so invalid frontmatter leaves the file byte-identical.
+ *
+ * Frontmatter keys the schema doesn't know are DROPPED (zod strips them). A
+ * caller that must not lose them screens with `unknownFrontmatterKeys` first.
+ *
+ * Returns the (unchanged) absolute path.
+ */
+export const rewriteTask = async ($: Shell, task: FileRef, input: TaskInput, log?: Log): Promise<string> => {
+  // Same last-write-boundary check `moveTask` makes: the target is built from
+  // `task.id`, so an unsafe id (`../…`) would write outside the backlog.
+  if (!isSafeTaskId(task.id)) {
+    throw new Error(`cannot rewrite task: unsafe id ${JSON.stringify(task.id)}`)
+  }
+  statusOf(task) // throws when the file is not inside a status folder
+  const dest = path.join(path.dirname(task.path), `${task.id}.md`)
+  if (path.resolve(dest) !== path.resolve(task.path)) {
+    throw new Error(`cannot rewrite ${task.id}: ${task.path} is not ${dest} — rewriteTask never renames or moves a task`)
+  }
+  const exists = await $`test -f ${dest}`.quiet().nothrow()
+  if (exists.exitCode !== 0) {
+    throw new Error(`cannot rewrite task ${task.id}: ${dest} does not exist — rewriteTask never creates a task (use writeTask)`)
+  }
+  const content = serializeTask(input) // validates before anything is written
+  const out = await writeFileAtomic($, dest, content)
+  if (out.exitCode !== 0) {
+    throw new Error(`could not rewrite task ${task.id}: ${out.stderr.toString().trim()}`)
+  }
+  // Confirm it landed on the real FS, exactly as `moveTask` does — never report a
+  // write that a stale path turned into a no-op.
+  const check = await $`test -f ${dest}`.quiet().nothrow()
+  if (check.exitCode !== 0) {
+    throw new Error(`rewrite of ${task.id} did not land at ${dest}`)
+  }
+  log?.("info", `rewrote ${dest}`)
+  return dest
 }
 
 /**

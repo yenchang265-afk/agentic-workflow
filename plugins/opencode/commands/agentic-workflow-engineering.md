@@ -76,7 +76,9 @@ Dispatch:
      reshaped goal has to be re-approved, and the toast says so), and a task
      from `plan-review/` onward was refused with a pointer at `replan`. So
      resolve `<id>` in `docs/tasks/draft/` **only**; if it isn't there, the
-     plugin refused or the id is wrong — report that and stop.
+     plugin refused or the id is wrong — report that and stop. The `[note]` is
+     also written onto that audit note, so why the goal was wrong survives in
+     the task file, not just in this turn's context.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with

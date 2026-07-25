@@ -277,6 +277,57 @@ export interface TaskInput {
   readonly body?: string
 }
 
+/**
+ * The `TaskInput` that would round-trip an already-parsed task — the seam a
+ * caller spreads a patch over (`{ ...taskToInput(task), title }`) before handing
+ * the whole thing to `serializeTask`. Deliberately drops `id` and `path`: those
+ * are the FILE's identity, not the task's content, and a rewrite must not be
+ * able to change them (see `store.rewriteTask`). Loses nothing `parseTask`
+ * didn't already discard. Pure.
+ */
+export const taskToInput = (task: Task): TaskInput => ({
+  title: task.title,
+  type: task.type,
+  priority: task.priority,
+  estimate: task.estimate,
+  assignee: task.assignee,
+  labels: task.labels,
+  acceptance: task.acceptance,
+  tracker: task.tracker,
+  body: task.body,
+})
+
+/**
+ * Top-level frontmatter keys in `content` that `TaskFrontmatterSchema` does not
+ * know.
+ *
+ * zod STRIPS unknown keys, so `serializeTask` silently deletes them — harmless
+ * when creating a file, destructive when rewriting one a human or a tracker sync
+ * put extra fields on. A caller about to rewrite in place screens with this and
+ * refuses, turning silent data loss into a visible message naming the keys.
+ *
+ * Returns `[]` when the frontmatter is absent or unparseable: there is nothing
+ * this can *prove* would be lost, and the caller's own parse already refuses
+ * such a file. Pure.
+ */
+export const unknownFrontmatterKeys = (content: string): string[] => {
+  const match = FRONTMATTER_RE.exec(content)
+  if (!match) return []
+  let raw: unknown
+  try {
+    raw = parseYaml(match[1] ?? "")
+  } catch {
+    try {
+      raw = parseYaml(quotePlainScalars(match[1] ?? ""))
+    } catch {
+      return []
+    }
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return []
+  const known = new Set(Object.keys(TaskFrontmatterSchema.shape))
+  return Object.keys(raw as Record<string, unknown>).filter((k) => !known.has(k))
+}
+
 /** A generated task file: its id (unique among `taken`), filename, and content. */
 export interface TaskFile {
   readonly id: string

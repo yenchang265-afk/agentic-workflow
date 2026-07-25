@@ -127,6 +127,27 @@ test("retaskTask reports a missing id rather than inventing one", async () => {
   assert.equal(r.ok, false)
 })
 
+test("retaskTask records the reason on its audit note", async () => {
+  // The task file is the only place the next authoring pass looks for WHY the
+  // goal was wrong — same contract as replan's reason.
+  const { ctx, log } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await retaskTask(ctx, "t", "acceptance described the wrong screen")
+  assert.equal(r.ok, true)
+  assert.ok(
+    log.some((c) => c.includes("approval withdrawn — acceptance described the wrong screen")),
+    "the reason is appended to the note",
+  )
+})
+
+test("retaskTask with a reason still writes nothing for a draft", async () => {
+  // The draft branch is an idempotent no-op; a reason must not turn it into a write.
+  const { ctx, log } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await retaskTask(ctx, "t", "why")
+  assert.equal(r.ok, true)
+  assert.ok(!log.some((c) => c.startsWith("mv ")), "nothing moved")
+  assert.ok(!log.some((c) => c.includes("approval withdrawn")), "and no note appended")
+})
+
 // --- removeTask: hard-delete a task from the backlog entirely ---
 
 test("removeTask deletes a draft outright — the file is gone, not moved", async () => {
