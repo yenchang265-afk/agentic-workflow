@@ -277,7 +277,10 @@ T11–T13 for their authority):
 - **dep-sitter** — `scan (check) → upgrade (work) → verify (check) →
   publish (work)` over dependency advisories: `npm audit`/`npm outdated` for
   npm, OSV-Scanner (`osv-scanner --format json -L <pom.xml|gradle.lockfile>`)
-  for Maven/Gradle — the `ecosystem` binding defaults to `auto` (detect and
+  for Maven/Gradle — or a site's own CLI via
+  `workflows.dep-sitter.scannerCommand` (user-scope config only), whose output
+  may be an osv-scanner report or a raw OSV record list. The `ecosystem`
+  binding defaults to `auto` (detect and
   merge; Gradle needs a committed lockfile; undeclared JVM transitives are
   never claimed). Auto-fixes patch/minor advisories into verified DRAFT PRs
   on `feature/*` branches; majors are skipped and logged for a human.

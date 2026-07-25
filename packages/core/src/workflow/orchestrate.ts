@@ -130,6 +130,9 @@ export const buildWorkSources = (
             ...(typeof knobs["severityFloor"] === "string" ? { severityFloor: knobs["severityFloor"] } : {}),
             ...(typeof knobs["includeOutdated"] === "boolean" ? { includeOutdated: knobs["includeOutdated"] } : {}),
             ...(typeof knobs["ecosystem"] === "string" ? { ecosystem: knobs["ecosystem"] } : {}),
+            // Appended last on purpose: the hub's knob registry pins the line
+            // numbers of the reads above (knobs.test.ts).
+            ...(typeof knobs["scannerCommand"] === "string" ? { scannerCommand: knobs["scannerCommand"] } : {}),
           }),
         ]
       }

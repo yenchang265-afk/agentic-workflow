@@ -20,6 +20,12 @@ for Maven/Gradle — the ecosystem's confirm/verify commands.
    version must exist (npm: `npm view <pkg> versions --json`; JVM: the fixed
    version in the OSV report), and the bump must stay within the stated
    semver impact.
+   When the work order instead says the advisory and target are **established
+   fact** — this site configured its own scanner, which ran before you were
+   invoked and is not on your allowlist — do NOT hunt for a scanner to run.
+   Confirm what you can: the build files still declare the package at the
+   stated current version, the target version exists, and the bump stays
+   within the stated impact.
 2. Emit the upgrade work order: the exact package and target version, the
    build file(s) declaring it, the advisory being closed, and any
    breaking-change notes from the changelog the upgrade stage must handle.

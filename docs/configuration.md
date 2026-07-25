@@ -76,6 +76,15 @@ combined view — the intended split being:
 - **Repo scope**: everything tied to the project — `codePlatform`,
   `ado.project`, `ado.repository`, `tasksDir`, `workflows`, worktree settings.
 
+**Shell-bearing keys are the exception, and are honored from the USER layer
+only**: `worktreeSetup` and `workflows.<kind>.scannerCommand` are strings the
+loop hands to a shell verbatim. `.agentic-workflow.json` rides along with any
+cloned repo, so honoring them there would let merely watching a repository run
+arbitrary shell on the first claim — npm-postinstall-class risk, silently.
+Setting either in the repo layer drops it with a warning naming the key (and,
+for `scannerCommand`, the kind); the rest of that section still applies, and a
+user-layer value in the same section survives.
+
 Keep `codePlatform` and `workflows` in the repo file by convention: a user-scope
 value silently applies to *every* repo. If the user file holds a PAT, protect
 it (`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`); the `AZURE_DEVOPS_EXT_PAT` env var
@@ -114,7 +123,7 @@ hand-edited afterward.
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`, `insecureSkipTlsVerify`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
-| `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
+| `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
 Both plugins read the same file: the schema lives in the shared core package
@@ -192,6 +201,12 @@ it. The warnings are advisory: they annotate a save, never block it. See
   (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
   documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —
   don't duplicate that content here.
+- **`workflows.dep-sitter.scannerCommand`** — replace the bundled
+  `osv-scanner --format json -L <target>` call on the JVM ecosystems with your
+  own CLI (`{{target}}` / `{{ecosystem}}` are substituted). npm is unaffected.
+  Its output may be an osv-scanner report or a raw OSV record list; the payload
+  contract is in **[`docs/workflows/dep-sitter.md`](workflows/dep-sitter.md)**.
+  **Shell-bearing — user scope only** (see below).
 - **`workflows.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).

@@ -3,7 +3,14 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { depKey, detectEcosystems, makeDependencyScanSource, semverImpact, upgradeCandidates } from "./dependency-scan.js"
+import {
+  depKey,
+  detectEcosystems,
+  makeDependencyScanSource,
+  renderScannerCommand,
+  semverImpact,
+  upgradeCandidates,
+} from "./dependency-scan.js"
 
 /**
  * The dependency-scan source over the real dep-sitter manifest, against a
@@ -37,7 +44,14 @@ const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
     let cmd = ""
     strings.forEach((s, i) => {
       cmd += s
-      if (i < exprs.length) cmd += String(exprs[i])
+      // A `{ raw }` interpolation splices in unescaped, matching Bun's `$` and
+      // the Claude host's shim. Without this branch a raw splice renders
+      // "[object Object]" and every scannerCommand test would silently pass
+      // against a command nobody ran.
+      if (i < exprs.length) {
+        const e = exprs[i]
+        cmd += typeof e === "object" && e !== null && "raw" in e ? String((e as { raw: unknown }).raw) : String(e)
+      }
     })
     cmd = cmd.trim().replace(/\s+/g, " ")
     log.push(cmd)
@@ -313,6 +327,7 @@ const ecoSource = (opts: {
   log?: string[]
   warnings?: string[]
   ecosystem?: string
+  scannerCommand?: string
 } = {}) =>
   makeDependencyScanSource({
     $: scriptedShell(opts.script ?? [], opts.log),
@@ -322,8 +337,28 @@ const ecoSource = (opts: {
     log: (_l, m) => void opts.warnings?.push(m),
     loaded: sitter,
     ...(opts.ecosystem ? { ecosystem: opts.ecosystem } : {}),
+    ...(opts.scannerCommand ? { scannerCommand: opts.scannerCommand } : {}),
     now: () => "2026-07-05T00:00:00Z",
   })
+
+/** A vuln-list payload in the documented contract — what a site's own CLI emits. */
+const vulnList = (pkgs: { name: string; version: string; severity: string; fixed?: string }[]) =>
+  JSON.stringify({
+    vulns: pkgs.map((p) => ({
+      id: `V-${p.name}`,
+      severity: p.severity,
+      affected: [
+        {
+          package: { name: p.name, ecosystem: "Maven", version: p.version },
+          ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, ...(p.fixed ? [{ fixed: p.fixed }] : [])] }],
+        },
+      ],
+    })),
+  })
+
+const JACKSON_VULN_LIST = vulnList([
+  { name: "com.fasterxml.jackson.core:jackson-databind", version: "2.9.10", severity: "HIGH", fixed: "2.9.10.8" },
+])
 
 test("detectEcosystems probes the manifest files", async () => {
   const probe = (present: string[]) => (rel: string) => Promise.resolve(present.includes(rel))
@@ -500,4 +535,178 @@ test("a genuinely clean audit still reports no candidates, not a scan failure", 
   assert.equal(item, null)
   assert.doesNotMatch(skip?.message ?? "", /did not produce a report/)
   assert.match(skip?.message ?? "", /no auto-fixable upgrades/)
+})
+
+// --- workflows.<kind>.scannerCommand: a site's own JVM scanner ---
+
+test("the scripted shell renders a {raw} splice, so scannerCommand tests see the real command", () => {
+  const log: string[] = []
+  const $ = scriptedShell([], log)
+  void $`${{ raw: "corp-scan --json pom.xml" }}`
+  assert.deepEqual(log, ["corp-scan --json pom.xml"])
+})
+
+test("renderScannerCommand substitutes the internal constants and reports typos", () => {
+  assert.deepEqual(renderScannerCommand("corp-scan --json {{target}}", { target: "pom.xml", ecosystem: "maven" }), {
+    command: "corp-scan --json pom.xml",
+    unknown: [],
+  })
+  assert.deepEqual(
+    renderScannerCommand("corp-scan {{ecosystem}} {{target}} --also {{target}}", { target: "g.lockfile", ecosystem: "gradle" }),
+    { command: "corp-scan gradle g.lockfile --also g.lockfile", unknown: [] },
+  )
+  // A whole-repo scanner names no target and gets nothing appended.
+  assert.deepEqual(renderScannerCommand("corp-scan --all", { target: "pom.xml", ecosystem: "maven" }), {
+    command: "corp-scan --all",
+    unknown: [],
+  })
+  // A typo stays literal AND is reported — never silently shipped to the shell.
+  assert.deepEqual(renderScannerCommand("corp-scan {{targt}}", { target: "pom.xml", ecosystem: "maven" }), {
+    command: "corp-scan {{targt}}",
+    unknown: ["targt"],
+  })
+})
+
+test("a configured scannerCommand replaces osv-scanner entirely, probe included", async () => {
+  const log: string[] = []
+  const { item, skip } = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [{ cmd: "corp-scan --json pom.xml", result: { exitCode: 1, stdout: JACKSON_VULN_LIST } }],
+    scannerCommand: "corp-scan --json {{target}}",
+    log,
+  }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, JACKSON_KEY)
+  assert.match(item?.state.goal ?? "", /^Upgrade com\.fasterxml\.jackson\.core:jackson-databind to 2\.9\.10\.8/)
+  assert.ok(log.includes("corp-scan --json pom.xml"))
+  assert.ok(log.every((c) => !c.includes("osv-scanner")), "the --version probe must be skipped too")
+})
+
+test("{{ecosystem}} resolves on the gradle path", async () => {
+  const log: string[] = []
+  const report = vulnList([{ name: "ch.qos.logback:logback-classic", version: "1.2.3", severity: "CRITICAL", fixed: "1.2.9" }])
+  const { item } = await ecoSource({
+    files: {
+      "build.gradle.kts": `dependencies { implementation("ch.qos.logback:logback-classic:1.2.3") }`,
+      "gradle.lockfile": "ch.qos.logback:logback-classic:1.2.3=runtimeClasspath",
+    },
+    script: [{ cmd: "corp-scan gradle gradle.lockfile", result: { exitCode: 1, stdout: report } }],
+    scannerCommand: "corp-scan {{ecosystem}} {{target}}",
+    log,
+  }).claimNext()
+  assert.equal(item?.id, LOGBACK_KEY)
+  assert.ok(log.includes("corp-scan gradle gradle.lockfile"))
+})
+
+test("a custom scanner's work order tells the stage NOT to re-run a scanner", async () => {
+  const { item } = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [{ cmd: "corp-scan", result: { exitCode: 1, stdout: JACKSON_VULN_LIST } }],
+    scannerCommand: "corp-scan {{target}}",
+  }).claimNext()
+  const goal = item?.state.goal ?? ""
+  assert.doesNotMatch(goal, /confirm the advisory with `osv-scanner/)
+  assert.match(goal, /established fact/)
+  assert.match(goal, /do NOT re-run a scanner/)
+  // The rest of the Maven guidance is untouched.
+  assert.match(goal, /mvn versions:use-dep-version/)
+})
+
+test("empty scanner output is an actionable skip on BOTH paths, never a confident zero", async () => {
+  const custom = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [{ cmd: "corp-scan pom.xml", result: { exitCode: 0, stdout: "", stderr: "corp-scan: not found" } }],
+    scannerCommand: "corp-scan {{target}}",
+  }).claimNext()
+  assert.equal(custom.item, null)
+  assert.match(custom.skip?.message ?? "", /produced no output/)
+  assert.match(custom.skip?.message ?? "", /corp-scan pom\.xml/)
+  assert.match(custom.skip?.message ?? "", /scannerCommand/)
+  assert.doesNotMatch(custom.skip?.message ?? "", /no auto-fixable upgrades/)
+  assert.equal(custom.skip?.actionable, true)
+
+  // The default osv-scanner path had the same hole and is fixed with it.
+  const dflt = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [OSV_OK, { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 0, stdout: "" } }],
+  }).claimNext()
+  assert.equal(dflt.item, null)
+  assert.match(dflt.skip?.message ?? "", /produced no output/)
+  assert.doesNotMatch(dflt.skip?.message ?? "", /scannerCommand/, "no config advice when nothing was configured")
+})
+
+test("unreadable scanner output is an actionable skip naming the command", async () => {
+  const { item, skip } = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [{ cmd: "corp-scan pom.xml", result: { exitCode: 0, stdout: "<html>proxy error</html>" } }],
+    scannerCommand: "corp-scan {{target}}",
+  }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /could not read `corp-scan pom\.xml`/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("an unrecognized severity vocabulary is an error, not a silently empty scan", async () => {
+  const { item, skip } = await ecoSource({
+    files: { "pom.xml": POM },
+    script: [
+      {
+        cmd: "corp-scan pom.xml",
+        result: {
+          exitCode: 1,
+          stdout: vulnList([
+            { name: "com.fasterxml.jackson.core:jackson-databind", version: "2.9.10", severity: "ELEVATED", fixed: "2.9.10.8" },
+          ]),
+        },
+      },
+    ],
+    scannerCommand: "corp-scan {{target}}",
+  }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /"ELEVATED"/)
+  assert.match(skip?.message ?? "", /low\/moderate\/medium\/high\/critical/)
+  assert.equal(skip?.actionable, true)
+})
+
+test("the default osv-scanner invocation stays byte-identical when no command is configured", async () => {
+  const log: string[] = []
+  await ecoSource({
+    files: { "pom.xml": POM },
+    script: [OSV_OK, { cmd: "osv-scanner --format json -L pom.xml", result: { exitCode: 1, stdout: JACKSON } }],
+    log,
+  }).claimNext()
+  assert.deepEqual(
+    log.filter((c) => c.startsWith("osv-scanner")),
+    ["osv-scanner --version", "osv-scanner --format json -L pom.xml"],
+  )
+})
+
+test("scannerCommand never touches the npm path in a mixed repo", async () => {
+  const log: string[] = []
+  const { item } = await ecoSource({
+    files: { "package.json": "{}", "pom.xml": POM },
+    script: [
+      { cmd: "corp-scan pom.xml", result: { exitCode: 0, stdout: JSON.stringify({ vulns: [] }) } },
+      { cmd: "npm audit --json", result: { exitCode: 1, stdout: audit({ lodash: vuln({}) }) } },
+      { cmd: "npm ls --json", result: { stdout: installed({ lodash: "4.17.20" }) } },
+    ],
+    scannerCommand: "corp-scan {{target}}",
+    log,
+  }).claimNext()
+  assert.equal(item?.id, LODASH)
+  assert.ok(log.includes("npm audit --json"))
+  assert.ok(log.includes("npm ls --json --depth=0"))
+  // The npm goal carries no ecosystem guidance and is unchanged by the knob.
+  assert.doesNotMatch(item?.state.goal ?? "", /Ecosystem:/)
+  assert.doesNotMatch(item?.state.goal ?? "", /established fact/)
+})
+
+test("a gradle repo without a lockfile still hard-skips even with a custom scanner", async () => {
+  const { item, skip } = await ecoSource({
+    files: { "build.gradle": "dependencies {}" },
+    script: [{ cmd: "corp-scan", result: { exitCode: 0, stdout: JSON.stringify({ vulns: [] }) } }],
+    scannerCommand: "corp-scan {{target}}",
+  }).claimNext()
+  assert.equal(item, null)
+  assert.match(skip?.message ?? "", /dependency locking/)
 })
