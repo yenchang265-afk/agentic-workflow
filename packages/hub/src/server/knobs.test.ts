@@ -39,6 +39,18 @@ test("a wrong type is caught, naming where orchestrate reads it", () => {
   assert.match(w[0]?.message ?? "", /orchestrate\.ts:124/)
 })
 
+test("scannerCommand lints as a dependency-scan string knob", () => {
+  assert.deepEqual(lint({ "dep-sitter": { scannerCommand: "corp-scan --json {{target}}" } }), [])
+
+  const wrongSource = lint({ engineering: { scannerCommand: "corp-scan" } })
+  assert.equal(wrongSource.length, 1)
+  assert.match(wrongSource[0]?.message ?? "", /only applies to dependency-scan kinds/)
+
+  const wrongType = lint({ "dep-sitter": { scannerCommand: 7 } })
+  assert.equal(wrongType.length, 1)
+  assert.match(wrongType[0]?.message ?? "", /read only when it is a string/)
+})
+
 test("a knob on the wrong source is named as such, not merely 'unknown'", () => {
   // `query` is real — for pull-request kinds. On a backlog kind it looks right and
   // never fires, which is exactly the failure worth explaining.
@@ -92,7 +104,7 @@ test("drift alarm: the registry matches the knobs orchestrate.ts actually reads"
 
   // A rotted regex would extract nothing (or too little) and "pass" by matching
   // an empty registry — so pin the count as well as the contents.
-  assert.ok(found.size >= 5, `extracted only ${found.size} knob reads from ${orchestrate} — the regex has rotted, not the registry`)
+  assert.ok(found.size >= 6, `extracted only ${found.size} knob reads from ${orchestrate} — the regex has rotted, not the registry`)
   assert.deepEqual(
     [...found].sort(),
     [...registered].sort(),

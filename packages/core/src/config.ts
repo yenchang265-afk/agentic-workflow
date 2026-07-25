@@ -117,6 +117,21 @@ const BaseConfigSchema = z.object({
         trigger: WorkflowTriggerSchema.optional(),
         /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
         stageModels: z.record(z.string(), z.string().min(1)).optional(),
+        /**
+         * Replaces the bundled `osv-scanner --format json -L <target>` call for
+         * this kind's JVM (maven/gradle) scans with your own CLI. `{{target}}`
+         * (the lockfile path) and `{{ecosystem}}` are substituted; a command
+         * naming neither runs verbatim, since a corporate scanner may scan the
+         * whole repo. The npm path is unaffected. Output must be an osv-scanner
+         * report OR a list of raw OSV records (`{vulns:[…]}` and friends) — see
+         * docs/workflows/dep-sitter.md for the payload contract.
+         *
+         * SHELL-BEARING: honored from the USER-scope config ONLY. A repo's
+         * .agentic-workflow.json setting it is dropped with a warning
+         * (SHELL_BEARING_WORKFLOW_KEYS) — a cloned repo must not be able to make
+         * the driver execute an arbitrary command on first claim.
+         */
+        scannerCommand: z.string().min(1).optional(),
       }),
     )
     .default({}),
@@ -517,6 +532,59 @@ const dropShellBearingRepoKeys = async (repoRaw: unknown, client: Client): Promi
 }
 
 /**
+ * Keys INSIDE a `workflows.<kind>` section whose value is shell the loop
+ * executes verbatim — the nested sibling of SHELL_BEARING_KEYS, same rule and
+ * same reason. `dropShellBearingRepoKeys` deletes whole TOP-LEVEL keys and
+ * cannot see one level down, so this is a sibling rather than a generalization
+ * into a path walker: two small obviously-correct functions beat one clever one.
+ */
+const SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand"] as const
+
+/**
+ * Drop shell-bearing keys from each `workflows.<kind>` section of the repo
+ * layer, warning per (kind, key). Never mutates its input.
+ *
+ * Only sound because `mergeConfigLayers` merges `workflows.<kind>` per key: a
+ * repo section setting `severityFloor` beside a dropped `scannerCommand` keeps
+ * its severityFloor AND the user layer's scannerCommand. A shallow merge would
+ * silently eat one of them.
+ */
+const dropShellBearingWorkflowKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {
+  if (!isPlainObject(repoRaw)) return repoRaw
+  const workflows = repoRaw["workflows"]
+  if (!isPlainObject(workflows)) return repoRaw
+
+  const cleanedKinds: Record<string, unknown> = {}
+  let dropped = false
+  for (const [kind, section] of Object.entries(workflows)) {
+    if (!isPlainObject(section)) {
+      cleanedKinds[kind] = section
+      continue
+    }
+    let out = section
+    for (const key of SHELL_BEARING_WORKFLOW_KEYS) {
+      if (!(key in out)) continue
+      const { [key]: _dropped, ...rest } = out
+      out = rest
+      dropped = true
+      try {
+        await client.app.log({
+          body: {
+            service: "agentic-workflow",
+            level: "warn",
+            message: `${CONFIG_FILE} sets "workflows.${kind}.${key}" — ignored: shell-bearing keys are honored from the user-scope config only. Move it to your user config (~/.agentic-workflow.json).`,
+          },
+        })
+      } catch {
+        /* the drop matters, the log is best-effort */
+      }
+    }
+    cleanedKinds[kind] = out
+  }
+  return dropped ? { ...repoRaw, workflows: cleanedKinds } : repoRaw
+}
+
+/**
  * Load a host config by layering the user-scope file (if any) under the repo's
  * `.agentic-workflow.json` (repo wins field by field), falling back to the
  * schema's defaults when both are absent.
@@ -558,6 +626,7 @@ export const loadConfigWith = async <T>(
     }
   }
   repoRaw = await dropShellBearingRepoKeys(repoRaw, client)
+  repoRaw = await dropShellBearingWorkflowKeys(repoRaw, client)
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`

@@ -47,6 +47,7 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
     severityFloor: { type: "string", site: "orchestrate.ts:124" },
     includeOutdated: { type: "boolean", site: "orchestrate.ts:125" },
     ecosystem: { type: "string", site: "orchestrate.ts:126" },
+    scannerCommand: { type: "string", site: "orchestrate.ts:129" },
   },
   "ci-runs": { branch: { type: "string", site: "orchestrate.ts:132" } },
 }

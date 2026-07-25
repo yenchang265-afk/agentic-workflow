@@ -321,8 +321,25 @@ scripts.
 - **JVM ecosystems (OSV-Scanner):** for maven/gradle the advisory data comes
   from the host-installed `osv-scanner` binary querying the OSV.dev database
   — a new **external-read** egress (the binary is trusted like `gh`: the host
-  operator installs and updates it; the sitter only ever invokes it with
-  `--format json -L <file>` and parses the output defensively). OSV advisory
+  operator installs and updates it; by default the sitter invokes it only with
+  `--format json -L <file>` and parses the output defensively).
+- **A site-configured scanner (`workflows.<kind>.scannerCommand`):** replaces
+  that default invocation with an arbitrary command line, executed
+  driver-side via a raw shell splice — the same trust basis and the same
+  containment as `worktreeSetup`, and honored from the **user-scope config
+  only**. A watched repository's `.agentic-workflow.json` cannot set it
+  (`SHELL_BEARING_WORKFLOW_KEYS` drops it with a warning at load), so cloning
+  a hostile repo does not gain command execution. The placeholders substituted
+  into it (`{{target}}`, `{{ecosystem}}`) are internal constants — lockfile
+  paths and ecosystem names the source itself chose — never advisory or
+  registry text, so untrusted data never reaches the shell. Agent-visible bash
+  allowlists are unchanged: the custom command runs before any agent starts and
+  is deliberately NOT added to any stage's allowlist. Its output is parsed by
+  the same defensive normalizer as osv-scanner's, and an unreadable, empty or
+  unrecognized-vocabulary payload is an actionable skip rather than a
+  confident "no vulnerabilities".
+
+  OSV advisory
   text is untrusted input under the same discipline as npm advisories. Fix
   targets are pinned by the pure normalizer (`osv.ts`) from the report's
   `fixed` events before any agent runs — an agent never chooses a version.

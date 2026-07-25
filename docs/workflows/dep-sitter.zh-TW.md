@@ -66,6 +66,39 @@ SCAN → UPGRADE → VERIFY → PUBLISH（最多 2 次疊代）
 - **`workflows.dep-sitter.includeOutdated`** —— 預設 `false`；在 patch/minor
   政策範圍內，也認領沒有漏洞但已過時的直接相依套件。**僅限 npm**——對
   maven/gradle 會被忽略（並記錄一行日誌）。
+- **`workflows.dep-sitter.scannerCommand`** —— 以自訂 CLI 取代內建的
+  `osv-scanner --format json -L <target>`，**僅適用於 JVM 生態系統**
+  （npm 路徑不受影響）。`{{target}}`（鎖定檔路徑）與 `{{ecosystem}}`
+  會被代換；兩者皆未出現時指令原樣執行（企業掃描器可能掃整個儲存庫）。
+
+  ```jsonc
+  // ~/.config/agentic-workflow/agentic-workflow.json —— 僅限使用者層級
+  { "workflows": { "dep-sitter": {
+      "enabled": true,
+      "scannerCommand": "corp-scan --format osv --json {{target}}" } } }
+  ```
+
+  > **僅限使用者層級設定。** 此值是迴圈直接交給 shell 執行的指令，因此只在
+  > 使用者層級設定檔中生效。儲存庫的 `.agentic-workflow.json` 若設定它，會被
+  > 捨棄並發出警告——否則光是複製一個儲存庫就足以在首次認領時執行任意
+  > shell。與 `worktreeSetup` 同一規則。
+
+  **輸出格式**：stdout 必須是 osv-scanner 報告（`{"results":[…]}`），或原始
+  OSV 弱點記錄清單（`{"vulns":[…]}`、`vulnerabilities`、`findings`，或裸陣列）；
+  兩者皆可接受，不需額外的格式設定。每筆記錄必要欄位只有五個：`id`、
+  `severity`（`low`/`moderate`/`medium`/`high`/`critical`，不分大小寫）、
+  `affected[].package.name`（JVM 上必須是完整的 `group:artifact`）、
+  `affected[].package.version`（**已安裝**版本）、
+  `affected[].ranges[].events[].fixed`（升級目標）。其餘欄位一律忽略。
+  stdout 為空一律視為掃描失敗（可行動的 skip），絕不當作「沒有漏洞」。
+  完整契約與各種失敗情形見英文版 [`dep-sitter.md`](dep-sitter.md)。
+
+  **限制**：自訂指令在 driver 端執行（work source 內，任何 agent 啟動之前），
+  stage agent 無法重跑它——SCAN 階段的 bash allowlist 固定在 manifest 中，而
+  OpenCode host 的 agent 權限表在建置時產生，無法由設定檔參數化。實務上沒有
+  損失：work source 在項目產生前就已釘住套件、目前版本與目標版本，因此工作
+  單會告訴 SCAN 不要去找掃描器，改為確認建置檔仍宣告該套件、目標版本存在、
+  且升級幅度符合宣告的 impact。
 
 ## 範例：一次性掃描與升級
 
