@@ -151,8 +151,9 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
   `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存（唯一的 PLAN 入口）；
   `claim` 拉取下一個可建置的 `in-progress/` 任務；`watch` 是一個僅作用於
   engineering 類型的常駐 worker
-- `/agentic-workflow:pr-sitter claim` · `watch [interval]`（OpenCode）· `unwatch` ·
+- `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [interval]`（OpenCode）· `unwatch` ·
   `stop` · `status` —— 相同的 claim/watch 語意，作用範圍限定在 PR sitter
+  （`claim` 可傳入選填的 PR 編號／網址以強制處理特定的 PR）
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
   `/agentic-workflow:main-sitter` —— 同樣的 `claim` / `watch`（OpenCode）/
   `unwatch` / `stop` / `status` 動詞，各自作用於自己的類型（透過
