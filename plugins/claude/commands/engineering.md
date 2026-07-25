@@ -57,7 +57,8 @@ never claim the approval happened.
 Do not invent your own control flow — the `workflow-orchestration` skill defines
 the exact sequence of tool calls and Task spawns. The MCP tools own the state
 machine, git isolation, verdicts, backlog moves, snapshots, and metrics; you
-own spawning the stage subagents.
+own spawning the stage subagents — always with the Task tool, and always passing
+the response's `model` field as the Task tool's `model` when present.
 
 Never touch `docs/tasks/**` directly — no Bash `mv`/`mkdir`/`rm`/redirects
 into it, no Write/Edit of files in status folders (a PreToolUse hook blocks

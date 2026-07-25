@@ -136,6 +136,18 @@ const BaseConfigSchema = z.object({
     )
     .default({}),
   /**
+   * Agent name → model, for spawns that are NOT stage runs: the draft authoring
+   * `workflow-plan-author` does in `new`/`retask`, and the ad-hoc `workflow-plan`.
+   * Those have no `StageDef`, so `modelFor` has nothing to resolve and no fire
+   * payload carries a model for them. Deliberately separate from
+   * `workflows.<kind>.stageModels`: folding drafting into `stageModels.plan`
+   * would silently retarget the PLAN stage too, and vice versa.
+   *
+   * Top-level rather than per-kind because agent names are unique across kinds
+   * and `workflow-plan` belongs to no kind at all.
+   */
+  agentModels: z.record(z.string(), z.string().min(1)).optional(),
+  /**
    * Which platform PR-shaped work sources talk to: `github` (the `gh` CLI, the
    * default) or `ado` (Azure DevOps via its REST API). GitHub auth is delegated
    * to `gh auth login`; ADO auth is a Personal Access Token in the
@@ -303,6 +315,13 @@ export const modelFor = (config: Config, kind: string, def: StageDef): string | 
  */
 export const unknownStageModelKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
   Object.keys(config.workflows[kind]?.stageModels ?? {}).filter((name) => !stageNames.includes(name))
+
+/**
+ * The model a NON-stage spawn runs with: config `agentModels.<agent>`, else
+ * undefined (the host's default). Mirrors `modelFor`'s shape, but keyed by agent
+ * name because these spawns have no stage — see the `agentModels` doc. Pure.
+ */
+export const agentModel = (config: Config, agent: string): string | undefined => config.agentModels?.[agent]
 
 /**
  * The stage's `requiredAxes` that no configured review lens names — the axes

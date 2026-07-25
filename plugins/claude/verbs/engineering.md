@@ -55,7 +55,8 @@
        `/agentic-workflow:engineering approve <id>`. Then ask a second
        **AskUserQuestion**: "Plan it now?"
        - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
-         spawn `workflow-plan-author` (task mode) with the returned prompt, then
+         spawn `workflow-plan-author` (task mode, Task tool) with the returned
+         prompt and the response's `model` when present, then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `workflow-orchestration` skill).
@@ -137,8 +138,9 @@
 <!-- aw:verb plan -->
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
-  PLAN (no git isolation): spawn `workflow-plan-author` in task mode with the
-  returned prompt, then `workflow_advance` — the task parks in `plan-review/` and
+  PLAN (no git isolation): spawn `workflow-plan-author` (Task tool) in task mode
+  with the returned prompt and the response's `model` when present, then
+  `workflow_advance` — the task parks in `plan-review/` and
   the plan gate goes live: ask the user inline (AskUserQuestion — Approve /
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
   only telling them which command to run. If the id is already build-ready
@@ -159,7 +161,8 @@
 <!-- /aw:verb claim -->
 <!-- aw:verb recover -->
 - **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
-  resume driving from the action it returns.
+  resume driving from the action it returns: `workflow_stage`, then spawn the
+  response's `agent` via the Task tool with its `model` when present.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort

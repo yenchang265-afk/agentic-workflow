@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
-import { makeAgenticWorkflow } from "./impl.ts"
+import { parseConfig } from "@agentic-workflow/core/config"
+import type { Config } from "./config.ts"
+import { draftModelNote, makeAgenticWorkflow } from "./impl.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -277,4 +279,32 @@ test("command hook slices a template split across text parts", async () => {
   assert.match(output.parts[0]!.text!, /interview the user/)
   assert.doesNotMatch(output.parts[0]!.text!, /claim the next build-ready task/)
   assert.equal(output.parts[1]!.text, "", "no leftover template text may survive in a later part")
+})
+
+/**
+ * `agentModels` — the model source for the drafting invocation, which is not a
+ * stage run and so has no StageDef and no fire payload to carry one.
+ */
+test("draftModelNote names the configured drafting model for new and retask only", () => {
+  const config = parseConfig({ agentModels: { "workflow-plan-author": "anthropic/claude-haiku-4-5" } }) as Config
+  for (const verb of ["new", "retask"]) {
+    const note = draftModelNote(config, "engineering", verb)
+    assert.match(note!, /`workflow-plan-author` subagent with the model `anthropic\/claude-haiku-4-5`/, verb)
+    // OpenCode takes provider-qualified ids, so the prefix must survive here —
+    // only the Claude host strips it (bareModel).
+    assert.match(note!, /anthropic\//, "the provider prefix must not be stripped on this host")
+    assert.match(note!, /drafting invocation only/, "it must not read as retargeting the PLAN stage")
+  }
+  // `plan`'s invocation IS the PLAN stage — stageModels governs it, and naming
+  // agentModels here would give the model two competing answers.
+  assert.equal(draftModelNote(config, "engineering", "plan"), null)
+  assert.equal(draftModelNote(config, "engineering", "claim"), null)
+  assert.equal(draftModelNote(config, "pr-sitter", "new"), null, "the knob is engineering's drafting path only")
+})
+
+test("draftModelNote is silent when no drafting model is configured", () => {
+  const bare = parseConfig({}) as Config
+  assert.equal(draftModelNote(bare, "engineering", "new"), null)
+  const other = parseConfig({ agentModels: { "workflow-plan": "haiku" } }) as Config
+  assert.equal(draftModelNote(other, "engineering", "new"), null, "a different agent's entry must not leak in")
 })

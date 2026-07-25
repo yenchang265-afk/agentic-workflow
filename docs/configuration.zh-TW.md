@@ -238,6 +238,34 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   該 session 覆寫它：`watch poll [interval]`（或一個裸的間隔值）、
   `watch cron "<schedule>"`，或 `watch idle`。
 
+- **`agentModels`**（頂層，不在 `workflows` 之內）——代理名稱 → 該代理
+  執行時使用的模型，適用於**不是階段執行**、因此沒有 `stageModels`
+  項目可讀的生成：
+
+  ```json
+  {
+    "agentModels": {
+      "workflow-plan-author": "anthropic/claude-haiku-4-5",
+      "workflow-plan": "anthropic/claude-haiku-4-5"
+    }
+  }
+  ```
+
+  符合條件的有兩個：`/agentic-workflow:engineering new` 與 `retask` 用來
+  撰寫草稿檔案的 `workflow-plan-author`（在任何迴圈存在之前就執行），
+  以及臨時性的 `/agentic-workflow:plan` 指令所用的 `workflow-plan`。兩者
+  背後都沒有 manifest 階段，因此沒有任何 fire payload 會為它們帶上模型。
+
+  之所以放在頂層而非各類型之下：代理名稱在各類型間是唯一的，而
+  `workflow-plan` 根本不屬於任何類型。值的寫法與 `stageModels` 相同
+  （在 Claude Code 上 `provider/` 前綴會被去除），未設定的代理則使用
+  主機預設模型。
+
+  這個鍵**刻意與 `stageModels` 分開**，而不是併入 `stageModels.plan`：
+  草稿撰寫與 PLAN 階段都跑 `workflow-plan-author`，若共用一個鍵，把
+  草稿撰寫指向便宜模型就會連帶悄悄改動規劃階段，反之亦然。設定
+  `agentModels` 永遠不影響階段；設定 `stageModels` 也永遠不影響草稿撰寫。
+
 ## 管理面板（`hub`——僅限使用者層級）
 
 管理面板只從**使用者層級**設定的 `hub` 區段讀取它的設定

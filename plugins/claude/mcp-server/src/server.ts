@@ -209,14 +209,6 @@ const stageModel = (kind: string, def: StageDef): string | undefined => {
 }
 
 /**
- * Every spawn instruction must name the `model` field, not just `agent`.
- * The fire payloads have always carried the configured stage model, but the
- * per-transition notes only told the orchestrator to spawn the `agent` — so
- * `workflows.<kind>.stageModels` was silently dropped at each hop and every stage
- * ran on the host default. Appended to each note rather than stated once in
- * the skill: the note is what the orchestrator reads at the point of use.
- */
-/**
  * A `stageModels` key naming no stage of its kind is accepted by the schema
  * (the manifest isn't loaded at parse time) and then resolves to nothing —
  * the stage silently runs the host default. Surface it instead of leaving the
@@ -260,6 +252,24 @@ const SPAWN_MODEL_NOTE =
 // skill tool (primed by skill-first rules and the real skills spawned the same turn).
 const SPAWN_TOOL_NOTE =
   " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)"
+
+/** A check stage's non-negotiable extra: the subagent, not the orchestrator, records the verdict. */
+const CHECK_VERDICT_TAIL =
+  " — it is a check stage: the spawned subagent MUST call the workflow_verdict MCP tool before returning; " +
+  "a verdict in prose is ignored. Never call workflow_verdict yourself on its behalf."
+
+/**
+ * Compose a spawn instruction. EVERY note that tells the orchestrator to spawn a
+ * stage subagent is built here, never hand-written at the call site: the fire
+ * payloads have always carried the configured stage model, but a note naming only
+ * `agent` let `workflows.<kind>.stageModels` be dropped at every hop, and every
+ * stage ran the host default. The note at the point of use is what the orchestrator
+ * acts on, so the model clause must be impossible to leave out — one composer, and
+ * a source lint (server.test.ts) that no spawn note bypasses it.
+ *
+ * `lead` says what to spawn; `tail` adds the per-site consequence.
+ */
+const spawnNote = (lead: string, tail = ""): string => `${lead}${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}${tail}`
 
 /** Flip the stage marker's `verdictRecorded` flag in place once workflow_verdict
  *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
@@ -498,9 +508,17 @@ const firePayload = (state: WorkflowState, id: string) => {
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
     prompt: composePrompt(manifest, state, state.stage),
-    ...(state.stage === "plan"
-      ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
-      : {}),
+    // Every fired stage carries the spawn instruction, not just PLAN. A non-plan
+    // entry (BUILD via workflow_start/workflow_claim; every sitter's entry stage)
+    // used to arrive with `model` in the payload and nothing telling the
+    // orchestrator to pass it — the payload's own field, silently dropped.
+    note:
+      state.stage === "plan"
+        ? spawnNote(
+            "PLAN stage: spawn the subagent named in the `agent` field in task mode",
+            "; on workflow_advance the task parks in plan-review/ for the human gate",
+          )
+        : spawnNote("call workflow_stage, then spawn the subagent named in the `agent` field"),
   }
 }
 
@@ -794,13 +812,11 @@ server.registerTool(
       worktree: active.git?.worktree ?? null,
       ...(active.isolationWarning ? { isolationWarning: active.isolationWarning } : {}),
       deadlineMinutes: config.stageTimeoutMinutes,
-      ...(def.kind === "check"
-        ? {
-            note:
-              "check stage: the spawned subagent MUST call the workflow_verdict MCP tool before returning — " +
-              "a verdict in prose is ignored. Never call workflow_verdict yourself on its behalf.",
-          }
-        : {}),
+      // The last thing the orchestrator reads before the Task call, and for many
+      // stages the only spawn instruction it ever gets: the fire payload's note may
+      // be several tool calls back, or authored away in the same turn when
+      // workflow_stage and Task are emitted as two tool_use blocks at once.
+      note: spawnNote("spawn the subagent named in the `agent` field", def.kind === "check" ? CHECK_VERDICT_TAIL : ""),
     })
   },
 )
@@ -874,7 +890,10 @@ server.registerTool(
                 "COMPLETE axes array; partial submissions are not accumulated."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
-          note: `check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again${SPAWN_MODEL_NOTE}`,
+          note: spawnNote(
+            "check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again",
+            CHECK_VERDICT_TAIL,
+          ),
         })
       }
       pending = {
@@ -923,11 +942,10 @@ server.registerTool(
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
         prompt: composePrompt(activeManifest(), active, action.stage),
-        note:
-          `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}` +
-          (nextDef.kind === "check"
-            ? " — it MUST call the workflow_verdict MCP tool before returning; never call workflow_verdict yourself on its behalf"
-            : ""),
+        note: spawnNote(
+          "call workflow_stage, then spawn the subagent named in the `agent` field",
+          nextDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
+        ),
       })
     }
     if (action.kind === "park") {
@@ -1365,7 +1383,10 @@ server.registerTool(
         action: step.action,
         agent: agentRef(resumedDef.agent),
         ...(resumedModel ? { model: resumedModel } : {}),
-        note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
+        note: spawnNote(
+          "call workflow_stage before spawning the subagent named in the `agent` field",
+          resumedDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
+        ),
       })
     }
     active = buildEntryState(t)
@@ -1386,7 +1407,7 @@ server.registerTool(
       prompt: composePrompt(eng, active, "build"),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
-      note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
+      note: spawnNote("call workflow_stage before spawning the subagent named in the `agent` field"),
     })
   },
 )
