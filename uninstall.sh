@@ -21,12 +21,15 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  ./uninstall.sh                  # uninstall both plugins (OpenCode + Claude Code)
+  ./uninstall.sh                  # uninstall every plugin (OpenCode + Claude Code + Qwen Code)
   ./uninstall.sh opencode         # OpenCode only: remove entries from $OPENCODE_CONFIG_DIR or ~/.config/opencode
   ./uninstall.sh claude           # Claude Code only: remove the built mcp-server/dist
-  ./uninstall.sh all              # explicit both (same as no target)
+  ./uninstall.sh qwen             # Qwen Code only: remove entries from $QWEN_CONFIG_DIR or ~/.qwen
+                                  #   (including our hooks + MCP entries in settings.json)
+  ./uninstall.sh all              # explicit all (same as no target)
   ./uninstall.sh [opencode] --copy # also remove copies install left (not just symlinks)
   ./uninstall.sh [opencode] /dir  # uninstall the OpenCode half from an arbitrary config dir
+  ./uninstall.sh qwen /dir        # uninstall the Qwen half from an arbitrary config dir
 
 To also wipe local run state / backlog / config, see ./scripts/clean.sh.
 EOF
@@ -36,10 +39,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET=all
 MODE=symlink
 CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+QWEN_CONFIG_DIR="${QWEN_CONFIG_DIR:-$HOME/.qwen}"
 
 for arg in "$@"; do
   case "$arg" in
-    opencode|claude|all) TARGET="$arg" ;;
+    opencode|claude|qwen|all) TARGET="$arg" ;;
     both) TARGET=all ;;
     --copy) MODE=copy ;;
     -h|--help) usage; exit 0 ;;
@@ -48,9 +52,13 @@ for arg in "$@"; do
       usage
       exit 1
       ;;
-    *) CONFIG_DIR="$arg" ;;
+    *) POSITIONAL_DIR="$arg" ;;
   esac
 done
+
+if [ -n "${POSITIONAL_DIR:-}" ]; then
+  if [ "$TARGET" = qwen ]; then QWEN_CONFIG_DIR="$POSITIONAL_DIR"; else CONFIG_DIR="$POSITIONAL_DIR"; fi
+fi
 
 # Remove a dest we own: a symlink pointing back into this repo always goes; a
 # plain file/dir goes only in --copy mode (that is what install left behind).
@@ -121,12 +129,52 @@ uninstall_claude() {
   echo "             symlinks are git-tracked and are left in place."
 }
 
+
+# Qwen Code half. The mirror of install_qwen: remove the symlinks we own, the
+# GENERATED agent copies (which `remove_owned` can't recognize — they are real
+# files, by design, because each carries a baked-in `model:`), and our entries in
+# settings.json. Everything else in that file, including hooks the user added to
+# the same events, is left exactly as it was.
+uninstall_qwen() {
+  echo "Uninstalling agentic-workflow for Qwen Code ($QWEN_CONFIG_DIR)"
+
+  for f in "$REPO_DIR"/plugins/qwen/commands/*.md; do
+    remove_owned "$QWEN_CONFIG_DIR/commands/agentic-workflow/$(basename "$f")"
+  done
+  for d in "$REPO_DIR"/skills/*/; do
+    remove_owned "$QWEN_CONFIG_DIR/skills/$(basename "$d")"
+  done
+  remove_owned "$QWEN_CONFIG_DIR/skills/workflow-orchestration"
+  for f in "$REPO_DIR"/references/*.md; do
+    remove_owned "$QWEN_CONFIG_DIR/references/$(basename "$f")"
+  done
+
+  # Agents are copies, so match by the names this repo ships rather than by link
+  # target — never a blanket wipe of the user's agents dir.
+  for f in "$REPO_DIR"/plugins/qwen/agents/*.md; do
+    dest="$QWEN_CONFIG_DIR/agents/$(basename "$f")"
+    if [ -f "$dest" ]; then rm -f "$dest"; echo "removed: $dest"; fi
+  done
+
+  if [ -f "$QWEN_CONFIG_DIR/settings.json" ]; then
+    node "$REPO_DIR/scripts/qwen-settings.mjs" remove "$QWEN_CONFIG_DIR"
+  fi
+
+  rmdir "$QWEN_CONFIG_DIR/commands/agentic-workflow" 2>/dev/null || true
+  for dir in agents commands skills references; do
+    rmdir "$QWEN_CONFIG_DIR/$dir" 2>/dev/null || true
+  done
+}
+
 case "$TARGET" in
   opencode) uninstall_opencode ;;
   claude) uninstall_claude ;;
+  qwen) uninstall_qwen ;;
   all)
     uninstall_opencode
     echo
     uninstall_claude
+    echo
+    uninstall_qwen
     ;;
 esac
