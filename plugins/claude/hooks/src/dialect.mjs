@@ -1,0 +1,107 @@
+/**
+ * Tool-identity dialect for the hook guards.
+ *
+ * The guards' POLICY is host-neutral — the same backlog-mutation rules, the same
+ * check-stage bash allowlist, the same worktree pin, the same ADO/GitHub/push
+ * backstops. What is NOT host-neutral is the tool *names* that policy keys off:
+ * Claude Code calls the shell `Bash`, Qwen Code calls it `run_shell_command`.
+ * Keeping the policy in one place and the names here is what stops a second host
+ * from becoming a fork of a 300-line security guard.
+ *
+ * Selected by AGENTIC_WORKFLOW_HOST — the same switch the MCP server reads, so
+ * the marker the server WRITES and the marker the guard READS can never disagree.
+ *
+ * Keep this file dependency-free (no @agentic-workflow/core, no node built-ins
+ * beyond `process`) so a test can import it under bare `node --test`, matching
+ * ./allowlist.mjs.
+ */
+
+/**
+ * Qwen tool ids come from qwen-code's packages/core/src/tools/tool-names.ts.
+ * `replace` is its LEGACY alias for `edit` and is still accepted at runtime
+ * (ToolNamesMigration), so it is listed too — a legacy name that slipped past
+ * the guard would be a hole, not a cosmetic miss.
+ *
+ * `MultiEdit` is deliberately absent from the Claude list: no such tool exists,
+ * and matching it only obscured that `NotebookEdit` is the third real one.
+ */
+const DIALECTS = {
+  claude: {
+    stageMarkerFile: ".stage.json",
+    // Claude Code surfaces plugin MCP tools under a second, plugin-bundled
+    // alias; Qwen has only the one registration.
+    verdictAliases:
+      "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
+    bash: ["Bash"],
+    write: ["Edit", "Write", "NotebookEdit"],
+    spawnTool: "Task tool",
+    // Whether the host's spawn tool takes a per-call model. False on Qwen: the
+    // model is baked into the installed agent file, so telling the orchestrator
+    // to "set `model`" would name a parameter that does not exist.
+    conveysSpawnModel: true,
+    installer: "plugins/claude/install.sh",
+  },
+  qwen: {
+    stageMarkerFile: ".stage-qwen.json",
+    verdictAliases: "mcp__agentic-workflow__workflow_verdict",
+    bash: ["run_shell_command"],
+    write: ["write_file", "edit", "replace", "notebook_edit"],
+    spawnTool: "`agent` tool",
+    conveysSpawnModel: false,
+    installer: "./install.sh qwen",
+  },
+}
+
+/** The write tools' path argument, in probe order. Shared: both hosts use `file_path`. */
+export const WRITE_PATH_KEYS = ["file_path", "path", "notebook_path"]
+
+export const KNOWN_HOSTS = Object.keys(DIALECTS)
+
+/**
+ * The active host, or null when AGENTIC_WORKFLOW_HOST names one we don't know.
+ * Unset (or empty — wrappers propagate empty env vars) means Claude Code, which
+ * is the host that shipped first and never sets the variable.
+ *
+ * Null is returned rather than a fallback ON PURPOSE. Defaulting a typo'd host
+ * to Claude would leave every Qwen tool name matching nothing, so the guard
+ * would wave through every write and every off-allowlist command while looking
+ * healthy — a silent hole. The caller blocks instead.
+ */
+export const hostFor = (env = process.env) => {
+  const raw = env.AGENTIC_WORKFLOW_HOST || undefined
+  if (raw === undefined) return "claude"
+  return raw in DIALECTS ? raw : null
+}
+
+/** The dialect for a host name, or null when unknown. */
+export const dialectFor = (host) => (host && host in DIALECTS ? DIALECTS[host] : null)
+
+export const isBashTool = (d, tool) => d.bash.includes(tool)
+export const isWriteTool = (d, tool) => d.write.includes(tool)
+
+/**
+ * The host-neutral name core's `classifyMutation` matches on. Core keys off the
+ * Claude spelling (`/^(write|edit|multiedit|notebookedit)$/i`, `/^bash$/i`), so
+ * a Qwen `run_shell_command` must arrive as `Bash` or the always-on backlog
+ * guard would classify it as "some other tool" and allow it through.
+ */
+export const canonicalTool = (d, tool) => {
+  if (isBashTool(d, tool)) return "Bash"
+  if (isWriteTool(d, tool)) return "Write"
+  return String(tool ?? "")
+}
+
+/** The write target's path from a tool input, or undefined. */
+export const writePathOf = (ti) => {
+  for (const key of WRITE_PATH_KEYS) if (ti[key] !== undefined) return ti[key]
+  return undefined
+}
+
+/** Which key held the write path, for rewriting it in place. */
+export const writePathKeyOf = (ti) => WRITE_PATH_KEYS.find((key) => ti[key] !== undefined) ?? "file_path"
+
+/** The message shown when AGENTIC_WORKFLOW_HOST names a host we don't know. */
+export const unknownHostMessage = (raw) =>
+  `agentic-workflow: AGENTIC_WORKFLOW_HOST="${raw}" is not a known host (expected one of: ${KNOWN_HOSTS.join(", ")}). ` +
+  `Blocking rather than guessing: on the wrong dialect this guard would not recognize a single tool name and would ` +
+  `wave through every backlog mutation. Fix the value in your host's settings and restart the session.`

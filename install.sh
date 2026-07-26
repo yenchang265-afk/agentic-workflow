@@ -19,11 +19,14 @@ Usage:
                                   #    detected host(s); both when neither CLI is found)
   ./install.sh opencode           # OpenCode only: symlink into $OPENCODE_CONFIG_DIR or ~/.config/opencode
   ./install.sh claude             # Claude Code only: build mcp-server + link shared skills/references
-  ./install.sh all                # explicit both (OpenCode + Claude Code)
+  ./install.sh qwen               # Qwen Code only: build mcp-server, install agents/commands/skills into
+                                  #   $QWEN_CONFIG_DIR or ~/.qwen, and merge hooks + MCP into settings.json
+  ./install.sh all                # explicit all (OpenCode + Claude Code + Qwen Code)
   ./install.sh config             # config only: run the wizard, install no plugin files
   ./install.sh [opencode] --copy  # copy instead of symlink (OpenCode half only)
   ./install.sh [opencode] /dir    # install the OpenCode half into an arbitrary config dir
-                                  # (a dir literally named "claude"/"opencode"/"all"/"config" needs a slash, e.g. ./claude)
+  ./install.sh qwen /dir          # install the Qwen half into an arbitrary config dir
+                                  # (a dir literally named "claude"/"opencode"/"qwen"/"all"/"config" needs a slash, e.g. ./qwen)
 
 After installing, a short wizard offers to write an initial .agentic-workflow.json
 into the project the loop will drive (interactive terminals only):
@@ -41,18 +44,21 @@ already exist there, so every knob is visible without reading docs/configuration
 Never overwrites an existing file; a pre-XDG ~/.agentic-workflow.json is still read
 as a fallback and left untouched.
 
-To reverse an install: ./uninstall.sh [opencode|claude|all].
+To reverse an install: ./uninstall.sh [opencode|claude|qwen|all].
 To clear local run state / backlog / config: ./scripts/clean.sh (see --help).
 EOF
 }
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET=all
-# 1 once a positional target (opencode/claude/all/both/config) is given, so the
+# 1 once a positional target (opencode/claude/qwen/all/both/config) is given, so the
 # host-selection menu only runs when the user let the target default.
 TARGET_EXPLICIT=0
 MODE=symlink
 CONFIG_DIR="${OPENCODE_CONFIG_DIR:-$HOME/.config/opencode}"
+# Qwen Code reads ~/.qwen; the override exists so CI can round-trip into a temp
+# dir, mirroring OPENCODE_CONFIG_DIR above.
+QWEN_CONFIG_DIR="${QWEN_CONFIG_DIR:-$HOME/.qwen}"
 WANT_CONFIG=1
 ASSUME_YES=0
 # Config scope the wizard writes to: "" = ask, "repo" = <project>/.agentic-workflow.json,
@@ -91,7 +97,7 @@ user_config_path() {
 
 for arg in "$@"; do
   case "$arg" in
-    opencode|claude|all|config) TARGET="$arg"; TARGET_EXPLICIT=1 ;;
+    opencode|claude|qwen|all|config) TARGET="$arg"; TARGET_EXPLICIT=1 ;;
     both) TARGET=all; TARGET_EXPLICIT=1 ;;  # tolerate the historical alias; never let it fall to the config-dir catch-all
     --copy) MODE=copy ;;
     --config) WANT_CONFIG=1 ;;
@@ -111,9 +117,17 @@ for arg in "$@"; do
       usage
       exit 1
       ;;
-    *) CONFIG_DIR="$arg" ;;
+    # A positional dir belongs to whichever single host was named. Assigned
+    # after the loop, because the target may be given after the dir.
+    *) POSITIONAL_DIR="$arg" ;;
   esac
 done
+
+# Route the positional config dir to the named host. Defaults to OpenCode, which
+# is the only host that accepted one before Qwen existed.
+if [ -n "${POSITIONAL_DIR:-}" ]; then
+  if [ "$TARGET" = qwen ]; then QWEN_CONFIG_DIR="$POSITIONAL_DIR"; else CONFIG_DIR="$POSITIONAL_DIR"; fi
+fi
 
 link_or_copy() {
   local src="$1" dest="$2"
@@ -195,6 +209,71 @@ install_claude() {
   "$REPO_DIR/plugins/claude/install.sh"
 }
 
+# Qwen Code half. Unlike the Claude plugin (which the host loads in place from a
+# --plugin-dir) Qwen has no plugin-dir concept, so this installs INTO the Qwen
+# config dir, the way the OpenCode half does: symlinks for everything static,
+# plus two things symlinks can't express —
+#   * agents are COPIES, because each one's `model:` is baked in from config
+#     (Qwen's `agent` tool takes no per-call model), and
+#   * hooks + the MCP server are merged into settings.json, because Qwen
+#     extensions cannot carry hooks at all and the guard hooks ARE the safety
+#     substrate.
+install_qwen() {
+  echo "Installing agentic-workflow for Qwen Code ($QWEN_CONFIG_DIR)"
+  if [ "$MODE" = copy ]; then
+    echo "note: --copy applies to the OpenCode install only"
+  fi
+
+  # The MCP server is shared with the Claude host; build it the same way.
+  ( cd "$REPO_DIR" && npm install && npm run build -w agentic-workflow-mcp )
+
+  mkdir -p "$QWEN_CONFIG_DIR/commands/agentic-workflow" "$QWEN_CONFIG_DIR/skills" "$QWEN_CONFIG_DIR/references"
+
+  # Sweep our own dangling links first, so a renamed source doesn't linger.
+  for dir in commands/agentic-workflow skills references; do
+    [ -d "$QWEN_CONFIG_DIR/$dir" ] || continue
+    for entry in "$QWEN_CONFIG_DIR/$dir"/*; do
+      [ -L "$entry" ] || continue
+      case "$(readlink "$entry")" in
+        "$REPO_DIR"/*) [ -e "$entry" ] || rm -f "$entry" ;;
+      esac
+    done
+  done
+
+  # Commands land under a namespace dir, which is what makes Qwen render them as
+  # /agentic-workflow:engineering — byte-identical names to the other two hosts.
+  for f in "$REPO_DIR"/plugins/qwen/commands/*.md; do
+    link_or_copy "$f" "$QWEN_CONFIG_DIR/commands/agentic-workflow/$(basename "$f")"
+  done
+
+  # The shared skill library, with the loop's own driving protocol taken from the
+  # Qwen rendering rather than the OpenCode one.
+  for d in "$REPO_DIR"/skills/*/; do
+    name="$(basename "$d")"
+    [ "$name" = workflow-orchestration ] && continue
+    link_or_copy "$d" "$QWEN_CONFIG_DIR/skills/$name"
+  done
+  link_or_copy "$REPO_DIR/plugins/qwen/skills/workflow-orchestration" "$QWEN_CONFIG_DIR/skills/workflow-orchestration"
+
+  for f in "$REPO_DIR"/references/*.md; do
+    link_or_copy "$f" "$QWEN_CONFIG_DIR/references/$(basename "$f")"
+  done
+
+  # Agents are generated, not linked: `model:` is baked in from config.
+  node "$REPO_DIR/scripts/qwen-agents.mjs" "$QWEN_CONFIG_DIR" "$TARGET_DIR"
+
+  # Hooks + MCP server, merged into settings.json without disturbing the rest.
+  node "$REPO_DIR/scripts/qwen-settings.mjs" merge \
+    "$QWEN_CONFIG_DIR" \
+    "$REPO_DIR/plugins/qwen" \
+    "$REPO_DIR/plugins/claude/mcp-server/dist/server.js"
+
+  echo
+  echo "Qwen Code: restart the session, then run /agentic-workflow:engineering status"
+  echo "           (re-run this installer after changing stageModels/agentModels —"
+  echo "            Qwen binds a subagent's model statically, at install time)"
+}
+
 # ---------------------------------------------------------------------------
 # Config wizard: writes an initial .agentic-workflow.json into the project the loop
 # will drive. All bash 3.2 compatible (no associative arrays, no `read -i`).
@@ -240,31 +319,39 @@ confirm() {
 # unreliable signal because this installer creates it.
 has_claude()   { command -v claude   >/dev/null 2>&1 || [ -d "$HOME/.claude" ]; }
 has_opencode() { command -v opencode >/dev/null 2>&1; }
+has_qwen()     { command -v qwen     >/dev/null 2>&1 || [ -d "$HOME/.qwen" ]; }
 
 # Interactive host-selection menu, run only when no positional target was given.
 # Sets TARGET to claude|opencode|all|config, defaulting to whatever was detected.
 select_host() {
-  local c_mark o_mark default
+  local c_mark o_mark q_mark default detected
   if has_claude;   then c_mark="✓"; else c_mark="✗"; fi
   if has_opencode; then o_mark="✓"; else o_mark="✗"; fi
+  if has_qwen;     then q_mark="✓"; else q_mark="✗"; fi
 
-  # Default the choice to the detected host(s): both → 3, one → that one, else 3.
-  if has_claude && has_opencode; then default="3"
+  # Default to the single detected host; anything else (none, or several) → all.
+  detected=0
+  has_claude   && detected=$((detected + 1))
+  has_opencode && detected=$((detected + 1))
+  has_qwen     && detected=$((detected + 1))
+  if [ "$detected" -ne 1 ]; then default="4"
   elif has_claude;   then default="1"
   elif has_opencode; then default="2"
   else default="3"; fi
 
   echo
-  echo "Detected hosts: Claude Code $c_mark   OpenCode $o_mark"
+  echo "Detected hosts: Claude Code $c_mark   OpenCode $o_mark   Qwen Code $q_mark"
   echo "Install agentic-workflow for which?"
   echo "  [1] Claude Code"
   echo "  [2] OpenCode"
-  echo "  [3] Both (default)"
-  echo "  [4] Config only — no plugin files, just the .agentic-workflow.json wizard"
+  echo "  [3] Qwen Code"
+  echo "  [4] All (default)"
+  echo "  [5] Config only — no plugin files, just the .agentic-workflow.json wizard"
   case "$(ask "Choice" "$default")" in
     1) TARGET=claude ;;
     2) TARGET=opencode ;;
-    4) TARGET=config ;;
+    3) TARGET=qwen ;;
+    5) TARGET=config ;;
     *) TARGET=all ;;
   esac
 }
@@ -650,10 +737,17 @@ EOF
 # Pick a target from the detected hosts when the user didn't name one. Echoes
 # claude|opencode|all: both detected (or neither) → all; exactly one → that one.
 detect_default_target() {
-  if has_claude && has_opencode; then printf 'all'
+  local n=0
+  has_claude   && n=$((n + 1))
+  has_opencode && n=$((n + 1))
+  has_qwen     && n=$((n + 1))
+  # Exactly one detected → that one. None or several → all; with three hosts
+  # "two of three" has no single-token spelling, and installing a half nobody
+  # uses is cheap next to silently skipping one they do.
+  if [ "$n" -ne 1 ]; then printf 'all'
   elif has_claude;   then printf 'claude'
   elif has_opencode; then printf 'opencode'
-  else printf 'all'; fi
+  else printf 'qwen'; fi
 }
 
 # No positional target given: in an interactive shell, let the user pick a host
@@ -665,8 +759,8 @@ if [ "$TARGET_EXPLICIT" -eq 0 ]; then
     select_host
   else
     TARGET="$(detect_default_target)"
-    if [ "$TARGET" = all ] && ! has_claude && ! has_opencode; then
-      echo "note: no 'claude' or 'opencode' CLI detected — installing both halves." >&2
+    if [ "$TARGET" = all ] && ! has_claude && ! has_opencode && ! has_qwen; then
+      echo "note: no 'claude', 'opencode' or 'qwen' CLI detected — installing every half." >&2
     else
       echo "note: no target given; installing for detected host(s): $TARGET" >&2
     fi
@@ -675,17 +769,22 @@ elif [ "$TARGET" = claude ] && ! has_claude; then
   echo "note: installing the Claude Code half, but no 'claude' CLI / ~/.claude was detected." >&2
 elif [ "$TARGET" = opencode ] && ! has_opencode; then
   echo "note: installing the OpenCode half, but no 'opencode' CLI was detected." >&2
+elif [ "$TARGET" = qwen ] && ! has_qwen; then
+  echo "note: installing the Qwen Code half, but no 'qwen' CLI / ~/.qwen was detected." >&2
 fi
 
 case "$TARGET" in
   opencode) install_opencode ;;
   claude) install_claude ;;
+  qwen) install_qwen ;;
   all)
     install_opencode
     echo
     install_claude
+    echo
+    install_qwen
     ;;
-  config) echo "Config only — skipping plugin install (OpenCode + Claude Code)." ;;
+  config) echo "Config only — skipping plugin install (OpenCode + Claude Code + Qwen Code)." ;;
 esac
 
 maybe_configure

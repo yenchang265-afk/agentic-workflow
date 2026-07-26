@@ -37,6 +37,7 @@ import {
 } from "@agentic-workflow/core/workflow/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import { hostStageMarkerPath } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -153,7 +154,7 @@ const writeRunMetrics = (id: string, outcome: Outcome, detail: string, endedAt: 
     const file = metricsPath(directory, config.tasksDir, id)
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     // Upsert: replace the trailing `open` entry the per-stage flush left behind.
-    fs.writeFileSync(file, upsertRunMetrics(existing, { endedAt, outcome, detail, host: "claude", samples }))
+    fs.writeFileSync(file, upsertRunMetrics(existing, { endedAt, outcome, detail, host: HOST, samples }))
   } catch {
     /* telemetry never fails the loop */
   }
@@ -171,7 +172,7 @@ const flushRunMetrics = (id: string): void => {
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     fs.writeFileSync(
       file,
-      upsertRunMetrics(existing, { endedAt: new Date().toISOString(), detail: "", host: "claude", samples, open: true }),
+      upsertRunMetrics(existing, { endedAt: new Date().toISOString(), detail: "", host: HOST, samples, open: true }),
     )
   } catch {
     /* telemetry never fails the loop */
@@ -189,22 +190,89 @@ const loadCfg = async () => {
 
 // --- host wiring (shared helpers live in @agentic-workflow/core/workflow/orchestrate) ---
 
-const stageMarkerPath = () => path.join(directory, config.tasksDir, "runs", ".stage.json")
+/**
+ * Which host is driving this server. One binary serves both Claude Code and
+ * Qwen Code: they run the same state machine over the same manifests and differ
+ * only in how a subagent is named, which marker file their hooks read, whether
+ * their spawn tool takes a model, and the prose that instructs the spawn. Those
+ * four live in HOST_DIALECT below and nowhere else — anything that starts to
+ * vary belongs there too, not in an `if` at the call site.
+ *
+ * A set-but-unrecognized value throws at load rather than defaulting: on the
+ * wrong dialect every spawn silently targets a subagent_type that does not
+ * exist, which reads as "the loop is broken" long after the typo. Empty is
+ * treated as absent, not as a typo — shell wrappers and installers propagate
+ * empty env vars routinely, and refusing to boot on one would be noise.
+ */
+const HOSTS = ["claude", "qwen"] as const
+type HostName = (typeof HOSTS)[number]
+const rawHost = process.env.AGENTIC_WORKFLOW_HOST || undefined
+if (rawHost !== undefined && !HOSTS.includes(rawHost as HostName)) {
+  throw new Error(`AGENTIC_WORKFLOW_HOST="${rawHost}" is not a known host — expected one of: ${HOSTS.join(", ")}`)
+}
+const HOST: HostName = (rawHost as HostName | undefined) ?? "claude"
+
+interface HostDialect {
+  /** The subagent identifier the orchestrator hands its spawn tool. */
+  readonly agentRef: (name: string) => string
+  /** Whether the spawn tool takes a per-call model, i.e. whether a payload's
+   *  `model` field is actionable at all on this host. */
+  readonly conveysStageModel: boolean
+  /** Names the spawn tool explicitly, so the `agent` field is not mis-routed. */
+  readonly spawnToolNote: string
+  /** Carries the configured stage model; "" on a host that cannot convey one. */
+  readonly spawnModelNote: string
+}
+
+// A stage agent is a subagent, not a skill. Name the tool explicitly at the
+// spawn instruction: the host otherwise mis-routes the `agent`-field name to the
+// skill tool (primed by skill-first rules and the real skills spawned the same turn).
+const HOST_DIALECT: Record<HostName, HostDialect> = {
+  claude: {
+    // Plugin-bundled agents resolve under the plugin namespace in Claude Code —
+    // Task's subagent_type is "agentic-workflow:<name>", not the bare manifest
+    // name. The manifests stay host-neutral; only this host prefixes.
+    agentRef: (name) => `agentic-workflow:${name}`,
+    conveysStageModel: true,
+    spawnToolNote:
+      " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)",
+    spawnModelNote:
+      ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)",
+  },
+  qwen: {
+    // Qwen Code loads subagents from its own agents/ directory with no namespace,
+    // so the manifest name is already the subagent_type.
+    agentRef: (name) => name,
+    // Qwen's `agent` tool has NO model parameter. Rather than emit a `model` the
+    // orchestrator cannot act on, this host drops it from every payload and the
+    // configured stage model is baked into the installed agent file at install
+    // time (scripts/qwen-agents.mjs). The empty note below is that decision, not
+    // an omission — see docs/design/qwen-host-support.md, gap 1.
+    conveysStageModel: false,
+    spawnToolNote:
+      " (spawn it with the `agent` tool, passing the name as `subagent_type` and `run_in_background: false` — a stage agent is an `agent` subagent, never a skill; do not route it through the skill tool)",
+    spawnModelNote: "",
+  },
+}
+const dialect = HOST_DIALECT[HOST]
+
+const stageMarkerPath = () => hostStageMarkerPath(directory, config.tasksDir, HOST)
 const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
 
-/**
- * Plugin-bundled agents resolve under the plugin namespace in Claude Code —
- * Task's subagent_type is "agentic-workflow:<name>", not the bare manifest name.
- * The manifests stay host-neutral; only this host prefixes.
- */
-const agentRef = (name: string): string => `agentic-workflow:${name}`
+const agentRef = (name: string): string => dialect.agentRef(name)
 
 /**
  * The stage's configured model in this host's vocabulary (config > manifest,
  * undefined ⇒ host default), with any "provider/" prefix (the OpenCode
- * spelling) stripped so a shared config works on both hosts.
+ * spelling) stripped so a shared config works on every host.
+ *
+ * Undefined on a host whose spawn tool takes no model: emitting a `model` the
+ * orchestrator has nowhere to put invites it to improvise one. Every payload
+ * spreads this conditionally, so suppressing it here removes the field
+ * everywhere without touching a call site.
  */
 const stageModel = (kind: string, def: StageDef): string | undefined => {
+  if (!dialect.conveysStageModel) return undefined
   const m = modelFor(config, kind, def)
   return m ? bareModel(m) : undefined
 }
@@ -245,14 +313,8 @@ const stageModelWarnings = (): string[] =>
     return warnings
   })
 
-const SPAWN_MODEL_NOTE =
-  ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)"
-
-// A stage agent is a Task subagent, not a skill. Name the tool explicitly at the
-// spawn instruction: the host otherwise mis-routes the `agent`-field name to the
-// skill tool (primed by skill-first rules and the real skills spawned the same turn).
-const SPAWN_TOOL_NOTE =
-  " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)"
+const SPAWN_MODEL_NOTE = dialect.spawnModelNote
+const SPAWN_TOOL_NOTE = dialect.spawnToolNote
 
 /** A check stage's non-negotiable extra: the subagent, not the orchestrator, records the verdict. */
 const CHECK_VERDICT_TAIL =
@@ -267,6 +329,10 @@ const CHECK_VERDICT_TAIL =
  * stage ran the host default. The note at the point of use is what the orchestrator
  * acts on, so the model clause must be impossible to leave out — one composer, and
  * a source lint (server.test.ts) that no spawn note bypasses it.
+ *
+ * Both clauses come from HOST_DIALECT, so a host whose spawn tool takes no model
+ * contributes an empty model clause *by declaring one* — the composer still
+ * splices it, and the lint still proves no note skips the composer.
  *
  * `lead` says what to spawn; `tail` adds the per-site consequence.
  */
@@ -378,7 +444,7 @@ const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, confi
  * The shared terminal context for this host — the ports core's `runTerminal`
  * needs. Backlog commits and checkpoints go straight through `commitPaths`/
  * `commitAll` (no per-tree lock: the pull host drives one loop at a time), and
- * metrics render into this host's run log + `host: "claude"` sidecar.
+ * metrics render into this host's run log + `host: <HOST>` sidecar.
  */
 const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx => ({
   $: sh,
@@ -1441,7 +1507,7 @@ server.registerTool(
  */
 const readStageTaskId = (): string | null => {
   try {
-    const raw = fs.readFileSync(path.join(directory, config.tasksDir, "runs", ".stage.json"), "utf8")
+    const raw = fs.readFileSync(stageMarkerPath(), "utf8")
     const marker = JSON.parse(raw) as { taskId?: unknown }
     return typeof marker.taskId === "string" ? marker.taskId : null
   } catch {

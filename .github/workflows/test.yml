@@ -23,28 +23,34 @@ jobs:
       - name: Typecheck (all workspaces)
         run: npm run typecheck:all
 
-      - name: Test (all workspaces + Claude hooks)
+      - name: Test (all workspaces + hooks + installer scripts)
         run: npm run test:all
 
       - name: Generated prompts are in sync with prompts/ sources
         run: |
           node scripts/gen-prompts.mjs
-          git diff --exit-code -- plugins/opencode/agents plugins/claude/agents plugins/opencode/commands
+          git diff --exit-code -- \
+            plugins/opencode/agents plugins/claude/agents plugins/qwen/agents \
+            plugins/opencode/commands \
+            plugins/claude/verbs plugins/qwen/verbs \
+            plugins/claude/skills/workflow-orchestration plugins/qwen/skills
 
       - name: Bundled hooks are in sync with hooks/src/ sources
         run: |
           node scripts/build-hooks.mjs
-          git diff --exit-code -- plugins/claude/hooks
+          git diff --exit-code -- plugins/claude/hooks plugins/qwen/hooks
 
       - name: Build the hub (typecheck alone never exercises the web bundle)
         run: npm run build -w @agentic-workflow/hub
 
-      - name: Build and smoke-run the MCP server
+      - name: Build and smoke-run the MCP server (both hosts)
         run: |
           npm run build -w agentic-workflow-mcp
-          out=$(node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
-          echo "$out"
-          echo "$out" | grep -q "MCP server ready"
+          for host in claude qwen; do
+            out=$(AGENTIC_WORKFLOW_HOST=$host node plugins/claude/mcp-server/dist/server.js < /dev/null 2>&1 | head -1)
+            echo "$host: $out"
+            echo "$out" | grep -q "MCP server ready"
+          done
 
       - name: Shell-script syntax check
         run: bash -n install.sh uninstall.sh bootstrap.sh scripts/clean.sh plugins/claude/install.sh
@@ -62,3 +68,36 @@ jobs:
           if [ -n "$leftovers" ]; then
             echo "uninstall left entries behind:"; echo "$leftovers"; exit 1
           fi
+
+      # --no-config: the wizard would write a user-scope ~/.config config, which
+      # layers under every repo config and would silently change what later steps
+      # (and a developer's own test run) resolve.
+      - name: Qwen install-script round trip (install twice, then uninstall)
+        run: |
+          d=$(mktemp -d)
+          printf '{"theme":"dark"}\n' > "$d/settings.json"
+          cp "$d/settings.json" "$d/settings.expected.json"
+          QWEN_CONFIG_DIR="$d" ./install.sh qwen "$d" --no-config
+          QWEN_CONFIG_DIR="$d" ./install.sh qwen "$d" --no-config
+          test -f "$d/agents/workflow-verify.md" || { echo "agents were not installed"; exit 1; }
+          test -f "$d/commands/agentic-workflow/engineering.md" || { echo "commands were not installed"; exit 1; }
+          node -e 'const s=require("'"$d"'/settings.json");
+            const n=Object.values(s.hooks).flatMap(g=>g.flatMap(x=>x.hooks.map(h=>h.name)));
+            if (new Set(n).size !== n.length) { console.error("duplicate hooks after 2 installs:", n); process.exit(1); }
+            if (!s.mcpServers["agentic-workflow"]) { console.error("MCP server not merged"); process.exit(1); }'
+          QWEN_CONFIG_DIR="$d" ./uninstall.sh qwen "$d"
+          leftovers=$(find "$d" -lname "$GITHUB_WORKSPACE/*" 2>/dev/null)
+          if [ -n "$leftovers" ]; then
+            echo "uninstall left entries behind:"; echo "$leftovers"; exit 1
+          fi
+          # settings.json is the user's file: uninstall must restore it exactly.
+          node -e '
+            const fs = require("fs");
+            const read = (f) => JSON.stringify(JSON.parse(fs.readFileSync(f, "utf8")));
+            const before = read(process.argv[1] + "/settings.expected.json");
+            const after = read(process.argv[1] + "/settings.json");
+            if (before !== after) {
+              console.error("uninstall did not restore settings.json\nexpected: " + before + "\nactual:   " + after);
+              process.exit(1);
+            }
+          ' "$d"

@@ -4,7 +4,15 @@ import fs from "node:fs"
 import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { clearOpencodeStageMarker, opencodeMarkerPath, opencodeStageMarker, writeOpencodeStageMarker } from "./stage-marker.js"
+import {
+  clearOpencodeStageMarker,
+  hostStageMarkerPath,
+  opencodeMarkerPath,
+  opencodeStageMarker,
+  STAGE_MARKER_HOSTS,
+  stageMarkerFile,
+  writeOpencodeStageMarker,
+} from "./stage-marker.js"
 import type { WorkflowState } from "./state.js"
 
 /**
@@ -46,6 +54,30 @@ const state: WorkflowState = {
   task: { id: "f7k3-add-rate-limit", path: "docs/tasks/in-progress/f7k3-add-rate-limit.md", acceptance: [] },
   git: { base: "main", branch: "feature/f7k3-add-rate-limit", worktree: "/wt/f7k3" },
 }
+
+// Each host's marker must be its OWN file: a marker is a control input to its
+// own host's hooks, so a shared path would subject a human's interactive session
+// on another host to guards meant for the loop's agents.
+test("every host's stage marker is a distinct file under runs/", () => {
+  const files = STAGE_MARKER_HOSTS.map(stageMarkerFile)
+  assert.equal(new Set(files).size, files.length, `two hosts share a marker file: ${files.join(", ")}`)
+  for (const host of STAGE_MARKER_HOSTS) {
+    assert.equal(hostStageMarkerPath("/repo", "docs/tasks", host), path.join("/repo/docs/tasks/runs", stageMarkerFile(host)))
+  }
+})
+
+// Claude's marker predates the others and its SHIPPED hook bundles read this
+// literal path. Renaming it does not error — it silently disarms every installed
+// Claude hook, so the asymmetry with the suffixed siblings is pinned here.
+test("the Claude marker keeps its unsuffixed historical filename", () => {
+  assert.equal(stageMarkerFile("claude"), ".stage.json")
+  assert.equal(stageMarkerFile("opencode"), ".stage-opencode.json")
+  assert.equal(stageMarkerFile("qwen"), ".stage-qwen.json")
+})
+
+test("opencodeMarkerPath stays a thin wrapper over the generic path", () => {
+  assert.equal(opencodeMarkerPath("/repo", "docs/tasks"), hostStageMarkerPath("/repo", "docs/tasks", "opencode"))
+})
 
 test("opencodeStageMarker snapshots the state's driving facts", () => {
   const m = opencodeStageMarker(state, 1234)

@@ -16,6 +16,7 @@
  */
 import fs from "node:fs"
 import path from "node:path"
+import { dialectFor, hostFor } from "./dialect.mjs"
 import { decideVerdictGuard, nagMessage } from "./verdict-guard.mjs"
 
 const read = () =>
@@ -51,9 +52,13 @@ const main = async () => {
   const cwd = input.cwd || process.cwd()
   const tasksDir = readTasksDir(cwd)
   const runsDir = path.join(cwd, tasksDir, "runs")
+  // An unknown host cannot be nagged usefully — there is no marker path to read.
+  // Unlike the PreToolUse guard, failing open here only skips a reminder.
+  const d = dialectFor(hostFor())
+  if (!d) return allow()
   let marker = null
   try {
-    marker = JSON.parse(fs.readFileSync(path.join(runsDir, ".stage.json"), "utf8"))
+    marker = JSON.parse(fs.readFileSync(path.join(runsDir, d.stageMarkerFile), "utf8"))
   } catch {
     return allow()
   }
@@ -65,7 +70,7 @@ const main = async () => {
   } catch {
     return allow() // can't make the block one-shot — fail open rather than trap the subagent
   }
-  return block(nagMessage(marker.stage))
+  return block(nagMessage(marker.stage, d.verdictAliases))
 }
 
 main()

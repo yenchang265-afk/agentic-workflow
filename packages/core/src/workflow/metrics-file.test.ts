@@ -117,3 +117,19 @@ test("claude-host entries carry no tokens and no sessionID", () => {
   assert.equal(parsed?.runs[0]?.sessionID, undefined)
   assert.equal(parsed?.runs[0]?.samples[0]?.tokens, undefined)
 })
+
+// The sidecar's `host` is a closed enum, so a host missing from it does not
+// degrade — every entry it writes fails validation and the run vanishes from
+// the hub entirely.
+test("a qwen-host entry round-trips; an unknown host is rejected", () => {
+  const entry: RunEntry = {
+    endedAt: "2026-07-26T10:00:00.000Z",
+    outcome: "done",
+    detail: "",
+    host: "qwen",
+    samples: [{ stage: "review", iteration: 1, ms: 1000, verdict: "PASS" }],
+  }
+  assert.equal(parseRunMetrics(appendRunMetrics(null, entry))?.runs[0]?.host, "qwen")
+  const bogus = JSON.stringify({ version: 1, runs: [{ ...entry, host: "gemini" }] })
+  assert.equal(parseRunMetrics(bogus), null)
+})

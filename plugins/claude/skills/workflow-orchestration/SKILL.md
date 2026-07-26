@@ -56,18 +56,21 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
 **Which subagent to spawn is data, not memorized.** Every `workflow_start`,
 `workflow_claim`, `workflow_stage`, and `workflow_advance` (fire) response carries an
 `agent` field — the subagent this stage binds, straight from the kind's
-manifest, under the plugin namespace (e.g. `agentic-workflow:workflow-verify` — the
-Task tool's `subagent_type` for a plugin-provided agent). Always spawn the
-agent named there; never hardcode a per-kind name. If that subagent type is
-unknown to your Claude Code version, retry once with the bare name (e.g.
-`workflow-verify`). The `agent` value is a **Task-tool `subagent_type`, not a
-skill name** — spawn it with the Task tool, never the `skill` tool, even though
-this same turn also invokes genuine skills (`interview-me`,
-`task-backlog-management`); a stage agent is always a subagent. The stage names below (`workflow-plan-author`, `workflow-build`, …) are
-the engineering kind's current values, shown for concreteness — a new workflow kind
-needs no edit to this protocol. The same responses may also carry a `model`
-field — the model the user configured for that stage (manifest `model` or
-config `workflows.<kind>.stageModels`). When present, pass it as the Task tool's
+manifest.
+It arrives under the plugin namespace (e.g.
+`agentic-workflow:workflow-verify` — the Task tool's `subagent_type` for a
+plugin-provided agent). If that subagent type is unknown to your Claude Code
+version, retry once with the bare name (e.g. `workflow-verify`).
+Always spawn the agent named there; never hardcode a per-kind name. The `agent`
+value is a **`subagent_type`, not a skill name** — spawn it with the
+Task tool, never the `skill` tool, even though this same turn also invokes
+genuine skills (`interview-me`, `task-backlog-management`); a stage agent is
+always a subagent. The stage names below (`workflow-plan-author`,
+`workflow-build`, …) are the engineering kind's current values, shown for
+concreteness — a new workflow kind needs no edit to this protocol.
+The same responses may also carry a `model` field — the model the user
+configured for that stage (manifest `model` or config
+`workflows.<kind>.stageModels`). When present, pass it as the Task tool's
 `model` parameter when spawning that stage's subagent; when absent, don't set
 `model` (host default). Never hardcode a per-stage model.
 
@@ -88,9 +91,8 @@ config `workflows.<kind>.stageModels`). When present, pass it as the Task tool's
    stage `prompt` comes back either way.
 2. **Plan (queued tasks only).** `workflow_stage({stage:"plan"})`, then spawn the
    stage's subagent — the response's `agent` field (**`workflow-plan-author`** for
-   engineering) — via the Task tool with the prompt and the response's `model`
-   when present. It runs in `task`
-   mode, reads the code, and writes the `## Implementation Plan` onto the
+   engineering) — via the Task tool with the prompt, passing the response's `model` when present.
+   It runs in `task` mode, reads the code, and writes the `## Implementation Plan` onto the
    task file named by the prompt's `Task file:` line. When it returns, call
    `workflow_advance({stageOutput: <plan summary>})` — the server validates the
    plan landed, parks the task in `plan-review/`, and returns `{kind:"park"}`
@@ -117,13 +119,13 @@ config `workflows.<kind>.stageModels`). When present, pass it as the Task tool's
    the stage deadline, reconciles isolation, and appends the audited
    `BUILD started` note — then spawn the response's `agent` (**`workflow-build`**)
    via the Task tool with the prompt (it carries the `Worktree:` line when
-   isolated) and the response's `model` when present. When it returns,
+   isolated), passing the response's `model` when present. When it returns,
    call `mcp__agentic-workflow__workflow_advance({stageOutput: <build summary>})` —
    the server appends `BUILD finished`, commits a checkpoint, and returns
    `{kind:"fire", stage:"verify", prompt}`.
 4. **Verify.** `workflow_stage({stage:"verify"})` (arms the read-only bash
    allowlist + deadline), spawn the response's `agent` (**`workflow-verify`**) with
-   the prompt and the response's `model` when present. The verify
+   the prompt, passing the response's `model` when present. The verify
    subagent records its verdict by calling `workflow_verdict` itself — you do not.
    Then `workflow_advance({stageOutput: <verify summary>})`: PASS →
    `{fire, review}`; FAIL → `{fire, build}` (re-build, threading the failure)
@@ -255,7 +257,7 @@ Three further opt-in kinds drive the same way (`workflow_claim({kind})` →
   trigger claims and drives the next approved task. Within your turn,
   BUILD → VERIFY → REVIEW still advance without human turns.
 - **The interview runs in the main agent.** `/agentic-workflow:engineering new` interviews
-  the user directly (Task subagents can't converse); the `workflow-plan-author`
+  the user directly (subagents can't converse); the `workflow-plan-author`
   subagent only writes the confirmed file(s). A **heavy idea is split** during
   that interview into sibling drafts (vertical, independently shippable slices
   ordered by `priority`) plus one `type: epic` tracking draft that is never

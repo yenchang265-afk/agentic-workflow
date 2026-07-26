@@ -21,6 +21,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
+import { dialectFor, hostFor } from "./dialect.mjs"
 
 /**
  * Mirror of core `wasInterrupted` (store.ts): a BUILD started with no later
@@ -121,11 +122,17 @@ const main = async () => {
   // The MCP server (and the deterministic gate CLI) live in mcp-server/dist —
   // never built means every gate verb and loop tool is dead. Surface it at
   // session start, before the first silently-failing approve.
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+  const pluginRoot =
+    process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT ||
+    process.env.CLAUDE_PLUGIN_ROOT ||
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
   const serverBuilt = fs.existsSync(path.join(pluginRoot, "mcp-server", "dist", "server.js"))
 
   const lines = []
-  if (!serverBuilt) lines.push("agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) — gates and loop tools will not work. Run plugins/claude/install.sh, then restart the session.")
+  if (!serverBuilt)
+    lines.push(
+      `agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) — gates and loop tools will not work. Run ${dialectFor(hostFor())?.installer ?? "the installer"}, then restart the session.`,
+    )
   if (notes.length) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
   if (snapshots.length) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`)
   if (planClaims.length) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)

@@ -95,18 +95,21 @@ OpenCode 上還有 `watch [trigger]` / `unwatch`）。**`pr-sitter` 和
 git clone <this-repo>
 cd agentic-workflow
 npm install             # npm workspaces —— 同時建置 @agentic-workflow/core（prepare）
-./install.sh            # 兩個外掛都裝；或者：./install.sh opencode | claude
+./install.sh            # 全部外掛都裝；或者：./install.sh opencode | claude | qwen
 ```
 
 - 在儲存庫根目錄執行 `npm install` 會安裝所有 workspace（OpenCode 外掛、
   `packages/core`、`plugins/claude/mcp-server`），並透過 `prepare` 腳本建置核心
-  套件——兩個外掛都消費核心套件建置出的 `dist/`。
+  套件——每個外掛都消費核心套件建置出的 `dist/`。
 - `./install.sh opencode` 會把 agents/commands/skills/references 符號連結進
   `~/.config/opencode/`（或 `$OPENCODE_CONFIG_DIR`）並註冊外掛——細節和參數
   （`--copy`、自訂目錄）見 [docs/opencode.md](docs/opencode.md)。
 - `./install.sh claude` 會建置內建的 MCP 伺服器並連結共用的
   skills/references，然後印出載入方式（`claude --plugin-dir` 或市集安裝）——
   細節見 [`plugins/claude/README.md`](plugins/claude/README.md)。
+- `./install.sh qwen` 會建置同一個 MCP 伺服器，把 agents/commands/skills/
+  references 安裝進 `~/.qwen/`（或 `$QWEN_CONFIG_DIR`），並把 hooks 與 MCP
+  項目併入 `settings.json`——細節見 [docs/qwen.md](docs/qwen.zh-TW.md)。
 - 安裝完成後，互動式終端機會得到一個簡短的**設定精靈**來產生
   `.agentic-workflow.json`——見 [docs/configuration.md](docs/configuration.md)。
 
@@ -117,7 +120,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 兩個腳本分別復原兩種痕跡——已安裝的外掛，以及執行中的迴圈留下的本機狀態：
 
 ```bash
-./uninstall.sh                 # 復原 install.sh；或 opencode | claude | all
+./uninstall.sh                 # 復原 install.sh；或 opencode | claude | qwen | all
 ./scripts/clean.sh             # 只移除 <tasksDir>/runs/ 中的暫存狀態
 ./scripts/clean.sh --purge     # 同時刪除待辦任務檔案 + .agentic-workflow.json
 ```

@@ -10,7 +10,7 @@ right before execution:
 when you return, the driver parks the task in `plan-review/` for the human
 plan gate (`/agentic-workflow:engineering approve <id>`).
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
 when you return, `workflow_advance` parks the task in `plan-review/` for the
 human plan gate (`/agentic-workflow:engineering approve <id>`).
 {{/host}}
@@ -97,7 +97,7 @@ Rules for good output:
   — the plugin greps for that literal string to park the task at the plan
   gate and to thread the plan into the BUILD stage.
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
   — the server greps for that literal string to park the task at the plan
   gate and to thread the plan into the BUILD stage.
 {{/host}}
@@ -234,7 +234,7 @@ Mode `task` — return:
   — the gates (`/agentic-workflow:engineering approve` / `replan`) and the
   loop driver do every move.
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
   — the server does that. A PreToolUse hook enforces this: writes under
   `docs/tasks/` outside `draft/*.md` (or your own claimed `queued/` task in
   `task` mode) are blocked, as are Bash `mv`/`mkdir`/`rm` against the backlog.

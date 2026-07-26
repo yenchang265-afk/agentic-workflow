@@ -208,7 +208,7 @@ export interface RunDetailResponse {
   readonly activity?: readonly StageActivity[]
 }
 
-/** A host's live-stage marker: Claude's `runs/.stage.json`, or the OpenCode driver's sibling `runs/.stage-opencode.json`. */
+/** A host's live-stage marker — one file per host under `runs/` (Claude's `.stage.json`, plus `.stage-opencode.json` / `.stage-qwen.json`). */
 export interface StageMarker {
   readonly kind?: string
   readonly stage: string

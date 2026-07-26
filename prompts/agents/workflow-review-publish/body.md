@@ -25,7 +25,7 @@ The goal (which PR) and assess's draft review.
   This agent's curl allowlist is scoped to `/threads*`, so any ADO call that
   would vote on or complete a PR is blocked outright.
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
   A backstop hook blocks every ADO call except GET reads and thread posts, so
   those mutations can't get through.
 {{/host}}

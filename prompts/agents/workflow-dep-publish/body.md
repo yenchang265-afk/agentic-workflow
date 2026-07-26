@@ -35,7 +35,7 @@ The goal (package + target), scan's work order, and verify's result.
   bash allowlist itself is the control (create-new-PR and reads only, no
   `-X PATCH`/`PUT`/`DELETE` glob is ever granted).
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
   A backstop hook blocks every ADO call except GET reads, thread-comment
   replies, and creating a brand-new PR, so completing/abandoning/voting
   can't get through even if attempted.

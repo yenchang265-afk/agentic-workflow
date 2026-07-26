@@ -1,12 +1,19 @@
-<!-- The per-verb halves of /agentic-workflow:engineering.
-     commands/engineering.md is the router the model always receives; the block
-     for the invoked verb is injected from here by the UserPromptSubmit hook
-     (hooks/gate-command.mjs via hooks/verb-slice.mjs).
+<!-- SOURCE of the per-verb halves of /agentic-workflow:engineering, shared by
+     every prompt-injecting host. Rendered by scripts/gen-prompts.mjs into
+     plugins/claude/verbs/ and plugins/qwen/verbs/ — edit THIS file, never the
+     generated ones; CI fails on drift.
+     Each host's commands/engineering.md is the router the model always
+     receives; the block for the invoked verb is injected from the generated
+     copy by that host's UserPromptSubmit hook (gate-command.mjs via
+     verb-slice.mjs).
      Everything in this file MUST sit inside an "aw:verb <names>" marker pair.
      Unmarked prose here is silently dropped, never injected — shared prose
      belongs in the router instead. Note HTML comments do not nest, so never
      write a literal marker inside this header.
-     One block may serve several verbs: "aw:verb stop|abort". -->
+     One block may serve several verbs: "aw:verb stop|abort".
+     Host-specific WORDS use the inline tokens listed in gen-prompts.mjs
+     (spawnTool, askTool, modelClause) rather than whole-block host
+     conditionals, so one sentence serves every host. -->
 
 <!-- aw:verb new -->
 - **`new <idea>`** — turn a rough idea into one or more **planless drafts** in
@@ -55,8 +62,8 @@
        `/agentic-workflow:engineering approve <id>`. Then ask a second
        **AskUserQuestion**: "Plan it now?"
        - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
-         spawn `workflow-plan-author` (task mode, Task tool) with the returned
-         prompt and the response's `model` when present, then
+         spawn `workflow-plan-author` (task mode, Task tool) with the
+         returned prompt, passing the response's `model` when present, then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `workflow-orchestration` skill).
@@ -158,7 +165,7 @@
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
   PLAN (no git isolation): spawn `workflow-plan-author` (Task tool) in task mode
-  with the returned prompt and the response's `model` when present, then
+  with the returned prompt, passing the response's `model` when present, then
   `workflow_advance` — the task parks in `plan-review/` and
   the plan gate goes live: ask the user inline (AskUserQuestion — Approve /
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
@@ -172,8 +179,9 @@
   auto-planned (use `plan <id>`). An `in-progress/`
   task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
-  `workflow-verify` / `workflow-review` via the Task tool, passing the response's
-  `model` as the Task tool's `model` when present) and `workflow_advance` after
+  `workflow-verify` / `workflow-review` via the
+  Task tool, passing the response's `model` when present)
+  and `workflow_advance` after
   each returns, until a terminal action. This is the pull equivalent of the
   OpenCode plugin's `watch` — there is no standing watch mode on this
   substrate.
@@ -181,7 +189,7 @@
 <!-- aw:verb recover -->
 - **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
   resume driving from the action it returns: `workflow_stage`, then spawn the
-  response's `agent` via the Task tool with its `model` when present.
+  subagent it names with the Task tool, passing the response's `model` when present.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
