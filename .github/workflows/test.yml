@@ -15,7 +15,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Floor of engines.node — 22.13 is the first release with an unflagged
+          # node:sqlite, which the hub's opencode.db token backfill imports.
+          node-version: '22.13'
 
       - name: Install dependencies (builds @agentic-workflow/core via prepare)
         run: npm ci

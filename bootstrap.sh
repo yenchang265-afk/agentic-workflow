@@ -4,7 +4,7 @@
 #
 # install.sh installs the *plugins* (npm workspaces + symlinks + the bundled
 # MCP server) but assumes the system prerequisites already exist. This script
-# fills that gap: it verifies/installs the system CLIs (Node 20+, git, curl, gh,
+# fills that gap: it verifies/installs the system CLIs (Node 22.13+, git, curl, gh,
 # Chrome), registers the chrome-devtools MCP server the loop's skills expect,
 # and finally delegates to ./install.sh all.
 #
@@ -15,7 +15,13 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NODE_MAJOR_MIN=20
+# 22.13 is the first release where `node:sqlite` works without
+# --experimental-sqlite (unflagged in v22.13.0 / v23.4.0); the hub's opencode.db
+# token backfill needs it. The minor floor is checked too — 22.0-22.12 would
+# pass a major-only test and still fail at import.
+NODE_MAJOR_MIN=22
+NODE_MINOR_MIN=13
+NODE_VERSION_MIN="${NODE_MAJOR_MIN}.${NODE_MINOR_MIN}"
 
 WANT_ADO=1
 WANT_BROWSER=1
@@ -30,7 +36,7 @@ Usage:
   ./bootstrap.sh --check-only     # report status of every dependency, change nothing
   ./bootstrap.sh -h | --help
 
-Covers: Node.js >=20, git, curl, gh (GitHub CLI), Google Chrome, the
+Covers: Node.js >=22.13, git, curl, gh (GitHub CLI), Google Chrome, the
 chrome-devtools MCP server, and the in-repo JS deps (via ./install.sh). Azure
 DevOps needs only curl + a PAT (AZURE_DEVOPS_EXT_PAT). Auth steps are printed,
 never run for you.
@@ -89,27 +95,37 @@ cannot_install() {
 }
 
 # ---------------------------------------------------------------------------
-# node >= 20
+# node >= 22.13
 # ---------------------------------------------------------------------------
 node_major() { node -v 2>/dev/null | sed -E 's/^v([0-9]+).*/\1/'; }
+node_minor() { node -v 2>/dev/null | sed -E 's/^v[0-9]+\.([0-9]+).*/\1/'; }
+
+# 0 when the installed node satisfies NODE_MAJOR_MIN.NODE_MINOR_MIN or newer.
+node_ok() {
+  local maj="$1" min="$2"
+  [ -z "$maj" ] && return 1
+  [ "$maj" -gt "$NODE_MAJOR_MIN" ] && return 0
+  [ "$maj" -eq "$NODE_MAJOR_MIN" ] && [ "$min" -ge "$NODE_MINOR_MIN" ] && return 0
+  return 1
+}
 
 ensure_node() {
-  local maj=""
-  command -v node >/dev/null 2>&1 && maj="$(node_major)"
-  if [ -n "$maj" ] && [ "$maj" -ge "$NODE_MAJOR_MIN" ]; then
-    ok "node $(node -v) (>= $NODE_MAJOR_MIN)"
+  local maj="" min=""
+  if command -v node >/dev/null 2>&1; then maj="$(node_major)"; min="$(node_minor)"; fi
+  if node_ok "$maj" "$min"; then
+    ok "node $(node -v) (>= $NODE_VERSION_MIN)"
     return 0
   fi
   if [ -n "$maj" ]; then
-    todo "node $(node -v) is too old — need >= $NODE_MAJOR_MIN"
+    todo "node $(node -v) is too old — need >= $NODE_VERSION_MIN"
   else
-    todo "node (>= $NODE_MAJOR_MIN) not found"
+    todo "node (>= $NODE_VERSION_MIN) not found"
   fi
   if cannot_install; then
     case "$PKG" in
-      apt) note_manual "Node >= $NODE_MAJOR_MIN: curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR_MIN}.x | sudo -E bash - && sudo apt-get install -y nodejs" ;;
+      apt) note_manual "Node >= $NODE_VERSION_MIN: curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR_MIN}.x | sudo -E bash - && sudo apt-get install -y nodejs" ;;
       brew) note_manual "Node: brew install node@${NODE_MAJOR_MIN} && brew link --overwrite --force node@${NODE_MAJOR_MIN}" ;;
-      *) note_manual "Node >= $NODE_MAJOR_MIN: install from https://nodejs.org/ or via nvm" ;;
+      *) note_manual "Node >= $NODE_VERSION_MIN: install from https://nodejs.org/ or via nvm" ;;
     esac
     return 0
   fi
@@ -124,10 +140,11 @@ ensure_node() {
       ;;
   esac
   maj="$(node_major)"
-  if [ -n "$maj" ] && [ "$maj" -ge "$NODE_MAJOR_MIN" ]; then
+  min="$(node_minor)"
+  if node_ok "$maj" "$min"; then
     ok "node $(node -v)"
   else
-    note_manual "Node install did not yield >= $NODE_MAJOR_MIN — check PATH / nvm shadowing"
+    note_manual "Node install did not yield >= $NODE_VERSION_MIN — check PATH / nvm shadowing"
   fi
 }
 

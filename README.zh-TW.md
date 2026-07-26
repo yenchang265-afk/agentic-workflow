@@ -80,7 +80,7 @@ OpenCode 上還有 `watch [trigger]` / `unwatch`）。**`pr-sitter` 和
 
 ## 安裝
 
-以下步驟假設系統先決條件已就緒（Node ≥ 20、git、`gh`、`curl`，如需瀏覽器相關
+以下步驟假設系統先決條件已就緒（Node ≥ 22.13、git、`gh`、`curl`，如需瀏覽器相關
 作業還需要 Chrome）。Azure DevOps 只需要 `curl` 加上 `AZURE_DEVOPS_EXT_PAT`
 中的一個 PAT。對於全新的機器，`./bootstrap.sh` 會為你驗證/安裝這些相依項，
 註冊 `chrome-devtools` MCP 伺服器，然後為你執行 `./install.sh`：

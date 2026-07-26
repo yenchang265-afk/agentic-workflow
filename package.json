@@ -6,7 +6,7 @@
   "type": "module",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13.0"
   },
   "workspaces": [
     "packages/core",
@@ -26,5 +26,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.1"
+  },
+  "overrides": {
+    "@hono/node-server": "^2.0.5"
   }
 }
