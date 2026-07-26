@@ -8,9 +8,14 @@
  * wrapped in ---) plus body.md rendered for that host.
  *
  * body.md may contain host-conditional blocks, each marker on its own line:
- *   {{#host opencode}} ... {{/host}}
- *   {{#host claude}}   ... {{/host}}
- * A block is kept (markers stripped) when its host matches, dropped otherwise.
+ *   {{#host opencode}}     ... {{/host}}
+ *   {{#host claude}}       ... {{/host}}
+ *   {{#host claude|qwen}}  ... {{/host}}
+ * A block is kept (markers stripped) when its host is named, dropped otherwise.
+ * The `|` list matters: most prose that is "not opencode" is identical on Claude
+ * Code and Qwen Code, and duplicating it into per-host twins is exactly how the
+ * two would drift. Name both hosts on one block; split only where they genuinely
+ * differ.
  *
  * Run `node scripts/gen-prompts.mjs` after editing a source; CI fails when the
  * generated files drift from their sources (`git diff --exit-code`).
@@ -25,6 +30,7 @@ const WORKFLOWS = path.join(ROOT, "packages", "core", "workflows")
 const HOSTS = [
   { host: "opencode", frontmatter: "opencode.yaml", outDir: path.join(ROOT, "plugins", "opencode", "agents") },
   { host: "claude", frontmatter: "claude.yaml", outDir: path.join(ROOT, "plugins", "claude", "agents") },
+  { host: "qwen", frontmatter: "qwen.yaml", outDir: path.join(ROOT, "plugins", "qwen", "agents") },
 ]
 
 /**
@@ -123,7 +129,7 @@ const expandAllowlist = (frontmatter, agent) => {
   return frontmatter.replace(marker, () => lines)
 }
 
-const OPEN = /^\{\{#host ([a-z]+)\}\}\s*$/
+const OPEN = /^\{\{#host ([a-z]+(?:\|[a-z]+)*)\}\}\s*$/
 const CLOSE = /^\{\{\/host\}\}\s*$/
 
 /** Render a body for one host: keep matching blocks (markers stripped), drop the rest. */
@@ -135,8 +141,13 @@ const render = (body, host) => {
     const open = OPEN.exec(line)
     if (open) {
       if (inBlock) throw new Error(`nested {{#host}} block (at "${line}")`)
+      const named = open[1].split("|")
+      const unknown = named.filter((h) => !HOSTS.some((k) => k.host === h))
+      // A typo'd host name is not a no-op: the block is silently dropped from
+      // EVERY rendering, so the prose vanishes with no error anywhere.
+      if (unknown.length) throw new Error(`{{#host ${open[1]}}} names unknown host(s): ${unknown.join(", ")}`)
       inBlock = true
-      keeping = open[1] === host
+      keeping = named.includes(host)
       continue
     }
     if (CLOSE.test(line)) {

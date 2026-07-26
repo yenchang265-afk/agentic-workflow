@@ -47,9 +47,13 @@ workflow kinds at launch, per-stage models baked into generated agent files.
 
 1. **No per-invocation model.** Qwen's `agent` tool has no `model` argument.
    Mitigation: `install.sh qwen` *generates* `$QWEN_CONFIG_DIR/agents/<name>.md`
-   with `modelConfig.model` resolved from `workflows.<kind>.stageModels` and
-   `agentModels`. Documented consequence: changing those keys requires
-   re-running the installer.
+   with the subagent's own top-level `model:` frontmatter field resolved from
+   `workflows.<kind>.stageModels` and `agentModels`. Documented consequence:
+   changing those keys requires re-running the installer. **Resolved during
+   slice 0 research:** `model:` is a first-class Qwen subagent field
+   (`inherit` | `fast` | `<modelId>` | `<authType>:<modelId>`), so baking is
+   native rather than a workaround — but it is a *static* binding, which is
+   what makes the re-run necessary.
 2. **Extensions cannot carry hooks.** `qwen-extension.json` has no `hooks`
    field, and the guard hooks *are* the safety substrate. The installer must
    therefore merge a hooks block into `settings.json`; an extension-only
@@ -58,11 +62,16 @@ workflow kinds at launch, per-stage models baked into generated agent files.
    `$CLAUDE_ENV_FILE`; Qwen has no equivalent. On Qwen the SessionStart hook
    degrades to an `additionalContext` notice and the README documents exporting
    `AZURE_DEVOPS_EXT_PAT` directly. Flag it; don't fake it.
-4. **MCP tool naming is unconfirmed.** Qwen's docs show both
-   `server_name-tool_name` (registration) and `mcp__server__tool` (disallow
-   patterns). This must be pinned **empirically in slice 1** — it drives the
-   check-agent `tools:` lists, the `PreToolUse` matcher, and the verdict-tool
-   name in spawn prose.
+4. ~~**MCP tool naming is unconfirmed.**~~ **Resolved — no divergence.**
+   Qwen registers MCP tools as `mcp__${serverName}__${serverToolName}` through
+   `normalizeToolNameForProvider`, which passes a name through untouched when it
+   is ≤63 chars and matches `^[A-Za-z][A-Za-z0-9_-]*$`. Every tool this server
+   exposes qualifies (longest: `mcp__agentic-workflow__workflow_plan_approve`,
+   44 chars), so the names are **byte-identical to Claude Code's**. The
+   check-agent `tools:` lists, the `PreToolUse` matcher, and the spawn prose can
+   all be shared verbatim. Claude additionally exposes a plugin-scoped alias
+   (`mcp__plugin_agentic-workflow_agentic-workflow__*`) that Qwen has no twin
+   for; the Qwen agent files name the single form only.
 
 ## Slice 0 — one host switch in the shared machinery
 
