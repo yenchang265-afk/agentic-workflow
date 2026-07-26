@@ -65,7 +65,7 @@ const MOVES: Partial<Record<TaskStatus, readonly Move[]>> = {
       label: "Ship",
       title: "Ship this task?",
       detail:
-        "Moves it to completed/, commits to git, AND opens a pull request. This is visible outside your machine.",
+        "Moves it to completed/, commits to git, AND opens a pull request. This is visible outside your machine. (The PR is best-effort — if it can't be opened the task still ships, and the reason is reported.)",
       danger: true,
     },
   ],
@@ -170,7 +170,10 @@ const GateButton = ({
       </Confirm>
       {/* A refusal is data, not an error: core explains why, and the board is unchanged. */}
       {result && !result.ok && <p className={`gate-msg gate-msg--${result.variant ?? "warning"}`}>{result.message}</p>}
-      {result?.ok && <p className="gate-msg gate-msg--ok">{result.message}</p>}
+      {/* A success may still carry a variant — a ship whose PR did not open is
+          `ok` with `variant: "warning"`. Hardcoding the ok tone here would render
+          that caveat in the same green as a clean ship. */}
+      {result?.ok && <p className={`gate-msg gate-msg--${result.variant ?? "ok"}`}>{result.message}</p>}
       {error && <p className="gate-msg gate-msg--warning">{error}</p>}
     </>
   )

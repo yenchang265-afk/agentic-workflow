@@ -71,7 +71,7 @@ import {
   worktreeForBranch,
 } from "@agentic-workflow/core/workflow/git"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -502,6 +502,15 @@ export const findDrivingWorkflow = async (
 
 const toast = (client: Client, message: string, variant: "info" | "success" | "warning" | "error") =>
   client.tui.showToast({ body: { message, variant } }).catch(() => {})
+
+/**
+ * The toast variant for a gate move. Core sets `variant` on a REFUSAL to grade
+ * it (`info` = nothing to do, `warning` = wrong folder), and on a SUCCESS to
+ * mark a move that landed with a caveat — a ship whose PR did not open. Without
+ * honouring it on the ok branch, that ship toasts plain green and the note in
+ * the message body is easy to scroll past.
+ */
+const gateVariant = (r: GateResult): "success" | "warning" | "info" => r.variant ?? (r.ok ? "success" : "warning")
 
 /** Toast a terminal outcome AND return it, so the command hook can replace the
  *  rendered command template with what actually happened — otherwise the model
@@ -1589,7 +1598,7 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
   try {
     const r = await approveAny(gateCtx(deps, config), id)
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
@@ -1625,8 +1634,8 @@ export const handleRetask = async (deps: Deps, _sessionID: string, args: string,
     const r = await retaskTask(gateCtx(deps, config), id, note)
     // Success is silent unless the plugin actually moved something — the agent's
     // turn reports the reshape, and a toast per retask would double up.
-    if (!r.ok) await toast(client, r.message, r.variant ?? "warning")
-    else if (!r.data?.alreadyDone) await toast(client, r.message, "success")
+    if (!r.ok) await toast(client, r.message, gateVariant(r))
+    else if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
   }
@@ -1636,7 +1645,7 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
   const { client } = deps
   try {
     const r = await rejectAny(gateCtx(deps, config), args.trim())
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Replan failed: ${(err as Error).message}`, "error")
   }
@@ -1663,7 +1672,7 @@ export const handleRemove = async (deps: Deps, _sessionID: string, args: string,
   if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id> [--force].`, "warning"))
   try {
     const r = await removeTask(gateCtx(deps, config), id, force)
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
   }
@@ -1680,7 +1689,7 @@ export const handleAbandon = async (deps: Deps, _sessionID: string, args: string
   if (!id) return void (await toast(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning"))
   try {
     const r = await abandonTask(gateCtx(deps, config), id, rest.join(" ") || undefined)
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
   }
