@@ -5,7 +5,7 @@ import { DEFAULT_CONFIG, applyAdoPatEnv, loadConfig } from "./config.ts"
 import { agentModel, enabledWorkflowKinds, ignoredUserConfigPaths, resolveUserConfigPath } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
-import { overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
+import { failurePrompt, overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
 import { sliceCommandPrompt } from "./command-slice.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
@@ -316,9 +316,34 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         overrideCommandPrompt(output, draftNote ? `${base}\n\n${draftNote}` : base)
       }
       const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
-      if (!gateFirst) await reconcileOnce()
-      const outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
-      if (gateFirst) await reconcileOnce()
+      let outcome: string | undefined
+      try {
+        if (!gateFirst) await reconcileOnce()
+        outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
+        if (gateFirst) await reconcileOnce()
+      } catch (err) {
+        // A crash here is the ONE path on which a report-and-stop verb's body
+        // reaches the model. The slice above already wrote it to `output`, and
+        // for those verbs that prose describes the plugin's deterministic work
+        // in the imperative — take the watch lease, release orphaned claim
+        // markers, audit and repair the backlog, read the manifests. The
+        // `if (outcome)` override below is what normally replaces it, and a
+        // throw skips straight past it, so the model is handed the plugin's job
+        // as its instructions and improvises the loop by hand. That is exactly
+        // the failure mode the not-enabled branch above already overrides for;
+        // this is the same guard for the failure path. Wraps reconcileOnce too:
+        // it is awaited on the same unguarded path, either side of the dispatch.
+        const message = err instanceof Error ? err.message : String(err)
+        // Override FIRST, then report. The prompt is the part that must not be
+        // lost: a logger or TUI call that throws on its way out would take the
+        // whole hook down and leave the sliced body standing.
+        overrideCommandPrompt(output, failurePrompt(input.command, verb, message))
+        await log("error", `command /${input.command} "${verb}" failed: ${message}`).catch(() => {})
+        await client.tui
+          .showToast({ body: { message: `agentic-workflow: /${input.command} ${verb} failed — ${message}`, variant: "error" } })
+          .catch(() => {})
+        return
+      }
       // The command markdown renders to the model whether or not the plugin
       // handled the verb. For the report-and-stop verbs (claim/watch/status/…)
       // handleCommand did all the work and only toasted — but toasts are

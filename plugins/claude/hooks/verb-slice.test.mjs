@@ -175,6 +175,14 @@ test("the router tells the model what to do when no block arrives", () => {
 })
 
 test("the router is a fraction of the body it replaced", () => {
+  // This ceiling is the whole per-verb context budget on this host, and it is
+  // why the router earns its own size test while OpenCode's shared prose does
+  // not. A `UserPromptSubmit` hook can only prepend, never rewrite, so the
+  // router is sent for EVERY verb — including the ones the MCP server handles
+  // end to end, whose own block is two or three lines. OpenCode gets the mirror
+  // case for free: it overrides the rendered body in `command.execute.before`,
+  // so prose those verbs never read costs nothing there. Neither host can adopt
+  // the other's trade; keeping the router small is this host's only lever.
   assert.ok(router().split("\n").length < 90, `router is ${router().split("\n").length} lines`)
 })
 

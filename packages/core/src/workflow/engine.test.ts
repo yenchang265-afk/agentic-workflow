@@ -57,6 +57,21 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
     if (a.plan) parts.push(`Plan & acceptance criteria:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)
     if (accept.length) parts.push(acceptBlock("Acceptance criteria (the verdict must check each):"))
+    // A deliberate post-freeze addition, on the same footing as the contract
+    // block appended in oracleCompose below. VERIFY has `git diff*` in its
+    // bashAllowlist but was never told WHICH diff is its scope, so a failure
+    // that pre-dated the loop's own commits read as this task's regression.
+    // Mirrors review's boundary, worded for verification rather than review.
+    if (state.git) {
+      const wt = state.git.worktree
+      const diffCmd = wt
+        ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
+        : `git diff ${state.git.base}...${state.git.branch}`
+      parts.push(
+        `Change scope: this loop's work is the commits on branch ${state.git.branch} since ${state.git.base} — ` +
+          `\`${diffCmd}\` shows exactly what changed. Verify that work; a failure that pre-dates it is not this task's regression.`,
+      )
+    }
   } else if (target === "review") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)

@@ -307,6 +307,18 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   （在 Claude Code 上 `provider/` 前綴會被去除），未設定的代理則使用
   主機預設模型。
 
+  **每個項目的作用範圍。** 這兩個生成都不是階段觸發，因此都無法以參數
+  方式帶上模型——必須由「讀取指令內文的模型」來執行生成，設定值才傳達
+  得到。`workflow-plan-author` 在兩個主機上都是如此；但 `workflow-plan`
+  在 OpenCode 上並非如此：`plugins/opencode/commands/plan.md` 宣告了
+  `agent: workflow-plan` 與 `subtask: true`，opencode 會自行生成該子代理，
+  而指令內文本身就已經是該子代理的提示——前面沒有任何回合可以下指示。
+  因此 `agentModels.workflow-plan` 只適用於 Claude 主機的
+  `/agentic-workflow:plan`（其內文要求模型以 Task 工具生成
+  `workflow-plan`）；在 OpenCode 上臨時規劃器使用工作階段預設模型，此項
+  目無效。兩個主機的 `stageModels.plan` 都不受影響——那是真正的階段觸發，
+  會明確帶上自己的模型。
+
   這個鍵**刻意與 `stageModels` 分開**，而不是併入 `stageModels.plan`：
   草稿撰寫與 PLAN 階段都跑 `workflow-plan-author`，若共用一個鍵，把
   草稿撰寫指向便宜模型就會連帶悄悄改動規劃階段，反之亦然。設定
