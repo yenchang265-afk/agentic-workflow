@@ -9,11 +9,13 @@ let seq = 0
  * MAX_ARG_STRLEN (128 KiB) regardless of total ARG_MAX. Past that execve fails
  * with E2BIG, and the shim resolves that as exitCode 127 rather than throwing.
  *
- * 32 KiB leaves room for the worst case: single-quote escaping expands a byte
- * 4x (`'` → `'\''`), so even all-quotes content stays under the cap with the
- * rest of the command alongside it. Bigger payloads are appended in chunks.
+ * The bound has to hold for the WORST case, not the typical one: single-quote
+ * escaping expands a byte 4x (`'` → `'\''`), so a chunk of pure quotes costs
+ * 4 × its size. 32 KiB would land exactly on the 128 KiB ceiling before the
+ * `printf '%s' … > <path>` wrapper is even counted; 16 KiB leaves half the
+ * budget spare. Bigger payloads are appended in chunks.
  */
-const SINGLE_SHOT_MAX = 32 * 1024
+const SINGLE_SHOT_MAX = 16 * 1024
 
 /** Append one chunk to `tmp`; the first truncates, the rest extend. */
 const writeChunk = ($: Shell, tmp: string, chunk: string, first: boolean): PromiseLike<ShellOutput> =>

@@ -499,6 +499,44 @@ test("shipTask retry on an already-completed task re-attempts the PR when none w
   assert.ok("/repo/docs/tasks/completed/t.md" in fs, "the task stays completed")
 })
 
+test("shipTask says so on the RESULT when the PR was attempted and not opened", async () => {
+  // The failure used to land only in the task-file audit note, while the returned
+  // message was an unqualified `"<title>" completed.` — and every host renders
+  // that message verbatim, so the user saw plain success with no PR. Worse under
+  // the default ignoreBacklog: true, which never commits the note either.
+  const { ctx } = makeCtx(
+    { "in-review/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" } // feature/t exists
+        if (cmd.includes("push")) return { exitCode: 0, stdout: "" } // pushes fine; gh is what fails
+        return undefined
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.ok(r.ok, "the ship itself succeeded — the task IS completed")
+  assert.match(r.message, /NOT opened/, "but the message must not read as an unqualified success")
+  assert.ok(r.ok && (r.data.pr as { failed?: boolean }).failed === true, "and the failure is machine-readable too")
+})
+
+test("shipTask's already-completed retry reports a still-failing PR rather than 'nothing to do'", async () => {
+  const { ctx } = makeCtx(
+    { "completed/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" }
+        if (cmd.includes("push")) return { exitCode: 0, stdout: "" }
+        return undefined
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.ok(r.ok)
+  assert.match(r.message, /NOT opened/)
+  assert.doesNotMatch(r.message, /Nothing to do/, "a failed PR attempt is not 'nothing to do'")
+})
+
 test("shipTask retry does nothing when the completed task already recorded a PR", async () => {
   const withPr = `${task("Do it")}\n\n> PR opened — https://example.com/pr/1 _(2026-01-01)_`
   const { ctx, log } = makeCtx(
