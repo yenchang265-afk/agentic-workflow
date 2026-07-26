@@ -2,8 +2,36 @@ English | [繁體中文](09-context-management.zh-TW.md)
 
 # 09 — Context budgets for stage prompts
 
-**Status: proposed.** Plans 01–07 are design records of shipped work; this one,
-like 08, is not implemented yet.
+**Status: implemented.** A design record of shipped work, like plans 01–07; only
+08 remains a backlog item.
+
+Two things landed differently from the design below, both found while verifying
+its anchors against the source:
+
+1. **`extractPlan` had a second bug.** It used `body.indexOf(PLAN_HEADING)` — the
+   *first* heading — and `rejectPlan` only appends a note while `appendPlan`
+   appends a second `## Implementation Plan` at EOF, so a replanned task fed BUILD
+   the **stale** plan on top of the audit tail. Same three-line function, fixed with
+   the same change: read the last heading via `lastMarkerIndex`, stop at the first
+   audit-note line. The note pattern requires `auditNote`'s bracketed stamp rather
+   than matching any `> …` line, so a plan quoting a requirement as a blockquote is
+   not truncated.
+2. **The structured block had to move into core.** Both hosts fused
+   `verdictFeedbackBlock` onto the prose *before* `advance` saw either string, so
+   "only the prose is clamped" was unreachable by clamping `artifacts[stage]`.
+   `advance` now takes the `VerdictRecord` and owns the fusion (byte-identical
+   output), recording the seam in `WorkflowState.feedback`; `promptContext` clamps
+   only the suffix. The exemption is an exact `startsWith` against that seam — not
+   an embedded sentinel, which an agent's own prose could forge — and is itself
+   capped at `EXEMPT_MAX` so it cannot swallow the budget. A seam that no longer
+   matches clamps the artifact whole: lossy, never unbounded.
+
+Also worth recording: applying the budget at render required threading `config`
+through `composePrompt`/`fireAt`/`firstStep` (a trailing optional, so unset still
+means unbounded) — the design assumed `promptContext` could resolve it locally,
+but it receives only the state. And both `feedback` and `attempts` had to be
+declared in `persist.ts`'s snapshot schema, which strips undeclared fields, or
+`recover` would silently drop them.
 
 ## Context
 

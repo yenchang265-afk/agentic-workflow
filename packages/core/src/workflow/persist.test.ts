@@ -174,3 +174,18 @@ test("the verdict-block seam survives saveState → loadState; a legacy snapshot
   assert.deepEqual(loaded, legacy)
   assert.equal(loaded?.feedback, undefined)
 })
+
+test("the attempts ledger survives saveState → loadState", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
+  // A recovered run must not forget what earlier iterations already tried, or it
+  // can re-try the same wrong fix until the cap trips.
+  const withLedger: WorkflowState = {
+    ...sampleState,
+    attempts: [
+      { stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" },
+      { stage: "review", iteration: 1, verdict: "FAIL" },
+    ],
+  }
+  await saveState(fakeShell(), dir, "docs/tasks", "add-rl", withLedger)
+  assert.deepEqual(await loadState(fakeClient(dir), dir, "docs/tasks", "add-rl"), withLedger)
+})

@@ -268,10 +268,19 @@ test("the scope fence reaches every kind's work stages, not just engineering", (
 
 // --- golden parity: advance ≡ the frozen advanceOnIdle across the transition table ---
 
+/** The additive iteration-ledger section — the frozen oracle predates it. */
+const ATTEMPTS_SECTION = /\n\nPrevious attempts on this task[\s\S]*?(?=\n\n|$)/
+
 const strip = <T extends object>(o: T): Record<string, unknown> => {
   // Drop the fields the frozen legacy oracle could not express (additive manifest
-  // semantics): `toStatus` and the `retryable` stop flag (asserted separately below).
-  const { toStatus: _dropped, retryable: _retryable, ...rest } = o as Record<string, unknown>
+  // semantics): `toStatus`, the `retryable` stop flag, and `promptElided`
+  // (asserted separately below). The rendered attempts ledger is additive for the
+  // same reason — everything ELSE in the prompt must still match byte-for-byte,
+  // and the ledger's own rendering is pinned by the attempts tests.
+  const { toStatus: _d, retryable: _r, promptElided: _e, ...rest } = o as Record<string, unknown>
+  if (typeof rest["arguments"] === "string") {
+    rest["arguments"] = (rest["arguments"] as string).replace(ATTEMPTS_SECTION, "")
+  }
   return rest
 }
 
@@ -297,7 +306,11 @@ test("advance reproduces the frozen advanceOnIdle exactly (states and actions) a
   for (const c of CASES) {
     const legacy = oracleAdvance(c.state, config, c.output, c.verdict ?? null)
     const engine = advance(eng, c.state, config, c.output, c.verdict ?? null)
-    assert.deepEqual(engine.state, legacy.state, `${c.label}: state`)
+    // `attempts` is additive state the frozen oracle predates (the iteration
+    // ledger). Every other field must still match it exactly, and the ledger's own
+    // contents are pinned by the attempts tests below.
+    const { attempts: _ledger, ...state } = engine.state
+    assert.deepEqual(state, legacy.state, `${c.label}: state`)
     assert.deepEqual(strip(engine.action), strip(legacy.action), `${c.label}: action`)
   }
 })
@@ -813,4 +826,61 @@ test("firstStep honors a configured stageContext", () => {
     (firstStep(eng, state, config).action as Extract<Action, { kind: "fire" }>).arguments,
     (firstStep(eng, state).action as Extract<Action, { kind: "fire" }>).arguments,
   )
+})
+
+// --- plan 09: the attempts ledger ---------------------------------------------
+
+const failRecord = (reason: string) => ({ verdict: "FAIL" as Verdict, reason })
+
+test("advance records one attempts entry per COUNTED iteration, with the stage, effective verdict, and one-line reason", () => {
+  const state = { ...mk("add foo"), stage: "verify" as string, artifacts: { plan: "P" } }
+  const { state: next } = advance(eng, state, config, "prose", "FAIL", failRecord("two tests are red"))
+  assert.deepEqual(next.attempts, [{ stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" }])
+  assert.equal(next.iteration, 1, "the entry is recorded on the counted re-fire")
+  // A non-counted transition (verify PASS → review) records nothing.
+  const passed = advance(eng, state, config, "prose", "PASS", { verdict: "PASS" }).state
+  assert.equal(passed.attempts, undefined)
+})
+
+test("the attempts ledger keeps only the last 5 entries", () => {
+  let state: WorkflowState = {
+    ...mk("g"),
+    stage: "verify",
+    artifacts: { plan: "P" },
+    attempts: Array.from({ length: 5 }, (_, i) => ({ stage: "verify", iteration: i, verdict: "FAIL" as Verdict, reason: `r${i}` })),
+  }
+  state = advance(eng, state, { ...config, maxIterations: 99 }, "prose", "FAIL", failRecord("newest")).state
+  assert.equal(state.attempts?.length, 5)
+  assert.equal(state.attempts?.[4]?.reason, "newest")
+  assert.equal(state.attempts?.[0]?.reason, "r1", "the oldest entry was not dropped")
+})
+
+test("a multi-line or long verdict reason is flattened to one bounded line — the ledger cannot itself blow the budget", () => {
+  const messy = `first line of the reason\nsecond line\n${"x".repeat(500)}`
+  const { state } = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "prose", "FAIL", failRecord(messy))
+  const reason = state.attempts?.[0]?.reason ?? ""
+  assert.ok(!reason.includes("\n"), "the reason kept a newline")
+  assert.ok(reason.length <= 200, `reason is ${reason.length} chars`)
+  assert.equal(reason, "first line of the reason")
+})
+
+test("promptContext omits attempts on iteration 0 — a first-iteration BUILD prompt is unchanged", () => {
+  const first = resumeAtBuild("add foo", task, "PLAN BODY")
+  assert.equal(promptContext(first).attempts, undefined)
+  assert.equal(composePrompt(eng, first, "build"), composePrompt(eng, { ...first, attempts: [] }, "build"))
+})
+
+test("the attempts section renders into the BUILD prompt with one line per attempt", () => {
+  const state: WorkflowState = {
+    ...resumeAtBuild("add foo", task, "PLAN BODY"),
+    iteration: 2,
+    attempts: [
+      { stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" },
+      { stage: "review", iteration: 1, verdict: "FAIL", reason: "missing input validation" },
+    ],
+  }
+  const prompt = composePrompt(eng, state, "build")
+  assert.match(prompt, /do not repeat a fix that already failed/i)
+  assert.match(prompt, /iteration 1.*verify.*FAIL.*two tests are red/)
+  assert.match(prompt, /iteration 2.*review.*FAIL.*missing input validation/)
 })

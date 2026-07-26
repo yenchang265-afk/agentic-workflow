@@ -8,7 +8,7 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
-import { advance, composePrompt, firstStep } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, composePromptWithStats, firstStep } from "@agentic-workflow/core/workflow/engine"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
@@ -137,6 +137,20 @@ let driftNoted = false // whether this stage attempt already audited an out-of-s
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
+/**
+ * Size of the prompt this server last handed out for a REAL fire, and how much a
+ * stage context budget elided from it. This host cannot see the prompt at the
+ * point it records a metrics sample (it was returned to the orchestrator turns
+ * earlier), so the value is captured at the fire boundary instead.
+ *
+ * Deliberately NOT written by `workflow_compose`: that is an agent-callable,
+ * idempotent read tool that can fire arbitrarily often and can name a stage that
+ * is not the active one, so letting it write would make `promptChars` mean "the
+ * last thing anyone asked to look at". Reset wherever a stage is fired without
+ * this server composing, so a stale value is never misattributed.
+ */
+let lastFirePromptChars: number | undefined
+let lastFirePromptElided: number | undefined
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
 let config: Config = DEFAULT_CONFIG
 
@@ -492,6 +506,32 @@ const claimWarnings = async (): Promise<string[]> => {
   return warnings
 }
 
+/**
+ * Compose a stage prompt for an actual fire, recording its size for the pass's
+ * metrics sample. `suffix` is host prose appended after composition (the
+ * verdict-retry nag), counted because it is part of what the model receives.
+ */
+const firePrompt = (loaded: LoadedManifest, state: WorkflowState, stage: string, suffix = ""): string => {
+  const { prompt, elided } = composePromptWithStats(loaded, state, stage, config)
+  const fired = `${prompt}${suffix}`
+  lastFirePromptChars = fired.length
+  lastFirePromptElided = elided
+  return fired
+}
+
+/** Record the size of a prompt handed out via a fire `Action` (the snapshot-resume path). */
+const recordFiredAction = (action: Action): void => {
+  if (action.kind !== "fire") return
+  lastFirePromptChars = action.arguments.length
+  lastFirePromptElided = action.promptElided
+}
+
+/** The recorded prompt size for the pass that just finished, if this server composed it. */
+const promptSizeFields = (): { promptChars?: number; promptElided?: number } => ({
+  ...(lastFirePromptChars !== undefined ? { promptChars: lastFirePromptChars } : {}),
+  ...(lastFirePromptElided ? { promptElided: lastFirePromptElided } : {}),
+})
+
 /** The fire payload workflow_start/workflow_claim return for a fresh claim. */
 const firePayload = (state: WorkflowState, id: string) => {
   const manifest = manifestFor(state.kind ?? "engineering")
@@ -506,7 +546,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     agent: agentRef(def.agent),
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
-    prompt: composePrompt(manifest, state, state.stage, config),
+    prompt: firePrompt(manifest, state, state.stage),
     ...(state.stage === "plan"
       ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
       : {}),
@@ -764,6 +804,10 @@ server.registerTool(
     }
     const outOfOrder = stageOrderError(active.stage, stage)
     if (outOfOrder) return fail(outOfOrder)
+    // The orchestrator is about to run a stage this server did not compose for —
+    // drop the recorded size rather than attribute an older prompt to this pass.
+    lastFirePromptChars = undefined
+    lastFirePromptElided = undefined
     if (stageDef(activeManifest().manifest, stage).isolation !== "none") {
       // A no-isolation stage (engineering's PLAN) runs in the main tree — no branch, no worktree to reconcile.
       try {
@@ -829,7 +873,13 @@ server.registerTool(
         kind: "stop",
         message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agentic-workflow:engineering recover the task.`,
       }
-      samples.push({ stage, iteration: active.iteration, ms: Date.now() - lastFireAt, startedAt: new Date(lastFireAt).toISOString() })
+      samples.push({
+        stage,
+        iteration: active.iteration,
+        ms: Date.now() - lastFireAt,
+        startedAt: new Date(lastFireAt).toISOString(),
+        ...promptSizeFields(),
+      })
       await runTerminal(action)
       return ok({ action })
     }
@@ -840,6 +890,7 @@ server.registerTool(
       iteration: active.iteration,
       ms: Date.now() - lastFireAt,
       startedAt: new Date(lastFireAt).toISOString(),
+      ...promptSizeFields(),
       ...(stageDef(activeManifest().manifest, stage).kind === "check"
         ? { verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none" }
         : {}),
@@ -875,14 +926,17 @@ server.registerTool(
           action: { kind: "fire", stage },
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
           ...(retryModel ? { model: retryModel } : {}),
-          prompt:
-            composePrompt(activeManifest(), active, stage, config) +
+          prompt: firePrompt(
+            activeManifest(),
+            active,
+            stage,
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
                 "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
                 "COMPLETE axes array; partial submissions are not accumulated."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
+          ),
           note: `check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again${SPAWN_MODEL_NOTE}`,
         })
       }
@@ -931,7 +985,7 @@ server.registerTool(
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
-        prompt: composePrompt(activeManifest(), active, action.stage, config),
+        prompt: firePrompt(activeManifest(), active, action.stage),
         note:
           `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}` +
           (nextDef.kind === "check"
@@ -1366,6 +1420,7 @@ server.registerTool(
       }
       await appendNote(sh, active.task as TaskRef, auditNote(`Recovered from snapshot at ${active.stage}`, new Date(), actor), log)
       const step = firstStep(eng, active, config)
+      recordFiredAction(step.action)
       const resumedDef = stageDef(eng.manifest, active.stage)
       const resumedModel = stageModel(eng.manifest.kind, resumedDef)
       return ok({
@@ -1392,7 +1447,7 @@ server.registerTool(
     return ok({
       resumedFrom: "plan",
       stage: "build",
-      prompt: composePrompt(eng, active, "build", config),
+      prompt: firePrompt(eng, active, "build"),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
       note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,

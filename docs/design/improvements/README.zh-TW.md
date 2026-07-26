@@ -2,17 +2,16 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**計畫 01–07 已實作並測試完成**，目前存放於共用的
+**計畫 01–07 與 09 已實作並測試完成**，目前存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
-backlog。**計畫 08 與 09 為提案中**、尚未實作——它們是本頁僅有的、仍屬待辦
-事項的條目。
+backlog。**計畫 08 為提案中**、尚未實作——它是本頁僅有的、仍屬待辦事項的條目。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
 `README.md` / `skills/workflow-orchestration/SKILL.md` 中記載的已知限制。
 
-## 這些計畫（01–07 已發布）
+## 這些計畫（01–07 與 09 已發布）
 
 | # | 計畫 | 帶來了什麼 | 現在位於何處 |
 |---|------|----------------|--------------------|
@@ -23,16 +22,19 @@ backlog。**計畫 08 與 09 為提案中**、尚未實作——它們是本頁�
 | 05 | [Secret redaction（機密資訊遮罩）](./05-secret-redaction.md) | 在寫入持久化產出物之前先清除機密資訊 | `packages/core/src/task/redact.ts`，接線於 `packages/core/src/task/store.ts`；`redact.test.ts` |
 | 06 | [Run metrics（執行指標）](./06-run-metrics.md) | 每次執行的階段耗時 + 裁定歷史記錄寫入執行日誌 | `packages/core/src/workflow/metrics.ts`；`metrics.test.ts` |
 | 07 | [在共用排程器上執行多種工作流程類型](./07-multi-workflow-scheduler.md) | 一個排程器驅動多種工作流程類型（engineering + PR sitter）；抽取出 `@agentic-workflow/core`，讓兩個外掛共用同一份實作 | `packages/core/src/manifest/`（結構描述、註冊表、範本）、`packages/core/src/scheduler/`（排程器、租約）、`packages/core/src/source/`（backlog、github-pr、ado-pr、帳本）；`workflows/engineering/`、`workflows/pr-sitter/` |
+| 09 | [階段提示詞的上下文預算](./09-context-management.zh-TW.md) | 提示詞不再隨疊代單調成長：計畫產出物不再累積稽核註記（也不會在 replan 後餵回舊計畫）、每個階段每份產出物的字元上限會裁剪階段讀到的內容但永不裁剪結構化裁定區塊與階段契約、有界的嘗試紀錄讓弱模型不再重試已失敗的修法，而提示詞大小也在管理面板中依階段可見 | `packages/core/src/workflow/budget.ts`、`config.ts` 中的 `contextFor`/`unknownStageContextKeys`、`task/store.ts` 中的 `extractPlan`、`workflow/engine.ts` 中的接縫與紀錄、`packages/hub/src/server/metrics/prompt.ts` 中的 `promptSize`；`budget.test.ts` |
 
 ## 提案中
 
 | # | 計畫 | 會帶來什麼 |
 |---|------|-------------------|
 | 08 | [決定性把關指令](./08-deterministic-gate-commands.zh-TW.md) | 已宣告的測試／型別檢查／lint 指令改由驅動程式端執行；其結束碼成為檢查類階段的既定事實並約束其裁定，取代今天由代理人自行回報的「測試是綠的」 |
-| 09 | [階段提示詞的上下文預算](./09-context-management.zh-TW.md) | 針對每個階段、每份產出物設定提示詞內容的上限，讓重新建置以結構化發現開頭，而不是一整份逐字稿；修正 `extractPlan` 把稽核尾巴累積進每一份提示詞的問題，並讓提示詞大小在指標中可見 |
 
-每項計畫明確延後處理的殘留事項（bash 工作樹釘選、跨行程的 `index.lock`
-競速、指標匯出、遮罩選項）仍未解決——目前的殘餘風險見
+仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
+另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，
+指標匯出在 `workflow/metrics-file.ts` 與 `packages/hub/src/server/metrics/`。）
+計畫 09 明確把 persona／skill 的重量、以模型呼叫做摘要、以及以 token 為單位的
+精確預算排除在範圍外。目前的殘餘風險見
 [`../threat-model.md`](../threat-model.md)。
 
 ## 每項計畫都遵循的慣例

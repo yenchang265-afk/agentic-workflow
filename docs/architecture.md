@@ -34,6 +34,7 @@ flowchart TB
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
         engine["workflow/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
+        budget["workflow/budget.ts — <b>pure</b><br/>clamp: per-stage prompt context budgets"]
         manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
     end
 
@@ -79,7 +80,12 @@ flowchart TB
   (`---`-separated sections, `{{var}}` interpolation, `{{#path}}…{{/path}}`
   conditional blocks). `workflow/engine.ts` interprets it as a pure state machine:
   `advance(manifest, state, output, verdict)` returns the next state and
-  action. Logic a manifest can't express hangs off named hooks resolved
+  action. It also fuses each check stage's structured verdict block onto the head
+  of that stage's artifact and records the seam, so `workflow/budget.ts` can hold
+  a stage's prompt to a configured character ceiling
+  (`workflows.<kind>.stageContext`) by trimming only the prose — the structured
+  findings and the stage contract are never trimmed, and the run log keeps the
+  full text regardless. Logic a manifest can't express hangs off named hooks resolved
   through `manifest/registry.ts` — compose hooks (prompt-context augmenters),
   pre-transition validators, claim predicates.
 - **Work sources + scheduler** — a `WorkSource`
