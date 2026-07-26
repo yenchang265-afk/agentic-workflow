@@ -5,6 +5,7 @@ import { z } from "zod"
 import type { Client } from "./host.js"
 import { CODE_PLATFORMS, type Config, type WorkflowTrigger } from "./workflow/state.js"
 import type { StageDef } from "./manifest/schema.js"
+import type { StagePass } from "./workflow/verdict.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 
 /**
@@ -126,6 +127,17 @@ const BaseConfigSchema = z.object({
          * repo can shrink its own prompts and nothing else. See `SHELL_BEARING_KEYS`.
          */
         stageContext: z.record(z.string(), z.record(z.string(), z.number().int().positive())).optional(),
+        /**
+         * Stage name → fan-out strategy, overriding the manifest stage's `fanout`.
+         * `"axis"` runs the stage once per required axis; `"none"` turns a
+         * manifest-declared fan-out back off.
+         *
+         * This is what makes fan-out reachable at all: the built-in kinds'
+         * manifests ship inside the core package (manifest/dir.ts), so a user
+         * cannot edit `fanout` there. Same direction as `stageModels`/`stageContext`
+         * — config beats manifest. Value space is two literals: no shell, no path.
+         */
+        stageFanout: z.record(z.string(), z.enum(["axis", "none"])).optional(),
         /**
          * Replaces the bundled `osv-scanner --format json -L <target>` call for
          * this kind's JVM (maven/gradle) scans with your own CLI. `{{target}}`
@@ -374,6 +386,73 @@ export const unreviewedAxes = (config: Config, def: StageDef): string[] => {
   const named = new Set(lenses.map((l) => l.trim().toLowerCase()))
   return def.requiredAxes.filter((axis) => !named.has(axis.trim().toLowerCase()))
 }
+
+/**
+ * The fan-out strategy a stage runs under: config
+ * `workflows.<kind>.stageFanout.<stage>`, else the manifest stage's `fanout`,
+ * else none. `"none"` in config turns a manifest-declared fan-out off. Pure.
+ */
+export const fanoutFor = (config: Config, kind: string, def: StageDef): "axis" | undefined => {
+  const strategy = config.workflows[kind]?.stageFanout?.[def.name] ?? def.fanout
+  return strategy === "axis" ? "axis" : undefined
+}
+
+/**
+ * The focused passes a stage runs, in order — the single place both hosts ask
+ * "how many times does this stage fire, and what is each pass told to cover?".
+ *
+ * Precedence, highest first:
+ *  1. `reviewLenses`, on the stage named `review`. A config knob that predates
+ *     fan-out and WINS, so an existing lens setup keeps behaving exactly as it
+ *     does today rather than being silently reinterpreted on upgrade. Its
+ *     `review`-only scope used to be hardcoded inside the OpenCode driver; it
+ *     lives here now, named and documented, and deliberately does NOT generalize
+ *     to other check stages (a sitter's triage stage is not a code review).
+ *  2. `fanout: "axis"` (manifest or `stageFanout`) — one pass per `requiredAxes`
+ *     entry, on any check stage of any kind.
+ *  3. one unfocused pass — today's behavior, byte-identical.
+ * Pure.
+ */
+export const stagePasses = (config: Config, kind: string, def: StageDef): readonly StagePass[] => {
+  const single: readonly StagePass[] = [{ focus: null, mode: "single" }]
+  if (def.kind !== "check") return single
+  if (def.name === "review" && config.reviewLenses.length) {
+    return config.reviewLenses.map((focus) => ({ focus, mode: "lens" as const }))
+  }
+  if (fanoutFor(config, kind, def) === "axis" && def.requiredAxes?.length) {
+    return def.requiredAxes.map((focus) => ({ focus, mode: "axis" as const }))
+  }
+  return single
+}
+
+/**
+ * The axes ONE pass's `workflow_verdict` call must cover.
+ *
+ * An `axis` pass is narrowed to its own axis — that is what lets a focused pass
+ * be admitted instead of rejected for the four it was told not to review. The
+ * stage-wide guarantee does not vanish with it: it moves to the accumulated
+ * record, checked with `uncoveredAxes` when the stage advances. A `lens` pass
+ * maps to no axis at all, so it is unenforced, exactly as before. Pure.
+ */
+export const passAxes = (def: StageDef, pass: StagePass): readonly string[] | undefined =>
+  pass.mode === "axis" && pass.focus ? [pass.focus] : pass.mode === "lens" ? undefined : def.requiredAxes
+
+/**
+ * True when a configured `reviewLenses` is overriding a declared per-axis
+ * fan-out — the user asked for two different multi-pass reviews and got the
+ * lenses. Silence would make the `fanout` look broken, so hosts warn. Pure.
+ */
+export const fanoutOverriddenByLenses = (config: Config, kind: string, def: StageDef): boolean =>
+  config.reviewLenses.length > 0 && def.name === "review" && fanoutFor(config, kind, def) === "axis"
+
+/**
+ * The `stageFanout` keys that name no stage of `kind` — the same silent-default
+ * trap `unknownStageModelKeys` closes: a typo'd stage name resolves to "no
+ * fan-out" and reads as "the setting doesn't work". Not checkable at parse time
+ * (the manifest isn't loaded yet), so hosts warn once the stages are known. Pure.
+ */
+export const unknownStageFanoutKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
+  Object.keys(config.workflows[kind]?.stageFanout ?? {}).filter((name) => !stageNames.includes(name))
 
 /**
  * A model string without its provider prefix ("anthropic/claude-sonnet-4-5" →

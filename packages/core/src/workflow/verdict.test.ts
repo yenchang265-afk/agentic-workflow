@@ -10,11 +10,15 @@ import {
   WORKFLOW_VERIFY_TAG,
   mergeAxes,
   parseVerdict,
+  passFocusBlock,
   stageDriftNote,
+  uncoveredAxes,
   verdictContractBlock,
   verdictFeedbackBlock,
+  withCoverageGap,
   workScopeBlock,
   worstOf,
+  type VerdictRecord,
 } from "./verdict.js"
 
 const AXES = ["correctness", "readability", "architecture", "security", "performance"]
@@ -82,6 +86,132 @@ test("verdictContractBlock names every required axis and the rejection rule", ()
   assert.match(block, /REJECTED/)
   assert.match(block, /severity/)
   assert.match(block, /not accumulated across calls/)
+})
+
+test("verdictContractBlock is byte-identical whether fanout is omitted or explicitly off", () => {
+  // Every stage that does NOT fan out renders this; a drift here would rewrite
+  // every existing loop's prompt.
+  assert.equal(verdictContractBlock("review", AXES, false), verdictContractBlock("review", AXES))
+  assert.equal(verdictContractBlock("verify", undefined, false), verdictContractBlock("verify"))
+  // With no axes there is nothing to fan out over, so the flag changes nothing.
+  assert.equal(verdictContractBlock("verify", undefined, true), verdictContractBlock("verify"))
+})
+
+test("the fan-out contract asks for ONE axis, not all of them", () => {
+  const block = verdictContractBlock("review", AXES, true)
+  for (const axis of AXES) assert.match(block, new RegExp(axis))
+  assert.match(block, /exactly ONE/)
+  assert.match(block, /REVIEW AXIS line/)
+  assert.match(block, /that ONE axis and no others/)
+  assert.match(block, /worst-wins/)
+  // The contradiction this variant exists to prevent: the pass is told by its
+  // suffix to report one axis, so the contract must not also demand all five.
+  assert.doesNotMatch(block, /covering all 5 axes/)
+  assert.doesNotMatch(block, /complete array/)
+})
+
+// --- passFocusBlock (what a single focused pass is told it covers) ---
+
+test("passFocusBlock: a lens pass is byte-identical to what the driver appended before", () => {
+  // Pinned as a literal: this string moved out of driver.ts, and a one-character
+  // drift silently changes every existing reviewLenses user's prompt.
+  assert.equal(
+    passFocusBlock({ focus: "a hostile attacker", mode: "lens" }, 1, 3),
+    "Review lens 2/3: focus exclusively on a hostile attacker. The other lenses " +
+      "run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.",
+  )
+})
+
+test("passFocusBlock: an axis pass is told to report its axis and nothing else", () => {
+  const block = passFocusBlock({ focus: "security", mode: "axis" }, 3, 5)
+  assert.match(block, /REVIEW AXIS 4\/5: security\./)
+  assert.match(block, /security ONLY/)
+  assert.match(block, /The other 4 axes run as separate/)
+  assert.match(block, /axes: \[\{ axis: "security", verdict, findings \}\]/)
+  assert.match(block, /exactly that one entry/)
+})
+
+test("passFocusBlock: the single unfocused pass gets nothing appended", () => {
+  assert.equal(passFocusBlock({ focus: null, mode: "single" }, 0, 1), "")
+})
+
+// --- uncoveredAxes / withCoverageGap (the stage-level completeness gate) ---
+
+test("uncoveredAxes: names the axes an accumulated record never reported", () => {
+  const record = { verdict: "PASS" as const, axes: [{ axis: "correctness", verdict: "PASS" as const }] }
+  assert.deepEqual(uncoveredAxes(record, AXES), ["readability", "architecture", "security", "performance"])
+  assert.deepEqual(uncoveredAxes({ verdict: "PASS", axes: fiveAxes() }, AXES), [])
+  assert.deepEqual(uncoveredAxes(null, AXES), AXES)
+})
+
+test("uncoveredAxes: no requirement means no gap, and matching tolerates case and whitespace", () => {
+  assert.deepEqual(uncoveredAxes({ verdict: "PASS" }, undefined), [])
+  assert.deepEqual(uncoveredAxes({ verdict: "PASS" }, []), [])
+  const axes = AXES.map((a) => ({ axis: ` ${a.toUpperCase()} `, verdict: "PASS" as const }))
+  assert.deepEqual(uncoveredAxes({ verdict: "PASS", axes }, AXES), [])
+})
+
+test("withCoverageGap: an uncovered axis is ERROR, never FAIL — a rebuild on a review that never ran wastes an iteration", () => {
+  const record = {
+    verdict: "PASS" as const,
+    reason: "looks fine",
+    axes: [{ axis: "correctness", verdict: "PASS" as const, findings: [{ severity: "suggestion" as const, detail: "nit" }] }],
+  }
+  const gapped = withCoverageGap(record, ["security", "performance"])
+  assert.equal(gapped.verdict, "ERROR")
+  assert.match(gapped.reason ?? "", /looks fine · axes security, performance recorded no per-axis result/)
+  // The axes that DID report keep their findings — the run log and the next
+  // prompt must not lose the work that actually happened.
+  assert.deepEqual(gapped.axes, record.axes)
+})
+
+test("withCoverageGap: complete coverage returns the record untouched", () => {
+  const record = { verdict: "FAIL" as const, reason: "bug", axes: fiveAxes() }
+  assert.equal(withCoverageGap(record, []), record)
+})
+
+test("a focused pass is admitted against its own axis alone — the whole point of per-axis fan-out", () => {
+  const incoming = { verdict: "PASS" as const, axes: [{ axis: "security", verdict: "PASS" as const }] }
+  // Under the stage's full requirement this same call is rejected...
+  assert.ok(axisCoverageIssue(incoming, AXES))
+  // ...and narrowed to the pass's own axis it is accepted.
+  assert.equal(axisCoverageIssue(incoming, ["security"]), null)
+  const admission = admitVerdict(incoming, ["security"], null)
+  assert.ok(admission.ok)
+})
+
+test("a focused pass that reports the wrong axis is rejected, and the message names only its own", () => {
+  const incoming = { verdict: "PASS" as const, axes: [{ axis: "correctness", verdict: "PASS" as const }] }
+  const issue = axisCoverageIssue(incoming, ["security"])
+  assert.ok(issue)
+  assert.equal(issue.match(/Missing: ([^.]+)\./)?.[1], "security")
+  // Plural boilerplate would read as a bug and invite the pass to send all five.
+  assert.doesNotMatch(issue, /all 1 axes/)
+  assert.doesNotMatch(issue, /must carry all 1/)
+  assert.match(issue, /the axis "security"/)
+})
+
+test("a fan-out FAIL still has to name a blocking finding", () => {
+  const record = { verdict: "FAIL" as const, axes: [{ axis: "security", verdict: "FAIL" as const }] }
+  assert.ok(blockingFindingsIssue(record, ["security"]))
+  const named = {
+    verdict: "FAIL" as const,
+    axes: [
+      { axis: "security", verdict: "FAIL" as const, findings: [{ severity: "critical" as const, detail: "no authz", location: "a.ts:4" }] },
+    ],
+  }
+  assert.equal(blockingFindingsIssue(named, ["security"]), null)
+})
+
+test("consecutive focused passes accumulate into one complete record", () => {
+  let pending: VerdictRecord | null = null
+  for (const axis of AXES) {
+    const admission = admitVerdict({ verdict: "PASS", axes: [{ axis, verdict: "PASS" }] }, [axis], pending)
+    assert.ok(admission.ok)
+    pending = admission.record
+  }
+  assert.deepEqual(uncoveredAxes(pending, AXES), [])
+  assert.equal(effectiveVerdict(pending!), "PASS")
 })
 
 // --- workScopeBlock (the prompt-carried scope fence for work stages) ---

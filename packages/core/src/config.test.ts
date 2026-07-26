@@ -18,8 +18,13 @@ import {
   agentModel,
   modelFor,
   unknownStageContextKeys,
+  unknownStageFanoutKeys,
   unknownStageModelKeys,
   contextFor,
+  fanoutFor,
+  fanoutOverriddenByLenses,
+  passAxes,
+  stagePasses,
   unreviewedAxes,
   parseConfig,
   platformFor,
@@ -174,6 +179,90 @@ const stageWith = (model?: string): StageDef => ({
 const stageWithContext = (context?: Record<string, number>): StageDef => ({
   ...stageWith(),
   ...(context ? { context } : {}),
+})
+
+const AXES = ["correctness", "readability", "architecture", "security", "performance"]
+
+/** A check stage, named `review` by default so the reviewLenses scope applies. */
+const checkStage = (over: Partial<StageDef> = {}): StageDef => ({
+  ...stageWith(),
+  name: "review",
+  kind: "check",
+  command: "review",
+  agent: "workflow-review",
+  prompt: "stages/review.md",
+  requiredAxes: AXES,
+  ...over,
+})
+
+test("stagePasses: no fan-out and no lenses is one unfocused pass — today's behavior", () => {
+  assert.deepEqual(stagePasses(DEFAULT_CONFIG, "engineering", checkStage()), [{ focus: null, mode: "single" }])
+  // A work stage never fans out, whatever the config says.
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { build: "axis" } } } })
+  assert.deepEqual(stagePasses(c, "engineering", stageWith()), [{ focus: null, mode: "single" }])
+})
+
+test("stagePasses: fanout axis yields one pass per required axis, in order", () => {
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" } } } })
+  assert.deepEqual(
+    stagePasses(c, "engineering", checkStage()),
+    AXES.map((focus) => ({ focus, mode: "axis" })),
+  )
+  // The manifest can declare it without any config at all.
+  assert.deepEqual(
+    stagePasses(DEFAULT_CONFIG, "engineering", checkStage({ fanout: "axis" })),
+    AXES.map((focus) => ({ focus, mode: "axis" })),
+  )
+})
+
+test("stagePasses: config stageFanout wins over the manifest, and none turns a declared fan-out off", () => {
+  const off = parseConfig({ workflows: { engineering: { stageFanout: { review: "none" } } } })
+  assert.deepEqual(stagePasses(off, "engineering", checkStage({ fanout: "axis" })), [{ focus: null, mode: "single" }])
+  assert.equal(fanoutFor(off, "engineering", checkStage({ fanout: "axis" })), undefined)
+  const on = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" } } } })
+  assert.equal(fanoutFor(on, "engineering", checkStage()), "axis")
+})
+
+test("stagePasses: reviewLenses wins over a declared per-axis fan-out — an existing lens setup is never reinterpreted", () => {
+  const c = parseConfig({ reviewLenses: ["a hostile attacker", "the next maintainer"] })
+  assert.deepEqual(stagePasses(c, "engineering", checkStage({ fanout: "axis" })), [
+    { focus: "a hostile attacker", mode: "lens" },
+    { focus: "the next maintainer", mode: "lens" },
+  ])
+  assert.equal(fanoutOverriddenByLenses(c, "engineering", checkStage({ fanout: "axis" })), true)
+  assert.equal(fanoutOverriddenByLenses(c, "engineering", checkStage()), false)
+  assert.equal(fanoutOverriddenByLenses(DEFAULT_CONFIG, "engineering", checkStage({ fanout: "axis" })), false)
+})
+
+test("stagePasses: lenses stay scoped to the stage named review; fanout does not", () => {
+  // A sitter's triage stage is not a code review — lenses must not leak onto it,
+  // which is the hardcode that used to live inside the OpenCode driver.
+  const c = parseConfig({ reviewLenses: ["security"] })
+  const triage = checkStage({ name: "triage", fanout: "axis", requiredAxes: ["correctness"] })
+  assert.deepEqual(stagePasses(c, "pr-sitter", triage), [{ focus: "correctness", mode: "axis" }])
+})
+
+test("stagePasses: fanout with no required axes falls back to one pass", () => {
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { verify: "axis" } } } })
+  const verify = checkStage({ name: "verify", requiredAxes: undefined })
+  assert.deepEqual(stagePasses(c, "engineering", verify), [{ focus: null, mode: "single" }])
+})
+
+test("passAxes: an axis pass is narrowed to its own axis, a lens pass is unenforced, a single pass carries the stage's", () => {
+  const def = checkStage()
+  assert.deepEqual(passAxes(def, { focus: "security", mode: "axis" }), ["security"])
+  assert.equal(passAxes(def, { focus: "a hostile attacker", mode: "lens" }), undefined)
+  assert.deepEqual(passAxes(def, { focus: null, mode: "single" }), AXES)
+})
+
+test("unknownStageFanoutKeys names a stageFanout key that matches no stage", () => {
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { revieww: "axis", review: "axis" } } } })
+  assert.deepEqual(unknownStageFanoutKeys(c, "engineering", ["build", "review"]), ["revieww"])
+  assert.deepEqual(unknownStageFanoutKeys(DEFAULT_CONFIG, "engineering", ["review"]), [])
+})
+
+test("parseConfig rejects an unknown stageFanout strategy", () => {
+  assert.throws(() => parseConfig({ workflows: { engineering: { stageFanout: { review: "lens" } } } }), /Invalid/)
 })
 
 test("modelFor: config stageModels wins over the manifest stage's model, which wins over nothing", () => {

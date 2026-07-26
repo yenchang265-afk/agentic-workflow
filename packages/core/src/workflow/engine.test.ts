@@ -251,6 +251,49 @@ test("composePrompt carries the five-axis payload contract on review, and none o
   assert.doesNotMatch(composePrompt(eng, { ...state, stage: "verify" }, "verify"), /axes/)
 })
 
+test("composePrompt swaps in the per-axis contract when review fans out, and only then", () => {
+  const state = resumeAtBuild("add foo", task, "PLAN BODY")
+  const fanned: Config = { ...config, workflows: { engineering: { stageFanout: { review: "axis" } } } }
+  const review = composePrompt(eng, { ...state, stage: "review" }, "review", fanned)
+  assert.match(review, /exactly ONE/)
+  assert.match(review, /REVIEW AXIS line/)
+  // Without the config the shipped manifest declares no fan-out, so the prompt
+  // must be byte-identical to what every existing loop renders today.
+  assert.equal(
+    composePrompt(eng, { ...state, stage: "review" }, "review", config),
+    composePrompt(eng, { ...state, stage: "review" }, "review"),
+  )
+  assert.doesNotMatch(composePrompt(eng, { ...state, stage: "review" }, "review", config), /exactly ONE/)
+  // VERIFY declares no axes, so fanning it out changes nothing to fan out over.
+  const verifyFan: Config = { ...config, workflows: { engineering: { stageFanout: { verify: "axis" } } } }
+  assert.equal(
+    composePrompt(eng, { ...state, stage: "verify" }, "verify", verifyFan),
+    composePrompt(eng, { ...state, stage: "verify" }, "verify", config),
+  )
+})
+
+test("composePrompt: configured reviewLenses beat a fan-out, and the contract follows the passes that will run", () => {
+  const state = resumeAtBuild("add foo", task, "PLAN BODY")
+  // Both knobs set: lenses win, so the contract must NOT tell each pass to
+  // report a single axis it was never assigned.
+  const both: Config = {
+    ...config,
+    reviewLenses: ["a hostile attacker"],
+    workflows: { engineering: { stageFanout: { review: "axis" } } },
+  }
+  const review = composePrompt(eng, { ...state, stage: "review" }, "review", both)
+  assert.doesNotMatch(review, /exactly ONE/)
+  assert.equal(review, composePrompt(eng, { ...state, stage: "review" }, "review", config))
+})
+
+test("composeStagePrompt defaults its fan-out from the stage, so the hub preview needs no config", () => {
+  const def = stageDef(eng.manifest, "review")
+  const ctx = promptContext(resumeAtBuild("add foo", task, "PLAN BODY"))
+  const tpl = eng.prompts["review"] ?? ""
+  assert.doesNotMatch(composeStagePrompt(def, tpl, ctx), /exactly ONE/)
+  assert.match(composeStagePrompt({ ...def, fanout: "axis" }, tpl, ctx), /exactly ONE/)
+})
+
 test("composePrompt fences work stages to their own stage", () => {
   const state = resumeAtBuild("add foo", task, "PLAN BODY")
   for (const stage of ["plan", "build"]) {

@@ -4,7 +4,7 @@ import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { clampWithStats } from "./budget.js"
-import { contextFor } from "../config.js"
+import { contextFor, stagePasses } from "../config.js"
 import {
   verdictContractBlock,
   verdictFeedbackBlock,
@@ -177,10 +177,18 @@ export const promptContext = (
  * (the hub's creator preview) — compose the exact same output without the
  * throw. `composePrompt` layers loading and hook resolution on top.
  */
-export const composeStagePrompt = (def: StageDef, tpl: string, ctx: TemplateContext): string => {
+export const composeStagePrompt = (
+  def: StageDef,
+  tpl: string,
+  ctx: TemplateContext,
+  // Defaulted from the stage itself so a config-less caller (the hub's creator
+  // preview) shows what the manifest declares. `composePromptWithStats` passes
+  // the EFFECTIVE mode instead, because config can turn fan-out on or off.
+  fanout = def.fanout === "axis",
+): string => {
   const rendered = renderPrompt(tpl, ctx)
   return def.kind === "check"
-    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes)}`
+    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, fanout)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}`
 }
 
@@ -210,7 +218,12 @@ export const composePromptWithStats = (
   const base = promptContext(state, budgets)
   const hookRef = loaded.manifest.hooks.compose[def.name]
   const ctx = hookRef ? resolveComposeHook(hookRef)(base, state) : base
-  return { prompt: composeStagePrompt(def, tpl, ctx), elided }
+  // The EFFECTIVE mode, not the manifest's: a configured `reviewLenses` beats a
+  // declared per-axis fan-out, and the contract must describe the passes that
+  // will actually run — otherwise a lens pass is told to report one axis it was
+  // never given, or an axis pass is told to report all five.
+  const fanout = config ? stagePasses(config, loaded.manifest.kind, def).some((p) => p.mode === "axis") : undefined
+  return { prompt: composeStagePrompt(def, tpl, ctx, fanout), elided }
 }
 
 /** Render the prompt threaded into `target`'s stage command. */
