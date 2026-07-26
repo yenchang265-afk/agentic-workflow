@@ -15,6 +15,7 @@ var APPROVE = new RegExp(`(?:^|\\s)${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)$`, "im")
 var REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im");
 var RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im");
 var REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im");
+var ABANDON = new RegExp(`(?:^|\\s)${CMD}\\s+abandon\\b[ \\t]*(.*)$`, "im");
 var ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i");
 var ADHOC_PLAN = /(?:^|\s)\/(?:agentic-workflow:)?plan(?![-\w])/i;
 var isAdhocPlan = (prompt) => ADHOC_PLAN.test(String(prompt ?? ""));
@@ -47,11 +48,20 @@ var gateArgsFor = (prompt) => {
     if (!id) return { passThrough: true };
     return { argv: ["gate", "retask", id], continueTurn: true };
   }
+  const abandon = prompt.match(ABANDON);
+  if (abandon) {
+    const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = words[0] || "";
+    if (!id) return { passThrough: true };
+    return { argv: ["gate", "abandon", id, ...words.slice(1)] };
+  }
   const remove = prompt.match(REMOVE);
   if (remove) {
-    const id = (remove[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+    const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = words.find((w) => !w.startsWith("-")) || "";
     if (!id) return { passThrough: true };
-    return { argv: ["gate", "remove", id] };
+    const force = words.some((w) => w === "--force" || w === "-f");
+    return { argv: ["gate", "remove", id, ...force ? ["--force"] : []] };
   }
   return null;
 };

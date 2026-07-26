@@ -71,7 +71,7 @@ import {
   worktreeForBranch,
 } from "@agentic-workflow/core/workflow/git"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { approveAny, rejectAny, removeTask, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -898,7 +898,7 @@ export const runStageWithLenses = async (
  */
 const snapshot = async (deps: Deps, config: Config, state: WorkflowState): Promise<void> => {
   if (!state.task) return
-  await saveState(deps.$, deps.directory, config.tasksDir, state.task.id, state)
+  await saveState(deps.$, deps.directory, config.tasksDir, state.task.id, state, deps.log)
 }
 
 /**
@@ -1643,22 +1643,46 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
 }
 
 /**
- * Handle `remove <id>` — hard-delete a task from the backlog entirely. Unlike
- * every other gate this deletes the file rather than moving it: the task leaves
- * the backlog for good (git history retains it if the backlog is tracked). Core
- * refuses a task a live loop is driving or one holding a claim marker. An id is
- * required — there is no folder-driven "remove the awaiting one" (too easy to
- * delete the wrong task).
+ * Handle `remove <id> [--force]` — hard-delete a task from the backlog entirely.
+ * Unlike every other gate this deletes the file rather than moving it: the task
+ * leaves the backlog for good, recoverable from git ONLY when the backlog is
+ * tracked, which is not the default. Core refuses a task a live loop is driving
+ * or one holding a claim marker. An id is required — there is no folder-driven
+ * "remove the awaiting one" (too easy to delete the wrong task).
+ *
+ * Without `--force` core reports what it WOULD delete and deletes nothing. This
+ * runs inside `command.execute.before`, so there is no turn in which a model
+ * could ask the user first — the dry run is the only confirmation there is. Use
+ * `abandon` when the task should merely leave the active backlog.
  */
 export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
-  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id>.`, "warning"))
+  const words = args.trim().split(/\s+/).filter(Boolean)
+  const force = words.some((w) => w === "--force" || w === "-f")
+  const id = words.find((w) => !w.startsWith("-")) ?? ""
+  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id> [--force].`, "warning"))
   try {
-    const r = await removeTask(gateCtx(deps, config), id)
+    const r = await removeTask(gateCtx(deps, config), id, force)
     await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
   } catch (err) {
     await toast(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `abandon <id> [reason]` — cancel a task by moving it to `abandoned/`.
+ * The reversible counterpart to `remove`: the file survives, so unlike `remove`
+ * this needs no confirmation. An id is required for the same reason.
+ */
+export const handleAbandon = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const [id = "", ...rest] = args.trim().split(/\s+/).filter(Boolean)
+  if (!id) return void (await toast(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning"))
+  try {
+    const r = await abandonTask(gateCtx(deps, config), id, rest.join(" ") || undefined)
+    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+  } catch (err) {
+    await toast(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -1713,7 +1737,8 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
-  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] · replan [id] [reason] · plan <id> · ` +
+  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] · replan [id] [reason] · ` +
+  "abandon <id> [reason] · remove <id> --force · plan <id> · " +
   "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
@@ -1794,6 +1819,7 @@ export const handleCommand = async (
     if (verb === "approve") return void (await handleApprove(deps, sessionID, rest, config))
     if (verb === "replan") return void (await handleReplan(deps, sessionID, rest, config))
     if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
+    if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {

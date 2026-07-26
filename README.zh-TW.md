@@ -149,6 +149,14 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
   停在迴圈等待點上的任務；兩個等待點都沒有任務時，才退而推進唯一的一份草稿
 - `/agentic-workflow:engineering replan [id] [reason]` —— 拒絕動詞：把一份暫存的計畫（或以 id
   指定、觸發了上限的任務）送回 `queued/` 重新規劃
+- `/agentic-workflow:engineering abandon <id> [reason]` —— 取消一項任務：移到 `abandoned/`，
+  也就是「不會再做」的終結資料夾。檔案會保留，因此可以再移回來；一份追蹤用的
+  epic 草稿在所有子任務都出貨後，也是用這個動詞收尾
+- `/agentic-workflow:engineering remove <id> --force` —— 硬刪除一項任務：檔案會被刪除，
+  而不是移動。單獨的 `remove <id>` 不會刪除任何東西，只會回報該 id 解析到哪一份
+  任務 —— `--force` 才是確認。只有在你設定 `ignoreBacklog: false` 時才能從 git
+  還原；預設會把 `docs/tasks/` 完全排除在 git 之外，所以除非你真的要讓檔案消失，
+  否則請優先使用 `abandon`
 - `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]`（OpenCode）·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ——
   `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存（唯一的 PLAN 入口）；

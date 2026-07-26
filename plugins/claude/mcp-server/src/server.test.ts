@@ -24,7 +24,7 @@ const code = (src: string) =>
 const flat = (src: string) => code(src).replace(/\n\s*/g, " ")
 
 /** The body of one registerTool call, from its name literal to the next registration. */
-const toolBody = (src: string, name: string) => src.slice(src.indexOf(`"${name}",`)).split("server.registerTool(")[0]
+const toolBody = (src: string, name: string) => src.slice(src.indexOf(`"${name}",`)).split("server.registerTool(")[0] ?? ""
 
 // Every fire payload has always carried the configured stage model, but the
 // notes that tell the orchestrator what to spawn once named only `agent` — so
@@ -45,7 +45,7 @@ test("every spawn instruction the server emits is composed by spawnNote, so none
   // would splice `undefined` into every spawn note. A host that genuinely cannot
   // convey a model declares `""` — an explicit empty, which this still catches
   // the absence of.
-  const dialects = [...code(src).matchAll(/^ {2}(claude|qwen): \{$/gm)].map((m) => m[1])
+  const dialects = [...code(src).matchAll(/^ {2}(claude|qwen): \{$/gm)].map((m) => m[1]).filter((h): h is string => !!h)
   assert.ok(dialects.length >= 2, `expected every host dialect to be found; got ${dialects.length}`)
   for (const host of dialects) {
     const body = code(src).slice(code(src).indexOf(`  ${host}: {`))
@@ -53,7 +53,7 @@ test("every spawn instruction the server emits is composed by spawnNote, so none
     assert.match(entry, /spawnToolNote:/, `the ${host} dialect declares no spawnToolNote`)
     assert.match(entry, /spawnModelNote:/, `the ${host} dialect declares no spawnModelNote`)
   }
-  const notes = [...flat(src).matchAll(/\bnote:\s*(.{0,240})/g)].map((m) => m[1]).filter((n) => /spawn/i.test(n))
+  const notes = [...flat(src).matchAll(/\bnote:\s*(.{0,240})/g)].map((m) => m[1]).filter((n): n is string => !!n && /spawn/i.test(n))
   assert.ok(notes.length >= 6, `expected every spawn note to be found; got ${notes.length}`)
   for (const note of notes) {
     assert.match(note, /spawnNote\(/, `a spawn note bypasses the composer and can omit the model:\n  ${note.trim()}`)

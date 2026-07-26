@@ -137,6 +137,19 @@ test("the verbs file has no unmarked prose — it would be injected on every ver
   assert.deepEqual(unmarkedLines(verbs()), [], "move shared prose into the router instead")
 })
 
+test("every verb's block opens with that verb's own bullet, not mid-sentence", () => {
+  // The opencode command shipped two blocks whose marker sat one line late, so
+  // the verb's opening bullet stayed in the PREVIOUS block and its own help
+  // began mid-sentence. This file is correctly aligned today; pin it, because
+  // every other coverage test here passes either way.
+  const body = verbs()
+  for (const verb of advertisedVerbs(router())) {
+    const slice = sliceForVerb(body, verb)
+    const bullet = new RegExp(`^- \\*\\*\`${verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "m")
+    assert.match(slice, bullet, `${verb}'s block must open on its own bullet — a marker is one line off`)
+  }
+})
+
 test("the router carries no verb procedure, so nothing is said twice", () => {
   const body = router()
   assert.doesNotMatch(body, /aw:verb/, "the router is never sliced")

@@ -31,6 +31,7 @@ jobs:
           node scripts/gen-prompts.mjs
           git diff --exit-code -- \
             plugins/opencode/agents plugins/claude/agents plugins/qwen/agents \
+            plugins/opencode/commands \
             plugins/claude/verbs plugins/qwen/verbs \
             plugins/claude/skills/workflow-orchestration plugins/qwen/skills
 
@@ -38,6 +39,9 @@ jobs:
         run: |
           node scripts/build-hooks.mjs
           git diff --exit-code -- plugins/claude/hooks plugins/qwen/hooks
+
+      - name: Build the hub (typecheck alone never exercises the web bundle)
+        run: npm run build -w @agentic-workflow/hub
 
       - name: Build and smoke-run the MCP server (both hosts)
         run: |

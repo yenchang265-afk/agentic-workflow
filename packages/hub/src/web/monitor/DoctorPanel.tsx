@@ -74,8 +74,8 @@ export const DoctorPanel = () => {
       {data.duplicates.length > 0 && (
         <p className="doctor-note doctor-note--warn">
           Duplicate ids never auto-resolved (the hub can’t know which copy is canonical):{" "}
-          {data.duplicates.map((d) => `${d.id} in ${d.statuses.join(" + ")}`).join("; ")} — keep one, move the rest to
-          abandoned by hand.
+          {data.duplicates.map((d) => `${d.id} in ${d.statuses.join(" + ")}`).join("; ")} — keep one, and use the
+          Abandon button on the rest.
         </p>
       )}
 

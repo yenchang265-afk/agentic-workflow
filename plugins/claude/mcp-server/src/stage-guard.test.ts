@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { stageOrderError } from "./stage-guard.ts"
+import { stageOrderError } from "./stage-guard.js"
 
 // workflow_stage arms the marker for the stage the state machine is AT — never a
 // stage ahead of it. A mismatch means the orchestrator skipped workflow_advance:

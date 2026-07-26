@@ -64,9 +64,11 @@ Authoring + gates (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering new <idea>` — the main agent **always interviews you** (at
   minimum a restate-and-confirm) to pin down the goal and testable acceptance
   criteria, then writes a **planless draft** into `docs/tasks/draft/`.
-- `/agentic-workflow:engineering retask <id> [note]` — reshape a `draft/` task before you
-  approve it: the main agent re-interviews you (seeded by the optional note)
-  and rewrites the same draft in place — same id, no plan. Drafts only.
+- `/agentic-workflow:engineering retask <id> [note]` — reshape a **planless** task before
+  it is planned: the main agent re-interviews you (seeded by the optional note)
+  and rewrites the task in place — same id, no plan. Takes a `draft/` task, or
+  a `queued/` one (its approval is withdrawn and it moves back to `draft/`
+  first). Once a plan exists, `replan` is the verb instead.
 - `/agentic-workflow:engineering approve [id]` — THE gate verb, unified and folder-driven
   (handled deterministically by a hook before the agent's turn). Which move
   happens depends on which folder the task is in (draft → queued, plan-review
@@ -83,6 +85,20 @@ Authoring + gates (`/agentic-workflow:engineering`):
   parked plan (or a cap-tripped `in-progress/` task, by id) back to
   `queued/`, with the reason audited. (Also exposed as the `workflow_reject` MCP
   tool.)
+- `/agentic-workflow:engineering abandon <id> [reason]` — cancel a task: it moves to
+  `abandoned/`, the terminal folder for work that will not be done, with the
+  reason audited. Works from any non-terminal folder (a shipped `completed/`
+  task is refused). The file is kept, so the move is reversible — this is the
+  cancellation to reach for, and the way to close a tracking epic once every
+  child has shipped. (Also `workflow_abandon`.)
+- `/agentic-workflow:engineering remove <id> --force` — hard-delete a task: unlike every
+  other verb the file is deleted rather than moved. A bare `remove <id>`
+  deletes nothing and reports which task the id resolved to; `--force` is the
+  confirmation, which matters because ids are prefix-resolvable and a typo'd
+  short handle can name a different real task. Git retains the file only when
+  the backlog is tracked, and `ignoreBacklog` defaults to `true`, so a forced
+  remove is usually permanent — prefer `abandon`. (Also `workflow_remove`,
+  which takes the same `force`.)
 
 The loop (`/agentic-workflow:engineering`):
 

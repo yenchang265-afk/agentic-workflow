@@ -10,7 +10,10 @@ import { branchExists, currentBranch, pushBranch } from "./git.js"
  * GitHub or Azure DevOps, chosen by `platformFor(config, kind)`. Called only
  * from the ship gate, after the task has already been moved to `completed/`:
  * this never throws, and a failure here must never look like the ship itself
- * failed — callers surface `reason` as an audit note, nothing more.
+ * failed. It must not look like a SUCCESS either: the ship gate reports `reason`
+ * on the `GateResult.message` every host renders, as well as in the audit note —
+ * the note alone is invisible under the default `ignoreBacklog: true`, which
+ * never commits it.
  */
 
 export interface ShipPrResult {

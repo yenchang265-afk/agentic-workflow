@@ -72,15 +72,37 @@ const MOVES: Partial<Record<TaskStatus, readonly Move[]>> = {
 }
 
 /**
- * Remove is offered on every column, so it lives outside MOVES: it hard-deletes
- * the task file rather than moving it, and the delete is committed. Danger copy
- * names the irreversibility; core still refuses a live-driven or claim-held task.
+ * The two cancellations are offered on every column, so they live outside MOVES.
+ * They are deliberately a pair: `abandon` is the reversible one (the task file
+ * moves to `abandoned/` and can be moved back), `remove` deletes.
+ *
+ * `abandoned` was a first-class status with no way to reach it until this button
+ * existed — the docs told people to move files by hand — so it is listed FIRST,
+ * as the cancellation to reach for.
+ */
+const ABANDON_MOVE: Move = {
+  action: "abandon",
+  label: "Abandon",
+  title: "Abandon this task?",
+  detail: "Moves the task to abandoned/ and commits the move. The file is kept, so this can be undone by moving it back.",
+  withReason: true,
+}
+
+/**
+ * Remove hard-deletes the task file rather than moving it, and commits the
+ * delete. Danger copy names the irreversibility; core still refuses a
+ * live-driven or claim-held task.
+ *
+ * The copy leads with the DEFAULT: `ignoreBacklog` defaults to true, which keeps
+ * the backlog out of git entirely, so for most installs there is no history to
+ * recover from and "git keeps it" would be a false reassurance.
  */
 const REMOVE_MOVE: Move = {
   action: "remove",
   label: "Remove",
   title: "Remove this task?",
-  detail: "Deletes the task file from the backlog and commits the removal. This cannot be undone from your working tree (git history keeps it if the backlog is tracked).",
+  detail:
+    "Deletes the task file from the backlog and commits the removal. Unless you set ignoreBacklog: false, the backlog is not tracked by git — so this is permanent. Abandon keeps the file.",
   danger: true,
 }
 
@@ -165,8 +187,11 @@ export const GateActions = ({
   kind: string
   claimed: boolean
 }) => {
-  // Remove is available on every column; the forward moves are column-specific.
-  const moves = [...(MOVES[status as TaskStatus] ?? []), REMOVE_MOVE]
+  // The cancellations are available on every column; the forward moves are
+  // column-specific. Abandon is offered only where it can work — core refuses a
+  // completed or already-abandoned task, so no button should promise otherwise.
+  const cancellable = status !== "completed" && status !== "abandoned"
+  const moves = [...(MOVES[status as TaskStatus] ?? []), ...(cancellable ? [ABANDON_MOVE] : []), REMOVE_MOVE]
   return (
     <div className="gate-actions">
       {moves.map((m) => (

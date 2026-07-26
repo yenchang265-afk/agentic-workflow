@@ -14,6 +14,9 @@ import {
   resolveAdoHeaders,
 } from "./ado-shared.js"
 import type { AdoHttp } from "./ado-pr.js"
+// Part of this module's own surface: `makeAdoCiRunsSource` takes an `http` of
+// this type, so callers (and its tests) resolve it from here.
+export type { AdoHttp }
 import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
 
 /**

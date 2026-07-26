@@ -52,7 +52,7 @@
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
        body listing the children in order). **Never approve it** — an
        un-approved draft is inert, so the loop never claims it. Close it by
-       hand with `mcp__agentic-workflow__workflow_move` (to `abandoned/` or
+       hand with `abandon <id>` (or `workflow_move` to
        `completed/`) once every child has shipped.
   5. **Task gate — ask, don't require a command.** For each non-epic drafted
      child (skip the epic tracking file — never approve it), ask with
@@ -129,18 +129,37 @@
   audit note. (Fallback: `mcp__agentic-workflow__workflow_reject({id, reason})`, id
   optional.)
 <!-- /aw:verb replan -->
+<!-- aw:verb abandon -->
+- **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
+  terminal folder for work that will not be done. The **reversible**
+  cancellation and the one to reach for — the file is kept, so it can be moved
+  back. Works from **any** non-terminal status folder; a `completed/` task is
+  refused (shipped work isn't cancellable). **Handled by the same hook** as
+  approve/replan, so the move is already done before your turn; an id is
+  required. Core refuses a task a live loop is driving or one holding a claim
+  marker, and releases any worktree the task owned. (Fallback:
+  `mcp__agentic-workflow__workflow_abandon({id, reason})`.) This is also how a
+  tracking epic draft is closed once every child has shipped.
+<!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
-- **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
-  replan/retask this does **not** move the task to another folder: the file is
-  deleted and the removal committed, so the task is gone from the backlog for
-  good (git history retains it if the backlog is tracked). Works from **any**
+- **`remove <id> --force`** — hard-delete a task from the backlog entirely.
+  Unlike replan/retask/abandon this does **not** move the task to another
+  folder: the file is deleted and the removal committed. Works from **any**
   status folder — a stale draft, a rejected plan, a finished task. **Handled by
   the same hook** as approve/replan; an id is required (a bare `remove` never
   guesses which task to delete). Core refuses a task a live loop is driving or
   one holding a claim marker, and releases any worktree the task owned.
-  (Fallback: `mcp__agentic-workflow__workflow_remove({id})`.) **Destructive and
-  cannot be undone from the working tree** — only run it when the user
-  explicitly wants the task gone; confirm the id first.
+  (Fallback: `mcp__agentic-workflow__workflow_remove({id, force: true})`.)
+  - **`--force` is the confirmation, and the hook parses it — not you.** This
+    verb dispatches before your turn and then blocks it, so there is no point
+    at which you could ask the user. A bare `remove <id>` therefore deletes
+    nothing: it reports which task the id resolved to and stops. Relay that
+    report and let the user re-run with `--force`. Never add `--force` to a
+    command the user did not write it in.
+  - **Usually permanent.** Git retains the file only when the backlog is
+    tracked, and `ignoreBacklog` defaults to `true` (the backlog is kept out of
+    git entirely). Prefer `abandon` unless the user has said they want the file
+    gone.
 <!-- /aw:verb remove -->
 <!-- aw:verb plan -->
 - **`plan <id>`** — plan one approved task now. Call
