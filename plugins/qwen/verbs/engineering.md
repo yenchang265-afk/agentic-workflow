@@ -43,7 +43,7 @@
        ships stacked children one at a time in that order — `priority` orders
        claims but does **not** block, so this human sequencing is the
        dependency gate.
-  4. Spawn the **`workflow-plan-author`** subagent (Task tool) once with the
+  4. Spawn the **`workflow-plan-author`** subagent (`agent` tool) once with the
      confirmed set to write the draft file(s) — one draft, or N child drafts
      plus one epic tracking file. No plan is written now — the loop's PLAN
      stage plans each task right before execution, so plans don't rot while it
@@ -56,14 +56,14 @@
        `completed/`) once every child has shipped.
   5. **Task gate — ask, don't require a command.** For each non-epic drafted
      child (skip the epic tracking file — never approve it), ask with
-     **AskUserQuestion**: "Approve `<id>` now?"
+     **`ask_user_question`**: "Approve `<id>` now?"
      - **Approve** → call `mcp__agentic-workflow__workflow_approve({id})` directly
        (task gate: `draft/` → `queued/`) — the user does not need to type
        `/agentic-workflow:engineering approve <id>`. Then ask a second
-       **AskUserQuestion**: "Plan it now?"
+       **`ask_user_question`**: "Plan it now?"
        - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
-         spawn `workflow-plan-author` (task mode, Task tool) with the
-         returned prompt, passing the response's `model` when present, then
+         spawn `workflow-plan-author` (task mode, `agent` tool) with the
+         returned prompt, then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `workflow-orchestration` skill).
@@ -97,7 +97,7 @@
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
      the optional `note` and the current draft. Re-confirm the goal and 2–5
      testable acceptance criteria, then get an explicit "looks right".
-  4. Spawn the **`workflow-plan-author`** subagent (Task tool) in **`retask` mode**
+  4. Spawn the **`workflow-plan-author`** subagent (`agent` tool) in **`retask` mode**
      with the id and the confirmed title/priority/acceptance/body (carry
      forward the `tracker` block if the draft had one) to rewrite
      `docs/tasks/draft/<id>.md` **in place** — the id/filename never changes.
@@ -145,10 +145,10 @@
 <!-- aw:verb plan -->
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
-  PLAN (no git isolation): spawn `workflow-plan-author` (Task tool) in task mode
-  with the returned prompt, passing the response's `model` when present, then
+  PLAN (no git isolation): spawn `workflow-plan-author` (`agent` tool) in task mode
+  with the returned prompt, then
   `workflow_advance` — the task parks in `plan-review/` and
-  the plan gate goes live: ask the user inline (AskUserQuestion — Approve /
+  the plan gate goes live: ask the user inline (`ask_user_question` — Approve /
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
   only telling them which command to run. If the id is already build-ready
   (`in-progress/`), don't start it here — `claim` builds it.
@@ -161,7 +161,7 @@
   task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
   `workflow-verify` / `workflow-review` via the
-  Task tool, passing the response's `model` when present)
+  `agent` tool)
   and `workflow_advance` after
   each returns, until a terminal action. This is the pull equivalent of the
   OpenCode plugin's `watch` — there is no standing watch mode on this
@@ -170,7 +170,7 @@
 <!-- aw:verb recover -->
 - **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
   resume driving from the action it returns: `workflow_stage`, then spawn the
-  subagent it names with the Task tool, passing the response's `model` when present.
+  subagent it names with the `agent` tool.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
@@ -222,7 +222,7 @@ and the next PLAN pass addresses the failure.
 <!-- aw:verb new|retask|plan|claim -->
 When a loop you are driving hits a gate live (a draft just written, a plan
 just parked, or a build just finished), offer the gate choices inline via
-AskUserQuestion instead of making the user type a command — see `new` step 5
+`ask_user_question` instead of making the user type a command — see `new` step 5
 above for the task gate, and the `workflow-orchestration` skill for the plan and
 ship gates. The command verbs above are the deferred path for gates hit
 while you were away.

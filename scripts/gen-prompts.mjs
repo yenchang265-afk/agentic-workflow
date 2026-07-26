@@ -129,6 +129,42 @@ const expandAllowlist = (frontmatter, agent) => {
   return frontmatter.replace(marker, () => lines)
 }
 
+/**
+ * Per-host substitutions for host-specific words that appear MID-SENTENCE.
+ * A `{{#host}}` block is right for a paragraph; for a tool name inside a clause
+ * it would shred the prose into per-host fragments nobody can read or keep in
+ * step. Applied after the host blocks, and an unrendered `{{` still throws — so
+ * a typo'd token fails the build instead of shipping a literal `{{spawnTool}}`.
+ *
+ * `modelClause` is empty on Qwen because its `agent` tool takes no per-call
+ * model (the model is baked into the installed agent file at install time);
+ * that emptiness is a declared value, not a missing entry.
+ */
+const TOKENS = {
+  opencode: {
+    hostName: "OpenCode",
+    spawnTool: "subtask command",
+    askTool: "a follow-up question",
+    modelClause: "",
+  },
+  claude: {
+    hostName: "Claude Code",
+    spawnTool: "Task tool",
+    askTool: "AskUserQuestion",
+    modelClause: ", passing the response's `model` when present",
+  },
+  qwen: {
+    hostName: "Qwen Code",
+    spawnTool: "`agent` tool",
+    askTool: "`ask_user_question`",
+    modelClause: "",
+  },
+}
+
+/** Substitute the host's inline tokens. Unknown `{{...}}` is left for the caller's guard. */
+const substitute = (text, host) =>
+  text.replace(/\{\{([a-zA-Z]+)\}\}/g, (whole, key) => (key in TOKENS[host] ? TOKENS[host][key] : whole))
+
 const OPEN = /^\{\{#host ([a-z]+(?:\|[a-z]+)*)\}\}\s*$/
 const CLOSE = /^\{\{\/host\}\}\s*$/
 
@@ -173,7 +209,7 @@ for (const name of fs.readdirSync(SRC).sort()) {
     // OpenCode enforces the bash allowlist via agent-frontmatter permissions;
     // expand the manifest-sourced globs into it (no-op when there's no marker).
     const fm = host === "opencode" ? expandAllowlist(raw, name) : raw
-    const rendered = render(body, host)
+    const rendered = substitute(render(body, host), host)
     if (rendered.includes("{{")) throw new Error(`${name}/${host}: unrendered marker survived`)
     fs.mkdirSync(outDir, { recursive: true })
     fs.writeFileSync(path.join(outDir, `${name}.md`), `---\n${fm}\n---\n\n${rendered}`)
@@ -181,6 +217,66 @@ for (const name of fs.readdirSync(SRC).sort()) {
   }
 }
 console.log(`gen-prompts: wrote ${wrote} files from ${SRC}`)
+
+/**
+ * The per-verb command halves (prompts/verbs/<name>.md → plugins/<host>/verbs/).
+ * Both prompt-injecting hosts — Claude Code and Qwen Code — receive the invoked
+ * verb's block from a UserPromptSubmit hook, and the two texts differ only in
+ * the spawn/ask tool names. Hand-maintaining two copies of a 200-line procedure
+ * is exactly the drift AGENTS.md warns about: a verb that loses its block does
+ * not error, it silently falls back to no instructions at all.
+ *
+ * OpenCode is absent on purpose — it slices its own rendered command prompt
+ * (plugins/opencode/src/command-slice.ts) and has no verbs/ directory.
+ */
+const VERBS_SRC = path.join(ROOT, "prompts", "verbs")
+const VERB_HOSTS = ["claude", "qwen"]
+let verbs = 0
+if (fs.existsSync(VERBS_SRC)) {
+  for (const file of fs.readdirSync(VERBS_SRC).sort()) {
+    if (!file.endsWith(".md")) continue
+    const body = fs.readFileSync(path.join(VERBS_SRC, file), "utf8")
+    for (const host of VERB_HOSTS) {
+      const rendered = substitute(render(body, host), host)
+      if (rendered.includes("{{")) throw new Error(`verbs/${file}/${host}: unrendered marker survived`)
+      const outDir = path.join(ROOT, "plugins", host, "verbs")
+      fs.mkdirSync(outDir, { recursive: true })
+      fs.writeFileSync(path.join(outDir, file), rendered)
+      verbs++
+    }
+  }
+}
+console.log(`gen-prompts: wrote ${verbs} verb files from ${VERBS_SRC}`)
+
+/**
+ * The driving-protocol skill (prompts/skills/<name>/SKILL.md → plugins/<host>/skills/).
+ *
+ * prompts/README.md says the workflow-orchestration skills are NOT generated
+ * because OpenCode's in-process driver and the MCP pull protocol are genuinely
+ * different documents — still true, and why `skills/workflow-orchestration/`
+ * stays hand-authored for OpenCode. But Claude Code and Qwen Code run the SAME
+ * protocol and differ only in tool names, so hand-maintaining a second 290-line
+ * copy would be pure drift surface. Same rule as the verbs: one source, host
+ * tokens for the words, host blocks for the paragraphs.
+ */
+const SKILLS_SRC = path.join(ROOT, "prompts", "skills")
+let skills = 0
+if (fs.existsSync(SKILLS_SRC)) {
+  for (const name of fs.readdirSync(SKILLS_SRC).sort()) {
+    const file = path.join(SKILLS_SRC, name, "SKILL.md")
+    if (!fs.existsSync(file)) continue
+    const body = fs.readFileSync(file, "utf8")
+    for (const host of VERB_HOSTS) {
+      const rendered = substitute(render(body, host), host)
+      if (rendered.includes("{{")) throw new Error(`skills/${name}/${host}: unrendered marker survived`)
+      const outDir = path.join(ROOT, "plugins", host, "skills", name)
+      fs.mkdirSync(outDir, { recursive: true })
+      fs.writeFileSync(path.join(outDir, "SKILL.md"), rendered)
+      skills++
+    }
+  }
+}
+console.log(`gen-prompts: wrote ${skills} skill files from ${SKILLS_SRC}`)
 
 // Single-source the OpenCode per-stage command `agent:` from the manifests. The
 // command bodies stay hand-authored; only the agent binding is normalized, so a

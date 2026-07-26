@@ -1,13 +1,13 @@
 ---
 name: workflow-orchestration
-description: The protocol for driving the agentic loop inside Claude Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agentic-workflow:engineering verbs (new, retask, the unified folder-driven approve, replan).
+description: The protocol for driving the agentic loop inside Qwen Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agentic-workflow:engineering verbs (new, retask, the unified folder-driven approve, replan).
 ---
 
-# Driving the agentic loop (Claude Code)
+# Driving the agentic loop (Qwen Code)
 
 You (the **main agent**) are the driver. Unlike the OpenCode original — which runs
-an autonomous background driver — Claude Code has no such primitive, so you drive
-the stages yourself: you spawn each stage as a subagent via the **Task tool**, and
+an autonomous background driver — Qwen Code has no such primitive, so you drive
+the stages yourself: you spawn each stage as a subagent via the **`agent` tool**, and
 the **`agentic-workflow` MCP server** owns the state machine, git isolation, verdicts,
 task backlog, snapshots, and metrics. Follow this protocol exactly; do not invent
 your own control flow.
@@ -57,22 +57,21 @@ human gate and the loop ends there — an unapproved plan cannot reach BUILD.
 `workflow_claim`, `workflow_stage`, and `workflow_advance` (fire) response carries an
 `agent` field — the subagent this stage binds, straight from the kind's
 manifest.
-It arrives under the plugin namespace (e.g.
-`agentic-workflow:workflow-verify` — the Task tool's `subagent_type` for a
-plugin-provided agent). If that subagent type is unknown to your Claude Code
-version, retry once with the bare name (e.g. `workflow-verify`).
+It arrives as the bare manifest name (e.g. `workflow-verify`), which is the
+`agent` tool's `subagent_type` — Qwen Code loads these from its own agents
+directory with no namespace.
 Always spawn the agent named there; never hardcode a per-kind name. The `agent`
 value is a **`subagent_type`, not a skill name** — spawn it with the
-Task tool, never the `skill` tool, even though this same turn also invokes
+`agent` tool, never the `skill` tool, even though this same turn also invokes
 genuine skills (`interview-me`, `task-backlog-management`); a stage agent is
 always a subagent. The stage names below (`workflow-plan-author`,
 `workflow-build`, …) are the engineering kind's current values, shown for
 concreteness — a new workflow kind needs no edit to this protocol.
-The same responses may also carry a `model` field — the model the user
-configured for that stage (manifest `model` or config
-`workflows.<kind>.stageModels`). When present, pass it as the Task tool's
-`model` parameter when spawning that stage's subagent; when absent, don't set
-`model` (host default). Never hardcode a per-stage model.
+Responses carry no `model` field on this host: the `agent` tool has no per-call
+model, so the configured stage model is baked into the installed agent file at
+install time. Spawn with `run_in_background: false` — a stage must finish
+before you advance — and never pass or invent a `model`. Changing
+`workflows.<kind>.stageModels` therefore requires re-running `./install.sh qwen`.
 
 ## Step by step
 
@@ -91,16 +90,16 @@ configured for that stage (manifest `model` or config
    stage `prompt` comes back either way.
 2. **Plan (queued tasks only).** `workflow_stage({stage:"plan"})`, then spawn the
    stage's subagent — the response's `agent` field (**`workflow-plan-author`** for
-   engineering) — via the Task tool with the prompt, passing the response's `model` when present.
+   engineering) — via the `agent` tool with the prompt.
    It runs in `task` mode, reads the code, and writes the `## Implementation Plan` onto the
    task file named by the prompt's `Task file:` line. When it returns, call
    `workflow_advance({stageOutput: <plan summary>})` — the server validates the
    plan landed, parks the task in `plan-review/`, and returns `{kind:"park"}`
    with a `gate` field. **The plan gate is now live.** Show the user a short
-   summary of the plan, then ask with **AskUserQuestion**:
+   summary of the plan, then ask with **`ask_user_question`**:
    - **Approve** → `workflow_plan_approve({id})` — the task moves to
      `in-progress/` (build-ready) only. Then ask a second
-     **AskUserQuestion**: "Build it now?"
+     **`ask_user_question`**: "Build it now?"
      - **Yes** → `workflow_start({id})` — the task is claimed from
        `in-progress/` and the loop continues at step 3 (BUILD) in this same
        session.
@@ -118,14 +117,14 @@ configured for that stage (manifest `model` or config
 3. **Build.** Call `mcp__agentic-workflow__workflow_stage({stage:"build"})` — it arms
    the stage deadline, reconciles isolation, and appends the audited
    `BUILD started` note — then spawn the response's `agent` (**`workflow-build`**)
-   via the Task tool with the prompt (it carries the `Worktree:` line when
-   isolated), passing the response's `model` when present. When it returns,
+   via the `agent` tool with the prompt (it carries the `Worktree:` line when
+   isolated). When it returns,
    call `mcp__agentic-workflow__workflow_advance({stageOutput: <build summary>})` —
    the server appends `BUILD finished`, commits a checkpoint, and returns
    `{kind:"fire", stage:"verify", prompt}`.
 4. **Verify.** `workflow_stage({stage:"verify"})` (arms the read-only bash
    allowlist + deadline), spawn the response's `agent` (**`workflow-verify`**) with
-   the prompt, passing the response's `model` when present. The verify
+   the prompt. The verify
    subagent records its verdict by calling `workflow_verdict` itself — you do not.
    Then `workflow_advance({stageOutput: <verify summary>})`: PASS →
    `{fire, review}`; FAIL → `{fire, build}` (re-build, threading the failure)
@@ -142,7 +141,7 @@ configured for that stage (manifest `model` or config
    kept the worktree (it is released only when the task ships, so a `replan`
    bounce resumes in it), and written the `## Run summary` — and returned a
    `gate: {kind:"ship"}` field. **The ship gate is now live.** Show the user a
-   short summary of the loop branch's diff, then ask with **AskUserQuestion**:
+   short summary of the loop branch's diff, then ask with **`ask_user_question`**:
    - **Ship** → `workflow_ship({id})` — the task completes.
    - **Replan** (with the user's reason) → `workflow_replan({id, reason})`.
    - **Leave in in-review** → stop here; `/agentic-workflow:engineering approve <id>` (or `/agentic-workflow:engineering approve`)
@@ -264,6 +263,11 @@ Three further opt-in kinds drive the same way (`workflow_claim({kind})` →
   approved — see `task-backlog-management` → "Slicing a heavy idea".
 - Verdicts and all deterministic operations go through the `agentic-workflow` MCP
   tools, not in-process plugin hooks.
+- **Per-stage models are static here.** OpenCode passes the configured model at
+  spawn time and Claude Code passes it to the Task tool; Qwen's `agent` tool has
+  no model parameter, so `workflows.<kind>.stageModels` is baked into each
+  installed agent file by `./install.sh qwen`. A change to that config takes
+  effect on the next install, not the next claim.
 
 ## Red flags
 
@@ -275,7 +279,7 @@ Three further opt-in kinds drive the same way (`workflow_claim({kind})` →
   plan gate sits between PLAN and BUILD, and approving a plan is not by
   itself authorization to build it. The ONLY path through it is
   `workflow_plan_approve` (on an explicit Approve) followed by `workflow_start` (on
-  a separate explicit "build now" answer) — inline via AskUserQuestion, or
+  a separate explicit "build now" answer) — inline via `ask_user_question`, or
   later via `/agentic-workflow:engineering approve` then `claim`.
 - Spawning a stage subagent without first calling `workflow_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.
