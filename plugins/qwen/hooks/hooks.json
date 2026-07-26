@@ -1,0 +1,68 @@
+{
+  "_comment": [
+    "GENERATED-ADJACENT: this is the fragment scripts/qwen-settings.mjs merges into",
+    "$QWEN_CONFIG_DIR/settings.json. Qwen extensions cannot carry hooks, so unlike",
+    "the Claude plugin's hooks.json this file is not loaded by the host directly —",
+    "the installer copies it in, rewriting AGENTIC_WORKFLOW_PLUGIN_ROOT to an",
+    "absolute path. The four events mirror the Claude plugin exactly; only the",
+    "PreToolUse matcher differs, because the tool ids do."
+  ],
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-gate",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/gate-command.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-verdict-guard",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-verdict-guard.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "run_shell_command|write_file|edit|replace|notebook_edit|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-stage-guard",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-stage-guard.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-ado-pat",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/inject-ado-pat.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          },
+          {
+            "type": "command",
+            "name": "agentic-workflow-reconcile",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/reconcile.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -32,6 +32,7 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { dialectFor, hostFor } from "./src/dialect.mjs"
 
 /** `<!-- aw:verb new -->` / `<!-- aw:verb stop|abort -->`, opening or closing, whole line only. */
 const MARKER = /^<!--\s*(\/?)aw:verb\s+([a-z][a-z0-9|-]*)\s*-->$/
@@ -88,7 +89,7 @@ export const agentModelFor = (cwd, agent) => {
     return typeof value === "string" && value.trim() ? value.trim() : null
   }
   const model = pick(layer(path.join(cwd, ".agentic-workflow.json"))) ?? pick(layer(userConfigPath()))
-  // The Task tool takes bare model ids; strip a `provider/` prefix the way core's
+  // The spawn tool takes bare model ids; strip a `provider/` prefix the way core's
   // `bareModel` does, so one config written OpenCode-style works on both hosts.
   return model?.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model
 }
@@ -225,9 +226,13 @@ export const verbContext = (pluginRoot, verb, cwd) => {
   const slice = sliceForVerb(body, wanted)
   if (!slice) return null
   const draftAgent = VERB_DRAFT_AGENT[wanted]
-  const model = draftAgent && cwd ? agentModelFor(cwd, draftAgent) : null
+  const d = dialectFor(hostFor())
+  // A host whose spawn tool takes no model gets no model line at all: its
+  // `agentModels` value is baked into the installed agent file instead, and
+  // naming a parameter that does not exist would only invite improvisation.
+  const model = d?.conveysSpawnModel && draftAgent && cwd ? agentModelFor(cwd, draftAgent) : null
   const modelLine =
-    `Spawn \`${draftAgent}\` with the Task tool's \`model\` set to \`${model}\` ` +
+    `Spawn \`${draftAgent}\` with the ${d?.spawnTool ?? "Task tool"}'s \`model\` set to \`${model}\` ` +
     "(config `agentModels`). This covers the drafting spawn only — a PLAN stage " +
     "spawn still takes the `model` field off the MCP response."
   return [
@@ -249,6 +254,7 @@ export const verbContext = (pluginRoot, verb, cwd) => {
  * pays nothing.
  */
 export const adhocAgentContext = (cwd, agent) => {
-  const model = cwd ? agentModelFor(cwd, agent) : null
-  return model ? `Spawn \`${agent}\` with the Task tool's \`model\` set to \`${model}\` (config \`agentModels\`).` : null
+  const d = dialectFor(hostFor())
+  const model = d?.conveysSpawnModel && cwd ? agentModelFor(cwd, agent) : null
+  return model ? `Spawn \`${agent}\` with the ${d.spawnTool}'s \`model\` set to \`${model}\` (config \`agentModels\`).` : null
 }

@@ -16,17 +16,17 @@
  */
 
 /** The actionable block message when the plugin's MCP server was never built. */
-export const missingDistMessage = (label) =>
+export const missingDistMessage = (label, installer = "plugins/claude/install.sh") =>
   `agentic-workflow: can't run the "${label}" gate — the plugin is not built ` +
-  `(mcp-server/dist/server.js is missing). Run plugins/claude/install.sh, then retry.`
+  `(mcp-server/dist/server.js is missing). Run ${installer}, then retry.`
 
 /**
  * Decide the hook's action from the spawn result. Returns
  * `{ action: "pass" }` or `{ action: "block", message, ok }`.
  * `label` is the human-readable gate ("approve-any f7k3") for fallback text.
  */
-export const decideGateOutcome = ({ distExists, spawnError, status, stdout }, label) => {
-  if (!distExists) return { action: "block", message: missingDistMessage(label), ok: false }
+export const decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, installer) => {
+  if (!distExists) return { action: "block", message: missingDistMessage(label, installer), ok: false }
   // Could not even run node (binary missing, spawn failure) — fail open.
   if (spawnError || status === null || status === undefined) return { action: "pass" }
   let parsed = null

@@ -20,7 +20,7 @@
  * turn back with the outcome as context (`continueTurn`); a refusal still blocks.
  *
  * Failure handling (decideGateOutcome in gate-result.mjs, pure + unit-tested):
- * - dist/server.js missing → BLOCK with the "not built — run install.sh"
+ * - dist/server.js missing → BLOCK with the "not built — run the installer"
  *   diagnosis. Failing open would be pointless: the MCP fallback launches the
  *   same missing dist, so the model could only flounder or fabricate a move.
  * - the CLI ran and printed a GateResult → BLOCK with that verdict;
@@ -35,6 +35,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { gateArgsFor, isAdhocPlan, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
+import { dialectFor, hostFor } from "./src/dialect.mjs"
 import { adhocAgentContext, verbContext } from "./verb-slice.mjs"
 
 const read = () =>
@@ -79,7 +80,12 @@ const main = async () => {
   const cwd = input.cwd || process.cwd()
   if (typeof prompt !== "string" || !prompt) return passThrough()
 
-  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+  // AGENTIC_WORKFLOW_PLUGIN_ROOT first: hosts other than Claude Code have no
+  // CLAUDE_PLUGIN_ROOT, and their installer supplies this instead.
+  const pluginRoot =
+    process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT ||
+    process.env.CLAUDE_PLUGIN_ROOT ||
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 
   // The engineering command body is a router; the invoked verb's procedure lives
   // in verbs/engineering.md and is injected here (see verb-slice.mjs for why the
@@ -115,6 +121,7 @@ const main = async () => {
   const outcome = decideGateOutcome(
     { distExists, spawnError: res.error, status: res.status, stdout: res.stdout },
     label,
+    dialectFor(hostFor())?.installer,
   )
   // Fail-open: the CLI crashed without a verdict, so the model runs the verb via
   // its MCP fallback — which is described in the verb's own block, not the router.
