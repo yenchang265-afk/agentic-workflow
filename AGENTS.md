@@ -20,10 +20,13 @@ sections below cover each.
    first), `approve [id]` is the one folder-driven gate (draft →
    queued, parked plan → in-progress, finished review parked in `in-review/`
    → completed), and
-   `replan [id]` sends a parked plan back, and `remove <id>` hard-deletes a
-   task from the backlog entirely (from any folder — the file is deleted and
-   the removal committed, not moved; refused while a loop drives it or a claim
-   is held);
+   `replan [id]` sends a parked plan back, `abandon <id>` cancels a task by
+   moving it to `abandoned/` (the reversible cancellation — the file is kept,
+   and it is how a tracking epic is closed), and `remove <id> --force`
+   hard-deletes a task from the backlog entirely (from any folder — the file is
+   deleted and the removal committed, not moved; a bare `remove` is a dry run
+   that deletes nothing, and both are refused while a loop drives the task or a
+   claim is held);
    the loop claims build-ready work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
    engineering kind; `unwatch` takes this session back out) and drives
@@ -82,11 +85,18 @@ stateDiagram-v2
     in_progress --> in_review: REVIEW PASS
     in_progress --> queued: replan &lt;id&gt; (iteration cap tripped)
     in_review --> completed: approve &lt;id&gt; (ship — after you review the diff)
+    draft --> abandoned: abandon &lt;id&gt;
+    queued --> abandoned: abandon &lt;id&gt;
+    plan_review --> abandoned: abandon &lt;id&gt;
+    in_progress --> abandoned: abandon &lt;id&gt;
+    in_review --> abandoned: abandon &lt;id&gt;
     completed --> [*]
+    abandoned --> [*]
 
     state "plan-review/" as plan_review
     state "in-progress/ (BUILD→VERIFY→REVIEW)" as in_progress
     state "in-review/" as in_review
+    state "abandoned/" as abandoned
 ```
 
 ### Core Rules (ad-hoc mode)

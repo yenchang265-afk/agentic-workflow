@@ -229,3 +229,19 @@ test("the aliases the engineering command documents outside argument-hint still 
   const body = commandFile("agentic-workflow-engineering")
   assert.equal(sliceCommandPrompt(body, "abort"), sliceCommandPrompt(body, "stop"))
 })
+
+test("every verb's block opens with that verb's own bullet, not mid-sentence", () => {
+  // Slicing is line-based, so a marker placed one line late leaves the verb's
+  // opening line inside the PREVIOUS block: the neighbour's help gains a
+  // one-line teaser and the verb's own help starts mid-sentence with no
+  // definition of what it does. `watch` and `recover` both shipped that way —
+  // every other coverage test above passed the whole time, because a block that
+  // exists, balances, and is short is still a block. This is the assertion that
+  // catches it: the slice must contain a bullet naming the verb it is for.
+  const body = commandFile("agentic-workflow-engineering")
+  for (const verb of advertisedVerbs(body)) {
+    const slice = sliceCommandPrompt(body, verb)!
+    const bullet = new RegExp(`^- \\*\\*\`${verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "m")
+    assert.match(slice, bullet, `${verb}'s slice must open on its own bullet — a marker is one line off`)
+  }
+})

@@ -45,6 +45,7 @@ import {
   approveTask as coreApproveTask,
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
+  abandonTask as coreAbandonTask,
   removeTask as coreRemoveTask,
   replanTask as coreReplanTask,
   retaskTask as coreRetaskTask,
@@ -1208,8 +1209,10 @@ const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> 
   coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
 const retaskTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
-const removeTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
-  coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
+const removeTask = (id: string, liveTaskId: string | null, force = false): Promise<GateResult> =>
+  coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, force)
+const abandonTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
+  coreAbandonTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
@@ -1269,15 +1272,29 @@ server.registerTool(
 )
 
 server.registerTool(
+  "workflow_abandon",
+  {
+    description:
+      "Deterministic /agentic-workflow:engineering abandon <id> — cancel a task by moving it to abandoned/, the terminal folder for work that will not be done. The REVERSIBLE cancellation and the one to prefer: the task file is kept (it can be moved back), unlike workflow_remove which deletes it. Works from any non-terminal status folder; refuses a completed task (shipped work isn't cancellable) and one a live loop is driving or that holds a claim marker. Releases any worktree the task owned. This is also how a tracking epic draft is closed once every child has shipped. The agent writes nothing.",
+    inputSchema: { id: z.string().min(1), reason: z.string().optional() },
+  },
+  async ({ id, reason }) => {
+    await loadCfg()
+    const r = await abandonTask(id, reason?.trim() || undefined, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
   "workflow_remove",
   {
     description:
-      "Deterministic /agentic-workflow:engineering remove <id> — hard-delete a task from the backlog entirely. Unlike replan/retask this does NOT move the task to another folder: the file is removed and the removal committed, so the task leaves the backlog for good (git history retains it if the backlog is tracked). Works from ANY status folder — a stale draft, a rejected plan, a finished task. Refuses a task a live loop is driving or one holding a claim marker; releases any worktree the task owned. Idempotent: an id that no longer resolves reports success (alreadyDone). This is destructive and cannot be undone from the working tree — reserve it for tasks the human explicitly wants gone.",
-    inputSchema: { id: z.string().min(1) },
+      "Deterministic /agentic-workflow:engineering remove <id> — hard-delete a task from the backlog entirely. Unlike replan/retask/abandon this does NOT move the task to another folder: the file is removed and the removal committed. Works from ANY status folder — a stale draft, a rejected plan, a finished task. Refuses a task a live loop is driving or one holding a claim marker; releases any worktree the task owned. Idempotent: an id that no longer resolves reports success (alreadyDone). REQUIRES force: true to actually delete — without it this reports which task the id resolved to and deletes nothing, which is the confirmation step (ids are prefix-resolvable, so a typo'd short handle can name a different real task). Recovery from git exists ONLY when the backlog is tracked, and ignoreBacklog defaults to true, so a forced remove is usually permanent — prefer workflow_abandon unless the human explicitly wants the file gone.",
+    inputSchema: { id: z.string().min(1), force: z.boolean().optional() },
   },
-  async ({ id }) => {
+  async ({ id, force }) => {
     await loadCfg()
-    const r = await removeTask(id, active?.task?.id ?? null)
+    const r = await removeTask(id, active?.task?.id ?? null, force === true)
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )
@@ -1437,7 +1454,7 @@ async function runGate(argv: string[]): Promise<number> {
   const remainder = rest.join(" ").trim()
   const emit = (r: GateResult) => process.stdout.write(`${JSON.stringify(r)}\n`)
   if (!verb) {
-    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan> [id] [reason]" })
+    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan|retask|abandon|remove> [id] [reason]" })
     return 1
   }
   await loadCfg()
@@ -1450,15 +1467,19 @@ async function runGate(argv: string[]): Promise<number> {
     const [id, ...reasonParts] = rest
     const reason = reasonParts.join(" ").trim() || undefined
     if (!id) {
-      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|remove> <id> [reason]" })
+      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|abandon|remove> <id> [reason|--force]" })
       return 1
     }
     if (verb === "approve") result = await approveTask(id)
     else if (verb === "approve-plan") result = await approvePlan(id)
     else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
     else if (verb === "retask") result = await retaskTask(id, reason, readStageTaskId())
-    else if (verb === "remove") result = await removeTask(id, readStageTaskId())
-    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, or remove.` }
+    else if (verb === "abandon") result = await abandonTask(id, reason, readStageTaskId())
+    // `--force` is remove's confirmation. It arrives as a trailing word from the
+    // hook (which parses it, because the hook blocks the turn and no model gets
+    // to ask); without it core reports what it would delete and deletes nothing.
+    else if (verb === "remove") result = await removeTask(id, readStageTaskId(), reasonParts.includes("--force"))
+    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, abandon, or remove.` }
   }
   emit(result)
   return result.ok ? 0 : 1

@@ -67,6 +67,35 @@ test("a bare remove is malformed — never guess which task to delete", () => {
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove"), { passThrough: true })
 })
 
+test("remove forwards --force, and forwards nothing when the user didn't type it", () => {
+  // The hook dispatches and then BLOCKS, so no model turn exists in which to
+  // confirm — the flag has to survive parsing or the confirmation is unreachable.
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove my-task --force").argv, ["gate", "remove", "my-task", "--force"])
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove -f my-task").argv, ["gate", "remove", "my-task", "--force"])
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove my-task").argv, ["gate", "remove", "my-task"])
+})
+
+test("a flag never becomes the id — `remove --force` names no task, so it is malformed", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove --force"), { passThrough: true })
+})
+
+test("abandon routes to the gate abandon CLI verb, carrying its reason", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering abandon my-task").argv, ["gate", "abandon", "my-task"])
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering abandon my-task superseded by the epic").argv, [
+    "gate",
+    "abandon",
+    "my-task",
+    "superseded",
+    "by",
+    "the",
+    "epic",
+  ])
+})
+
+test("a bare abandon is malformed — never guess which task to cancel", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering abandon"), { passThrough: true })
+})
+
 test("prose containing the plain word 'engineering' never fires a gate", () => {
   for (const prompt of [
     "the engineering approve step happens at the plan gate",
