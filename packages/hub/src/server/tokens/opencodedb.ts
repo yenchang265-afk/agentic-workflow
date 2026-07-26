@@ -6,7 +6,9 @@ import type { StageTokens } from "@agentic-workflow/core/workflow/metrics"
 /**
  * opencode.db reader — backfill for opencode runs that predate the driver's
  * token capture. Uses node:sqlite (readonly; WAL permits concurrent readers)
- * behind a feature-detected dynamic import: it needs Node ≥22.5, and on older
+ * behind a feature-detected dynamic import: it needs Node ≥22.13 (the release
+ * that unflagged node:sqlite — on 22.5-22.12 the import throws without
+ * --experimental-sqlite, which is why this stays feature-detected), and on older
  * runtimes the endpoint degrades with a reason instead of failing. Only ever
  * queries `WHERE sessionID = ?` (from the metrics sidecar) — never scans; the
  * database can be gigabytes.
@@ -76,7 +78,7 @@ export const readSessionUsage = async (dbPath: string, sessionID: string): Promi
   if (cached) return { available: true, usage: cached }
 
   const sqlite = await loadSqlite()
-  if (!sqlite) return { available: false, reason: "opencode.db history needs Node 22.5+ (node:sqlite)" }
+  if (!sqlite) return { available: false, reason: "opencode.db history needs Node 22.13+ (node:sqlite)" }
 
   try {
     const db = new sqlite.DatabaseSync(dbPath, { readOnly: true })

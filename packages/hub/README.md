@@ -237,7 +237,7 @@ creator tab is unaffected.
 2. Claude transcripts (`~/.claude/projects/<slug>/*.jsonl`) — time-window
    attribution for Claude-host runs, flagged `estimated`.
 3. `~/.local/share/opencode/opencode.db` — session-total backfill for old
-   opencode runs; needs Node ≥ 22.5 (`node:sqlite`) and degrades with a
+   opencode runs; needs Node ≥ 22.13 (`node:sqlite`) and degrades with a
    reason otherwise.
 
 ## Safety model
@@ -284,7 +284,7 @@ Known beta caveats:
 - **The task editor writes the schema's frontmatter fields only.** A task
   carrying an unknown key (`sprint:`, a tracker sync's own field) is refused
   with the key named rather than silently stripped — edit that file directly
-- **opencode.db token backfill** needs Node ≥ 22.5 (`node:sqlite`); on older
+- **opencode.db token backfill** needs Node ≥ 22.13 (`node:sqlite`); on older
   runtimes the panel says so and shows sidecar/transcript data only
 - **Claude-host token numbers are estimates** (time-window attribution from
   transcripts) — always flagged `~` in the UI, never exact

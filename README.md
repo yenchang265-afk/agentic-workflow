@@ -92,7 +92,7 @@ config keys: [docs/sitters.md](docs/sitters.md); security posture:
 
 ## Install
 
-The steps below assume the system prerequisites are already present (Node ≥ 20,
+The steps below assume the system prerequisites are already present (Node ≥ 22.13,
 git, `gh`, `curl`, and — for browser work — Chrome). Azure DevOps needs only
 `curl` plus a PAT in `AZURE_DEVOPS_EXT_PAT`. For a fresh machine, `./bootstrap.sh`
 verifies/installs those, registers the `chrome-devtools` MCP server, and then

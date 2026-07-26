@@ -146,7 +146,7 @@ localStorage 中），SSE 事件和把關點通知也都會標上儲存庫 id。
 2. Claude 逐字稿（`~/.claude/projects/<slug>/*.jsonl`）—— 針對
    Claude host 的執行，用時間窗口歸因，並標記為 `estimated`。
 3. `~/.local/share/opencode/opencode.db` —— 為舊的 opencode 執行提供
-   session 總量回填；需要 Node ≥ 22.5（`node:sqlite`），否則會降級
+   session 總量回填；需要 Node ≥ 22.13（`node:sqlite`），否則會降級
    並附上原因。
 
 ## Safety model
@@ -188,7 +188,7 @@ slug 篩檢；工作流程類型的寫入被限制在 `packages/core/workflows/<
 - **任務編輯器只寫入 schema 定義的 frontmatter 欄位。** 帶有未知鍵
   （`sprint:`、追蹤系統同步自己的欄位）的任務會被拒絕並指出是哪個鍵，
   而不是被悄悄剝除——那種檔案請直接編輯
-- **opencode.db token 回填**需要 Node ≥ 22.5（`node:sqlite`）；在
+- **opencode.db token 回填**需要 Node ≥ 22.13（`node:sqlite`）；在
   較舊的執行環境上，面板會明確說明，並只顯示 sidecar／逐字稿的資料
 - **Claude host 的 token 數字都是估計值**（從逐字稿做時間窗口歸因）——
   在 UI 中一律標記 `~`，絕不是精確值
