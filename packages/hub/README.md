@@ -103,8 +103,25 @@ creator tab is unaffected.
   human types the reshape. Saving a **`queued/`** task therefore also sends it
   back to `draft/` and withdraws its task-gate approval — a goal the loop was
   approved to plan is not one you may change quietly. The comment lands on the
-  audit note, where the next PLAN pass will read it. A task with a plan stays
-  read-only and points at Replan instead.
+  audit note, where the next PLAN pass will read it.
+
+  A task with a plan is not editable here — its goal was already planned
+  against — so the drawer **reviews** it instead: body and plan rendered as
+  Markdown (raw source one click away), where hovering any line offers a
+  comment. Sending the comments performs the same `replan` the card's button
+  does, with them composed into its reason. Replan always took a reason, but it
+  was typed into a textarea with none of the plan in front of it, so it came out
+  vague and the next PLAN pass repeated the mistake; each comment quotes the
+  block it hangs off, so the audit note still says *which step*:
+
+  ```
+  > Plan rejected — sent back to queued for re-planning — plan “Add an mtime-keyed cache in `manifest/load.ts`.”: mtime is not enough on DrvFs — key on size too. [2026-07-26T13:49:07.371Z by you]
+  ```
+
+  Comments live only in the open drawer — a composition aid for one gate move,
+  not a review thread. What persists is that note, which is what the next pass
+  reads. Columns with no comment-carrying move (`in-review`, `completed`) still
+  get the rendered preview, without the affordance.
 
   The audit trail is never round-tripped through the browser: the editor is
   seeded with the body *minus* its trailing `> …` notes, and the server re-reads

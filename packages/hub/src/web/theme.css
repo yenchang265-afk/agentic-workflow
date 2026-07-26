@@ -1740,3 +1740,174 @@ body {
   font-family: var(--font-mono);
   font-size: var(--fs-xs);
 }
+
+/* --- markdown preview + line comments --------------------------------------- */
+/* markdown/Markdown + monitor/TaskReview. Each block is its own hover target:
+   the comment button is the only reason the preview renders block-by-block
+   rather than as one document. */
+
+.task-view__bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.task-view__send {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-xs);
+}
+
+.md-block {
+  position: relative;
+  padding: 2px var(--sp-2) 2px var(--sp-4);
+  border-left: 2px solid transparent;
+  border-radius: var(--r-1);
+}
+.md-block:hover {
+  background: var(--panel-raised);
+  border-left-color: var(--border-strong);
+}
+.md-block.commented {
+  border-left-color: var(--gate);
+  background: var(--gate-bg);
+}
+.md-block.composing {
+  border-left-color: var(--accent);
+  background: var(--accent-weak);
+}
+
+.md-block__comment {
+  position: absolute;
+  left: -6px;
+  top: 2px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-full);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+.md-block:hover .md-block__comment,
+.md-block.commented .md-block__comment,
+.md-block.composing .md-block__comment,
+.md-block__comment:focus-visible {
+  opacity: 1;
+}
+.md-block__comment:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.md-block__note {
+  margin: var(--sp-1) 0 0;
+  padding-left: var(--sp-2);
+  border-left: 2px solid var(--gate);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.md-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.md-composer textarea {
+  width: 100%;
+  padding: var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-2);
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--fs-sm);
+  resize: vertical;
+}
+.md-composer__actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.md .md-h {
+  margin: var(--sp-3) 0 var(--sp-1);
+  font-weight: 600;
+  line-height: var(--lh-tight);
+}
+.md .md-h1 {
+  font-size: var(--fs-lg);
+}
+.md .md-h2 {
+  font-size: var(--fs-md);
+}
+.md .md-h3,
+.md .md-h4,
+.md .md-h5,
+.md .md-h6 {
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+
+.md .md-p {
+  margin: var(--sp-2) 0;
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.md .md-list {
+  margin: var(--sp-2) 0;
+  padding-left: var(--sp-5);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+.md .md-code {
+  margin: var(--sp-2) 0;
+  padding: var(--sp-2) var(--sp-3);
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: var(--panel-raised);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+}
+
+.md .md-quote {
+  margin: var(--sp-2) 0;
+  padding-left: var(--sp-3);
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: var(--lh);
+}
+
+.md .md-rule {
+  margin: var(--sp-3) 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.md code {
+  padding: 0 0.2em;
+  border-radius: var(--r-1);
+  background: var(--panel-raised);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.md a {
+  color: var(--accent);
+}
