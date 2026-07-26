@@ -354,7 +354,7 @@ const writeStageMarker = (stage: string | null) => {
 const isOverdue = (deadline: number | null, now: number): boolean => deadline !== null && now > deadline
 
 const snapshot = async () => {
-  if (active?.task) await saveState(sh, directory, config.tasksDir, active.task.id, active)
+  if (active?.task) await saveState(sh, directory, config.tasksDir, active.task.id, active, log)
 }
 
 const workTree = () => (active ? workflowWorkTree(directory, active) : directory)

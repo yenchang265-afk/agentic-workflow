@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
+import { abandonTask, approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -15,7 +15,7 @@ import { approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask
  */
 const makeCtx = (
   files: Record<string, string>,
-  opts: { driving?: string; git?: (cmd: string) => { exitCode: number; stdout: string } | undefined } = {},
+  opts: { driving?: string; ignoreBacklog?: boolean; git?: (cmd: string) => { exitCode: number; stdout: string } | undefined } = {},
 ) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
@@ -64,7 +64,7 @@ const makeCtx = (
     client: { file: { list: async () => ({ data: [] }), read: async () => ({ data: null }) }, app: { log: async () => undefined } } as any,
     log: () => {},
     directory: "/repo",
-    config: DEFAULT_CONFIG,
+    config: opts.ignoreBacklog === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, ignoreBacklog: opts.ignoreBacklog },
     isDriving: (id) => id === opts.driving,
   }
   return { ctx, fs, log }
@@ -152,7 +152,7 @@ test("retaskTask with a reason still writes nothing for a draft", async () => {
 
 test("removeTask deletes a draft outright — the file is gone, not moved", async () => {
   const { ctx, fs, log } = makeCtx({ "draft/t.md": task("Do it") })
-  const r = await removeTask(ctx, "t")
+  const r = await removeTask(ctx, "t", true)
   assert.equal(r.ok, true)
   assert.ok(r.ok && r.data.removed === true && r.data.from === "draft")
   assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "the file is removed")
@@ -162,7 +162,7 @@ test("removeTask deletes a draft outright — the file is gone, not moved", asyn
 
 test("removeTask works from any folder — a finished in-review task deletes too", async () => {
   const { ctx, fs } = makeCtx({ "in-review/t.md": task("Built", `${PLAN_HEADING}\n\n1. Step.`) })
-  const r = await removeTask(ctx, "t")
+  const r = await removeTask(ctx, "t", true)
   assert.equal(r.ok, true)
   assert.ok(r.ok && r.data.from === "in-review")
   assert.ok(!("/repo/docs/tasks/in-review/t.md" in fs))
@@ -190,6 +190,102 @@ test("removeTask on a missing id is an idempotent success (rm -f semantics)", as
   const r = await removeTask(ctx, "gone")
   assert.equal(r.ok, true)
   assert.ok(r.ok && r.data.alreadyDone === true)
+})
+
+test("removeTask without force deletes NOTHING and reports what it would delete", async () => {
+  // The CLI hosts have no confirmation step of their own — Claude blocks the turn
+  // before the model runs, opencode deletes inside the command hook — so the
+  // dry run IS the confirmation.
+  const { ctx, fs, log } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /--force/, "names the way to confirm")
+  assert.match(r.message, /Do it/, "names the task it resolved, so a typo'd handle is visible")
+  assert.ok("/repo/docs/tasks/draft/t.md" in fs, "the file survives a bare remove")
+  assert.ok(!log.some((c) => c.startsWith("rm ")), "and no delete was attempted")
+})
+
+test("removeTask's dry run leads with the real recovery story for this config", async () => {
+  // ignoreBacklog defaults to TRUE, so "git history keeps it" is false for most
+  // installs — the copy must not reassure a user whose backlog is untracked.
+  const untracked = makeCtx({ "draft/t.md": task("Do it") }, { ignoreBacklog: true })
+  assert.match((await removeTask(untracked.ctx, "t")).message, /CANNOT be undone/)
+  const tracked = makeCtx({ "draft/t.md": task("Do it") }, { ignoreBacklog: false })
+  assert.match((await removeTask(tracked.ctx, "t")).message, /git history/)
+})
+
+test("removeTask runs its guards before the confirm — a claim-held task is refused, not offered", async () => {
+  const { ctx } = makeCtx({ "in-progress/t.md": task("Claimed"), "in-progress/.claims/t": "" })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /claim marker/)
+  assert.ok(!/--force/.test(r.message), "never invites a force that would still be refused")
+})
+
+// --- abandonTask: the reversible cancellation `abandoned/` always modelled ---
+
+test("abandonTask moves a task to abandoned/ instead of deleting it", async () => {
+  const { ctx, fs } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await abandonTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.abandoned === true && r.data.from === "draft")
+  assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "left its old folder")
+  assert.ok("/repo/docs/tasks/abandoned/t.md" in fs, "and the file still exists")
+})
+
+test("abandonTask works from every non-terminal folder", async () => {
+  for (const from of ["draft", "queued", "plan-review", "in-progress", "in-review"]) {
+    const { ctx, fs } = makeCtx({ [`${from}/t.md`]: task("Do it", `${PLAN_HEADING}\n\n1. Step.`) })
+    const r = await abandonTask(ctx, "t")
+    assert.equal(r.ok, true, `${from} → abandoned`)
+    assert.ok(`/repo/docs/tasks/abandoned/t.md` in fs, `${from} landed in abandoned/`)
+  }
+})
+
+test("abandonTask refuses a completed task — shipped work isn't cancellable", async () => {
+  const { ctx, fs } = makeCtx({ "completed/t.md": task("Shipped") })
+  const r = await abandonTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /completed/)
+  assert.ok("/repo/docs/tasks/completed/t.md" in fs)
+})
+
+test("abandonTask is idempotent on an already-abandoned task", async () => {
+  const { ctx } = makeCtx({ "abandoned/t.md": task("Gone") })
+  const r = await abandonTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.alreadyDone === true)
+})
+
+test("abandonTask carries the same live-loop and claim guards remove has", async () => {
+  const driving = makeCtx({ "in-progress/t.md": task("Building") }, { driving: "t" })
+  const a = await abandonTask(driving.ctx, "t")
+  assert.equal(a.ok, false)
+  assert.match(a.message, /live loop/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in driving.fs)
+
+  const claimed = makeCtx({ "in-progress/t.md": task("Claimed"), "in-progress/.claims/t": "" })
+  const b = await abandonTask(claimed.ctx, "t")
+  assert.equal(b.ok, false)
+  assert.match(b.message, /claim marker/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in claimed.fs)
+})
+
+test("abandonTask records the reason on the audit note", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await abandonTask(ctx, "t", "superseded by the new epic")
+  assert.equal(r.ok, true)
+  assert.ok(log.some((c) => c.includes("superseded by the new epic")))
+})
+
+test("replanTask refuses a claim-held task — isDriving is per-process and misses other hosts", async () => {
+  // A replan from the hub or the Claude MCP server while an opencode loop is
+  // mid-BUILD used to sail past isDriving and release that run's marker.
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Building", `${PLAN_HEADING}\n\n1. Step.`), "in-progress/.claims/t": "" })
+  const r = await replanTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /claim marker/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in fs, "the live run keeps its task")
 })
 
 test("approveTask moves a draft to queued and returns a structured result", async () => {
