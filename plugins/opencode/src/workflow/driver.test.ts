@@ -23,7 +23,7 @@ import {
   recordVerdict,
   findDrivingWorkflow,
   resolveDrivingSession,
-  runStageWithLenses,
+  runStagePasses,
   type Deps,
 } from "./driver.ts"
 
@@ -1462,7 +1462,7 @@ test("recordVerdict still records a verdict from the stage the loop is actually 
   }
 })
 
-// --- runStageWithLenses: a missing lens verdict is a broken channel, not a FAIL ---
+// --- runStagePasses: a missing lens verdict is a broken channel, not a FAIL ---
 // Regression guard for the spurious-second-iteration bug: with reviewLenses
 // configured, a lens whose workflow_verdict call never lands used to combine as
 // null→FAIL (worstOf) and fire a rebuild of already-passing work; it must take
@@ -1494,7 +1494,7 @@ const runLensReview = async (sessionID: string, onCall: (call: number, deps: Dep
     },
   }
   try {
-    const result = await runStageWithLenses(
+    const result = await runStagePasses(
       deps,
       sessionID,
       lensConfig,
@@ -1530,7 +1530,7 @@ const runSinglePassReview = async (sessionID: string, onCall: (deps: Deps) => vo
   } as unknown as Deps["client"]
   const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
   try {
-    return await runStageWithLenses(
+    return await runStagePasses(
       deps,
       sessionID,
       testConfig,
@@ -1723,6 +1723,232 @@ test("lenses: a stop mid-pass returns quietly — no ERROR, no retry, no warn", 
   assert.equal(result.record, null)
   assert.equal(calls(), 1, "no retry and no further lens passes after a stop")
   assert.ok(!warns.some((w) => /stopping with ERROR/.test(w)), `unexpected warn: ${warns.join(" | ")}`)
+})
+
+// --- per-axis fan-out: one focused pass per required axis ---
+// The point of fan-out over lenses: each pass is enforced against its OWN axis
+// (so a focused call is admitted, not rejected for the four it was told to skip)
+// and the union restores the coverage lens mode gives up entirely.
+
+const axisConfig: Config = {
+  ...testConfig,
+  workflows: { engineering: { stageFanout: { review: "axis" } } },
+}
+
+/** Run the review stage fanned out over its five axes; `onCall(n, deps)` runs before the nth command returns. */
+const runAxisReview = async (
+  sessionID: string,
+  onCall: (call: number, deps: Deps) => void,
+  warns: string[] = [],
+  config: Config = axisConfig,
+  shell: string[] = [],
+) => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  let calls = 0
+  const fired: string[] = []
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async (req: { body?: { arguments?: string } }) => {
+        calls++
+        fired.push(req?.body?.arguments ?? "")
+        onCall(calls, deps)
+        return { data: { parts: [{ type: "text", text: `review pass ${calls}` }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = {
+    client,
+    $: makeShellFS({}, shell),
+    directory: "/repo",
+    log: (level, msg) => {
+      if (level === "warn") warns.push(msg)
+    },
+  }
+  try {
+    const result = await runStagePasses(
+      deps,
+      sessionID,
+      config,
+      manifestFor("engineering"),
+      { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
+      "review",
+      "goal args",
+      0,
+    )
+    return { result, calls: () => calls, fired }
+  } finally {
+    clearWorkflow(sessionID)
+  }
+}
+
+/** Record the single-axis verdict the nth fan-out pass is supposed to record. */
+const recordAxis = (sessionID: string, call: number, over: Partial<{ verdict: "PASS" | "FAIL" | "ERROR" }> = {}, findings?: unknown) =>
+  recordVerdict(sessionID, "review", {
+    verdict: over.verdict ?? "PASS",
+    axes: [
+      {
+        axis: FIVE[call - 1]!,
+        verdict: over.verdict ?? "PASS",
+        ...(findings ? { findings: findings as never } : {}),
+      },
+    ],
+  })
+
+test("fan-out: one pass fires per required axis, in manifest order, each told to review only its own", async () => {
+  const sessionID = "sess-axis-order"
+  const { result, calls, fired } = await runAxisReview(sessionID, (call) => {
+    recordAxis(sessionID, call)
+  })
+  assert.equal(calls(), FIVE.length, "one pass per axis, no retries")
+  FIVE.forEach((axis, i) => {
+    assert.match(fired[i]!, new RegExp(`REVIEW AXIS ${i + 1}/5: ${axis}\\.`), `pass ${i + 1} is focused on ${axis}`)
+    assert.match(fired[i]!, /exactly that one entry/)
+    assert.ok(fired[i]!.startsWith("goal args"), "the focus block is appended to the composed prompt, not replacing it")
+  })
+  assert.equal(result.verdict, "PASS")
+  assert.deepEqual(
+    (result.record?.axes ?? []).map((a) => a.axis),
+    FIVE,
+    "the union of the passes covers every required axis",
+  )
+})
+
+test("fan-out: a pass carrying only its own axis is accepted — the rejection fan-out exists to remove", async () => {
+  const sessionID = "sess-axis-accepted"
+  const rejections: string[] = []
+  await runAxisReview(sessionID, (call) => {
+    const r = recordAxis(sessionID, call)
+    if (!r.accepted) rejections.push(r.message)
+  })
+  assert.deepEqual(rejections, [], "no focused pass may be rejected for the axes it was told not to review")
+})
+
+test("fan-out: a pass reporting someone else's axis is rejected and names its own", async () => {
+  const sessionID = "sess-axis-wrong"
+  const rejections: string[] = []
+  await runAxisReview(sessionID, (call) => {
+    // Every pass reports `correctness`, whoever it is.
+    const r = recordVerdict(sessionID, "review", {
+      verdict: "PASS",
+      axes: [{ axis: "correctness", verdict: "PASS" }],
+    })
+    if (!r.accepted) rejections.push(r.message)
+    else if (call > 1) throw new Error("an off-axis pass must not be admitted")
+  })
+  assert.ok(rejections.length, "passes 2-5 were rejected")
+  assert.match(rejections[0]!, /Missing: readability/)
+  assert.doesNotMatch(rejections[0]!, /all 1 axes/)
+})
+
+test("fan-out: one axis FAILing with a blocking finding fails the whole stage, prefixed with the axis", async () => {
+  const sessionID = "sess-axis-fail"
+  const { result } = await runAxisReview(sessionID, (call) => {
+    if (FIVE[call - 1] === "security") {
+      recordVerdict(sessionID, "review", {
+        verdict: "FAIL",
+        reason: "missing authz check",
+        axes: [
+          {
+            axis: "security",
+            verdict: "FAIL",
+            findings: [{ severity: "critical", detail: "no authz on the delete route", location: "api.ts:42" }],
+          },
+        ],
+      })
+    } else recordAxis(sessionID, call)
+  })
+  assert.equal(result.verdict, "FAIL")
+  assert.match(result.record?.reason ?? "", /\[security\] missing authz check/)
+  assert.equal(result.record?.axes?.length, FIVE.length, "the passing axes' evidence survives alongside the failure")
+})
+
+test("fan-out: an axis pass that never records a verdict → ERROR naming it, never FAIL", async () => {
+  const sessionID = "sess-axis-missing"
+  const warns: string[] = []
+  const { result, calls } = await runAxisReview(
+    sessionID,
+    (call) => {
+      // The security pass (4th) and its one retry record nothing.
+      if (call <= 3) recordAxis(sessionID, call)
+      else if (call > 5) recordAxis(sessionID, call - 1)
+    },
+    warns,
+  )
+  assert.equal(result.verdict, "ERROR", "a broken verdict channel must stop, not burn a rebuild iteration")
+  assert.match(result.record?.reason ?? "", /security/)
+  assert.match(result.record?.reason ?? "", /axis: security/, "the tag says axis, not lens")
+  // A missing pass does not abort the fan-out — the remaining axes still run, so
+  // the run log holds every finding the review did manage to produce.
+  assert.equal(calls(), 6, "3 clean passes + the security pass and its one retry + the performance pass")
+  assert.ok(warns.some((w) => /re-running the pass once/.test(w)))
+})
+
+test("fan-out: a genuine FAIL plus a missing axis still stops with ERROR — no rebuild on partial information", async () => {
+  const sessionID = "sess-axis-fail-and-missing"
+  const { result } = await runAxisReview(sessionID, (call) => {
+    if (call === 1) {
+      recordVerdict(sessionID, "review", {
+        verdict: "FAIL",
+        reason: "off-by-one",
+        axes: [
+          { axis: "correctness", verdict: "FAIL", findings: [{ severity: "critical", detail: "off-by-one", location: "a.ts:1" }] },
+        ],
+      })
+    }
+    // pass 2 (readability) and its retry record nothing
+  })
+  assert.equal(result.verdict, "ERROR")
+})
+
+test("fan-out: an ESC interrupt mid-fan-out fires no further axis and no retry", async () => {
+  const sessionID = "sess-axis-esc"
+  const warns: string[] = []
+  const { clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  const { result, calls } = await runAxisReview(
+    sessionID,
+    () => {
+      clearWorkflow(sessionID)
+    },
+    warns,
+  )
+  assert.equal(result.verdict, null)
+  assert.equal(result.record, null)
+  assert.equal(calls(), 1)
+  assert.ok(!warns.some((w) => /stopping with ERROR/.test(w)), `unexpected warn: ${warns.join(" | ")}`)
+})
+
+test("fan-out: each pass is logged under its own axis in the `lens` slot the run-log parser already reads", async () => {
+  const sessionID = "sess-axis-runlog"
+  const shell: string[] = []
+  const { result } = await runAxisReview(sessionID, (call) => recordAxis(sessionID, call), [], axisConfig, shell)
+  assert.equal(result.verdict, "PASS")
+  for (const axis of FIVE) {
+    assert.ok(
+      shell.some((c) => c.includes(`review (lens: ${axis}) · iteration 1`)),
+      `the run log records a ${axis} pass — reusing \`lens:\` keeps runlog.ts and the hub's per-pass panels working`,
+    )
+  }
+})
+
+test("fan-out: configured reviewLenses win, and the lens prompt is unchanged", async () => {
+  const sessionID = "sess-axis-vs-lenses"
+  const both: Config = { ...axisConfig, reviewLenses: ["a hostile attacker", "the next maintainer"] }
+  const { calls, fired } = await runAxisReview(
+    sessionID,
+    () => recordVerdict(sessionID, "review", { verdict: "PASS" }),
+    [],
+    both,
+  )
+  assert.equal(calls(), 2, "the two lenses ran, not the five axes")
+  assert.equal(
+    fired[0],
+    "goal args\n\nReview lens 1/2: focus exclusively on a hostile attacker. The other lenses " +
+      "run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.",
+    "an existing lens setup's prompt must not shift by a character",
+  )
+  assert.ok(!fired.some((f) => /REVIEW AXIS/.test(f)))
 })
 
 // --- configSources: the `kinds` toast names which config files are in effect ---

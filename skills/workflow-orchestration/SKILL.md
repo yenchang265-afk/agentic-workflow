@@ -410,8 +410,9 @@ field has a default:
   "watchIntervalMinutes": 5,    // default /agentic-workflow:engineering watch polling cadence (override: /agentic-workflow:engineering watch 30s)
   "worktreesDir": ".workflow-worktrees", // DEFAULT: per-task git worktree isolation (set to `false` to opt into shared-tree branch switching)
   "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out otherwise)
-  "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review, worst verdict wins
+  "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review, worst verdict wins (suppresses axis-coverage enforcement)
   "workflows": {                    // OPTIONAL: per-kind sections. engineering on unless disabled; every sitter (and any local kind) is experimental, off until listed with "enabled": true
+    "engineering": { "stageFanout": { "review": "axis" } }, // OPTIONAL: one review pass per required axis, coverage still enforced
     "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
@@ -441,7 +442,18 @@ iteration's work and its `worktreeSetup` output. On by default
 **Multi-lens review** (`reviewLenses`): REVIEW runs once per lens, each pass
 focused on that lens, and the loop takes the **worst** verdict across passes —
 a single prompt-injected reviewer can't wave a change through (threat model
-T1). Costs ~N× review time. Off by default (single review).
+T1). Costs ~N× review time. Off by default (single review). A lens maps to no
+axis, so lens mode **switches per-pass axis-coverage enforcement off**; the
+loop warns which required axes no lens names.
+
+**Per-axis fan-out** (`workflows.<kind>.stageFanout: {"review": "axis"}`): the
+stronger form of the same idea. REVIEW runs once per entry in the stage's
+`requiredAxes`, each pass told to review and report exactly one axis, merged
+worst-wins — so it keeps the T1 mitigation **without** the coverage downgrade:
+each pass is enforced against its own axis and the union has to cover every
+one, or the stage stops with ERROR rather than re-building. Same ~N× cost. Off
+by default. `reviewLenses`, if set, wins over it on the `review` stage (and the
+loop says so), so an existing lens setup is never reinterpreted.
 
 ## Common Rationalizations
 

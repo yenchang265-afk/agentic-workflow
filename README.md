@@ -220,7 +220,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   commands, known limitations
 - [docs/configuration.md](docs/configuration.md) — `.agentic-workflow.json`
   reference (user-scope + repo-scope layering), per-kind `workflows` sections, and
-  optional hardening (worktrees, review lenses, redaction)
+  optional hardening (worktrees, per-axis review fan-out, review lenses, redaction)
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) — starter
   `AGENTS.md`/`CLAUDE.md` (loop workflow + skill mapping) to copy into
   projects driven by agentic-workflow

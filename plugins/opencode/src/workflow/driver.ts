@@ -82,7 +82,10 @@ import {
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
   parseVerdict,
+  passFocusBlock,
   stageDriftNote,
+  uncoveredAxes,
+  withCoverageGap,
   type AxisResult,
   type Verdict,
   type VerdictRecord,
@@ -91,11 +94,15 @@ import {
 import {
   EXPERIMENTAL_KINDS,
   enabledWorkflowKinds,
+  fanoutOverriddenByLenses,
   ignoredUserConfigPaths,
   modelFor,
+  passAxes,
   resolveUserConfigPath,
+  stagePasses,
   triggerFor,
   unknownStageContextKeys,
+  unknownStageFanoutKeys,
   unknownStageModelKeys,
   deprecatedAdoKeys,
   unreviewedAxes,
@@ -367,7 +374,7 @@ const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly 
 /**
  * Axes the running check stage's verdict must cover, per driving session.
  *
- * Published by `runStageWithLenses` rather than read from the manifest inside
+ * Published by `runStagePasses` rather than read from the manifest inside
  * `recordVerdict`, because a lens pass is told to "focus exclusively on
  * <lens>" — enforcing all five axes on it would reject every pass and deadlock
  * the loop. Lens mode therefore clears the requirement; it already enforces its
@@ -765,13 +772,15 @@ const combineRecords = (records: readonly (VerdictRecord | null)[], lenses: read
 
 /**
  * Fire a stage, log its output to the run log, and (for check stages) capture
- * its verdict record. REVIEW expands into one pass per configured lens — the
- * verdicts are combined worst-wins and non-PASS pass outputs concatenated, so
- * a single injected reviewer can't flip the outcome (threat model T1). All
- * other stages run exactly once. Stops firing further lens passes if a
- * `stop` clears the loop mid-pass. Exported for tests.
+ * its verdict record. A check stage may expand into several focused passes —
+ * one per configured review lens, or one per required axis under
+ * `fanout: "axis"` — whose verdicts are combined worst-wins and whose non-PASS
+ * outputs are concatenated, so a single injected reviewer can't flip the
+ * outcome (threat model T1). Which passes run is `stagePasses`' decision, not
+ * this function's. Every other stage runs exactly once. Stops firing further
+ * passes if a `stop` clears the loop mid-pass. Exported for tests.
  */
-export const runStageWithLenses = async (
+export const runStagePasses = async (
   deps: Deps,
   sessionID: string,
   config: Config,
@@ -782,27 +791,27 @@ export const runStageWithLenses = async (
   iteration: number,
   promptElided?: number,
 ): Promise<{ output: string; verdict: Verdict | null; record: VerdictRecord | null }> => {
-  const isCheck = stageDef(loaded.manifest, stage).kind === "check"
-  const model = modelFor(config, loaded.manifest.kind, stageDef(loaded.manifest, stage))
-  const lenses = stage === "review" ? config.reviewLenses : []
-  const passes: (string | null)[] = lenses.length ? [...lenses] : [null]
-  // Axis coverage is enforced only when this stage runs as ONE pass. A lens
-  // pass is told to focus exclusively on its own lens, so demanding every axis
-  // from it would reject every pass and wedge the loop; lens mode gets its
-  // coverage from the per-lens ERROR fallback below instead.
-  const required = stageDef(loaded.manifest, stage).requiredAxes
-  if (required?.length && !lenses.length) axisRequirement.set(sessionID, required)
-  else axisRequirement.delete(sessionID)
+  const def = stageDef(loaded.manifest, stage)
+  const isCheck = def.kind === "check"
+  const model = modelFor(config, loaded.manifest.kind, def)
+  const passes = stagePasses(config, loaded.manifest.kind, def)
   const outputs: string[] = []
   const records: (VerdictRecord | null)[] = []
   const { client } = deps
 
   for (let i = 0; i < passes.length; i++) {
-    const lens = passes[i]
-    const args = lens
-      ? `${baseArgs}\n\nReview lens ${i + 1}/${passes.length}: focus exclusively on ${lens}. The other lenses ` +
-        `run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.`
-      : baseArgs
+    const pass = passes[i]!
+    // Publish THIS pass's axis requirement before firing; recordVerdict reads it
+    // when workflow_verdict lands. An `axis` pass narrows it to its own axis, so
+    // a focused pass is ACCEPTED instead of rejected for the axes it was told
+    // not to review; a `lens` pass maps to no axis and clears it, exactly as
+    // before. The stage-wide completeness guarantee moves to the coverage gate
+    // below, which reads the accumulated record.
+    const required = isCheck ? passAxes(def, pass) : undefined
+    if (required?.length) axisRequirement.set(sessionID, required)
+    else axisRequirement.delete(sessionID)
+    const focusBlock = passFocusBlock(pass, i, passes.length)
+    const args = focusBlock ? `${baseArgs}\n\n${focusBlock}` : baseArgs
     // One pass, plus at most one retry when a check stage ends with no
     // workflow_verdict call — a broken verdict channel is not a genuine FAIL, and
     // burning a build iteration on it re-built already-done work (the
@@ -828,21 +837,24 @@ export const runStageWithLenses = async (
       const ms = Date.now() - t0
       const stamp = new Date().toISOString()
       const retryTag = attempt > 0 ? " · verdict retry" : ""
-      const header = lens
-        ? `${stage} (lens: ${lens}) · iteration ${iteration + 1}${retryTag} · ${stamp}`
+      // An axis reuses the `lens:` run-log slot rather than getting its own: the
+      // parsers, the hub's per-pass flip streams and the token panel are all
+      // already keyed on it, and a pass's focus is a pass's focus.
+      const header = pass.focus
+        ? `${stage} (lens: ${pass.focus}) · iteration ${iteration + 1}${retryTag} · ${stamp}`
         : `${stage} · iteration ${iteration + 1}${retryTag} · ${stamp}`
       await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), header, out, deps.log)
-      outputs.push(lens ? `### Review lens: ${lens}\n${out}` : out)
+      outputs.push(pass.focus ? `### Review ${pass.mode === "axis" ? "axis" : "lens"}: ${pass.focus}\n${out}` : out)
       passRecord = isCheck ? takeVerdictRecord(sessionID, stage as CheckStage) : null
       addSample(sessionID, {
         stage,
         iteration,
         ms,
         ...(isCheck ? { verdict: passRecord?.verdict ?? "none" } : {}),
-        ...(lens ? { lens } : {}),
+        ...(pass.focus ? { lens: pass.focus } : {}),
         startedAt: new Date(t0).toISOString(),
         // The length of what was actually FIRED, not of what core composed: the
-        // lens instruction and the verdict-retry nag above are appended after
+        // focus instruction and the verdict-retry nag above are appended after
         // composition, and the honest number is what the model received.
         promptChars: passArgs.length,
         ...(promptElided ? { promptElided } : {}),
@@ -854,7 +866,10 @@ export const runStageWithLenses = async (
       await flushMetrics(deps, sessionID, config, state)
       if (!isCheck || passRecord || halted(sessionID)) break
       if (attempt === 0) {
-        await deps.log("warn", `${stage}${lens ? ` (${lens})` : ""} recorded no verdict via workflow_verdict — re-running the pass once`)
+        await deps.log(
+          "warn",
+          `${stage}${pass.focus ? ` (${pass.focus})` : ""} recorded no verdict via workflow_verdict — re-running the pass once`,
+        )
       }
     }
     records.push(passRecord)
@@ -869,18 +884,35 @@ export const runStageWithLenses = async (
   // unreachable verdict channel for a stage the user simply stopped.
   if (halted(sessionID)) return { output: outputs.join("\n\n"), verdict: null, record: null }
 
-  // Lenses that FIRED but recorded nothing even after their retry. A missing
-  // lens verdict is a broken channel, not a FAIL: worst-wins combining would
-  // read it as FAIL and burn a rebuild iteration on possibly-done work, so it
-  // must take the same ERROR→recoverable-stop path as the single-pass case —
-  // even when another lens recorded a genuine FAIL (a rebuild on partial
+  // Focused passes that FIRED but recorded nothing even after their retry. A
+  // missing pass verdict is a broken channel, not a FAIL: worst-wins combining
+  // would read it as FAIL and burn a rebuild iteration on possibly-done work, so
+  // it must take the same ERROR→recoverable-stop path as the single-pass case —
+  // even when another pass recorded a genuine FAIL (a rebuild on partial
   // information is still wasted; the FAIL's output survives in the run log).
-  const missingLenses = lenses.filter((_, i) => i < records.length && records[i] === null)
-  const record = lenses.length
-    ? missingLenses.length
+  const focused = passes.some((p) => p.focus !== null)
+  const missingPasses = passes
+    .map((p, i) => (i < records.length && records[i] === null ? p.focus : null))
+    .filter((f): f is string => f !== null)
+  const combined = focused
+    ? missingPasses.length
       ? null
-      : combineRecords(records, lenses)
+      : combineRecords(
+          records,
+          passes.map((p) => p.focus ?? ""),
+        )
     : (records[0] ?? null)
+  // The completeness guarantee per-axis fan-out exists to restore. Per-pass
+  // enforcement proves each pass covered ITS axis, never that every axis ran —
+  // only the accumulated record can show that. Unreachable in practice on this
+  // host (a pass that recorded nothing already took the ERROR path above), and
+  // kept anyway: it costs nothing, and it is the same check the Claude host
+  // depends on, where the orchestrator owns the pass loop and can skip a spawn.
+  const gapped = combined && passes.some((p) => p.mode === "axis") ? uncoveredAxes(combined, def.requiredAxes) : []
+  const record = combined && gapped.length ? withCoverageGap(combined, gapped) : combined
+  if (gapped.length) {
+    await deps.log("warn", `${stage} fan-out finished with no result for ${gapped.join(", ")} — stopping with ERROR`)
+  }
   // The DERIVED verdict — a pass that declared PASS while flagging a Critical
   // finding on an axis fails the stage (verdict.ts `effectiveVerdict`).
   const verdict = record ? effectiveVerdict(record) : null
@@ -890,7 +922,10 @@ export const runStageWithLenses = async (
     // surface it as a retryable ERROR (manifest onError → recoverable stop),
     // never as a FAIL that triggers a pointless rebuild.
     const inText = parseVerdict(outputs.join("\n"), stage === "verify" ? WORKFLOW_VERIFY_TAG : WORKFLOW_REVIEW_TAG)
-    const lensTag = missingLenses.length ? ` (lens${missingLenses.length > 1 ? "es" : ""}: ${missingLenses.join(", ")})` : ""
+    const noun = passes.some((p) => p.mode === "axis") ? "axis" : "lens"
+    const lensTag = missingPasses.length
+      ? ` (${missingPasses.length > 1 ? (noun === "axis" ? "axes" : "lenses") : noun}: ${missingPasses.join(", ")})`
+      : ""
     await deps.log(
       "warn",
       `${stage} recorded no verdict via workflow_verdict even after a retry${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
@@ -1047,6 +1082,20 @@ const driveChain = async (
         `ignored; that prompt stays unbounded. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
+  // Same trap for a stageFanout key: a typo'd stage never fans out, which reads
+  // as "the setting doesn't work".
+  const unknownFanouts = unknownStageFanoutKeys(
+    config,
+    loaded.manifest.kind,
+    loaded.manifest.stages.map((s) => s.name),
+  )
+  if (unknownFanouts.length) {
+    await deps.log(
+      "warn",
+      `workflows.${loaded.manifest.kind}.stageFanout names ${unknownFanouts.map((k) => `"${k}"`).join(", ")}, which is not a stage of this loop — ` +
+        `ignored; that stage runs a single pass. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
+    )
+  }
   // reviewLenses suppresses per-pass axis-coverage enforcement, so turning it on
   // silently downgrades what a review guarantees — name the axes no lens covers.
   for (const def of loaded.manifest.stages) {
@@ -1056,6 +1105,16 @@ const driveChain = async (
       "warn",
       `reviewLenses is on, so the ${def.name} stage no longer enforces axis coverage, and no lens covers ` +
         `${unreviewed.map((a) => `"${a}"`).join(", ")}. Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} or unset reviewLenses.`,
+    )
+  }
+  // Both multi-pass knobs set: the lenses run and the per-axis fan-out does not.
+  // Silence would make the fan-out look broken.
+  for (const def of loaded.manifest.stages) {
+    if (!fanoutOverriddenByLenses(config, loaded.manifest.kind, def)) continue
+    await deps.log(
+      "warn",
+      `reviewLenses is configured, so the ${def.name} stage runs the lens passes instead of its declared per-axis ` +
+        "fan-out — and per-pass axis coverage is not enforced. Unset reviewLenses to use the fan-out.",
     )
   }
   const actor = await gitActor(deps.$, deps.directory)
@@ -1102,7 +1161,7 @@ const driveChain = async (
         deps.log,
       )
     }
-    const { output, verdict, record } = await runStageWithLenses(
+    const { output, verdict, record } = await runStagePasses(
       deps,
       sessionID,
       config,

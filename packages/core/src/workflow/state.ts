@@ -249,6 +249,8 @@ export interface WorkflowKindConfig {
   readonly stageModels?: Readonly<Record<string, string>>
   /** Stage name → per-artifact character ceilings for that stage's composed prompt; replaces the manifest stage's `context`. */
   readonly stageContext?: Readonly<Record<string, Readonly<Record<string, number>>>>
+  /** Stage name → fan-out strategy for that stage; wins over the manifest stage's `fanout`. `"none"` turns one off. */
+  readonly stageFanout?: Readonly<Record<string, "axis" | "none">>
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

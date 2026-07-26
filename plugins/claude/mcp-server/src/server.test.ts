@@ -89,6 +89,74 @@ test("firePayload's spawn note is not gated on the plan stage", () => {
   assert.doesNotMatch(body, /\.\.\.\(state\.stage === "plan"/, "a spread-gated note leaves every non-plan fire with none")
 })
 
+// --- per-axis fan-out ---
+// Source-level for the same reason as the notes above: the handlers are inline
+// literals in a module that only boots as an MCP transport, so there is no seam
+// to call them through. These pin the invariants that are silent when broken.
+
+// THE trap of this feature. workflow_stage is called before EVERY pass, and it
+// used to wipe `pending` unconditionally ("a fresh stage starts empty"). Under
+// fan-out that throws away every earlier pass's axis the moment the next one is
+// armed, so the coverage gate would ERROR on four axes on every single run —
+// with nothing in the logs to say why.
+test("workflow_stage keeps the accumulated verdict while a fan-out is still running", () => {
+  const body = flat(toolBody(code(source()), "workflow_stage"))
+  assert.match(
+    body,
+    /if \(fanoutStage !== stage \|\| !pass\.focus\) \{ pending = null/,
+    "the wipe must be conditional on this not being the next pass of the same fan-out",
+  )
+  assert.equal(
+    (body.match(/pending = null/g) ?? []).length,
+    1,
+    "a second, unguarded wipe anywhere in the handler discards every pass but the last",
+  )
+})
+
+// A focused pass owes ONE axis. Admitting it against the stage's full
+// requirement rejects every fan-out pass for the axes it was told not to review
+// — and rejects every reviewLenses pass on this host too, which is a bug that
+// predates fan-out.
+test("workflow_verdict admits a pass against that pass's own axes, not the stage's", () => {
+  const body = toolBody(code(source()), "workflow_verdict")
+  assert.match(body, /admitVerdict\(rec, passAxes\(def, currentPass\(stage\)\), pending\)/)
+  assert.doesNotMatch(body, /admitVerdict\(rec, def\.requiredAxes/, "the stage-wide requirement belongs on the accumulated record")
+})
+
+// Narrowing admission per pass gives up the stage-wide guarantee, so it has to
+// be picked back up somewhere. On this host that somewhere is load-bearing, not
+// defensive: the ORCHESTRATOR owns the pass loop and can simply skip a spawn,
+// which no per-call check can ever see.
+test("workflow_advance gates a fan-out on the accumulated axis coverage, and a gap is ERROR not FAIL", () => {
+  const body = toolBody(code(source()), "workflow_advance")
+  assert.match(body, /uncoveredAxes\(pending, gateDef\.requiredAxes\)/, "the gate must read the accumulated record")
+  assert.match(body, /pending = withCoverageGap\(pending, gaps\)/, "a gap must degrade to ERROR, never to a FAIL that rebuilds")
+  assert.match(flat(body), /gaps\.length && !verdictRetried/, "the missing passes get one retry before the stage errors")
+  assert.match(flat(body), /passes: gaps/, "the retry must name exactly the passes that recorded nothing")
+  assert.match(flat(body), /armedPass = null/, "the retry arms its own pass; the finished one is already sampled")
+})
+
+// The orchestrator could otherwise call workflow_stage once with no focus, spawn
+// one reviewer, and advance — a fan-out in config that never happened in fact.
+test("workflow_stage refuses an unfocused call on a stage that runs focused passes", () => {
+  const body = flat(toolBody(code(source()), "workflow_stage"))
+  assert.match(body, /if \(!focus && labels\.length\)/, "an unfocused call on a fan-out stage must be rejected")
+  assert.match(body, /focused passes, not one/, "the rejection must say what to call instead")
+  assert.match(body, /workflow_stage\(\{stage:"\$\{stage\}", focus:/, "…including the corrected call itself")
+  // A focused pass needs its own prompt: the fire payload composed one for the
+  // stage, and each pass has to be told which axis is its own.
+  assert.match(body, /passFocusBlock\(pass, index, passes\.length\)/)
+})
+
+// The hub keys its per-pass panels on `lens`, and workflow_advance runs ONCE for
+// the whole stage — so without a sample as each pass is superseded, N passes
+// collapse into one row and every per-pass metric on this host is a lie.
+test("each fan-out pass is sampled as the next one is armed", () => {
+  const body = flat(toolBody(code(source()), "workflow_stage"))
+  assert.match(body, /armedPass\?\.stage === stage && armedPass\.pass\.focus/, "the finished pass is sampled when its successor arms")
+  assert.match(body, /lens: armedPass\.pass\.focus/, "an axis rides the existing `lens` slot")
+})
+
 // A done whose park failed (core's TerminalReport says stop — the task never
 // left in-progress/) must not announce the ship gate. Source-level for the same
 // reason as above: the advance handler is an inline literal in a module that
