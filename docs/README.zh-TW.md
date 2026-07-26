@@ -13,12 +13,13 @@
 | [sitters.md](sitters.md) | 四個 sitter 的共同點（形狀、可選啟用、不可信輸入的處理方式）、哪些已穩定哪些仍屬實驗性，並索引到 `workflows/` 下它們各自的檔案 |
 | [configuration.md](configuration.md) | 每一個 `.agentic-workflow.json` 欄位（分層/優先順序、`workflows`、`codePlatform`/`ado`、`projectManagement`、強化項、環境變數） |
 | [opencode.md](opencode.md) | OpenCode 特有的執行細節（watch 觸發、ESC/recover）以及完整的 OpenCode 指令面 |
+| [qwen.md](qwen.md) | Qwen Code 的安裝、執行模型、指令面，以及它靜態的每階段模型 |
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code 安裝、MCP 伺服器指令面，以及已知限制 |
 | [`../packages/core/workflows/README.md`](../packages/core/workflows/README.md) | 如何編寫一種新的工作流程類型（清單結構描述、提示詞範本、hooks、工作來源） |
 | [`../packages/hub/README.md`](../packages/hub/README.md) | 管理面板（測試版）：安裝、各視圖，以及它自己的設定 |
 | [design/threat-model.md](design/threat-model.md) | 安全態勢——每種工作流程類型的威脅與控制措施 |
 | [design/proposed-workflows.md](design/proposed-workflows.md) | 尚未建置的工作流程類型提案（其中三項已經上線——目前行為見 `sitters.md`） |
-| [design/qwen-host-support.md](design/qwen-host-support.md) | 第三個宿主 Qwen Code（`qwen` CLI）的實作計畫——尚未建置 |
+| [design/qwen-host-support.md](design/qwen-host-support.md) | 第三個宿主 Qwen Code 的設計紀錄——已出貨；目前行為見 `qwen.md` |
 | [design/proposed-hub-features.md](design/proposed-hub-features.md) | 管理面板提案——把關/doctor/設定寫入介面（基礎架構、提示詞預覽和把關動作已經上線；doctor 和設定編輯器尚未——管理面板目前實際做了什麼見 `../packages/hub/README.md`） |
 | [design/improvements/](design/improvements/README.md) | 已上線強化工作的實作設計紀錄（worktree、狀態持久化、裁定品質……） |
 | [migration.md](migration.md) | 從早期版面遷移（舊的 `/agent-loop` 指令、`in-planning/`、阻塞式 PLAN 把關） |

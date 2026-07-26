@@ -21,6 +21,7 @@ flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
         oc["OpenCode plugin (plugins/opencode/src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
         cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
+        qw["Qwen Code<br/>(plugins/qwen/) — 同一個 MCP 伺服器，<br/>AGENTIC_WORKFLOW_HOST=qwen"]
     end
 
     subgraph core["@agentic-workflow/core (packages/core)"]
@@ -42,6 +43,7 @@ flowchart TB
 
     oc --> sched
     cc --> sched
+    qw --> sched
     sched --> backlog
     sched --> ghpr
     sched --> depscan
@@ -68,7 +70,8 @@ flowchart TB
   裡的那些介面（Shell、Client、Log……）。OpenCode 外掛用 Bun 的 `$`
   和 opencode SDK client 來滿足這些介面；Claude Code MCP 伺服器則用
   Node 墊片（`plugins/claude/mcp-server/src/shim.ts`）——它先前那份
-  `src/lib/` 迴圈邏輯分支已經不存在了。
+  `src/lib/` 迴圈邏輯分支已經不存在了。Qwen Code 宿主重用同一個 MCP
+  伺服器執行檔，由 `AGENTIC_WORKFLOW_HOST=qwen` 切換。
 - **清單引擎**——一種工作流程類型就是
   `packages/core/workflows/<kind>/workflow.json`（經 zod 驗證：帶有
   `work|check` 種類的階段、agent、提示詞路徑、隔離方式、bash 白名單；
@@ -140,15 +143,29 @@ tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種
 以及它的 `workflows.<kind>` 設定項；四者的安全態勢都在
 [威脅模型](design/threat-model.md)中。
 
-## Claude Code 版本（`plugins/claude/`）
+## 兩個由 MCP 驅動的版本（`plugins/claude/`、`plugins/qwen/`）
 
-相同的工作流程類型和生命週期，不同的驅動方式：Claude Code 沒有背景的
-`session.idle` 驅動程式，所以主 agent 是透過一個內建的 MCP 伺服器
-（`mcp__agentic-workflow__workflow_*` 工具）而不是 agent frontmatter 權限來
-驅動迴圈，而且人工把關點是**互動式**的——一次 park 或 done 會回傳
-一個 `gate` 欄位，驅動中的 agent 會透過 AskUserQuestion 就地詢問，
-而不是只等待一個指令。完整的安裝和指令細節見
-[`plugins/claude/README.md`](../plugins/claude/README.md)。
+相同的工作流程類型和生命週期，不同的驅動方式：Claude Code 和 Qwen Code
+都沒有背景的 `session.idle` 驅動程式，所以主 agent 是透過一個內建的 MCP
+伺服器（`mcp__agentic-workflow__workflow_*` 工具）而不是 agent frontmatter
+權限來驅動迴圈，而且人工把關點是**互動式**的——一次 park 或 done 會回傳
+一個 `gate` 欄位，驅動中的 agent 會就地詢問（AskUserQuestion／
+`ask_user_question`），而不是只等待一個指令。
+
+**一個執行檔，一張方言表。** 這兩個宿主跑的是完全相同的協定，只在四件事上
+不同：子代理怎麼命名、它們的 hooks 讀哪一個 stage marker 檔、它們的啟動工具
+是否接受每次呼叫的模型，以及指示啟動的那段敘述。這四件事只存在於 MCP 伺服器
+的 `HOST_DIALECT` 裡；防護 hook 的工具名稱方言則在
+`plugins/claude/hooks/src/dialect.mjs`。兩者都由 `AGENTIC_WORKFLOW_HOST`
+選擇，所以伺服器**寫入**的 marker 與 guard**讀取**的 marker 永遠不會不一致。
+
+唯一的行為差異是 Qwen 的 `agent` 工具沒有 model 參數，所以
+`workflows.<kind>.stageModels` 是在安裝時烘焙進每一份已安裝的 agent 檔案，
+而不是在啟動時傳入——改動會在下一次安裝時生效，而不是下一次 claim。
+
+完整的安裝和指令細節：
+[`plugins/claude/README.md`](../plugins/claude/README.zh-TW.md) 與
+[`docs/qwen.md`](qwen.zh-TW.md)。
 
 ## 管理面板——測試版（`packages/hub/`）
 

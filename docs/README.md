@@ -14,12 +14,13 @@ should link.
 | [sitters.md](sitters.md) | What the four sitters have in common (shape, opt-in, untrusted-input handling), which are stable vs. experimental, and an index into their individual files under `workflows/` |
 | [configuration.md](configuration.md) | Every `.agentic-workflow.json` field (layers/precedence, `workflows`, `codePlatform`/`ado`, `projectManagement`, hardening, env vars) |
 | [opencode.md](opencode.md) | OpenCode-specific execution details (watch triggers, ESC/recover) and the full OpenCode command surface |
+| [qwen.md](qwen.md) | Qwen Code install, execution model, command surface, and its static per-stage models |
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code install, the MCP-server command surface, and known limitations |
 | [`../packages/core/workflows/README.md`](../packages/core/workflows/README.md) | Authoring a new workflow kind (manifest schema, prompt templates, hooks, work sources) |
 | [`../packages/hub/README.md`](../packages/hub/README.md) | The admin hub (beta): install, views, and its own config |
 | [design/threat-model.md](design/threat-model.md) | Security posture — threats and controls for every workflow kind |
 | [design/proposed-workflows.md](design/proposed-workflows.md) | Not-yet-built workflow kind proposals (three entries have since shipped — see `sitters.md` for their current behavior) |
-| [design/qwen-host-support.md](design/qwen-host-support.md) | Implementation plan for a third host, Qwen Code (`qwen` CLI) — not built yet |
+| [design/qwen-host-support.md](design/qwen-host-support.md) | Design record for the third host, Qwen Code — now shipped; see `qwen.md` for how it behaves today |
 | [design/proposed-hub-features.md](design/proposed-hub-features.md) | Admin hub proposals — the gate/doctor/config write surface (the foundation, prompt preview and gate actions have since shipped; doctor and the config editor have not — see `../packages/hub/README.md` for what the hub does today) |
 | [design/improvements/](design/improvements/README.md) | Implementation design records for shipped hardening work (worktrees, state persistence, verdict quality, …) |
 | [migration.md](migration.md) | Upgrading from earlier layouts (the old `/agent-loop` command, `in-planning/`, the blocking PLAN gate) |

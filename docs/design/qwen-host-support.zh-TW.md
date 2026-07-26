@@ -8,10 +8,18 @@
 （[`packages/core/src/host.ts`](../../packages/core/src/host.ts)）以及既有的兩個宿主
 轉接層所寫，因此可以直接執行、不需要再翻譯一次。
 
-**狀態：切片 0 已完成；切片 1–6 尚未開始。** `AGENTIC_WORKFLOW_HOST` 開關、
-`HOST_DIALECT` 表、各宿主的 stage marker 輔助函式，以及 metrics 的 `host` 值都已
-出貨——所以 MCP 伺服器已經能以 Qwen 宿主的身分啟動與運作。但讓那個宿主**能被觸及**
-所需的東西（agent、指令、hooks、安裝腳本）都還不存在。
+**狀態：已出貨——每一個切片都已完成。** 本檔作為設計紀錄保留（為什麼這個宿主是
+這個形狀，以及哪些取捨是刻意的）。目前的實際行為請見
+**[`docs/qwen.md`](../qwen.zh-TW.md)**。
+
+實作過程中相對於下列計畫有兩處刻意的偏離：
+
+- **沒有出貨 `qwen-extension.json`。** `qwen extensions install` 會複製擴充目錄，
+  那會讓 manifest 指向共用 MCP 伺服器的路徑立刻失效——而且 extension 本來就無法
+  攜帶防護 hooks。一個看起來受支援卻會失敗的 manifest，比沒有更糟。
+- **`workflow-orchestration` skill 也是產生的**，而不是切片 2 原本假設的手寫。
+  prompts/README.md 不產生它的理由對 OpenCode 成立（驅動協定確實不同），但在兩個
+  由 MCP 驅動的宿主之間不成立——它們只有工具名稱不同。
 
 ## 為什麼
 
@@ -44,8 +52,11 @@ Qwen Code（Gemini CLI 的 fork）其實比 OpenCode 更接近 Claude Code：
 1. **沒有每次呼叫的模型參數。** Qwen 的 `agent` 工具沒有 `model` 參數。
    緩解方式：`install.sh qwen` 會**產生**
    `$QWEN_CONFIG_DIR/agents/<name>.md`，並把從 `workflows.<kind>.stageModels`
-   與 `agentModels` 解析出來的 `modelConfig.model` 寫進去。要記錄的後果是：
-   改動這些設定鍵之後必須重跑安裝腳本。
+   與 `agentModels` 解析出來的頂層 `model:` frontmatter 欄位寫進去。要記錄的
+   後果是：改動這些設定鍵之後必須重跑安裝腳本。**切片 0 研究期間已確認：**
+   `model:` 是 Qwen 子代理的一級欄位（`inherit`｜`fast`｜`<modelId>`｜
+   `<authType>:<modelId>`），所以烘焙是原生做法而非變通——但它是**靜態**綁定，
+   這正是必須重跑安裝的原因。
 2. **Extension 無法攜帶 hooks。** `qwen-extension.json` 沒有 `hooks` 欄位，
    而那些防護 hook **就是**安全基座。因此安裝腳本必須把一段 hooks 併進
    `settings.json`；只用 extension 安裝不是受支援的路徑。
@@ -53,10 +64,15 @@ Qwen Code（Gemini CLI 的 fork）其實比 OpenCode 更接近 Claude Code：
    Qwen 沒有等價物。在 Qwen 上，SessionStart hook 退化成一則
    `additionalContext` 提示，README 則說明直接匯出 `AZURE_DEVOPS_EXT_PAT`。
    標示出來，不要假裝有。
-4. **MCP 工具命名尚未確認。** Qwen 文件同時出現 `server_name-tool_name`（註冊）
-   與 `mcp__server__tool`（停用樣式）兩種寫法。這必須在**切片 1 以實測釘死**
-   ——它決定了 check 階段 agent 的 `tools:` 清單、`PreToolUse` 的 matcher，
-   以及 spawn 提示語裡的裁決工具名稱。
+4. ~~**MCP 工具命名尚未確認。**~~ **已確認——沒有差異。**
+   Qwen 以 `mcp__${serverName}__${serverToolName}` 註冊 MCP 工具，經過
+   `normalizeToolNameForProvider`；當名稱長度 ≤63 且符合
+   `^[A-Za-z][A-Za-z0-9_-]*$` 時會原樣通過。本伺服器提供的每個工具都符合
+   （最長的是 `mcp__agentic-workflow__workflow_plan_approve`，44 字元），
+   所以名稱與 Claude Code **逐位元組相同**。check 階段 agent 的 `tools:` 清單、
+   `PreToolUse` matcher，以及 spawn 提示語都可以原樣共用。Claude 另外還提供一個
+   外掛層級的別名（`mcp__plugin_agentic-workflow_agentic-workflow__*`），
+   Qwen 沒有對應物；Qwen 的 agent 檔案只列出單一形式。
 
 ## 切片 0——共用機制裡的一個宿主開關
 

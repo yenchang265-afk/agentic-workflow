@@ -9,11 +9,20 @@ against the real host contract
 ([`packages/core/src/host.ts`](../../packages/core/src/host.ts)) and the two
 existing host adapters, so it can be executed without re-translation.
 
-**Status: slice 0 is built; slices 1–6 are not.** The `AGENTIC_WORKFLOW_HOST`
-switch, the `HOST_DIALECT` table, the per-host stage-marker helper, and the
-metrics `host` value all ship — so the MCP server already boots and behaves as
-the Qwen host. Nothing that host needs in order to be *reachable* (agents,
-commands, hooks, installer) exists yet.
+**Status: shipped — every slice is built.** This file is kept as the design
+record (why the host is shaped this way, and which trade-offs were deliberate).
+For how the host behaves today, see **[`docs/qwen.md`](../qwen.md)**.
+
+Two deviations from the plan below, both decided during implementation:
+
+- **No `qwen-extension.json` is shipped.** `qwen extensions install` copies the
+  extension directory, which would leave the manifest's path to the shared MCP
+  server dangling — and an extension cannot carry the guard hooks anyway. A
+  manifest that looks supported and fails is worse than none.
+- **The `workflow-orchestration` skill is generated too**, not hand-authored as
+  slice 2 assumed. prompts/README.md's reason for not generating it holds for
+  OpenCode (a genuinely different driving protocol) but not between the two
+  MCP-driven hosts, which differ only in tool names.
 
 ## Why
 
