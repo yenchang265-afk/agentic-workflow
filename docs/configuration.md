@@ -134,20 +134,17 @@ it can honor (today: OpenCode's `watchIntervalMinutes` — see
 ## Workflow kinds (`workflows`)
 
 Each key under `workflows` enables and configures one workflow kind (a
-`packages/core/workflows/<kind>/` manifest). Three kinds are live with no
+`packages/core/workflows/<kind>/` manifest). Exactly one kind is live with no
 configuration at all:
 
-- **`pr-sitter` and `review-sitter` are always on.** They are part of the
-  product, not a feature to opt into, and have **no off switch**:
-  `"enabled": false` on either is rejected at load with a message naming the
-  key, rather than honored or silently dropped. Their other knobs (`query`,
-  `codePlatform`, `trigger`, `stageModels`) still apply.
 - **`engineering` runs unless explicitly disabled** with `"enabled": false`.
 
-Every other kind (`dep-sitter`, `main-sitter`, and any kind you author) is
-opt-in with `"enabled": true`. Enabled kinds are polled in claim-priority
-order: `engineering`, then `pr-sitter` and `review-sitter`, then opted-in
-kinds in config order — so a claim that names no kind reaches the sitters too,
+Every other kind — all four sitters (`pr-sitter`, `review-sitter`,
+`dep-sitter`, `main-sitter`) and any kind you author — is **experimental and
+opt-in** with `"enabled": true`. A knob-only section does not enable a kind:
+tuning `query` on a disabled `pr-sitter` leaves it off. Enabled kinds are
+polled in claim-priority order: `engineering`, then the opted-in kinds in
+config order — so a claim that names no kind reaches an enabled sitter too,
 once nothing earlier in the order is claimable.
 
 Kind-specific knobs ride along in the same section. **They are not validated**:
@@ -173,16 +170,17 @@ a did-you-mean), wrong type, and a knob on a kind whose work source never reads
 it. The warnings are advisory: they annotate a save, never block it. See
 [the admin hub](#admin-hub-hub--user-scope-only) below.
 
-> **`pr-sitter` and `review-sitter` are stable**, alongside `engineering`, the
-> default-on kind — their knobs and defaults below are settled.
-> **`dep-sitter` and `main-sitter` are still experimental** — theirs may still
-> change between releases.
+> **All four sitters are experimental** — their manifests, knobs, and defaults
+> may still change between releases, which is why none of them starts without
+> `"enabled": true`. `engineering` is the one kind whose defaults are settled.
+> The `ado` code platform (below) is experimental on the same terms.
 
 ```json
 {
   "workflows": {
     "engineering": { "enabled": true },
     "pr-sitter": {
+      "enabled": true,
       "query": "is:open author:@me"
     },
     "dep-sitter": { "enabled": true, "severityFloor": "high" },
@@ -193,10 +191,9 @@ it. The warnings are advisory: they annotate a save, never block it. See
 
 - **`workflows.engineering.enabled`** — default `true`; set `false` to run only
   other kinds (e.g. a dedicated PR-sitter watcher).
-- **`workflows.pr-sitter`**, **`workflows.review-sitter`** — always on; these
-  sections carry knobs only, and `enabled: false` in one is a config error.
-- **`workflows.dep-sitter`**, **`workflows.main-sitter`** — `enabled: false` by
-  default. What each sitter
+- **`workflows.pr-sitter`**, **`workflows.review-sitter`**,
+  **`workflows.dep-sitter`**, **`workflows.main-sitter`** — every sitter is off
+  until you set `"enabled": true`. What each sitter
   does, its stage pipeline, and its full set of kind-specific keys
   (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
   documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —
@@ -406,6 +403,10 @@ The hub only writes the file. A loop already running picks up the new config at
 its next stage; it is not re-read mid-stage.
 
 ## Code platform (`codePlatform` / `ado`)
+
+> **`codePlatform: "ado"` is experimental** — the `ado` section's keys and
+> defaults may still change between releases, on the same terms as the sitter
+> kinds that consume it. `github` is the default and the settled path.
 
 Platform *mechanics* (config fields, auth, the ADO write-backstop) live here;
 what each sitter kind actually does is in

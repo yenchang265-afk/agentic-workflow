@@ -104,9 +104,8 @@ skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要�
 - `/agentic-workflow:engineering stop`（別名 `abort`）—— 中止目前執行中的
   迴圈（未完成的工作會留在迴圈分支上）。
 
-各個 sitter（**`pr-sitter` 和 `review-sitter` 已穩定**，與預設開啟的
-`engineering` 並列；**`dep-sitter` 和 `main-sitter` 仍是實驗性的**——
-它們的清單和設定項都可能還會變動）。**每一個 sitter 具體做什麼都只在
+各個 sitter（**四個全都是實驗性的**——它們的清單和設定項都可能還會變動，
+因此每一個都要可選啟用；`engineering` 是唯一預設開啟的類型）。**每一個 sitter 具體做什麼都只在
 [`../../docs/sitters.md`](../../docs/sitters.md) 中記載一次**——在這個
 host 上，每個 sitter 的指令面都相同：`claim [<pr>]`（對應到
 `workflow_claim({kind: "<kind>"})`；這裡沒有常駐的 watch，所以 `claim`
@@ -114,14 +113,14 @@ host 上，每個 sitter 的指令面都相同：`claim [<pr>]`（對應到
 PR）以及 `status` · `stop`（回報／中止目前執行中的迴圈；
 單獨的 `/agentic-workflow:<kind>` = status）：
 
-- `/agentic-workflow:pr-sitter` —— 永遠開啟，無法停用。
-- `/agentic-workflow:review-sitter` —— 永遠開啟，無法停用。
+- `/agentic-workflow:pr-sitter` —— 透過 `workflows.pr-sitter.enabled` 選擇啟用。
+- `/agentic-workflow:review-sitter` —— 透過 `workflows.review-sitter.enabled` 選擇啟用。
 - `/agentic-workflow:dep-sitter` —— 透過 `workflows.dep-sitter.enabled` 選擇啟用。
 - `/agentic-workflow:main-sitter` —— 透過 `workflows.main-sitter.enabled` 選擇啟用。
 
-兩個已發布的 sitter 完全不需要設定。裸的 `workflow_claim()` 會依認領優先
-順序輪詢每一種已啟用的類型，所以當排在前面的都沒有可認領的工作時就會觸及
-它們；`workflow_claim({kind})` 則把拉取範圍限定在一種類型，而
+每個 sitter 都要先寫上 `"enabled": true` 才會被觸及。裸的
+`workflow_claim()` 會依認領優先順序輪詢每一種已啟用的類型，所以當排在前面
+的都沒有可認領的工作時就會觸及已啟用的 sitter；`workflow_claim({kind})` 則把拉取範圍限定在一種類型，而
 `workflow_claim({kind: "pr-sitter", target: 42})` 會強制處理特定的 PR——
 即使沒有任何待處理訊號，也會直接取回並驅動它（fork PR 仍會被拒絕）。
 

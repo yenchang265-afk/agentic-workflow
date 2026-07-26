@@ -72,8 +72,8 @@ export interface WorkSourceDeps {
 /**
  * The work sources the scheduler polls, in claim-priority order (config
  * order). An `only` kind restricts the poll to that one kind (the claim/watch
- * kind filter); without it every enabled kind is polled, the always-on sitters
- * included. A `target` (a PR number, from `claim <pr>`) is paired with a PR
+ * kind filter); without it every enabled kind is polled — engineering plus
+ * whichever sitters were opted in. A `target` (a PR number, from `claim <pr>`) is paired with a PR
  * `only` kind — it makes the resulting pull-request source claim that exact PR,
  * overriding the poller's heuristics; non-PR kinds ignore it. A typo'd or
  * unavailable `workflows.<kind>` (the config schema is an open record) must not

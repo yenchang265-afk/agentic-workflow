@@ -12,8 +12,8 @@
 （backlog）上驅動一個目標經歷 PLAN → BUILD → VERIFY → REVIEW，包含人工任務把關和
 計畫把關。四個 **sitter** 監看一個代管的目標面（開啟中的 PR、
 審查請求、有漏洞的相依套件、變紅的 CI）並驅動修復，同時把每一個終端呼叫都
-留給人類：`pr-sitter` 和 `review-sitter` 已**穩定**；`dep-sitter` 和
-`main-sitter` 仍是**實驗性的**。詳見下方 [sitters](#sitters)。
+留給人類。**四個 sitter 全都是實驗性的**，一律可選啟用；它們可以對接的
+`ado`（Azure DevOps）平台同樣是實驗性的。詳見下方 [sitters](#sitters)。
 
 編寫一種新的工作流程類型只需要一個 `workflow.json` 加上階段提示詞——詳見
 [`packages/core/workflows/README.md`](packages/core/workflows/README.md)。
@@ -62,16 +62,15 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 
 四個 sitter 會監看一個代管的目標面並驅動修復，每一個都有自己的
 `/agentic-workflow:<kind>` 指令，共用 `claim` / `status` / `stop` 動詞（在
-OpenCode 上還有 `watch [trigger]` / `unwatch`）。**`pr-sitter` 和
-`review-sitter` 已穩定，而且不需要任何設定**——如同 `engineering`，除非你
-把它們關掉，否則都會執行；其清單、設定項和預設值也比照相同的相容性標準。
-**`dep-sitter` 和 `main-sitter` 仍是實驗性的**，維持可選啟用；它們的則仍
-可能變動。
+OpenCode 上還有 `watch [trigger]` / `unwatch`）。**四個 sitter 全都是
+實驗性的**——它們的清單、設定項和預設值在各版本之間都可能還會變動，因此
+每一個都要靠 `"enabled": true` 才會啟用。`engineering` 是唯一不需要你開口
+就會執行的類型。
 
 ```json
 {
   "workflows": {
-    "pr-sitter":   { "query": "is:open author:@me" },
+    "pr-sitter":   { "enabled": true, "query": "is:open author:@me" },
     "dep-sitter":  { "enabled": true, "severityFloor": "high" },
     "main-sitter": { "enabled": true, "branch": "main" }
   }

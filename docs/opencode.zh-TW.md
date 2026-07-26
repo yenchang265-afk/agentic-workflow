@@ -113,21 +113,21 @@ OpenCode 版本如何執行、它完整的指令面，以及安裝細節。共�
   待核准/可認領/已中斷/審查中）。裸 `/agentic-workflow:engineering` 也
   做同樣的事
 
-各個 sitter（**`pr-sitter` 和 `review-sitter` 已穩定**，與預設開啟的
-`engineering` 並列；**`dep-sitter` 和 `main-sitter` 仍是實驗性的**——
-它們的清單和設定項都可能還會變動）。每一個都有完全相同的指令面——`claim`
+各個 sitter（**四個全都是實驗性的**，都要透過
+`workflows.<kind>.enabled: true` 可選啟用——它們的清單和設定項都可能還會
+變動；`engineering` 是唯一除非停用否則都會執行的類型）。每一個都有完全相同的指令面——`claim`
 （一次性拉取；PR sitter 還可傳入選填的 `<pr>` 編號／網址以強制處理特定的
 PR）、`watch [trigger]` / `unwatch`（常駐 worker，觸發/
 間隔語法和每複本一個 watcher 的租約與 engineering 的 `watch` 相同，
 範圍限定於該類型），以及 `stop`（別名 `abort`）/ `status`（裸指令
 = status）。**每一個各自做什麼只在一個地方記載，見
 [`docs/sitters.md`](sitters.md)**——這四個指令是：
-`/agentic-workflow:pr-sitter`（永遠開啟——沒有開關）、
-`/agentic-workflow:review-sitter`（同樣永遠開啟）、
+`/agentic-workflow:pr-sitter`（透過 `workflows.pr-sitter.enabled` 可選啟用）、
+`/agentic-workflow:review-sitter`（同樣可選啟用）、
 `/agentic-workflow:dep-sitter`（透過 `workflows.dep-sitter.enabled` 可選啟用），
 以及 `/agentic-workflow:main-sitter`（透過 `workflows.main-sitter.enabled`
-可選啟用）。這裡每一個動詞都會指名自己的類型，所以預設開啟的 sitter 完全
-不需要 `.agentic-workflow.json` 就能使用。
+可選啟用）。這裡每一個動詞都會指名自己的類型，而且每個 sitter 都要先在
+`.agentic-workflow.json` 裡寫上 `enabled: true`，認領或 watch 才會觸及它。
 
 舊的總管式 `/agent-loop` 指令已經消失——連同它的自由文字模式和它的
 `task <id>`、`run`、`ship`、`approve-plan`、`reject`，以及

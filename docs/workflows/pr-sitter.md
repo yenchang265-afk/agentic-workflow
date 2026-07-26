@@ -8,14 +8,14 @@ TRIAGE → FIX → VERIFY → PUBLISH (up to 3 iterations)
 
 ## Enable
 
-Always on — nothing to add to `.agentic-workflow.json` to use it, and no way
-to turn it off (`"enabled": false` here is a config error). To narrow which
-PRs it claims:
+Experimental and off by default — add it to `.agentic-workflow.json` to use
+it. The same section narrows which PRs it claims:
 
 ```jsonc
 {
   "workflows": {
     "pr-sitter": {
+      "enabled": true,
       "query": "is:open author:@me"
     }
   }

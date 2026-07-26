@@ -106,9 +106,8 @@ const BaseConfigSchema = z.object({
         /**
          * Deliberately NOT defaulted: `enabledWorkflowKinds` reads it as
          * `!== false` for `engineering` (undefined keeps it on) and `=== true`
-         * for opt-in kinds, so a knob-only section never silently starts one.
-         * A schema default would collapse both. On an `ALWAYS_ENABLED_KINDS`
-         * sitter the key is meaningless and `false` is rejected outright.
+         * for opt-in kinds — every sitter — so a knob-only section never
+         * silently starts one. A schema default would collapse both.
          */
         enabled: z.boolean().optional(),
         /** Per-kind override of the global `codePlatform`. */
@@ -163,6 +162,9 @@ const BaseConfigSchema = z.object({
    * to `gh auth login`; ADO auth is a Personal Access Token in the
    * `AZURE_DEVOPS_EXT_PAT` env var. Overridable per kind via
    * `workflows.<kind>.codePlatform`.
+   *
+   * `ado` is **experimental** — like the sitters that consume it, its config
+   * shape (the `ado` section below) may still change. See docs/configuration.md.
    */
   codePlatform: CodePlatformSchema.default("github"),
   /**
@@ -230,41 +232,31 @@ export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
       message: "codePlatform 'ado' requires ado.selfLogin (a PAT cannot resolve the sitter's identity)",
     })
   }
-  // The released sitters have no off switch. Someone who wrote `enabled: false`
-  // expects it to take effect, so say it doesn't rather than honoring the key
-  // (wrong) or dropping it in silence (worse — the setting reads as applied and
-  // the kind keeps running, with nothing to connect the two).
-  for (const kind of ALWAYS_ENABLED_KINDS) {
-    if (c.workflows[kind]?.enabled === false) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["workflows", kind, "enabled"],
-        message: `"${kind}" is always enabled and cannot be disabled — remove this key. Its other knobs still apply.`,
-      })
-    }
-  }
 })
 
 /**
- * Kinds that are always live and cannot be switched off — the released sitters
- * are part of the product, not a feature to opt into, so they carry no off
- * switch at all. `workflows.<kind>.enabled: false` on one of these is rejected
- * at load rather than ignored (see `ConfigSchema`): silently dropping a setting
- * someone wrote is the worst of the three options.
+ * Kinds still under development: every sitter. Their manifests, stage prompts,
+ * and config keys may still change between releases, so none of them starts
+ * without an explicit `workflows.<kind>.enabled: true` — a sitter acts on a
+ * hosted surface (pull requests, dependencies, the default branch's CI), and
+ * turning that on is the user's call to make, not a default to inherit.
  *
- * Note what this does NOT mean: an always-enabled sitter still only runs when
- * a claim or watch actually pulls it, and every terminal call (merge, approve,
- * close) stays human. See docs/design/threat-model.md T7-T11.
+ * Exported so hosts can label them as experimental where a kind is listed
+ * (the OpenCode `kinds` verb, the hub's kind checklist) rather than presenting
+ * an unfinished kind as settled product.
+ *
+ * Note what this does NOT mean: an enabled sitter still only runs when a claim
+ * or watch actually pulls it, and every terminal call (merge, approve, close)
+ * stays human. See docs/design/threat-model.md T7-T11.
  */
-export const ALWAYS_ENABLED_KINDS: readonly string[] = ["pr-sitter", "review-sitter"]
+export const EXPERIMENTAL_KINDS: readonly string[] = ["pr-sitter", "review-sitter", "dep-sitter", "main-sitter"]
 
 /**
- * Kinds live without any configuration: the always-on sitters plus
- * `engineering`, which unlike them may still be turned off with
- * `enabled: false`. Everything else (`dep-sitter`, `main-sitter`, any local
- * kind) stays opt-in via `enabled: true`.
+ * Kinds live without any configuration: `engineering` alone, and it may still
+ * be turned off with `enabled: false`. Everything else — every sitter in
+ * `EXPERIMENTAL_KINDS`, plus any local kind — stays opt-in via `enabled: true`.
  */
-export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering", ...ALWAYS_ENABLED_KINDS]
+export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering"]
 
 /**
  * The workflow kinds this config activates, in claim-priority order: the
@@ -273,7 +265,7 @@ export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering", ...ALWAY
  */
 export const enabledWorkflowKinds = (config: Config): string[] => {
   const sections = config.workflows
-  const kinds = DEFAULT_ENABLED_KINDS.filter((kind) => ALWAYS_ENABLED_KINDS.includes(kind) || sections[kind]?.enabled !== false)
+  const kinds = DEFAULT_ENABLED_KINDS.filter((kind) => sections[kind]?.enabled !== false)
   for (const [kind, section] of Object.entries(sections)) {
     if (!DEFAULT_ENABLED_KINDS.includes(kind) && section.enabled === true) kinds.push(kind)
   }

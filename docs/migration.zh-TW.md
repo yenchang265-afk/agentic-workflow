@@ -2,6 +2,28 @@
 
 # 跨版面遷移
 
+## 遷移到可選啟用的 sitter——每一種 sitter 類型都成為實驗性
+
+- **`pr-sitter` 和 `review-sitter` 不再預設執行。** 四個 sitter
+  （`pr-sitter`、`review-sitter`、`dep-sitter`、`main-sitter`）全都是實驗性
+  的，因此每一個都需要在自己的 `workflows.<kind>` 區段寫上
+  `"enabled": true`，就跟 `dep-sitter` 和 `main-sitter` 原本一樣。
+  `engineering` 沒有變——除非停用，否則仍會執行。
+- **這是無聲的中斷**：只帶旋鈕的設定（例如
+  `"pr-sitter": { "query": "is:open author:@me" }`）仍能解析，但該類型現在
+  是關的，只會靜靜停止認領。在同一個區段加上 `"enabled": true` 即可恢復
+  原本的行為：
+
+  ```json
+  { "workflows": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
+  ```
+
+- **在 sitter 上寫 `"enabled": false` 不再是設定錯誤。** 它以前會在載入時
+  被拒絕（「永遠啟用且無法停用」）；現在可以解析，並讓該類型維持關閉——
+  這也是預設值。如果你當初為了避開那個錯誤而刪掉這個鍵，不需要改回來。
+- **`codePlatform: "ado"` 同樣是實驗性的**——設定不必改動，但請把 `ado`
+  區段的鍵視為仍可能變動。
+
 ## 遷移到 `workflows` ——內部由 `loop` 改名為 `workflow`
 
 - **設定鍵現在是 `workflows`，不再是 `loops`。** 把你的

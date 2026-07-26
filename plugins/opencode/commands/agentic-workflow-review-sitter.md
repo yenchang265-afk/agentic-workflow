@@ -33,12 +33,11 @@ Dispatch:
 - **`status`** — print the current loop (stage, iteration, watch state and
   cadence). Bare `/agentic-workflow:review-sitter` (no arguments) does the same.
 
-This kind is **always on** — it needs no configuration and has no off
-switch (`"enabled": false` on it is a config error). Narrow which PRs it
-watches with:
+This kind is **experimental and opt-in** — it does nothing until enabled,
+and its config keys may still change:
 
 ```json
-{ "workflows": { "review-sitter": { "query": "is:open review-requested:@me" } } }
+{ "workflows": { "review-sitter": { "enabled": true, "query": "is:open review-requested:@me" } } }
 ```
 
 `query` (GitHub) narrows which PRs are polled; on Azure DevOps set

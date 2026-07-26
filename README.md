@@ -15,8 +15,8 @@ Five workflow kinds ship today. **engineering** (default-on) drives a goal throu
 PLAN → BUILD → VERIFY → REVIEW over the `docs/tasks/` backlog, with human task
 and plan gates. Four **sitters** watch a hosted surface (open PRs,
 review requests, vulnerable deps, red CI) and drive a fix, keeping every
-terminal call human: `pr-sitter` and `review-sitter` are **stable**;
-`dep-sitter` and `main-sitter` are still **experimental**. See
+terminal call human. **All four sitters are experimental** and opt-in — so is
+the `ado` (Azure DevOps) platform they can run against. See
 [The sitters](#the-sitters) below.
 
 Authoring a new kind is a `workflow.json` + stage prompts away — see
@@ -68,27 +68,24 @@ shipping. Full execution model (watch mode, iteration caps, recovery):
 
 Four sitters watch a hosted surface and drive a fix, each on its own
 `/agentic-workflow:<kind>` command sharing the `claim` / `status` / `stop` verbs
-(plus `watch [trigger]` / `unwatch` on OpenCode). **`pr-sitter` and
-`review-sitter` are stable and need no configuration** — like `engineering`
-they run unless you turn them off, and their manifests, config keys, and
-defaults follow the same compatibility bar. **`dep-sitter` and `main-sitter`
-are still experimental** and stay opt-in; theirs may still change.
+(plus `watch [trigger]` / `unwatch` on OpenCode). **All four are experimental**
+— their manifests, config keys, and defaults may still change between releases
+— so every one of them stays opt-in behind `"enabled": true`. `engineering` is
+the only kind that runs without being asked for.
 
 ```json
 {
   "workflows": {
-    "pr-sitter":  { "query": "is:open author:@me" },
+    "pr-sitter":  { "enabled": true, "query": "is:open author:@me" },
     "dep-sitter": { "enabled": true, "severityFloor": "high" },
     "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```
 
-All of it is optional: `pr-sitter` here only narrows a query, and the two
-experimental kinds need `"enabled": true` to start at all. `pr-sitter` and
-`review-sitter` have **no off switch** — `"enabled": false` on either is a
-config error, not a toggle. They still only act when a claim or watch pulls
-them, and every terminal call stays human.
+Nothing here starts on its own: a sitter needs `"enabled": true` to run at all,
+and the other keys only tune one that is already on. Even enabled, a sitter
+acts only when a claim or watch pulls it, and every terminal call stays human.
 
 Every sitter treats the PR/comment/diff/CI text it reads as untrusted input,
 stays behind per-stage bash + platform allowlists, and keeps the terminal call

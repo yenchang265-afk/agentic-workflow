@@ -227,19 +227,19 @@ landed). The registry path is there for kinds whose validation is pure.
 ```json
 {
   "workflows": {
-    "pr-sitter": { "query": "is:open author:@me" },
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" },
     "dep-sitter": { "enabled": true, "severityFloor": "high" },
     "main-sitter": { "enabled": true, "branch": "main" }
   }
 }
 ```
 
-`pr-sitter` and `review-sitter` are always on and cannot be disabled;
 `engineering` runs unless explicitly disabled (`"engineering": { "enabled":
-false }`); every other kind, including any you author here, is opt-in with
-`"enabled": true`. Kind-specific knobs (like the sitter's `query`) live in the
-same section. The scheduler polls enabled kinds in claim-priority order —
-engineering's backlog first, then the two sitters, then opted-in kinds.
+false }`); every other kind — all four sitters, plus any you author here — is
+experimental and opt-in with `"enabled": true`. Kind-specific knobs (like the
+sitter's `query`) live in the same section but never enable a kind on their
+own. The scheduler polls enabled kinds in claim-priority order — engineering's
+backlog first, then the opted-in kinds in config order.
 
 ## Checklist for a new kind
 

@@ -122,9 +122,9 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering stop` (alias `abort`) — abort the active loop (partial work
   stays on the loop branch).
 
-The sitters (**`pr-sitter` and `review-sitter` are stable**, alongside
-`engineering`, the default-on kind; **`dep-sitter` and `main-sitter` are still
-experimental** — their manifests and config keys may still change).
+The sitters (**all four are experimental** — their manifests and config keys
+may still change, so each is opt-in; `engineering` is the one default-on
+kind).
 **What each one does is documented once in
 [`../../docs/sitters.md`](../../docs/sitters.md)** — on this host every
 sitter has the same command surface: `claim [<pr>]` (maps to
@@ -133,14 +133,14 @@ pull — the PR sitters also take an optional PR number/URL to force a specific
 one) and `status` · `stop` (report / abort the active loop; bare
 `/agentic-workflow:<kind>` = status):
 
-- `/agentic-workflow:pr-sitter` — always on; cannot be disabled.
-- `/agentic-workflow:review-sitter` — always on; cannot be disabled.
+- `/agentic-workflow:pr-sitter` — opt-in via `workflows.pr-sitter.enabled`.
+- `/agentic-workflow:review-sitter` — opt-in via `workflows.review-sitter.enabled`.
 - `/agentic-workflow:dep-sitter` — opt-in via `workflows.dep-sitter.enabled`.
 - `/agentic-workflow:main-sitter` — opt-in via `workflows.main-sitter.enabled`.
 
-Both released sitters need no config at all. A bare `workflow_claim()` polls
-every enabled kind in claim-priority order, so it reaches them once nothing
-earlier is claimable; `workflow_claim({kind})` restricts the pull to one, and
+Each sitter needs its `"enabled": true` before anything reaches it. A bare
+`workflow_claim()` polls every enabled kind in claim-priority order, so it
+reaches an enabled sitter once nothing earlier is claimable; `workflow_claim({kind})` restricts the pull to one, and
 `workflow_claim({kind: "pr-sitter", target: 42})` forces a specific PR — fetched
 directly and driven even with no outstanding signal (fork PRs still refused).
 
