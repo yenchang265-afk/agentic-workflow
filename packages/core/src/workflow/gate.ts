@@ -36,14 +36,19 @@ export interface GateCtx {
 }
 
 /**
- * A refusal's severity, for hosts that surface it (the OpenCode toast): a task
- * already at a forward status is `info` ("nothing to do"), a genuine
- * wrong-folder/not-found is `warning`. The Claude host ignores it.
+ * A result's severity, for hosts that surface it (the OpenCode toast, the hub's
+ * message line). On a refusal: a task already at a forward status is `info`
+ * ("nothing to do"), a genuine wrong-folder/not-found is `warning`.
+ *
+ * On a SUCCESS it marks a move that landed but carries a caveat — the ship gate
+ * whose PR did not open is the case it exists for. Absent means an unqualified
+ * success, which is what an ordinary move returns. The Claude host ignores it
+ * (see `data` for the machine-readable half).
  */
 export type GateVariant = "info" | "warning"
 
 export type GateResult =
-  | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown> }
+  | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown>; readonly variant?: GateVariant }
   | { readonly ok: false; readonly message: string; readonly variant?: GateVariant }
 
 /**
@@ -478,16 +483,29 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
 
 /**
  * The PR half of a ship, rendered onto the `GateResult.message` every surface
- * shows verbatim (opencode toast, Claude, the hub card).
+ * shows verbatim (opencode toast, the hub card).
  *
- * A failed `shipPr` used to be recorded ONLY as an audit note on the task file,
- * so the user was told `"<title>" completed.` while the branch sat unpushed with
- * no PR — a silent wrong-success on the one action visible outside the machine,
- * and doubly invisible under the default `ignoreBacklog: true`, which never
- * commits that note. The failure belongs in the message.
+ * An unopened PR is a NOTE, not a failure. Opening one is not a requirement of
+ * the ship: `shipPr` never throws, no-ops entirely for a hand-authored task with
+ * no `feature/<id>` branch, and several of its reasons — `ado config missing`,
+ * `ado.repository not configured` — are plain configuration states where a PR
+ * was never possible. By the time it runs, the task is already audited, moved to
+ * `completed/`, and committed. So the ship succeeded; this is the caveat.
+ *
+ * What it must not do is go SILENT, which is what it used to do: the reason went
+ * only into an audit note, invisible under the default `ignoreBacklog: true`
+ * that never commits it, and the user read an unqualified "completed".
+ *
+ * Deliberately says nothing about whether the branch was pushed. `attempted`
+ * covers two worlds — `git push failed` (not pushed) and a `gh`/ADO create
+ * failure (pushed) — and `ShipPrResult` does not distinguish them, so any claim
+ * either way is wrong half the time.
  */
 const prOutcome = (pr: ShipPrResult): string =>
-  pr.url ? ` PR: ${pr.url}` : pr.attempted ? ` But the PR was NOT opened — ${pr.reason ?? "reason unknown"}. The branch is pushed; open it by hand or re-run approve.` : ""
+  pr.url ? ` PR: ${pr.url}` : pr.attempted ? ` Note: no PR was opened — ${pr.reason ?? "reason unknown"}. The task is completed; open one when you're ready.` : ""
+
+/** Whether a ship's PR attempt came up short — the one case that warrants a warning. */
+const prMissed = (pr: ShipPrResult): boolean => pr.attempted && !pr.url
 
 /** ship: an in-review/ task → completed/ (the final human gate). Opens/links the draft PR. */
 export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
@@ -508,6 +526,10 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
       const done = elsewhere!
       const data: Record<string, unknown> = { completed: done.path, alreadyDone: true }
       let tail = " Nothing to do."
+      // Hoisted: `pr` is scoped to the re-attempt below, but the variant is
+      // decided on the return. A retry that STILL can't open the PR warns for
+      // the same reason the main path does.
+      let missedPr = false
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
       if (!prAlreadyRecorded) {
         const pr = await shipPr($, log, directory, config, kind, id, done.title)
@@ -516,16 +538,17 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
           await appendNote($, { id, path: done.path }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
           await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
         } else if (pr.attempted) {
-          data.pr = { failed: true, reason: pr.reason }
+          data.pr = { opened: false, reason: pr.reason }
           await appendNote($, { id, path: done.path }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
           await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
         }
         // Same rule as the main path: a retry that still can't open the PR must
         // say so, not report "nothing to do".
         if (pr.url || pr.attempted) tail = prOutcome(pr)
+        missedPr = prMissed(pr)
       }
       await releaseWorktree($, log, directory, config, id)
-      return { ok: true, message: `"${done.title}" is already completed.${tail}`, path: done.path, data }
+      return { ok: true, message: `"${done.title}" is already completed.${tail}`, path: done.path, data, ...(missedPr ? { variant: "warning" as const } : {}) }
     }
     return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : ((await unparseableAt(ctx, id)) ?? `No in-review task "${id}".`) }
   }
@@ -540,7 +563,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
     await appendNote($, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
     await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
   } else if (pr.attempted) {
-    data.pr = { failed: true, reason: pr.reason }
+    data.pr = { opened: false, reason: pr.reason }
     await appendNote($, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
     await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
   }
@@ -548,7 +571,10 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   // and recoveries build on prior iterations — is finally disposable. The
   // branch survives, so the PR opened just above is unaffected.
   await releaseWorktree($, log, directory, config, id)
-  return { ok: true, message: `"${t.title}" completed.${prOutcome(pr)}`, path: newPath, data }
+  // A caveated ship is still a ship: `ok` stays true (the CLI exits 0, no host
+  // reads it as a refusal) and the variant is what makes the note VISIBLE rather
+  // than a green toast the user scrolls past.
+  return { ok: true, message: `"${t.title}" completed.${prOutcome(pr)}`, path: newPath, data, ...(prMissed(pr) ? { variant: "warning" as const } : {}) }
 }
 
 /** Which task a folder-driven gate shortcut should act on. */

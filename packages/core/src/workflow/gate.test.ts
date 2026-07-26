@@ -499,11 +499,13 @@ test("shipTask retry on an already-completed task re-attempts the PR when none w
   assert.ok("/repo/docs/tasks/completed/t.md" in fs, "the task stays completed")
 })
 
-test("shipTask says so on the RESULT when the PR was attempted and not opened", async () => {
-  // The failure used to land only in the task-file audit note, while the returned
-  // message was an unqualified `"<title>" completed.` — and every host renders
-  // that message verbatim, so the user saw plain success with no PR. Worse under
-  // the default ignoreBacklog: true, which never commits the note either.
+test("an unopened PR is a WARNING on a successful ship, not a failure", async () => {
+  // Opening a PR is not a requirement of shipping — shipPr never throws, no-ops
+  // for a hand-authored task with no branch, and some of its reasons are plain
+  // config states. By the time it runs the task is already moved and committed.
+  // So the ship succeeds; the caveat rides along as a variant. What it must NOT
+  // do is go silent: the reason used to land only in an audit note, which the
+  // default ignoreBacklog: true never commits.
   const { ctx } = makeCtx(
     { "in-review/t.md": task("Do it") },
     {
@@ -515,9 +517,45 @@ test("shipTask says so on the RESULT when the PR was attempted and not opened", 
     },
   )
   const r = await shipTask(ctx, "t")
-  assert.ok(r.ok, "the ship itself succeeded — the task IS completed")
-  assert.match(r.message, /NOT opened/, "but the message must not read as an unqualified success")
-  assert.ok(r.ok && (r.data.pr as { failed?: boolean }).failed === true, "and the failure is machine-readable too")
+  assert.equal(r.ok, true, "the ship succeeded — the task IS completed")
+  assert.equal(r.variant, "warning", "and it is surfaced as a warning, which is the whole point")
+  assert.match(r.message, /no PR was opened/, "the message says so rather than reading as an unqualified success")
+  // The embedded reason may legitimately contain "failed" — `gh pr create failed`
+  // is the diagnostic. What must not come back is the FRAMING that read as a
+  // failed ship.
+  assert.doesNotMatch(r.message, /But the PR|NOT opened/, "the framing must not read as a failure")
+  assert.match(r.message, /completed/, "and it still leads with the ship having succeeded")
+  assert.ok(r.ok && (r.data.pr as { opened?: boolean }).opened === false, "machine-readable too — the only channel the Claude host shows")
+  assert.ok(r.ok && !("failed" in (r.data.pr as object)), "and nothing claims the ship failed")
+})
+
+test("a caveated ship never claims the branch was pushed — that is unknowable here", async () => {
+  // `attempted` covers two worlds: `git push failed` (not pushed) and a gh/ADO
+  // create failure (pushed). ShipPrResult does not distinguish them, so any
+  // claim either way is wrong half the time.
+  const { ctx } = makeCtx(
+    { "in-review/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" }
+        if (cmd.includes("push")) return { exitCode: 1, stdout: "" } // the PUSH is what fails here
+        return undefined
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.equal(r.ok, true, "a failed push still does not fail the ship")
+  assert.equal(r.variant, "warning")
+  assert.doesNotMatch(r.message, /branch is pushed/, "the old wording asserted this and was wrong in exactly this case")
+})
+
+test("a clean ship carries no variant, so ordinary ships stay green", async () => {
+  // The regression this change is most likely to cause.
+  const { ctx } = makeCtx({ "in-review/t.md": task("Do it") })
+  const r = await shipTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.equal(r.variant, undefined, "no branch to ship → no PR attempt → nothing to warn about")
+  assert.doesNotMatch(r.message, /no PR was opened/)
 })
 
 test("shipTask's already-completed retry reports a still-failing PR rather than 'nothing to do'", async () => {
@@ -533,8 +571,9 @@ test("shipTask's already-completed retry reports a still-failing PR rather than 
   )
   const r = await shipTask(ctx, "t")
   assert.ok(r.ok)
-  assert.match(r.message, /NOT opened/)
-  assert.doesNotMatch(r.message, /Nothing to do/, "a failed PR attempt is not 'nothing to do'")
+  assert.equal(r.variant, "warning", "the retry warns for the same reason the main path does")
+  assert.match(r.message, /no PR was opened/)
+  assert.doesNotMatch(r.message, /Nothing to do/, "a PR that still did not open is not 'nothing to do'")
 })
 
 test("shipTask retry does nothing when the completed task already recorded a PR", async () => {

@@ -604,13 +604,17 @@ test("/approve with no id ships the single in-review task to completed/", async 
 
   await handleApprove(deps, "sess", "", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
-  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
   // The fake shell's default (unmatched → exitCode 0, empty stdout) makes the
   // branch "exist" and the push "succeed", but every `gh` call reads as empty
-  // output — i.e. attempted-but-failed, not "no branch".
+  // output — i.e. attempted-but-failed, not "no branch". So this is the
+  // caveated ship: it SHIPPED (the task moved), and the toast is a warning
+  // rather than green so the note is not scrolled past. Not a failure — the
+  // sibling test below pins that a no-branch ship stays "success".
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")), "the ship still happened")
   assert.ok(log.some((cmd) => cmd.includes("PR not opened")))
   assert.ok(!(toasts[0]?.message ?? "").includes("PR:"))
+  assert.match(toasts[0]?.message ?? "", /no PR was opened/)
 })
 
 test("ship is a silent no-op on PR creation when there's no feature/<id> branch", async () => {
@@ -932,7 +936,9 @@ test("id-less approve ships the single in-review task (ship verb is gone)", asyn
 
   await handleCommand(deps, "sess", "approve", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
+  // Warning, not success: same attempted-but-failed PR as the test above. The
+  // ship itself landed, which is what the mv asserts.
+  assert.equal(toasts[0]?.variant, "warning")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")))
 })
 
