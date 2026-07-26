@@ -22,22 +22,57 @@
 export type CommandPromptOutput = { parts?: Array<{ type?: string; text?: string } | null | undefined> }
 
 /**
- * Wrap a refusal reason in the standing "do not do this yourself" directive.
- * The explicit prohibitions are not decoration: without them a capable model
- * reads a bare "the plugin did not run" as an invitation to fill the gap.
+ * The standing "this body is not your instructions" directive.
+ *
+ * Shared by every override that leaves the model holding a rendered template it
+ * must not act on. The explicit prohibitions are not decoration: without them a
+ * capable model reads a bare "the plugin did not run" as an invitation to fill
+ * the gap. One copy so a refusal and a crash cannot drift apart.
  */
+const DO_NOT_IMPROVISE = [
+  "This command's body is a description of work the PLUGIN performs, not instructions for you.",
+  "Do NOT attempt any of it: do not read files, do not run git/gh/az or call any API,",
+  "do not start, watch, or claim anything, and do not move task files.",
+]
+
+/** Wrap a refusal reason in the standing "do not do this yourself" directive. */
 export const refusalPrompt = (reason: string, remedy: string): string =>
   [
     `The agentic-workflow plugin did NOT run this command: ${reason}`,
     "",
-    "This command's body is a description of work the PLUGIN performs, not instructions for you.",
-    "Do NOT attempt any of it: do not read files, do not run git/gh/az or call any API,",
-    "do not start, watch, or claim anything, and do not move task files.",
+    ...DO_NOT_IMPROVISE,
     "",
     "Reply with exactly the following and nothing else:",
     "",
     remedy,
   ].join("\n")
+
+/**
+ * The override for a command whose deterministic half THREW.
+ *
+ * Distinct from `refusalPrompt` on purpose. A refusal is a decision taken before
+ * anything ran, so it can promise nothing happened; a crash can land anywhere —
+ * `approve` moves the task file and only then reconciles — so this must not
+ * claim the command did nothing. It must also not invite the model to finish or
+ * retry the half-applied work: the body it is holding was already sliced to the
+ * invoked verb, and for the report-and-stop verbs that prose describes the
+ * plugin's own deterministic work in the imperative. Reporting the error and
+ * stopping is the only safe action; the kind's `status` verb is how the human
+ * inspects what actually landed.
+ */
+export const failurePrompt = (command: string, verb: string, error: string): string => {
+  const invocation = verb ? `\`/${command} ${verb}\`` : `\`/${command}\``
+  return [
+    `The agentic-workflow plugin FAILED while running ${invocation}: ${error}`,
+    "",
+    ...DO_NOT_IMPROVISE,
+    "Do NOT retry it, and do NOT try to finish what it started — part of its work may already have been applied.",
+    "",
+    "Reply with exactly the following and nothing else:",
+    "",
+    `${invocation} failed: ${error}. Nothing further was attempted, and some of its work may already have been applied — check \`/${command} status\` before re-running it.`,
+  ].join("\n")
+}
 
 /**
  * The rendered template as the model would receive it.

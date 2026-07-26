@@ -15,7 +15,10 @@ import { draftModelNote, makeAgenticWorkflow } from "./impl.ts"
 
 type Hooks = { "tool.execute.before": (input: { sessionID: string; tool: string; callID: string }, output: { args: Record<string, unknown> }) => Promise<void> }
 
-const makeHooks = async (sessions: Record<string, string | undefined>, opts: { failSessionApi?: boolean } = {}): Promise<Hooks> => {
+const makeHooks = async (
+  sessions: Record<string, string | undefined>,
+  opts: { failSessionApi?: boolean; failShell?: boolean } = {},
+): Promise<Hooks> => {
   const client = {
     app: { log: async () => {} },
     file: { read: async () => Promise.reject(new Error("no config file")) },
@@ -28,8 +31,14 @@ const makeHooks = async (sessions: Record<string, string | undefined>, opts: { f
     tui: { showToast: async () => {} },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const $ = (() => ({ quiet: () => ({ nothrow: () => Promise.resolve({ exitCode: 1, stdout: "" }) }) })) as any
+  // A Bun shell that throws stands in for any hard failure inside the plugin's
+  // deterministic half (spawn refused, git missing, fs error) — the command hook
+  // must not let that failure hand the model the rendered body.
+  const $ = (() => {
+    if (opts.failShell) throw new Error("shell unavailable")
+    return { quiet: () => ({ nothrow: () => Promise.resolve({ exitCode: 1, stdout: "" }) }) }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any
   return (await makeAgenticWorkflow({ client, directory: "/repo", $, worktree: "/repo" } as never)) as unknown as Hooks
 }
 
@@ -279,6 +288,56 @@ test("command hook slices a template split across text parts", async () => {
   assert.match(output.parts[0]!.text!, /interview the user/)
   assert.doesNotMatch(output.parts[0]!.text!, /claim the next build-ready task/)
   assert.equal(output.parts[1]!.text, "", "no leftover template text may survive in a later part")
+})
+
+/**
+ * The failure path. The slice has already written the invoked verb's prose to
+ * `output` by the time the plugin dispatches, so a throw in the deterministic
+ * half is the ONE path on which a report-and-stop verb's description of PLUGIN
+ * work becomes the model's instructions — the `if (outcome)` override that
+ * normally replaces it never runs. Both dispatch orders must be covered:
+ * `approve`/`replan` run the gate move before reconciling, every other verb
+ * reconciles first.
+ */
+const FAILURE_TEMPLATE = [
+  "shared preamble",
+  "<!-- aw:verb recover -->",
+  "re-claim the task and resume from its state snapshot",
+  "<!-- /aw:verb recover -->",
+  "<!-- aw:verb approve -->",
+  "glob the folder to verify the move landed",
+  "<!-- /aw:verb approve -->",
+  "never touch docs/tasks yourself",
+].join("\n")
+
+const runFailingCommand = async (args: string): Promise<string> => {
+  const output = { parts: [{ type: "text", text: FAILURE_TEMPLATE }] }
+  const hooks = (await makeHooks({}, { failShell: true })) as unknown as CmdHooks
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_f", arguments: args }, output)
+  return output.parts[0]!.text!
+}
+
+test("a throw in the deterministic half overrides the body instead of leaving it as instructions", async () => {
+  const text = await runFailingCommand("recover t1")
+  assert.match(text, /FAILED while running/, "a toast is invisible to the model — the failure must be in the prompt")
+  assert.match(text, /shell unavailable/, "the real error must reach the user")
+  assert.doesNotMatch(text, /resume from its state snapshot/, "the verb's description of plugin work must not survive as instructions")
+  assert.doesNotMatch(text, /aw:verb/, "markers must not reach the model")
+  assert.doesNotMatch(text, /already ran/, "the success override must not claim the work landed")
+})
+
+test("the failure override is inert when the deterministic half succeeds", async () => {
+  // The guard must not cost the pass-through verbs their body. `approve` needs
+  // its prose — it verifies the folder move the plugin just made — so a
+  // catch-all that fired on any swallowed internal error would silently break
+  // the gate. Same shell failure, but one the plugin handles itself.
+  const output = { parts: [{ type: "text", text: FAILURE_TEMPLATE }] }
+  const hooks = (await makeHooks({})) as unknown as CmdHooks
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_g", arguments: "approve t1" }, output)
+  const text = output.parts[0]!.text!
+  assert.match(text, /verify the move landed/, "a pass-through verb keeps its instructions")
+  assert.doesNotMatch(text, /FAILED while running/, "no throw means no failure override")
+  assert.doesNotMatch(text, /resume from its state snapshot/, "still sliced to the invoked verb")
 })
 
 /**

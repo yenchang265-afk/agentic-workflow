@@ -294,6 +294,19 @@ it. The warnings are advisory: they annotate a save, never block it. See
   host-specific spelling as `stageModels` (a `provider/` prefix is stripped on
   Claude Code), and an unset agent runs the host default.
 
+  **How far each entry reaches.** Neither spawn is a stage fire, so neither can
+  be handed a model as a parameter — the model that reads the command body has
+  to perform the spawn for the configured value to reach it. That holds for
+  `workflow-plan-author` on both hosts. It does **not** hold for `workflow-plan`
+  on OpenCode: `plugins/opencode/commands/plan.md` declares
+  `agent: workflow-plan` with `subtask: true`, so opencode spawns the subagent
+  itself and the body is already that subagent's prompt — there is no earlier
+  turn left to instruct. So `agentModels.workflow-plan` applies to the Claude
+  host's `/agentic-workflow:plan` (whose body asks the model to spawn
+  `workflow-plan` with the Task tool); on OpenCode the ad-hoc planner runs the
+  session default and this entry is inert. `stageModels.plan` is unaffected on
+  both hosts — that is a real stage fire, and it carries its model explicitly.
+
   Deliberately **separate from `stageModels`**, not folded into
   `stageModels.plan`: drafting and the PLAN stage both run
   `workflow-plan-author`, so one key for both would mean pointing drafting at a

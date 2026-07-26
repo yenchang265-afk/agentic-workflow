@@ -230,6 +230,41 @@ test("the aliases the engineering command documents outside argument-hint still 
   assert.equal(sliceCommandPrompt(body, "abort"), sliceCommandPrompt(body, "stop"))
 })
 
+/**
+ * The verbs the Claude host advertises for the same loop. That host splits the
+ * command physically (an always-sent router plus per-verb blocks injected by a
+ * hook), so its hint lives in the router — but it is the same `argument-hint`
+ * grammar, and `advertisedVerbs` reads it unchanged.
+ */
+const claudeRouter = () =>
+  fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "claude", "commands", "engineering.md"), "utf8")
+
+/**
+ * The divergence between the two hosts that IS intended. Declared, so widening
+ * it takes a deliberate edit here rather than happening by omission.
+ */
+const HOST_ONLY = {
+  // Watch needs a driver that holds a timer across turns and claims on idle
+  // events. The Claude host has no standing watch mode (see plugins/claude/
+  // README.md), so both watcher verbs are OpenCode's alone.
+  opencode: ["unwatch", "watch"],
+  claude: [] as string[],
+}
+
+test("the two hosts advertise the same engineering verbs, except the declared host-only set", () => {
+  // Every coverage guard above is INTERNAL — it checks this file's hint against
+  // this file's markers. Nothing compared the two hosts, so a verb added to one
+  // command and forgotten on the other shipped as a silent capability gap: on
+  // Claude the model receives no instructions for it, on OpenCode it falls back
+  // to the whole body. Both fail quietly, which is why this has to be asserted.
+  const ours = advertisedVerbs(commandFile("agentic-workflow-engineering"))
+  const theirs = advertisedVerbs(claudeRouter())
+  const opencodeOnly = ours.filter((verb) => !theirs.includes(verb)).sort()
+  const claudeOnly = theirs.filter((verb) => !ours.includes(verb)).sort()
+  assert.deepEqual(opencodeOnly, HOST_ONLY.opencode, "an engineering verb exists only on OpenCode — add it to the Claude command, or declare it in HOST_ONLY")
+  assert.deepEqual(claudeOnly, HOST_ONLY.claude, "an engineering verb exists only on Claude — add it to the OpenCode command, or declare it in HOST_ONLY")
+})
+
 test("every verb's block opens with that verb's own bullet, not mid-sentence", () => {
   // Slicing is line-based, so a marker placed one line late leaves the verb's
   // opening line inside the PREVIOUS block: the neighbour's help gains a
