@@ -185,7 +185,7 @@ test("pre-set git never adopts the MAIN tree as its worktree, even if it is on t
 test("pre-set git already isolated (shared reconcile) does not rebuild a worktree", async () => {
   const log: string[] = []
   const $ = makeShell((cmd) => (cmd.includes("abbrev-ref HEAD") ? { exitCode: 0, stdout: "pr-head" } : { exitCode: 0 }), log)
-  const sharedConfig = { ...config, worktreesDir: undefined }
+  const sharedConfig = { ...config, worktreesDir: false as const }
   const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, { ...prState, isolated: true })
   assert.equal(next.isolated, true)
   assert.ok(!log.some((c) => c.includes("worktree add")))
