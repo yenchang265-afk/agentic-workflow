@@ -22,15 +22,31 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageContextKeys, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
+import {
+  bareModel,
+  enabledWorkflowKinds,
+  fanoutOverriddenByLenses,
+  modelFor,
+  passAxes,
+  platformFor,
+  stagePasses,
+  unknownStageContextKeys,
+  unknownStageFanoutKeys,
+  unknownStageModelKeys,
+  unreviewedAxes,
+} from "@agentic-workflow/core/config"
 import {
   admitVerdict,
   axisVerdict,
   effectiveVerdict,
   parseVerdict,
+  passFocusBlock,
   stageDriftNote,
+  uncoveredAxes,
+  withCoverageGap,
   type AxisResult,
   type CriterionResult,
+  type StagePass,
   type Verdict,
   type VerdictRecord,
 } from "@agentic-workflow/core/workflow/verdict"
@@ -136,6 +152,24 @@ let pending: VerdictRecord | null = null // verdict(s) recorded for the current 
 let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
 let verdictRejected = false // whether the current check stage had a verdict REJECTED (incomplete axis coverage) — changes the re-fire wording
 let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
+/**
+ * The focused pass currently armed on a check stage, if any — what
+ * `workflow_verdict` admits against and what the next metrics sample is
+ * attributed to. Null on a single-pass stage and between passes.
+ */
+let armedPass: { readonly stage: string; readonly pass: StagePass; readonly index: number; readonly total: number } | null = null
+/**
+ * The stage whose fan-out is still accumulating verdicts, or null.
+ *
+ * Separate from `armedPass` because it answers a different question:
+ * `workflow_stage` normally wipes `pending` ("a fresh stage starts empty"), and
+ * under fan-out that would throw away every earlier pass's axis the moment the
+ * next one is armed — merging the passes is the entire point. It must also
+ * survive the axis retry below, which clears `armedPass` (its sample is already
+ * recorded) but must not lose the axes that did report. Cleared on every
+ * transition.
+ */
+let fanoutStage: string | null = null
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
@@ -291,6 +325,27 @@ const stageModel = (kind: string, def: StageDef): string | undefined => {
 }
 
 /**
+ * The focused passes a stage runs, in order. Takes the kind explicitly rather
+ * than reading `activeManifest()`: `firePayload` composes for a state that is
+ * not the active loop yet.
+ */
+const passesFor = (kind: string, def: StageDef): readonly StagePass[] => stagePasses(config, kind, def)
+
+/** The focus labels of a stage's passes — empty when it runs as a single pass. */
+const passLabels = (kind: string, def: StageDef): string[] => passesFor(kind, def).flatMap((p) => (p.focus ? [p.focus] : []))
+
+/** Focus names are matched normalized, so a capitalization slip is not a rejection loop. */
+const focusKey = (focus: string): string => focus.trim().toLowerCase()
+
+/**
+ * The pass `workflow_verdict` should admit against right now. Falls back to the
+ * unfocused pass when nothing is armed, which is what every single-pass stage
+ * (and every stage on a host that ignores `focus`) gets.
+ */
+const currentPass = (stage: string): StagePass =>
+  armedPass?.stage === stage ? armedPass.pass : { focus: null, mode: "single" }
+
+/**
  * A `stageModels` key naming no stage of its kind is accepted by the schema
  * (the manifest isn't loaded at parse time) and then resolves to nothing —
  * the stage silently runs the host default. Surface it instead of leaving the
@@ -331,6 +386,23 @@ const stageModelWarnings = (): string[] =>
       warnings.push(
         `reviewLenses is on, so the ${kind} loop's ${def.name} stage no longer enforces axis coverage, and no lens covers ` +
           `${unreviewed.map((a) => `"${a}"`).join(", ")}. Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} or unset reviewLenses.`,
+      )
+    }
+    // Same trap once more for stageFanout: a typo'd stage never fans out.
+    const unfanned = unknownStageFanoutKeys(config, kind, stageNames)
+    if (unfanned.length) {
+      warnings.push(
+        `workflows.${kind}.stageFanout names ${unfanned.map((k) => `"${k}"`).join(", ")}, which ${unfanned.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
+          `${unfanned.length > 1 ? "those are" : "that is"} ignored and the stage runs a single pass. Valid stages: ${stageNames.join(", ")}.`,
+      )
+    }
+    // Both multi-pass knobs set on one stage: the lenses run and the declared
+    // per-axis fan-out does not. Silence would make the fan-out look broken.
+    for (const def of manifestFor(kind).manifest.stages) {
+      if (!fanoutOverriddenByLenses(config, kind, def)) continue
+      warnings.push(
+        `reviewLenses is configured, so the ${kind} loop's ${def.name} stage runs the lens passes instead of its declared ` +
+          "per-axis fan-out — and per-pass axis coverage is not enforced. Unset reviewLenses to use the fan-out.",
       )
     }
     return warnings
@@ -624,6 +696,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
     prompt: firePrompt(manifest, state, state.stage),
+    ...(passLabels(manifest.manifest.kind, def).length ? { passes: passLabels(manifest.manifest.kind, def) } : {}),
     // Every fired stage carries the spawn instruction, not just PLAN. A non-plan
     // entry (BUILD via workflow_start/workflow_claim; every sitter's entry stage)
     // used to arrive with `model` in the payload and nothing telling the
@@ -843,7 +916,13 @@ server.registerTool(
     // verdict CANNOT reach `stampVerdictRecorded` below — which would otherwise
     // mark the stage satisfied for the SubagentStop guard and burn its one-shot
     // nag sentinel, letting the subagent stop having recorded nothing valid.
-    const admission = admitVerdict(rec, def.requiredAxes, pending)
+    // The axes THIS pass owes, not the stage's: a focused fan-out pass is
+    // narrowed to its own axis (so it is admitted rather than rejected for the
+    // ones it was told not to review), and a lens pass owes none at all — which
+    // also fixes a lens pass on this host being rejected for missing four axes
+    // it was never asked for. The stage-wide requirement is enforced on the
+    // accumulated record in workflow_advance instead.
+    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending)
     if (!admission.ok) {
       verdictRejected = true
       return fail(admission.message)
@@ -879,16 +958,62 @@ server.registerTool(
   "workflow_stage",
   {
     description:
-      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. The stage must be the one the state machine is at (the stage the last fire action named) — a mismatch means workflow_advance was skipped and the call is rejected. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on.",
-    inputSchema: { stage: z.string().min(1) },
+      "Set the current stage marker so the PreToolUse hook enforces the right bash allowlist (default-deny for verify/review) and the stage deadline. Call right before spawning EACH stage subagent, plan and build included. The stage must be the one the state machine is at (the stage the last fire action named) — a mismatch means workflow_advance was skipped and the call is rejected. Setting 'build' appends the audited 'BUILD started' note the claimability predicates key on. A stage that runs FOCUSED PASSES (the response's `passes` array, or the fire action's) needs one call per entry, each naming it in `focus`, and returns that pass's own `prompt`.",
+    inputSchema: {
+      stage: z.string().min(1),
+      focus: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "The single axis or lens THIS pass covers, on a stage that runs focused passes (they are listed in the `passes` array). " +
+            "Omit on a single-pass stage. The response's `prompt` is this pass's prompt — hand it to the subagent instead of the fire payload's.",
+        ),
+    },
   },
-  async ({ stage }) => {
+  async ({ stage, focus }) => {
     if (!active) return fail("No active loop.")
     if (!activeManifest().manifest.stages.some((d) => d.name === stage)) {
       return fail(`Unknown stage "${stage}" for workflow kind "${activeManifest().manifest.kind}".`)
     }
     const outOfOrder = stageOrderError(active.stage, stage)
     if (outOfOrder) return fail(outOfOrder)
+    const stageDefinition = stageDef(activeManifest().manifest, stage)
+    const passes = passesFor(activeManifest().manifest.kind, stageDefinition)
+    const labels = passLabels(activeManifest().manifest.kind, stageDefinition)
+    if (focus && !labels.length) {
+      return fail(`Stage ${stage} runs a single pass — call workflow_stage({stage:"${stage}"}) without a focus.`)
+    }
+    if (focus && !labels.some((l) => focusKey(l) === focusKey(focus))) {
+      return fail(`Unknown focus "${focus}" for ${stage} — it runs one pass per: ${labels.join(", ")}.`)
+    }
+    // The enforcement that makes a fan-out actually fan out on this host: the
+    // orchestrator owns the pass loop, so without this it could quietly collapse
+    // N focused passes into one unfocused pass and lose the whole guarantee.
+    if (!focus && labels.length) {
+      return fail(
+        `Stage ${stage} runs ${labels.length} focused passes, not one — call ` +
+          `workflow_stage({stage:"${stage}", focus:"<one of ${labels.join(", ")}>"}) once per focus, spawn one subagent ` +
+          `per call (sequentially — one pass is armed at a time), then call workflow_advance ONCE when all ${labels.length} have run.`,
+      )
+    }
+    const index = focus ? passes.findIndex((p) => p.focus && focusKey(p.focus) === focusKey(focus)) : -1
+    const pass: StagePass = index >= 0 ? passes[index]! : { focus: null, mode: "single" }
+    // Arming the NEXT pass of a fan-out is also the moment the previous one
+    // finished, and it is the only moment this server sees: `workflow_advance`
+    // runs once for the whole stage. Sample here, before the size fields are
+    // dropped below, or every pass but the last is invisible to the hub.
+    if (armedPass?.stage === stage && armedPass.pass.focus) {
+      samples.push({
+        stage,
+        iteration: active.iteration,
+        ms: Date.now() - lastFireAt,
+        startedAt: new Date(lastFireAt).toISOString(),
+        lens: armedPass.pass.focus,
+        ...promptSizeFields(),
+      })
+      flushRunMetrics(workflowId(active))
+    }
     // The orchestrator is about to run a stage this server did not compose for —
     // drop the recorded size rather than attribute an older prompt to this pass.
     lastFirePromptChars = undefined
@@ -901,10 +1026,18 @@ server.registerTool(
         return fail((err as Error).message)
       }
     }
-    writeStageMarker(stage)
+    writeStageMarker(stage) // every pass gets its own deadline and verdictRecorded:false
     lastFireAt = Date.now()
-    pending = null // no stale verdict may leak into this stage
-    verdictRejected = false // ...nor a stale rejection into this stage's re-fire wording
+    // Wiping `pending` is right for a FRESH stage and catastrophic mid-fan-out:
+    // the orchestrator calls workflow_stage before every pass, so wiping here
+    // would leave only the last pass's axis and the coverage gate would ERROR on
+    // every run. Merging the passes is the point.
+    if (fanoutStage !== stage || !pass.focus) {
+      pending = null // no stale verdict may leak into this stage
+      verdictRejected = false // ...nor a stale rejection into this stage's re-fire wording
+    }
+    armedPass = pass.focus ? { stage, pass, index, total: passes.length } : null
+    fanoutStage = pass.focus ? stage : null
     if (stage === "build" && active.task && buildNoteFor !== `${active.task.id}:${active.iteration}`) {
       // Same-stage re-fires are legal (stageOrderError allows them), but the
       // audited note must land once per build iteration, not once per call.
@@ -923,7 +1056,7 @@ server.registerTool(
         )
       }
     }
-    const def = stageDef(activeManifest().manifest, stage)
+    const def = stageDefinition
     const model = stageModel(activeManifest().manifest.kind, def)
     return ok({
       stage,
@@ -932,11 +1065,29 @@ server.registerTool(
       worktree: active.git?.worktree ?? null,
       ...(active.isolationWarning ? { isolationWarning: active.isolationWarning } : {}),
       deadlineMinutes: config.stageTimeoutMinutes,
+      // A focused pass gets its OWN prompt: the fire payload composed one prompt
+      // for the stage, and each pass has to be told which axis it covers.
+      ...(pass.focus
+        ? {
+            focus: pass.focus,
+            passIndex: index + 1,
+            prompt: firePrompt(activeManifest(), active, stage, `\n\n${passFocusBlock(pass, index, passes.length)}`),
+          }
+        : {}),
+      ...(labels.length ? { passes: labels } : {}),
       // The last thing the orchestrator reads before the Task call, and for many
       // stages the only spawn instruction it ever gets: the fire payload's note may
       // be several tool calls back, or authored away in the same turn when
       // workflow_stage and Task are emitted as two tool_use blocks at once.
-      note: spawnNote("spawn the subagent named in the `agent` field", def.kind === "check" ? CHECK_VERDICT_TAIL : ""),
+      note: spawnNote(
+        pass.focus
+          ? `focused pass ${index + 1}/${passes.length} (${pass.focus}): spawn the subagent named in the \`agent\` field with THIS response's \`prompt\`` +
+              (index + 1 < passes.length
+                ? `, then call workflow_stage again with the next focus — do not call workflow_advance until all ${passes.length} have run`
+                : ", then call workflow_advance once")
+          : "spawn the subagent named in the `agent` field",
+        def.kind === "check" ? CHECK_VERDICT_TAIL : "",
+      ),
     })
   },
 )
@@ -973,6 +1124,11 @@ server.registerTool(
       iteration: active.iteration,
       ms: Date.now() - lastFireAt,
       startedAt: new Date(lastFireAt).toISOString(),
+      // Under fan-out this is the LAST pass's row (the earlier ones were sampled
+      // as they were superseded in workflow_stage), and it is the row that
+      // carries the stage's verdict — so a fan-out contributes one sample per
+      // pass and exactly one verdict row, as a single-pass stage does.
+      ...(armedPass?.stage === stage && armedPass.pass.focus ? { lens: armedPass.pass.focus } : {}),
       ...promptSizeFields(),
       ...(stageDef(activeManifest().manifest, stage).kind === "check"
         ? { verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none" }
@@ -1034,6 +1190,47 @@ server.registerTool(
           (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
       }
     }
+    // The completeness gate. Per-pass admission proves each pass covered ITS
+    // axis; it can never prove every axis ran, because on THIS host the
+    // orchestrator owns the pass loop and can simply skip a spawn. Only the
+    // accumulated record shows that — so check it here, re-fire just the missing
+    // passes once (no iteration consumed), then stop with ERROR rather than
+    // re-build on a review that never happened.
+    const gateDef = stageDef(activeManifest().manifest, stage)
+    if (gateDef.kind === "check" && pending && passesFor(activeManifest().manifest.kind, gateDef).some((p) => p.mode === "axis")) {
+      const gaps = uncoveredAxes(pending, gateDef.requiredAxes)
+      if (gaps.length && !verdictRetried) {
+        verdictRetried = true
+        if (active.task) {
+          await appendNote(
+            sh,
+            active.task,
+            auditNote(
+              `${stage.toUpperCase()} fan-out recorded no result for ${gaps.join(", ")} — re-running those passes once`,
+              new Date(),
+              await gitActor(sh, directory),
+            ),
+            log,
+          )
+        }
+        writeStageMarker(stage)
+        lastFireAt = Date.now()
+        armedPass = null // its sample is already recorded; the retry arms its own
+        const gapModel = stageModel(activeManifest().manifest.kind, gateDef)
+        return ok({
+          action: { kind: "fire", stage },
+          agent: agentRef(gateDef.agent),
+          ...(gapModel ? { model: gapModel } : {}),
+          passes: gaps,
+          note: spawnNote(
+            `axis retry (no iteration consumed): ${gaps.join(", ")} recorded no verdict — call ` +
+              `workflow_stage({stage:"${stage}", focus:"<axis>"}) and spawn the stage subagent again for EACH of them`,
+            CHECK_VERDICT_TAIL,
+          ),
+        })
+      }
+      if (gaps.length) pending = withCoverageGap(pending, gaps)
+    }
     // `advance` threads the structured feedback (reason, failed criteria, failing
     // axes) ahead of the prose for the next iteration and records the seam, so a
     // stage context budget can clamp the prose without touching the block. The
@@ -1062,18 +1259,24 @@ server.registerTool(
     pending = null
     verdictRetried = false // the transition happened — the next check stage gets its own retry budget
     verdictRejected = false
+    armedPass = null // no pass of the finished stage may admit a verdict for the next one
+    fanoutStage = null
 
     if (action.kind === "fire") {
       await snapshot()
       const nextDef = stageDef(activeManifest().manifest, action.stage)
       const nextModel = stageModel(activeManifest().manifest.kind, nextDef)
+      const nextPasses = passLabels(activeManifest().manifest.kind, nextDef)
       return ok({
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
         prompt: firePrompt(activeManifest(), active, action.stage),
+        ...(nextPasses.length ? { passes: nextPasses } : {}),
         note: spawnNote(
-          "call workflow_stage, then spawn the subagent named in the `agent` field",
+          nextPasses.length
+            ? `call workflow_stage once per entry in \`passes\` (focus: ${nextPasses.join(", ")}), spawning the subagent named in the \`agent\` field for each`
+            : "call workflow_stage, then spawn the subagent named in the `agent` field",
           nextDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
         ),
       })
