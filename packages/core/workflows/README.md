@@ -67,6 +67,7 @@ fails loud at host startup). A minimal two-stage kind:
       "prompt": "stages/check.md",
       "isolation": "worktree",
       "requiredAxes": ["correctness", "security"],  // optional; check stages only — workflow_verdict rejects a verdict missing any of them
+      "fanout": "axis",                 // optional; check stages with requiredAxes — run one focused pass per axis, merged worst-wins
       "context": { "work": 8000 },      // optional per-artifact character ceilings for THIS stage's prompt; config workflows.<kind>.stageContext.<name> replaces it, unset = unbounded
       "bashAllowlist": ["git diff*", "npm test*"]  // default-deny bash for this stage
     }
@@ -105,8 +106,25 @@ per-axis payload contract, and `workflow_verdict` **rejects** a verdict whose `a
 array misses any of them, so a multi-axis review cannot silently skip one. The
 recorded verdict is also worsened to match its axes — a declared PASS carrying a
 Critical or Important finding resolves as FAIL. `requiredAxes` on a `work` stage
-is a manifest error (there is no verdict to carry them), and OpenCode's
-`reviewLenses` mode suppresses the enforcement (see `docs/configuration.md`).
+is a manifest error (there is no verdict to carry them), and `reviewLenses` mode
+suppresses the enforcement (see `docs/configuration.md`).
+
+Such a stage may also declare `fanout: "axis"`: it then runs **one focused pass
+per required axis**, sequentially, each pass told to review and report exactly
+that axis, and the passes merge worst-wins. Per-pass admission narrows to the
+pass's own axis — otherwise every focused pass would be rejected for the axes it
+was told not to review — and the stage-wide requirement moves to the accumulated
+record, so a fan-out that never reported an axis stops the loop with ERROR rather
+than re-building on an incomplete review. That is the difference from
+`reviewLenses`, which buys its extra passes by giving the guarantee up.
+
+`fanout` is a manifest error on a `work` stage, on a stage with no
+`requiredAxes` (the axis list is the pass list), and over more than
+`FANOUT_MAX` (8) axes — each axis is a full subagent pass with its own stage
+timeout, so the list is a direct cost multiplier. Config
+`workflows.<kind>.stageFanout.<name>` overrides it (`"none"` turns it off), and
+that config key is how the built-in kinds are reached at all, since their
+manifests ship inside the core package.
 
 Any stage may declare `context`: per-artifact **character** ceilings on the prompt
 this stage composes, keyed by the producing stage's name. Unset ⇒ unbounded, which

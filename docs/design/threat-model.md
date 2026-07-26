@@ -57,6 +57,19 @@ persuading the agent the check passed.
   injection would have to survive every lens's independent pass. Residual
   shrinks to N simultaneous persuasions.
 
+  Per-axis fan-out (`stageFanout: {"review": "axis"}`) is the same mitigation
+  without the cost lenses charge for it. Lens mode has to switch per-pass
+  axis-coverage enforcement off — a lens maps to no axis — so hardening against
+  T1 quietly weakened the completeness guarantee. A fan-out pass covers exactly
+  one *required* axis, so per-pass enforcement narrows instead of vanishing,
+  and the stage-wide requirement is checked on the accumulated record before
+  the stage may advance. Two residuals are accepted deliberately: a focused
+  pass may still volunteer off-axis findings (harmless — merging is worst-wins,
+  so a stray PASS cannot mask another pass's FAIL), and on the Claude/Qwen host
+  the orchestrator owns the pass loop and could skip a spawn — which is
+  precisely what the accumulated-coverage gate at `workflow_advance` detects,
+  stopping with ERROR rather than acting on a review that never ran.
+
 ### T2. A "read-only" check stage mutates state or exfiltrates data
 
 `edit: deny` alone does not restrict bash; `git commit`, `rm`, or `curl`

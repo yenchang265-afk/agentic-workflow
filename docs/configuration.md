@@ -627,7 +627,32 @@ Impact on the commands:
   axis-coverage enforcement** (`requiredAxes`): each pass is told to focus on
   its own lens, so demanding all five axes from it would reject every pass.
   Lens mode enforces coverage its own way — a lens that records no verdict
-  becomes an ERROR, not a silently missing opinion.
+  becomes an ERROR, not a silently missing opinion. If you want multi-pass
+  review *without* that downgrade, use `stageFanout` below.
+- **`workflows.<kind>.stageFanout`** — stage name → `"axis"` or `"none"`: run a
+  check stage once per entry in its `requiredAxes`, sequentially, each pass
+  told to review and report exactly one axis. The passes merge worst-wins.
+
+  ```jsonc
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
+  ```
+
+  It is the same ~N× cost as `reviewLenses` and the same threat-model benefit
+  (no single reviewer can wave a change through), but it **keeps** the coverage
+  guarantee lenses give up: each pass is enforced against its own axis, and the
+  stage cannot advance with an axis uncovered — a gap stops the loop with ERROR
+  rather than re-building on a review that never ran. Off by default; a stage
+  with neither knob set is byte-identical to today.
+
+  `"none"` turns a fan-out declared in the manifest (`fanout` on the stage) back
+  off. Config wins over the manifest, as with `stageModels` and `stageContext` —
+  and it is how you reach the built-in kinds at all, since their manifests ship
+  inside the `@agentic-workflow/core` package.
+
+  **`reviewLenses` wins over this** on the stage named `review`, so an existing
+  lens setup keeps behaving exactly as it did; both hosts warn when a configured
+  lens list is overriding a declared fan-out. A key naming no stage is accepted,
+  ignored, and warned about, exactly like `stageModels`.
 - Secrets echoed into audit notes, plans, or run logs are **shape-redacted**
   (`AKIA…`, `sk-…`, tokens, PEM blocks, `key/secret/token: …` assignments)
   before they are written and committed.

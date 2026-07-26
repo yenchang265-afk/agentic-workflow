@@ -198,7 +198,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
   指令、已知限制
 - [docs/configuration.md](docs/configuration.md) —— `.agentic-workflow.json`
   參考（使用者層級 + 儲存庫層級分層）、各類型的 `workflows` 區塊，以及可選的強化項
-  （worktree、審查視角、去識別化）
+  （worktree、每軸審查 fan-out、審查視角、去識別化）
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) —— 可複製到由
   agentic-workflow 驅動的專案中的起始 `AGENTS.md`/`CLAUDE.md`（迴圈工作流程 +
   skill 對應）
