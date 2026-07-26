@@ -75,11 +75,20 @@ test("every OpenCode command's agent: frontmatter names an agent file that actua
   assert.ok(checked >= 10, `expected at least 10 command files with an agent: frontmatter; checked ${checked}`)
 })
 
-test("agentRef's namespace prefix format matches the plugin name Claude Code actually registers", () => {
+test("the Claude dialect's namespace prefix matches the plugin name Claude Code actually registers", () => {
   const src = fs.readFileSync(SERVER_TS, "utf8")
   assert.match(
     src,
-    /const agentRef = \(name: string\): string => `agentic-workflow:\$\{name\}`/,
-    "agentRef's literal prefix drifted from \"agentic-workflow:\" — this must equal the plugin.json \"name\" field or every Task dispatch silently targets a nonexistent subagent_type",
+    /agentRef: \(name\) => `agentic-workflow:\$\{name\}`/,
+    'the Claude dialect\'s literal prefix drifted from "agentic-workflow:" — this must equal the plugin.json "name" field or every Task dispatch silently targets a nonexistent subagent_type',
   )
+})
+
+// Qwen Code loads subagents from its own agents/ directory with no plugin
+// namespace, so the manifest name IS the subagent_type. Asserted as a literal
+// for the same reason as the Claude prefix above: a wrong ref does not error,
+// it dispatches to a subagent_type that does not exist.
+test("the Qwen dialect passes the bare manifest name as subagent_type", () => {
+  const src = fs.readFileSync(SERVER_TS, "utf8")
+  assert.match(src, /agentRef: \(name\) => name,/, "the Qwen dialect must not prefix the agent name")
 })

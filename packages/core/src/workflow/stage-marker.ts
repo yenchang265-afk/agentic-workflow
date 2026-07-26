@@ -4,21 +4,55 @@ import type { Shell } from "../host.js"
 import type { WorkflowState } from "./state.js"
 
 /**
- * The OpenCode host's live-stage marker: `runs/.stage-opencode.json`, written
- * while a stage runs and removed when the drive ends. Out-of-process observers
- * (the admin hub's driving oracle, its doctor, the live board badge) read it to
- * answer "what is this loop doing RIGHT NOW" — before this file existed, the
- * hub could see OpenCode-driven work only through claim markers, so its doctor
- * had to skip claim release wholesale whenever a watcher lease was live.
+ * The live-stage marker: written under `<tasksDir>/runs/` while a stage runs and
+ * removed when the drive ends. Out-of-process observers (the admin hub's driving
+ * oracle, its doctor, the live board badge) read it to answer "what is this loop
+ * doing RIGHT NOW" — before it existed, the hub could see OpenCode-driven work
+ * only through claim markers, so its doctor had to skip claim release wholesale
+ * whenever a watcher lease was live.
  *
- * Deliberately a SIBLING of the Claude host's `runs/.stage.json`, not the same
- * file: that marker is a control-plane input to the Claude plugin's PreToolUse
- * hooks (stage allowlists, worktree pinning, deadlines). An OpenCode loop's
- * stages run in OpenCode where those hooks don't exist — writing the shared
- * path would instead subject a human's concurrent interactive Claude session
- * to guards meant for the loop's own agents, and already-built hook bundles
- * could not be taught to skip it. A separate file is inert to every hook.
+ * **One file per host, never a shared one.** A marker is not only telemetry: the
+ * Claude host's is a control-plane input to its PreToolUse hooks (stage
+ * allowlists, worktree pinning, deadlines), and the Qwen host's is the same to
+ * its own. A loop driven by one host runs its stages where the other host's
+ * hooks do not exist, so writing a shared path would subject a human's
+ * concurrent interactive session on the *other* host to guards meant for the
+ * loop's agents — and already-built hook bundles could not be taught to skip it.
+ * A per-host file is inert to every hook but the one that owns it.
+ *
+ * Claude's marker is the unsuffixed `.stage.json` because it came first and its
+ * shipped hook bundles read that literal path; every host added since is
+ * suffixed. Don't "tidy" that asymmetry away — renaming it silently disarms
+ * every installed Claude hook.
  */
+
+/** The hosts that write a live-stage marker. */
+export type StageMarkerHost = "claude" | "opencode" | "qwen"
+
+const MARKER_FILE: Record<StageMarkerHost, string> = {
+  claude: ".stage.json",
+  opencode: ".stage-opencode.json",
+  qwen: ".stage-qwen.json",
+}
+
+/**
+ * Every host that writes a marker, in the precedence order an out-of-process
+ * observer should read them. At most one loop runs per repo, so precedence only
+ * decides a tie that should not happen; the point of the list is that observers
+ * iterate it instead of hardcoding a set that silently misses a new host.
+ */
+export const STAGE_MARKER_HOSTS: readonly StageMarkerHost[] = ["claude", "opencode", "qwen"]
+
+/** Basename of a host's stage marker under `<tasksDir>/runs/`. Pure. */
+export const stageMarkerFile = (host: StageMarkerHost): string => MARKER_FILE[host]
+
+/**
+ * Absolute path of a host's stage marker. Pure. The single place a marker
+ * filename is spelled — a host that builds its own path by hand is one rename
+ * away from writing a file nothing reads.
+ */
+export const hostStageMarkerPath = (directory: string, tasksDir: string, host: StageMarkerHost): string =>
+  path.join(directory, tasksDir, "runs", MARKER_FILE[host])
 
 export interface OpencodeStageMarker {
   readonly host: "opencode"
@@ -33,7 +67,7 @@ export interface OpencodeStageMarker {
 
 /** Absolute path of the OpenCode host's stage marker. Pure. */
 export const opencodeMarkerPath = (directory: string, tasksDir: string): string =>
-  path.join(directory, tasksDir, "runs", ".stage-opencode.json")
+  hostStageMarkerPath(directory, tasksDir, "opencode")
 
 /** Build the marker for a stage the driver is about to fire. Pure. */
 export const opencodeStageMarker = (state: WorkflowState, deadline: number | null): OpencodeStageMarker => ({

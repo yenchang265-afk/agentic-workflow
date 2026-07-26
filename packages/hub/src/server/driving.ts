@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 import { listClaimIds } from "@agentic-workflow/core/task/store"
+import { STAGE_MARKER_HOSTS, stageMarkerFile } from "@agentic-workflow/core/workflow/stage-marker"
 import type { StageMarker } from "../shared/api.js"
 import type { HubDeps } from "./deps.js"
 import { readText } from "./io.js"
@@ -19,11 +20,11 @@ import { readText } from "./io.js"
  *    the claim throughout, so **driving implies claimed**. That makes claims a
  *    per-task signal, unlike the lease.
  * 2. **The stage marker** — written while a stage runs, and it names the task.
- *    The Claude host writes `runs/.stage.json`; the OpenCode driver writes the
- *    sibling `runs/.stage-opencode.json` (a separate file because `.stage.json`
- *    is a control input to the Claude plugin's hooks — see core's
- *    stage-marker.ts). Both are read here; at most one loop runs per repo, so
- *    the Claude marker wins if both somehow exist.
+ *    Each host writes its own file (`runs/.stage.json` for Claude, and the
+ *    siblings `.stage-opencode.json` / `.stage-qwen.json`) because a marker is a
+ *    control input to its own host's hooks — see core's stage-marker.ts. All are
+ *    read here; at most one loop runs per repo, so the first hit wins if several
+ *    somehow exist.
  *
  * The watch lease is deliberately **not** a driving signal: a live watcher that
  * holds no claim is polling, not driving, and blocking on it would refuse every
@@ -55,15 +56,17 @@ const parseMarker = (content: string | null): StageMarker | null => {
 }
 
 /**
- * The stage marker on disk, or null when absent/garbled. Reads both hosts'
- * markers (Claude's `.stage.json` first, then OpenCode's sibling). The single
- * reader — `routes/active.ts` and `routes/runs.ts` render the same marker and
- * import this rather than keeping second parsers that could drift.
+ * The stage marker on disk, or null when absent/garbled. Reads every host's
+ * marker in turn. The single reader — `routes/active.ts` and `routes/runs.ts`
+ * render the same marker and import this rather than keeping second parsers
+ * that could drift.
  */
 export const readStageMarker = async (deps: HubDeps): Promise<StageMarker | null> => {
-  const claude = parseMarker(await readText(deps, `${deps.tasksDir}/runs/.stage.json`))
-  if (claude) return claude
-  return parseMarker(await readText(deps, `${deps.tasksDir}/runs/.stage-opencode.json`))
+  for (const host of STAGE_MARKER_HOSTS) {
+    const marker = parseMarker(await readText(deps, `${deps.tasksDir}/runs/${stageMarkerFile(host)}`))
+    if (marker) return marker
+  }
+  return null
 }
 
 export interface DrivingOracle {

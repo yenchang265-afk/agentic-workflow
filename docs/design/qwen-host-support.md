@@ -4,10 +4,16 @@ English | [繁體中文](qwen-host-support.zh-TW.md)
 
 This is an **implementation plan**, not a record of shipped work (that's
 [`improvements/`](./improvements/README.md)) and not a speculative catalog
-(that's [`proposed-workflows.md`](./proposed-workflows.md)). Nothing described
-here is built yet. It is written against the real host contract
+(that's [`proposed-workflows.md`](./proposed-workflows.md)). It is written
+against the real host contract
 ([`packages/core/src/host.ts`](../../packages/core/src/host.ts)) and the two
 existing host adapters, so it can be executed without re-translation.
+
+**Status: slice 0 is built; slices 1–6 are not.** The `AGENTIC_WORKFLOW_HOST`
+switch, the `HOST_DIALECT` table, the per-host stage-marker helper, and the
+metrics `host` value all ship — so the MCP server already boots and behaves as
+the Qwen host. Nothing that host needs in order to be *reachable* (agents,
+commands, hooks, installer) exists yet.
 
 ## Why
 

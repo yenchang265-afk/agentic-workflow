@@ -40,6 +40,19 @@ test("every spawn instruction the server emits is composed by spawnNote, so none
     /const spawnNote = \([\s\S]{0,160}\$\{SPAWN_TOOL_NOTE\}\$\{SPAWN_MODEL_NOTE\}/,
     "the composer must splice both notes — that is the whole guarantee",
   )
+  // Both clauses now come from HOST_DIALECT. The composer's guarantee only holds
+  // if every dialect actually declares them: a host that omits `spawnModelNote`
+  // would splice `undefined` into every spawn note. A host that genuinely cannot
+  // convey a model declares `""` — an explicit empty, which this still catches
+  // the absence of.
+  const dialects = [...code(src).matchAll(/^ {2}(claude|qwen): \{$/gm)].map((m) => m[1])
+  assert.ok(dialects.length >= 2, `expected every host dialect to be found; got ${dialects.length}`)
+  for (const host of dialects) {
+    const body = code(src).slice(code(src).indexOf(`  ${host}: {`))
+    const entry = body.slice(0, body.indexOf("\n  },"))
+    assert.match(entry, /spawnToolNote:/, `the ${host} dialect declares no spawnToolNote`)
+    assert.match(entry, /spawnModelNote:/, `the ${host} dialect declares no spawnModelNote`)
+  }
   const notes = [...flat(src).matchAll(/\bnote:\s*(.{0,240})/g)].map((m) => m[1]).filter((n) => /spawn/i.test(n))
   assert.ok(notes.length >= 6, `expected every spawn note to be found; got ${notes.length}`)
   for (const note of notes) {
@@ -112,4 +125,50 @@ test("server boots, announces readiness on stderr, and exits on stdin EOF", asyn
   assert.notEqual(code, null, `server was killed after 30s without exiting; stderr:\n${stderr}`)
   assert.match(stderr, /agentic-workflow MCP server ready/)
   assert.equal(stdout, "", "stdout must stay clean for the MCP protocol")
+})
+
+/** Boot the server with an env overlay and return how it went. */
+const boot = async (env: Record<string, string>): Promise<{ code: number | null; stdout: string; stderr: string }> => {
+  const proc = spawn(process.execPath, ["--import", "tsx", path.join(pkgDir, "src", "server.ts")], {
+    cwd: pkgDir,
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+  })
+  let stdout = ""
+  let stderr = ""
+  proc.stdout.on("data", (d) => (stdout += d))
+  proc.stderr.on("data", (d) => (stderr += d))
+  proc.stdin.end()
+  const exited = new Promise<number | null>((resolve) => proc.on("close", resolve))
+  const timeout = setTimeout(() => proc.kill("SIGKILL"), 30_000)
+  const code = await exited
+  clearTimeout(timeout)
+  return { code, stdout, stderr }
+}
+
+// The same binary serves the Qwen host; only HOST_DIALECT differs. If it did not
+// boot under that env, the Qwen host would have no server at all.
+test("server boots under AGENTIC_WORKFLOW_HOST=qwen", async () => {
+  const { code, stdout, stderr } = await boot({ AGENTIC_WORKFLOW_HOST: "qwen" })
+  assert.notEqual(code, null, `server was killed after 30s without exiting; stderr:\n${stderr}`)
+  assert.match(stderr, /agentic-workflow MCP server ready/)
+  assert.equal(stdout, "", "stdout must stay clean for the MCP protocol")
+})
+
+// A typo'd host must not fall back to Claude: on the wrong dialect every spawn
+// targets a subagent_type that does not exist, and the failure surfaces much
+// later as "the loop is broken" rather than as the config error it is.
+test("an unknown AGENTIC_WORKFLOW_HOST fails the boot loudly instead of defaulting", async () => {
+  const { code, stderr } = await boot({ AGENTIC_WORKFLOW_HOST: "claude-code" })
+  assert.notEqual(code, 0, "an unrecognized host must not boot")
+  assert.match(stderr, /AGENTIC_WORKFLOW_HOST="claude-code" is not a known host/)
+})
+
+// Shell wrappers and installers propagate empty env vars routinely, so an empty
+// value means "not specified", not "typo" — refusing to boot on one would turn
+// a harmless quirk into a hard failure.
+test("an empty AGENTIC_WORKFLOW_HOST is treated as absent and boots the default host", async () => {
+  const { code, stderr } = await boot({ AGENTIC_WORKFLOW_HOST: "" })
+  assert.notEqual(code, null, `server was killed after 30s without exiting; stderr:\n${stderr}`)
+  assert.match(stderr, /agentic-workflow MCP server ready/)
 })

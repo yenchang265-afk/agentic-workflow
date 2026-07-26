@@ -3,15 +3,21 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
+import { STAGE_MARKER_HOSTS, stageMarkerFile } from "@agentic-workflow/core/workflow/stage-marker"
 import { diffSnapshots, scanSnapshot, type WatchSnapshot } from "./watch.js"
 
 const GATES = ["plan-review", "in-review"] as const
 
-const empty: WatchSnapshot = { tasks: {}, runs: {}, stageMarker: null, opencodeMarker: null, lease: null, config: null }
+const noMarkers = Object.fromEntries(STAGE_MARKER_HOSTS.map((h) => [h, null]))
+const empty: WatchSnapshot = { tasks: {}, runs: {}, stageMarkers: noMarkers, lease: null, config: null }
+/** One host's marker key, with every other host absent. */
+const markers = (host: string, key: string | null): Partial<WatchSnapshot> => ({
+  stageMarkers: { ...noMarkers, [host]: key },
+})
 const snap = (partial: Partial<WatchSnapshot>): WatchSnapshot => ({ ...empty, ...partial })
 
 test("diffSnapshots on identical snapshots yields nothing", () => {
-  const s = snap({ tasks: { queued: { "a.md": 1 } }, runs: { "a.md": "10:1" }, stageMarker: "5:2" })
+  const s = snap({ tasks: { queued: { "a.md": 1 } }, runs: { "a.md": "10:1" }, ...markers("claude", "5:2") })
   assert.deepEqual(diffSnapshots(s, s, GATES), [])
 })
 
@@ -36,15 +42,15 @@ test("diffSnapshots does not emit gate for tasks merely edited in a gate folder"
 })
 
 test("diffSnapshots emits run for changed run logs and active for marker/lease/state changes", () => {
-  const prev = snap({ runs: { "fix.md": "10:1", "fix.state.json": "5:1" }, stageMarker: null, lease: null })
-  const next = snap({ runs: { "fix.md": "20:2", "fix.state.json": "6:2" }, stageMarker: "9:9", lease: "3:3" })
+  const prev = snap({ runs: { "fix.md": "10:1", "fix.state.json": "5:1" }, lease: null })
+  const next = snap({ runs: { "fix.md": "20:2", "fix.state.json": "6:2" }, ...markers("claude", "9:9"), lease: "3:3" })
   const events = diffSnapshots(prev, next, GATES)
   assert.deepEqual(events, [{ type: "run", id: "fix" }, { type: "active" }])
 })
 
 test("diffSnapshots emits active when the OpenCode sibling marker appears or vanishes", () => {
   const prev = snap({})
-  const started = snap({ opencodeMarker: "7:1" })
+  const started = snap(markers("opencode", "7:1"))
   assert.deepEqual(diffSnapshots(prev, started, GATES), [{ type: "active" }])
   assert.deepEqual(diffSnapshots(started, prev, GATES), [{ type: "active" }])
 })
@@ -72,15 +78,13 @@ test("scanSnapshot reads folders, runs and markers from disk", () => {
   fs.mkdirSync(path.join(tasks, "runs", ".watch-lease"), { recursive: true })
   fs.writeFileSync(path.join(tasks, "queued", "a.md"), "---\ntitle: a\n---\n")
   fs.writeFileSync(path.join(tasks, "runs", "a.md"), "log")
-  fs.writeFileSync(path.join(tasks, "runs", ".stage.json"), "{}")
-  fs.writeFileSync(path.join(tasks, "runs", ".stage-opencode.json"), "{}")
+  for (const host of STAGE_MARKER_HOSTS) fs.writeFileSync(path.join(tasks, "runs", stageMarkerFile(host)), "{}")
   fs.writeFileSync(path.join(tasks, "runs", ".watch-lease", "owner.json"), "{}")
   const s = scanSnapshot(dir, "docs/tasks", ["queued", "plan-review"])
   assert.ok(s.tasks["queued"]?.["a.md"])
   assert.deepEqual(s.tasks["plan-review"], {})
   assert.ok(s.runs["a.md"])
-  assert.notEqual(s.stageMarker, null)
-  assert.notEqual(s.opencodeMarker, null)
+  for (const host of STAGE_MARKER_HOSTS) assert.notEqual(s.stageMarkers[host], null, `${host} marker not scanned`)
   assert.notEqual(s.lease, null)
   fs.rmSync(dir, { recursive: true, force: true })
 })

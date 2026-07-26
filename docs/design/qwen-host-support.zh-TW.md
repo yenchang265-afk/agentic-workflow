@@ -4,10 +4,14 @@
 
 這是一份**實作計畫**，不是已出貨工作的紀錄（那是
 [`improvements/`](./improvements/README.md)），也不是推測性的提案目錄（那是
-[`proposed-workflows.md`](./proposed-workflows.md)）。這裡描述的東西目前都還沒有做。
-它是針對真實的宿主契約
+[`proposed-workflows.md`](./proposed-workflows.md)）。它是針對真實的宿主契約
 （[`packages/core/src/host.ts`](../../packages/core/src/host.ts)）以及既有的兩個宿主
 轉接層所寫，因此可以直接執行、不需要再翻譯一次。
+
+**狀態：切片 0 已完成；切片 1–6 尚未開始。** `AGENTIC_WORKFLOW_HOST` 開關、
+`HOST_DIALECT` 表、各宿主的 stage marker 輔助函式，以及 metrics 的 `host` 值都已
+出貨——所以 MCP 伺服器已經能以 Qwen 宿主的身分啟動與運作。但讓那個宿主**能被觸及**
+所需的東西（agent、指令、hooks、安裝腳本）都還不存在。
 
 ## 為什麼
 

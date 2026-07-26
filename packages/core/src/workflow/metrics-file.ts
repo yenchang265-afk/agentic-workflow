@@ -10,8 +10,9 @@ import { z } from "zod"
  *
  * `host` makes the observation asymmetry explicit: the opencode driver sees
  * per-stage tokens/cost (and records its sessionID so host storage can be
- * joined exactly); the Claude host never calls the LLM itself, so its entries
- * carry timing/verdicts only and tokens are joined from transcripts.
+ * joined exactly); the Claude and Qwen hosts never call the LLM themselves —
+ * their stages run as agent turns the host owns — so their entries carry
+ * timing/verdicts only and tokens are joined from transcripts.
  */
 
 export const RUN_METRICS_VERSION = 1 as const
@@ -51,7 +52,7 @@ const RunEntrySchema = z.object({
   // event yet. No consumer reads `outcome`, so making it optional is zero-ripple.
   outcome: z.enum(["done", "stopped", "error"]).optional(),
   detail: z.string().default(""),
-  host: z.enum(["opencode", "claude"]),
+  host: z.enum(["opencode", "claude", "qwen"]),
   sessionID: z.string().optional(),
   samples: z.array(MetricsSampleSchema),
   /** True while the run is still live: a per-stage flush wrote samples-so-far.
