@@ -9,8 +9,11 @@ import { branchExists, currentBranch, pushBranch } from "./git.js"
  * Push a ship-gated task's branch and open (or reuse) a draft PR for it —
  * GitHub or Azure DevOps, chosen by `platformFor(config, kind)`. Called only
  * from the ship gate, after the task has already been moved to `completed/`:
- * this never throws, and a failure here must never look like the ship itself
- * failed — callers surface `reason` as an audit note, nothing more.
+ * this never throws, and a failure here must never fail the ship — opening a PR
+ * is not a requirement of shipping. It must not be SILENT either: the ship gate
+ * renders `reason` onto its `GateResult` as a warning (message + `pr.opened`),
+ * not only into the audit note, which is invisible under the default
+ * `ignoreBacklog: true` that never commits it.
  */
 
 export interface ShipPrResult {

@@ -1,12 +1,19 @@
-<!-- The per-verb halves of /agentic-workflow:engineering.
-     commands/engineering.md is the router the model always receives; the block
-     for the invoked verb is injected from here by the UserPromptSubmit hook
-     (hooks/gate-command.mjs via hooks/verb-slice.mjs).
+<!-- SOURCE of the per-verb halves of /agentic-workflow:engineering, shared by
+     every prompt-injecting host. Rendered by scripts/gen-prompts.mjs into
+     plugins/claude/verbs/ and plugins/qwen/verbs/ — edit THIS file, never the
+     generated ones; CI fails on drift.
+     Each host's commands/engineering.md is the router the model always
+     receives; the block for the invoked verb is injected from the generated
+     copy by that host's UserPromptSubmit hook (gate-command.mjs via
+     verb-slice.mjs).
      Everything in this file MUST sit inside an "aw:verb <names>" marker pair.
      Unmarked prose here is silently dropped, never injected — shared prose
      belongs in the router instead. Note HTML comments do not nest, so never
      write a literal marker inside this header.
-     One block may serve several verbs: "aw:verb stop|abort". -->
+     One block may serve several verbs: "aw:verb stop|abort".
+     Host-specific WORDS use the inline tokens listed in gen-prompts.mjs
+     (spawnTool, askTool, modelClause) rather than whole-block host
+     conditionals, so one sentence serves every host. -->
 
 <!-- aw:verb new -->
 - **`new <idea>`** — turn a rough idea into one or more **planless drafts** in
@@ -45,7 +52,7 @@
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
        body listing the children in order). **Never approve it** — an
        un-approved draft is inert, so the loop never claims it. Close it by
-       hand with `mcp__agentic-workflow__workflow_move` (to `abandoned/` or
+       hand with `abandon <id>` (or `workflow_move` to
        `completed/`) once every child has shipped.
   5. **Task gate — ask, don't require a command.** For each non-epic drafted
      child (skip the epic tracking file — never approve it), ask with
@@ -55,7 +62,8 @@
        `/agentic-workflow:engineering approve <id>`. Then ask a second
        **AskUserQuestion**: "Plan it now?"
        - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
-         spawn `workflow-plan-author` (task mode) with the returned prompt, then
+         spawn `workflow-plan-author` (task mode, Task tool) with the
+         returned prompt, passing the response's `model` when present, then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `workflow-orchestration` skill).
@@ -81,7 +89,9 @@
      reshaped goal has to be re-approved), and a task from `plan-review/` onward
      was refused outright. So resolve `<id>` in `docs/tasks/draft/` **only**. If
      it isn't there, the id is wrong — say so and stop. (Fallback when the hook
-     didn't run: `mcp__agentic-workflow__workflow_retask({id})` first.)
+     didn't run: `mcp__agentic-workflow__workflow_retask({id, reason})` first.)
+     The `[note]` is also written onto that audit note, so why the goal was
+     wrong survives in the task file, not just in this turn's context.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
@@ -119,24 +129,44 @@
   audit note. (Fallback: `mcp__agentic-workflow__workflow_reject({id, reason})`, id
   optional.)
 <!-- /aw:verb replan -->
+<!-- aw:verb abandon -->
+- **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
+  terminal folder for work that will not be done. The **reversible**
+  cancellation and the one to reach for — the file is kept, so it can be moved
+  back. Works from **any** non-terminal status folder; a `completed/` task is
+  refused (shipped work isn't cancellable). **Handled by the same hook** as
+  approve/replan, so the move is already done before your turn; an id is
+  required. Core refuses a task a live loop is driving or one holding a claim
+  marker, and releases any worktree the task owned. (Fallback:
+  `mcp__agentic-workflow__workflow_abandon({id, reason})`.) This is also how a
+  tracking epic draft is closed once every child has shipped.
+<!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
-- **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
-  replan/retask this does **not** move the task to another folder: the file is
-  deleted and the removal committed, so the task is gone from the backlog for
-  good (git history retains it if the backlog is tracked). Works from **any**
+- **`remove <id> --force`** — hard-delete a task from the backlog entirely.
+  Unlike replan/retask/abandon this does **not** move the task to another
+  folder: the file is deleted and the removal committed. Works from **any**
   status folder — a stale draft, a rejected plan, a finished task. **Handled by
   the same hook** as approve/replan; an id is required (a bare `remove` never
   guesses which task to delete). Core refuses a task a live loop is driving or
   one holding a claim marker, and releases any worktree the task owned.
-  (Fallback: `mcp__agentic-workflow__workflow_remove({id})`.) **Destructive and
-  cannot be undone from the working tree** — only run it when the user
-  explicitly wants the task gone; confirm the id first.
+  (Fallback: `mcp__agentic-workflow__workflow_remove({id, force: true})`.)
+  - **`--force` is the confirmation, and the hook parses it — not you.** This
+    verb dispatches before your turn and then blocks it, so there is no point
+    at which you could ask the user. A bare `remove <id>` therefore deletes
+    nothing: it reports which task the id resolved to and stops. Relay that
+    report and let the user re-run with `--force`. Never add `--force` to a
+    command the user did not write it in.
+  - **Usually permanent.** Git retains the file only when the backlog is
+    tracked, and `ignoreBacklog` defaults to `true` (the backlog is kept out of
+    git entirely). Prefer `abandon` unless the user has said they want the file
+    gone.
 <!-- /aw:verb remove -->
 <!-- aw:verb plan -->
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
-  PLAN (no git isolation): spawn `workflow-plan-author` in task mode with the
-  returned prompt, then `workflow_advance` — the task parks in `plan-review/` and
+  PLAN (no git isolation): spawn `workflow-plan-author` (Task tool) in task mode
+  with the returned prompt, passing the response's `model` when present, then
+  `workflow_advance` — the task parks in `plan-review/` and
   the plan gate goes live: ask the user inline (AskUserQuestion — Approve /
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
   only telling them which command to run. If the id is already build-ready
@@ -149,15 +179,17 @@
   auto-planned (use `plan <id>`). An `in-progress/`
   task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
-  `workflow-verify` / `workflow-review` via the Task tool, passing the response's
-  `model` as the Task tool's `model` when present) and `workflow_advance` after
+  `workflow-verify` / `workflow-review` via the
+  Task tool, passing the response's `model` when present)
+  and `workflow_advance` after
   each returns, until a terminal action. This is the pull equivalent of the
   OpenCode plugin's `watch` — there is no standing watch mode on this
   substrate.
 <!-- /aw:verb claim -->
 <!-- aw:verb recover -->
 - **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
-  resume driving from the action it returns.
+  resume driving from the action it returns: `workflow_stage`, then spawn the
+  subagent it names with the Task tool, passing the response's `model` when present.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort

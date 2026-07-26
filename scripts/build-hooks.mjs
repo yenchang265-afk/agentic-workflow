@@ -1,10 +1,15 @@
 #!/usr/bin/env node
 /**
- * Bundle the Claude plugin's hook sources (plugins/claude/hooks/src/*.entry.mjs)
- * into the self-contained .mjs files hooks.json runs. Hooks execute under bare
- * `node` from a possibly-copied plugin dir with no node_modules, so anything
- * they share with @agentic-workflow/core must be INLINED, not imported — esbuild
- * bundles core's built dist/ into the output.
+ * Bundle the shared hook sources (plugins/claude/hooks/src/*.entry.mjs) into the
+ * self-contained .mjs files each host's hooks config runs. Hooks execute under
+ * bare `node` from a possibly-copied plugin dir with no node_modules, so
+ * anything they share with @agentic-workflow/core must be INLINED, not imported
+ * — esbuild bundles core's built dist/ into the output.
+ *
+ * One source set, two outputs: plugins/claude/hooks/ (alongside its hand-written
+ * hooks) and plugins/qwen/hooks/ (entirely generated). The guards' policy is
+ * identical on both hosts; only the tool names differ, and those are resolved at
+ * runtime from AGENTIC_WORKFLOW_HOST via hooks/src/dialect.mjs.
  *
  * Outputs are checked in; CI fails when they drift from their sources
  * (`node scripts/build-hooks.mjs && git diff --exit-code`).
@@ -16,7 +21,19 @@ import { fileURLToPath } from "node:url"
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const SRC = path.join(ROOT, "plugins", "claude", "hooks", "src")
-const OUT = path.join(ROOT, "plugins", "claude", "hooks")
+const CLAUDE_OUT = path.join(ROOT, "plugins", "claude", "hooks")
+const QWEN_OUT = path.join(ROOT, "plugins", "qwen", "hooks")
+
+/**
+ * The Claude plugin keeps hand-written hooks alongside the bundled ones, so only
+ * the *.entry.mjs sources are generated there. The Qwen plugin has no
+ * hand-written half at all: EVERY hook it ships is bundled from these same
+ * sources, so `plugins/qwen/hooks/` is 100% generated and CI's
+ * `git diff --exit-code` drift gate covers all of it. That is the whole reason
+ * the hand-written entries are listed here too — an un-generated copy over there
+ * would be a second place to forget.
+ */
+const HAND_WRITTEN_ENTRIES = ["gate-command.mjs", "inject-ado-pat.mjs"]
 
 const entries = fs.readdirSync(SRC).filter((f) => f.endsWith(".entry.mjs"))
 if (entries.length === 0) {
@@ -24,10 +41,9 @@ if (entries.length === 0) {
   process.exit(1)
 }
 
-for (const entry of entries) {
-  const outfile = path.join(OUT, entry.replace(/\.entry\.mjs$/, ".mjs"))
+const bundle = async (entryPath, outfile) => {
   await build({
-    entryPoints: [path.join(SRC, entry)],
+    entryPoints: [entryPath],
     outfile,
     bundle: true,
     format: "esm",
@@ -39,4 +55,15 @@ for (const entry of entries) {
     legalComments: "none",
   })
   console.log(`build-hooks: ${path.relative(ROOT, outfile)}`)
+}
+
+for (const entry of entries) {
+  const name = entry.replace(/\.entry\.mjs$/, ".mjs")
+  await bundle(path.join(SRC, entry), path.join(CLAUDE_OUT, name))
+  await bundle(path.join(SRC, entry), path.join(QWEN_OUT, name))
+}
+
+// The hand-written Claude hooks, bundled into the Qwen plugin only.
+for (const entry of HAND_WRITTEN_ENTRIES) {
+  await bundle(path.join(CLAUDE_OUT, entry), path.join(QWEN_OUT, entry))
 }

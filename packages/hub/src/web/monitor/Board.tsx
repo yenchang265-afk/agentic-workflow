@@ -1,4 +1,4 @@
-import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard } from "../../shared/api.js"
+import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard, TaskStatus } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
@@ -8,6 +8,7 @@ import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
 import { DoctorPanel } from "./DoctorPanel.js"
 import { GateActions } from "./GateActions.js"
+import { TaskDrawer } from "./TaskDrawer.js"
 
 /**
  * The backlog board for one workflow kind: one column per manifest status, task
@@ -23,6 +24,7 @@ const TaskCardView = ({
   status,
   kind,
   stage,
+  onOpen,
 }: {
   task: TaskCard
   gated: boolean
@@ -31,9 +33,14 @@ const TaskCardView = ({
   kind: string
   /** The live stage marker, already confirmed to belong to this task. */
   stage: StageMarker | null
+  onOpen: () => void
 }) => (
   <Card gated={gated} title={task.acceptance.join("\n")}>
-    <div className="card-title">{task.title}</div>
+    {/* A button rather than a click handler on the card: gate buttons and a
+        confirm dialog already live inside it, and this stays keyboard-reachable. */}
+    <button type="button" className="card-title card-open" onClick={onOpen}>
+      {task.title}
+    </button>
     <div className="card-meta">
       <Badge title={task.id}>{task.shortId}</Badge>
       {task.type && <Badge>{task.type}</Badge>}
@@ -60,6 +67,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
   const [doctorOpen, setDoctorOpen] = useState(false)
+  const [openTask, setOpenTask] = useState<{ id: string; status: TaskStatus } | null>(null)
   const { data, error } = useJson<BacklogResponse>(
     repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId),
     [versions.backlog, versions.gate, repoId, info.kind],
@@ -125,12 +133,22 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                   status={status}
                   kind={info.kind}
                   stage={liveStage?.taskId === t.id ? liveStage : null}
+                  onOpen={() => setOpenTask({ id: t.id, status: status as TaskStatus })}
                 />
               ))}
             </div>
           )
         })}
       </div>
+      {openTask && (
+        <TaskDrawer
+          key={`${openTask.status}/${openTask.id}`}
+          id={openTask.id}
+          status={openTask.status}
+          claimed={claimed.has(openTask.id)}
+          onClose={() => setOpenTask(null)}
+        />
+      )}
     </div>
   )
 }

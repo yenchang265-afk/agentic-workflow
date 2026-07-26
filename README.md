@@ -114,18 +114,22 @@ Manual path (deps already installed):
 git clone <this-repo>
 cd agentic-workflow
 npm install             # npm workspaces — also builds @agentic-workflow/core (prepare)
-./install.sh            # both plugins; or: ./install.sh opencode | claude
+./install.sh            # every plugin; or: ./install.sh opencode | claude | qwen
 ```
 
 - `npm install` at the repo root installs all workspaces (the OpenCode plugin,
   `packages/core`, `plugins/claude/mcp-server`) and builds the core package via
-  the `prepare` script — both plugins consume core's built `dist/`.
+  the `prepare` script — every plugin consumes core's built `dist/`.
 - `./install.sh opencode` symlinks agents/commands/skills/references into
   `~/.config/opencode/` (or `$OPENCODE_CONFIG_DIR`) and registers the plugin —
   details and flags (`--copy`, custom dir) in [docs/opencode.md](docs/opencode.md).
 - `./install.sh claude` builds the bundled MCP server and links the shared
   skills/references, then prints the load options (`claude --plugin-dir` or
   marketplace) — details in [`plugins/claude/README.md`](plugins/claude/README.md).
+- `./install.sh qwen` builds the same MCP server, installs agents/commands/
+  skills/references into `~/.qwen/` (or `$QWEN_CONFIG_DIR`), and merges the
+  hooks + MCP entry into `settings.json` — details in
+  [docs/qwen.md](docs/qwen.md).
 - After installing, an interactive terminal gets a short **config wizard** that
   seeds `.agentic-workflow.json` — see [docs/configuration.md](docs/configuration.md).
 
@@ -137,7 +141,7 @@ Two scripts undo the two kinds of footprint — the installed plugin, and the
 local state a running loop leaves behind:
 
 ```bash
-./uninstall.sh                 # reverse install.sh; or opencode | claude | all
+./uninstall.sh                 # reverse install.sh; or opencode | claude | qwen | all
 ./scripts/clean.sh             # remove <tasksDir>/runs/ ephemeral state only
 ./scripts/clean.sh --purge     # also delete backlog task files + .agentic-workflow.json
 ```
@@ -170,6 +174,15 @@ local state a running loop leaves behind:
   gate has anything waiting
 - `/agentic-workflow:engineering replan [id] [reason]` — the rejection verb: a parked plan (or
   a cap-tripped task, by id) back to `queued/` for re-planning
+- `/agentic-workflow:engineering abandon <id> [reason]` — cancel a task: it moves to
+  `abandoned/`, the terminal folder for work that won't be done. The file is
+  kept, so it can be moved back; this is also how a tracking epic is closed once
+  every child has shipped
+- `/agentic-workflow:engineering remove <id> --force` — hard-delete a task: the file is
+  deleted, not moved. A bare `remove <id>` deletes nothing and reports which
+  task the id resolved to — `--force` is the confirmation. Recoverable from git
+  only if you set `ignoreBacklog: false`; the default keeps `docs/tasks/` out of
+  git entirely, so prefer `abandon` unless you want the file gone
 - `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
   `plan` runs PLAN on one queued task and parks it (the only PLAN entry);

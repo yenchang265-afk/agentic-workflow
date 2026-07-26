@@ -71,7 +71,7 @@ import {
   worktreeForBranch,
 } from "@agentic-workflow/core/workflow/git"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { approveAny, rejectAny, removeTask, retaskTask, type GateCtx } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -503,6 +503,15 @@ export const findDrivingWorkflow = async (
 const toast = (client: Client, message: string, variant: "info" | "success" | "warning" | "error") =>
   client.tui.showToast({ body: { message, variant } }).catch(() => {})
 
+/**
+ * The toast variant for a gate move. Core sets `variant` on a REFUSAL to grade
+ * it (`info` = nothing to do, `warning` = wrong folder), and on a SUCCESS to
+ * mark a move that landed with a caveat — a ship whose PR did not open. Without
+ * honouring it on the ok branch, that ship toasts plain green and the note in
+ * the message body is easy to scroll past.
+ */
+const gateVariant = (r: GateResult): "success" | "warning" | "info" => r.variant ?? (r.ok ? "success" : "warning")
+
 /** Toast a terminal outcome AND return it, so the command hook can replace the
  *  rendered command template with what actually happened — otherwise the model
  *  reads the descriptive template as information and never reports the action. */
@@ -904,7 +913,7 @@ export const runStageWithLenses = async (
  */
 const snapshot = async (deps: Deps, config: Config, state: WorkflowState): Promise<void> => {
   if (!state.task) return
-  await saveState(deps.$, deps.directory, config.tasksDir, state.task.id, state)
+  await saveState(deps.$, deps.directory, config.tasksDir, state.task.id, state, deps.log)
 }
 
 /**
@@ -1612,7 +1621,7 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
   try {
     const r = await approveAny(gateCtx(deps, config), id)
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
@@ -1638,14 +1647,18 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
  */
 export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  // Split the id off the note verbatim rather than on whitespace — the note is
+  // the human's prose and reaches the task file's audit trail intact.
+  const parsed = /^(\S+)\s*([\s\S]*)$/.exec(args.trim())
+  const id = parsed?.[1] ?? ""
   if (!id) return void (await toast(client, `Usage: ${ECMD} retask <id> [note].`, "warning"))
+  const note = parsed?.[2]?.trim() || undefined
   try {
-    const r = await retaskTask(gateCtx(deps, config), id)
+    const r = await retaskTask(gateCtx(deps, config), id, note)
     // Success is silent unless the plugin actually moved something — the agent's
     // turn reports the reshape, and a toast per retask would double up.
-    if (!r.ok) await toast(client, r.message, r.variant ?? "warning")
-    else if (!r.data?.alreadyDone) await toast(client, r.message, "success")
+    if (!r.ok) await toast(client, r.message, gateVariant(r))
+    else if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
   }
@@ -1655,29 +1668,53 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
   const { client } = deps
   try {
     const r = await rejectAny(gateCtx(deps, config), args.trim())
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Replan failed: ${(err as Error).message}`, "error")
   }
 }
 
 /**
- * Handle `remove <id>` — hard-delete a task from the backlog entirely. Unlike
- * every other gate this deletes the file rather than moving it: the task leaves
- * the backlog for good (git history retains it if the backlog is tracked). Core
- * refuses a task a live loop is driving or one holding a claim marker. An id is
- * required — there is no folder-driven "remove the awaiting one" (too easy to
- * delete the wrong task).
+ * Handle `remove <id> [--force]` — hard-delete a task from the backlog entirely.
+ * Unlike every other gate this deletes the file rather than moving it: the task
+ * leaves the backlog for good, recoverable from git ONLY when the backlog is
+ * tracked, which is not the default. Core refuses a task a live loop is driving
+ * or one holding a claim marker. An id is required — there is no folder-driven
+ * "remove the awaiting one" (too easy to delete the wrong task).
+ *
+ * Without `--force` core reports what it WOULD delete and deletes nothing. This
+ * runs inside `command.execute.before`, so there is no turn in which a model
+ * could ask the user first — the dry run is the only confirmation there is. Use
+ * `abandon` when the task should merely leave the active backlog.
  */
 export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
   const { client } = deps
-  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
-  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id>.`, "warning"))
+  const words = args.trim().split(/\s+/).filter(Boolean)
+  const force = words.some((w) => w === "--force" || w === "-f")
+  const id = words.find((w) => !w.startsWith("-")) ?? ""
+  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id> [--force].`, "warning"))
   try {
-    const r = await removeTask(gateCtx(deps, config), id)
-    await toast(client, r.message, r.ok ? "success" : (r.variant ?? "warning"))
+    const r = await removeTask(gateCtx(deps, config), id, force)
+    await toast(client, r.message, gateVariant(r))
   } catch (err) {
     await toast(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `abandon <id> [reason]` — cancel a task by moving it to `abandoned/`.
+ * The reversible counterpart to `remove`: the file survives, so unlike `remove`
+ * this needs no confirmation. An id is required for the same reason.
+ */
+export const handleAbandon = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+  const { client } = deps
+  const [id = "", ...rest] = args.trim().split(/\s+/).filter(Boolean)
+  if (!id) return void (await toast(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning"))
+  try {
+    const r = await abandonTask(gateCtx(deps, config), id, rest.join(" ") || undefined)
+    await toast(client, r.message, gateVariant(r))
+  } catch (err) {
+    await toast(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -1732,7 +1769,8 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
-  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] · replan [id] [reason] · plan <id> · ` +
+  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] · replan [id] [reason] · ` +
+  "abandon <id> [reason] · remove <id> --force · plan <id> · " +
   "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
@@ -1813,6 +1851,7 @@ export const handleCommand = async (
     if (verb === "approve") return void (await handleApprove(deps, sessionID, rest, config))
     if (verb === "replan") return void (await handleReplan(deps, sessionID, rest, config))
     if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
+    if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {

@@ -286,8 +286,21 @@ T7 相同的紀律）並**安裝套件**——upgrade 階段的 `npm install <pk
 - **JVM 生態系（OSV-Scanner）：** 對 maven/gradle 而言，公告資料來自主機上
   已安裝的 `osv-scanner` 執行檔查詢 OSV.dev 資料庫——這是一種新的**對外
   讀取**連線（該執行檔如同 `gh` 一樣被信任：由主機操作者負責安裝與更新；
-  sitter 只會以 `--format json -L <file>` 呼叫它，並以防禦性的方式解析
-  輸出）。OSV 公告文字是不可信輸入，適用與 npm 公告相同的紀律。修復目標
+  預設情況下 sitter 只會以 `--format json -L <file>` 呼叫它，並以防禦性的
+  方式解析輸出）。
+- **站台自訂掃描器（`workflows.<kind>.scannerCommand`）：** 以任意指令列取代
+  上述預設呼叫，在 driver 端以 raw shell 展開執行——與 `worktreeSetup` 相同
+  的信任基礎與相同的圍堵，且**僅在使用者層級設定檔中生效**。被觀察儲存庫的
+  `.agentic-workflow.json` 無法設定它（載入時由 `SHELL_BEARING_WORKFLOW_KEYS`
+  捨棄並警告），因此複製一個惡意儲存庫不會取得指令執行能力。代換進去的
+  佔位符（`{{target}}`、`{{ecosystem}}`）是內部常數——由 source 自己選定的
+  鎖定檔路徑與生態系名稱——絕不會是公告或登錄檔文字，因此不可信資料不會抵達
+  shell。agent 可見的 bash allowlist 完全不變：自訂指令在任何 agent 啟動前
+  執行，且刻意不加入任何階段的 allowlist。其輸出由與 osv-scanner 相同的防禦性
+  正規化器解析；無法解析、空白或詞彙無法辨識的輸出一律是可行動的 skip，而
+  不是一句有把握的「沒有漏洞」。
+
+  OSV 公告文字是不可信輸入，適用與 npm 公告相同的紀律。修復目標
   是由純函式正規化器（`osv.ts`）在任何 agent 執行之前，從報告的 `fixed`
   事件中釘住的——agent 絕不會自行選擇版本。未在建置檔案中宣告的有漏洞
   套件（transitive 相依）在結構上就無法被認領，這與 npm 的 `isDirect`

@@ -64,10 +64,42 @@ const readPat = (file) => {
   return undefined
 }
 
+/**
+ * Tell the session the PAT could not be injected, rather than failing silently.
+ * `additionalContext` on SessionStart is the only channel available here.
+ */
+const notice = (text) => {
+  process.stdout.write(
+    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: text } }) + "\n",
+  )
+}
+
 const main = async () => {
-  const envFile = process.env.CLAUDE_ENV_FILE
-  if (!envFile) return // not Claude Code / capability unavailable — nothing to do
   if (process.env.AZURE_DEVOPS_EXT_PAT) return // the env var always wins; already set
+  const envFile = process.env.CLAUDE_ENV_FILE
+  if (!envFile) {
+    // No env-file channel. Claude Code always provides one, so this is either a
+    // non-Claude host (Qwen Code has no equivalent) or the capability is off.
+    // Degrade to a notice ONLY when a PAT is actually configured and an ADO loop
+    // would therefore be about to fail — an unrelated session must stay silent,
+    // and the notice must never carry the secret itself.
+    let input = {}
+    try {
+      input = JSON.parse(await read())
+    } catch {
+      /* fall back to cwd */
+    }
+    const cwd = input.cwd || process.cwd()
+    const configured = readPat(path.join(cwd, ".agentic-workflow.json")) ?? readPat(userConfigPath())
+    if (configured) {
+      notice(
+        "agentic-workflow: an `ado.pat` is configured, but this host provides no session env-file channel to " +
+          "inject it (that is Claude Code only). Export AZURE_DEVOPS_EXT_PAT in your shell before starting the " +
+          "session, or the Azure DevOps sitters will fail to authenticate.",
+      )
+    }
+    return
+  }
   // The harness creates the env file before hooks run. A CLAUDE_ENV_FILE that
   // does not already exist as a regular file is not that channel — appending
   // would write the secret to an arbitrary path.

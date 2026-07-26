@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
+import { abandonTask, approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -15,7 +15,7 @@ import { approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask
  */
 const makeCtx = (
   files: Record<string, string>,
-  opts: { driving?: string; git?: (cmd: string) => { exitCode: number; stdout: string } | undefined } = {},
+  opts: { driving?: string; ignoreBacklog?: boolean; git?: (cmd: string) => { exitCode: number; stdout: string } | undefined } = {},
 ) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
@@ -64,7 +64,7 @@ const makeCtx = (
     client: { file: { list: async () => ({ data: [] }), read: async () => ({ data: null }) }, app: { log: async () => undefined } } as any,
     log: () => {},
     directory: "/repo",
-    config: DEFAULT_CONFIG,
+    config: opts.ignoreBacklog === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, ignoreBacklog: opts.ignoreBacklog },
     isDriving: (id) => id === opts.driving,
   }
   return { ctx, fs, log }
@@ -127,11 +127,32 @@ test("retaskTask reports a missing id rather than inventing one", async () => {
   assert.equal(r.ok, false)
 })
 
+test("retaskTask records the reason on its audit note", async () => {
+  // The task file is the only place the next authoring pass looks for WHY the
+  // goal was wrong — same contract as replan's reason.
+  const { ctx, log } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await retaskTask(ctx, "t", "acceptance described the wrong screen")
+  assert.equal(r.ok, true)
+  assert.ok(
+    log.some((c) => c.includes("approval withdrawn — acceptance described the wrong screen")),
+    "the reason is appended to the note",
+  )
+})
+
+test("retaskTask with a reason still writes nothing for a draft", async () => {
+  // The draft branch is an idempotent no-op; a reason must not turn it into a write.
+  const { ctx, log } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await retaskTask(ctx, "t", "why")
+  assert.equal(r.ok, true)
+  assert.ok(!log.some((c) => c.startsWith("mv ")), "nothing moved")
+  assert.ok(!log.some((c) => c.includes("approval withdrawn")), "and no note appended")
+})
+
 // --- removeTask: hard-delete a task from the backlog entirely ---
 
 test("removeTask deletes a draft outright — the file is gone, not moved", async () => {
   const { ctx, fs, log } = makeCtx({ "draft/t.md": task("Do it") })
-  const r = await removeTask(ctx, "t")
+  const r = await removeTask(ctx, "t", true)
   assert.equal(r.ok, true)
   assert.ok(r.ok && r.data.removed === true && r.data.from === "draft")
   assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "the file is removed")
@@ -141,7 +162,7 @@ test("removeTask deletes a draft outright — the file is gone, not moved", asyn
 
 test("removeTask works from any folder — a finished in-review task deletes too", async () => {
   const { ctx, fs } = makeCtx({ "in-review/t.md": task("Built", `${PLAN_HEADING}\n\n1. Step.`) })
-  const r = await removeTask(ctx, "t")
+  const r = await removeTask(ctx, "t", true)
   assert.equal(r.ok, true)
   assert.ok(r.ok && r.data.from === "in-review")
   assert.ok(!("/repo/docs/tasks/in-review/t.md" in fs))
@@ -169,6 +190,102 @@ test("removeTask on a missing id is an idempotent success (rm -f semantics)", as
   const r = await removeTask(ctx, "gone")
   assert.equal(r.ok, true)
   assert.ok(r.ok && r.data.alreadyDone === true)
+})
+
+test("removeTask without force deletes NOTHING and reports what it would delete", async () => {
+  // The CLI hosts have no confirmation step of their own — Claude blocks the turn
+  // before the model runs, opencode deletes inside the command hook — so the
+  // dry run IS the confirmation.
+  const { ctx, fs, log } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /--force/, "names the way to confirm")
+  assert.match(r.message, /Do it/, "names the task it resolved, so a typo'd handle is visible")
+  assert.ok("/repo/docs/tasks/draft/t.md" in fs, "the file survives a bare remove")
+  assert.ok(!log.some((c) => c.startsWith("rm ")), "and no delete was attempted")
+})
+
+test("removeTask's dry run leads with the real recovery story for this config", async () => {
+  // ignoreBacklog defaults to TRUE, so "git history keeps it" is false for most
+  // installs — the copy must not reassure a user whose backlog is untracked.
+  const untracked = makeCtx({ "draft/t.md": task("Do it") }, { ignoreBacklog: true })
+  assert.match((await removeTask(untracked.ctx, "t")).message, /CANNOT be undone/)
+  const tracked = makeCtx({ "draft/t.md": task("Do it") }, { ignoreBacklog: false })
+  assert.match((await removeTask(tracked.ctx, "t")).message, /git history/)
+})
+
+test("removeTask runs its guards before the confirm — a claim-held task is refused, not offered", async () => {
+  const { ctx } = makeCtx({ "in-progress/t.md": task("Claimed"), "in-progress/.claims/t": "" })
+  const r = await removeTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /claim marker/)
+  assert.ok(!/--force/.test(r.message), "never invites a force that would still be refused")
+})
+
+// --- abandonTask: the reversible cancellation `abandoned/` always modelled ---
+
+test("abandonTask moves a task to abandoned/ instead of deleting it", async () => {
+  const { ctx, fs } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await abandonTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.abandoned === true && r.data.from === "draft")
+  assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "left its old folder")
+  assert.ok("/repo/docs/tasks/abandoned/t.md" in fs, "and the file still exists")
+})
+
+test("abandonTask works from every non-terminal folder", async () => {
+  for (const from of ["draft", "queued", "plan-review", "in-progress", "in-review"]) {
+    const { ctx, fs } = makeCtx({ [`${from}/t.md`]: task("Do it", `${PLAN_HEADING}\n\n1. Step.`) })
+    const r = await abandonTask(ctx, "t")
+    assert.equal(r.ok, true, `${from} → abandoned`)
+    assert.ok(`/repo/docs/tasks/abandoned/t.md` in fs, `${from} landed in abandoned/`)
+  }
+})
+
+test("abandonTask refuses a completed task — shipped work isn't cancellable", async () => {
+  const { ctx, fs } = makeCtx({ "completed/t.md": task("Shipped") })
+  const r = await abandonTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /completed/)
+  assert.ok("/repo/docs/tasks/completed/t.md" in fs)
+})
+
+test("abandonTask is idempotent on an already-abandoned task", async () => {
+  const { ctx } = makeCtx({ "abandoned/t.md": task("Gone") })
+  const r = await abandonTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.ok(r.ok && r.data.alreadyDone === true)
+})
+
+test("abandonTask carries the same live-loop and claim guards remove has", async () => {
+  const driving = makeCtx({ "in-progress/t.md": task("Building") }, { driving: "t" })
+  const a = await abandonTask(driving.ctx, "t")
+  assert.equal(a.ok, false)
+  assert.match(a.message, /live loop/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in driving.fs)
+
+  const claimed = makeCtx({ "in-progress/t.md": task("Claimed"), "in-progress/.claims/t": "" })
+  const b = await abandonTask(claimed.ctx, "t")
+  assert.equal(b.ok, false)
+  assert.match(b.message, /claim marker/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in claimed.fs)
+})
+
+test("abandonTask records the reason on the audit note", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await abandonTask(ctx, "t", "superseded by the new epic")
+  assert.equal(r.ok, true)
+  assert.ok(log.some((c) => c.includes("superseded by the new epic")))
+})
+
+test("replanTask refuses a claim-held task — isDriving is per-process and misses other hosts", async () => {
+  // A replan from the hub or the Claude MCP server while an opencode loop is
+  // mid-BUILD used to sail past isDriving and release that run's marker.
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Building", `${PLAN_HEADING}\n\n1. Step.`), "in-progress/.claims/t": "" })
+  const r = await replanTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /claim marker/)
+  assert.ok("/repo/docs/tasks/in-progress/t.md" in fs, "the live run keeps its task")
 })
 
 test("approveTask moves a draft to queued and returns a structured result", async () => {
@@ -380,6 +497,83 @@ test("shipTask retry on an already-completed task re-attempts the PR when none w
   // the attempt is recorded (a "PR not opened" note appended), not silently skipped.
   assert.ok(log.some((c) => c.includes("PR not opened")), "the PR attempt must be audited on the completed task")
   assert.ok("/repo/docs/tasks/completed/t.md" in fs, "the task stays completed")
+})
+
+test("an unopened PR is a WARNING on a successful ship, not a failure", async () => {
+  // Opening a PR is not a requirement of shipping — shipPr never throws, no-ops
+  // for a hand-authored task with no branch, and some of its reasons are plain
+  // config states. By the time it runs the task is already moved and committed.
+  // So the ship succeeds; the caveat rides along as a variant. What it must NOT
+  // do is go silent: the reason used to land only in an audit note, which the
+  // default ignoreBacklog: true never commits.
+  const { ctx } = makeCtx(
+    { "in-review/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" } // feature/t exists
+        if (cmd.includes("push")) return { exitCode: 0, stdout: "" } // pushes fine; gh is what fails
+        return undefined
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.equal(r.ok, true, "the ship succeeded — the task IS completed")
+  assert.equal(r.variant, "warning", "and it is surfaced as a warning, which is the whole point")
+  assert.match(r.message, /no PR was opened/, "the message says so rather than reading as an unqualified success")
+  // The embedded reason may legitimately contain "failed" — `gh pr create failed`
+  // is the diagnostic. What must not come back is the FRAMING that read as a
+  // failed ship.
+  assert.doesNotMatch(r.message, /But the PR|NOT opened/, "the framing must not read as a failure")
+  assert.match(r.message, /completed/, "and it still leads with the ship having succeeded")
+  assert.ok(r.ok && (r.data.pr as { opened?: boolean }).opened === false, "machine-readable too — the only channel the Claude host shows")
+  assert.ok(r.ok && !("failed" in (r.data.pr as object)), "and nothing claims the ship failed")
+})
+
+test("a caveated ship never claims the branch was pushed — that is unknowable here", async () => {
+  // `attempted` covers two worlds: `git push failed` (not pushed) and a gh/ADO
+  // create failure (pushed). ShipPrResult does not distinguish them, so any
+  // claim either way is wrong half the time.
+  const { ctx } = makeCtx(
+    { "in-review/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" }
+        if (cmd.includes("push")) return { exitCode: 1, stdout: "" } // the PUSH is what fails here
+        return undefined
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.equal(r.ok, true, "a failed push still does not fail the ship")
+  assert.equal(r.variant, "warning")
+  assert.doesNotMatch(r.message, /branch is pushed/, "the old wording asserted this and was wrong in exactly this case")
+})
+
+test("a clean ship carries no variant, so ordinary ships stay green", async () => {
+  // The regression this change is most likely to cause.
+  const { ctx } = makeCtx({ "in-review/t.md": task("Do it") })
+  const r = await shipTask(ctx, "t")
+  assert.equal(r.ok, true)
+  assert.equal(r.variant, undefined, "no branch to ship → no PR attempt → nothing to warn about")
+  assert.doesNotMatch(r.message, /no PR was opened/)
+})
+
+test("shipTask's already-completed retry reports a still-failing PR rather than 'nothing to do'", async () => {
+  const { ctx } = makeCtx(
+    { "completed/t.md": task("Do it") },
+    {
+      git: (cmd) => {
+        if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" }
+        if (cmd.includes("push")) return { exitCode: 0, stdout: "" }
+        return undefined
+      },
+    },
+  )
+  const r = await shipTask(ctx, "t")
+  assert.ok(r.ok)
+  assert.equal(r.variant, "warning", "the retry warns for the same reason the main path does")
+  assert.match(r.message, /no PR was opened/)
+  assert.doesNotMatch(r.message, /Nothing to do/, "a PR that still did not open is not 'nothing to do'")
 })
 
 test("shipTask retry does nothing when the completed task already recorded a PR", async () => {

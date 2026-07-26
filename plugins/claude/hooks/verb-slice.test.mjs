@@ -1,9 +1,11 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { sliceForVerb, unmarkedLines, verbContext, verbsIn } from "./verb-slice.mjs"
+import { isAdhocPlan } from "./gate-parse.mjs"
+import { adhocAgentContext, agentModelFor, sliceForVerb, unmarkedLines, verbContext, verbsIn } from "./verb-slice.mjs"
 
 /**
  * On this host the command body cannot be rewritten, so the split is physical:
@@ -135,6 +137,19 @@ test("the verbs file has no unmarked prose — it would be injected on every ver
   assert.deepEqual(unmarkedLines(verbs()), [], "move shared prose into the router instead")
 })
 
+test("every verb's block opens with that verb's own bullet, not mid-sentence", () => {
+  // The opencode command shipped two blocks whose marker sat one line late, so
+  // the verb's opening bullet stayed in the PREVIOUS block and its own help
+  // began mid-sentence. This file is correctly aligned today; pin it, because
+  // every other coverage test here passes either way.
+  const body = verbs()
+  for (const verb of advertisedVerbs(router())) {
+    const slice = sliceForVerb(body, verb)
+    const bullet = new RegExp(`^- \\*\\*\`${verb.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "m")
+    assert.match(slice, bullet, `${verb}'s block must open on its own bullet — a marker is one line off`)
+  }
+})
+
 test("the router carries no verb procedure, so nothing is said twice", () => {
   const body = router()
   assert.doesNotMatch(body, /aw:verb/, "the router is never sliced")
@@ -161,4 +176,77 @@ test("the router tells the model what to do when no block arrives", () => {
 
 test("the router is a fraction of the body it replaced", () => {
   assert.ok(router().split("\n").length < 90, `router is ${router().split("\n").length} lines`)
+})
+
+/**
+ * `agentModels` — the model source for the two spawns that are NOT stage runs.
+ * They have no StageDef and no MCP response, so a static prose sentence cannot
+ * name their model; the hook interpolates it or says nothing at all.
+ */
+
+const withConfig = (config, run) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-agentmodels-"))
+  const prevUserConfig = process.env.AGENTIC_WORKFLOW_USER_CONFIG
+  // Pin the user layer off, or a developer's real config leaks into the test.
+  process.env.AGENTIC_WORKFLOW_USER_CONFIG = ""
+  try {
+    if (config !== null) fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), config)
+    return run(dir)
+  } finally {
+    if (prevUserConfig === undefined) delete process.env.AGENTIC_WORKFLOW_USER_CONFIG
+    else process.env.AGENTIC_WORKFLOW_USER_CONFIG = prevUserConfig
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+test("agentModelFor reads the repo layer, strips a provider prefix, and ignores non-strings", () => {
+  withConfig(JSON.stringify({ agentModels: { "workflow-plan-author": "anthropic/claude-haiku-4-5" } }), (dir) => {
+    assert.equal(agentModelFor(dir, "workflow-plan-author"), "claude-haiku-4-5")
+    assert.equal(agentModelFor(dir, "workflow-plan"), null)
+  })
+  withConfig(JSON.stringify({ agentModels: { "workflow-plan": 42 } }), (dir) => {
+    assert.equal(agentModelFor(dir, "workflow-plan"), null, "a malformed value must degrade to the host default")
+  })
+})
+
+test("agentModelFor treats an absent or unparseable config as no config, never an error", () => {
+  withConfig(null, (dir) => assert.equal(agentModelFor(dir, "workflow-plan-author"), null))
+  withConfig("{ not json", (dir) => assert.equal(agentModelFor(dir, "workflow-plan-author"), null))
+})
+
+test("verbContext names the drafting model for the verbs that spawn outside the loop", () => {
+  const config = JSON.stringify({ agentModels: { "workflow-plan-author": "haiku" } })
+  withConfig(config, (dir) => {
+    for (const verb of ["new", "retask"]) {
+      const context = verbContext(ROOT, verb, dir)
+      assert.match(context, /Task tool's `model` set to `haiku`/, `${verb} must carry the configured drafting model`)
+      assert.match(context, /drafting spawn only/, "it must not read as retargeting the PLAN stage")
+    }
+    // `plan`'s spawn IS the PLAN stage — stageModels governs it through the MCP
+    // response, so injecting agentModels here would give two competing answers.
+    assert.doesNotMatch(verbContext(ROOT, "plan", dir), /agentModels/)
+  })
+})
+
+test("verbContext adds nothing when no drafting model is configured", () => {
+  withConfig(null, (dir) => {
+    assert.doesNotMatch(verbContext(ROOT, "new", dir), /agentModels/, "an unconfigured install pays no tokens for the knob")
+    assert.equal(verbContext(ROOT, "new", dir), verbContext(ROOT, "new"), "and omitting cwd is the same as unconfigured")
+  })
+})
+
+test("adhocAgentContext covers the ad-hoc plan spawn, which has no MCP response at all", () => {
+  withConfig(JSON.stringify({ agentModels: { "workflow-plan": "haiku" } }), (dir) => {
+    assert.match(adhocAgentContext(dir, "workflow-plan"), /`workflow-plan` with the Task tool's `model` set to `haiku`/)
+    assert.equal(adhocAgentContext(dir, "workflow-plan-author"), null)
+  })
+  withConfig(null, (dir) => assert.equal(adhocAgentContext(dir, "workflow-plan"), null))
+})
+
+test("isAdhocPlan matches the plan command without swallowing its siblings", () => {
+  assert.ok(isAdhocPlan("/agentic-workflow:plan add a cache"))
+  assert.ok(isAdhocPlan("/plan add a cache"))
+  assert.ok(!isAdhocPlan("/agentic-workflow:plan-task 42"), "the sibling command must not match")
+  assert.ok(!isAdhocPlan("/agentic-workflow:engineering plan 42"), "the engineering verb is not the ad-hoc command")
+  assert.ok(!isAdhocPlan("we should plan this out"), "prose must never match")
 })

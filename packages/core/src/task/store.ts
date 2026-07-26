@@ -1,8 +1,9 @@
 import path from "node:path"
+import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
-import { buildTaskFile, isPaired, isSafeTaskId, parseTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
+import { buildTaskFile, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
 
 /**
  * Filesystem IO for the task backlog. **Impure**: reads via the host client
@@ -150,6 +151,51 @@ export const extractPlan = (task: Task): string | undefined => {
   if (idx === -1) return undefined
   const from = idx + PLAN_HEADING.length
   return task.body.slice(from, auditTailIndex(task.body, from)).trim()
+}
+
+/** A task body split into the prose a human may edit and the audit trail that must survive. */
+export interface TaskBodyParts {
+  /** Editable prose, trimmed. `""` for a body that is nothing but notes. */
+  readonly prose: string
+  /** The trailing `> …` run, verbatim and trimmed. `""` when there is none. */
+  readonly tail: string
+}
+
+/** A line that may belong to the trailing audit run: blank, or a `> ` blockquote. */
+const isTailLine = (line: string): boolean => line.trim() === "" || /^>(\s|$)/.test(line)
+
+/**
+ * Split a task body into the prose a human may edit and the audit tail that must
+ * survive the edit.
+ *
+ * `appendNote` only ever APPENDS `> …` lines, so a task's audit trail is the
+ * maximal suffix of blockquote-and-blank lines. That is the whole rule — purely
+ * positional, with no attempt to recognise a note by its text (the format is
+ * `auditNote`'s, and matching on it here would be a second parser that can
+ * drift). A blockquote a human wrote in the MIDDLE of the body stays in `prose`,
+ * exactly where it is; one they wrote at the very END is conservatively classed
+ * as tail, so it becomes read-only rather than editable. The bias runs that way
+ * on purpose: losing the ability to edit one line is recoverable, losing an
+ * audit note is not.
+ *
+ * Deliberately NOT plan-aware — `PLAN_HEADING` and its text land in `prose`,
+ * which is why a caller offering an editor gates on `hasPlan` first. Pure.
+ */
+export const splitTaskBody = (body: string): TaskBodyParts => {
+  const lines = body.split("\n")
+  let cut = lines.length
+  while (cut > 0 && isTailLine(lines[cut - 1]!)) cut--
+  return {
+    prose: lines.slice(0, cut).join("\n").trim(),
+    tail: lines.slice(cut).join("\n").trim(),
+  }
+}
+
+/** Rejoin the halves into a task body — the inverse of `splitTaskBody`. Pure. */
+export const joinTaskBody = (prose: string, tail: string): string => {
+  const p = prose.trim()
+  const t = tail.trim()
+  return p && t ? `${p}\n\n${t}` : p || t
 }
 
 /**
@@ -414,72 +460,28 @@ export const resolveTaskIdAnywhere = async (
 /** Directory of atomic claim markers, alongside the task files of one status folder. */
 const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
 
-/**
- * The stamp written inside a won claim marker. Staleness is judged from its
- * `claimedAt`, never from fs mtime — DrvFS/WSL mtime is unreliable, the same
- * rule `scheduler/lease.ts` applies to watch-lease liveness.
- */
-const claimStampPath = (task: FileRef): string => path.join(claimsDir(task.path), task.id, "claim.json")
+/** A task's claim marker directory. The stamp/staleness rules live in `claim-marker.ts`. */
+const claimMarker = (task: FileRef): string => path.join(claimsDir(task.path), task.id)
 
 /**
- * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
- * the marker either succeeds — claim won — or fails because another watcher
- * on this filesystem already holds it. Closes the window between listing
- * claimable tasks and appending the `> BUILD started` note.
+ * Atomically claim a task for execution. Closes the window between listing
+ * claimable tasks and appending the `> BUILD started` note. See
+ * `claim-marker.ts` for why the marker carries a stamp.
  */
-export const claimTask = async ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> => {
-  await $`mkdir -p ${claimsDir(task.path)}`.quiet().nothrow()
-  const out = await $`mkdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
-  if (out.exitCode !== 0) return false
-  // Best-effort, deliberately non-atomic: a torn or missing stamp only degrades
-  // claimOlderThan to its mtime fallback, never to a wrong verdict from garbage.
-  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${claimStampPath(task)}`.quiet().nothrow()
-  return true
-}
+export const claimTask = ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> => acquireMarker($, claimMarker(task), now)
 
-/** Release a task's claim marker, if present. Best-effort. The stamp goes
- *  first — `rmdir` (kept over `rm -rf` for blast-radius reasons) needs the
- *  marker empty; a crash in between leaves a stamp-less marker the mtime
- *  fallback still sweeps. */
-export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
-  await $`rm -f ${claimStampPath(task)}`.quiet().nothrow()
-  await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
-}
-
-/**
- * A claim marker older than this, on a task with no BUILD note and no live
- * loop, is treated as orphaned — its claimer died between `claimTask` and the
- * first "BUILD started" note. Must exceed the worst-case claim→BUILD-note
- * window, including a slow `worktreeSetup` (e.g. npm ci).
- */
-export const STALE_CLAIM_MINUTES = 15
+/** Release a task's claim marker, if present. Best-effort. */
+export const releaseClaim = ($: Shell, task: FileRef): Promise<void> => releaseMarker($, claimMarker(task))
 
 /**
  * Whether a `FileRef`'s claim marker exists and is older than `minutes`.
- * Judged from the marker's `claim.json` stamp when present (fs mtime is
- * unreliable on DrvFS/WSL — see `claimTask`); markers from older versions
- * carry no stamp and fall back to `find -mmin +N`, which prints the path only
- * when strictly older (GNU and BSD). Any failure — marker absent, or a `find`
- * without `-mmin` semantics — reads as "not stale", degrading safely to
- * "marker stays held".
+ * On a task with no BUILD note and no live loop, that means orphaned — its
+ * claimer died between `claimTask` and the first "BUILD started" note.
  */
-export const claimOlderThan = async ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> => {
-  const marker = path.join(claimsDir(task.path), task.id)
-  const stamp = await $`cat ${claimStampPath(task)}`.quiet().nothrow()
-  if (stamp.exitCode === 0) {
-    try {
-      const { claimedAt } = JSON.parse(stamp.stdout.toString()) as { claimedAt?: unknown }
-      if (typeof claimedAt === "string") {
-        const at = Date.parse(claimedAt)
-        if (!Number.isNaN(at)) return now.getTime() - at > minutes * 60_000
-      }
-    } catch {
-      /* garbled stamp — fall through to the mtime check */
-    }
-  }
-  const out = await $`find ${marker} -maxdepth 0 -mmin +${String(minutes)}`.quiet().nothrow()
-  return out.exitCode === 0 && out.stdout.toString().trim().length > 0
-}
+export const claimOlderThan = ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> =>
+  markerOlderThan($, claimMarker(task), minutes, now)
+
+export { STALE_CLAIM_MINUTES }
 
 /** Ids currently holding a claim marker in a status folder's `.claims/`. `[]` when absent. */
 export const listClaimIds = async (
@@ -720,6 +722,61 @@ export const removeTaskFile = async ($: Shell, task: FileRef): Promise<string> =
     throw new Error(`removal of ${task.id} did not take effect at ${task.path}`)
   }
   return task.path
+}
+
+/**
+ * Rewrite an EXISTING task file in place: same id, same filename, same status
+ * folder.
+ *
+ * The counterweight to `writeTask` — that one CREATES and refuses to clobber;
+ * this one UPDATES and refuses to create. Together they are total, and neither
+ * can be talked into the other's job.
+ *
+ * It cannot move or rename by construction: there is no `TaskStatus` parameter
+ * to express a move, the write target is DERIVED (`dirname(task.path)/<id>.md`)
+ * rather than taken from the caller, and the derived path is asserted equal to
+ * `task.path`. Lifecycle moves stay `moveTask`'s alone — it, not this, owns
+ * `canTransition`.
+ *
+ * `input` is the WHOLE task, not a patch: `serializeTask` validates the entire
+ * frontmatter, so a partial patch would have to be merged against the parsed
+ * task anyway. The caller does that merge (`taskToInput` + spread), where it can
+ * also decide which fields a human may touch. Serialization runs BEFORE any
+ * write, so invalid frontmatter leaves the file byte-identical.
+ *
+ * Frontmatter keys the schema doesn't know are DROPPED (zod strips them). A
+ * caller that must not lose them screens with `unknownFrontmatterKeys` first.
+ *
+ * Returns the (unchanged) absolute path.
+ */
+export const rewriteTask = async ($: Shell, task: FileRef, input: TaskInput, log?: Log): Promise<string> => {
+  // Same last-write-boundary check `moveTask` makes: the target is built from
+  // `task.id`, so an unsafe id (`../…`) would write outside the backlog.
+  if (!isSafeTaskId(task.id)) {
+    throw new Error(`cannot rewrite task: unsafe id ${JSON.stringify(task.id)}`)
+  }
+  statusOf(task) // throws when the file is not inside a status folder
+  const dest = path.join(path.dirname(task.path), `${task.id}.md`)
+  if (path.resolve(dest) !== path.resolve(task.path)) {
+    throw new Error(`cannot rewrite ${task.id}: ${task.path} is not ${dest} — rewriteTask never renames or moves a task`)
+  }
+  const exists = await $`test -f ${dest}`.quiet().nothrow()
+  if (exists.exitCode !== 0) {
+    throw new Error(`cannot rewrite task ${task.id}: ${dest} does not exist — rewriteTask never creates a task (use writeTask)`)
+  }
+  const content = serializeTask(input) // validates before anything is written
+  const out = await writeFileAtomic($, dest, content)
+  if (out.exitCode !== 0) {
+    throw new Error(`could not rewrite task ${task.id}: ${out.stderr.toString().trim()}`)
+  }
+  // Confirm it landed on the real FS, exactly as `moveTask` does — never report a
+  // write that a stale path turned into a no-op.
+  const check = await $`test -f ${dest}`.quiet().nothrow()
+  if (check.exitCode !== 0) {
+    throw new Error(`rewrite of ${task.id} did not land at ${dest}`)
+  }
+  log?.("info", `rewrote ${dest}`)
+  return dest
 }
 
 /**

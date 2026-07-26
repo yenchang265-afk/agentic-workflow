@@ -18,7 +18,7 @@
  *  1. Check-stage bash allowlist — while the loop is in VERIFY or REVIEW, Bash is
  *     restricted to a default-deny read/test allowlist (threat-model T2). The
  *     active stage is read from the marker the MCP server writes
- *     (<tasksDir>/runs/.stage.json via workflow_stage/workflow_advance).
+ *     (<tasksDir>/runs/<host marker> via workflow_stage/workflow_advance).
  *  2. Worktree pinning — while a worktree-isolated loop is active, edit/write
  *     tools may not touch anything outside the worktree (fail closed:
  *     relative and unreadable paths are refused, and the worktree's frozen
@@ -47,6 +47,16 @@ import fs from "node:fs"
 import path from "node:path"
 import { classifyMutation } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
+import {
+  canonicalTool,
+  dialectFor,
+  hostFor,
+  isBashTool,
+  isWriteTool,
+  unknownHostMessage,
+  writePathKeyOf,
+  writePathOf,
+} from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
 
 const read = () =>
@@ -83,11 +93,9 @@ const rewriteInput = (updatedInput) => {
 // `commandAllowed`) lives in ./allowlist.mjs so it is unit-testable and the
 // chain-split rule has a single home.
 
-// Every built-in file-writing tool, in one place so the pin and the stage
-// deadline agree on what counts as a write. `MultiEdit` is deliberately absent:
-// no such tool exists, so matching it only obscured that `NotebookEdit` is the
-// third real one.
-const WRITE_TOOLS = ["Edit", "Write", "NotebookEdit"]
+// Which tool names count as "the shell" and "a write" is host-specific and
+// lives in ./dialect.mjs, so the pin, the stage deadline, and the backlog guard
+// all agree on one answer per host.
 
 // tasksDir defaults to docs/tasks; honor .agentic-workflow.json if present.
 const readTasksDir = (cwd) => {
@@ -100,9 +108,9 @@ const readTasksDir = (cwd) => {
   return "docs/tasks"
 }
 
-const readMarker = (cwd, tasksDir) => {
+const readMarker = (cwd, tasksDir, markerFile) => {
   try {
-    return JSON.parse(fs.readFileSync(path.join(cwd, tasksDir, "runs", ".stage.json"), "utf8"))
+    return JSON.parse(fs.readFileSync(path.join(cwd, tasksDir, "runs", markerFile), "utf8"))
   } catch {
     return null
   }
@@ -116,16 +124,23 @@ const main = async () => {
     return allow()
   }
   const cwd = input.cwd || process.cwd()
+  const host = hostFor()
+  // Fail CLOSED on an unrecognized host: guessing a dialect would leave every
+  // tool name unmatched and silently disarm the whole guard.
+  if (host === null) return block(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST))
+  const d = dialectFor(host)
   const tasksDir = readTasksDir(cwd)
-  const marker = readMarker(cwd, tasksDir)
+  const marker = readMarker(cwd, tasksDir, d.stageMarkerFile)
   const tool = input.tool_name
   const ti = input.tool_input || {}
+  const isBash = isBashTool(d, tool)
+  const isWrite = isWriteTool(d, tool)
 
   // (3) ADO REST write backstop — always on. Every sitter kind reaches ADO via
   // curl+PAT and may only GET, POST a thread-comment reply, or POST a brand-new
   // pull request; every mutation of an EXISTING PR is off-limits (threat-model
   // T8/T12/T13).
-  if (tool === "Bash" && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
+  if (isBash && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
     return block(
       `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps REST call is blocked. ` +
         `Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR ` +
@@ -139,7 +154,7 @@ const main = async () => {
   // `az pipelines`/`az devops invoke` commands. The loop reaches ADO only over
   // REST, so this never fires on loop-issued commands — it's defense-in-depth
   // in case an az CLI is on PATH and slips into a chained command.
-  if (tool === "Bash" && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
+  if (isBash && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
     return block(
       `agentic-workflow: the loop must never mutate an existing pull request — this az CLI call is blocked. ` +
         `Only reads, thread-comment replies (az devops invoke POST to a pullRequestThreads/pullRequestThreadComments ` +
@@ -152,9 +167,9 @@ const main = async () => {
   // Write/Edit under the backlog bypasses the MCP state machine. The classifier
   // is core's classifyMutation — the same code the OpenCode plugin runs.
   const planTaskId = marker && marker.stage === "plan" && typeof marker.taskId === "string" ? marker.taskId : null
-  const filePath = ti.file_path ?? ti.path ?? ti.notebook_path
+  const filePath = writePathOf(ti)
   const backlogVerdict = classifyMutation(
-    String(tool ?? ""),
+    canonicalTool(d, tool),
     {
       ...(typeof filePath === "string" ? { filePath } : {}),
       ...(typeof ti.command === "string" ? { command: ti.command } : {}),
@@ -187,7 +202,7 @@ const main = async () => {
   // stage allowlist permits `gh api *` for reads/replies but can't exclude the
   // mutating REST route (`gh api -X PUT …/merge`), so this catches it. Gated on the
   // marker so a human's manual `gh pr merge` outside a loop is untouched.
-  if (tool === "Bash" && chainedGithubPrMutation(String(ti.command ?? ""))) {
+  if (isBash && chainedGithubPrMutation(String(ti.command ?? ""))) {
     return block(
       `agentic-workflow: the loop must never mutate a pull request — this GitHub command is blocked. ` +
         `Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) ` +
@@ -199,7 +214,7 @@ const main = async () => {
   // only their own head fast-forward; a refspec (`x:main`), a force, or a delete
   // that the dotAll push allowlist glob can't exclude is blocked here. A human's
   // manual push outside a loop is untouched (gated on the marker, like 3b).
-  if (tool === "Bash" && chainedGitPushViolation(String(ti.command ?? ""))) {
+  if (isBash && chainedGitPushViolation(String(ti.command ?? ""))) {
     return block(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
         `Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; ` +
@@ -210,7 +225,7 @@ const main = async () => {
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
   // tools so it returns control; workflow_advance then stops the loop.
   if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
-    if (tool === "Bash" || WRITE_TOOLS.includes(tool)) {
+    if (isBash || isWrite) {
       return block(
         `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
           `stop working, summarize what you have, and return control so the loop can stop cleanly.`,
@@ -237,7 +252,7 @@ const main = async () => {
   const rawCommand = String(ti.command ?? "")
   let effectiveCommand = rawCommand
   let commandRewritten = false
-  if (tool === "Bash" && workflowWorktree) {
+  if (isBash && workflowWorktree) {
     const pinVerdict = pinBash(rawCommand, workflowWorktree)
     if (pinVerdict.action === "block") return block(pinVerdict.reason)
     if (pinVerdict.action === "rewrite") {
@@ -263,7 +278,7 @@ const main = async () => {
     Array.isArray(marker.bashAllowlist) && marker.bashAllowlist.every((g) => typeof g === "string") && marker.bashAllowlist.length
       ? marker.bashAllowlist
       : null
-  if (tool === "Bash" && (markerList || marker.stage === "verify" || marker.stage === "review")) {
+  if (isBash && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW)
     if (!commandAllowed(effectiveCommand, list)) {
       return block(
@@ -279,8 +294,8 @@ const main = async () => {
   // the "agent keeps editing the current branch" symptom; both are mechanical
   // misses, so both are remapped onto the worktree. A path we cannot read at all
   // stays fail-closed, and so does one under neither tree.
-  if (workflowWorktree && WRITE_TOOLS.includes(tool)) {
-    const fp = ti.file_path ?? ti.path ?? ti.notebook_path
+  if (workflowWorktree && isWrite) {
+    const fp = writePathOf(ti)
     if (typeof fp !== "string") {
       return block(
         `agentic-workflow: this loop is isolated to its worktree ${workflowWorktree}, but ${tool}'s target path could not be determined — pass an absolute path under the worktree.`,
@@ -298,7 +313,7 @@ const main = async () => {
             `Code changes belong to the BUILD stage, inside the loop's worktree ${workflowWorktree}.`,
         )
       }
-      const key = ti.file_path !== undefined ? "file_path" : ti.path !== undefined ? "path" : "notebook_path"
+      const key = writePathKeyOf(ti)
       return rewriteInput({ ...ti, [key]: verdict.value })
     }
   }

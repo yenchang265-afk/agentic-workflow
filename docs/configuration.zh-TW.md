@@ -75,6 +75,14 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
   `ado.project`、`ado.repository`、`tasksDir`、`workflows`、worktree
   設定。
 
+**含 shell 的鍵是例外，只在「使用者層級」生效**：`worktreeSetup` 與
+`workflows.<kind>.scannerCommand` 都是迴圈原樣交給 shell 執行的字串。
+`.agentic-workflow.json` 會跟著任何被複製的儲存庫一起散布，若在該層生效，
+光是「觀察」一個儲存庫就足以在首次認領時執行任意 shell——等同 npm
+postinstall 等級的風險，而且是無聲的。在儲存庫層設定這兩者會被捨棄並發出
+警告（指名該鍵，`scannerCommand` 還會指名 kind）；同一段落的其他鍵仍然生效，
+使用者層級的同名值也會保留。
+
 依慣例把 `codePlatform` 和 `workflows` 留在儲存庫檔案裡：使用者層級的值
 會悄悄套用到*每一個*儲存庫。如果使用者檔案裡放了 PAT，請保護它
 （`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`）；`AZURE_DEVOPS_EXT_PAT` 環境
@@ -113,7 +121,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`customHeaders`、`insecureSkipTlsVerify`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
 | `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
-| `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。 |
+| `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
 | `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 
 兩個外掛讀取的是同一份檔案：結構描述位於共用核心套件
@@ -190,6 +198,12 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   的類型專屬鍵集合（`query`、`ecosystem`、`severityFloor`、
   `includeOutdated`、`branch`……）都只在一個地方權威記載，就是
   **[`docs/sitters.md`](sitters.md)**——不要在這裡重複那些內容。
+- **`workflows.dep-sitter.scannerCommand`**——在 JVM 生態系統上，以自訂 CLI
+  取代內建的 `osv-scanner --format json -L <target>`（`{{target}}`、
+  `{{ecosystem}}` 會被代換）；npm 路徑不受影響。輸出可以是 osv-scanner 報告
+  或原始 OSV 記錄清單，完整契約見
+  **[`docs/workflows/dep-sitter.md`](workflows/dep-sitter.md)**。
+  **含 shell——僅限使用者層級**（見下方）。
 - **`workflows.<kind>.codePlatform`**——依類型覆寫全域的
   `codePlatform`（例如讓某個 sitter 對接 ADO，同時其他一切都預設
   使用 GitHub）。
@@ -274,6 +288,34 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   啟動時發出警告（設定解析時 manifest 還沒載入）。與 `worktreeSetup`
   不同，這個鍵**會**從 repo 的 `.agentic-workflow.json` 生效：它的
   值域是正整數，所以被監看的 repo 只能縮小自己的提示，別的都動不了。
+
+- **`agentModels`**（頂層，不在 `workflows` 之內）——代理名稱 → 該代理
+  執行時使用的模型，適用於**不是階段執行**、因此沒有 `stageModels`
+  項目可讀的生成：
+
+  ```json
+  {
+    "agentModels": {
+      "workflow-plan-author": "anthropic/claude-haiku-4-5",
+      "workflow-plan": "anthropic/claude-haiku-4-5"
+    }
+  }
+  ```
+
+  符合條件的有兩個：`/agentic-workflow:engineering new` 與 `retask` 用來
+  撰寫草稿檔案的 `workflow-plan-author`（在任何迴圈存在之前就執行），
+  以及臨時性的 `/agentic-workflow:plan` 指令所用的 `workflow-plan`。兩者
+  背後都沒有 manifest 階段，因此沒有任何 fire payload 會為它們帶上模型。
+
+  之所以放在頂層而非各類型之下：代理名稱在各類型間是唯一的，而
+  `workflow-plan` 根本不屬於任何類型。值的寫法與 `stageModels` 相同
+  （在 Claude Code 上 `provider/` 前綴會被去除），未設定的代理則使用
+  主機預設模型。
+
+  這個鍵**刻意與 `stageModels` 分開**，而不是併入 `stageModels.plan`：
+  草稿撰寫與 PLAN 階段都跑 `workflow-plan-author`，若共用一個鍵，把
+  草稿撰寫指向便宜模型就會連帶悄悄改動規劃階段，反之亦然。設定
+  `agentModels` 永遠不影響階段；設定 `stageModels` 也永遠不影響草稿撰寫。
 
 ## 管理面板（`hub`——僅限使用者層級）
 

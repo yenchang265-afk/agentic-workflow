@@ -29,7 +29,7 @@ who moves what) is the engineering backlog, unchanged.
   `/agentic-workflow:engineering replan <id>`, or `/agentic-workflow:engineering plan <id>` —
   all read from this backlog.
 - Use when reviewing what `/agentic-workflow:engineering new` filed, reshaping a draft with
-  `/agentic-workflow:engineering retask <id>`, or moving a task to `abandoned/`.
+  `/agentic-workflow:engineering retask <id>`, or `/agentic-workflow:engineering abandon <id>`.
 
 ## The folders
 
@@ -41,7 +41,7 @@ docs/tasks/
   in-progress/  # plan approved: build-ready queue + build → verify → review  ← /agentic-workflow:engineering approve moves here
   in-review/    # review passed, human diff gate                              ← the driver moves here automatically
   completed/    # shipped                                                     ← you move here (/agentic-workflow:engineering approve), once the PR merges
-  abandoned/    # won't do                                                    ← you move here, from any status
+  abandoned/    # won't do                                                    ← `abandon <id>`, from any non-terminal status
 ```
 
 ## Task file schema
@@ -156,8 +156,8 @@ scope judgement, not a measured limit.
   approves and ships stacked children one at a time, which *is* the dependency
   gate. Genuinely independent slices can run in any order.
 - The **epic file is never approved** — an un-approved draft is inert, so the
-  loop never claims it. It is a human-facing index; close it (move to
-  `abandoned/` or `completed/`) once every child has shipped.
+  loop never claims it. It is a human-facing index; close it with
+  `/agentic-workflow:engineering abandon <id>` once every child has shipped.
 
 ## Lifecycle — who moves what
 
@@ -172,7 +172,8 @@ scope judgement, not a measured limit.
 | `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS — parks it as the human diff gate |
 | `in-review → completed` | **you** | you've reviewed the diff and shipped it — run `/agentic-workflow:engineering approve <id>` (an audited move + commit) or move the file by hand; the loop never does this move on its own |
 | stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
-| `→ abandoned` | **you** | you decide not to do it, from any status |
+| `→ abandoned` | **you** | **`/agentic-workflow:engineering abandon <id> [reason]`** — you decide not to do it, from any non-terminal status; the file is kept, so the move is reversible |
+| task file deleted | **you** | **`/agentic-workflow:engineering remove <id> --force`** — the one destructive verb; a bare `remove` is a dry run. Usually permanent (`ignoreBacklog` defaults to true), so prefer `abandon` |
 
 The gate verb is one and the same at every stop: **`/agentic-workflow:engineering approve [id]`**
 advances a task by the gate its folder implies (parked plan → build, finished
@@ -184,8 +185,8 @@ waiting (tracking epics are never candidates).
 A failed or stopped task is **left in `in-progress/`** with a note appended, so
 it is visibly stuck for a human rather than silently re-queued. `/agentic-workflow:engineering recover
 <id>` resumes it; if the plan itself was the problem, send it back with
-`/agentic-workflow:engineering replan <id> <why>` and gate the new plan again; or move it
-to `abandoned/` to give up on it.
+`/agentic-workflow:engineering replan <id> <why>` and gate the new plan again; or
+`/agentic-workflow:engineering abandon <id>` to give up on it.
 
 The `## Implementation Plan` section is the durable on-disk record — it
 survives a `/agentic-workflow:engineering stop` or an opencode restart, when the in-memory loop state
@@ -219,7 +220,7 @@ What's on the task file tells you what happened:
 - Execution is isolated on a `feature/<id>` branch (or per-task worktree, when
   configured); after the loop finishes, review the diff, then open the PR
   yourself.
-- `→ abandoned` is a manual file move — there is no abandon command.
+- `→ abandoned` is `/agentic-workflow:engineering abandon`'s move.
   `plan-review → in-progress` is `/agentic-workflow:engineering approve`'s move;
   `in-progress → in-review` is the driver recording a review PASS. Neither is
   a second layer of file-moving bureaucracy — each records a decision that

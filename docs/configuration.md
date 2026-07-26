@@ -76,6 +76,15 @@ combined view — the intended split being:
 - **Repo scope**: everything tied to the project — `codePlatform`,
   `ado.project`, `ado.repository`, `tasksDir`, `workflows`, worktree settings.
 
+**Shell-bearing keys are the exception, and are honored from the USER layer
+only**: `worktreeSetup` and `workflows.<kind>.scannerCommand` are strings the
+loop hands to a shell verbatim. `.agentic-workflow.json` rides along with any
+cloned repo, so honoring them there would let merely watching a repository run
+arbitrary shell on the first claim — npm-postinstall-class risk, silently.
+Setting either in the repo layer drops it with a warning naming the key (and,
+for `scannerCommand`, the kind); the rest of that section still applies, and a
+user-layer value in the same section survives.
+
 Keep `codePlatform` and `workflows` in the repo file by convention: a user-scope
 value silently applies to *every* repo. If the user file holds a PAT, protect
 it (`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`); the `AZURE_DEVOPS_EXT_PAT` env var
@@ -114,7 +123,7 @@ hand-edited afterward.
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`, `insecureSkipTlsVerify`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
-| `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). |
+| `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
 Both plugins read the same file: the schema lives in the shared core package
@@ -192,6 +201,12 @@ it. The warnings are advisory: they annotate a save, never block it. See
   (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
   documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —
   don't duplicate that content here.
+- **`workflows.dep-sitter.scannerCommand`** — replace the bundled
+  `osv-scanner --format json -L <target>` call on the JVM ecosystems with your
+  own CLI (`{{target}}` / `{{ecosystem}}` are substituted). npm is unaffected.
+  Its output may be an osv-scanner report or a raw OSV record list; the payload
+  contract is in **[`docs/workflows/dep-sitter.md`](workflows/dep-sitter.md)**.
+  **Shell-bearing — user scope only** (see below).
 - **`workflows.<kind>.codePlatform`** — per-kind override of the global
   `codePlatform` (e.g. run the sitter against ADO while everything else
   defaults to GitHub).
@@ -310,6 +325,36 @@ it. The warnings are advisory: they annotate a save, never block it. See
   parses). Unlike `worktreeSetup`, this key **is** honored from a repo's
   `.agentic-workflow.json`: the value space is positive integers, so a watched
   repo can shrink its own prompts and nothing else.
+
+- **`agentModels`** — agent name → the model that agent runs with, for the
+  spawns that are **not** stage runs and so have no `stageModels` entry to read:
+
+  ```json
+  {
+    "agentModels": {
+      "workflow-plan-author": "anthropic/claude-haiku-4-5",
+      "workflow-plan": "anthropic/claude-haiku-4-5"
+    }
+  }
+  ```
+
+  Two spawns qualify: the draft authoring `workflow-plan-author` does for
+  `/agentic-workflow:engineering new` and `retask` (it writes task files before
+  any loop exists), and the ad-hoc `/agentic-workflow:plan` command's
+  `workflow-plan`. Neither has a manifest stage behind it, so no fire payload
+  carries a model for them.
+
+  Top-level rather than per-kind: agent names are unique across kinds, and
+  `workflow-plan` belongs to no kind at all. The value takes the same
+  host-specific spelling as `stageModels` (a `provider/` prefix is stripped on
+  Claude Code), and an unset agent runs the host default.
+
+  Deliberately **separate from `stageModels`**, not folded into
+  `stageModels.plan`: drafting and the PLAN stage both run
+  `workflow-plan-author`, so one key for both would mean pointing drafting at a
+  cheap model silently retargets planning too, and vice versa. Setting
+  `agentModels` never affects a stage; setting `stageModels` never affects
+  drafting.
 
 ## Admin hub (`hub` — user scope only)
 

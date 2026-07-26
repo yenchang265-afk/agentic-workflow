@@ -29,6 +29,15 @@ interface SqliteModule {
   }
 }
 
+/**
+ * `node:sqlite` landed in Node 22.5 and this repo's floor is Node 20, so the
+ * module may genuinely not exist — hence the hand-declared `SqliteModule` above
+ * and the null return, which the callers treat as "token usage unavailable".
+ *
+ * That optionality is also why `packages/hub` alone pins `@types/node` above the
+ * floor: it is the only workspace referencing a post-20 builtin, and the
+ * reference has to resolve at type level even though it may fail at runtime.
+ */
 const loadSqlite = async (): Promise<SqliteModule | null> => {
   try {
     return (await import("node:sqlite")) as unknown as SqliteModule

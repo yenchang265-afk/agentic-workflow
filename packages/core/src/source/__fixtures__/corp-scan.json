@@ -1,0 +1,79 @@
+{
+  "_comment": [
+    "A REPRESENTATIVE payload in the contract documented in docs/workflows/dep-sitter.md,",
+    "NOT a capture from a real scanner. Replace it with real `scannerCommand` stdout",
+    "(trimmed to 2-3 records, internal package names scrubbed) before trusting the",
+    "parser against your site's CLI, then re-run osv-payload.test.ts. Extra keys like",
+    "this one are ignored by the parser on purpose."
+  ],
+  "vulns": [
+    {
+      "id": "CVE-2024-12345",
+      "severity": "HIGH",
+      "summary": "Deserialization of untrusted data",
+      "affected": [
+        {
+          "package": {
+            "name": "com.fasterxml.jackson.core:jackson-databind",
+            "ecosystem": "Maven",
+            "version": "2.13.4"
+          },
+          "ranges": [
+            {
+              "type": "ECOSYSTEM",
+              "events": [{ "introduced": "0" }, { "fixed": "2.13.4.2" }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2024-22222",
+      "severity": "CRITICAL",
+      "summary": "Advisory affecting two packages at once",
+      "affected": [
+        {
+          "package": {
+            "name": "com.fasterxml.jackson.core:jackson-databind",
+            "ecosystem": "Maven",
+            "version": "2.13.4"
+          },
+          "ranges": [
+            {
+              "type": "ECOSYSTEM",
+              "events": [{ "introduced": "0" }, { "fixed": "2.13.5" }]
+            }
+          ]
+        },
+        {
+          "package": {
+            "name": "org.yaml:snakeyaml",
+            "ecosystem": "Maven",
+            "version": "1.33"
+          },
+          "ranges": [
+            {
+              "type": "ECOSYSTEM",
+              "events": [{ "introduced": "0" }, { "fixed": "2.0" }]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "CVE-2024-33333",
+      "severity": "HIGH",
+      "summary": "No fixed version published yet",
+      "affected": [
+        {
+          "package": {
+            "name": "org.example:unpatched",
+            "ecosystem": "Maven",
+            "version": "1.0.0"
+          },
+          "ranges": [{ "type": "ECOSYSTEM", "events": [{ "introduced": "0" }] }]
+        }
+      ]
+    }
+  ]
+}

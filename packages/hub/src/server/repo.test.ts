@@ -13,6 +13,17 @@ import { makeRepo } from "./repo.js"
  * one rather than blanking the board.
  */
 
+/**
+ * Pin the user-scope config layer OFF for this suite. `loadConfig` layers
+ * `~/.config/agentic-workflow/agentic-workflow.json` under the repo's file, and
+ * `install.sh` writes exactly that file — so on any machine where the installer
+ * has been run, a fixture config of `{maxIterations: 3}` edited to
+ * `{maxIterations: 9}` still resolved to the user layer's value and `reload()`
+ * reported "nothing changed". The tests were green only on machines that had
+ * never onboarded, which is the wrong way round.
+ */
+process.env["AGENTIC_WORKFLOW_USER_CONFIG"] = ""
+
 const makeFixture = (config?: string): string => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hub-repo-"))
   if (config !== undefined) fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), config)

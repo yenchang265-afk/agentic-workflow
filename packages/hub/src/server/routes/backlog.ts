@@ -1,32 +1,31 @@
 import {
-  findByIdIn,
   hasPlan,
-  extractPlan,
   listByStatus,
   listClaimIds,
   summarizeBacklog,
-  STATUSES,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
 import { isPaired, shortIdOf, type Task } from "@agentic-workflow/core/task/schema"
 import { auditBacklog, hasAnomalies } from "@agentic-workflow/core/task/audit"
-import type { BacklogResponse, KindBoardInfo, TaskCard, TaskDetailResponse } from "../../shared/api.js"
+import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { auditStatuses } from "../kindboard.js"
-import { badRequest, isSafeId, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
-import { extractAuditNotes } from "../notes.js"
+import { badRequest, notFound, ok, type JsonResponse, type ParsedRequest } from "../http.js"
 
 /**
- * Read-only backlog views: the per-kind board roll-up and single-task detail.
- * Board shape (columns, gate highlights, claim pools) comes from the kind's
- * manifest via `deps.boards`. The audit sweep runs for every backlog kind
- * (it reads the shared backlog root, judged against every enabled kind's
- * status set); only the lifecycle summary stays engineering-only — its
- * semantics ("interrupted", plan-gate counts) are engineering's by
- * construction.
+ * The read-only backlog board: the per-kind roll-up. Board shape (columns, gate
+ * highlights, claim pools) comes from the kind's manifest via `deps.boards`. The
+ * audit sweep runs for every backlog kind (it reads the shared backlog root,
+ * judged against every enabled kind's status set); only the lifecycle summary
+ * stays engineering-only — its semantics ("interrupted", plan-gate counts) are
+ * engineering's by construction.
+ *
+ * Single-task detail (and its editor) lives in `tasks.ts` — that route writes,
+ * and this file stays a read-only view.
  */
 
-const toCard = (task: Task): TaskCard => ({
+/** Shared with `tasks.ts`, so a card on the board and a card in the drawer can never disagree. */
+export const toCard = (task: Task): TaskCard => ({
   id: task.id,
   shortId: shortIdOf(task.id),
   title: task.title,
@@ -77,24 +76,3 @@ export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
   return ok(response)
 }
 
-export const getTaskDetail = async (deps: HubDeps, req: ParsedRequest): Promise<JsonResponse> => {
-  const status = req.params["status"] ?? ""
-  const id = req.params["id"] ?? ""
-  // Any status folder an enabled kind declares is addressable (core STATUSES
-  // as the fallback when no manifest loaded).
-  const known = new Set<string>([...deps.boards.flatMap((b) => b.statuses), ...STATUSES])
-  if (!known.has(status)) return badRequest(`unknown status "${status}"`)
-  // `id` becomes a path segment in `findByIdIn` — screen out traversal
-  // (`..%2f..`) before it reaches the filesystem, like the runs/tokens routes.
-  if (!isSafeId(id)) return badRequest(`invalid task id "${id}"`)
-  const task = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, status, id, deps.log)
-  if (!task) return notFound(`task ${id} in ${status}`)
-  const response: TaskDetailResponse = {
-    card: toCard(task),
-    status,
-    body: task.body,
-    plan: extractPlan(task),
-    notes: extractAuditNotes(task.body),
-  }
-  return ok(response)
-}

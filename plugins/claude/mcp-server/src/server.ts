@@ -36,6 +36,7 @@ import {
 } from "@agentic-workflow/core/workflow/verdict"
 import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import { hostStageMarkerPath } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -44,6 +45,7 @@ import {
   approveTask as coreApproveTask,
   findAnyStatus as coreFindAnyStatus,
   rejectAny as coreRejectAny,
+  abandonTask as coreAbandonTask,
   removeTask as coreRemoveTask,
   replanTask as coreReplanTask,
   retaskTask as coreRetaskTask,
@@ -165,7 +167,7 @@ const writeRunMetrics = (id: string, outcome: Outcome, detail: string, endedAt: 
     const file = metricsPath(directory, config.tasksDir, id)
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     // Upsert: replace the trailing `open` entry the per-stage flush left behind.
-    fs.writeFileSync(file, upsertRunMetrics(existing, { endedAt, outcome, detail, host: "claude", samples }))
+    fs.writeFileSync(file, upsertRunMetrics(existing, { endedAt, outcome, detail, host: HOST, samples }))
   } catch {
     /* telemetry never fails the loop */
   }
@@ -183,7 +185,7 @@ const flushRunMetrics = (id: string): void => {
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     fs.writeFileSync(
       file,
-      upsertRunMetrics(existing, { endedAt: new Date().toISOString(), detail: "", host: "claude", samples, open: true }),
+      upsertRunMetrics(existing, { endedAt: new Date().toISOString(), detail: "", host: HOST, samples, open: true }),
     )
   } catch {
     /* telemetry never fails the loop */
@@ -201,34 +203,93 @@ const loadCfg = async () => {
 
 // --- host wiring (shared helpers live in @agentic-workflow/core/workflow/orchestrate) ---
 
-const stageMarkerPath = () => path.join(directory, config.tasksDir, "runs", ".stage.json")
+/**
+ * Which host is driving this server. One binary serves both Claude Code and
+ * Qwen Code: they run the same state machine over the same manifests and differ
+ * only in how a subagent is named, which marker file their hooks read, whether
+ * their spawn tool takes a model, and the prose that instructs the spawn. Those
+ * four live in HOST_DIALECT below and nowhere else — anything that starts to
+ * vary belongs there too, not in an `if` at the call site.
+ *
+ * A set-but-unrecognized value throws at load rather than defaulting: on the
+ * wrong dialect every spawn silently targets a subagent_type that does not
+ * exist, which reads as "the loop is broken" long after the typo. Empty is
+ * treated as absent, not as a typo — shell wrappers and installers propagate
+ * empty env vars routinely, and refusing to boot on one would be noise.
+ */
+const HOSTS = ["claude", "qwen"] as const
+type HostName = (typeof HOSTS)[number]
+const rawHost = process.env.AGENTIC_WORKFLOW_HOST || undefined
+if (rawHost !== undefined && !HOSTS.includes(rawHost as HostName)) {
+  throw new Error(`AGENTIC_WORKFLOW_HOST="${rawHost}" is not a known host — expected one of: ${HOSTS.join(", ")}`)
+}
+const HOST: HostName = (rawHost as HostName | undefined) ?? "claude"
+
+interface HostDialect {
+  /** The subagent identifier the orchestrator hands its spawn tool. */
+  readonly agentRef: (name: string) => string
+  /** Whether the spawn tool takes a per-call model, i.e. whether a payload's
+   *  `model` field is actionable at all on this host. */
+  readonly conveysStageModel: boolean
+  /** Names the spawn tool explicitly, so the `agent` field is not mis-routed. */
+  readonly spawnToolNote: string
+  /** Carries the configured stage model; "" on a host that cannot convey one. */
+  readonly spawnModelNote: string
+}
+
+// A stage agent is a subagent, not a skill. Name the tool explicitly at the
+// spawn instruction: the host otherwise mis-routes the `agent`-field name to the
+// skill tool (primed by skill-first rules and the real skills spawned the same turn).
+const HOST_DIALECT: Record<HostName, HostDialect> = {
+  claude: {
+    // Plugin-bundled agents resolve under the plugin namespace in Claude Code —
+    // Task's subagent_type is "agentic-workflow:<name>", not the bare manifest
+    // name. The manifests stay host-neutral; only this host prefixes.
+    agentRef: (name) => `agentic-workflow:${name}`,
+    conveysStageModel: true,
+    spawnToolNote:
+      " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)",
+    spawnModelNote:
+      ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)",
+  },
+  qwen: {
+    // Qwen Code loads subagents from its own agents/ directory with no namespace,
+    // so the manifest name is already the subagent_type.
+    agentRef: (name) => name,
+    // Qwen's `agent` tool has NO model parameter. Rather than emit a `model` the
+    // orchestrator cannot act on, this host drops it from every payload and the
+    // configured stage model is baked into the installed agent file at install
+    // time (scripts/qwen-agents.mjs). The empty note below is that decision, not
+    // an omission — see docs/design/qwen-host-support.md, gap 1.
+    conveysStageModel: false,
+    spawnToolNote:
+      " (spawn it with the `agent` tool, passing the name as `subagent_type` and `run_in_background: false` — a stage agent is an `agent` subagent, never a skill; do not route it through the skill tool)",
+    spawnModelNote: "",
+  },
+}
+const dialect = HOST_DIALECT[HOST]
+
+const stageMarkerPath = () => hostStageMarkerPath(directory, config.tasksDir, HOST)
 const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
 
-/**
- * Plugin-bundled agents resolve under the plugin namespace in Claude Code —
- * Task's subagent_type is "agentic-workflow:<name>", not the bare manifest name.
- * The manifests stay host-neutral; only this host prefixes.
- */
-const agentRef = (name: string): string => `agentic-workflow:${name}`
+const agentRef = (name: string): string => dialect.agentRef(name)
 
 /**
  * The stage's configured model in this host's vocabulary (config > manifest,
  * undefined ⇒ host default), with any "provider/" prefix (the OpenCode
- * spelling) stripped so a shared config works on both hosts.
+ * spelling) stripped so a shared config works on every host.
+ *
+ * Undefined on a host whose spawn tool takes no model: emitting a `model` the
+ * orchestrator has nowhere to put invites it to improvise one. Every payload
+ * spreads this conditionally, so suppressing it here removes the field
+ * everywhere without touching a call site.
  */
 const stageModel = (kind: string, def: StageDef): string | undefined => {
+  if (!dialect.conveysStageModel) return undefined
   const m = modelFor(config, kind, def)
   return m ? bareModel(m) : undefined
 }
 
-/**
- * Every spawn instruction must name the `model` field, not just `agent`.
- * The fire payloads have always carried the configured stage model, but the
- * per-transition notes only told the orchestrator to spawn the `agent` — so
- * `workflows.<kind>.stageModels` was silently dropped at each hop and every stage
- * ran on the host default. Appended to each note rather than stated once in
- * the skill: the note is what the orchestrator reads at the point of use.
- */
 /**
  * A `stageModels` key naming no stage of its kind is accepted by the schema
  * (the manifest isn't loaded at parse time) and then resolves to nothing —
@@ -275,14 +336,30 @@ const stageModelWarnings = (): string[] =>
     return warnings
   })
 
-const SPAWN_MODEL_NOTE =
-  ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)"
+const SPAWN_MODEL_NOTE = dialect.spawnModelNote
+const SPAWN_TOOL_NOTE = dialect.spawnToolNote
 
-// A stage agent is a Task subagent, not a skill. Name the tool explicitly at the
-// spawn instruction: the host otherwise mis-routes the `agent`-field name to the
-// skill tool (primed by skill-first rules and the real skills spawned the same turn).
-const SPAWN_TOOL_NOTE =
-  " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)"
+/** A check stage's non-negotiable extra: the subagent, not the orchestrator, records the verdict. */
+const CHECK_VERDICT_TAIL =
+  " — it is a check stage: the spawned subagent MUST call the workflow_verdict MCP tool before returning; " +
+  "a verdict in prose is ignored. Never call workflow_verdict yourself on its behalf."
+
+/**
+ * Compose a spawn instruction. EVERY note that tells the orchestrator to spawn a
+ * stage subagent is built here, never hand-written at the call site: the fire
+ * payloads have always carried the configured stage model, but a note naming only
+ * `agent` let `workflows.<kind>.stageModels` be dropped at every hop, and every
+ * stage ran the host default. The note at the point of use is what the orchestrator
+ * acts on, so the model clause must be impossible to leave out — one composer, and
+ * a source lint (server.test.ts) that no spawn note bypasses it.
+ *
+ * Both clauses come from HOST_DIALECT, so a host whose spawn tool takes no model
+ * contributes an empty model clause *by declaring one* — the composer still
+ * splices it, and the lint still proves no note skips the composer.
+ *
+ * `lead` says what to spawn; `tail` adds the per-site consequence.
+ */
+const spawnNote = (lead: string, tail = ""): string => `${lead}${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}${tail}`
 
 /** Flip the stage marker's `verdictRecorded` flag in place once workflow_verdict
  *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
@@ -367,7 +444,7 @@ const writeStageMarker = (stage: string | null) => {
 const isOverdue = (deadline: number | null, now: number): boolean => deadline !== null && now > deadline
 
 const snapshot = async () => {
-  if (active?.task) await saveState(sh, directory, config.tasksDir, active.task.id, active)
+  if (active?.task) await saveState(sh, directory, config.tasksDir, active.task.id, active, log)
 }
 
 const workTree = () => (active ? workflowWorkTree(directory, active) : directory)
@@ -390,7 +467,7 @@ const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, confi
  * The shared terminal context for this host — the ports core's `runTerminal`
  * needs. Backlog commits and checkpoints go straight through `commitPaths`/
  * `commitAll` (no per-tree lock: the pull host drives one loop at a time), and
- * metrics render into this host's run log + `host: "claude"` sidecar.
+ * metrics render into this host's run log + `host: <HOST>` sidecar.
  */
 const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx => ({
   $: sh,
@@ -547,9 +624,17 @@ const firePayload = (state: WorkflowState, id: string) => {
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
     prompt: firePrompt(manifest, state, state.stage),
-    ...(state.stage === "plan"
-      ? { note: `PLAN stage: spawn the subagent named in the \`agent\` field in task mode${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}; on workflow_advance the task parks in plan-review/ for the human gate` }
-      : {}),
+    // Every fired stage carries the spawn instruction, not just PLAN. A non-plan
+    // entry (BUILD via workflow_start/workflow_claim; every sitter's entry stage)
+    // used to arrive with `model` in the payload and nothing telling the
+    // orchestrator to pass it — the payload's own field, silently dropped.
+    note:
+      state.stage === "plan"
+        ? spawnNote(
+            "PLAN stage: spawn the subagent named in the `agent` field in task mode",
+            "; on workflow_advance the task parks in plan-review/ for the human gate",
+          )
+        : spawnNote("call workflow_stage, then spawn the subagent named in the `agent` field"),
   }
 }
 
@@ -847,13 +932,11 @@ server.registerTool(
       worktree: active.git?.worktree ?? null,
       ...(active.isolationWarning ? { isolationWarning: active.isolationWarning } : {}),
       deadlineMinutes: config.stageTimeoutMinutes,
-      ...(def.kind === "check"
-        ? {
-            note:
-              "check stage: the spawned subagent MUST call the workflow_verdict MCP tool before returning — " +
-              "a verdict in prose is ignored. Never call workflow_verdict yourself on its behalf.",
-          }
-        : {}),
+      // The last thing the orchestrator reads before the Task call, and for many
+      // stages the only spawn instruction it ever gets: the fire payload's note may
+      // be several tool calls back, or authored away in the same turn when
+      // workflow_stage and Task are emitted as two tool_use blocks at once.
+      note: spawnNote("spawn the subagent named in the `agent` field", def.kind === "check" ? CHECK_VERDICT_TAIL : ""),
     })
   },
 )
@@ -937,7 +1020,10 @@ server.registerTool(
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
           ),
-          note: `check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again${SPAWN_MODEL_NOTE}`,
+          note: spawnNote(
+            "check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again",
+            CHECK_VERDICT_TAIL,
+          ),
         })
       }
       pending = {
@@ -986,11 +1072,10 @@ server.registerTool(
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
         prompt: firePrompt(activeManifest(), active, action.stage),
-        note:
-          `call workflow_stage, then spawn the subagent named in the \`agent\` field${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}` +
-          (nextDef.kind === "check"
-            ? " — it MUST call the workflow_verdict MCP tool before returning; never call workflow_verdict yourself on its behalf"
-            : ""),
+        note: spawnNote(
+          "call workflow_stage, then spawn the subagent named in the `agent` field",
+          nextDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
+        ),
       })
     }
     if (action.kind === "park") {
@@ -1251,10 +1336,12 @@ const replanTask = (id: string, reason: string | undefined, liveTaskId: string |
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> =>
   coreRejectAny({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, arg)
-const retaskTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
-  coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
-const removeTask = (id: string, liveTaskId: string | null): Promise<GateResult> =>
-  coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id)
+const retaskTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
+  coreRetaskTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
+const removeTask = (id: string, liveTaskId: string | null, force = false): Promise<GateResult> =>
+  coreRemoveTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, force)
+const abandonTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
+  coreAbandonTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
@@ -1303,12 +1390,26 @@ server.registerTool(
   "workflow_retask",
   {
     description:
-      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. Refuses from plan-review/ onward (a task with a plan goes back via workflow_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
-    inputSchema: { id: z.string().min(1) },
+      "Deterministic half of /agentic-workflow:engineering retask <id> — puts the task where the authoring interview can reshape it. A draft/ task is already there (no-op). An approved queued/ task is sent BACK to draft/ with an audited note, withdrawing the task-gate approval: it is planless, so nothing downstream breaks, but the reshaped goal must be re-approved. `reason` is recorded on that audit note, so why the task is being reshaped survives in the file rather than only in your turn's context. Refuses from plan-review/ onward (a task with a plan goes back via workflow_replan), tasks a live loop is driving, and tasks holding a claim marker. Call this BEFORE running the interview; the reshape itself is your work, writing draft/<id>.md in place.",
+    inputSchema: { id: z.string().min(1), reason: z.string().max(500).optional() },
   },
-  async ({ id }) => {
+  async ({ id, reason }) => {
     await loadCfg()
-    const r = await retaskTask(id, active?.task?.id ?? null)
+    const r = await retaskTask(id, reason, active?.task?.id ?? null)
+    return r.ok ? ok(r.data) : fail(r.message)
+  },
+)
+
+server.registerTool(
+  "workflow_abandon",
+  {
+    description:
+      "Deterministic /agentic-workflow:engineering abandon <id> — cancel a task by moving it to abandoned/, the terminal folder for work that will not be done. The REVERSIBLE cancellation and the one to prefer: the task file is kept (it can be moved back), unlike workflow_remove which deletes it. Works from any non-terminal status folder; refuses a completed task (shipped work isn't cancellable) and one a live loop is driving or that holds a claim marker. Releases any worktree the task owned. This is also how a tracking epic draft is closed once every child has shipped. The agent writes nothing.",
+    inputSchema: { id: z.string().min(1), reason: z.string().optional() },
+  },
+  async ({ id, reason }) => {
+    await loadCfg()
+    const r = await abandonTask(id, reason?.trim() || undefined, active?.task?.id ?? null)
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )
@@ -1317,12 +1418,12 @@ server.registerTool(
   "workflow_remove",
   {
     description:
-      "Deterministic /agentic-workflow:engineering remove <id> — hard-delete a task from the backlog entirely. Unlike replan/retask this does NOT move the task to another folder: the file is removed and the removal committed, so the task leaves the backlog for good (git history retains it if the backlog is tracked). Works from ANY status folder — a stale draft, a rejected plan, a finished task. Refuses a task a live loop is driving or one holding a claim marker; releases any worktree the task owned. Idempotent: an id that no longer resolves reports success (alreadyDone). This is destructive and cannot be undone from the working tree — reserve it for tasks the human explicitly wants gone.",
-    inputSchema: { id: z.string().min(1) },
+      "Deterministic /agentic-workflow:engineering remove <id> — hard-delete a task from the backlog entirely. Unlike replan/retask/abandon this does NOT move the task to another folder: the file is removed and the removal committed. Works from ANY status folder — a stale draft, a rejected plan, a finished task. Refuses a task a live loop is driving or one holding a claim marker; releases any worktree the task owned. Idempotent: an id that no longer resolves reports success (alreadyDone). REQUIRES force: true to actually delete — without it this reports which task the id resolved to and deletes nothing, which is the confirmation step (ids are prefix-resolvable, so a typo'd short handle can name a different real task). Recovery from git exists ONLY when the backlog is tracked, and ignoreBacklog defaults to true, so a forced remove is usually permanent — prefer workflow_abandon unless the human explicitly wants the file gone.",
+    inputSchema: { id: z.string().min(1), force: z.boolean().optional() },
   },
-  async ({ id }) => {
+  async ({ id, force }) => {
     await loadCfg()
-    const r = await removeTask(id, active?.task?.id ?? null)
+    const r = await removeTask(id, active?.task?.id ?? null, force === true)
     return r.ok ? ok(r.data) : fail(r.message)
   },
 )
@@ -1429,7 +1530,10 @@ server.registerTool(
         action: step.action,
         agent: agentRef(resumedDef.agent),
         ...(resumedModel ? { model: resumedModel } : {}),
-        note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
+        note: spawnNote(
+          "call workflow_stage before spawning the subagent named in the `agent` field",
+          resumedDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
+        ),
       })
     }
     active = buildEntryState(t)
@@ -1450,7 +1554,7 @@ server.registerTool(
       prompt: firePrompt(eng, active, "build"),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
-      note: `call workflow_stage before spawning the subagent${SPAWN_MODEL_NOTE}`,
+      note: spawnNote("call workflow_stage before spawning the subagent named in the `agent` field"),
     })
   },
 )
@@ -1467,7 +1571,7 @@ server.registerTool(
  */
 const readStageTaskId = (): string | null => {
   try {
-    const raw = fs.readFileSync(path.join(directory, config.tasksDir, "runs", ".stage.json"), "utf8")
+    const raw = fs.readFileSync(stageMarkerPath(), "utf8")
     const marker = JSON.parse(raw) as { taskId?: unknown }
     return typeof marker.taskId === "string" ? marker.taskId : null
   } catch {
@@ -1480,7 +1584,7 @@ async function runGate(argv: string[]): Promise<number> {
   const remainder = rest.join(" ").trim()
   const emit = (r: GateResult) => process.stdout.write(`${JSON.stringify(r)}\n`)
   if (!verb) {
-    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan> [id] [reason]" })
+    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan|retask|abandon|remove> [id] [reason]" })
     return 1
   }
   await loadCfg()
@@ -1493,15 +1597,19 @@ async function runGate(argv: string[]): Promise<number> {
     const [id, ...reasonParts] = rest
     const reason = reasonParts.join(" ").trim() || undefined
     if (!id) {
-      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|remove> <id> [reason]" })
+      emit({ ok: false, message: "Usage: gate <approve|approve-plan|replan|retask|abandon|remove> <id> [reason|--force]" })
       return 1
     }
     if (verb === "approve") result = await approveTask(id)
     else if (verb === "approve-plan") result = await approvePlan(id)
     else if (verb === "replan") result = await replanTask(id, reason, readStageTaskId())
-    else if (verb === "retask") result = await retaskTask(id, readStageTaskId())
-    else if (verb === "remove") result = await removeTask(id, readStageTaskId())
-    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, or remove.` }
+    else if (verb === "retask") result = await retaskTask(id, reason, readStageTaskId())
+    else if (verb === "abandon") result = await abandonTask(id, reason, readStageTaskId())
+    // `--force` is remove's confirmation. It arrives as a trailing word from the
+    // hook (which parses it, because the hook blocks the turn and no model gets
+    // to ask); without it core reports what it would delete and deletes nothing.
+    else if (verb === "remove") result = await removeTask(id, readStageTaskId(), reasonParts.includes("--force"))
+    else result = { ok: false, message: `Unknown gate verb "${verb}" — expected approve-any, reject-any, approve, approve-plan, replan, retask, abandon, or remove.` }
   }
   emit(result)
   return result.ok ? 0 : 1

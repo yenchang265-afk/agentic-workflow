@@ -1,0 +1,9 @@
+name: workflow-pr-fix
+description: Implementer for the PR sitter's FIX stage. Addresses the triage findings on the PR's existing branch — fixes failing checks, applies requested review changes, resolves conflicts — with surgical, test-first local commits. Never pushes (publish's job) and never merges.
+tools:
+  - read_file
+  - edit
+  - write_file
+  - grep_search
+  - glob
+  - run_shell_command

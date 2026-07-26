@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { serializeTask, type Task } from "./schema.js"
+import { parseTask, serializeTask, taskToInput, unknownFrontmatterKeys, type Task } from "./schema.js"
 import {
   appendNote,
   appendPlan,
@@ -17,6 +17,7 @@ import {
   isClaimable,
   isOrphanedClaim,
   isRecoverable,
+  joinTaskBody,
   listClaimIds,
   markClaimed,
   moveTask,
@@ -26,8 +27,10 @@ import {
   removeTaskFile,
   resolveTaskIdAnywhere,
   resolveTaskIdIn,
+  rewriteTask,
   selectNext,
   selectOrder,
+  splitTaskBody,
   statusOf,
   STATUSES,
   writeTask,
@@ -79,6 +82,7 @@ const task = (id: string, priority: number, body = ""): Task => ({
   title: id,
   priority,
   acceptance: [],
+  labels: [],
   body,
   path: `/r/docs/tasks/in-progress/${id}.md`,
 })
@@ -999,4 +1003,142 @@ test("findByIdIn still resolves ordinary modern and legacy ids", async () => {
   const found = await findByIdIn($, "/repo", "docs/tasks", "queued", "f7k3-add-rate-limit")
   assert.ok(found, "safe ids must keep resolving")
   assert.equal(found?.id, "f7k3-add-rate-limit")
+})
+
+// --- rewriteTask: update an existing task file in place, and nothing else ---
+
+/** A shell whose `test -f` reports the task file present, tracking every command. */
+const rewriteShell = (cmds: string[], present = true) =>
+  makeShell((cmd) => (cmd.startsWith("test -f") ? { exitCode: present ? 0 : 1 } : {}), cmds)
+
+test("rewriteTask writes the serialized task back to the same path", async () => {
+  const cmds: string[] = []
+  const $ = rewriteShell(cmds)
+  const ref = { id: "f7k3-add-rate-limit", path: "/repo/docs/tasks/draft/f7k3-add-rate-limit.md" }
+  const out = await rewriteTask($, ref, { title: "Add rate limiting", priority: 2, body: "reshaped" })
+  assert.equal(out, ref.path, "the path is unchanged — a rewrite never relocates")
+  const printed = cmds.find((c) => c.startsWith("printf"))
+  assert.ok(printed?.includes("Add rate limiting"), "the new content is written")
+  // writeFileAtomic renames its temp onto the target; nothing else may move.
+  const moves = cmds.filter((c) => c.startsWith("mv "))
+  assert.equal(moves.length, 1)
+  assert.ok(moves[0]!.endsWith(ref.path), "the only mv lands on the task's own path")
+})
+
+test("rewriteTask refuses a file that does not exist — it never creates one", async () => {
+  const cmds: string[] = []
+  const $ = rewriteShell(cmds, false)
+  await assert.rejects(
+    () => rewriteTask($, { id: "gone", path: "/repo/docs/tasks/draft/gone.md" }, { title: "Ghost" }),
+    /does not exist/,
+  )
+  assert.ok(!cmds.some((c) => c.startsWith("printf")), "no write attempted after the existence check")
+})
+
+test("rewriteTask refuses a path whose filename is not <id>.md — it never renames", async () => {
+  const cmds: string[] = []
+  const $ = rewriteShell(cmds)
+  await assert.rejects(
+    () => rewriteTask($, { id: "renamed", path: "/repo/docs/tasks/draft/original.md" }, { title: "T" }),
+    /never renames or moves/,
+  )
+  assert.ok(!cmds.some((c) => c.startsWith("printf")), "nothing written for a mismatched path")
+})
+
+test("rewriteTask refuses a file outside a status folder", async () => {
+  const $ = rewriteShell([])
+  await assert.rejects(
+    () => rewriteTask($, { id: "stray", path: "/repo/docs/tasks/run/stray.md" }, { title: "T" }),
+    /not inside a known status folder/,
+  )
+})
+
+test("rewriteTask refuses an unsafe id before any filesystem work", async () => {
+  const cmds: string[] = []
+  const $ = rewriteShell(cmds)
+  await assert.rejects(
+    () => rewriteTask($, { id: "../evil", path: "/repo/docs/tasks/draft/../evil.md" }, { title: "T" }),
+    /unsafe id/,
+  )
+  assert.deepEqual(cmds, [], "no shell command may run for an unsafe id")
+})
+
+test("rewriteTask validates before writing, so a bad task leaves the file untouched", async () => {
+  const cmds: string[] = []
+  const $ = rewriteShell(cmds)
+  await assert.rejects(
+    () => rewriteTask($, { id: "t", path: "/repo/docs/tasks/draft/t.md" }, { title: "" }),
+    /title is required/,
+  )
+  assert.ok(!cmds.some((c) => c.startsWith("printf")), "serialization failed before any write")
+})
+
+test("rewriteTask drops frontmatter keys the schema does not know", async () => {
+  // Pinned deliberately: zod strips unknown keys, so this loss is real and a
+  // caller must screen with `unknownFrontmatterKeys` first (the hub does).
+  const cmds: string[] = []
+  const $ = rewriteShell(cmds)
+  const parsed = parseTask("t.md", "---\ntitle: T\nsprint: 42\n---\nbody", "/repo/docs/tasks/draft/t.md")
+  await rewriteTask($, { id: "t", path: parsed.path }, taskToInput(parsed))
+  assert.ok(!cmds.find((c) => c.startsWith("printf"))?.includes("sprint"), "the unknown key is gone")
+})
+
+// --- splitTaskBody / joinTaskBody: the audit trail survives a human edit ---
+
+test("splitTaskBody separates prose from the trailing audit run", () => {
+  const parts = splitTaskBody("Context line.\n\n> Task approved [2026-01-01 by A]\n> CLAIMED [2026-01-02 by B]")
+  assert.equal(parts.prose, "Context line.")
+  assert.equal(parts.tail, "> Task approved [2026-01-01 by A]\n> CLAIMED [2026-01-02 by B]")
+})
+
+test("splitTaskBody keeps a mid-body blockquote in the editable prose", () => {
+  // Only the SUFFIX is the audit trail — a quote the author wrote inside the
+  // description stays theirs to edit.
+  const parts = splitTaskBody("Intro.\n\n> a quoted requirement\n\nMore prose.\n\n> Task approved [x by y]")
+  assert.equal(parts.prose, "Intro.\n\n> a quoted requirement\n\nMore prose.")
+  assert.equal(parts.tail, "> Task approved [x by y]")
+})
+
+test("splitTaskBody handles a notes-only body and an empty one", () => {
+  assert.deepEqual(splitTaskBody("> only a note [x by y]"), { prose: "", tail: "> only a note [x by y]" })
+  assert.deepEqual(splitTaskBody(""), { prose: "", tail: "" })
+  assert.deepEqual(splitTaskBody("Just prose."), { prose: "Just prose.", tail: "" })
+})
+
+test("joinTaskBody round-trips a split body", () => {
+  const body = "Context.\n\n> Task approved [x by y]"
+  const { prose, tail } = splitTaskBody(body)
+  assert.equal(joinTaskBody(prose, tail), body)
+  assert.equal(joinTaskBody("", "> n"), "> n")
+  assert.equal(joinTaskBody("p", ""), "p")
+  assert.equal(joinTaskBody("", ""), "")
+})
+
+test("joinTaskBody preserves the tail when the prose is replaced wholesale", () => {
+  const { tail } = splitTaskBody("Old goal.\n\n> Task approved [x by y]")
+  assert.equal(joinTaskBody("Brand new goal.", tail), "Brand new goal.\n\n> Task approved [x by y]")
+})
+
+// --- taskToInput / unknownFrontmatterKeys ---
+
+test("taskToInput round-trips a parsed task through serializeTask", () => {
+  const original = serializeTask({
+    title: "Add rate limiting",
+    type: "feature",
+    priority: 2,
+    labels: ["api"],
+    acceptance: ["429 after 100 rps"],
+    body: "Context.",
+  })
+  const parsed = parseTask("f7k3-add-rate-limit.md", original, "/repo/docs/tasks/draft/f7k3-add-rate-limit.md")
+  const again = parseTask("f7k3-add-rate-limit.md", serializeTask(taskToInput(parsed)), parsed.path)
+  assert.deepEqual(again, parsed)
+})
+
+test("unknownFrontmatterKeys names what serializeTask would drop", () => {
+  assert.deepEqual(unknownFrontmatterKeys("---\ntitle: T\nsprint: 42\nowner: me\n---\nbody"), ["sprint", "owner"])
+  assert.deepEqual(unknownFrontmatterKeys("---\ntitle: T\npriority: 1\n---\nbody"), [])
+  // Nothing this can prove would be lost: the caller's own parse refuses these.
+  assert.deepEqual(unknownFrontmatterKeys("no frontmatter at all"), [])
+  assert.deepEqual(unknownFrontmatterKeys("---\n[: :[ broken\n---\nbody"), [])
 })

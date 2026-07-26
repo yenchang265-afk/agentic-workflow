@@ -23,6 +23,7 @@ flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
         oc["OpenCode plugin (plugins/opencode/src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
         cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
+        qw["Qwen Code<br/>(plugins/qwen/) — same MCP server,<br/>AGENTIC_WORKFLOW_HOST=qwen"]
     end
 
     subgraph core["@agentic-workflow/core (packages/core)"]
@@ -45,6 +46,7 @@ flowchart TB
 
     oc --> sched
     cc --> sched
+    qw --> sched
     sched --> backlog
     sched --> ghpr
     sched --> depscan
@@ -71,7 +73,8 @@ flowchart TB
   `packages/core/src/host.ts` (Shell, Client, Log, …). The OpenCode plugin
   satisfies them with Bun's `$` and the opencode SDK client; the Claude Code
   MCP server with Node shims (`plugins/claude/mcp-server/src/shim.ts`) — its
-  former `src/lib/` fork of the loop logic is gone.
+  former `src/lib/` fork of the loop logic is gone. The Qwen Code host reuses
+  that same MCP server binary, switched by `AGENTIC_WORKFLOW_HOST=qwen`.
 - **Manifest engine** — a workflow kind is `packages/core/workflows/<kind>/workflow.json`
   (zod-validated: stages with `work|check` kind, agent, prompt path,
   isolation, bash allowlist; a transitions table mapping
@@ -153,16 +156,32 @@ what each one does, its stage pipeline, its authority limits, and its
 `workflows.<kind>` config keys; the security posture for all four is in the
 [threat model](design/threat-model.md).
 
-## Claude Code variant (`plugins/claude/`)
+## The two MCP-driven variants (`plugins/claude/`, `plugins/qwen/`)
 
-Same workflow kinds and lifecycles, different driver: Claude Code has no
-background `session.idle` driver, so the main agent drives the loop through a
-bundled MCP server (`mcp__agentic-workflow__workflow_*` tools) rather than agent
-frontmatter permissions, and human gates are **interactive** — a park or a
-done returns a `gate` field and the driving agent asks inline via
-AskUserQuestion instead of only waiting for a command. Full install and
-command details live in
-[`plugins/claude/README.md`](../plugins/claude/README.md).
+Same workflow kinds and lifecycles, different driver: neither Claude Code nor
+Qwen Code has a background `session.idle` driver, so the main agent drives the
+loop through a bundled MCP server (`mcp__agentic-workflow__workflow_*` tools)
+rather than agent frontmatter permissions, and human gates are **interactive** —
+a park or a done returns a `gate` field and the driving agent asks inline
+(AskUserQuestion / `ask_user_question`) instead of only waiting for a command.
+
+**One binary, one dialect table.** The two hosts run the identical protocol and
+differ only in how a subagent is named, which stage-marker file their hooks
+read, whether their spawn tool takes a per-call model, and the prose that
+instructs the spawn. Those four live in `HOST_DIALECT` in the MCP server and
+nowhere else; the guards' tool-name dialect lives in
+`plugins/claude/hooks/src/dialect.mjs`. Both are selected by
+`AGENTIC_WORKFLOW_HOST`, so the marker the server *writes* and the marker the
+guard *reads* can never disagree.
+
+The one behavioral difference is that Qwen's `agent` tool has no model
+parameter, so `workflows.<kind>.stageModels` is baked into each installed agent
+file at install time rather than passed at spawn time — a change takes effect on
+the next install, not the next claim.
+
+Full install and command details:
+[`plugins/claude/README.md`](../plugins/claude/README.md) and
+[`docs/qwen.md`](qwen.md).
 
 ## Admin hub — beta (`packages/hub/`)
 

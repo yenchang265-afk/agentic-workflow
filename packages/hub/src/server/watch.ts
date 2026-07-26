@@ -1,5 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
+import { STAGE_MARKER_HOSTS, stageMarkerFile } from "@agentic-workflow/core/workflow/stage-marker"
 
 /**
  * Filesystem watching for live updates. Two always-on triggers feed one
@@ -15,10 +16,13 @@ export interface WatchSnapshot {
   readonly tasks: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** runs/ filename → size+mtime key */
   readonly runs: Readonly<Record<string, string>>
-  /** .stage.json key, or null when absent */
-  readonly stageMarker: string | null
-  /** .stage-opencode.json key (the OpenCode driver's sibling marker), or null */
-  readonly opencodeMarker: string | null
+  /**
+   * host → its stage marker's size+mtime key, or null when absent. Keyed by host
+   * rather than one field per file so a host added to core's STAGE_MARKER_HOSTS
+   * is watched here automatically — a named field per host is how the third one
+   * would have gone unwatched.
+   */
+  readonly stageMarkers: Readonly<Record<string, string | null>>
   /** watch-lease owner.json key, or null */
   readonly lease: string | null
   /**
@@ -76,8 +80,9 @@ export const scanSnapshot = (directory: string, tasksDir: string, statuses: read
   return {
     tasks,
     runs,
-    stageMarker: statKey(path.join(runsDir, ".stage.json")),
-    opencodeMarker: statKey(path.join(runsDir, ".stage-opencode.json")),
+    stageMarkers: Object.fromEntries(
+      STAGE_MARKER_HOSTS.map((host) => [host, statKey(path.join(runsDir, stageMarkerFile(host)))]),
+    ),
     lease: statKey(path.join(runsDir, ".watch-lease", "owner.json")),
     config: statKey(path.join(directory, ".agentic-workflow.json")),
   }
@@ -113,7 +118,7 @@ export const diffSnapshots = (
 
   const runNames = new Set([...Object.keys(prev.runs), ...Object.keys(next.runs)])
   let activeChanged =
-    prev.stageMarker !== next.stageMarker || prev.opencodeMarker !== next.opencodeMarker || prev.lease !== next.lease
+    STAGE_MARKER_HOSTS.some((host) => prev.stageMarkers[host] !== next.stageMarkers[host]) || prev.lease !== next.lease
   for (const name of runNames) {
     if (prev.runs[name] === next.runs[name]) continue
     if (name.endsWith(".state.json")) activeChanged = true

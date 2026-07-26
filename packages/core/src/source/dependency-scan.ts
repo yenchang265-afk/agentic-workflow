@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { z } from "zod"
+import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, WorkflowState } from "../workflow/state.js"
 import { writeFileAtomic } from "../fsatomic.js"
-import { osvCandidates, OsvReportSchema } from "./osv.js"
+import { osvCandidates } from "./osv.js"
+import { parseOsvPayload } from "./osv-payload.js"
 import { slugify } from "../task/schema.js"
 import type { ClaimSkipReason, TerminalOutcome, WorkItem, WorkSource } from "./types.js"
 
@@ -190,6 +192,30 @@ export const depKey = (pkg: string): string =>
 const ledgerRel = (tasksDir: string, kind: string, pkg: string): string =>
   `${tasksDir}/runs/${kind}/${depKey(pkg)}.json`
 
+/**
+ * Substitute the work source's placeholders into a configured scanner command.
+ * `{{target}}` is the lockfile path and `{{ecosystem}}` the ecosystem name —
+ * both INTERNAL CONSTANTS (`pom.xml`, `gradle.lockfile`, `maven`), never remote
+ * data — so the result is spliced raw, exactly the `worktreeSetup` contract
+ * (isolate.ts). A command naming no `{{target}}` gets nothing appended: a
+ * corporate scanner may legitimately scan the whole repo. Unrecognized
+ * `{{name}}` placeholders survive verbatim and are RETURNED rather than
+ * silently shipped to the shell — a typo'd `{{targt}}` must be visible. Pure.
+ */
+export const renderScannerCommand = (
+  command: string,
+  vars: { readonly target: string; readonly ecosystem: string },
+): { readonly command: string; readonly unknown: string[] } => {
+  const unknown: string[] = []
+  const rendered = command.replace(/\{\{(\w+)\}\}/g, (match, name: string) => {
+    if (name === "target") return vars.target
+    if (name === "ecosystem") return vars.ecosystem
+    if (!unknown.includes(name)) unknown.push(name)
+    return match
+  })
+  return { command: rendered, unknown }
+}
+
 interface DependencyScanDeps {
   readonly $: Shell
   readonly client: Client
@@ -202,6 +228,12 @@ interface DependencyScanDeps {
   readonly includeOutdated?: boolean
   /** Config override of the manifest's ecosystem binding (`workflows.<kind>.ecosystem`). */
   readonly ecosystem?: string
+  /**
+   * Config override of the JVM scan command (`workflows.<kind>.scannerCommand`;
+   * USER-scope only — see config.ts SHELL_BEARING_WORKFLOW_KEYS). Replaces the
+   * bundled osv-scanner invocation for maven/gradle; npm is unaffected.
+   */
+  readonly scannerCommand?: string
   /** The resolved code platform (`platformFor(config, kind)`) stamped onto entry state; defaults to `github`. */
   readonly platform?: CodePlatform
   /** Clock injection for ledger stamps; defaults to the real time. */
@@ -229,6 +261,14 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
       ? deps.ecosystem
       : binding.ecosystem
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
+  const depMarker = (pkg: string): string => `${claimsDir}/${depKey(pkg)}`
+  /** Win the dependency's marker, sweeping it first if a dead run left it behind. */
+  const claimDep = async (pkg: string): Promise<boolean> => {
+    if (await acquireMarker($, depMarker(pkg))) return true
+    if (!(await markerOlderThan($, depMarker(pkg), STALE_CLAIM_MINUTES))) return false
+    await releaseMarker($, depMarker(pkg))
+    return acquireMarker($, depMarker(pkg))
+  }
 
   const readText = async (rel: string): Promise<string> => {
     const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
@@ -298,38 +338,80 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
     return { claimable, skippedMajors, notes: [] }
   }
 
-  /** Shared OSV-Scanner path for the JVM ecosystems: probe the binary, scan one file, judge via osv.ts. */
+  /**
+   * Shared OSV path for the JVM ecosystems: run a scanner, judge via osv.ts.
+   *
+   * Two branches, deliberately kept literally separate so the default
+   * osv-scanner invocation stays byte-identical (a scripted-shell log test pins
+   * it). `parseOsvPayload` serves BOTH, so an osv-scanner report and a
+   * corporate CLI's raw OSV records need no `format` knob to tell apart.
+   */
   const collectOsv = async (eco: "maven" | "gradle", target: string, declared: (pkg: string) => boolean): Promise<Collected> => {
-    const probe = await $`osv-scanner --version`.cwd(directory).quiet().nothrow()
-    if (probe.exitCode !== 0) {
+    const custom = deps.scannerCommand?.trim()
+    const notes: string[] = []
+    let out: Awaited<ReturnType<Shell>>
+    let shown: string
+    if (custom) {
+      // No `--version` probe: it exists only to emit the brew/go install hint,
+      // which we have none of for a site's own binary. A missing command
+      // surfaces below as empty stdout + its exit code, which says more.
+      const rendered = renderScannerCommand(custom, { target, ecosystem: eco })
+      shown = rendered.command
+      for (const name of rendered.unknown) {
+        notes.push(`${kind}: scannerCommand contains an unrecognized placeholder {{${name}}} — passed to the shell verbatim`)
+      }
+      out = await $`${{ raw: shown }}`.cwd(directory).quiet().nothrow()
+    } else {
+      const probe = await $`osv-scanner --version`.cwd(directory).quiet().nothrow()
+      if (probe.exitCode !== 0) {
+        return {
+          skip: {
+            message:
+              `${kind}: osv-scanner not found — install it (e.g. \`brew install osv-scanner\`, or ` +
+              `\`go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest\`) so the sitter can scan ${eco} dependencies.`,
+            actionable: true,
+          },
+        }
+      }
+      shown = `osv-scanner --format json -L ${target}`
+      // Exit 0 = clean, 1 = vulnerabilities found; the JSON report is on stdout either way.
+      out = await $`osv-scanner --format json -L ${target}`.cwd(directory).quiet().nothrow()
+    }
+
+    // Empty stdout is a FAILED scan, not a clean one. Parsing `"" || "{}"` into
+    // a zero-package report — as this path used to — turns a scanner that
+    // silently died into a confident "no vulnerabilities", forever. Same rule
+    // the npm path already enforces above.
+    const stdout = out.stdout.toString().trim()
+    if (!stdout) {
       return {
         skip: {
           message:
-            `${kind}: osv-scanner not found — install it (e.g. \`brew install osv-scanner\`, or ` +
-            `\`go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest\`) so the sitter can scan ${eco} dependencies.`,
+            `${kind}: \`${shown}\` produced no output (${out.stderr.toString().trim() || `exit ${out.exitCode}`}) — no ${eco} ` +
+            `vulnerabilities could be assessed, which is NOT the same as none existing.` +
+            (custom ? ` Check workflows.${kind}.scannerCommand in your user-scope config.` : ""),
           actionable: true,
         },
       }
     }
-    // Exit 0 = clean, 1 = vulnerabilities found; the JSON report is on stdout either way.
-    const out = await $`osv-scanner --format json -L ${target}`.cwd(directory).quiet().nothrow()
-    let report: z.infer<typeof OsvReportSchema>
-    try {
-      report = OsvReportSchema.parse(JSON.parse(out.stdout.toString() || "{}"))
-    } catch (err) {
+    // Both JVM ecosystems are "Maven" in OSV's ecosystem vocabulary (Gradle
+    // resolves Maven coordinates), so one filter value serves both.
+    const parsed = parseOsvPayload(stdout, { ecosystem: "Maven" })
+    if ("error" in parsed) {
       return {
-        skip: { message: `${kind}: could not parse osv-scanner output for ${target} — ${(err as Error).message}`, actionable: true },
+        skip: { message: `${kind}: could not read \`${shown}\` output for ${target} — ${parsed.error}`, actionable: true },
       }
     }
-    const judged = osvCandidates(report, policy, declared, eco)
-    const notes = [
+    notes.push(...parsed.notes.map((n) => `${kind}: ${n}`))
+    const judged = osvCandidates(parsed.report, policy, declared, eco)
+    notes.push(
       ...judged.unfixable.map(
         (c) => `${kind}: ${c.pkg} ${c.current} has advisories with no fixed version above it — nothing to upgrade to yet`,
       ),
       ...judged.skippedTransitives.map(
         (c) => `${kind}: ${c.pkg} is vulnerable but not declared in the build files (transitive) — pinning it stays a human call`,
       ),
-    ]
+    )
     if (policy.includeOutdated) notes.push(`${kind}: includeOutdated is npm-only for now — ignored for ${eco}`)
     return { claimable: judged.claimable, skippedMajors: judged.skippedMajors, notes }
   }
@@ -404,15 +486,28 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
     // Ecosystem-specific commands ride in the work order itself — the stage
     // prompts defer to it, so no template-context plumbing is needed. The npm
     // goal stays byte-identical to the original (regression pin).
+    //
+    // A site's own scanner is NOT on any stage's bash allowlist and cannot be
+    // put there (OpenCode's permission map is static, generated at build time),
+    // so when one is configured the confirm clause is replaced rather than
+    // renamed: the work source already pinned the advisory and the target
+    // before this item existed, leaving the stage the checks it CAN run.
+    const confirm = (defaultCmd: string): string =>
+      deps.scannerCommand?.trim()
+        ? `The advisory and target were confirmed by the configured dependency scanner at claim time and are ` +
+          `established fact — do NOT re-run a scanner (it is not on this stage's allowlist). Confirm instead that ` +
+          `the build files still declare ${c.pkg} at ${c.current}, that ${c.target} exists, and that the bump stays ` +
+          `within the stated impact.`
+        : `confirm the advisory with \`${defaultCmd}\`.`
     const guidance =
       c.ecosystem === "maven"
-        ? ` Ecosystem: Maven — confirm the advisory with \`osv-scanner --format json -L pom.xml\`. If the version is ` +
+        ? ` Ecosystem: Maven — ${confirm("osv-scanner --format json -L pom.xml")} If the version is ` +
           `managed by the Spring Boot BOM (or another imported BOM), override its version property or bump the parent ` +
           `rather than hardcoding a literal; otherwise ` +
           `\`mvn versions:use-dep-version -Dincludes=${c.pkg} -DdepVersion=${c.target} -DforceVersion=true\`. ` +
           `Verify with \`./mvnw verify\` (or \`mvn verify\`).`
         : c.ecosystem === "gradle"
-          ? ` Ecosystem: Gradle — confirm the advisory with \`osv-scanner --format json -L gradle.lockfile\`. Bump the ` +
+          ? ` Ecosystem: Gradle — ${confirm("osv-scanner --format json -L gradle.lockfile")} Bump the ` +
             `version in \`gradle/libs.versions.toml\` (version catalog) or the dependency string in \`build.gradle(.kts)\`, ` +
             `refresh the lockfile with \`./gradlew dependencies --write-locks\`, and verify with \`./gradlew check\` (or \`build\`).`
           : ""
@@ -493,9 +588,9 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
         const ledger = await loadDepLedger(candidate.pkg)
         if (ledger.versionHandled === candidate.target) continue
         if (ledger.failedAttempts.some((f) => f.target === candidate.target)) continue
-        await $`mkdir -p ${claimsDir}`.quiet().nothrow()
-        const marker = await $`mkdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
-        if (marker.exitCode !== 0) {
+        // A stale marker is swept before we give up: without it a crashed run
+        // wedged this dependency forever (see `claim-marker.ts`).
+        if (!(await claimDep(candidate.pkg))) {
           heldIds.push(depKey(candidate.pkg))
           continue
         }
@@ -518,7 +613,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
 
     async release(work) {
       const { candidate } = work.ref as { candidate: UpgradeCandidate }
-      await $`rmdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
+      await releaseMarker($, depMarker(candidate.pkg))
     },
 
     async onTerminal(work, outcome: TerminalOutcome) {
@@ -537,7 +632,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
                 updatedAt: now(),
               }
       if (updated !== ledger) await saveDepLedger(updated)
-      await $`rmdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
+      await releaseMarker($, depMarker(candidate.pkg))
     },
   }
 }

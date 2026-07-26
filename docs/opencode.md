@@ -66,6 +66,19 @@ Authoring + gates (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering replan [id] [reason]` — the sole rejection verb: send a
   parked plan (or a cap-tripped `in-progress/` task, by id) back to `queued/`
   with the reason audited; the next PLAN pass must address it
+- `/agentic-workflow:engineering abandon <id> [reason]` — cancel a task: it moves to
+  `abandoned/`, the terminal folder for work that will not be done, with the
+  reason audited. Works from any non-terminal folder (a shipped `completed/`
+  task is refused). The file is kept, so the move is reversible — this is the
+  cancellation to reach for, and the way to close a tracking epic once every
+  child has shipped
+- `/agentic-workflow:engineering remove <id> --force` — hard-delete a task: unlike every
+  other verb the file is deleted rather than moved. A bare `remove <id>`
+  deletes nothing and reports which task the id resolved to; `--force` is the
+  confirmation, which matters because ids are prefix-resolvable and a typo'd
+  short handle can name a different real task. Git retains the file only when
+  the backlog is tracked, and `ignoreBacklog` defaults to `true`, so a forced
+  remove is usually permanent — prefer `abandon`
 
 The loop (`/agentic-workflow:engineering`):
 

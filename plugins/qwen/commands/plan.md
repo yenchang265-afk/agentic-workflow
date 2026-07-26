@@ -1,0 +1,12 @@
+---
+description: Ad-hoc read-only implementation plan for a goal — relayed as chat, nothing persisted
+argument-hint: <goal>
+---
+
+Spawn the **`workflow-plan`** subagent (`agent` tool) to produce a read-only
+implementation plan for: `{{args}}`
+
+Relay its plan back verbatim. Nothing is written to disk — if the user wants
+a persisted, loop-executable plan, point them at `/agentic-workflow:engineering new
+<idea>` (draft + interview) — the loop's PLAN stage plans the task right
+before execution, once it's approved into the queue.

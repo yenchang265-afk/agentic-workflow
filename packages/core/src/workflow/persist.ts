@@ -1,6 +1,6 @@
 import path from "node:path"
 import { writeFileAtomic } from "../fsatomic.js"
-import type { Client, Shell } from "../host.js"
+import type { Client, Log, Shell } from "../host.js"
 import { z } from "zod"
 import { isSafeTaskId, SAFE_TASK_ID_RE } from "../task/schema.js"
 import { CODE_PLATFORMS, STAGES, type WorkflowState } from "./state.js"
@@ -83,18 +83,27 @@ const WorkflowStateSchema = z.object({
 export const statePath = (directory: string, tasksDir: string, id: string): string =>
   path.join(directory, tasksDir, "runs", `${id}.state.json`)
 
-/** Write a snapshot of the loop state. Best-effort — never fails the drive over telemetry. */
+/**
+ * Write a snapshot of the loop state. Best-effort — never fails the drive over
+ * telemetry — but never SILENT either: a dropped snapshot is why a later
+ * `recover` degrades to plan-based recovery, and without this warning there is
+ * nothing anywhere to explain it. Pass `log` to hear about it.
+ */
 export const saveState = async (
   $: Shell,
   directory: string,
   tasksDir: string,
   id: string,
   state: WorkflowState,
+  log?: Log,
 ): Promise<void> => {
   const dir = path.join(directory, tasksDir, "runs")
   await $`mkdir -p ${dir}`.quiet().nothrow()
   const file = statePath(directory, tasksDir, id)
-  await writeFileAtomic($, file, JSON.stringify(state, null, 2))
+  const wrote = await writeFileAtomic($, file, JSON.stringify(state, null, 2))
+  if (wrote.exitCode !== 0 && log) {
+    await log("warn", `loop(${id}): state snapshot not written (${wrote.stderr.toString().trim() || `exit ${wrote.exitCode}`}) — recover will fall back to the plan on the task file`)
+  }
 }
 
 /**

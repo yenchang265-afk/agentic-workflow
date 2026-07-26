@@ -30,7 +30,7 @@ The goal (which PR), triage's findings, fix's summary, and verify's result.
   This agent's curl allowlist is scoped to `/threads*`, so those calls are
   blocked outright — only thread-comment replies get through.
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
   A backstop hook blocks every ADO call except GET reads and thread-comment
   replies, so those mutations can't get through.
 {{/host}}

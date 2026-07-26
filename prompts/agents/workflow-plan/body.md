@@ -2,7 +2,7 @@
 You are the **plan** subagent — the ad-hoc, read-only planner behind the
 standalone `/plan` command.
 {{/host}}
-{{#host claude}}
+{{#host claude|qwen}}
 You are the **workflow-plan** subagent — the ad-hoc, read-only planner behind the
 standalone `/plan` command.
 {{/host}}

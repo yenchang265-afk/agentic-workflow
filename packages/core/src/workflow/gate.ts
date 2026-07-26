@@ -6,7 +6,7 @@ import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds,
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
-import { shipPr } from "./ship-pr.js"
+import { shipPr, type ShipPrResult } from "./ship-pr.js"
 
 /**
  * The human gate moves — approve (task), approve-plan, replan, ship — shared by
@@ -36,21 +36,30 @@ export interface GateCtx {
 }
 
 /**
- * A refusal's severity, for hosts that surface it (the OpenCode toast): a task
- * already at a forward status is `info` ("nothing to do"), a genuine
- * wrong-folder/not-found is `warning`. The Claude host ignores it.
+ * A result's severity, for hosts that surface it (the OpenCode toast, the hub's
+ * message line). On a refusal: a task already at a forward status is `info`
+ * ("nothing to do"), a genuine wrong-folder/not-found is `warning`.
+ *
+ * On a SUCCESS it marks a move that landed but carries a caveat — the ship gate
+ * whose PR did not open is the case it exists for. Absent means an unqualified
+ * success, which is what an ordinary move returns. The Claude host ignores it
+ * (see `data` for the machine-readable half).
  */
 export type GateVariant = "info" | "warning"
 
 export type GateResult =
-  | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown> }
+  | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown>; readonly variant?: GateVariant }
   | { readonly ok: false; readonly message: string; readonly variant?: GateVariant }
 
 /**
  * Commit the backlog move, unless `config.ignoreBacklog` (the default) says to
  * leave it alone — then just re-assert the `.git/info/exclude` entry instead.
+ *
+ * Exported for callers that write to a task file *outside* a gate move and must
+ * commit it the same way (the hub's task editor). They must not re-derive the
+ * `ignoreBacklog` policy — it lives here, once.
  */
-const commitBacklog = async ($: Shell, directory: string, config: Config, message: string): Promise<void> => {
+export const commitBacklog = async ($: Shell, directory: string, config: Config, message: string): Promise<void> => {
   if (config.ignoreBacklog) {
     await ensureExcluded($, directory, config.tasksDir)
     return
@@ -173,7 +182,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
  * From `plan-review/` onward a plan exists, so `replan` is the right verb and
  * this refuses.
  */
-export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
@@ -209,7 +218,10 @@ export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
     return { ok: false, message: `Task "${id}" holds a claim marker — release it first (/agentic-workflow:engineering doctor fix).`, variant: "warning" }
   }
   const actor = await gitActor($, directory)
-  await appendNote($, queued, auditNote("Sent back to draft for re-shaping — approval withdrawn", new Date(), actor), log)
+  // Same shape as replan's: the reason is why the goal was wrong, and the task
+  // file is the only place the next authoring pass will look for it.
+  const why = reason ? ` — ${reason}` : ""
+  await appendNote($, queued, auditNote(`Sent back to draft for re-shaping — approval withdrawn${why}`, new Date(), actor), log)
   const newPath = await moveTask($, queued, "draft")
   await commitBacklog($, directory, config, `loop(${id}): sent back to draft for re-shaping`)
   return {
@@ -221,21 +233,45 @@ export const retaskTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
 }
 
 /**
+ * What a user can actually recover a deleted task from, phrased for the config
+ * they are actually running.
+ *
+ * `ignoreBacklog` DEFAULTS TO TRUE — the backlog is kept out of git entirely —
+ * so the stock "git history keeps it" reassurance is false for most installs.
+ * Lead with the default rather than the exception.
+ */
+const recoveryHint = (config: Config): string =>
+  config.ignoreBacklog
+    ? "the backlog is untracked (ignoreBacklog defaults to true), so this CANNOT be undone."
+    : "the backlog is committed, so git history keeps a copy, but it cannot be undone from the working tree."
+
+/**
  * remove: hard-delete a task from the backlog entirely.
  *
  * Unlike every other gate this does NOT move the task to another folder — the
  * file is removed and the removal committed, so the task leaves the active
- * backlog for good (git history retains it if the backlog is tracked). Works
- * from ANY status folder: cleaning up a stale draft, a rejected plan, or a
- * finished task is all the same delete.
+ * backlog for good. Git history retains it ONLY when the backlog is tracked,
+ * which is not the default (`ignoreBacklog: true`); prefer `abandonTask` when
+ * the user wants the task out of the way rather than gone. Works from ANY
+ * status folder: cleaning up a stale draft, a rejected plan, or a finished task
+ * is all the same delete.
  *
  * Refuses a task a live loop is driving, or one still holding a claim marker —
  * deleting the file out from under a run would strand its worktree/marker.
  * Idempotent by design: an id that resolves to nothing is reported as success
  * (`alreadyDone`), matching `rm -f`, so a double-click or a retry after a prior
  * success stays harmless. Any worktree the task owned is released best-effort.
+ *
+ * **`force` is the confirmation.** Without it this resolves the id, runs every
+ * guard, and reports what WOULD be deleted without touching the file. The CLI
+ * hosts had no confirmation at all: Claude dispatches `remove` from a
+ * UserPromptSubmit hook that then blocks the turn, so the verb prose telling the
+ * model to "confirm the id first" could never run, and opencode deleted straight
+ * out of `command.execute.before`. Only the hub — which has its own <Confirm> —
+ * passed a decision the user had actually made. Since ids are prefix-resolvable,
+ * a typo'd short handle could resolve to a different real task and delete it.
  */
-export const removeTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
+export const removeTask = async (ctx: GateCtx, id: string, force = false): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
@@ -259,6 +295,16 @@ export const removeTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
   if (held.includes(id)) {
     return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
   }
+  if (!force) {
+    return {
+      ok: false,
+      variant: "info",
+      message:
+        `Remove "${task.title}" (${id}) from ${config.tasksDir}/${from}/? This DELETES the task file — ` +
+        `${recoveryHint(config)} Nothing has been deleted. Re-run with --force to confirm: ` +
+        `/agentic-workflow:engineering remove ${id} --force`,
+    }
+  }
   const removed = await removeTaskFile($, { id, path: task.path })
   await commitBacklog($, directory, config, `loop(${id}): task removed from backlog`)
   // A parked in-progress/in-review task can own a worktree; free it so the
@@ -269,6 +315,69 @@ export const removeTask = async (ctx: GateCtx, id: string): Promise<GateResult> 
     message: `"${task.title}" removed from ${config.tasksDir}/${from}/.`,
     path: removed,
     data: { removed: true, path: removed, id, from },
+  }
+}
+
+/**
+ * abandon: cancel a task by moving it to `abandoned/` — the reversible
+ * counterpart to `remove`.
+ *
+ * `abandoned` has always been a first-class status: it is in the vocabulary,
+ * `canTransition` already admits it from every non-terminal folder, and `status`
+ * renders its count. What it never had was a way in. The only cancellation verb
+ * users could reach was `remove`, which deletes; the docs told them to reach
+ * `abandoned/` "by hand" — on opencode via a move tool that host does not even
+ * register. So the counter was unreachable and the safe path went unused.
+ *
+ * Guards mirror `remove` exactly (live loop, claim marker), because the hazard
+ * is the same: moving the file out from under a run strands its worktree and
+ * marker. Unlike `remove` the file survives, so this needs no `--force`.
+ */
+export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
+  const { $, directory, config, log } = ctx
+  const resolved = await resolveGateId(ctx, id)
+  if (resolved && "error" in resolved) return resolved.error
+  if (resolved) id = resolved.id
+  if (ctx.isDriving?.(id)) {
+    return { ok: false, message: `Task "${id}" is being driven by a live loop — stop it first (/agentic-workflow:engineering stop).`, variant: "warning" }
+  }
+  const task = await findAnyStatus(ctx, id)
+  if (!task) {
+    return { ok: false, message: (await unparseableAt(ctx, id)) ?? `No task "${id}" to abandon.`, variant: "warning" }
+  }
+  const from = statusFolder(task)
+  if (from === "abandoned") {
+    return { ok: true, message: `"${task.title}" is already abandoned.`, path: task.path, data: { abandoned: true, alreadyDone: true, id } }
+  }
+  // `completed` is terminal in the same sense abandoned is — a shipped task is
+  // not cancellable, and store.ts's canTransition says so. Name the rule rather
+  // than letting moveTask fail obscurely.
+  if (from === "completed") {
+    return { ok: false, message: `Can't abandon "${id}": it's already completed — shipped work isn't cancellable.`, variant: "warning" }
+  }
+  const held = await listClaimIds($, directory, config.tasksDir, from)
+  if (held.includes(id)) {
+    return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
+  }
+  const why = reason?.trim()
+  await appendNote($, { id, path: task.path }, auditNote(`Abandoned from ${from}${why ? ` — ${why}` : ""}`, new Date(), await gitActor($, directory)), log)
+  let newPath: string
+  try {
+    newPath = await moveTask($, { id, path: task.path }, "abandoned")
+  } catch (err) {
+    // Same rule the terminal handlers follow: a thrown move must not escape a
+    // function whose contract is GateResult, leaving a note asserting a move
+    // that never happened.
+    return { ok: false, message: `Can't abandon "${id}": ${(err as Error).message}`, variant: "warning" }
+  }
+  await commitBacklog($, directory, config, `loop(${id}): abandoned${why ? ` — ${why}` : ""}`)
+  // A parked task can own a worktree; free it the way remove/ship do.
+  await releaseWorktree($, log, directory, config, id)
+  return {
+    ok: true,
+    message: `"${task.title}" abandoned — moved to ${config.tasksDir}/abandoned/.`,
+    path: newPath,
+    data: { abandoned: true, path: newPath, id, from },
   }
 }
 
@@ -350,6 +459,15 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
         : ((await unparseableAt(ctx, id)) ?? `Can't replan "${id}": no task found.`),
     }
   }
+  // `isDriving` is PER-PROCESS — it walks an in-memory Map local to one plugin
+  // instance — so a replan issued from the hub or the Claude MCP server sails
+  // past it while an opencode loop is mid-BUILD, and the move then releases that
+  // live run's claim marker out from under it. The marker is the cross-process
+  // signal; retask and remove already check it, replan did not.
+  const held = await listClaimIds($, directory, config.tasksDir, statusFolder(task))
+  if (held.includes(id)) {
+    return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
+  }
   const actor = await gitActor($, directory)
   const why = reason ? ` — ${reason}` : ""
   await appendNote($, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor), log)
@@ -362,6 +480,32 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
     data: { requeued: true, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it` },
   }
 }
+
+/**
+ * The PR half of a ship, rendered onto the `GateResult.message` every surface
+ * shows verbatim (opencode toast, the hub card).
+ *
+ * An unopened PR is a NOTE, not a failure. Opening one is not a requirement of
+ * the ship: `shipPr` never throws, no-ops entirely for a hand-authored task with
+ * no `feature/<id>` branch, and several of its reasons — `ado config missing`,
+ * `ado.repository not configured` — are plain configuration states where a PR
+ * was never possible. By the time it runs, the task is already audited, moved to
+ * `completed/`, and committed. So the ship succeeded; this is the caveat.
+ *
+ * What it must not do is go SILENT, which is what it used to do: the reason went
+ * only into an audit note, invisible under the default `ignoreBacklog: true`
+ * that never commits it, and the user read an unqualified "completed".
+ *
+ * Deliberately says nothing about whether the branch was pushed. `attempted`
+ * covers two worlds — `git push failed` (not pushed) and a `gh`/ADO create
+ * failure (pushed) — and `ShipPrResult` does not distinguish them, so any claim
+ * either way is wrong half the time.
+ */
+const prOutcome = (pr: ShipPrResult): string =>
+  pr.url ? ` PR: ${pr.url}` : pr.attempted ? ` Note: no PR was opened — ${pr.reason ?? "reason unknown"}. The task is completed; open one when you're ready.` : ""
+
+/** Whether a ship's PR attempt came up short — the one case that warrants a warning. */
+const prMissed = (pr: ShipPrResult): boolean => pr.attempted && !pr.url
 
 /** ship: an in-review/ task → completed/ (the final human gate). Opens/links the draft PR. */
 export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
@@ -381,22 +525,30 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
       // records an opened/linked PR; then release the orphaned worktree.
       const done = elsewhere!
       const data: Record<string, unknown> = { completed: done.path, alreadyDone: true }
-      let prUrl: string | undefined
+      let tail = " Nothing to do."
+      // Hoisted: `pr` is scoped to the re-attempt below, but the variant is
+      // decided on the return. A retry that STILL can't open the PR warns for
+      // the same reason the main path does.
+      let missedPr = false
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
       if (!prAlreadyRecorded) {
         const pr = await shipPr($, log, directory, config, kind, id, done.title)
         if (pr.url) {
-          prUrl = pr.url
           data.pr = { url: pr.url }
           await appendNote($, { id, path: done.path }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
           await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
         } else if (pr.attempted) {
+          data.pr = { opened: false, reason: pr.reason }
           await appendNote($, { id, path: done.path }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
           await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
         }
+        // Same rule as the main path: a retry that still can't open the PR must
+        // say so, not report "nothing to do".
+        if (pr.url || pr.attempted) tail = prOutcome(pr)
+        missedPr = prMissed(pr)
       }
       await releaseWorktree($, log, directory, config, id)
-      return { ok: true, message: `"${done.title}" is already completed.${prUrl ? ` PR: ${prUrl}` : " Nothing to do."}`, path: done.path, data }
+      return { ok: true, message: `"${done.title}" is already completed.${tail}`, path: done.path, data, ...(missedPr ? { variant: "warning" as const } : {}) }
     }
     return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : ((await unparseableAt(ctx, id)) ?? `No in-review task "${id}".`) }
   }
@@ -411,6 +563,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
     await appendNote($, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
     await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
   } else if (pr.attempted) {
+    data.pr = { opened: false, reason: pr.reason }
     await appendNote($, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
     await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
   }
@@ -418,7 +571,10 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   // and recoveries build on prior iterations — is finally disposable. The
   // branch survives, so the PR opened just above is unaffected.
   await releaseWorktree($, log, directory, config, id)
-  return { ok: true, message: `"${t.title}" completed.${pr.url ? ` PR: ${pr.url}` : ""}`, path: newPath, data }
+  // A caveated ship is still a ship: `ok` stays true (the CLI exits 0, no host
+  // reads it as a refusal) and the variant is what makes the note VISIBLE rather
+  // than a green toast the user scrolls past.
+  return { ok: true, message: `"${t.title}" completed.${prOutcome(pr)}`, path: newPath, data, ...(prMissed(pr) ? { variant: "warning" as const } : {}) }
 }
 
 /** Which task a folder-driven gate shortcut should act on. */

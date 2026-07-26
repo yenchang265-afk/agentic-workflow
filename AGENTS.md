@@ -5,7 +5,7 @@ Guidance for AI coding agents working in this repository.
 ## Repository Overview
 
 `agentic-workflow` is a multi-kind agentic-workflow framework (shared engine in
-`@agentic-workflow/core`, shipping both an OpenCode and a Claude Code plugin); this
+`@agentic-workflow/core`, shipping OpenCode, Claude Code and Qwen Code plugins); this
 guide covers the OpenCode plugin — see `plugins/claude/README.md` for the
 Claude Code equivalent. It has two ways to work: an **automatic loop** that
 drives a backlog task through its whole lifecycle unattended, and **ad-hoc,
@@ -20,10 +20,13 @@ sections below cover each.
    first), `approve [id]` is the one folder-driven gate (draft →
    queued, parked plan → in-progress, finished review parked in `in-review/`
    → completed), and
-   `replan [id]` sends a parked plan back, and `remove <id>` hard-deletes a
-   task from the backlog entirely (from any folder — the file is deleted and
-   the removal committed, not moved; refused while a loop drives it or a claim
-   is held);
+   `replan [id]` sends a parked plan back, `abandon <id>` cancels a task by
+   moving it to `abandoned/` (the reversible cancellation — the file is kept,
+   and it is how a tracking epic is closed), and `remove <id> --force`
+   hard-deletes a task from the backlog entirely (from any folder — the file is
+   deleted and the removal committed, not moved; a bare `remove` is a dry run
+   that deletes nothing, and both are refused while a loop drives the task or a
+   claim is held);
    the loop claims build-ready work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
    engineering kind; `unwatch` takes this session back out) and drives
@@ -82,11 +85,18 @@ stateDiagram-v2
     in_progress --> in_review: REVIEW PASS
     in_progress --> queued: replan &lt;id&gt; (iteration cap tripped)
     in_review --> completed: approve &lt;id&gt; (ship — after you review the diff)
+    draft --> abandoned: abandon &lt;id&gt;
+    queued --> abandoned: abandon &lt;id&gt;
+    plan_review --> abandoned: abandon &lt;id&gt;
+    in_progress --> abandoned: abandon &lt;id&gt;
+    in_review --> abandoned: abandon &lt;id&gt;
     completed --> [*]
+    abandoned --> [*]
 
     state "plan-review/" as plan_review
     state "in-progress/ (BUILD→VERIFY→REVIEW)" as in_progress
     state "in-review/" as in_review
+    state "abandoned/" as abandoned
 ```
 
 ### Core Rules (ad-hoc mode)
@@ -155,22 +165,25 @@ flowchart TD
 
     OpenCode["plugins/opencode<br/>OpenCode plugin (state machine + driver)"]
     Claude["plugins/claude<br/>Claude Code plugin (MCP server drives the state machine)"]
+    Qwen["plugins/qwen<br/>Qwen Code plugin (same MCP server, AGENTIC_WORKFLOW_HOST=qwen)"]
     Hub["packages/hub<br/>admin hub (beta) — monitor + visual creator, never drives a stage"]
 
     Core --> OpenCode
     Core --> Claude
+    Core --> Qwen
     Core --> Hub
 ```
 
 - `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-workflow/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
 - `packages/core/workflows/<kind>/` — declarative workflow-kind manifests (`workflow.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
-- `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship) and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-workflow/core` entry points the hosts call, a Config tab that edits `.agentic-workflow.json` one layer at a time, a Metrics tab rolling loop health up across runs (iteration burn, first-pass yield, verdict flips, cache hit — the pass, not the file, is its unit of analysis), and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
+- `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship), an in-place task editor that reshapes a planless task and (from `queued/`) retasks it back to `draft/` with a comment, and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-workflow/core` entry points the hosts call, a Config tab that edits `.agentic-workflow.json` one layer at a time, a Metrics tab rolling loop health up across runs (iteration burn, first-pass yield, verdict flips, cache hit — the pass, not the file, is its unit of analysis), and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
 - `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `workflow-*`, pr-sitter's `workflow-pr-triage`/`workflow-pr-fix`/`workflow-pr-publish`, review-sitter's `workflow-review-fetch`/`workflow-review-assess`/`workflow-review-publish`, dep-sitter's `workflow-dep-scan`/`workflow-dep-upgrade`/`workflow-dep-publish`, and main-sitter's `workflow-main-diagnose`/`workflow-main-remedy`/`workflow-main-publish`, with the shared `workflow-verify` reused as the VERIFY stage across several kinds)
 - `plugins/opencode/commands/` — the slash commands (`/agentic-workflow:engineering`, `/agentic-workflow:pr-sitter`, `/agentic-workflow:review-sitter`, `/agentic-workflow:dep-sitter`, `/agentic-workflow:main-sitter`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`, and the new-kind stage commands `/review-fetch`, `/review-assess`, `/review-publish`, `/dep-scan`, `/dep-upgrade`, `/dep-publish`, `/main-diagnose`, `/main-remedy`, `/main-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
-- `plugins/claude/verbs/engineering.md` — the per-verb procedures of `/agentic-workflow:engineering` on the Claude host, each inside an `<!-- aw:verb <names> -->` block (see "Per-verb command slicing" below)
+- `prompts/verbs/engineering.md` — the per-verb procedures of `/agentic-workflow:engineering`, each inside an `<!-- aw:verb <names> -->` block; **generated** into `plugins/claude/verbs/` and `plugins/qwen/verbs/` (see "Per-verb command slicing" below)
+- `plugins/qwen/` — the Qwen Code host: generated `agents/`, `verbs/`, `skills/` and `hooks/`, plus hand-authored `commands/`. Reuses the Claude plugin's MCP server and hook sources; see `docs/qwen.md`
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
 
 ### Per-verb command slicing
@@ -181,22 +194,22 @@ deterministic plugin work described in the imperative — which is both wasted
 context and a live source of confusion about which half is its job. So each
 verb's prose sits inside an `<!-- aw:verb <names> -->` … `<!-- /aw:verb <names> -->`
 block (`|`-separated for aliases and shared subsets, e.g. `stop|abort`), and
-only the invoked verb's blocks reach the model. The two hosts differ because
-their capabilities do:
+only the invoked verb's blocks reach the model. The hosts differ because their capabilities do:
 
 - **OpenCode** slices the *rendered* prompt in `command.execute.before`
   (`plugins/opencode/src/command-slice.ts`). Text **outside** every marker is
   always kept, so prose added later is shared by default and can never be
   silently dropped from a verb.
-- **Claude Code** cannot rewrite a prompt — a `UserPromptSubmit` hook may only
-  prepend context or block the turn. So the split is physical:
+- **Claude Code and Qwen Code** cannot rewrite a prompt — a `UserPromptSubmit`
+  hook may only prepend context or block the turn. So the split is physical:
   `commands/engineering.md` is a router that is always sent, and the invoked
   verb's block is injected from `verbs/engineering.md` by
   `hooks/verb-slice.mjs`. Nothing unmarked belongs in that file — it would be
-  dropped, not shared. Shared prose goes in the router.
+  dropped, not shared. Shared prose goes in the router. Both hosts' copies are
+  **generated** from `prompts/verbs/engineering.md`, so edit that, not them.
 
 Adding or renaming a verb means updating its marker block **and** the
-`argument-hint` on both hosts; the coverage tests
+`argument-hint` on every host; the coverage tests
 (`command-slice.test.ts`, `verb-slice.test.mjs`) fail otherwise. They have to:
 a verb that loses its block does not error, it silently falls back to the whole
 body (OpenCode) or to no instructions at all (Claude). Markers must own their

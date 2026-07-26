@@ -130,8 +130,14 @@ export const bandCvss = (score: string): Severity | "" => {
   return "critical"
 }
 
-/** GHSA/OSV label → npm severity vocabulary ("MEDIUM"/"MODERATE" → moderate); "" when unrecognized. Pure. */
-const normalizeLabel = (raw: string): Severity | "" => {
+/**
+ * GHSA/OSV label → npm severity vocabulary ("MEDIUM"/"MODERATE" → moderate);
+ * "" when unrecognized. Exported so `osv-payload.ts` can report an unreadable
+ * rating using the SAME vocabulary this function applies: a private copy there
+ * could disagree with the verdict here — warn about a label that then resolves
+ * fine, or stay silent on one that drops the package below every floor. Pure.
+ */
+export const normalizeLabel = (raw: string): Severity | "" => {
   const s = raw.toLowerCase()
   const mapped = s === "medium" ? "moderate" : s
   return severityRank(mapped) >= 0 ? (mapped as Severity) : ""

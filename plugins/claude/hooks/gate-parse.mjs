@@ -8,7 +8,8 @@
  * Claude Code offers for plugin commands):
  *   approve [id]           → gate approve-any [id]   (unified folder-driven gate)
  *   replan [id] [reason]   → gate reject-any [id] [reason...]
- *   remove <id>            → gate remove <id>        (hard-delete; id required)
+ *   abandon <id> [reason]  → gate abandon <id> …     (→ abandoned/; id required)
+ *   remove <id> [--force]  → gate remove <id> …      (hard-delete; id required)
  * plus the `GATE-DISPATCH:` sentinel a command template may emit once
  * expanded — covering both possible UserPromptSubmit interception points
  * (pre- or post-expansion). Longest alternative first inside VERB —
@@ -39,12 +40,26 @@ const RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im")
 // id: there is no folder-driven "remove the awaiting one" (too easy to delete
 // the wrong task), so a bare `remove` passes through for the model to report.
 const REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im")
+// abandon MOVES a task to abandoned/ rather than deleting it — the reversible
+// cancellation. Deterministic like remove, so it blocks the turn, and it takes
+// the same explicit id for the same reason.
+const ABANDON = new RegExp(`(?:^|\\s)${CMD}\\s+abandon\\b[ \\t]*(.*)$`, "im")
 
 // Any engineering verb, for the per-verb instruction injection (verb-slice.mjs)
 // rather than for a gate move. Shares CMD so the leading-slash requirement and
 // its rationale above are not re-derived: this hook has matcher "" and sees
 // EVERY prompt, so prose like "the engineering approve step" must not match.
 const ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i")
+
+// The ad-hoc plan command — not an engineering verb and not a gate move, but it
+// spawns `workflow-plan` outside any loop, so no MCP response ever carries a
+// model for it and `agentModels` is its only source. `(?![-\w])` keeps the
+// sibling `/plan-task` command out; the leading slash carries the same
+// "must not match prose" rationale as CMD above.
+const ADHOC_PLAN = /(?:^|\s)\/(?:agentic-workflow:)?plan(?![-\w])/i
+
+/** Whether a prompt invokes the ad-hoc `/agentic-workflow:plan` command. */
+export const isAdhocPlan = (prompt) => ADHOC_PLAN.test(String(prompt ?? ""))
 
 /**
  * The engineering verb a prompt invokes, or null when the prompt is not the
@@ -96,13 +111,27 @@ export const gateArgsFor = (prompt) => {
     if (!id) return { passThrough: true }
     return { argv: ["gate", "retask", id], continueTurn: true }
   }
+  const abandon = prompt.match(ABANDON)
+  if (abandon) {
+    const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = words[0] || ""
+    if (!id) return { passThrough: true }
+    return { argv: ["gate", "abandon", id, ...words.slice(1)] }
+  }
   const remove = prompt.match(REMOVE)
   if (remove) {
     // remove always names its target; a bare one is malformed — never guess
     // which task to delete. Blocks the turn: the CLI does the whole move.
-    const id = (remove[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
+    //
+    // `--force` is the CONFIRMATION, and it has to be parsed here rather than
+    // left to the model: this hook dispatches and then blocks, so there is no
+    // turn in which a model could ask. Without it the CLI reports what it would
+    // delete and deletes nothing.
+    const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = words.find((w) => !w.startsWith("-")) || ""
     if (!id) return { passThrough: true }
-    return { argv: ["gate", "remove", id] }
+    const force = words.some((w) => w === "--force" || w === "-f")
+    return { argv: ["gate", "remove", id, ...(force ? ["--force"] : [])] }
   }
   return null
 }

@@ -1,0 +1,12 @@
+{
+  // See packages/core/tsconfig.test.json — tsconfig.json is the build config and
+  // excludes *.test.ts to keep tests out of dist/, which also left them
+  // unchecked because tsx strips types without checking them. This config
+  // type-checks them and nothing else.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist"]
+}

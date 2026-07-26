@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | remove <id> | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -63,8 +63,8 @@ Dispatch:
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
        body listing the children in order). **Never approve it** — an
        un-approved draft is inert, so the loop never claims it. Close it by
-       hand with the loop move tool (to `abandoned/` or `completed/`) once
-       every child has shipped.
+       hand once every child has shipped: `abandon <id>` retires the tracking
+       draft.
 <!-- /aw:verb new -->
 <!-- aw:verb retask -->
 - **`retask <id> [note]`** — reshape a planless task when the drafted goal or
@@ -76,7 +76,9 @@ Dispatch:
      reshaped goal has to be re-approved, and the toast says so), and a task
      from `plan-review/` onward was refused with a pointer at `replan`. So
      resolve `<id>` in `docs/tasks/draft/` **only**; if it isn't there, the
-     plugin refused or the id is wrong — report that and stop.
+     plugin refused or the id is wrong — report that and stop. The `[note]` is
+     also written onto that audit note, so why the goal was wrong survives in
+     the task file, not just in this turn's context.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
@@ -114,15 +116,33 @@ Dispatch:
   re-planning; the reason is recorded in the audit note and the next PLAN
   pass must address it.
 <!-- /aw:verb replan -->
+<!-- aw:verb abandon -->
+- **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
+  terminal folder for work that will not be done. Works from **any**
+  non-terminal status folder (a shipped `completed/` task is refused —
+  shipped work isn't cancellable). The file survives, so this is the verb to
+  reach for when the user wants a task out of the way; `remove` is for when
+  they want it *gone*. Handled in the plugin like the gates above; the toast
+  reports the outcome. The plugin refuses a task a live loop is driving or one
+  holding a claim marker, and releases any worktree the task owned. An id is
+  required. This is also how an epic tracking draft is closed once every child
+  has shipped.
+<!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
-- **`remove <id>`** — hard-delete a task from the backlog entirely. Unlike
-  replan/retask this does **not** move the task: the file is deleted and the
-  removal committed, so the task is gone for good (git history retains it if
-  the backlog is tracked). Works from **any** status folder. Handled in the
-  plugin like the gates above; the toast reports the outcome. The plugin
+- **`remove <id> --force`** — hard-delete a task from the backlog entirely.
+  Unlike replan/retask/abandon this does **not** move the task: the file is
+  deleted and the removal committed. Works from **any** status folder. Handled
+  in the plugin like the gates above; the toast reports the outcome. The plugin
   refuses a task a live loop is driving or one holding a claim marker, and
-  releases any worktree the task owned. **Destructive and cannot be undone
-  from the working tree** — only run it when the user wants the task gone.
+  releases any worktree the task owned.
+  - **A bare `remove <id>` deletes nothing.** It reports which task the id
+    resolved to and stops; `--force` is the confirmation. Ids are
+    prefix-resolvable, so this is what stops a typo'd short handle deleting a
+    different real task — report the dry run and let the user decide.
+  - **Recoverable only if the backlog is tracked, which is NOT the default.**
+    `ignoreBacklog` defaults to `true`, keeping `docs/tasks/` out of git
+    entirely, so a forced remove is usually permanent. Prefer `abandon` unless
+    the user has said they want the file gone.
 <!-- /aw:verb remove -->
 
 <!-- aw:verb approve|replan -->
@@ -154,9 +174,9 @@ a rebuild from an unmoved file on an execution verb.
 - **`claim`** — one-shot pull: claim the next build-ready `in-progress/` task
   (lowest priority number first) and drive it once this turn settles. Planless
   `queued/` tasks are never auto-planned — plan them with `plan <id>`.
-- **`watch [trigger]`** — put **this** session into engineering worker mode.
 <!-- /aw:verb claim -->
 <!-- aw:verb watch -->
+- **`watch [trigger]`** — put **this** session into engineering worker mode.
   Each tick polls the backlog for one build-ready `in-progress/` task to drive
   BUILD → VERIFY → REVIEW; planless `queued/` tasks are left for `plan <id>`
   (a tick that finds only those says so). Bare `watch` uses the kind's configured trigger
@@ -183,9 +203,9 @@ a rebuild from an unmoved file on an execution verb.
 - **`unwatch`** — take this session out of watch mode and stop its polling
   timer (a build already in progress still finishes). Pressing **ESC**
   mid-drive also unwatches *and* interrupts the running loop (see `recover`).
-- **`recover <id>`** — resume an in-progress task whose run stopped early — a
 <!-- /aw:verb unwatch -->
 <!-- aw:verb recover -->
+- **`recover <id>`** — resume an in-progress task whose run stopped early — a
   crash/restart, or a user **interrupt (ESC)** mid-drive: re-claims it and
   resumes from its state snapshot at the exact stage it reached (or, with no
   valid snapshot, re-enters at BUILD from the persisted plan). ESC is a pause
@@ -235,10 +255,11 @@ within the cap it re-builds with the review's feedback; on a VERIFY/REVIEW
 ERROR (the check itself couldn't run) it stops for a human instead of
 iterating. If the iteration cap trips, the plan itself is suspect — send it
 back with `replan <id> <why>` and the next PLAN pass addresses the failure.
-On a REVIEW PASS the loop is done and the task parks in `in-review/` — it
-never pushes or opens a PR itself; review the branch diff yourself,
-push/open the PR, then `approve <id>` to complete it. That is the final
-human gate.
+On a REVIEW PASS the loop is done and the task parks in `in-review/` — the
+loop itself never pushes or opens a PR. Review the branch diff yourself, then
+`approve <id>` to complete it: **that ship step is what pushes the branch and
+opens (or reuses) the draft PR**, so it is the one gate with an effect visible
+outside this machine. That is the final human gate.
 
 When `worktreesDir` is configured, execution runs in a per-task `git
 worktree` instead of the shared checkout — the stage prompts carry a
