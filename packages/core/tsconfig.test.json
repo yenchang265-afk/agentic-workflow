@@ -1,0 +1,16 @@
+{
+  // tsconfig.json doubles as the build config (outDir/rootDir), so it excludes
+  // *.test.ts to keep tests out of dist/ — which also left them unchecked: the
+  // test runner is tsx, which strips types without checking them. A fixture that
+  // stopped satisfying its interface failed neither the build nor the suite.
+  // This config type-checks them and nothing else.
+  //
+  // Same file, same rationale, as packages/hub/tsconfig.test.json — that one
+  // was written after the hub hit exactly this bug, and core never got the fix.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["dist"]
+}

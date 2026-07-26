@@ -104,6 +104,24 @@ test("park moves a planned queued task to plan-review and reports the path", asy
   assert.deepEqual(metrics, [{ outcome: "done", detail: "plan parked for review" }])
 })
 
+test("park releases the claim and reports an error when the move throws", async () => {
+  // runDone has always wrapped its note→move→commit in try/catch and released
+  // the claim on failure; runPark ran the identical sequence unguarded. A
+  // duplicate destination (moveTask's `test -e` refusal) therefore escaped
+  // runTerminal AFTER the "Plan written — parked" note was already on disk
+  // asserting a park that never happened — and engineering's queued pool is
+  // `manual: true`, so the held marker meant nothing ever reclaimed the task.
+  const { ctx, log, metrics } = makeCtx({ "queued/t.md": body(true), "plan-review/t.md": body(true) }, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error", "the throw must not escape runTerminal")
+  assert.match(report.kind === "error" ? report.message : "", /park to plan-review\/ failed/)
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes(".claims/t")),
+    "the queued/ claim marker is released rather than wedged",
+  )
+  assert.equal(metrics[0]?.outcome, "error", "and the run is recorded as failed, not done")
+})
+
 test("park with no plan on disk fails and leaves the task in queued", async () => {
   const { ctx, log, metrics } = makeCtx({ "queued/t.md": body(false) }, planState())
   const report = await runTerminal(ctx, park)

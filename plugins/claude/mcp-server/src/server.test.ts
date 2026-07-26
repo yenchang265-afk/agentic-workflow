@@ -24,7 +24,7 @@ const code = (src: string) =>
 const flat = (src: string) => code(src).replace(/\n\s*/g, " ")
 
 /** The body of one registerTool call, from its name literal to the next registration. */
-const toolBody = (src: string, name: string) => src.slice(src.indexOf(`"${name}",`)).split("server.registerTool(")[0]
+const toolBody = (src: string, name: string) => src.slice(src.indexOf(`"${name}",`)).split("server.registerTool(")[0] ?? ""
 
 // Every fire payload has always carried the configured stage model, but the
 // notes that tell the orchestrator what to spawn once named only `agent` — so
@@ -40,7 +40,7 @@ test("every spawn instruction the server emits is composed by spawnNote, so none
     /const spawnNote = \([\s\S]{0,160}\$\{SPAWN_TOOL_NOTE\}\$\{SPAWN_MODEL_NOTE\}/,
     "the composer must splice both notes — that is the whole guarantee",
   )
-  const notes = [...flat(src).matchAll(/\bnote:\s*(.{0,240})/g)].map((m) => m[1]).filter((n) => /spawn/i.test(n))
+  const notes = [...flat(src).matchAll(/\bnote:\s*(.{0,240})/g)].map((m) => m[1]).filter((n): n is string => !!n && /spawn/i.test(n))
   assert.ok(notes.length >= 6, `expected every spawn note to be found; got ${notes.length}`)
   for (const note of notes) {
     assert.match(note, /spawnNote\(/, `a spawn note bypasses the composer and can omit the model:\n  ${note.trim()}`)

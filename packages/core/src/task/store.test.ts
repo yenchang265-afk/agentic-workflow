@@ -82,6 +82,7 @@ const task = (id: string, priority: number, body = ""): Task => ({
   title: id,
   priority,
   acceptance: [],
+  labels: [],
   body,
   path: `/r/docs/tasks/in-progress/${id}.md`,
 })

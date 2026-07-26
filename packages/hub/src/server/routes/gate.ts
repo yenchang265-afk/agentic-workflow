@@ -1,4 +1,4 @@
-import { approvePlan, approveTask, removeTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approvePlan, approveTask, removeTask, replanTask, shipTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { findByIdIn, STATUSES } from "@agentic-workflow/core/task/store"
 import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 import type { GateAction, GateRequest } from "../../shared/api.js"
@@ -32,18 +32,34 @@ const ACTIONS: Readonly<Record<GateAction, { from: TaskStatus; run: (ctx: GateCt
   "approve-plan": { from: "plan-review", run: (ctx, id) => approvePlan(ctx, id) },
   replan: { from: "plan-review", run: (ctx, id, body) => replanTask(ctx, id, body.reason?.trim() || undefined) },
   ship: { from: "in-review", run: (ctx, id, body) => shipTask(ctx, id, body.kind ?? "engineering") },
+  // abandon moves the task to abandoned/ — the reversible cancellation. Like
+  // remove its button lives on every non-terminal column, so `from` is nominal
+  // and `allowedFrom` carries the real set.
+  abandon: { from: "draft", run: (ctx, id, body) => abandonTask(ctx, id, body.reason?.trim() || undefined) },
   // remove hard-deletes the task; its button lives on every column, so it has
   // no single origin — `from` is nominal and every status is a valid origin
   // (see `allowedFrom`). Core refuses a live-driven or claim-held task.
-  remove: { from: "draft", run: (ctx, id) => removeTask(ctx, id) },
+  //
+  // `force: true` because the hub, unlike the CLI hosts, already put this behind
+  // a <Confirm> naming the effect — the user HAS confirmed by the time we get
+  // here, and core's dry run would just make the button silently do nothing.
+  remove: { from: "draft", run: (ctx, id) => removeTask(ctx, id, true) },
 }
 
 /** `replan` also accepts a cap-tripped in-progress task — the only forward action with two valid origins. */
 const EXTRA_FROM: Partial<Record<GateAction, readonly TaskStatus[]>> = { replan: ["in-progress"] }
 
-/** The statuses an action may run from: every folder for `remove`, else its declared origins. */
+/**
+ * The statuses an action may run from: every folder for `remove`, every
+ * non-terminal one for `abandon` (core refuses completed/abandoned anyway, but
+ * the button should not appear where it cannot work), else its declared origins.
+ */
 const allowedFrom = (action: GateAction): readonly TaskStatus[] =>
-  action === "remove" ? STATUSES : [ACTIONS[action].from, ...(EXTRA_FROM[action] ?? [])]
+  action === "remove"
+    ? STATUSES
+    : action === "abandon"
+      ? STATUSES.filter((s) => s !== "completed" && s !== "abandoned")
+      : [ACTIONS[action].from, ...(EXTRA_FROM[action] ?? [])]
 
 const isGateAction = (s: string): s is GateAction => Object.hasOwn(ACTIONS, s)
 

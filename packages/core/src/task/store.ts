@@ -1,4 +1,5 @@
 import path from "node:path"
+import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
@@ -459,72 +460,28 @@ export const resolveTaskIdAnywhere = async (
 /** Directory of atomic claim markers, alongside the task files of one status folder. */
 const claimsDir = (taskPath: string): string => path.join(path.dirname(taskPath), ".claims")
 
-/**
- * The stamp written inside a won claim marker. Staleness is judged from its
- * `claimedAt`, never from fs mtime — DrvFS/WSL mtime is unreliable, the same
- * rule `scheduler/lease.ts` applies to watch-lease liveness.
- */
-const claimStampPath = (task: FileRef): string => path.join(claimsDir(task.path), task.id, "claim.json")
+/** A task's claim marker directory. The stamp/staleness rules live in `claim-marker.ts`. */
+const claimMarker = (task: FileRef): string => path.join(claimsDir(task.path), task.id)
 
 /**
- * Atomically claim a task for execution. A plain (non-recursive) `mkdir` of
- * the marker either succeeds — claim won — or fails because another watcher
- * on this filesystem already holds it. Closes the window between listing
- * claimable tasks and appending the `> BUILD started` note.
+ * Atomically claim a task for execution. Closes the window between listing
+ * claimable tasks and appending the `> BUILD started` note. See
+ * `claim-marker.ts` for why the marker carries a stamp.
  */
-export const claimTask = async ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> => {
-  await $`mkdir -p ${claimsDir(task.path)}`.quiet().nothrow()
-  const out = await $`mkdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
-  if (out.exitCode !== 0) return false
-  // Best-effort, deliberately non-atomic: a torn or missing stamp only degrades
-  // claimOlderThan to its mtime fallback, never to a wrong verdict from garbage.
-  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${claimStampPath(task)}`.quiet().nothrow()
-  return true
-}
+export const claimTask = ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> => acquireMarker($, claimMarker(task), now)
 
-/** Release a task's claim marker, if present. Best-effort. The stamp goes
- *  first — `rmdir` (kept over `rm -rf` for blast-radius reasons) needs the
- *  marker empty; a crash in between leaves a stamp-less marker the mtime
- *  fallback still sweeps. */
-export const releaseClaim = async ($: Shell, task: FileRef): Promise<void> => {
-  await $`rm -f ${claimStampPath(task)}`.quiet().nothrow()
-  await $`rmdir ${path.join(claimsDir(task.path), task.id)}`.quiet().nothrow()
-}
-
-/**
- * A claim marker older than this, on a task with no BUILD note and no live
- * loop, is treated as orphaned — its claimer died between `claimTask` and the
- * first "BUILD started" note. Must exceed the worst-case claim→BUILD-note
- * window, including a slow `worktreeSetup` (e.g. npm ci).
- */
-export const STALE_CLAIM_MINUTES = 15
+/** Release a task's claim marker, if present. Best-effort. */
+export const releaseClaim = ($: Shell, task: FileRef): Promise<void> => releaseMarker($, claimMarker(task))
 
 /**
  * Whether a `FileRef`'s claim marker exists and is older than `minutes`.
- * Judged from the marker's `claim.json` stamp when present (fs mtime is
- * unreliable on DrvFS/WSL — see `claimTask`); markers from older versions
- * carry no stamp and fall back to `find -mmin +N`, which prints the path only
- * when strictly older (GNU and BSD). Any failure — marker absent, or a `find`
- * without `-mmin` semantics — reads as "not stale", degrading safely to
- * "marker stays held".
+ * On a task with no BUILD note and no live loop, that means orphaned — its
+ * claimer died between `claimTask` and the first "BUILD started" note.
  */
-export const claimOlderThan = async ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> => {
-  const marker = path.join(claimsDir(task.path), task.id)
-  const stamp = await $`cat ${claimStampPath(task)}`.quiet().nothrow()
-  if (stamp.exitCode === 0) {
-    try {
-      const { claimedAt } = JSON.parse(stamp.stdout.toString()) as { claimedAt?: unknown }
-      if (typeof claimedAt === "string") {
-        const at = Date.parse(claimedAt)
-        if (!Number.isNaN(at)) return now.getTime() - at > minutes * 60_000
-      }
-    } catch {
-      /* garbled stamp — fall through to the mtime check */
-    }
-  }
-  const out = await $`find ${marker} -maxdepth 0 -mmin +${String(minutes)}`.quiet().nothrow()
-  return out.exitCode === 0 && out.stdout.toString().trim().length > 0
-}
+export const claimOlderThan = ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> =>
+  markerOlderThan($, claimMarker(task), minutes, now)
+
+export { STALE_CLAIM_MINUTES }
 
 /** Ids currently holding a claim marker in a status folder's `.claims/`. `[]` when absent. */
 export const listClaimIds = async (

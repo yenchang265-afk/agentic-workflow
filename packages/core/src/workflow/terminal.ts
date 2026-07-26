@@ -151,7 +151,22 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     return { kind: "error", message: `PLAN failed for "${id}" — ${why}. It stays in queued/.`, taskId: id }
   }
   await appendNote($, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), log)
-  const newPath = await moveTask($, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
+  // moveTask THROWS on a duplicate destination or a failed `mv`. Unguarded, that
+  // exception escapes runTerminal after the park note is already on disk claiming
+  // a park that never happened, and the queued/ claim marker is never released —
+  // and engineering's queued pool is `manual: true`, so nothing auto-reclaims it.
+  // Same guard runDone uses below, for the same reason.
+  let newPath: string
+  try {
+    newPath = await moveTask($, fresh, (action.toStatus ?? "plan-review") as TaskStatus) // also releases the queued/ claim marker
+  } catch (err) {
+    const why = (err as Error).message
+    await log("warn", `loop(${id}): plan written but park move failed: ${why}`)
+    await appendNote($, fresh, auditNote(`Park failed — ${why}; still queued`, new Date(), actor), log)
+    await releaseClaim($, fresh)
+    await ctx.writeMetrics("error", why)
+    return { kind: "error", message: `Plan written for "${id}" but the park to plan-review/ failed — ${why}. It stays in queued/.`, taskId: id }
+  }
   await commitBacklog(ctx, `loop(${id}): plan written — parked for review`)
   await ctx.writeMetrics("done", "plan parked for review")
   return { kind: "park", taskId: id, path: newPath, message: action.message }

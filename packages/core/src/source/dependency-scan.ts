@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { z } from "zod"
+import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, WorkflowState } from "../workflow/state.js"
@@ -260,6 +261,14 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
       ? deps.ecosystem
       : binding.ecosystem
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
+  const depMarker = (pkg: string): string => `${claimsDir}/${depKey(pkg)}`
+  /** Win the dependency's marker, sweeping it first if a dead run left it behind. */
+  const claimDep = async (pkg: string): Promise<boolean> => {
+    if (await acquireMarker($, depMarker(pkg))) return true
+    if (!(await markerOlderThan($, depMarker(pkg), STALE_CLAIM_MINUTES))) return false
+    await releaseMarker($, depMarker(pkg))
+    return acquireMarker($, depMarker(pkg))
+  }
 
   const readText = async (rel: string): Promise<string> => {
     const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
@@ -579,9 +588,9 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
         const ledger = await loadDepLedger(candidate.pkg)
         if (ledger.versionHandled === candidate.target) continue
         if (ledger.failedAttempts.some((f) => f.target === candidate.target)) continue
-        await $`mkdir -p ${claimsDir}`.quiet().nothrow()
-        const marker = await $`mkdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
-        if (marker.exitCode !== 0) {
+        // A stale marker is swept before we give up: without it a crashed run
+        // wedged this dependency forever (see `claim-marker.ts`).
+        if (!(await claimDep(candidate.pkg))) {
           heldIds.push(depKey(candidate.pkg))
           continue
         }
@@ -604,7 +613,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
 
     async release(work) {
       const { candidate } = work.ref as { candidate: UpgradeCandidate }
-      await $`rmdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
+      await releaseMarker($, depMarker(candidate.pkg))
     },
 
     async onTerminal(work, outcome: TerminalOutcome) {
@@ -623,7 +632,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
                 updatedAt: now(),
               }
       if (updated !== ledger) await saveDepLedger(updated)
-      await $`rmdir ${`${claimsDir}/${depKey(candidate.pkg)}`}`.quiet().nothrow()
+      await releaseMarker($, depMarker(candidate.pkg))
     },
   }
 }

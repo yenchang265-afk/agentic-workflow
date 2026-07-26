@@ -164,6 +164,15 @@ local state a running loop leaves behind:
   gate has anything waiting
 - `/agentic-workflow:engineering replan [id] [reason]` — the rejection verb: a parked plan (or
   a cap-tripped task, by id) back to `queued/` for re-planning
+- `/agentic-workflow:engineering abandon <id> [reason]` — cancel a task: it moves to
+  `abandoned/`, the terminal folder for work that won't be done. The file is
+  kept, so it can be moved back; this is also how a tracking epic is closed once
+  every child has shipped
+- `/agentic-workflow:engineering remove <id> --force` — hard-delete a task: the file is
+  deleted, not moved. A bare `remove <id>` deletes nothing and reports which
+  task the id resolved to — `--force` is the confirmation. Recoverable from git
+  only if you set `ignoreBacklog: false`; the default keeps `docs/tasks/` out of
+  git entirely, so prefer `abandon` unless you want the file gone
 - `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
   `plan` runs PLAN on one queued task and parks it (the only PLAN entry);

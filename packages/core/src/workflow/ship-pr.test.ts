@@ -55,6 +55,8 @@ const baseConfig: Config = {
   maxIterations: 3,
   tasksDir: "docs/tasks",
   stageTimeoutMinutes: 60,
+  ignoreBacklog: true,
+  worktreesDir: false,
   reviewLenses: [],
   workflows: {},
 }
@@ -261,7 +263,8 @@ test("shipPr (ado) sends ado.customHeaders on every REST call, with the env var 
       assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
     }
     // The POST create call also carries Content-Type alongside the custom headers.
-    const post = seen[seen.length - 1]
+    const post = seen.at(-1)
+    assert.ok(post, "a POST create call was made")
     assert.equal(post["Content-Type"], "application/json")
   } finally {
     if (prevEnv === undefined) delete process.env.AGENTIC_WORKFLOW_ADO_HEADERS

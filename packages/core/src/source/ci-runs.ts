@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger, shortSha } from "./ci-runs-shared.js"
@@ -99,6 +100,14 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
   const kind = loaded.manifest.kind
   const now = deps.now ?? (() => new Date().toISOString())
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
+  const headMarker = (sha: string): string => `${claimsDir}/head-${shortSha(sha)}`
+  /** Win the head's marker, sweeping it first if a dead run left it behind. */
+  const claimHead = async (sha: string): Promise<boolean> => {
+    if (await acquireMarker($, headMarker(sha))) return true
+    if (!(await markerOlderThan($, headMarker(sha), STALE_CLAIM_MINUTES))) return false
+    await releaseMarker($, headMarker(sha))
+    return acquireMarker($, headMarker(sha))
+  }
   let resolvedBranch: string | null = null
 
   const branch = async (): Promise<string> => {
@@ -160,9 +169,9 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
           },
         }
       }
-      await $`mkdir -p ${claimsDir}`.quiet().nothrow()
-      const marker = await $`mkdir ${`${claimsDir}/head-${shortSha(judged.sha)}`}`.quiet().nothrow()
-      if (marker.exitCode !== 0) {
+      // A stale marker is swept before we give up: without it a crashed run
+      // wedged this head forever (see `claim-marker.ts`).
+      if (!(await claimHead(judged.sha))) {
         return {
           item: null,
           skip: { message: `${kind}: claim marker held for head-${shortSha(judged.sha)}`, actionable: true },
@@ -176,7 +185,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
       const tip = await $`git -C ${directory} rev-parse ${`refs/remotes/origin/${b}`}`.quiet().nothrow()
       if (tip.exitCode !== 0 || tip.stdout.toString().trim() !== judged.sha) {
         await log("info", `${kind}: ${b} moved past ${shortSha(judged.sha)} — re-judging on the next poll`)
-        await $`rmdir ${`${claimsDir}/head-${shortSha(judged.sha)}`}`.quiet().nothrow()
+        await releaseMarker($, headMarker(judged.sha))
         return { item: null, skip: { message: `${kind}: ${b} moved during claim — retrying next poll`, actionable: false } }
       }
       // `branch -f` would silently discard prior remedy commits when the same
@@ -188,7 +197,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
         const pin = await $`git -C ${directory} branch -f ${remedyBranch} ${judged.sha}`.quiet().nothrow()
         if (pin.exitCode !== 0) {
           await log("warn", `${kind}: could not pin ${remedyBranch} at ${shortSha(judged.sha)} — skipping`)
-          await $`rmdir ${`${claimsDir}/head-${shortSha(judged.sha)}`}`.quiet().nothrow()
+          await releaseMarker($, headMarker(judged.sha))
           return { item: null, skip: { message: `${kind}: could not pin the red head locally`, actionable: true } }
         }
       }
@@ -197,7 +206,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
 
     async release(work) {
       const { sha } = work.ref as { sha: string }
-      await $`rmdir ${`${claimsDir}/head-${shortSha(sha)}`}`.quiet().nothrow()
+      await releaseMarker($, headMarker(sha))
     },
 
     async onTerminal(work, outcome: TerminalOutcome) {
@@ -212,7 +221,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
             ? ledger
             : { ...ledger, failedAttempts: [...ledger.failedAttempts, { at: now() }], updatedAt: now() }
       if (updated !== ledger) await saveHeadLedger($, directory, tasksDir, kind, updated)
-      await $`rmdir ${`${claimsDir}/head-${shortSha(sha)}`}`.quiet().nothrow()
+      await releaseMarker($, headMarker(sha))
     },
   }
 }

@@ -1,3 +1,4 @@
+import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, WorkflowState } from "../workflow/state.js"
@@ -35,18 +36,29 @@ export const triggerSummary = (triggers: readonly PrTrigger[], snapshot: PrSnaps
         })
         .join("; ")
 
-/** Local mkdir claim markers under `<tasksDir>/runs/<kind>/.claims/pr-<n>` — atomic across watchers on this filesystem. Keyed by kind so a second PR-shaped kind can't clash. */
+/**
+ * Local mkdir claim markers under `<tasksDir>/runs/<kind>/.claims/pr-<n>` —
+ * atomic across watchers on this filesystem. Keyed by kind so a second PR-shaped
+ * kind can't clash.
+ *
+ * `claim` sweeps a stale marker before trying: without it, a SIGKILL or a throw
+ * that never reached `onTerminal` left the marker on disk forever and that PR
+ * was never sitted again — the backlog markers have had this recovery since
+ * `STALE_CLAIM_MINUTES` existed, these never did. The sweep is the same
+ * stamp-based check, so a marker whose loop is genuinely still running is left
+ * alone until it ages out.
+ */
 export const makeClaimMarkers = ($: Shell, directory: string, tasksDir: string, kind: string) => {
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
+  const marker = (pr: number): string => `${claimsDir}/pr-${pr}`
   return {
-    claim: async (pr: number): Promise<boolean> => {
-      await $`mkdir -p ${claimsDir}`.quiet().nothrow()
-      const out = await $`mkdir ${`${claimsDir}/pr-${pr}`}`.quiet().nothrow()
-      return out.exitCode === 0
+    claim: async (pr: number, now: Date = new Date()): Promise<boolean> => {
+      if (await acquireMarker($, marker(pr), now)) return true
+      if (!(await markerOlderThan($, marker(pr), STALE_CLAIM_MINUTES, now))) return false
+      await releaseMarker($, marker(pr))
+      return acquireMarker($, marker(pr), now)
     },
-    release: async (pr: number): Promise<void> => {
-      await $`rmdir ${`${claimsDir}/pr-${pr}`}`.quiet().nothrow()
-    },
+    release: (pr: number): Promise<void> => releaseMarker($, marker(pr)),
   }
 }
 

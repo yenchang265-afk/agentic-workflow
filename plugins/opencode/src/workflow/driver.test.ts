@@ -13,6 +13,7 @@ import {
   drive,
   handleApprove,
   handleCommand,
+  handleAbandon,
   handleRemove,
   handleReplan,
   manifestFor,
@@ -829,7 +830,23 @@ test("/reject with no plan awaiting is a harmless info toast", async () => {
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when nothing awaits")
 })
 
-test("/remove <id> hard-deletes the task file — rm, no mv", async () => {
+test("/remove <id> --force hard-deletes the task file — rm, no mv", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleRemove(deps, "sess", "my-task --force", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(toasts[0]?.message ?? "", /removed/)
+  assert.ok(log.some((cmd) => cmd.startsWith("rm ")), "the file is deleted")
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "and never moved")
+})
+
+test("/remove <id> without --force deletes nothing and reports what it would delete", async () => {
+  // handleRemove runs inside command.execute.before, so no model turn exists in
+  // which to ask the user — the dry run IS the confirmation on this host.
   const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
   const { client, toasts } = makeClientFS(files)
   const log: string[] = []
@@ -837,10 +854,37 @@ test("/remove <id> hard-deletes the task file — rm, no mv", async () => {
 
   await handleRemove(deps, "sess", "my-task", testConfig)
 
+  assert.match(toasts[0]?.message ?? "", /--force/)
+  assert.match(toasts[0]?.message ?? "", /Do the thing/, "names the task the id resolved to")
+  assert.ok(!log.some((cmd) => cmd.startsWith("rm ")), "nothing deleted")
+})
+
+test("/abandon <id> moves the task to abandoned/ — mv, no rm", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleAbandon(deps, "sess", "my-task superseded", testConfig)
+
   assert.equal(toasts[0]?.variant, "success")
-  assert.match(toasts[0]?.message ?? "", /removed/)
-  assert.ok(log.some((cmd) => cmd.startsWith("rm ")), "the file is deleted")
-  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "and never moved")
+  assert.match(toasts[0]?.message ?? "", /abandoned/)
+  assert.ok(log.some((cmd) => cmd.startsWith("mv ") && cmd.includes("/abandoned/")), "the file moves to abandoned/")
+  // Claim-stamp/worktree cleanup legitimately shells out to `rm -f`; what must
+  // never happen is the TASK FILE being deleted the way remove deletes it.
+  assert.ok(!log.some((cmd) => cmd.startsWith("rm ") && cmd.includes("my-task.md")), "the task file is never deleted")
+})
+
+test("/abandon with no id is a usage warning, not a move", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleAbandon(deps, "sess", "", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Usage/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "nothing moved")
 })
 
 test("/remove with no id is a usage warning, not a delete", async () => {

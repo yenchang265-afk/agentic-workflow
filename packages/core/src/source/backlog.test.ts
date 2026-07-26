@@ -278,7 +278,7 @@ test("a claim is handed out with the real-FS body, not the stale listing's", asy
 })
 
 test("taskGoal joins title and body", () => {
-  assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], body: "B", path: "/p" }), "T\n\nB")
+  assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], labels: [], body: "B", path: "/p" }), "T\n\nB")
 })
 
 test("claimSkipReason precedence: held beats empty beats started beats queued", () => {
