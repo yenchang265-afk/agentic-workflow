@@ -11,7 +11,7 @@ should link.
 |-----|---------------|
 | [workflows/](workflows/README.md) | Each kind's full picture (engineering, pr-sitter, review-sitter, dep-sitter, main-sitter) — architecture (stage pipeline, mermaid diagram, config keys), enable snippet, command surface, and 1-2 worked examples, all in one file per kind |
 | [architecture.md](architecture.md) | The framework only (core package, manifest engine, scheduler, work sources, the watch lease) and how the Claude Code variant + admin hub differ — per-kind architecture lives in `workflows/` |
-| [sitters.md](sitters.md) | What the four sitters have in common (shape, opt-in, untrusted-input handling), which are stable vs. experimental, and an index into their individual files under `workflows/` |
+| [sitters.md](sitters.md) | What the four sitters have in common (shape, opt-in, untrusted-input handling), why all four are experimental, and an index into their individual files under `workflows/` |
 | [configuration.md](configuration.md) | Every `.agentic-workflow.json` field (layers/precedence, `workflows`, `codePlatform`/`ado`, `projectManagement`, hardening, env vars) |
 | [opencode.md](opencode.md) | OpenCode-specific execution details (watch triggers, ESC/recover) and the full OpenCode command surface |
 | [qwen.md](qwen.md) | Qwen Code install, execution model, command surface, and its static per-stage models |

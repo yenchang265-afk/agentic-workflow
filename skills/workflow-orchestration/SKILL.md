@@ -219,10 +219,9 @@ order; the first source that yields a claim wins the tick. Each kind
 command's `claim`/`watch` scopes the poll to its own kind's source
 (engineering: the backlog-folder source with its atomic `.claims/` markers,
 semantics unchanged; pr-sitter: its PR query). Kinds are enabled per
-`workflows.<kind>` sections in `.agentic-workflow.json` — `pr-sitter` and
-`review-sitter` are always on and cannot be disabled, `engineering` is on
-unless disabled, and every other kind is off until you add its section with
-`"enabled": true`. Each enabled kind gets its own `/agentic-workflow:<kind>`
+`workflows.<kind>` sections in `.agentic-workflow.json` — `engineering` is on
+unless disabled, and every other kind (all four sitters, plus any local kind)
+is experimental and off until you add its section with `"enabled": true`. Each enabled kind gets its own `/agentic-workflow:<kind>`
 command.
 
 ### The pr-sitter kind
@@ -255,11 +254,11 @@ Dedup is a per-PR ledger under `<tasksDir>/runs/pr-sitter/pr-<n>.json`
 (ledgers are namespaced per kind under `runs/<kind>/`): head-SHA and
 comment-timestamp watermarks plus an own-login filter, so the sitter never
 reacts to its own pushes or replies; a capped/failed attempt parks the PR
-until a human pushes a new head. It needs no configuration to run; narrow
-which PRs it watches with:
+until a human pushes a new head. It is experimental, so it runs only once
+enabled; narrow which PRs it watches with the same section:
 
 ```jsonc
-{ "workflows": { "pr-sitter": { "query": "is:open author:@me" } } }
+{ "workflows": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
 ```
 
 ### The review-sitter, dep-sitter, and main-sitter kinds
@@ -385,8 +384,8 @@ field has a default:
   "worktreesDir": ".workflow-worktrees", // DEFAULT: per-task git worktree isolation (set to `false` to opt into shared-tree branch switching)
   "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out otherwise)
   "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review, worst verdict wins
-  "workflows": {                    // OPTIONAL: per-kind sections. pr-sitter + review-sitter are always on (no off switch); engineering on unless disabled; other kinds off until listed
-    "pr-sitter": { "query": "is:open author:@me" }
+  "workflows": {                    // OPTIONAL: per-kind sections. engineering on unless disabled; every sitter (and any local kind) is experimental, off until listed with "enabled": true
+    "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```

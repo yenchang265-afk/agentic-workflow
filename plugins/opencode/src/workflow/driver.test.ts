@@ -980,11 +980,12 @@ test("kinds lists known kinds with their enabled state", async () => {
 
   assert.equal(toasts[0]?.variant, "info")
   assert.match(toasts[0]?.message ?? "", /engineering \(enabled\)/)
-  assert.match(toasts[0]?.message ?? "", /dep-sitter \(disabled\)/)
-  // The released sitters read as "always on", not "enabled" — otherwise the
-  // reader goes looking for a toggle that does not exist.
-  assert.match(toasts[0]?.message ?? "", /pr-sitter \(always on\)/)
-  assert.match(toasts[0]?.message ?? "", /review-sitter \(always on\)/)
+  // Every sitter carries the experimental caveat next to its on/off state, so
+  // the reader sees it where the kind is named rather than only in the docs.
+  assert.match(toasts[0]?.message ?? "", /dep-sitter \(disabled, experimental\)/)
+  assert.match(toasts[0]?.message ?? "", /pr-sitter \(disabled, experimental\)/)
+  assert.match(toasts[0]?.message ?? "", /review-sitter \(disabled, experimental\)/)
+  assert.match(toasts[0]?.message ?? "", /main-sitter \(disabled, experimental\)/)
 })
 
 test("report-and-stop verbs return their outcome for the command hook to surface", async () => {

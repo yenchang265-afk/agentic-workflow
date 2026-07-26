@@ -1,6 +1,5 @@
 import fsp from "node:fs/promises"
 import path from "node:path"
-import { ALWAYS_ENABLED_KINDS } from "@agentic-workflow/core/config"
 import { composeStagePrompt, promptContext } from "@agentic-workflow/core/workflow/engine"
 import type { WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { listWorkflowKinds, loadManifest } from "@agentic-workflow/core/manifest/load"
@@ -200,10 +199,10 @@ const buildChecklist = async (deps: HubDeps, manifest: WorkflowManifest): Promis
   // second raw readFile + JSON.parse that could drift from it.
   const cfg = (await readRawLayer(deps, "repo")).raw
   const enabled = valueAt(cfg, ["workflows", manifest.kind, "enabled"]) === true
-  // engineering is on unless disabled and the released sitters cannot be
-  // disabled at all — for those, an "enable it" step would sit permanently
-  // unchecked while the kind is already running.
-  if (manifest.kind !== "engineering" && !ALWAYS_ENABLED_KINDS.includes(manifest.kind)) {
+  // engineering is the one kind on without configuration — for it an "enable
+  // it" step would sit permanently unchecked while the kind is already
+  // running. Every other kind, sitters included, is opt-in.
+  if (manifest.kind !== "engineering") {
     // No longer "go hand-edit the file" — the Config tab writes this.
     items.push({ done: enabled, label: `enable it in the Config tab (workflows.${manifest.kind}.enabled)` })
   }

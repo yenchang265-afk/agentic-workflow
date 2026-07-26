@@ -10,9 +10,9 @@ PLAN / BUILD → VERIFY → REVIEW 工作流程，行為和它還是寫死的程
 修復——`pr-sitter`（你開啟中的 PR）、`review-sitter`（等待你審查的
 PR）、`dep-sitter`（有漏洞或已過期的相依套件），以及 `main-sitter`
 （預設分支的 CI）。每個 sitter 都把終端呼叫——合併、核准、關閉——留給
-人類。**`pr-sitter` 和 `review-sitter` 已穩定**，與預設開啟的
-`engineering` 並列；**`dep-sitter` 和 `main-sitter` 仍是實驗性的**——
-它們的清單、設定項和預設值都可能還會變動。
+人類。**四個 sitter 全都是實驗性的**——它們的清單、設定項和預設值
+都可能還會變動，因此每一個都要透過 `workflows.<kind>.enabled: true`
+可選啟用。`engineering` 是唯一預設開啟的類型。
 
 ## 框架——一個引擎，多種類型
 
@@ -133,8 +133,8 @@ tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種
 
 ## sitter 類型
 
-四個 sitter——已穩定且永遠開啟的 `pr-sitter` 和 `review-sitter`，加上
-仍屬實驗性的 `dep-sitter` 和 `main-sitter`——監看一個代管的目標面
+四個 sitter——`pr-sitter`、`review-sitter`、`dep-sitter` 和
+`main-sitter`，全都是實驗性的、全都可選啟用——監看一個代管的目標面
 （開啟中的 PR、審查請求、相依套件
 的安全公告、CI），並在 git worktree 隔離之下驅動修復，永遠把終端
 呼叫——合併、核准、關閉——留給人類。每一個都綁定自己的工作來源，並

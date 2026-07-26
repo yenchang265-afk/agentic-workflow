@@ -2,6 +2,29 @@ English | [繁體中文](migration.zh-TW.md)
 
 # Migrating between layouts
 
+## To opt-in sitters — every sitter kind is now experimental
+
+- **`pr-sitter` and `review-sitter` no longer run by default.** All four
+  sitters (`pr-sitter`, `review-sitter`, `dep-sitter`, `main-sitter`) are
+  experimental, so each one now needs `"enabled": true` under its
+  `workflows.<kind>` section, exactly like `dep-sitter` and `main-sitter`
+  already did. `engineering` is unchanged — still on unless disabled.
+- **This is a silent break**: a config that only carried knobs (e.g.
+  `"pr-sitter": { "query": "is:open author:@me" }`) still parses, but the kind
+  is now off and simply stops claiming. Add `"enabled": true` to the same
+  section to restore the old behavior:
+
+  ```json
+  { "workflows": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
+  ```
+
+- **`"enabled": false` on a sitter is no longer a config error.** It used to be
+  rejected at load ("always enabled and cannot be disabled"); it now parses and
+  keeps the kind off — which is also the default. If you removed the key to get
+  past that error, nothing needs undoing.
+- **`codePlatform: "ado"` is experimental too** — no config change, but treat
+  the `ado` section's keys as still-moving.
+
 ## To `workflows` — the internal rename from `loop` to `workflow`
 
 - **The config key is now `workflows`, not `loops`.** Rename the top-level

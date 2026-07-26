@@ -11,10 +11,10 @@ REVIEW workflow, behavior-identical to when it was hardcoded), and four
 **sitters** watch a hosted surface and drive a fix — `pr-sitter` (your open
 PRs), `review-sitter` (PRs awaiting your review), `dep-sitter` (vulnerable or
 outdated dependencies), and `main-sitter` (the default branch's CI). Each
-sitter keeps the terminal call — merge, approve, close — human. **`pr-sitter`
-and `review-sitter` are stable**, alongside `engineering`, the default-on kind;
-**`dep-sitter` and `main-sitter` are still experimental** — their manifests,
-config keys, and defaults may still change.
+sitter keeps the terminal call — merge, approve, close — human. **All four
+sitters are experimental** — their manifests, config keys, and defaults may
+still change, so each is opt-in via `workflows.<kind>.enabled: true`.
+`engineering` is the one default-on kind.
 
 ## The framework — one engine, many kinds
 
@@ -93,9 +93,8 @@ flowchart TB
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
   `"ado"`; they reach ADO through its REST API with a PAT.
   `pollOnce(sources)` walks the given sources in claim-priority order
-  (`engineering` unless disabled, then the always-on `pr-sitter` and
-  `review-sitter`, then opted-in kinds in config order —
-  `enabledWorkflowKinds` in core config); the first successful claim wins, and
+  (`engineering` unless disabled, then the opted-in kinds — every sitter — in
+  config order; `enabledWorkflowKinds` in core config); the first successful claim wins, and
   each kind's command scopes the poll to its own kind's source. Both
   hosts' triggers delegate to it: OpenCode's `session.idle` + the per-kind
   `watch` timer, and the Claude Code MCP server's `workflow_claim`. A source may
@@ -139,8 +138,8 @@ exists.
 
 ## The sitter kinds
 
-Four sitters — the stable, default-on `pr-sitter` and `review-sitter`, plus
-the opt-in, still-experimental `dep-sitter` and `main-sitter` — watch a hosted surface
+Four sitters — `pr-sitter`, `review-sitter`, `dep-sitter`, and `main-sitter`,
+all experimental and all opt-in — watch a hosted surface
 (open PRs, review requests, dependency advisories, CI) and drive a fix behind
 git worktree isolation, always leaving the terminal call — merge, approve,
 close — to a human. Each
