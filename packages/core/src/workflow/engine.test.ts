@@ -4,10 +4,10 @@ import { test } from "node:test"
 import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
 import { effectiveAllowlist, stageDef } from "../manifest/schema.js"
-import { advance, composePrompt, composeStagePrompt, firstStep, promptContext } from "./engine.js"
+import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext } from "./engine.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -270,10 +270,19 @@ test("the scope fence reaches every kind's work stages, not just engineering", (
 
 // --- golden parity: advance ≡ the frozen advanceOnIdle across the transition table ---
 
+/** The additive iteration-ledger section — the frozen oracle predates it. */
+const ATTEMPTS_SECTION = /\n\nPrevious attempts on this task[\s\S]*?(?=\n\n|$)/
+
 const strip = <T extends object>(o: T): Record<string, unknown> => {
   // Drop the fields the frozen legacy oracle could not express (additive manifest
-  // semantics): `toStatus` and the `retryable` stop flag (asserted separately below).
-  const { toStatus: _dropped, retryable: _retryable, ...rest } = o as Record<string, unknown>
+  // semantics): `toStatus`, the `retryable` stop flag, and `promptElided`
+  // (asserted separately below). The rendered attempts ledger is additive for the
+  // same reason — everything ELSE in the prompt must still match byte-for-byte,
+  // and the ledger's own rendering is pinned by the attempts tests.
+  const { toStatus: _d, retryable: _r, promptElided: _e, ...rest } = o as Record<string, unknown>
+  if (typeof rest["arguments"] === "string") {
+    rest["arguments"] = (rest["arguments"] as string).replace(ATTEMPTS_SECTION, "")
+  }
   return rest
 }
 
@@ -299,7 +308,11 @@ test("advance reproduces the frozen advanceOnIdle exactly (states and actions) a
   for (const c of CASES) {
     const legacy = oracleAdvance(c.state, config, c.output, c.verdict ?? null)
     const engine = advance(eng, c.state, config, c.output, c.verdict ?? null)
-    assert.deepEqual(engine.state, legacy.state, `${c.label}: state`)
+    // `attempts` is additive state the frozen oracle predates (the iteration
+    // ledger). Every other field must still match it exactly, and the ledger's own
+    // contents are pinned by the attempts tests below.
+    const { attempts: _ledger, ...state } = engine.state
+    assert.deepEqual(state, legacy.state, `${c.label}: state`)
     assert.deepEqual(strip(engine.action), strip(legacy.action), `${c.label}: action`)
   }
 })
@@ -707,4 +720,169 @@ test("main-sitter renders gh guidance by default and ADO REST guidance when stam
   assert.match(adoPublish, /"isDraft":true/)
   assert.match(adoPublish, /NEVER push main/)
   assert.doesNotMatch(adoPublish, /gh pr create/)
+})
+
+// --- plan 09: context budgets -------------------------------------------------
+
+const budgetState = (artifacts: Record<string, string>, stage = "build"): WorkflowState => ({
+  ...mk("add foo"),
+  stage,
+  artifacts,
+})
+
+const budgeted = (stage: string, budgets: Record<string, number>): Config => ({
+  ...config,
+  workflows: { engineering: { stageContext: { [stage]: budgets } } },
+})
+
+test("promptContext clamps an artifact to the resolved stage budget, head and tail", () => {
+  const plan = `HEAD MARKER\n${"p".repeat(5_000)}\nTAIL MARKER`
+  const ctx = promptContext(budgetState({ plan }), { plan: 400 })
+  const out = (ctx.artifacts as Record<string, string>).plan as string
+  assert.ok(out.startsWith("HEAD MARKER"))
+  assert.ok(out.endsWith("TAIL MARKER"))
+  assert.ok(out.length <= 400)
+  // An unbudgeted artifact in the same context is untouched.
+  const both = promptContext(budgetState({ plan, build: "b".repeat(5_000) }), { plan: 400 })
+  assert.equal(((both.artifacts as Record<string, string>).build as string).length, 5_000)
+})
+
+test("composePrompt is byte-identical for a budget-less state — the unset-knob pin", () => {
+  // The whole backward-compatibility promise: config threaded but no stageContext set.
+  for (const [label, state] of Object.entries(PROMPT_STATES)) {
+    for (const stage of ["plan", "build", "verify", "review"]) {
+      assert.equal(
+        composePrompt(eng, state, stage, config),
+        composePrompt(eng, state, stage),
+        `${label} → ${stage}: threading config changed the prompt`,
+      )
+    }
+  }
+})
+
+test("the structured verdict block survives intact when the prose budget clamps to zero", () => {
+  const record = { verdict: "FAIL" as Verdict, reason: "two tests are red", criteria: [{ criterion: "tests pass", pass: false }] }
+  const { state } = advance(eng, { ...mk("add foo"), stage: "verify", artifacts: { plan: "P" } }, config, "x".repeat(20_000), "FAIL", record)
+  const block = verdictFeedbackBlock(record)
+  assert.ok(state.artifacts.verify?.startsWith(block), "the block is not at the head of the artifact")
+  assert.equal(state.feedback?.verify, block)
+  const ctx = promptContext(state, { verify: 1 })
+  const rendered = (ctx.artifacts as Record<string, string>).verify as string
+  assert.ok(rendered.startsWith(block), "the block was clamped away")
+  assert.match(rendered, /two tests are red/)
+  assert.match(rendered, /elided by the stage context budget/)
+})
+
+test("advance fuses the verdict block into the artifact byte-identically to the old host-side threading", () => {
+  const record = { verdict: "FAIL" as Verdict, reason: "red", axes: [{ axis: "correctness", verdict: "FAIL" as Verdict }] }
+  const base = { ...mk("add foo"), stage: "verify" as string, artifacts: { plan: "P" } }
+  const block = verdictFeedbackBlock(record)
+  // What the hosts used to build themselves, before `advance` owned the fusion.
+  const legacy = advance(eng, base, config, `${block}\n\nPROSE`, "FAIL")
+  const now = advance(eng, base, config, "PROSE", "FAIL", record)
+  assert.equal(now.state.artifacts.verify, legacy.state.artifacts.verify)
+  // A verdict with nothing to report adds nothing.
+  assert.equal(advance(eng, base, config, "PROSE", "FAIL", { verdict: "FAIL" }).state.artifacts.verify, "PROSE")
+  assert.equal(advance(eng, base, config, "PROSE", "FAIL").state.feedback, undefined)
+})
+
+test("withoutArtifacts drops the matching feedback seam", () => {
+  // engineering's review-onFail drops the stale verify artifact; a dangling seam
+  // would otherwise accrete into every snapshot from then on.
+  const record = { verdict: "FAIL" as Verdict, reason: "red" }
+  const withSeam = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "PROSE", "FAIL", record).state
+  assert.ok(withSeam.feedback?.verify)
+  const next = advance(eng, { ...withSeam, stage: "review" }, config, "findings", "FAIL", { verdict: "FAIL" }).state
+  assert.equal(next.artifacts.verify, undefined, "the artifact was not dropped")
+  assert.equal(next.feedback?.verify, undefined, "the seam outlived its artifact")
+})
+
+test("an artifact whose seam no longer matches is clamped whole — fails safe", () => {
+  const state = { ...budgetState({ verify: "REWRITTEN BY SOMETHING ELSE".repeat(200) }), feedback: { verify: "STALE BLOCK" } }
+  const out = (promptContext(state, { verify: 300 }).artifacts as Record<string, string>).verify as string
+  assert.ok(out.length <= 300)
+  assert.ok(!out.startsWith("STALE BLOCK"))
+})
+
+test("a verdict block over EXEMPT_MAX is itself clamped — the exemption cannot swallow the budget", () => {
+  const huge = { verdict: "FAIL" as Verdict, reason: "r".repeat(EXEMPT_MAX * 2) }
+  const { state } = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "PROSE", "FAIL", huge)
+  const out = (promptContext(state, { verify: 500 }).artifacts as Record<string, string>).verify as string
+  assert.ok(out.length <= EXEMPT_MAX + 500, `exempt prefix ran to ${out.length}`)
+})
+
+test("a configured stageContext reaches the composed prompt through advance's fire action", () => {
+  // Mitigation for the trailing-optional `config`: prove the real fire path honors it.
+  const state = { ...mk("g"), stage: "verify" as string, artifacts: { plan: "P".repeat(20_000) } }
+  const { action } = advance(eng, state, budgeted("build", { plan: 600 }), "prose", "FAIL")
+  assert.equal(action.kind, "fire")
+  assert.match((action as Extract<Action, { kind: "fire" }>).arguments, /elided by the stage context budget/)
+})
+
+test("firstStep honors a configured stageContext", () => {
+  const state = resumeAtBuild("add foo", task, "P".repeat(20_000))
+  const { action } = firstStep(eng, state, budgeted("build", { plan: 600 }))
+  assert.match((action as Extract<Action, { kind: "fire" }>).arguments, /elided by the stage context budget/)
+  // …and is byte-identical without one.
+  assert.equal(
+    (firstStep(eng, state, config).action as Extract<Action, { kind: "fire" }>).arguments,
+    (firstStep(eng, state).action as Extract<Action, { kind: "fire" }>).arguments,
+  )
+})
+
+// --- plan 09: the attempts ledger ---------------------------------------------
+
+const failRecord = (reason: string) => ({ verdict: "FAIL" as Verdict, reason })
+
+test("advance records one attempts entry per COUNTED iteration, with the stage, effective verdict, and one-line reason", () => {
+  const state = { ...mk("add foo"), stage: "verify" as string, artifacts: { plan: "P" } }
+  const { state: next } = advance(eng, state, config, "prose", "FAIL", failRecord("two tests are red"))
+  assert.deepEqual(next.attempts, [{ stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" }])
+  assert.equal(next.iteration, 1, "the entry is recorded on the counted re-fire")
+  // A non-counted transition (verify PASS → review) records nothing.
+  const passed = advance(eng, state, config, "prose", "PASS", { verdict: "PASS" }).state
+  assert.equal(passed.attempts, undefined)
+})
+
+test("the attempts ledger keeps only the last 5 entries", () => {
+  let state: WorkflowState = {
+    ...mk("g"),
+    stage: "verify",
+    artifacts: { plan: "P" },
+    attempts: Array.from({ length: 5 }, (_, i) => ({ stage: "verify", iteration: i, verdict: "FAIL" as Verdict, reason: `r${i}` })),
+  }
+  state = advance(eng, state, { ...config, maxIterations: 99 }, "prose", "FAIL", failRecord("newest")).state
+  assert.equal(state.attempts?.length, 5)
+  assert.equal(state.attempts?.[4]?.reason, "newest")
+  assert.equal(state.attempts?.[0]?.reason, "r1", "the oldest entry was not dropped")
+})
+
+test("a multi-line or long verdict reason is flattened to one bounded line — the ledger cannot itself blow the budget", () => {
+  const messy = `first line of the reason\nsecond line\n${"x".repeat(500)}`
+  const { state } = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "prose", "FAIL", failRecord(messy))
+  const reason = state.attempts?.[0]?.reason ?? ""
+  assert.ok(!reason.includes("\n"), "the reason kept a newline")
+  assert.ok(reason.length <= 200, `reason is ${reason.length} chars`)
+  assert.equal(reason, "first line of the reason")
+})
+
+test("promptContext omits attempts on iteration 0 — a first-iteration BUILD prompt is unchanged", () => {
+  const first = resumeAtBuild("add foo", task, "PLAN BODY")
+  assert.equal(promptContext(first).attempts, undefined)
+  assert.equal(composePrompt(eng, first, "build"), composePrompt(eng, { ...first, attempts: [] }, "build"))
+})
+
+test("the attempts section renders into the BUILD prompt with one line per attempt", () => {
+  const state: WorkflowState = {
+    ...resumeAtBuild("add foo", task, "PLAN BODY"),
+    iteration: 2,
+    attempts: [
+      { stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" },
+      { stage: "review", iteration: 1, verdict: "FAIL", reason: "missing input validation" },
+    ],
+  }
+  const prompt = composePrompt(eng, state, "build")
+  assert.match(prompt, /do not repeat a fix that already failed/i)
+  assert.match(prompt, /iteration 1.*verify.*FAIL.*two tests are red/)
+  assert.match(prompt, /iteration 2.*review.*FAIL.*missing input validation/)
 })

@@ -101,7 +101,19 @@ flowchart TB
 
 Dotted edges are failure paths. VERIFY/REVIEW FAIL both re-enter BUILD and
 share one iteration budget (`maxIterations`, default 3); an ERROR verdict
-stops the loop for a human without burning an iteration. PLAN runs only on
+stops the loop for a human without burning an iteration.
+
+A re-build always receives the **structured** failure first — the verdict
+reason, the failed acceptance criteria, and the blocking axis findings with
+`file:line` — followed by the failing stage's prose. Under a configured
+`stageContext` budget (see [configuration.md](../configuration.md)) the prose
+may arrive as a bounded excerpt with the elided middle marked, but the
+structured block is never trimmed and the run log always keeps the full text.
+Each counted iteration also appends one line to a bounded **attempts ledger**
+(stage, verdict, one-line reason) that the next BUILD prompt carries, so a
+re-build can see what the previous attempts already tried instead of
+rediscovering — and a capped run says what those iterations did, not just that
+there were three of them. PLAN runs only on
 demand (`plan <id>` — `claim`/`watch` never auto-plan a `queued/` task) and
 never blocks: its only exit is the park into `plan-review/` for your gate. A
 `plan <id>` run that crashes leaves a stale claim marker in `queued/.claims/`;

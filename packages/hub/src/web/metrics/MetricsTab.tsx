@@ -4,7 +4,7 @@ import { repoPath, useRepo } from "../repo.js"
 import { Chip } from "../ui/Chip.js"
 import { useJson } from "../useJson.js"
 import { pct } from "./format.js"
-import { BurnHistogram, CacheTable, DurationTable, VerdictTable } from "./panels.js"
+import { BurnHistogram, CacheTable, DurationTable, PromptSizeTable, VerdictTable } from "./panels.js"
 
 /**
  * Cross-run loop health. The monitor answers "what is this run doing"; this
@@ -76,6 +76,9 @@ export const MetricsTab = () => {
       <h2 className="section-title">Stage duration</h2>
       <DurationTable durations={data.durations} />
 
+      <h2 className="section-title">Prompt size</h2>
+      <PromptSizeTable prompt={data.prompt} />
+
       {/*
         Coverage stated plainly rather than left implicit in the numbers above.
         A cache ratio over 12 of 87 runs is a real measurement of a slice, and
@@ -83,6 +86,7 @@ export const MetricsTab = () => {
       */}
       <div className="muted token-totals">
         cache ratio over {cache.runsCovered} of {data.runsTotal} run(s) — only opencode-driven runs observe tokens
+        {` · prompt size over ${data.prompt.runsCovered} of ${data.runsTotal} run(s) — both hosts report it`}
         {firstPass.passesWithoutChecks > 0 &&
           ` · ${firstPass.passesWithoutChecks} pass(es) recorded no verdict and are excluded from first-pass yield`}
         {data.skippedRuns.length > 0 && ` · ${data.skippedRuns.length} run log(s) unreadable: ${data.skippedRuns.join(", ")}`}

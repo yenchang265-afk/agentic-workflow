@@ -26,6 +26,7 @@
  */
 
 import type { TrackerSystem } from "../task/schema.js"
+import type { Verdict } from "./verdict.js"
 
 /** A stage name. Workflow kinds define their own stage sets in their manifests;
  *  the engineering loop's are `plan | build | verify | review`. */
@@ -55,6 +56,20 @@ export interface GitRef {
   readonly worktree?: string
 }
 
+/**
+ * One counted iteration's outcome, kept so a re-build can see what earlier
+ * attempts already tried. Short by construction — the full text of every pass is
+ * in the run log.
+ */
+export interface AttemptRecord {
+  readonly stage: Stage
+  /** 0-based iteration the attempt ran in (rendered 1-based). */
+  readonly iteration: number
+  readonly verdict: Verdict
+  /** The verdict's one-line reason, flattened and truncated by `advance`. */
+  readonly reason?: string
+}
+
 export interface WorkflowState {
   /** The workflow kind driving this state (a manifest's `kind`); absent ⇒ `engineering`. */
   readonly kind?: string
@@ -67,6 +82,28 @@ export interface WorkflowState {
   /** Captured output text per completed stage, used to thread context forward.
    *  Also carries the approved plan under the `plan` key. */
   readonly artifacts: Readonly<Record<string, string>>
+  /**
+   * Per-stage structured verdict block (`verdictFeedbackBlock`) that `advance`
+   * fused onto the head of that stage's artifact — the seam between the bounded
+   * machine-readable channel and the unbounded prose.
+   *
+   * Recorded so a stage context budget can clamp the prose while leaving the
+   * block, which carries the failed criteria and `file:line` findings, intact. A
+   * missing entry (an older snapshot, a host that stopped prepending) only means
+   * the whole artifact is subject to the budget.
+   */
+  readonly feedback?: Readonly<Record<string, string>>
+  /**
+   * Bounded ledger of what earlier counted iterations tried and how they failed.
+   *
+   * Without it a re-build sees the plan and the LATEST failure but nothing about
+   * iteration N−1, so a weak model can oscillate between two wrong fixes until
+   * the cap trips — and a capped run reports only that N iterations failed, not
+   * that all N tried the same thing. This is the one thing plan 09 ADDS to the
+   * prompt: a handful of lines is a far better use of the window than the
+   * transcript the budgets take out.
+   */
+  readonly attempts?: readonly AttemptRecord[]
   /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /**
@@ -101,7 +138,13 @@ export interface WorkflowState {
 
 /** What the driver should do next. All state changes are returned, not applied. */
 export type Action =
-  | { readonly kind: "fire"; readonly stage: Stage; readonly arguments: string }
+  | {
+      readonly kind: "fire"
+      readonly stage: Stage
+      readonly arguments: string
+      /** Characters the stage's context budget elided from `arguments`; absent ⇒ none. */
+      readonly promptElided?: number
+    }
   | { readonly kind: "done"; readonly message: string; readonly toStatus?: string }
   /** A gate stage finished: the driver validates its output, moves the item to `toStatus`, and the loop exits. */
   | { readonly kind: "park"; readonly message: string; readonly toStatus?: string }
@@ -204,6 +247,8 @@ export interface WorkflowKindConfig {
   readonly trigger?: WorkflowTrigger
   /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */
   readonly stageModels?: Readonly<Record<string, string>>
+  /** Stage name → per-artifact character ceilings for that stage's composed prompt; replaces the manifest stage's `context`. */
+  readonly stageContext?: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

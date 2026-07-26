@@ -8,7 +8,7 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
-import { advance, composePrompt, firstStep } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, composePromptWithStats, firstStep } from "@agentic-workflow/core/workflow/engine"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
@@ -22,14 +22,13 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
+import { bareModel, enabledWorkflowKinds, modelFor, platformFor, unknownStageContextKeys, unknownStageModelKeys, unreviewedAxes } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
   axisVerdict,
   effectiveVerdict,
   parseVerdict,
   stageDriftNote,
-  verdictFeedbackBlock,
   type AxisResult,
   type CriterionResult,
   type Verdict,
@@ -140,6 +139,20 @@ let driftNoted = false // whether this stage attempt already audited an out-of-s
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
+/**
+ * Size of the prompt this server last handed out for a REAL fire, and how much a
+ * stage context budget elided from it. This host cannot see the prompt at the
+ * point it records a metrics sample (it was returned to the orchestrator turns
+ * earlier), so the value is captured at the fire boundary instead.
+ *
+ * Deliberately NOT written by `workflow_compose`: that is an agent-callable,
+ * idempotent read tool that can fire arbitrarily often and can name a stage that
+ * is not the active one, so letting it write would make `promptChars` mean "the
+ * last thing anyone asked to look at". Reset wherever a stage is fired without
+ * this server composing, so a stale value is never misattributed.
+ */
+let lastFirePromptChars: number | undefined
+let lastFirePromptElided: number | undefined
 let stageDeadline: number | null = null // wall-clock cap for the stage in flight
 let config: Config = DEFAULT_CONFIG
 
@@ -299,6 +312,16 @@ const stageModelWarnings = (): string[] =>
             `${unknown.length > 1 ? "those overrides are" : "that override is"} ignored and the stage runs the host default model. Valid stages: ${stageNames.join(", ")}.`,
         ]
       : []
+    // Same silent-default trap for a stageContext key: a typo'd stage — or a
+    // typo'd artifact inside a valid stage — leaves that prompt unbounded, which
+    // reads as "the budget did nothing".
+    const unbudgeted = unknownStageContextKeys(config, kind, stageNames)
+    if (unbudgeted.length) {
+      warnings.push(
+        `workflows.${kind}.stageContext names ${unbudgeted.map((k) => `"${k}"`).join(", ")}, which ${unbudgeted.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
+          `${unbudgeted.length > 1 ? "those budgets are" : "that budget is"} ignored and the prompt stays unbounded. Valid stages: ${stageNames.join(", ")}.`,
+      )
+    }
     // reviewLenses suppresses per-pass axis-coverage enforcement, so turning it
     // on silently downgrades what a review guarantees — name the axes no lens
     // covers rather than let the downgrade pass unremarked.
@@ -560,6 +583,32 @@ const claimWarnings = async (): Promise<string[]> => {
   return warnings
 }
 
+/**
+ * Compose a stage prompt for an actual fire, recording its size for the pass's
+ * metrics sample. `suffix` is host prose appended after composition (the
+ * verdict-retry nag), counted because it is part of what the model receives.
+ */
+const firePrompt = (loaded: LoadedManifest, state: WorkflowState, stage: string, suffix = ""): string => {
+  const { prompt, elided } = composePromptWithStats(loaded, state, stage, config)
+  const fired = `${prompt}${suffix}`
+  lastFirePromptChars = fired.length
+  lastFirePromptElided = elided
+  return fired
+}
+
+/** Record the size of a prompt handed out via a fire `Action` (the snapshot-resume path). */
+const recordFiredAction = (action: Action): void => {
+  if (action.kind !== "fire") return
+  lastFirePromptChars = action.arguments.length
+  lastFirePromptElided = action.promptElided
+}
+
+/** The recorded prompt size for the pass that just finished, if this server composed it. */
+const promptSizeFields = (): { promptChars?: number; promptElided?: number } => ({
+  ...(lastFirePromptChars !== undefined ? { promptChars: lastFirePromptChars } : {}),
+  ...(lastFirePromptElided ? { promptElided: lastFirePromptElided } : {}),
+})
+
 /** The fire payload workflow_start/workflow_claim return for a fresh claim. */
 const firePayload = (state: WorkflowState, id: string) => {
   const manifest = manifestFor(state.kind ?? "engineering")
@@ -574,7 +623,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     agent: agentRef(def.agent),
     ...(model ? { model } : {}),
     isolation: state.git ?? null,
-    prompt: composePrompt(manifest, state, state.stage),
+    prompt: firePrompt(manifest, state, state.stage),
     // Every fired stage carries the spawn instruction, not just PLAN. A non-plan
     // entry (BUILD via workflow_start/workflow_claim; every sitter's entry stage)
     // used to arrive with `model` in the payload and nothing telling the
@@ -727,7 +776,7 @@ server.registerTool(
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
     try {
-      return ok({ prompt: composePrompt(activeManifest(), active, stage) })
+      return ok({ prompt: composePrompt(activeManifest(), active, stage, config) })
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -840,6 +889,10 @@ server.registerTool(
     }
     const outOfOrder = stageOrderError(active.stage, stage)
     if (outOfOrder) return fail(outOfOrder)
+    // The orchestrator is about to run a stage this server did not compose for —
+    // drop the recorded size rather than attribute an older prompt to this pass.
+    lastFirePromptChars = undefined
+    lastFirePromptElided = undefined
     if (stageDef(activeManifest().manifest, stage).isolation !== "none") {
       // A no-isolation stage (engineering's PLAN) runs in the main tree — no branch, no worktree to reconcile.
       try {
@@ -903,7 +956,13 @@ server.registerTool(
         kind: "stop",
         message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agentic-workflow:engineering recover the task.`,
       }
-      samples.push({ stage, iteration: active.iteration, ms: Date.now() - lastFireAt, startedAt: new Date(lastFireAt).toISOString() })
+      samples.push({
+        stage,
+        iteration: active.iteration,
+        ms: Date.now() - lastFireAt,
+        startedAt: new Date(lastFireAt).toISOString(),
+        ...promptSizeFields(),
+      })
       await runTerminal(action)
       return ok({ action })
     }
@@ -914,6 +973,7 @@ server.registerTool(
       iteration: active.iteration,
       ms: Date.now() - lastFireAt,
       startedAt: new Date(lastFireAt).toISOString(),
+      ...promptSizeFields(),
       ...(stageDef(activeManifest().manifest, stage).kind === "check"
         ? { verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none" }
         : {}),
@@ -949,14 +1009,17 @@ server.registerTool(
           action: { kind: "fire", stage },
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
           ...(retryModel ? { model: retryModel } : {}),
-          prompt:
-            composePrompt(activeManifest(), active, stage) +
+          prompt: firePrompt(
+            activeManifest(),
+            active,
+            stage,
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
                 "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
                 "COMPLETE axes array; partial submissions are not accumulated."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
+          ),
           note: spawnNote(
             "check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again",
             CHECK_VERDICT_TAIL,
@@ -971,10 +1034,10 @@ server.registerTool(
           (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
       }
     }
-    // thread the structured feedback (reason, failed criteria, failing axes)
-    // ahead of the prose for the next iteration
-    const block = verdictFeedbackBlock(pending)
-    const threaded = block ? `${block}\n\n${stageOutput}` : stageOutput
+    // `advance` threads the structured feedback (reason, failed criteria, failing
+    // axes) ahead of the prose for the next iteration and records the seam, so a
+    // stage context budget can clamp the prose without touching the block. The
+    // fused artifact is byte-identical to what this site used to build by hand.
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
@@ -994,7 +1057,7 @@ server.registerTool(
     // The derived verdict, not the declared one — an agent must not be able to
     // report PASS while flagging a Critical finding on an axis.
     const verdict = stageDef(activeManifest().manifest, stage).kind === "check" ? (pending ? effectiveVerdict(pending) : null) : null
-    const { state, action } = advance(activeManifest(), active, config, threaded, verdict)
+    const { state, action } = advance(activeManifest(), active, config, stageOutput, verdict, pending)
     active = state
     pending = null
     verdictRetried = false // the transition happened — the next check stage gets its own retry budget
@@ -1008,7 +1071,7 @@ server.registerTool(
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
-        prompt: composePrompt(activeManifest(), active, action.stage),
+        prompt: firePrompt(activeManifest(), active, action.stage),
         note: spawnNote(
           "call workflow_stage, then spawn the subagent named in the `agent` field",
           nextDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
@@ -1457,7 +1520,8 @@ server.registerTool(
         return fail((err as Error).message)
       }
       await appendNote(sh, active.task as TaskRef, auditNote(`Recovered from snapshot at ${active.stage}`, new Date(), actor), log)
-      const step = firstStep(eng, active)
+      const step = firstStep(eng, active, config)
+      recordFiredAction(step.action)
       const resumedDef = stageDef(eng.manifest, active.stage)
       const resumedModel = stageModel(eng.manifest.kind, resumedDef)
       return ok({
@@ -1487,7 +1551,7 @@ server.registerTool(
     return ok({
       resumedFrom: "plan",
       stage: "build",
-      prompt: composePrompt(eng, active, "build"),
+      prompt: firePrompt(eng, active, "build"),
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
       note: spawnNote("call workflow_stage before spawning the subagent named in the `agent` field"),

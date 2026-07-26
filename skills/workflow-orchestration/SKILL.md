@@ -369,6 +369,33 @@ scoped to the tasks dir; execution-phase notes ride the branch checkpoints in
 shared-tree mode, or are committed to the main tree per terminal event in
 worktree mode. See `docs/design/threat-model.md`.
 
+## What a stage receives (the artifact contract)
+
+Every stage's prompt carries its **contract** — the goal, the acceptance
+criteria, the worktree instructions, the diff boundary, and the verdict-or-scope
+block — plus the earlier stages' captured output as *artifacts*. A check stage's
+artifact leads with the **structured verdict block**: the verdict reason, the
+failed acceptance criteria, and the blocking axis findings with `file:line`.
+
+`workflows.<kind>.stageContext` (and the manifest's per-stage `context`) puts a
+character ceiling on what a stage reads of each artifact. Unset — the default —
+means unbounded. When a budget is set:
+
+- the **contract is never trimmed**; it is composed after the budget applies. A
+  budget can starve the history, never the contract.
+- the **structured verdict block is never trimmed**; it is bounded by
+  construction and is the highest-signal content in the prompt.
+- the **prose may arrive as an excerpt**, keeping the head and the tail with the
+  elided middle explicitly marked. That is the intended trade: the findings carry
+  `file:line`, the prose is commentary.
+- the **run log is always complete.** Each pass's full text is written to
+  `<tasksDir>/runs/<id>.md` before it ever becomes an artifact, so a budget costs
+  no evidence — only prompt weight.
+
+A re-build also receives a bounded **attempts ledger**: one line per counted
+iteration (stage, verdict, one-line reason), so it can avoid re-trying a fix that
+already failed. It is absent on the first iteration.
+
 ## Config
 
 Optional `.agentic-workflow.json` at the repo root, layered over an optional

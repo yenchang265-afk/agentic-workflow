@@ -15,7 +15,9 @@ import {
   mergeConfigLayers,
   agentModel,
   modelFor,
+  unknownStageContextKeys,
   unknownStageModelKeys,
+  contextFor,
   unreviewedAxes,
   parseConfig,
   platformFor,
@@ -167,6 +169,11 @@ const stageWith = (model?: string): StageDef => ({
   ...(model ? { model } : {}),
 })
 
+const stageWithContext = (context?: Record<string, number>): StageDef => ({
+  ...stageWith(),
+  ...(context ? { context } : {}),
+})
+
 test("modelFor: config stageModels wins over the manifest stage's model, which wins over nothing", () => {
   const c = parseConfig({ workflows: { engineering: { stageModels: { build: "anthropic/claude-opus-4-5" } } } })
   assert.equal(modelFor(c, "engineering", stageWith("anthropic/claude-sonnet-4-5")), "anthropic/claude-opus-4-5")
@@ -247,6 +254,49 @@ test("unknownStageModelKeys names stageModels entries that match no stage of the
   // Every key matching a stage, an absent section, and an absent stageModels are all clean.
   assert.deepEqual(unknownStageModelKeys(c, "pr-sitter", ["triage"]), [])
   assert.deepEqual(unknownStageModelKeys(DEFAULT_CONFIG, "engineering", ["build"]), [])
+})
+
+test("contextFor: config stageContext REPLACES the manifest stage's context map, which replaces unbounded", () => {
+  const c = parseConfig({ workflows: { engineering: { stageContext: { build: { plan: 24_000 } } } } })
+  // Replacement, not a merge: the manifest's `verify: 8000` is gone, mirroring modelFor.
+  assert.deepEqual(contextFor(c, "engineering", stageWithContext({ plan: 16_000, verify: 8_000 })), { plan: 24_000 })
+  assert.deepEqual(contextFor(DEFAULT_CONFIG, "engineering", stageWithContext({ plan: 16_000 })), { plan: 16_000 })
+  assert.deepEqual(contextFor(DEFAULT_CONFIG, "engineering", stageWithContext()), {})
+  // A stageContext entry for a different stage leaves this one alone.
+  const other = parseConfig({ workflows: { engineering: { stageContext: { review: { plan: 100 } } } } })
+  assert.deepEqual(contextFor(other, "engineering", stageWithContext()), {})
+})
+
+test("workflows.<kind>.stageContext validates fail-fast: a zero, a negative, and a non-integer are rejected", () => {
+  for (const bad of [0, -1, 1.5]) {
+    assert.throws(() => parseConfig({ workflows: { engineering: { stageContext: { build: { plan: bad } } } } }), /stageContext/)
+  }
+  assert.throws(() => parseConfig({ workflows: { engineering: { stageContext: { build: { plan: "24000" } } } } }), /stageContext/)
+})
+
+test("unknownStageContextKeys names a typo'd stage key and a typo'd artifact key inside a valid stage", () => {
+  const c = parseConfig({
+    workflows: {
+      engineering: { stageContext: { build: { plan: 1_000, pln: 500 }, BUILD: { plan: 1_000 }, triage: { plan: 1_000 } } },
+    },
+  })
+  assert.deepEqual(unknownStageContextKeys(c, "engineering", ["plan", "build", "verify", "review"]), [
+    "build.pln",
+    "BUILD",
+    "triage",
+  ])
+  // Every key matching a stage, an absent section, and an absent stageContext are all clean.
+  const clean = parseConfig({ workflows: { engineering: { stageContext: { build: { plan: 1_000, verify: 500 } } } } })
+  assert.deepEqual(unknownStageContextKeys(clean, "engineering", ["plan", "build", "verify", "review"]), [])
+  assert.deepEqual(unknownStageContextKeys(DEFAULT_CONFIG, "engineering", ["build"]), [])
+})
+
+test("mergeConfigLayers: stageContext merges per artifact across layers; repo wins per key", () => {
+  const user = { workflows: { engineering: { stageContext: { build: { plan: 24_000, verify: 8_000 } } } } }
+  const repo = { workflows: { engineering: { stageContext: { build: { plan: 12_000 } } } } }
+  assert.deepEqual(mergeConfigLayers(user, repo), {
+    workflows: { engineering: { stageContext: { build: { plan: 12_000, verify: 8_000 } } } },
+  })
 })
 
 test("bareModel strips a provider prefix and passes bare ids through", () => {

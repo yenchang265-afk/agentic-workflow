@@ -50,6 +50,12 @@ ones (they never auto-plan a queued task):
 | VERIFY | Runs tests; FAIL re-builds with the failure | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
 
+A re-build leads with the structured failure — verdict reason, failed criteria,
+findings with `file:line` — plus a bounded ledger of what earlier iterations
+already tried; `workflows.<kind>.stageContext` can cap what else a stage's prompt
+carries, which matters once you point a stage at a small model
+([docs/configuration.md](docs/configuration.md)).
+
 Execution is isolated on a `feature/<id>` git branch, verdicts are only trusted
 through a plugin tool, every transition is audited, and the loop itself never
 pushes or opens a PR — you review the diff and run

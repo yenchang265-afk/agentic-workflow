@@ -2,8 +2,16 @@ import type { LoadedManifest, StageDef } from "../manifest/schema.js"
 import { stageDef } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
-import type { Action, Config, WorkflowState } from "./state.js"
-import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
+import { clampWithStats } from "./budget.js"
+import { contextFor } from "../config.js"
+import {
+  verdictContractBlock,
+  verdictFeedbackBlock,
+  workScopeBlock,
+  type Verdict,
+  type VerdictRecord,
+} from "./verdict.js"
 
 /**
  * The manifest-interpreted state machine: given a workflow kind's manifest, the
@@ -13,15 +21,94 @@ import { verdictContractBlock, workScopeBlock, type Verdict } from "./verdict.js
  * and messages coming from the manifest instead of a switch.
  */
 
-const withArtifact = (state: WorkflowState, stage: string, output: string): WorkflowState => ({
-  ...state,
-  artifacts: { ...state.artifacts, [stage]: output },
-})
+/**
+ * Ceiling on the exempt structured prefix of an artifact (see `promptContext`).
+ * `verdictFeedbackBlock` is bounded by construction — one line per failed
+ * criterion, one per blocking finding — but not bounded in the worst case, and an
+ * unbounded exemption would defeat the budget it sits inside.
+ */
+export const EXEMPT_MAX = 4_000
+
+/**
+ * Store a completed stage's output as its artifact, fusing the structured verdict
+ * feedback ahead of the prose.
+ *
+ * Core owns the fusion (the hosts each used to do it themselves) so it can also
+ * record WHERE the prose starts — `feedback` — which is what lets `promptContext`
+ * budget the prose without touching the structured block. The fused text is what
+ * lands in the artifact and therefore in the snapshot, so a lost `feedback` key
+ * degrades to "the block is clamped too", never to "the block is missing".
+ */
+const withArtifact = (state: WorkflowState, stage: string, output: string, block: string): WorkflowState => {
+  const text = block ? `${block}\n\n${output}` : output
+  return {
+    ...state,
+    artifacts: { ...state.artifacts, [stage]: text },
+    ...(block ? { feedback: { ...state.feedback, [stage]: block } } : {}),
+  }
+}
 
 const withoutArtifacts = (state: WorkflowState, stages: readonly string[]): WorkflowState => {
   if (stages.length === 0) return state
   const artifacts = Object.fromEntries(Object.entries(state.artifacts).filter(([k]) => !stages.includes(k)))
-  return { ...state, artifacts }
+  // Drop the matching seams too: a seam whose artifact is gone would otherwise
+  // ride along in every later snapshot and could mis-exempt a re-created artifact.
+  const feedback = state.feedback
+    ? Object.fromEntries(Object.entries(state.feedback).filter(([k]) => !stages.includes(k)))
+    : undefined
+  return { ...state, artifacts, ...(feedback ? { feedback } : {}) }
+}
+
+/**
+ * Apply a stage's per-artifact character budgets, exempting the structured
+ * verdict block at the head of an artifact.
+ *
+ * The exemption is anchored on an exact `startsWith` against the seam recorded by
+ * `withArtifact` — no sentinel embedded in the text, which would be forgeable by
+ * an agent whose prose is in the same string. If the seam no longer matches (a
+ * host stopped prepending, a snapshot predates the seam) the artifact is clamped
+ * whole: lossy, never unbounded.
+ */
+const budgetedArtifacts = (
+  state: WorkflowState,
+  budgets: Readonly<Record<string, number>>,
+): { artifacts: Record<string, string>; elided: number } => {
+  let elided = 0
+  const artifacts: Record<string, string> = {}
+  for (const [key, text] of Object.entries(state.artifacts)) {
+    const limit = budgets[key] ?? Number.POSITIVE_INFINITY
+    const seam = state.feedback?.[key] ?? ""
+    if (!seam || !text.startsWith(seam)) {
+      const c = clampWithStats(text, limit)
+      artifacts[key] = c.text
+      elided += c.elided
+      continue
+    }
+    const head = clampWithStats(seam, EXEMPT_MAX)
+    const c = clampWithStats(text.slice(seam.length), limit)
+    artifacts[key] = `${head.text}${c.text}`
+    elided += head.elided + c.elided
+  }
+  return { artifacts, elided }
+}
+
+/** Longest a ledger reason may be; a verdict reason can be a paragraph. */
+const ATTEMPT_REASON_MAX = 200
+
+/** How many attempts the ledger keeps — covers any realistic `maxIterations`. */
+const ATTEMPTS_KEPT = 5
+
+/** First line of `reason`, truncated — the ledger must not itself blow the budget. Pure. */
+const attemptReason = (reason: string | undefined): string | undefined => {
+  const line = reason?.split("\n")[0]?.trim()
+  return line ? line.slice(0, ATTEMPT_REASON_MAX) : undefined
+}
+
+/** Append one counted iteration's outcome, keeping the last `ATTEMPTS_KEPT`. Pure. */
+const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, record: VerdictRecord | null): WorkflowState => {
+  const reason = attemptReason(record?.reason)
+  const entry: AttemptRecord = { stage, iteration: state.iteration, verdict, ...(reason ? { reason } : {}) }
+  return { ...state, attempts: [...(state.attempts ?? []), entry].slice(-ATTEMPTS_KEPT) }
 }
 
 /**
@@ -29,7 +116,10 @@ const withoutArtifacts = (state: WorkflowState, stages: readonly string[]): Work
  * from the state is precomputed here (diff command, worktree pinning
  * paragraph) so ordinary workflow kinds need no compose hooks.
  */
-export const promptContext = (state: WorkflowState): TemplateContext => {
+export const promptContext = (
+  state: WorkflowState,
+  budgets: Readonly<Record<string, number>> = {},
+): TemplateContext => {
   const accept = state.task?.acceptance ?? []
   const wt = state.git?.worktree
   const diffCmd = state.git
@@ -47,7 +137,16 @@ export const promptContext = (state: WorkflowState): TemplateContext => {
     },
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
-    artifacts: { ...state.artifacts },
+    artifacts: budgetedArtifacts(state, budgets).artifacts,
+    // Pre-rendered: TemplateValue has no arrays. Undefined when empty so
+    // `renderPrompt` drops the section and a first-iteration prompt is unchanged.
+    attempts: state.attempts?.length
+      ? {
+          lines: state.attempts
+            .map((a) => `- iteration ${a.iteration + 1} (${a.stage} ${a.verdict})${a.reason ? `: ${a.reason}` : ""}`)
+            .join("\n"),
+        }
+      : undefined,
     git: state.git
       ? { base: state.git.base, branch: state.git.branch, worktree: wt ?? "", diffCmd }
       : undefined,
@@ -85,26 +184,65 @@ export const composeStagePrompt = (def: StageDef, tpl: string, ctx: TemplateCont
     : `${rendered}\n\n${workScopeBlock(def.name)}`
 }
 
-/** Render the prompt threaded into `target`'s stage command. */
-export const composePrompt = (loaded: LoadedManifest, state: WorkflowState, target: string): string => {
+/**
+ * Render the prompt threaded into `target`'s stage command, and report how much
+ * artifact text the stage's context budget elided.
+ *
+ * `config` is optional so every existing call site keeps compiling and an omitted
+ * one means "unbounded" — the same thing an unset knob means. A host that fires a
+ * stage should pass it; the fire-site tests pin that, since a forgotten argument
+ * is otherwise silent.
+ *
+ * Note a compose hook runs AFTER the budget is applied and receives the raw
+ * state, so a hook is inside the trust boundary and owns its own budget.
+ */
+export const composePromptWithStats = (
+  loaded: LoadedManifest,
+  state: WorkflowState,
+  target: string,
+  config?: Config,
+): { prompt: string; elided: number } => {
   const def = stageDef(loaded.manifest, target)
   const tpl = loaded.prompts[def.name]
   if (tpl === undefined) throw new Error(`workflow kind "${loaded.manifest.kind}" has no prompt loaded for stage "${def.name}"`)
+  const budgets = config ? contextFor(config, loaded.manifest.kind, def) : {}
+  const { elided } = budgetedArtifacts(state, budgets)
+  const base = promptContext(state, budgets)
   const hookRef = loaded.manifest.hooks.compose[def.name]
-  const ctx = hookRef ? resolveComposeHook(hookRef)(promptContext(state), state) : promptContext(state)
-  return composeStagePrompt(def, tpl, ctx)
+  const ctx = hookRef ? resolveComposeHook(hookRef)(base, state) : base
+  return { prompt: composeStagePrompt(def, tpl, ctx), elided }
 }
 
-const fireAt = (loaded: LoadedManifest, state: WorkflowState, target: string): { state: WorkflowState; action: Action } => {
+/** Render the prompt threaded into `target`'s stage command. */
+export const composePrompt = (loaded: LoadedManifest, state: WorkflowState, target: string, config?: Config): string =>
+  composePromptWithStats(loaded, state, target, config).prompt
+
+const fireAt = (
+  loaded: LoadedManifest,
+  state: WorkflowState,
+  target: string,
+  config?: Config,
+): { state: WorkflowState; action: Action } => {
   const next = { ...state, stage: target }
-  return { state: next, action: { kind: "fire", stage: target, arguments: composePrompt(loaded, next, target) } }
+  const { prompt, elided } = composePromptWithStats(loaded, next, target, config)
+  return {
+    state: next,
+    action: { kind: "fire", stage: target, arguments: prompt, ...(elided ? { promptElided: elided } : {}) },
+  }
 }
 
 /** The first step to drive for a freshly-constructed state — fires its own stage. */
-export const firstStep = (loaded: LoadedManifest, state: WorkflowState): { state: WorkflowState; action: Action } => ({
-  state,
-  action: { kind: "fire", stage: state.stage, arguments: composePrompt(loaded, state, state.stage) },
-})
+export const firstStep = (
+  loaded: LoadedManifest,
+  state: WorkflowState,
+  config?: Config,
+): { state: WorkflowState; action: Action } => {
+  const { prompt, elided } = composePromptWithStats(loaded, state, state.stage, config)
+  return {
+    state,
+    action: { kind: "fire", stage: state.stage, arguments: prompt, ...(elided ? { promptElided: elided } : {}) },
+  }
+}
 
 /**
  * Decide what to do when `state.stage` completed. `output` is that stage's
@@ -120,9 +258,13 @@ export const advance = (
   config: Config,
   output: string,
   verdict: Verdict | null = null,
+  record: VerdictRecord | null = null,
 ): { state: WorkflowState; action: Action } => {
   const { manifest } = loaded
-  const s = withArtifact(state, state.stage, output)
+  // Fuse the machine-recorded failure reasons ahead of the stage's prose so the
+  // next iteration leads with what actually failed. Owned here, not by each host,
+  // so the seam between the two is recorded and the budget can spare the block.
+  const s = withArtifact(state, state.stage, output, verdictFeedbackBlock(record))
   const def = stageDef(manifest, s.stage)
   const t = manifest.transitions[s.stage]
   const effect =
@@ -149,10 +291,13 @@ export const advance = (
           )
           return { state: s, action: { kind: "stop", message } }
         }
-        const next = { ...withoutArtifacts(s, effect.dropArtifacts), iteration: s.iteration + 1 }
-        return fireAt(loaded, next, effect.stage)
+        // Recorded here, on the counted re-fire, not on every check completion:
+        // a verdict-channel retry must not inflate the ledger.
+        const logged = withAttempt(s, s.stage, verdict ?? "FAIL", record)
+        const next = { ...withoutArtifacts(logged, effect.dropArtifacts), iteration: s.iteration + 1 }
+        return fireAt(loaded, next, effect.stage, config)
       }
-      return fireAt(loaded, withoutArtifacts(s, effect.dropArtifacts), effect.stage)
+      return fireAt(loaded, withoutArtifacts(s, effect.dropArtifacts), effect.stage, config)
     }
     case "park":
       return { state: s, action: { kind: "park", message: effect.message, toStatus: effect.toStatus } }

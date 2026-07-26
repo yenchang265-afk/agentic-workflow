@@ -45,6 +45,15 @@ export interface StageSample {
   readonly tokens?: StageTokens
   readonly cost?: number
   readonly model?: string
+  /**
+   * Characters in the prompt actually fired for this pass. Records what the model
+   * received, including any host-appended suffix (a review lens, a verdict-retry
+   * nag) — without it, prompt growth across a struggling run's iterations is
+   * invisible and a context budget becomes folklore.
+   */
+  readonly promptChars?: number
+  /** Characters a stage context budget elided from that prompt; omitted when none were. */
+  readonly promptElided?: number
   /** Per-tool call counts for this pass — omitted when the host observes no tool parts. */
   readonly tools?: readonly StageToolUsage[]
   /** Distinct file paths the pass wrote/edited — omitted when none were touched. */

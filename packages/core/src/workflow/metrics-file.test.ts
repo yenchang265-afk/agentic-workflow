@@ -118,6 +118,42 @@ test("claude-host entries carry no tokens and no sessionID", () => {
   assert.equal(parsed?.runs[0]?.samples[0]?.tokens, undefined)
 })
 
+test("a sidecar written before promptChars still parses — the fail-closed pin", () => {
+  // `parseRunMetrics` fails closed to null and both writers treat null as "start
+  // fresh", so a REQUIRED new field would silently discard every run's history.
+  const legacy = JSON.stringify({
+    version: 1,
+    runs: [
+      {
+        endedAt: "2026-01-01T00:00:00.000Z",
+        outcome: "done",
+        host: "opencode",
+        samples: [{ stage: "build", iteration: 0, ms: 1_000 }],
+      },
+    ],
+  })
+  const parsed = parseRunMetrics(legacy)
+  assert.ok(parsed, "a pre-promptChars sidecar failed to parse")
+  assert.equal(parsed?.runs[0]?.samples[0]?.promptChars, undefined)
+})
+
+test("promptChars and promptElided round-trip through a sidecar", () => {
+  const raw = JSON.stringify({
+    version: 1,
+    runs: [
+      {
+        endedAt: "2026-01-01T00:00:00.000Z",
+        outcome: "done",
+        host: "claude",
+        samples: [{ stage: "build", iteration: 0, ms: 1_000, promptChars: 12_345, promptElided: 678 }],
+      },
+    ],
+  })
+  const sample = parseRunMetrics(raw)?.runs[0]?.samples[0]
+  assert.equal(sample?.promptChars, 12_345)
+  assert.equal(sample?.promptElided, 678)
+})
+
 // The sidecar's `host` is a closed enum, so a host missing from it does not
 // degrade — every entry it writes fails validation and the run vanishes from
 // the hub entirely.

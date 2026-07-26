@@ -115,6 +115,36 @@ test("a stage's optional model round-trips, defaults to undefined, and rejects a
   assert.throws(() => parseManifest({ ...base, stages: [{ ...base.stages[0], model: "" }, base.stages[1]] }), /model/)
 })
 
+test("a stage's optional context map round-trips, defaults to undefined, and rejects a non-positive limit", () => {
+  const withContext = parseManifest({
+    ...base,
+    stages: [{ ...base.stages[0], context: { work: 24_000, check: 8_000 } }, base.stages[1]],
+  })
+  assert.deepEqual(withContext.stages[0]?.context, { work: 24_000, check: 8_000 })
+  assert.equal(withContext.stages[1]?.context, undefined)
+  assert.equal(parseManifest(base).stages[0]?.context, undefined)
+  for (const bad of [0, -1, 1.5]) {
+    assert.throws(
+      () => parseManifest({ ...base, stages: [{ ...base.stages[0], context: { check: bad } }, base.stages[1]] }),
+      /context/,
+      `limit ${bad} was accepted`,
+    )
+  }
+})
+
+test("rejects a context key naming no stage of the manifest — a typo must not resolve to unbounded", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], context: { pln: 1_000 } }, base.stages[1]] }
+  assert.throws(() => parseManifest(raw), /budgets unknown artifact "pln"/)
+})
+
+test("no shipped manifest sets context — every stage is unbounded today", () => {
+  const workflowsDir = path.join(import.meta.dirname, "..", "..", "workflows")
+  for (const kind of fs.readdirSync(workflowsDir).filter((d) => fs.existsSync(path.join(workflowsDir, d, "workflow.json")))) {
+    const m = parseManifest(JSON.parse(fs.readFileSync(path.join(workflowsDir, kind, "workflow.json"), "utf8")))
+    for (const s of m.stages) assert.equal(s.context, undefined, `${kind}/${s.name} sets a context budget`)
+  }
+})
+
 test("a check stage's requiredAxes round-trips and defaults to undefined", () => {
   const axes = ["correctness", "security"]
   const raw = {

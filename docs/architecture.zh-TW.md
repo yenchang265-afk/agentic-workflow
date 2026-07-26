@@ -33,6 +33,7 @@ flowchart TB
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
         engine["workflow/engine.ts — <b>pure</b><br/>advance / composePrompt / firstStep"]
+        budget["workflow/budget.ts — <b>pure</b><br/>clamp：各階段提示的 context 預算"]
         manifest["manifest/ — schema (zod), template<br/>language, registry (TS escape hatch)"]
     end
 
@@ -80,7 +81,10 @@ flowchart TB
   提示詞範本（以 `---` 分隔的區段、`{{var}}` 插值、
   `{{#path}}…{{/path}}` 條件區塊）。`workflow/engine.ts` 把它解讀成一個
   純粹的狀態機：`advance(manifest, state, output, verdict)` 回傳下一個
-  狀態和動作。清單無法表達的邏輯，則掛在透過 `manifest/registry.ts`
+  狀態和動作。它同時會把檢查階段的結構化裁定區塊融合到該階段產物的開頭並
+  記下接縫，因此 `workflow/budget.ts` 可以只裁剪散文，就把某個階段的提示
+  壓在設定的字元上限內（`workflows.<kind>.stageContext`）——結構化發現與
+  階段契約永遠不會被裁剪，而 run log 一律保留完整內容。清單無法表達的邏輯，則掛在透過 `manifest/registry.ts`
   解析的具名 hook 上——組合 hook（提示詞上下文擴增器）、狀態轉換前的
   驗證器、認領判斷式。
 - **工作來源 + 排程器**——一個 `WorkSource`

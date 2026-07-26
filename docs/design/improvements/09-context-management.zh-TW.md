@@ -2,7 +2,31 @@
 
 # 09 — 階段提示詞的上下文預算
 
-**狀態：提案中。** 計畫 01–07 是已實作功能的設計紀錄；本計畫與 08 一樣尚未實作。
+**狀態：已實作。** 與計畫 01–07 一樣，是已實作功能的設計紀錄；只剩 08 仍屬待辦事項。
+
+有兩處與下面的設計不同，兩者都是在把設計中引用的位置逐一對照原始碼時發現的：
+
+1. **`extractPlan`還有第二個 bug。** 它用的是 `body.indexOf(PLAN_HEADING)`——
+   也就是**第一個**標題——而 `rejectPlan` 只會追加一則註記、`appendPlan` 則會在
+   檔尾再追加一個 `## Implementation Plan`，所以被 replan 過的任務會把**過期的**
+   計畫連同稽核尾巴一起餵給 BUILD。同一個三行函式、同一個修法就能解決：改用
+   `lastMarkerIndex` 讀最後一個標題，並在第一行稽核註記處停止。註記的比對樣式要求
+   `auditNote` 的方括號時戳，而不是比對任何 `> …` 行，因此把需求當引用區塊寫進
+   計畫並不會被截斷。
+2. **結構化區塊必須搬進 core。** 兩個 host 都在 `advance` 看到任何字串**之前**
+   就把 `verdictFeedbackBlock` 融合進散文，所以「只裁剪散文」這件事光靠裁剪
+   `artifacts[stage]` 是做不到的。現在 `advance` 會收下 `VerdictRecord` 並自己
+   負責融合（輸出逐位元組相同），同時把接縫記在 `WorkflowState.feedback`；
+   `promptContext` 只裁剪後半段。豁免是對該接縫做精確的 `startsWith` 比對——不是
+   內嵌哨符，那種做法會被代理人自己的散文偽造——而且豁免本身也被 `EXEMPT_MAX`
+   設上限，才不會把預算整個吃掉。接縫若不再吻合，就整份裁剪：有損，但絕不會變成
+   無上限。
+
+另外值得記錄的是：要在 render 時套用預算，就必須把 `config` 串過
+`composePrompt`／`fireAt`／`firstStep`（作為結尾的可選參數，所以未設定仍代表
+無上限）——設計原本假設 `promptContext` 可以就地解析它，但它只收到 state。
+還有 `feedback` 與 `attempts` 都必須宣告在 `persist.ts` 的快照 schema 裡，
+否則未宣告的欄位會被剝除，`recover` 就會默默丟掉它們。
 
 ## 背景
 

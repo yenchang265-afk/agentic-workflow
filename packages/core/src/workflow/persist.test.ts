@@ -155,3 +155,37 @@ test("a platform-stamped snapshot round-trips; a legacy snapshot without it load
   const legacy = await loadState(fakeClient(dir), dir, "docs/tasks", "legacy")
   assert.equal(legacy?.platform, undefined)
 })
+
+test("the verdict-block seam survives saveState → loadState; a legacy snapshot without one loads clean", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
+  const $ = fakeShell()
+  const client = fakeClient(dir)
+  // A recovered run must still be able to spare the structured block from its
+  // context budget, so the seam has to round-trip with the artifacts.
+  const withSeam: WorkflowState = { ...sampleState, feedback: { verify: "Verdict reason: two tests are red" } }
+  await saveState($, dir, "docs/tasks", "add-rl", withSeam)
+  assert.deepEqual(await loadState(client, dir, "docs/tasks", "add-rl"), withSeam)
+
+  // And a snapshot written before the seam existed still parses — `loadState`
+  // fails closed, so a required field would have invalidated every live snapshot.
+  const legacy = { ...sampleState }
+  fs.writeFileSync(statePath(dir, "docs/tasks", "legacy"), JSON.stringify(legacy))
+  const loaded = await loadState(client, dir, "docs/tasks", "legacy")
+  assert.deepEqual(loaded, legacy)
+  assert.equal(loaded?.feedback, undefined)
+})
+
+test("the attempts ledger survives saveState → loadState", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
+  // A recovered run must not forget what earlier iterations already tried, or it
+  // can re-try the same wrong fix until the cap trips.
+  const withLedger: WorkflowState = {
+    ...sampleState,
+    attempts: [
+      { stage: "verify", iteration: 0, verdict: "FAIL", reason: "two tests are red" },
+      { stage: "review", iteration: 1, verdict: "FAIL" },
+    ],
+  }
+  await saveState(fakeShell(), dir, "docs/tasks", "add-rl", withLedger)
+  assert.deepEqual(await loadState(fakeClient(dir), dir, "docs/tasks", "add-rl"), withLedger)
+})

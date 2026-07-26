@@ -1,6 +1,6 @@
 import { formatDuration } from "@agentic-workflow/core/workflow/metrics"
-import type { CacheHit, IterationBurn, StageDuration, StageVerdicts, VerdictFlips } from "../../shared/api.js"
-import { barWidth, bucketLabel, pct } from "./format.js"
+import type { CacheHit, IterationBurn, PromptSize, StageDuration, StageVerdicts, VerdictFlips } from "../../shared/api.js"
+import { barWidth, bucketLabel, formatChars, pct } from "./format.js"
 
 /** The metrics tab's panels. Presentation only — every number is computed server-side. */
 
@@ -159,6 +159,45 @@ export const DurationTable = ({ durations }: { durations: readonly StageDuration
             <td>{formatDuration(d.medianSeconds * 1000)}</td>
             <td>{formatDuration(d.maxSeconds * 1000)}</td>
             <td>{d.rows}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/**
+ * Composed-prompt size per stage. Unlike the cache ratio this covers BOTH hosts,
+ * so its coverage line reads the opposite way — see `promptSize`.
+ */
+export const PromptSizeTable = ({ prompt }: { prompt: PromptSize }) => {
+  if (prompt.stages.length === 0) {
+    return <div className="muted">No sample recorded a prompt size (sidecars written before this was tracked).</div>
+  }
+  return (
+    <table className="stage-table">
+      <thead>
+        <tr>
+          <th>stage</th>
+          <th>mean</th>
+          <th>median</th>
+          <th>max</th>
+          <th>elided</th>
+          <th>samples</th>
+        </tr>
+      </thead>
+      <tbody>
+        {prompt.stages.map((p) => (
+          <tr key={p.stage}>
+            <td>{p.stage}</td>
+            <td>{formatChars(p.meanChars)}</td>
+            <td>{formatChars(p.medianChars)}</td>
+            <td>{formatChars(p.maxChars)}</td>
+            {/* Blank, not "0", when no budget is configured — nothing was elided
+                because nothing could be, which is not the same as a budget that
+                never bit. */}
+            <td>{p.elidedSamples === 0 ? "—" : `${formatChars(p.elidedChars)} in ${p.elidedSamples}`}</td>
+            <td>{p.samples}</td>
           </tr>
         ))}
       </tbody>

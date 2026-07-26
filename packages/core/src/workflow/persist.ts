@@ -50,6 +50,29 @@ const WorkflowStateSchema = z.object({
   // this zod version treats an enum-keyed record as exhaustive; the state
   // machine only ever reads known stage keys, so extra keys are inert.
   artifacts: z.record(z.string(), z.string()).default({}),
+  /**
+   * Seam between each artifact's structured verdict block and its prose, so a
+   * resumed run's context budget still spares the block. **Optional**, because
+   * `loadState` fails closed on a schema mismatch — a required field would
+   * invalidate every snapshot written before this existed. A snapshot without it
+   * resumes with the whole artifact subject to the budget: lossy, never missing.
+   */
+  feedback: z.record(z.string(), z.string()).optional(),
+  /**
+   * Bounded iteration ledger. Optional for the same fail-closed reason as
+   * `feedback`: a resumed run without it simply has no memory of earlier
+   * attempts, which is what every pre-upgrade snapshot has.
+   */
+  attempts: z
+    .array(
+      z.object({
+        stage: z.string().min(1),
+        iteration: z.number().int().min(0),
+        verdict: z.enum(["PASS", "FAIL", "ERROR"]),
+        reason: z.string().optional(),
+      }),
+    )
+    .optional(),
   task: TaskRefSchema.optional(),
   git: GitRefSchema.optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */

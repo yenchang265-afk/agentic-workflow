@@ -685,6 +685,30 @@ export interface CacheHit {
   readonly stages: readonly StageCache[]
 }
 
+/** Composed-prompt size for one stage, in characters. */
+export interface StagePromptSize {
+  readonly stage: string
+  /** Sidecar samples for this stage that carried a `promptChars` value. */
+  readonly samples: number
+  readonly meanChars: number
+  readonly medianChars: number
+  readonly maxChars: number
+  /** Samples where a context budget elided anything — "the budget is biting". */
+  readonly elidedSamples: number
+  readonly elidedChars: number
+}
+
+export interface PromptSize {
+  /**
+   * Runs whose sidecar carried at least one `promptChars` sample. Unlike
+   * `cache.runsCovered` this covers BOTH hosts — prompt size is measured by the
+   * server that composed the prompt, not inferred from token usage.
+   */
+  readonly runsCovered: number
+  readonly samples: number
+  readonly stages: readonly StagePromptSize[]
+}
+
 /**
  * Cross-run loop health. Sourced entirely from `runs/<id>.md` plus the
  * `runs/<id>.metrics.json` sidecars — no transcript joins, so every token number
@@ -711,6 +735,8 @@ export interface MetricsResponse {
   readonly flips: VerdictFlips
   readonly durations: readonly StageDuration[]
   readonly cache: CacheHit
+  /** Composed-prompt size per stage — the signal a context budget is (or isn't) needed. */
+  readonly prompt: PromptSize
   /** Ids listed but unreadable — surfaced so a silent drop is visible in the UI. */
   readonly skippedRuns: readonly string[]
 }
