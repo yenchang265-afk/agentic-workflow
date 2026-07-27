@@ -374,9 +374,24 @@ const stampVerdictRecorded = () => {
   }
 }
 
-/** Write the current-stage marker the PreToolUse hook reads to scope the
- *  allowlist and enforce the stage deadline. */
-const writeStageMarker = (stage: string | null) => {
+/**
+ * Write the current-stage marker the PreToolUse hook reads to scope the
+ * allowlist and enforce the stage deadline. Returns null on success, or the
+ * failure reason.
+ *
+ * It used to swallow every error, and `workflow_stage` returned success
+ * regardless. A failed write (read-only mount, ENOSPC, EACCES on a runs/ dir
+ * another user created, a tasksDir on a flaky network mount) therefore left the
+ * PREVIOUS stage's marker in place: a check stage then ran under BUILD's
+ * unrestricted allowlist, with the one deterministic backstop this host has
+ * (threat-model T8/T1) silently gone and every layer reporting OK.
+ *
+ * So a failure is reported to the caller, and the stale marker is removed first
+ * — no marker means "no loop stage", which the guard treats as an ordinary
+ * session, and that is strictly safer than an armed marker describing a stage
+ * that is not the one about to run.
+ */
+const writeStageMarker = (stage: string | null): string | null => {
   const dir = path.join(directory, config.tasksDir, "runs")
   try {
     fs.mkdirSync(dir, { recursive: true })
@@ -436,8 +451,17 @@ const writeStageMarker = (stage: string | null) => {
         }),
       )
     }
-  } catch {
-    /* best-effort */
+    return null
+  } catch (err) {
+    // Never leave the previous stage's marker armed for a stage it does not
+    // describe — that is how a check stage inherited BUILD's allowlist.
+    try {
+      stageDeadline = null
+      fs.rmSync(stageMarkerPath(), { force: true })
+    } catch {
+      /* the report below is what matters */
+    }
+    return (err as Error).message
   }
 }
 
@@ -561,7 +585,13 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   // path spawns the author straight off workflow_start without a workflow_stage call, so
   // without this the marker never exists and the one write PLAN exists to make is
   // blocked. workflow_advance clears it on park.
-  writeStageMarker("plan")
+  // A failed arm here means the plan-author's one legal write (queued/<id>.md)
+  // will be blocked by the guard, so say so rather than start a doomed PLAN.
+  const markerError = writeStageMarker("plan")
+  if (markerError) {
+    active = null // never leave a loop marked live behind an unguarded stage
+    return { error: `Could not arm the PLAN stage marker — ${markerError}. Check that ${config.tasksDir}/runs/ is writable.` }
+  }
   return { state }
 }
 
@@ -761,7 +791,10 @@ server.registerTool(
       // exists and the plan-author's one write to queued/<id>.md is blocked (exit 2)
       // → workflow_advance finds no plan. Sitter check-stage entries re-arm via workflow_stage
       // anyway, so this is the fix for PLAN and a harmless no-op for them.
-      writeStageMarker(state.stage)
+      const entryMarkerError = writeStageMarker(state.stage)
+      if (entryMarkerError) {
+        await log("warn", `could not arm the ${state.stage} stage marker — ${entryMarkerError}; the guard will not scope this stage`)
+      }
     }
     const warnings = await claimWarnings()
     return ok({ ...firePayload(state, claim.item.id), ...(warnings.length ? { warnings } : {}) })
@@ -902,7 +935,18 @@ server.registerTool(
         return fail((err as Error).message)
       }
     }
-    writeStageMarker(stage)
+    // The marker IS the guard's only input. If it could not be written, the
+    // subagent about to be spawned would run either unguarded or under the
+    // previous stage's allowlist — so refuse the stage rather than report a
+    // success the enforcement layer cannot back.
+    const markerError = writeStageMarker(stage)
+    if (markerError) {
+      return fail(
+        `Could not arm the stage marker for "${stage}" — ${markerError}. ` +
+          `That marker is what scopes the bash allowlist and the stage deadline, so the stage is not started. ` +
+          `Check that ${config.tasksDir}/runs/ is writable, then retry.`,
+      )
+    }
     lastFireAt = Date.now()
     pending = null // no stale verdict may leak into this stage
     verdictRejected = false // ...nor a stale rejection into this stage's re-fire wording
@@ -1003,7 +1047,8 @@ server.registerTool(
             log,
           )
         }
-        writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+        const refireMarkerError = writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+    if (refireMarkerError) return fail(`Could not re-arm the stage marker for "${stage}" — ${refireMarkerError}. The stage is not re-fired.`)
         lastFireAt = Date.now()
         const retryModel = stageModel(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
         return ok({

@@ -172,3 +172,32 @@ test("an empty AGENTIC_WORKFLOW_HOST is treated as absent and boots the default 
   assert.notEqual(code, null, `server was killed after 30s without exiting; stderr:\n${stderr}`)
   assert.match(stderr, /agentic-workflow MCP server ready/)
 })
+
+// The stage marker is this host's ONLY deterministic enforcement input: the
+// PreToolUse guard reads it for the bash allowlist, the worktree pin and the
+// stage deadline (threat-model T8/T1). It used to be written best-effort inside
+// a bare `catch {}` while `workflow_stage` returned ok(...) regardless — so a
+// failed write left the PREVIOUS stage's marker armed and a check stage ran
+// under BUILD's unrestricted list, with every layer reporting success.
+test("writeStageMarker reports its failures instead of swallowing them", () => {
+  const src = source()
+  assert.match(
+    code(src),
+    /const writeStageMarker = \(stage: string \| null\): string \| null =>/,
+    "it must return a failure reason, not void",
+  )
+  const body = code(src).slice(code(src).indexOf("const writeStageMarker"))
+  const fn = body.slice(0, body.indexOf("\n}\n") + 3)
+  assert.match(fn, /return \(err as Error\)\.message/, "the catch must surface the error, not discard it")
+  assert.match(fn, /fs\.rmSync\(stageMarkerPath\(\), \{ force: true \}\)/, "a failed arm must clear the stale marker")
+  assert.doesNotMatch(fn, /catch \{\s*\/\* best-effort \*\/\s*\}\s*\}$/, "no silent best-effort swallow")
+})
+
+test("workflow_stage refuses a stage whose marker it could not arm", () => {
+  const body = flat(toolBody(source(), "workflow_stage"))
+  assert.match(
+    body,
+    /const markerError = writeStageMarker\(stage\) if \(markerError\) \{ return fail\(/,
+    "an unarmed stage must not be reported as started",
+  )
+})
