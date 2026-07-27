@@ -33,8 +33,8 @@ permission:
     "gh pr view*": allow
     "gh pr checks*": allow
     "gh api repos/*/pulls/*/comments*": allow
-    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
+    "curl *https://dev.azure.com/*/threads*": allow
+    "curl *https://*.visualstudio.com/*/threads*": allow
 ---
 
 You are the **workflow-pr-publish** subagent — the PUBLISH stage of the PR-sitter

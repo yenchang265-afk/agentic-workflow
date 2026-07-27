@@ -186,7 +186,14 @@ the loop reaches Azure DevOps).
   (`_apis/git/pullrequests?searchCriteria.status=active`) with failing checks
   read from blocking branch policy evaluations — a repo without a build
   policy never fires `failing-checks`. Stage `platformAllowlist` entries
-  merge into `bashAllowlist` for the resolved platform.
+  merge into `bashAllowlist` for the resolved platform. An `ado` glob is
+  anchored on the **host** (`curl *https://dev.azure.com/*`), never on flag
+  order: the globs compile to `^…$` regexes, so an `-u :*` prefix rejected the
+  same call written with a quoted URL, with `-X POST` ahead of `-u`, or with
+  `-s` instead of `-sS` — every ADO run died on its first REST call. What a
+  call may *do* is enforced by the write backstop
+  (`isAdoWriteBackstopViolation`: GET, or POST to a thread or a new PR), not by
+  the glob.
 - **`dependency-scan`** — direct dependencies with a fixable advisory at or
   above `severityFloor`, optionally plus plainly outdated ones
   (`includeOutdated`, npm only). Three ecosystems behind one policy, chosen
