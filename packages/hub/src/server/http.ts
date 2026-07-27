@@ -162,6 +162,13 @@ export const readBody = (req: IncomingMessage): Promise<unknown> =>
       }
     })
     req.on("error", () => finish(undefined))
+    // An aborted request emits `aborted`/`close` and is destroyed — no `end`,
+    // and no `error` on the normal abort path. Without this the promise never
+    // settled: `handleRequest` never returned, and the buffered chunks (up to
+    // MAX_BODY_BYTES) plus the pending promise stayed reachable for the life of
+    // the process, accumulating with every abort. `finish` is idempotent, so
+    // firing after a clean `end` is a no-op.
+    req.on("close", () => finish(undefined))
   })
 
 /**

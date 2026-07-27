@@ -257,3 +257,18 @@ test("malformed requests are rejected", async () => {
   assert.equal((await getConfig(f.deps, { params: {}, query: new URLSearchParams({ layer: "merged" }) })).status, 400)
   cleanup(f)
 })
+
+test("a malformed edits ELEMENT is a 400, not a 500", async () => {
+  // The pre-screen optional-chained (`edit?.path ?? ""`), so `[{}]` sailed past
+  // it and `applyEdits` then did `edit.path.split(".")` — a TypeError that
+  // escaped into makeListener's net and came back as a 500 with a raw JS
+  // message. Nothing is written either way, but this route's contract is that
+  // 400 covers every malformed request.
+  const f = makeFixture({ maxIterations: 3 })
+  for (const edits of [[{}], [null], ["maxIterations"], [{ path: 5, value: 1 }], [{ value: 1 }]]) {
+    const res = await save(f, { layer: "repo", edits })
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(edits)}`)
+  }
+  assert.equal(repoFile(f)["maxIterations"], 3, "and nothing was written")
+  cleanup(f)
+})

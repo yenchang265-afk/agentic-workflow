@@ -47,6 +47,25 @@ test("readBody drops an oversized body instead of buffering it", async () => {
   assert.equal(await readBody(fakeReq([huge])), undefined)
 })
 
+test("readBody settles when the client aborts mid-body", async () => {
+  // An aborted request emits `aborted`/`close` and is destroyed — no `end`, and
+  // no `error` on the normal abort path. Resolving only from data/end/error
+  // meant the promise never settled: handleRequest never returned, and the
+  // accumulated chunks plus the pending promise stayed reachable for the life
+  // of the process. Repeated aborts accumulate.
+  const { PassThrough } = await import("node:stream")
+  const req = new PassThrough() as unknown as IncomingMessage
+  const pending = readBody(req)
+  req.emit("data", Buffer.from('{"half":'))
+  ;(req as unknown as { destroy: () => void }).destroy()
+  req.emit("close")
+  assert.equal(
+    await Promise.race([pending, new Promise((r) => setTimeout(() => r("NEVER SETTLED"), 250))]),
+    undefined,
+    "an aborted body reads as absent, and the promise settles",
+  )
+})
+
 test("isLocalHost accepts local hosts only", () => {
   assert.equal(isLocalHost("localhost:4317"), true)
   assert.equal(isLocalHost("127.0.0.1:4317"), true)
