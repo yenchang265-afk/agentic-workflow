@@ -2,6 +2,8 @@
 
 # agentic-workflow — Qwen Code 外掛
 
+**實驗性**——此宿主的介面與行為仍可能變動。
+
 共用 `@agentic-workflow/core` 引擎的 Qwen Code 宿主。與 OpenCode 和 Claude Code
 宿主使用相同的工作流程類型、相同的把關、相同的待辦清單。
 

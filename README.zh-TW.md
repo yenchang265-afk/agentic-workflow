@@ -115,6 +115,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 - `./install.sh qwen` 會建置同一個 MCP 伺服器，把 agents/commands/skills/
   references 安裝進 `~/.qwen/`（或 `$QWEN_CONFIG_DIR`），並把 hooks 與 MCP
   項目併入 `settings.json`——細節見 [docs/qwen.md](docs/qwen.zh-TW.md)。
+  **實驗性**：此宿主的介面與行為仍可能變動。
 - 安裝完成後，互動式終端機會得到一個簡短的**設定精靈**來產生
   `.agentic-workflow.json`——見 [docs/configuration.md](docs/configuration.md)。
 

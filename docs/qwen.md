@@ -2,6 +2,8 @@ English | [繁體中文](qwen.zh-TW.md)
 
 # Qwen Code plugin
 
+**Experimental** — this host's interface and behavior may still change.
+
 How the Qwen Code variant executes, its command surface, and install details.
 For the shared pipeline picture see [architecture.md](architecture.md); for the
 other two hosts see [opencode.md](opencode.md) and
