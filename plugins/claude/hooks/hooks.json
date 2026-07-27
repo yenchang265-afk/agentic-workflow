@@ -30,6 +30,16 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-stage-guard.mjs\""
           }
         ]
+      },
+      {
+        "_comment": "Separate from the guard above, and deliberately non-overlapping with it: no alternative in that matcher is a substring of Agent or Task, so no call is ever seen by both hooks. Two PreToolUse hooks returning updatedInput for the same call is undocumented behaviour. The split also keeps the policies apart — the guard fails CLOSED on an unknown host, this one fails OPEN.",
+        "matcher": "^(Agent|Task)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stamp-spawn-model.mjs\""
+          }
+        ]
       }
     ],
     "SessionStart": [
