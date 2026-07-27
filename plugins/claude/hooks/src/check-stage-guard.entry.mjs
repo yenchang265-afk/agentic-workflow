@@ -58,6 +58,7 @@ import {
   writePathOf,
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
+import { backlogRoot, readTasksDir, runsDir } from "./tasksdir.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -97,20 +98,13 @@ const rewriteInput = (updatedInput) => {
 // lives in ./dialect.mjs, so the pin, the stage deadline, and the backlog guard
 // all agree on one answer per host.
 
-// tasksDir defaults to docs/tasks; honor .agentic-workflow.json if present.
-const readTasksDir = (cwd) => {
+// The backlog root and tasksDir are resolved by ./tasksdir.mjs, which mirrors
+// what the MCP SERVER does when it writes the marker — including the user-scope
+// config layer and AGENTIC_WORKFLOW_DIR. Reading only <cwd>/.agentic-workflow.json
+// made a live stage look like no stage at all wherever the two disagreed.
+const readMarker = (cwd, markerFile) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"))
-    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir
-  } catch {
-    /* default */
-  }
-  return "docs/tasks"
-}
-
-const readMarker = (cwd, tasksDir, markerFile) => {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(cwd, tasksDir, "runs", markerFile), "utf8"))
+    return JSON.parse(fs.readFileSync(path.join(runsDir(cwd), markerFile), "utf8"))
   } catch {
     return null
   }
@@ -129,8 +123,8 @@ const main = async () => {
   // tool name unmatched and silently disarm the whole guard.
   if (host === null) return block(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST))
   const d = dialectFor(host)
-  const tasksDir = readTasksDir(cwd)
-  const marker = readMarker(cwd, tasksDir, d.stageMarkerFile)
+  const tasksDir = readTasksDir(backlogRoot(cwd))
+  const marker = readMarker(cwd, d.stageMarkerFile)
   const tool = input.tool_name
   const ti = input.tool_input || {}
   const isBash = isBashTool(d, tool)
