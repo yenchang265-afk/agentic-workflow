@@ -63,7 +63,7 @@
        **AskUserQuestion**: "Plan it now?"
        - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
          spawn `workflow-plan-author` (task mode, Task tool) with the
-         returned prompt, passing the response's `model` when present, then
+         returned prompt (its `model` is already pinned from the response's `model` field when present), then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `workflow-orchestration` skill).
@@ -165,7 +165,7 @@
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
   PLAN (no git isolation): spawn `workflow-plan-author` (Task tool) in task mode
-  with the returned prompt, passing the response's `model` when present, then
+  with the returned prompt (its `model` is already pinned from the response's `model` field when present), then
   `workflow_advance` — the task parks in `plan-review/` and
   the plan gate goes live: ask the user inline (AskUserQuestion — Approve /
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
@@ -180,7 +180,7 @@
   task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
   `workflow-verify` / `workflow-review` via the
-  Task tool, passing the response's `model` when present)
+  Task tool (its `model` is already pinned from the response's `model` field when present))
   and `workflow_advance` after
   each returns, until a terminal action. This is the pull equivalent of the
   OpenCode plugin's `watch` — there is no standing watch mode on this
@@ -189,7 +189,7 @@
 <!-- aw:verb recover -->
 - **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
   resume driving from the action it returns: `workflow_stage`, then spawn the
-  subagent it names with the Task tool, passing the response's `model` when present.
+  subagent it names with the Task tool (its `model` is already pinned from the response's `model` field when present).
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort

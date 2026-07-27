@@ -303,21 +303,37 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   背後都沒有 manifest 階段，因此沒有任何 fire payload 會為它們帶上模型。
 
   之所以放在頂層而非各類型之下：代理名稱在各類型間是唯一的，而
-  `workflow-plan` 根本不屬於任何類型。值的寫法與 `stageModels` 相同
-  （在 Claude Code 上 `provider/` 前綴會被去除），未設定的代理則使用
-  主機預設模型。
+  `workflow-plan` 根本不屬於任何類型。未設定的代理則使用主機預設模型。
 
-  **每個項目的作用範圍。** 這兩個生成都不是階段觸發，因此都無法以參數
-  方式帶上模型——必須由「讀取指令內文的模型」來執行生成，設定值才傳達
-  得到。`workflow-plan-author` 在兩個主機上都是如此；但 `workflow-plan`
-  在 OpenCode 上並非如此：`plugins/opencode/commands/plan.md` 宣告了
-  `agent: workflow-plan` 與 `subtask: true`，opencode 會自行生成該子代理，
-  而指令內文本身就已經是該子代理的提示——前面沒有任何回合可以下指示。
-  因此 `agentModels.workflow-plan` 只適用於 Claude 主機的
-  `/agentic-workflow:plan`（其內文要求模型以 Task 工具生成
-  `workflow-plan`）；在 OpenCode 上臨時規劃器使用工作階段預設模型，此項
-  目無效。兩個主機的 `stageModels.plan` 都不受影響——那是真正的階段觸發，
-  會明確帶上自己的模型。
+  **各主機如何綁定，以及變更何時生效。** 這兩個生成都不是階段觸發，
+  因此都無法像階段那樣由驅動器帶上模型。每個主機改以其他方式綁定——
+  都不是靠「要求模型配合」，那正是這個設定過去的做法，也是它看起來
+  不可靠的原因：
+
+  | 主機 | 機制 | 設定變更何時生效 |
+  | --- | --- | --- |
+  | Claude Code | `PreToolUse` hook 直接改寫生成呼叫的 `model` | 下一次生成 |
+  | OpenCode | 外掛的 `config` hook 設定 `agent.<name>.model` | 下一次**重啟 opencode** |
+  | Qwen Code | 將 `model:` 烘進已安裝的代理檔案 | 下一次 `./install.sh qwen` |
+
+  **值的寫法因主機而異**，其中 Claude Code 最嚴格：
+
+  - **OpenCode** 使用帶 provider 前綴的完整 id（`anthropic/claude-haiku-4-5`）。
+  - **Qwen Code** 使用裸 id——`provider/` 前綴會自動去除。
+  - **Claude Code 的生成工具只接受 `sonnet`、`opus`、`haiku`、`fable`
+    這四個別名。** 若設定值指向其中某個模型家族，會自動對應
+    （`anthropic/claude-haiku-4-5` → `haiku`）；但無法對應到任何已知家族的
+    值就無法綁定：該次生成會使用主機預設模型，並由伺服器發出警告。
+    這是刻意不傳遞而非照傳——該工具會驗證 `model`，遇到不接受的值會讓
+    **整次生成失敗**，照傳只會把一個無傷大雅的設定錯誤變成失敗的執行。
+
+  代理名稱打錯同樣會被回報而不是默默忽略：在綁定已被強制執行之後，
+  這是設定項目失效的主要剩餘原因。
+
+  **在 OpenCode 上的優先順序為**：階段觸發的逐次模型（`stageModels`，由
+  驅動器傳入）> 本設定所寫的 `agent.<name>.model` > 你自己在
+  `opencode.json` 中為「本設定未指名的代理」所設的值 > 工作階段預設。
+  因此在任何主機上，`agentModels` 都不會影響 `stageModels`。
 
   這個鍵**刻意與 `stageModels` 分開**，而不是併入 `stageModels.plan`：
   草稿撰寫與 PLAN 階段都跑 `workflow-plan-author`，若共用一個鍵，把

@@ -342,22 +342,39 @@ it. The warnings are advisory: they annotate a save, never block it. See
   carries a model for them.
 
   Top-level rather than per-kind: agent names are unique across kinds, and
-  `workflow-plan` belongs to no kind at all. The value takes the same
-  host-specific spelling as `stageModels` (a `provider/` prefix is stripped on
-  Claude Code), and an unset agent runs the host default.
+  `workflow-plan` belongs to no kind at all. An unset agent runs the host default.
 
-  **How far each entry reaches.** Neither spawn is a stage fire, so neither can
-  be handed a model as a parameter — the model that reads the command body has
-  to perform the spawn for the configured value to reach it. That holds for
-  `workflow-plan-author` on both hosts. It does **not** hold for `workflow-plan`
-  on OpenCode: `plugins/opencode/commands/plan.md` declares
-  `agent: workflow-plan` with `subtask: true`, so opencode spawns the subagent
-  itself and the body is already that subagent's prompt — there is no earlier
-  turn left to instruct. So `agentModels.workflow-plan` applies to the Claude
-  host's `/agentic-workflow:plan` (whose body asks the model to spawn
-  `workflow-plan` with the Task tool); on OpenCode the ad-hoc planner runs the
-  session default and this entry is inert. `stageModels.plan` is unaffected on
-  both hosts — that is a real stage fire, and it carries its model explicitly.
+  **How each host binds it, and when a change takes effect.** Neither spawn is a
+  stage fire, so neither can be handed a model through the driver the way a stage
+  is. Each host binds it some other way — none of them by asking the model to
+  cooperate, which is what the setting used to do and why it looked unreliable:
+
+  | Host | Mechanism | A config change takes effect |
+  | --- | --- | --- |
+  | Claude Code | a `PreToolUse` hook rewrites the spawn call's `model` | on the next spawn |
+  | OpenCode | the plugin's `config` hook sets `agent.<name>.model` | on the next **opencode restart** |
+  | Qwen Code | `model:` baked into the installed agent file | on the next `./install.sh qwen` |
+
+  **The value's spelling is host-specific**, and Claude Code is the strict one:
+
+  - **OpenCode** takes real provider-qualified ids (`anthropic/claude-haiku-4-5`).
+  - **Qwen Code** takes bare ids — a `provider/` prefix is stripped for you.
+  - **Claude Code's spawn tool accepts only the aliases `sonnet`, `opus`,
+    `haiku`, `fable`.** A configured id naming one of those families is mapped
+    for you (`anthropic/claude-haiku-4-5` → `haiku`), but a value naming no known
+    family cannot bind: that spawn runs the host default and the server reports a
+    warning. It is deliberately left unbound rather than passed through — the
+    tool validates `model` and **errors the whole spawn** on a value it does not
+    accept, so passing an unmappable one would turn a cosmetic misconfig into a
+    failed run.
+
+  A typo'd *agent name* is likewise reported rather than silently ignored, since
+  with the binding enforced it is the main remaining way an entry does nothing.
+
+  **On OpenCode, precedence runs:** a stage fire's per-call model (`stageModels`,
+  passed by the driver) > `agent.<name>.model` from this setting > your own
+  `opencode.json` entry for an agent this setting does not name > the session
+  default. `stageModels` is therefore never affected by `agentModels` on any host.
 
   Deliberately **separate from `stageModels`**, not folded into
   `stageModels.plan`: drafting and the PLAN stage both run
