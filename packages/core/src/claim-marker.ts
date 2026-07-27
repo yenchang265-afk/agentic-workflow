@@ -59,6 +59,42 @@ export const releaseMarker = async ($: Shell, markerDir: string): Promise<void> 
  * older (GNU and BSD). Any failure — marker absent, or a `find` without `-mmin`
  * semantics — reads as "not stale", degrading safely to "marker stays held".
  */
+/**
+ * Win `markerDir`, sweeping it first when a dead claimer left it behind.
+ *
+ * The sweep used to be `rmdir` + re-acquire, which is NOT atomic: two processes
+ * that judged the SAME stale marker each removed whatever was there at that
+ * moment — including the other's brand-new marker — and both believed they had
+ * won. Two sitters then drove one PR, both pushing the same head and both
+ * writing the ledger at `onTerminal`. Reachable today with a watcher plus a
+ * manual `claim`, which the watch lease does not gate.
+ *
+ * So the takeover renames the stale marker ASIDE, the idiom `scheduler/lease.ts`
+ * uses for the same reason: rename of one source is atomic, so the first taker
+ * moves it and every other taker's `mv` fails with the source already gone. The
+ * moved-aside marker is then re-judged before it is discarded — if it turns out
+ * to carry a FRESH stamp, a rival re-claimed inside the window and we moved a
+ * live claim, so it goes straight back and this caller stands down.
+ */
+export const acquireOrSweepMarker = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
+  if (await acquireMarker($, markerDir, now)) return true
+  if (!(await markerOlderThan($, markerDir, minutes, now))) return false
+
+  const graveyard = `${markerDir}.dead-${process.pid}-${now.getTime()}`
+  const moved = await $`mv ${markerDir} ${graveyard}`.quiet().nothrow()
+  if (moved.exitCode !== 0) return false // lost the rename race — whoever moved it owns the sweep
+
+  if (!(await markerOlderThan($, graveyard, minutes, now))) {
+    // What we moved aside was a live claim, created between our judgement and
+    // our rename. Put it back; a claim that is still running must survive.
+    const restored = await $`mv ${graveyard} ${markerDir}`.quiet().nothrow()
+    if (restored.exitCode !== 0) await $`rm -rf ${graveyard}`.quiet().nothrow() // someone re-took the path — drop our copy rather than leave debris
+    return false
+  }
+  await $`rm -rf ${graveyard}`.quiet().nothrow()
+  return acquireMarker($, markerDir, now)
+}
+
 export const markerOlderThan = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
   const stamp = await $`cat ${stampPath(markerDir)}`.quiet().nothrow()
   if (stamp.exitCode === 0) {
