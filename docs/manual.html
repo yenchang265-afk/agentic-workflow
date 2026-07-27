@@ -319,8 +319,8 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
 
       <div class="pillrow">
         <span class="pill"><b>engineering</b> · default-on · PLAN→BUILD→VERIFY→REVIEW</span>
-        <span class="pill"><b>pr-sitter</b> · always on · watches your open PRs</span>
-        <span class="pill">ships as 2 plugins · OpenCode + Claude Code</span>
+        <span class="pill"><b>pr-sitter</b> · experimental, opt-in · watches your open PRs</span>
+        <span class="pill">ships as 3 plugins · OpenCode + Claude Code + Qwen Code</span>
       </div>
 
       <div class="guarantees">
@@ -344,7 +344,7 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
         <table>
           <thead><tr><th>Tool</th><th>Needed for</th><th>Note</th></tr></thead>
           <tbody>
-            <tr><td><code>Node.js ≥ 20</code></td><td>Core &amp; both plugins</td><td>Hard requirement.</td></tr>
+            <tr><td><code>Node.js ≥ 22.13</code></td><td>Core &amp; all plugins</td><td>Hard requirement (needs <code>node:sqlite</code>).</td></tr>
             <tr><td><code>git</code>, <code>curl</code></td><td>Isolation, fetching</td><td>Always.</td></tr>
             <tr><td><code>gh</code></td><td>GitHub PR work</td><td>Authenticate with <code>gh auth login</code>.</td></tr>
             <tr><td><code>az</code> + azure-devops ext</td><td>Azure DevOps PRs</td><td>Optional — skip with <code>--no-ado</code>.</td></tr>
@@ -475,8 +475,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <h3>The trusted-verdict boundary</h3>
       <p>A check stage's outcome counts only when recorded through the dedicated <code>workflow_verdict</code> tool, and only the stage the loop is <em>currently</em> running may record its own verdict. A stage that writes "PASS" in prose is treated as untrusted narration and ignored. That is what stops a prompt-injected or over-eager stage from waving its own work through.</p>
 
-      <h3>The pr-sitter kind <span class="def">stable</span></h3>
-      <p><code>pr-sitter</code> and <code>review-sitter</code> are <b>stable</b>, alongside <code>engineering</code>, the default-on kind — their manifests, config keys, and defaults are settled. <code>dep-sitter</code> and <code>main-sitter</code> are still <b>experimental</b> and theirs may change.</p>
+      <h3>The pr-sitter kind <span class="def">experimental</span></h3>
+      <p><b>All four sitters are experimental</b> — their manifests, config keys, and defaults may still change between releases, so none starts without an explicit <code>workflows.&lt;kind&gt;.enabled: true</code>. <code>engineering</code> is the only kind on without configuration; the <code>ado</code> (Azure DevOps) code platform they can run against is experimental on the same terms.</p>
       <div class="card" style="margin-top:10px">
         <div class="flow" style="margin:2px 0">
           <span class="f">TRIAGE <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
@@ -484,14 +484,14 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <span class="f">VERIFY <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f term">PUBLISH</span>
         </div>
-        <p style="margin:8px 0 0;font-size:14px">Always on — no configuration, and no off switch. Read-only <code>gh</code>/<code>az</code> triage turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
+        <p style="margin:8px 0 0;font-size:14px">Opt in via <code>workflows.pr-sitter.enabled: true</code>. Read-only <code>gh</code>/<code>az</code> triage turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
       </div>
       <div class="note warn">Read <code>docs/design/threat-model.md</code> before enabling the PR sitter — it documents the security posture for acting on untrusted PR content.</div>
 
       <h3>The other sitter kinds</h3>
-      <p>Three more sitters ship on the same engine, each watching a different signal. <code>review-sitter</code> is always on like the PR sitter; <code>dep-sitter</code> and <code>main-sitter</code> are opt-in via <code>workflows.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
+      <p>Three more sitters ship on the same engine, each watching a different signal. All are opt-in via <code>workflows.&lt;kind&gt;.enabled: true</code>; all run on GitHub or Azure DevOps and — like the PR sitter — <b>none merges, closes, or approves</b>. The full schema lives in the <a href="#config">config reference</a>.</p>
       <div class="card" style="margin-top:10px">
-        <h4 style="margin-top:0">review-sitter <span class="def">always on</span> <span style="text-transform:none;color:var(--ink-2)">— sits on PRs where your review is requested</span></h4>
+        <h4 style="margin-top:0">review-sitter <span class="def">experimental</span> <span style="text-transform:none;color:var(--ink-2)">— sits on PRs where your review is requested</span></h4>
         <div class="flow" style="margin:2px 0">
           <span class="f">FETCH <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f">ASSESS <span style="color:var(--accent-2)">work</span></span><span class="arr">→</span>
@@ -595,13 +595,14 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>tasksDir</code></td><td><span class="def">"docs/tasks"</span></td><td>Root of the task backlog; subfolders are statuses. Also hosts the ephemeral <code>runs/</code> machine state.</td></tr>
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
             <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>watch</code> (either kind's command). <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
-            <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>pr-sitter</code> and <code>review-sitter</code> are always on (no off switch — <code>"enabled": false</code> is a config error); <code>engineering</code> runs unless disabled; every other kind is opt-in with <code>"enabled": true</code>.</td></tr>
+            <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; all four sitters (<code>pr-sitter</code>, <code>review-sitter</code>, <code>dep-sitter</code>, <code>main-sitter</code>) are experimental and opt-in with <code>"enabled": true</code>.</td></tr>
             <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (Azure DevOps REST API, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
             <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
             <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
             <tr><td><code>worktreesDir</code></td><td><span class="def">unset</span></td><td>Run each loop in its own <code>git worktree</code> instead of switching branches. Pair with <code>worktreeSetup</code>.</td></tr>
             <tr><td><code>worktreeSetup</code></td><td><span class="def">unset</span></td><td>Shell command run in a fresh worktree, e.g. <code>"npm ci"</code>.</td></tr>
             <tr><td><code>reviewLenses</code></td><td><span class="def">[]</span></td><td>Run REVIEW once per lens and take the worst verdict. Max 5. Costs ~N× review time.</td></tr>
+            <tr><td><code>workflows.&lt;kind&gt;.stageFanout</code></td><td><span class="def">unset</span></td><td>Stage name → <code>"axis"</code>: run that check stage once per required axis, each pass reviewing exactly one, merged worst-wins. Same ~N× cost as <code>reviewLenses</code> but keeps the axis-coverage guarantee (a gap stops the loop with ERROR). <code>reviewLenses</code> wins over this on <code>review</code>.</td></tr>
           </tbody>
         </table>
       </div>
@@ -709,7 +710,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
           <p style="font-size:14px;margin-top:0">One sub-tab per enabled kind. Top to bottom:</p>
           <div class="tblwrap" style="margin-top:4px"><table style="min-width:0"><tbody>
             <tr><td><b>Active strip</b></td><td>The stage running right now with a live countdown to its deadline, the watcher lease (pid/host, flagged when stale), resumable snapshots, and PR ledgers.</td></tr>
-            <tr><td><b>Backlog board</b></td><td>A kanban column per lifecycle folder; <span class="verd fail" style="padding:0 6px">gate</span> columns (where the loop parked for you) glow amber and their cards read <em>awaiting you</em>. Read-only — approve from your host.</td></tr>
+            <tr><td><b>Backlog board</b></td><td>A kanban column per lifecycle folder; <span class="verd fail" style="padding:0 6px">gate</span> columns (where the loop parked for you) glow amber and their cards read <em>awaiting you</em>. Cards carry the gate moves themselves — approve/replan/ship — through the same entry points the hosts call. Clicking a title opens the task drawer: a planless task is editable in place; a planned task renders body + plan as Markdown and turns hovered-line comments into a composed <code>replan</code> reason.</td></tr>
             <tr><td><b>Run history</b></td><td>Each run expands to its per-stage table (verdict · iteration · wall-clock) plus token usage &amp; cost and the raw stage transcripts.</td></tr>
           </tbody></table></div>
           <p style="margin:10px 0 0;font-size:13.5px;color:var(--muted-txt)">Updates stream live (SSE + a polling reconciler). Arm the header <b>bell</b> once and the browser notifies you the moment a task parks at a gate.</p>
@@ -743,7 +744,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
     <a href="../plugins/claude/README.md">plugins/claude/README.md — Claude host</a>
     <a href="design/threat-model.md">design/threat-model.md — security</a>
   </div>
-  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: the stable engineering, pr-sitter, and review-sitter, plus the experimental dep-sitter and main-sitter.</p>
+  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: the default-on engineering, plus the four experimental, opt-in sitters — pr-sitter, review-sitter, dep-sitter, and main-sitter.</p>
 </footer>
 
 <script>
@@ -822,7 +823,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
       skills:["debugging-and-error-recovery"],
       transit:[["pass","→","fires REVIEW"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]},
     review:{name:"REVIEW",kind:"check",agent:"workflow-review",iso:"isolation: worktree",
-      what:"Five-axis diff review, run once per configured <code>reviewLens</code> with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>workflow_verdict</code>.",
+      what:"Five-axis diff review. Optionally fanned out — once per configured <code>reviewLens</code>, or once per required axis via <code>stageFanout</code> — with the worst verdict winning. Read-only bash; no edits. Records its verdict via <code>workflow_verdict</code>.",
       skills:["code-review-and-quality","security-and-hardening","performance-optimization"],
       transit:[["pass","→","done — parks the task in in-review/"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]}
   };

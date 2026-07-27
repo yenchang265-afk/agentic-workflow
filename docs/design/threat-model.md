@@ -437,9 +437,9 @@ than what is.
   real effect; `ship` is styled as destructive and says it opens a PR.
 - **Residual:** a *stranded* claim (from a crashed loop) reads as driving and
   refuses the gate until released — deliberate, and the reason the backlog
-  doctor exists (the hub exposes it too: `GET`/`POST /api/doctor`, which
-  releases only *stale, undriven* claims and skips release entirely while a
-  watcher lease is live). The claim→gate window is the same race two claimers
+  doctor exists (the hub exposes it too: `GET /api/doctor` sweeps read-only,
+  `POST /api/doctor/fix` releases only *stale, undriven* claims and skips
+  release entirely while a watcher lease is live). The claim→gate window is the same race two claimers
   already have, narrowed by `expectStatus`. Approval identity is still the
   configured git identity, not an authenticated one (see T4).
 
