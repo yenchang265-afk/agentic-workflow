@@ -111,6 +111,137 @@ test("severity resolution: label first (MODERATE and MEDIUM both normalize), els
   assert.equal(osvCandidates(banded, low, ALL_DECLARED, "maven").claimable[0]?.severity, "high")
 })
 
+test("a vulnerability's own CVSS vector resolves severity when no label is present", () => {
+  // The OSV spec's severity channel: `severity[].score` holds a CVSS vector.
+  const r = OsvReportSchema.parse({
+    results: [
+      {
+        packages: [
+          {
+            package: { name: "g:vectored", version: "1.0.0", ecosystem: "Maven" },
+            vulnerabilities: [
+              {
+                id: "V1",
+                severity: [{ type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }],
+                affected: [
+                  {
+                    package: { name: "g:vectored", ecosystem: "Maven" },
+                    ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.0.1" }] }],
+                  },
+                ],
+              },
+            ],
+            groups: [],
+          },
+        ],
+      },
+    ],
+  })
+  const { claimable } = osvCandidates(r, POLICY, ALL_DECLARED, "maven")
+  assert.equal(claimable[0]?.severity, "critical") // 9.8
+})
+
+test("severity takes the WORST of a vuln's vector and its group's max_severity", () => {
+  // max_severity is the maximum across a whole GROUP and may belong to another
+  // vulnerability, so a per-vuln vector can score lower. Preferring the vector
+  // would push packages below severityFloor that are claimed today.
+  const withGroup = (vector: string, maxSeverity: string) =>
+    OsvReportSchema.parse({
+      results: [
+        {
+          packages: [
+            {
+              package: { name: "g:a", version: "1.0.0", ecosystem: "Maven" },
+              vulnerabilities: [
+                {
+                  id: "V1",
+                  severity: [{ type: "CVSS_V3", score: vector }],
+                  affected: [
+                    {
+                      package: { name: "g:a", ecosystem: "Maven" },
+                      ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.0.1" }] }],
+                    },
+                  ],
+                },
+              ],
+              groups: [{ ids: ["V1"], aliases: [], max_severity: maxSeverity }],
+            },
+          ],
+        },
+      ],
+    })
+  const low = { severityFloor: "low", autoFix: ["patch", "minor"] }
+  const judge = (vector: string, maxSeverity: string) =>
+    osvCandidates(withGroup(vector, maxSeverity), low, ALL_DECLARED, "maven").claimable[0]?.severity
+
+  // Vector 4.7 (moderate) but the group says 9.1 — the group wins, as it did
+  // before vectors were read at all. This is the regression guard.
+  assert.equal(judge("CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N", "9.1"), "critical")
+  // Vector 9.8 (critical) and no usable group number — the vector supplies it.
+  assert.equal(judge("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", ""), "critical")
+})
+
+test("an unscorable CVSS version leaves severity unresolved rather than guessing a band", () => {
+  const r = OsvReportSchema.parse({
+    results: [
+      {
+        packages: [
+          {
+            package: { name: "g:v4", version: "1.0.0", ecosystem: "Maven" },
+            vulnerabilities: [
+              {
+                id: "V1",
+                severity: [{ type: "CVSS_V4", score: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" }],
+                affected: [
+                  {
+                    package: { name: "g:v4", ecosystem: "Maven" },
+                    ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.0.1" }] }],
+                  },
+                ],
+              },
+            ],
+            groups: [],
+          },
+        ],
+      },
+    ],
+  })
+  const low = { severityFloor: "low", autoFix: ["patch", "minor"] }
+  assert.equal(osvCandidates(r, low, ALL_DECLARED, "maven").claimable.length, 0)
+})
+
+test("an off-spec scalar severity on a record does not break the report schema", () => {
+  // The vuln-list branch carries records through verbatim, and a site scanner
+  // may put a scalar label where the spec wants an array. That record must
+  // still parse — its label reaches osvCandidates via database_specific.
+  const r = OsvReportSchema.parse({
+    results: [
+      {
+        packages: [
+          {
+            package: { name: "g:scalar", version: "1.0.0", ecosystem: "Maven" },
+            vulnerabilities: [
+              {
+                id: "V1",
+                severity: "HIGH",
+                database_specific: { severity: "HIGH" },
+                affected: [
+                  {
+                    package: { name: "g:scalar", ecosystem: "Maven" },
+                    ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.0.1" }] }],
+                  },
+                ],
+              },
+            ],
+            groups: [],
+          },
+        ],
+      },
+    ],
+  })
+  assert.equal(osvCandidates(r, POLICY, ALL_DECLARED, "maven").claimable[0]?.severity, "high")
+})
+
 test("the severity floor drops below-floor and severity-unresolvable packages silently", () => {
   const r = report(
     osvPackage("g:low", "1.0.0", [{ id: "V1", label: "LOW", fixed: ["1.0.1"] }]),

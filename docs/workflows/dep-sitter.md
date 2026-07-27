@@ -141,7 +141,7 @@ Only five things are required per record:
 | Field | Why |
 |---|---|
 | `id` | Dedup key — a missing or duplicate id collapses distinct advisories into one |
-| `severity` | The rating. `low`/`moderate`/`medium`/`high`/`critical`, case-insensitive |
+| `severity` | The rating — a `low`/`moderate`/`medium`/`high`/`critical` label (case-insensitive), or the spec's `[{type, score}]` array of CVSS vectors. See below |
 | `affected[].package.name` | **`group:artifact` on the JVM** — see below |
 | `affected[].package.version` | The *installed* version |
 | `affected[].ranges[].events[].fixed` | The upgrade target; absent ⇒ reported as unfixable, never claimed |
@@ -164,11 +164,35 @@ low-confidence because in standard OSV that array lists every *affected*
 version, so element 0 is the oldest affected release, not what is installed —
 and a wrong current version can let a major bump read as minor.
 
+**Severity** is read from whichever channel the record carries, in this order:
+
+1. a scalar `severity` string (off-spec, but what most site scanners emit),
+2. `database_specific.severity` (the GHSA-style label),
+3. label-shaped entries in the `severity[]` array,
+4. **CVSS vectors** in `severity[].score` — the OSV spec's own channel, and the
+   only one a compliant record is required to carry.
+
+A stated label always outranks a vector: a rating the scanner asserts beats one
+derived here, which is how a site overrides an advisory's severity.
+
+**CVSS vectors** are scored as **base scores, v3.0 and v3.1 only**, then banded
+on the same 4/7/9 thresholds osv-scanner's `max_severity` uses — under 4 `low`,
+under 7 `moderate`, under 9 `high`, else `critical`. Temporal and environmental
+metrics in a vector are ignored. Where a vulnerability has both its own vector
+and a covering osv-scanner group, the **worst** of the two wins, so reading
+vectors can only add severity, never lower one that already resolved.
+
+CVSS **v2** and **v4.0** vectors are recognized but not scored — v4's base score
+needs a large lookup table whose every entry has to be right, and a wrong one
+mis-bands real advisories invisibly. Such a record resolves to no severity, and
+says so.
+
 **Severity vocabulary** outside the five accepted terms maps to unknown, which
 ranks below every floor. Rather than silently dropping the package, an
-unrecognized label is logged with the raw value quoted, and a payload whose
-every record is unreadable is an actionable skip naming what it saw. Extend
-`normalizeLabel` in `packages/core/src/source/osv.ts` to add a site's own terms.
+unrecognized label is logged with the raw value quoted, an unscorable vector is
+logged naming its CVSS version, and a payload whose every record is unreadable
+is an actionable skip naming what it saw. Extend `normalizeLabel` in
+`packages/core/src/source/osv.ts` to add a site's own terms.
 
 Empty stdout is always an actionable skip, never "no vulnerabilities".
 

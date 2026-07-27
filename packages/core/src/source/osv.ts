@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { readCvssVector } from "./cvss.js"
 import { severityRank, type Severity, type SemverImpact, type UpgradeCandidate } from "./dependency-scan.js"
 
 /**
@@ -10,8 +11,10 @@ import { severityRank, type Severity, type SemverImpact, type UpgradeCandidate }
  *
  * OSV facts the shapes below encode:
  * - `severity[].score` on a vulnerability is a CVSS *vector string*, not a
- *   number — the numeric signal is the report's own `groups[].max_severity`
- *   (a string like "8.1" osv-scanner computes from the vectors).
+ *   number. It is scored here via `readCvssVector` (cvss.ts) and banded, which
+ *   is the ONLY severity channel a spec-compliant payload is required to carry.
+ *   osv-scanner additionally precomputes `groups[].max_severity` (a string like
+ *   "8.1") from those vectors; both are read — see `osvCandidates`.
  * - The authoritative fixed version lives in
  *   `affected[].ranges[].events[].fixed`; a vulnerability may affect several
  *   packages, so events are read only from `affected` entries matching the
@@ -30,10 +33,27 @@ const OsvAffectedSchema = z.object({
     .default([]),
 })
 
+const OsvSeveritySchema = z.object({
+  /** `CVSS_V2` / `CVSS_V3` / `CVSS_V4` / a vendor scheme. */
+  type: z.string().default(""),
+  /** A CVSS vector string, per the OSV spec — NOT a number and NOT a label. */
+  score: z.string().default(""),
+})
+
 const OsvVulnSchema = z.object({
   id: z.string().default(""),
   /** GHSA-style label (LOW/MODERATE/MEDIUM/HIGH/CRITICAL) when the record carries one. */
   database_specific: z.object({ severity: z.string().default("") }).nullish(),
+  /**
+   * The spec's own severity channel; holds CVSS vectors.
+   *
+   * Anything that is not a well-formed array is dropped rather than rejected.
+   * A site's scanner may put an OFF-SPEC scalar label here (`"HIGH"` — see
+   * osv-payload.ts, which reads it), and those records reach this schema
+   * verbatim. Rejecting them would fail the whole report over a field this
+   * layer only ever wants vectors from.
+   */
+  severity: z.array(OsvSeveritySchema).catch([]),
   affected: z.array(OsvAffectedSchema).default([]),
 })
 
@@ -131,6 +151,37 @@ export const bandCvss = (score: string): Severity | "" => {
 }
 
 /**
+ * Band the worst CVSS vector in an OSV `severity[]` array, and report which
+ * vector versions could not be scored.
+ *
+ * Worst-wins mirrors how a package already takes the worst of its
+ * vulnerabilities. The `unscored` versions are returned rather than swallowed
+ * so a caller can explain an unreadable rating: a v4-only record that silently
+ * resolved to "" would sit below every floor and read as "nothing to do".
+ *
+ * Shared with `osv-payload.ts` so the vuln-list branch bands vectors exactly
+ * the way the osv-scanner branch does — a private copy there could disagree
+ * about whether a record has a readable severity at all. Pure.
+ */
+export const bandSeverityVectors = (
+  entries: readonly { readonly score: string }[],
+): { readonly label: Severity | ""; readonly unscored: readonly string[] } => {
+  let label: Severity | "" = ""
+  const unscored: string[] = []
+  for (const entry of entries) {
+    const read = readCvssVector(entry.score)
+    if (!read) continue
+    if (read.kind === "unscored") {
+      if (!unscored.includes(read.version)) unscored.push(read.version)
+      continue
+    }
+    const banded = bandCvss(String(read.score))
+    if (severityRank(banded) > severityRank(label)) label = banded
+  }
+  return { label, unscored }
+}
+
+/**
  * GHSA/OSV label → npm severity vocabulary ("MEDIUM"/"MODERATE" → moderate);
  * "" when unrecognized. Exported so `osv-payload.ts` can report an unreadable
  * rating using the SAME vocabulary this function applies: a private copy there
@@ -158,8 +209,9 @@ export interface OsvJudgement {
  * the current version (across the affected entries naming this package); the
  * package's target is the MAX of those per-vuln minimal fixes, so one bump
  * clears everything. Severity resolves per vulnerability —
- * `database_specific.severity` label first, else the covering group's
- * `max_severity` banded — and the package takes the worst. Packages below the
+ * `database_specific.severity` label first, else the worst of the record's own
+ * banded CVSS vectors and the covering group's banded `max_severity` — and the
+ * package takes the worst. Packages below the
  * severity floor are dropped silently (npm-path parity); undeclared packages
  * land in `skippedTransitives`; majors/out-of-policy in `skippedMajors`. Pure.
  */
@@ -181,11 +233,20 @@ export const osvCandidates = (
       let target = ""
       let fixable = true
       for (const vuln of p.vulnerabilities) {
-        // Severity: label → covering group's banded max_severity.
+        // Severity: an explicit label wins; otherwise the WORST of the record's
+        // own CVSS vectors and the covering group's banded max_severity.
+        //
+        // Worst-of, not vector-first: `max_severity` is the maximum across a
+        // whole group and may belong to a different vulnerability, so a
+        // per-vuln vector can score lower. Preferring the vector would push
+        // packages BELOW severityFloor that are claimed today — a silent
+        // regression. Worst-of only ever adds resolution where there was none.
         let vulnSev = normalizeLabel(vuln.database_specific?.severity ?? "")
         if (!vulnSev) {
           const group = p.groups.find((g) => g.ids.includes(vuln.id) || g.aliases.includes(vuln.id))
-          vulnSev = group ? bandCvss(group.max_severity) : ""
+          const grouped = group ? bandCvss(group.max_severity) : ""
+          const { label: vectored } = bandSeverityVectors(vuln.severity)
+          vulnSev = severityRank(vectored) > severityRank(grouped) ? vectored : grouped
         }
         if (severityRank(vulnSev) > severityRank(severity)) severity = vulnSev
 
