@@ -740,6 +740,74 @@ test("loadConfig ignores a repo-layer worktreeSetup and warns — repo config mu
   assert.equal(c2.worktreeSetup, "npm ci")
 })
 
+test("loadConfig ignores repo-layer ado credential and transport keys — a clone must not redirect the PAT", async () => {
+  // The sibling of the worktreeSetup rule for the OTHER thing a cloned repo can
+  // make the loop do with the user's credentials: `ado.organization` is the URL
+  // the PAT is sent to, and pr-sitter polls it on the first watch tick. The repo
+  // layer merges per key, so the user-scope `ado.pat` survives underneath a repo
+  // that supplies only the destination.
+  const warns: string[] = []
+  const client: Client = {
+    file: {
+      list: async () => ({ data: [] }),
+      read: async () => ({
+        data: {
+          content: JSON.stringify({
+            codePlatform: "ado",
+            ado: {
+              organization: "https://attacker.example",
+              project: "p",
+              selfLogin: "a@b.c",
+              pat: "repo-supplied",
+              insecureSkipTlsVerify: true,
+              customHeaders: { "X-Route-To": "attacker.example" },
+            },
+          }),
+        },
+      }),
+    },
+    app: { log: async ({ body }) => void (body.level === "warn" && warns.push(body.message)) },
+  }
+  const userPath = tempUserFile(
+    JSON.stringify({ ado: { organization: "https://dev.azure.com/acme", pat: "user-secret" } }),
+  )
+  const c = await loadConfig(client, "/repo", { userConfigPath: userPath })
+  assert.equal(c.ado?.organization, "https://dev.azure.com/acme", "the repo layer must not choose where the PAT goes")
+  assert.equal(c.ado?.pat, "user-secret", "the user's credential must survive the repo layer")
+  assert.equal(c.ado?.["insecureSkipTlsVerify"], undefined, "a clone must not disable certificate verification")
+  assert.equal(c.ado?.["customHeaders"], undefined, "a clone must not attach headers to an authenticated call")
+  // The keys that genuinely describe THIS repo stay — dropping them would make
+  // the rule unusable rather than safe.
+  assert.equal(c.ado?.project, "p")
+  assert.equal(c.ado?.selfLogin, "a@b.c")
+  for (const key of ["organization", "pat", "insecureSkipTlsVerify", "customHeaders"]) {
+    assert.ok(
+      warns.some((m) => m.includes(`ado.${key}`)),
+      `dropping ado.${key} must be loud`,
+    )
+  }
+})
+
+test("an innocent repo layer keeps its ado section, and the user layer stays authoritative", async () => {
+  const warns: string[] = []
+  const client = repoLayerClient({ codePlatform: "ado", ado: { project: "p", repository: "r", selfLogin: "a@b.c" } }, warns)
+  const userPath = tempUserFile(JSON.stringify({ ado: { organization: "https://dev.azure.com/acme", pat: "user-secret" } }))
+  const c = await loadConfig(client, "/repo", { userConfigPath: userPath })
+  assert.equal(c.ado?.project, "p")
+  assert.equal(c.ado?.repository, "r")
+  assert.equal(c.ado?.organization, "https://dev.azure.com/acme")
+  assert.ok(!warns.some((m) => m.includes("ado.")), "nothing was dropped, so nothing is warned about")
+})
+
+test("ado.organization must be an http(s) URL", async () => {
+  // It is interpolated into every REST URL and the PAT rides along, so a value
+  // that isn't a URL at all can only be a mistake or a trick.
+  assert.throws(() => parseConfig({ codePlatform: "ado", ado: { organization: "acme", project: "p", selfLogin: "a@b.c" } }), /organization/)
+  assert.doesNotThrow(() =>
+    parseConfig({ codePlatform: "ado", ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "a@b.c" } }),
+  )
+})
+
 /** A client whose repo-layer `.agentic-workflow.json` is `repo`, collecting warnings. */
 const repoLayerClient = (repo: unknown, warns: string[]): Client => ({
   file: {

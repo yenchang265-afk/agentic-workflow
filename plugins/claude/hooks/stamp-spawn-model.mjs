@@ -145,18 +145,43 @@ var dialectFor = (host) => host && host in DIALECTS ? DIALECTS[host] : null;
 
 // plugins/claude/hooks/src/marker.mjs
 import fs2 from "node:fs";
+import os2 from "node:os";
 import path2 from "node:path";
-var readTasksDir = (cwd) => {
+var userConfigPath = () => {
+  const env = process.env.AGENTIC_WORKFLOW_USER_CONFIG;
+  if (env !== void 0) return env === "" ? null : env;
+  const home = os2.homedir();
+  if (!home) return null;
+  const xdg = process.env.XDG_CONFIG_HOME?.trim() ? process.env.XDG_CONFIG_HOME : path2.join(home, ".config");
+  const primary = path2.join(xdg, "agentic-workflow", "agentic-workflow.json");
+  if (fs2.existsSync(primary)) return primary;
+  const legacy = path2.join(home, ".agentic-workflow.json");
+  return fs2.existsSync(legacy) ? legacy : primary;
+};
+var layer = (file) => {
+  if (!file) return null;
   try {
-    const cfg = JSON.parse(fs2.readFileSync(path2.join(cwd, ".agentic-workflow.json"), "utf8"));
-    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir;
+    const parsed = JSON.parse(fs2.readFileSync(file, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
+    return null;
   }
+};
+var backlogRoot = (cwd) => process.env.AGENTIC_WORKFLOW_DIR || cwd || process.cwd();
+var readTasksDir = (root) => {
+  const repo = layer(path2.join(root, ".agentic-workflow.json"));
+  if (typeof repo?.tasksDir === "string" && repo.tasksDir) return repo.tasksDir;
+  const user = layer(userConfigPath());
+  if (typeof user?.tasksDir === "string" && user.tasksDir) return user.tasksDir;
   return "docs/tasks";
 };
-var readMarker = (cwd, tasksDir, markerFile) => {
+var runsDir = (cwd) => {
+  const root = backlogRoot(cwd);
+  return path2.join(root, readTasksDir(root), "runs");
+};
+var readMarker = (cwd, markerFile) => {
   try {
-    return JSON.parse(fs2.readFileSync(path2.join(cwd, tasksDir, "runs", markerFile), "utf8"));
+    return JSON.parse(fs2.readFileSync(path2.join(runsDir(cwd), markerFile), "utf8"));
   } catch {
     return null;
   }
@@ -206,7 +231,7 @@ var main = async () => {
   const agent = agentNameOf(ti.subagent_type, d.agentPrefixes);
   if (!agent) return allow();
   const cwd = input.cwd || process.cwd();
-  const marker = readMarker(cwd, readTasksDir(cwd), d.stageMarkerFile);
+  const marker = readMarker(cwd, d.stageMarkerFile);
   const model = modelFor(marker, readRawConfigLayers(cwd), agent);
   if (!model) return allow();
   if (ti.model === model) return allow();

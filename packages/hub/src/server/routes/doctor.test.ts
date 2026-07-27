@@ -143,8 +143,11 @@ test("a stale, undriven claim is released; a fresh one is kept", async () => {
   const dir = makeRepo()
   place(dir, "queued", "old1")
   place(dir, "queued", "new1")
-  claim(dir, "queued", "old1", 30) // orphaned
-  claim(dir, "queued", "new1", 0) // inside the claim→BUILD window
+  // The stale window is derived from the stage timeout (60m by default), not
+  // the bare 15m constant: a PLAN stage writes nothing durable until it parks,
+  // so anything shorter sweeps a healthy run's marker. 30m is a LIVE claim now.
+  claim(dir, "queued", "old1", 120) // orphaned
+  claim(dir, "queued", "new1", 30) // still well inside the window
 
   const body = (await fix(dir)).body as DoctorFixResponse
   assert.deepEqual(body.releasedClaims, ["old1"])

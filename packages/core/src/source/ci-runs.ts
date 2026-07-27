@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
+import { acquireOrSweepMarker, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger, shortSha } from "./ci-runs-shared.js"
@@ -102,12 +102,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   const headMarker = (sha: string): string => `${claimsDir}/head-${shortSha(sha)}`
   /** Win the head's marker, sweeping it first if a dead run left it behind. */
-  const claimHead = async (sha: string): Promise<boolean> => {
-    if (await acquireMarker($, headMarker(sha))) return true
-    if (!(await markerOlderThan($, headMarker(sha), STALE_CLAIM_MINUTES))) return false
-    await releaseMarker($, headMarker(sha))
-    return acquireMarker($, headMarker(sha))
-  }
+  const claimHead = (sha: string): Promise<boolean> => acquireOrSweepMarker($, headMarker(sha), STALE_CLAIM_MINUTES)
   let resolvedBranch: string | null = null
 
   const branch = async (): Promise<string> => {

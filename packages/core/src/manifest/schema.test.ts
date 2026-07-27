@@ -349,3 +349,35 @@ test("ci-runs source parses with an optional branch and empty workflows default"
   const pinned = parseManifest({ ...base, workSource: { type: "ci-runs", branch: "main", workflows: ["ci.yml"] } })
   if (pinned.workSource.type === "ci-runs") assert.equal(pinned.workSource.branch, "main")
 })
+
+test("a status folder must be a slug — it becomes a real path segment", () => {
+  // `statuses` are joined into <tasksDir>/<status>/ by listByStatus, findByIdIn
+  // and the hub's watcher (fs.readdirSync). Core deliberately does NOT guard the
+  // status argument at those call sites ("any status folder a kind's manifest
+  // declares"), so the manifest is where the rail belongs — the same reason
+  // `stage.prompt` is pinned to `stages/<name>.md` rather than trusted.
+  for (const bad of ["../../../../etc", "in progress", "In-Progress", "a/b", ".", ""]) {
+    assert.throws(
+      () => parseManifest({ ...base, workSource: { type: "backlog", statuses: [bad, "done"], pools: [{ status: "done", entryStage: "work" }] } }),
+      /status/i,
+      `expected "${bad}" to be refused`,
+    )
+  }
+  // The real lifecycle folders keep parsing.
+  const m = parseManifest({
+    ...base,
+    workSource: {
+      type: "backlog",
+      statuses: ["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"],
+      pools: [{ status: "queued", entryStage: "work" }],
+    },
+  })
+  assert.ok(m.workSource.type === "backlog" && m.workSource.statuses.includes("plan-review"))
+})
+
+test("a kind name must be a slug — it becomes a directory under runs/ and workflows/", () => {
+  for (const bad of ["../evil", "a/b", "Engineering", ""]) {
+    assert.throws(() => parseManifest({ ...base, kind: bad }), /kind/i, `expected "${bad}" to be refused`)
+  }
+  assert.equal(parseManifest({ ...base, kind: "pr-sitter" }).kind, "pr-sitter")
+})

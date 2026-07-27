@@ -118,7 +118,27 @@ const markerShell = (dirs: Set<string> = new Set(), files: Record<string, string
       else dirs.add(d)
     } else if (verb === "rmdir") dirs.delete(cmd.slice("rmdir ".length))
     else if (cmd.startsWith("rm -f ")) delete files[cmd.slice("rm -f ".length)]
-    else if (verb === "cat") {
+    else if (cmd.startsWith("rm -rf ")) {
+      const target = cmd.slice("rm -rf ".length)
+      dirs.delete(target)
+      for (const f of Object.keys(files)) if (f.startsWith(`${target}/`)) delete files[f]
+    } else if (verb === "mv") {
+      // The stale-marker takeover renames the marker aside — atomically, so only
+      // one of two sweepers can proceed. Modelled here because that rename IS
+      // the exclusion; a no-op `mv` would make the race untestable.
+      const [, src, dest] = cmd.split(/\s+/) as [string, string, string]
+      if (!dirs.has(src)) exitCode = 1
+      else {
+        dirs.delete(src)
+        dirs.add(dest)
+        for (const f of Object.keys(files)) {
+          if (f.startsWith(`${src}/`)) {
+            files[dest + f.slice(src.length)] = files[f]!
+            delete files[f]
+          }
+        }
+      }
+    } else if (verb === "cat") {
       const f = cmd.slice("cat ".length)
       if (f in files) stdout = files[f]!
       else exitCode = 1

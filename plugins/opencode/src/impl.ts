@@ -21,6 +21,7 @@ import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit
 import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
 import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-workflow/core/task/write-backstop"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-workflow/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
@@ -294,6 +295,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       if (claimIds.length) {
         const released = await releaseOrphanedClaims($, tasks, claimIds, path.join(directory, config.tasksDir, "in-progress"), {
           isDriving: (id) => findSessionDriving(id) !== undefined,
+          staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         })
         if (released.length) {
           await log(
@@ -313,6 +315,9 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         const released = await releaseOrphanedClaims($, queued, planClaimIds, path.join(directory, config.tasksDir, "queued"), {
           isDriving: (id) => findSessionDriving(id) !== undefined,
           isOrphaned: isOrphanedPlanClaim,
+          // PLAN writes nothing durable until it parks, so its whole runtime
+          // must fit inside the window — see staleClaimMinutes.
+          staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         })
         if (released.length) {
           await log("warn", `released orphaned plan-claim marker(s): ${released.join(", ")} — a prior run died mid-PLAN; watch will re-claim`)
@@ -450,7 +455,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // survives whichever half was kept, and emitted even when slicing was a
       // no-op (markers missing) — otherwise a broken template silently drops it.
       const draftNote = draftModelNote(config, kind, verb)
-      const base = sliced ?? rendered
+      // `??` here treated an EMPTY slice as a usable one: a verb block that
+      // tidies to nothing, plus a configured drafting model, replaced the entire
+      // command body with the model sentence — no task, no prohibitions, no
+      // usage. An empty slice is not a slice; fall back like a missing one.
+      const base = sliced || rendered
       if (base !== undefined && (sliced || draftNote)) {
         overrideCommandPrompt(output, draftNote ? `${base}\n\n${draftNote}` : base)
       }

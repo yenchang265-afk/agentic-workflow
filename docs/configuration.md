@@ -85,6 +85,17 @@ Setting either in the repo layer drops it with a warning naming the key (and,
 for `scannerCommand`, the kind); the rest of that section still applies, and a
 user-layer value in the same section survives.
 
+**The ADO destination and credentials follow the same rule**, for the same
+reason applied to a different asset: `ado.organization`, `ado.pat`,
+`ado.customHeaders` and `ado.insecureSkipTlsVerify` are honored from the **user
+layer only**. `organization` is the host your PAT is sent to, and
+`pr-sitter`/`review-sitter` poll it on the first watch tick — so a cloned repo
+setting it would aim your token at a host of its choosing without you running
+anything. Set them in the repo layer and each is dropped with a warning naming
+the key; `ado.project`, `ado.repository` and `ado.selfLogin` describe the
+project and stay repo-settable. `ado.organization` must also be a real
+`http(s)` URL.
+
 Keep `codePlatform` and `workflows` in the repo file by convention: a user-scope
 value silently applies to *every* repo. If the user file holds a PAT, protect
 it (`chmod 600 ~/.config/agentic-workflow/agentic-workflow.json`); the `AZURE_DEVOPS_EXT_PAT` env var

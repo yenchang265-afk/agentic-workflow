@@ -37,7 +37,7 @@
  */
 import { rawAgentModel, readRawConfigLayers, spawnAlias } from "@agentic-workflow/core/config-layers"
 import { dialectFor, hostFor } from "./dialect.mjs"
-import { readMarker, readTasksDir } from "./marker.mjs"
+import { readMarker } from "./marker.mjs"
 import { allow, readStdin, rewriteInput } from "./pretooluse.mjs"
 
 /** Agents this plugin ships are all `workflow-*`; nothing else may be retargeted. */
@@ -97,7 +97,7 @@ const main = async () => {
   if (!agent) return allow()
 
   const cwd = input.cwd || process.cwd()
-  const marker = readMarker(cwd, readTasksDir(cwd), d.stageMarkerFile)
+  const marker = readMarker(cwd, d.stageMarkerFile)
   const model = modelFor(marker, readRawConfigLayers(cwd), agent)
   if (!model) return allow()
   // Already correct — emitting an envelope would only add noise to the transcript.

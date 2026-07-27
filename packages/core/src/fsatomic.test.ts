@@ -34,7 +34,16 @@ const makeShell = (opts: { failAt?: number; failMv?: boolean } = {}) => {
       if (opts.failAt === writes) exitCode = 1
       else {
         const [, content, redirect, dest] = printf as unknown as [string, string, string, string]
-        files[dest] = redirect === ">>" ? (files[dest] ?? "") + content : content
+        // Each chunk crosses the process boundary as UTF-8 BYTES and is
+        // appended to the file as bytes — so encode per chunk and concatenate
+        // buffers rather than joining JS strings. A lone surrogate left by a
+        // bad split encodes to U+FFFD here exactly as it would in a real
+        // shell; string concatenation would silently heal it and hide the bug.
+        const bytes = Buffer.concat([
+          redirect === ">>" ? Buffer.from(files[dest] ?? "", "utf8") : Buffer.alloc(0),
+          Buffer.from(content, "utf8"),
+        ])
+        files[dest] = bytes.toString("utf8")
       }
     } else if (cmd.startsWith("mv ")) {
       const [, src, dest] = cmd.split(/\s+/) as [string, string, string]
@@ -115,4 +124,40 @@ test("a failed rename removes the temp file rather than leaving it behind", asyn
   assert.equal(r.exitCode, 1, "the mv's own failure is what the caller sees")
   assert.deepEqual(Object.keys(files), [], "no stray .tmp- file survives a failed rename")
   assert.ok(cmds.some((c) => c.startsWith("rm -f ")))
+})
+
+test("a failed single-shot write also cleans up its temp file", async () => {
+  // The chunked path and the rename both cleaned up; the single-shot path
+  // returned early and left `<dest>.tmp-<pid>-<n>` beside the task file
+  // forever. Every small durable write — task notes, state, ledgers — takes
+  // this branch.
+  const { $, files, cmds } = makeShell({ failAt: 1 })
+  files["/d/f"] = "previous"
+  const r = await writeFileAtomic($, "/d/f", "small")
+  assert.equal(r.exitCode, 1)
+  assert.deepEqual(Object.keys(files), ["/d/f"], "no stray .tmp- file survives")
+  assert.equal(files["/d/f"], "previous", "and the destination is untouched")
+  assert.ok(cmds.some((c) => c.startsWith("rm -f ")), "the temp file is removed")
+})
+
+test("chunking never splits a surrogate pair", async () => {
+  // `slice` cuts on UTF-16 code units. An astral character straddling a chunk
+  // boundary became two lone surrogates, each encoded to UTF-8 separately for
+  // the shell argument — two U+FFFD in a durable run log, reported as success.
+  const { $, files } = makeShell()
+  const pad = "a".repeat(16 * 1024 - 1) // leaves the boundary mid-pair
+  const content = `${pad}😀${"b".repeat(40 * 1024)}`
+  const r = await writeFileAtomic($, "/d/log.md", content)
+  assert.equal(r.exitCode, 0)
+  assert.equal(files["/d/log.md"], content, "the emoji survives the chunk boundary intact")
+  assert.ok(!(files["/d/log.md"] ?? "").includes("�"), "no replacement characters")
+})
+
+test("chunking still respects the argv ceiling when it steps back off a pair", async () => {
+  const { $, files, cmds } = makeShell()
+  // Every boundary lands mid-pair, the worst case for a naive step-back.
+  const content = "😀".repeat(100 * 1024)
+  await writeFileAtomic($, "/d/f", content)
+  assert.equal(files["/d/f"], content)
+  for (const c of cmds) assert.ok(c.length < MAX_ARG, `a command of ${c.length} bytes would be rejected by execve`)
 })

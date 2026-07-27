@@ -1,4 +1,4 @@
-import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
+import { acquireOrSweepMarker, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, WorkflowState } from "../workflow/state.js"
@@ -52,12 +52,7 @@ export const makeClaimMarkers = ($: Shell, directory: string, tasksDir: string, 
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   const marker = (pr: number): string => `${claimsDir}/pr-${pr}`
   return {
-    claim: async (pr: number, now: Date = new Date()): Promise<boolean> => {
-      if (await acquireMarker($, marker(pr), now)) return true
-      if (!(await markerOlderThan($, marker(pr), STALE_CLAIM_MINUTES, now))) return false
-      await releaseMarker($, marker(pr))
-      return acquireMarker($, marker(pr), now)
-    },
+    claim: (pr: number, now: Date = new Date()): Promise<boolean> => acquireOrSweepMarker($, marker(pr), STALE_CLAIM_MINUTES, now),
     release: (pr: number): Promise<void> => releaseMarker($, marker(pr)),
   }
 }

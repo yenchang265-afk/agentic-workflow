@@ -17,11 +17,14 @@ type Hooks = { "tool.execute.before": (input: { sessionID: string; tool: string;
 
 const makeHooks = async (
   sessions: Record<string, string | undefined>,
-  opts: { failSessionApi?: boolean; failShell?: boolean } = {},
+  opts: { failSessionApi?: boolean; failShell?: boolean; configJson?: string } = {},
 ): Promise<Hooks> => {
   const client = {
     app: { log: async () => {} },
-    file: { read: async () => Promise.reject(new Error("no config file")) },
+    file: {
+      read: async () =>
+        opts.configJson === undefined ? Promise.reject(new Error("no config file")) : { data: { content: opts.configJson } },
+    },
     session: {
       get: async ({ path: { id } }: { path: { id: string } }) => {
         if (opts.failSessionApi) throw new Error("session API down")
@@ -233,8 +236,8 @@ const MARKED_TEMPLATE = [
   "never touch docs/tasks yourself",
 ].join("\n")
 
-const runCommand = async (args: string, output: { parts?: Array<{ type?: string; text?: string }> }) => {
-  const hooks = (await makeHooks({})) as unknown as CmdHooks
+const runCommand = async (args: string, output: { parts?: Array<{ type?: string; text?: string }> }, configJson?: string) => {
+  const hooks = (await makeHooks({}, configJson === undefined ? {} : { configJson })) as unknown as CmdHooks
   await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_c", arguments: args }, output)
   return output
 }
@@ -266,6 +269,28 @@ test("command hook slices a marked template to the invoked verb for a pass-throu
   assert.match(text, /never touch docs\/tasks yourself/, "shared prose must survive")
   assert.doesNotMatch(text, /claim the next build-ready task/, "another verb's block must be gone")
   assert.doesNotMatch(text, /aw:verb/, "markers must not reach the model")
+})
+
+test("a verb whose block slices to nothing keeps the full body, not just the draft note", async () => {
+  // `base = sliced ?? rendered` treated an EMPTY slice as a usable one, so a
+  // verb block that tidies to nothing plus a configured drafting model replaced
+  // the entire command body with the model sentence: no task, no prohibitions,
+  // no usage. An empty slice is not a slice — fall back like a missing one.
+  // Every line sits inside a verb block, and the invoked verb's block is blank —
+  // so the slice really is empty rather than "shared prose only".
+  const emptyBlock = [
+    "<!-- aw:verb new -->",
+    "",
+    "<!-- /aw:verb new -->",
+    "<!-- aw:verb claim -->",
+    "claim the next build-ready task",
+    "<!-- /aw:verb claim -->",
+  ].join("\n")
+  const output = { parts: [{ type: "text", text: emptyBlock }] }
+  await runCommand("new add rate limiting", output, JSON.stringify({ agentModels: { "workflow-plan-author": "anthropic/claude-haiku-4-5" } }))
+  const text = output.parts[0]!.text!
+  assert.match(text, /workflow-plan-author/, "the drafting model note still rides along")
+  assert.ok(text.replace(/Invoke the[\s\S]*$/, "").trim().length > 0, "the note must not be the ENTIRE body")
 })
 
 test("the outcome override still wins over the slice for a report-and-stop verb", async () => {

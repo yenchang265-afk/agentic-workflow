@@ -1,3 +1,4 @@
+import { z } from "zod"
 import { ConfigSchema, mergeConfigLayers } from "@agentic-workflow/core/config"
 import { REDACTED, type ConfigEdit, type ConfigIssue, type ConfigLayer, type ConfigLayerResponse, type ConfigProvenance, type SaveConfigRequest, type SaveConfigResponse } from "../../shared/api.js"
 import { isGitIgnored, knownTopLevelKeys, layerPath, readRawLayer, redactSecrets, SECRET_PATHS, writeRawLayer } from "../configfile.js"
@@ -105,13 +106,20 @@ export const saveConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
   const body = req.body as Partial<SaveConfigRequest> | undefined
   const layer = body?.layer
   if (!isLayer(layer ?? null)) return badRequest(`body must be { layer: "repo" | "user", edits: [...] }`)
-  if (!Array.isArray(body?.edits)) return badRequest("body.edits must be an array of { path, value? }")
+  // The edits array is the one client-supplied structure this route consumes, so
+  // it is validated like every other request body (contrast tasks.ts's
+  // SaveTaskRequestSchema). The old shape-check optional-chained `edit?.path`,
+  // which let `[{}]` through to `applyEdits`'s `edit.path.split(".")` — a
+  // TypeError that surfaced as a 500 with a raw JS message. `value` stays
+  // `unknown` and optional: absent means "delete this path".
+  const parsedEdits = z.array(z.object({ path: z.string(), value: z.unknown().optional() })).safeParse(body?.edits)
+  if (!parsedEdits.success) return badRequest("body.edits must be an array of { path, value? }")
 
   const file = layerPath(deps, layer as ConfigLayer)
   if (!file) return badRequest("the user-scope config layer is disabled (AGENTIC_WORKFLOW_USER_CONFIG is empty)")
 
-  for (const edit of body.edits as ConfigEdit[]) {
-    const segments = (edit?.path ?? "").split(".").filter(Boolean)
+  for (const edit of parsedEdits.data as ConfigEdit[]) {
+    const segments = edit.path.split(".").filter(Boolean)
     if (segments.length > 0 && !isSafeConfigPath(segments)) {
       return badRequest(`refusing edit path "${edit.path}": prototype-shaped or empty key segments are not writable`)
     }
@@ -125,7 +133,7 @@ export const saveConfig = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
     if (self.parseError) return json(400, { error: `refusing to edit ${file}: ${self.parseError} — fix the file by hand first` })
 
     const current = self.raw ?? {}
-    const next = applyEdits(current, body.edits as ConfigEdit[])
+    const next = applyEdits(current, parsedEdits.data as ConfigEdit[])
     if (!isPlainObject(next)) return badRequest("edits must leave a JSON object at the top level")
 
     // Validate the MERGED view, not this layer alone: a repo layer is routinely

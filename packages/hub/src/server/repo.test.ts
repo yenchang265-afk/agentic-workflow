@@ -117,14 +117,14 @@ test("a degraded repo heals on reload once the config is fixed", async () => {
   const repo = await makeRepo("r1", dir, silent)
   assert.ok(repo.deps.configError)
 
-  fs.writeFileSync(
-    path.join(dir, ".agentic-workflow.json"),
-    JSON.stringify({ codePlatform: "ado", ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot@acme" } }),
-  )
+  // The repo layer cannot satisfy `ado` on its own any more: `ado.organization`
+  // is the host the PAT is sent to, so it is honored from the user layer only
+  // (see dropAdoRepoKeys). Heal with a config the repo layer may fully own.
+  fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), JSON.stringify({ codePlatform: "github", maxIterations: 4 }))
   assert.equal(await repo.reload(), true)
 
   assert.equal(repo.deps.configError, undefined, "a healthy reload clears the degraded marker")
-  assert.equal(repo.deps.config.codePlatform, "ado")
+  assert.equal(repo.deps.config.maxIterations, 4)
   cleanup(dir)
 })
 

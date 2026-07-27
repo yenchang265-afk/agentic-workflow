@@ -6,7 +6,7 @@ import {
   type ConfigLayer,
   type ConfigLayerResponse,
   type ConfigProvenance,
-  type MonitorKindsResponse,
+  type KindsResponse,
   type Platform,
   type SaveConfigResponse,
 } from "../../shared/api.js"
@@ -76,7 +76,13 @@ export const ConfigEditor = () => {
     repoPath(`/api/config?layer=${layer}`, repoId),
     [layer, repoId, versions.config],
   )
-  const { data: kinds } = useJson<MonitorKindsResponse>(repoPath("/api/monitor/kinds", repoId), [repoId, versions.config])
+  // /api/kinds (every INSTALLED kind), not /api/monitor/kinds (only the ENABLED
+  // ones). Sourcing the switches from the enabled set made unchecking a kind
+  // remove its own checkbox — the only way back was hand-editing
+  // .agentic-workflow.json — and an opt-in kind never got one at all, which made
+  // the creator's own post-save checklist item ("enable it in the Config tab")
+  // impossible to satisfy in the tab it names.
+  const { data: kinds } = useJson<KindsResponse>(repoPath("/api/kinds", repoId), [repoId, versions.config])
 
   // A layer or repo switch abandons pending edits rather than carrying them to a
   // different file — silently writing them somewhere else would be worse.

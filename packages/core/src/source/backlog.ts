@@ -45,6 +45,13 @@ interface BacklogDeps {
   readonly loaded: LoadedManifest
   /** Whether a live loop in this host instance is already driving the task id. */
   readonly isDriving: (id: string) => boolean
+  /**
+   * How long a claim marker may sit before it reads as orphaned. Derived from
+   * the configured stage timeout (`staleClaimMinutes`), because a PLAN stage
+   * writes nothing durable until it parks — judging it dead any earlier sweeps
+   * a healthy run's marker. Absent ⇒ the bare `STALE_CLAIM_MINUTES` default.
+   */
+  readonly staleMinutes?: number
 }
 
 /**
@@ -154,6 +161,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
         const walk = await claimFirst($, candidates, {
           isDriving,
           log,
+          ...(deps.staleMinutes === undefined ? {} : { staleMinutes: deps.staleMinutes }),
           // With a claim predicate, an orphaned marker is only released while
           // the body is still claimable (the dead run did no durable work);
           // without one (planless pools), a stale undriven marker is always

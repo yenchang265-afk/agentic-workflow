@@ -57,7 +57,7 @@ import {
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
-import { readMarker, readTasksDir } from "./marker.mjs"
+import { backlogRoot, readMarker, readTasksDir } from "./marker.mjs"
 
 // The PreToolUse envelope (allow / block / rewriteInput) lives in
 // ./pretooluse.mjs so this guard and the spawn-model stamp emit byte-identical
@@ -72,7 +72,10 @@ import { readMarker, readTasksDir } from "./marker.mjs"
 // all agree on one answer per host.
 
 // Reading tasksDir + the stage marker lives in ./marker.mjs, shared with the
-// spawn-model stamp.
+// spawn-model stamp, the verdict guard and the reconciler — and it resolves the
+// backlog exactly as the MCP SERVER does when it WRITES the marker (env root,
+// repo layer over user layer). Reading only <cwd>/.agentic-workflow.json made a
+// live stage look like no stage at all wherever the two disagreed.
 
 const main = async () => {
   let input
@@ -87,8 +90,8 @@ const main = async () => {
   // tool name unmatched and silently disarm the whole guard.
   if (host === null) return block(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST))
   const d = dialectFor(host)
-  const tasksDir = readTasksDir(cwd)
-  const marker = readMarker(cwd, tasksDir, d.stageMarkerFile)
+  const tasksDir = readTasksDir(backlogRoot(cwd))
+  const marker = readMarker(cwd, d.stageMarkerFile)
   const tool = input.tool_name
   const ti = input.tool_input || {}
   const isBash = isBashTool(d, tool)

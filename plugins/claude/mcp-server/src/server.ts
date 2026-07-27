@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep } from "@agentic-workflow/core/workflow/engine"
@@ -56,7 +57,7 @@ import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workf
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageMarkerPath } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
-import { ensureIsolation, workflowId } from "@agentic-workflow/core/workflow/isolate"
+import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
@@ -544,9 +545,24 @@ const stampVerdictRecorded = () => {
   }
 }
 
-/** Write the current-stage marker the PreToolUse hook reads to scope the
- *  allowlist and enforce the stage deadline. */
-const writeStageMarker = (stage: string | null) => {
+/**
+ * Write the current-stage marker the PreToolUse hook reads to scope the
+ * allowlist and enforce the stage deadline. Returns null on success, or the
+ * failure reason.
+ *
+ * It used to swallow every error, and `workflow_stage` returned success
+ * regardless. A failed write (read-only mount, ENOSPC, EACCES on a runs/ dir
+ * another user created, a tasksDir on a flaky network mount) therefore left the
+ * PREVIOUS stage's marker in place: a check stage then ran under BUILD's
+ * unrestricted allowlist, with the one deterministic backstop this host has
+ * (threat-model T8/T1) silently gone and every layer reporting OK.
+ *
+ * So a failure is reported to the caller, and the stale marker is removed first
+ * — no marker means "no loop stage", which the guard treats as an ordinary
+ * session, and that is strictly safer than an armed marker describing a stage
+ * that is not the one about to run.
+ */
+const writeStageMarker = (stage: string | null): string | null => {
   const dir = path.join(directory, config.tasksDir, "runs")
   try {
     fs.mkdirSync(dir, { recursive: true })
@@ -609,8 +625,17 @@ const writeStageMarker = (stage: string | null) => {
         }),
       )
     }
-  } catch {
-    /* best-effort */
+    return null
+  } catch (err) {
+    // Never leave the previous stage's marker armed for a stage it does not
+    // describe — that is how a check stage inherited BUILD's allowlist.
+    try {
+      stageDeadline = null
+      fs.rmSync(stageMarkerPath(), { force: true })
+    } catch {
+      /* the report below is what matters */
+    }
+    return (err as Error).message
   }
 }
 
@@ -734,7 +759,13 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   // path spawns the author straight off workflow_start without a workflow_stage call, so
   // without this the marker never exists and the one write PLAN exists to make is
   // blocked. workflow_advance clears it on park.
-  writeStageMarker("plan")
+  // A failed arm here means the plan-author's one legal write (queued/<id>.md)
+  // will be blocked by the guard, so say so rather than start a doomed PLAN.
+  const markerError = writeStageMarker("plan")
+  if (markerError) {
+    active = null // never leave a loop marked live behind an unguarded stage
+    return { error: `Could not arm the PLAN stage marker — ${markerError}. Check that ${config.tasksDir}/runs/ is writable.` }
+  }
   return { state }
 }
 
@@ -935,7 +966,10 @@ server.registerTool(
       // exists and the plan-author's one write to queued/<id>.md is blocked (exit 2)
       // → workflow_advance finds no plan. Sitter check-stage entries re-arm via workflow_stage
       // anyway, so this is the fix for PLAN and a harmless no-op for them.
-      writeStageMarker(state.stage)
+      const entryMarkerError = writeStageMarker(state.stage)
+      if (entryMarkerError) {
+        await log("warn", `could not arm the ${state.stage} stage marker — ${entryMarkerError}; the guard will not scope this stage`)
+      }
     }
     const warnings = await claimWarnings()
     return ok({ ...firePayload(state, claim.item.id), ...(warnings.length ? { warnings } : {}) })
@@ -1128,7 +1162,19 @@ server.registerTool(
         return fail((err as Error).message)
       }
     }
-    writeStageMarker(stage) // every pass gets its own deadline and verdictRecorded:false
+    // Re-armed per pass, so every pass gets its own deadline and
+    // verdictRecorded:false. The marker IS the guard's only input: if it could
+    // not be written, the subagent about to be spawned would run either
+    // unguarded or under the previous stage's allowlist — so refuse the stage
+    // rather than report a success the enforcement layer cannot back.
+    const markerError = writeStageMarker(stage)
+    if (markerError) {
+      return fail(
+        `Could not arm the stage marker for "${stage}" — ${markerError}. ` +
+          `That marker is what scopes the bash allowlist and the stage deadline, so the stage is not started. ` +
+          `Check that ${config.tasksDir}/runs/ is writable, then retry.`,
+      )
+    }
     lastFireAt = Date.now()
     // Wiping `pending` is right for a FRESH stage and catastrophic mid-fan-out:
     // the orchestrator calls workflow_stage before every pass, so wiping here
@@ -1260,7 +1306,8 @@ server.registerTool(
             log,
           )
         }
-        writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+        const refireMarkerError = writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+    if (refireMarkerError) return fail(`Could not re-arm the stage marker for "${stage}" — ${refireMarkerError}. The stage is not re-fired.`)
         lastFireAt = Date.now()
         const retryModel = stageModel(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
         return ok({
@@ -1315,7 +1362,10 @@ server.registerTool(
             log,
           )
         }
-        writeStageMarker(stage)
+        // Same rule as every other arm: a re-run the guard cannot scope must not
+        // be handed out as if it were scoped.
+        const gapMarkerError = writeStageMarker(stage)
+        if (gapMarkerError) return fail(`Could not re-arm the stage marker for "${stage}" — ${gapMarkerError}. The gap passes are not re-run.`)
         lastFireAt = Date.now()
         armedPass = null // its sample is already recorded; the retry arms its own
         const gapModel = stageModel(activeManifest().manifest.kind, gateDef)
@@ -1614,6 +1664,7 @@ server.registerTool(
       const tasks = await listByStatus(fsClient, directory, config.tasksDir, status, log)
       const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
         isDriving: (id) => active?.task?.id === id,
+        staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
       })
       if (released.length) releasedClaims[status] = released
@@ -1765,12 +1816,45 @@ server.registerTool(
 
 server.registerTool(
   "workflow_move",
-  { description: "Move a task file to another status folder.", inputSchema: { id: z.string(), status: z.enum(["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]) } },
+  {
+    description:
+      "Move a task file to another status folder. The low-level escape hatch — prefer the gate verbs (workflow_task_approve / workflow_plan_approve / workflow_replan / workflow_ship / workflow_abandon), which also write the audit note, commit, and open the PR. Refuses a task a loop is driving or that holds a claim marker.",
+    inputSchema: { id: z.string(), status: z.enum(["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]) },
+  },
   async ({ id, status }) => {
     await loadCfg()
+    // Every sibling move routes through core's gate ops, which resolve the
+    // short-hash handle and refuse a task that is being driven or still holds a
+    // claim. This one moved the file straight out from under a live loop:
+    // `active.task.path` then pointed at a path that no longer existed, so every
+    // later appendNote/snapshot/terminal move in workflow_advance missed, and the
+    // claim marker was orphaned in the folder the task had left.
+    const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
+    if (resolved && "ambiguous" in resolved) {
+      return fail(`Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`)
+    }
+    if (resolved) id = resolved.id
     const found = await findAnyStatus(id)
     if (!found) return fail(`No task "${id}".`)
-    const newPath = await moveTask(sh, { id, path: found.path }, status)
+    if (active?.task?.id === id) {
+      return fail(`Task "${id}" is being driven by a live loop — workflow_stop it first, or use the gate verb for the move you want.`)
+    }
+    const from = path.basename(path.dirname(found.path))
+    const held = await listClaimIds(sh, directory, config.tasksDir, from)
+    if (held.includes(id)) {
+      return fail(`Task "${id}" holds a claim marker — a loop may be driving it; stop it or run workflow_doctor fix first.`)
+    }
+    let newPath: string
+    try {
+      newPath = await moveTask(sh, { id, path: found.path }, status)
+    } catch (err) {
+      // moveTask throws on a duplicate destination, a failed mv, or a move that
+      // did not land — none of which may escape a tool whose contract is ok/fail.
+      return fail(`Can't move "${id}" to ${status}/: ${(err as Error).message}`)
+    }
+    // A parked task can own a worktree; a move into a terminal folder frees it,
+    // the way remove/abandon/ship do. Best-effort, never throws.
+    if (status === "completed" || status === "abandoned") await releaseWorktree(sh, log, directory, config, id)
     return ok({ moved: newPath })
   },
 )

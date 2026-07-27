@@ -17,6 +17,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { dialectFor, hostFor } from "./dialect.mjs"
+import { runsDir } from "./marker.mjs"
 import { decideVerdictGuard, nagMessage } from "./verdict-guard.mjs"
 
 const read = () =>
@@ -31,17 +32,6 @@ const block = (reason) => {
   process.exit(2)
 }
 
-// tasksDir defaults to docs/tasks; honor .agentic-workflow.json if present.
-const readTasksDir = (cwd) => {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"))
-    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir
-  } catch {
-    /* default */
-  }
-  return "docs/tasks"
-}
-
 const main = async () => {
   let input
   try {
@@ -50,19 +40,19 @@ const main = async () => {
     return allow()
   }
   const cwd = input.cwd || process.cwd()
-  const tasksDir = readTasksDir(cwd)
-  const runsDir = path.join(cwd, tasksDir, "runs")
+  // Same resolution the MCP server uses to WRITE the marker — see marker.mjs.
+  const runs = runsDir(cwd)
   // An unknown host cannot be nagged usefully — there is no marker path to read.
   // Unlike the PreToolUse guard, failing open here only skips a reminder.
   const d = dialectFor(hostFor())
   if (!d) return allow()
   let marker = null
   try {
-    marker = JSON.parse(fs.readFileSync(path.join(runsDir, d.stageMarkerFile), "utf8"))
+    marker = JSON.parse(fs.readFileSync(path.join(runs, d.stageMarkerFile), "utf8"))
   } catch {
     return allow()
   }
-  const nagPath = path.join(runsDir, ".verdict-nag")
+  const nagPath = path.join(runs, ".verdict-nag")
   const decision = decideVerdictGuard(marker, fs.existsSync(nagPath))
   if (decision !== "nag") return allow()
   try {

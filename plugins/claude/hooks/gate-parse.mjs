@@ -19,37 +19,62 @@
  * Unlike the old `agent-loop` prefix, `engineering` is an ordinary English
  * word — so the command match REQUIRES the leading slash form. Prose like
  * "the engineering approve step" must never fire a gate move.
+ *
+ * The slash alone is not enough, because the slash form is exactly what
+ * documentation quotes: the README, AGENTS.md and every verb block contain
+ * these strings verbatim, so a pasted spec or issue body routinely carries
+ * `/agentic-workflow:engineering remove <id> --force` as prose. A gate move is
+ * destructive AND blocks the turn, so a wrong one is never reported to anyone.
+ * Hence the second rule: the command must OPEN the prompt (modulo leading
+ * whitespace), which is also Claude Code's own rule for recognising a slash
+ * command. A verb quoted further in is payload, not an invocation.
+ *
+ * The verb's own arguments are therefore the rest of ITS line — `(.*)` with no
+ * `$` and no `m`, since `.` already stops at the newline. Ending the pattern at
+ * `$` instead would refuse to dispatch a perfectly ordinary
+ * `approve my-task\nthanks!`, and adding `m` back is the bug above.
  */
 const VERB = "(approve-plan|replan|approve)"
+// The sentinel is the ONE form that may appear anywhere: a command template
+// emits it once expanded, so it arrives mid-body by construction. It is also
+// the form no human types, which is what makes that safe.
 const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im")
 
-// The two gate verbs of /agentic-workflow:engineering — subcommands, NOT top-level
+// The gate verbs of /agentic-workflow:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
-// on both: a bare `approve` auto-resolves the single awaiting task (loop gates
-// first, a lone draft as fallback — the CLI's approve-any owns that priority).
-const CMD = "\\/(?:agentic-workflow:)?engineering"
-const APPROVE = new RegExp(`(?:^|\\s)${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)$`, "im")
-const REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im")
+// on approve/replan: a bare `approve` auto-resolves the single awaiting task
+// (loop gates first, a lone draft as fallback — the CLI's approve-any owns that
+// priority).
+//
+// `(?![-\\w])` closes the command name so a sibling command cannot inherit
+// engineering's verbs or its instructions: without it `/engineering-notes` read
+// as engineering plus the verb `-notes`. Same guard, same reason, as ADHOC_PLAN.
+const CMD = "\\/(?:agentic-workflow:)?engineering(?![-\\w])"
+// `^\\s*` — the command opens the prompt; see the header for why anything later
+// in the prompt is content rather than an invocation.
+const AT_START = "^\\s*"
+const APPROVE = new RegExp(`${AT_START}${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)`, "i")
+const REPLAN = new RegExp(`${AT_START}${CMD}\\s+replan\\b[ \\t]*(.*)`, "i")
 // retask is the one HYBRID verb: its move is deterministic (queued/ → draft/, or
 // a refusal) but the reshape that follows is an interview only the model can
 // run. So it dispatches like a gate verb and then, on success, hands the turn
 // back instead of blocking it — see `continueTurn` below.
-const RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im")
+const RETASK = new RegExp(`${AT_START}${CMD}\\s+retask\\b[ \\t]*(.*)`, "i")
 // remove hard-deletes a task. Fully deterministic like approve (nothing for the
 // model to do after), so it BLOCKS the turn — but it always requires an explicit
 // id: there is no folder-driven "remove the awaiting one" (too easy to delete
 // the wrong task), so a bare `remove` passes through for the model to report.
-const REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im")
+const REMOVE = new RegExp(`${AT_START}${CMD}\\s+remove\\b[ \\t]*(.*)`, "i")
 // abandon MOVES a task to abandoned/ rather than deleting it — the reversible
 // cancellation. Deterministic like remove, so it blocks the turn, and it takes
 // the same explicit id for the same reason.
-const ABANDON = new RegExp(`(?:^|\\s)${CMD}\\s+abandon\\b[ \\t]*(.*)$`, "im")
+const ABANDON = new RegExp(`${AT_START}${CMD}\\s+abandon\\b[ \\t]*(.*)`, "i")
 
 // Any engineering verb, for the per-verb instruction injection (verb-slice.mjs)
-// rather than for a gate move. Shares CMD so the leading-slash requirement and
-// its rationale above are not re-derived: this hook has matcher "" and sees
-// EVERY prompt, so prose like "the engineering approve step" must not match.
-const ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i")
+// rather than for a gate move. Shares CMD and AT_START so the two never
+// disagree about which verb a prompt invokes — they did once, and `new` then
+// injected its instructions while `remove` deleted a task in the same turn.
+const ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i")
 
 // The ad-hoc `/agentic-workflow:plan` command used to be matched here purely to
 // inject an `agentModels` sentence for its out-of-loop `workflow-plan` spawn.

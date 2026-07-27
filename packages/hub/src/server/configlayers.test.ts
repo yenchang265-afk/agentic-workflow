@@ -18,7 +18,7 @@ const LAYER_PAIRS: readonly { name: string; user: unknown; repo: unknown }[] = [
   { name: "repo overrides a user scalar", user: { maxIterations: 5 }, repo: { maxIterations: 9 } },
   {
     name: "nested objects merge per key",
-    user: { ado: { organization: "acme", project: "p", pat: "secret" } },
+    user: { ado: { organization: "https://dev.azure.com/acme", project: "p", pat: "secret" } },
     repo: { ado: { project: "other" } },
   },
   {
@@ -28,7 +28,7 @@ const LAYER_PAIRS: readonly { name: string; user: unknown; repo: unknown }[] = [
   },
   {
     name: "a non-object override masks a user object entirely",
-    user: { ado: { organization: "acme", pat: "secret" } },
+    user: { ado: { organization: "https://dev.azure.com/acme", pat: "secret" } },
     repo: { ado: false },
   },
   {
@@ -76,7 +76,7 @@ test("repo wins field by field, and an absent repo key falls through to the user
 test("a wholesale replacement makes the whole subtree belong to the winning layer", () => {
   // repo.ado is not a plain object, so the merge replaces user.ado entirely —
   // user.ado.pat is NOT reachable in the merged view, and provenance must agree.
-  const user = { ado: { organization: "acme", pat: "secret" } }
+  const user = { ado: { organization: "https://dev.azure.com/acme", pat: "secret" } }
   const repo = { ado: false }
   assert.equal(provenanceOf(user, repo, ["ado"]), "repo")
   assert.equal(provenanceOf(user, repo, ["ado", "pat"]), "default", "the user's pat is masked, not merged")
@@ -93,16 +93,16 @@ test("an array is a leaf — provenance never walks into its elements", () => {
 })
 
 test("setAt and deleteAt are immutable and create intermediates", () => {
-  const raw = { ado: { organization: "acme" } }
+  const raw = { ado: { organization: "https://dev.azure.com/acme" } }
   const next = setAt(raw, ["ado", "project"], "p")
-  assert.deepEqual(next, { ado: { organization: "acme", project: "p" } })
-  assert.deepEqual(raw, { ado: { organization: "acme" } }, "the input must not be mutated")
+  assert.deepEqual(next, { ado: { organization: "https://dev.azure.com/acme", project: "p" } })
+  assert.deepEqual(raw, { ado: { organization: "https://dev.azure.com/acme" } }, "the input must not be mutated")
 
   const created = setAt({}, ["projectManagement", "system"], "jira")
   assert.deepEqual(created, { projectManagement: { system: "jira" } })
 
   const pruned = deleteAt(next, ["ado", "project"])
-  assert.deepEqual(pruned, { ado: { organization: "acme" } })
+  assert.deepEqual(pruned, { ado: { organization: "https://dev.azure.com/acme" } })
   assert.deepEqual(deleteAt(raw, ["nope"]), raw, "deleting an absent key is a no-op")
 })
 

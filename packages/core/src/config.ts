@@ -221,8 +221,27 @@ const BaseConfigSchema = z.object({
    */
   ado: z
     .looseObject({
-      /** Organization URL, e.g. "https://dev.azure.com/acme". */
-      organization: z.string().min(1),
+      /**
+       * Organization URL, e.g. "https://dev.azure.com/acme".
+       *
+       * Checked as an actual http(s) URL rather than a non-empty string: it is
+       * interpolated into every REST URL and the PAT rides along in an
+       * `Authorization` header, so a value that isn't a URL can only be a
+       * mistake or a trick. Self-hosted ADO Server is why `http:` is allowed.
+       */
+      organization: z
+        .string()
+        .min(1)
+        .refine(
+          (v) => {
+            try {
+              return ["http:", "https:"].includes(new URL(v).protocol)
+            } catch {
+              return false
+            }
+          },
+          { message: "must be an http(s) URL, e.g. https://dev.azure.com/acme" },
+        ),
       project: z.string().min(1),
       /** Repository name; omitted → all repositories in the project. */
       repository: z.string().min(1).optional(),
@@ -301,6 +320,21 @@ export const EXPERIMENTAL_KINDS: readonly string[] = ["pr-sitter", "review-sitte
  * `EXPERIMENTAL_KINDS`, plus any local kind — stays opt-in via `enabled: true`.
  */
 export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering"]
+
+/**
+ * The kinds whose manifests and stage prompts SHIP with this package, in
+ * `workflows/<kind>/`. Everything else found there is local — authored in the
+ * hub's creator or by hand.
+ *
+ * The distinction matters because that directory is inside the core package:
+ * one copy for the whole machine, shared by every repo the hub watches and by
+ * both CLI hosts, and replaced wholesale by `npm ci`. So a writer with a
+ * per-repo mental model (the hub's `?repo=`-scoped kind routes) must treat
+ * these as read-only, or a save in one repo silently rewrites the workflow
+ * every other repo runs. Derived from the two lists above rather than spelled
+ * out again, so adding a kind cannot forget this.
+ */
+export const BUILTIN_WORKFLOW_KINDS: readonly string[] = [...DEFAULT_ENABLED_KINDS, ...EXPERIMENTAL_KINDS]
 
 /**
  * The workflow kinds this config activates, in claim-priority order: the
@@ -642,6 +676,55 @@ const dropShellBearingWorkflowKeys = async (repoRaw: unknown, client: Client): P
 }
 
 /**
+ * Keys inside the `ado` section that decide WHERE an authenticated request goes
+ * and HOW it is secured. The third sibling of the two drops above, same rule for
+ * a different asset: not shell the repo can run, but the user's Personal Access
+ * Token it can aim.
+ *
+ * `ado-pr.ts` resolves the PAT as `env AZURE_DEVOPS_EXT_PAT ?? ado.pat` and
+ * sends it as `Authorization: Basic` to `${ado.organization}/…`. Because layers
+ * merge per key, a cloned repo supplying only `organization` keeps the user's
+ * PAT underneath it — and `pr-sitter`/`review-sitter` poll on the first watch
+ * tick, so nobody has to run anything for the token to leave. `customHeaders`
+ * rides the same request and `insecureSkipTlsVerify` disables certificate
+ * verification for it.
+ *
+ * `project`, `repository` and `selfLogin` are NOT here: they describe this repo
+ * and nothing else, and dropping them would make the rule unusable rather than
+ * safe. An ADO user who kept `organization` in their repo file gets a loud
+ * warning naming the move; the section is experimental and says so.
+ */
+const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "customHeaders", "insecureSkipTlsVerify"] as const
+
+/** Drop destination/credential keys from the repo layer's `ado` section, warning per key. Never mutates its input. */
+const dropAdoRepoKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {
+  if (!isPlainObject(repoRaw)) return repoRaw
+  const ado = repoRaw["ado"]
+  if (!isPlainObject(ado)) return repoRaw
+
+  let out = ado
+  let dropped = false
+  for (const key of ADO_USER_LAYER_ONLY_KEYS) {
+    if (!(key in out)) continue
+    const { [key]: _dropped, ...rest } = out
+    out = rest
+    dropped = true
+    try {
+      await client.app.log({
+        body: {
+          service: "agentic-workflow",
+          level: "warn",
+          message: `${CONFIG_FILE} sets "ado.${key}" — ignored: the Azure DevOps destination and credentials are honored from the user-scope config only, so a cloned repo cannot aim your PAT at a host it chooses. Move it to your user config (~/.agentic-workflow.json).`,
+        },
+      })
+    } catch {
+      /* the drop matters, the log is best-effort */
+    }
+  }
+  return dropped ? { ...repoRaw, ado: out } : repoRaw
+}
+
+/**
  * Load a host config by layering the user-scope file (if any) under the repo's
  * `.agentic-workflow.json` (repo wins field by field), falling back to the
  * schema's defaults when both are absent.
@@ -684,6 +767,7 @@ export const loadConfigWith = async <T>(
   }
   repoRaw = await dropShellBearingRepoKeys(repoRaw, client)
   repoRaw = await dropShellBearingWorkflowKeys(repoRaw, client)
+  repoRaw = await dropAdoRepoKeys(repoRaw, client)
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`

@@ -25,6 +25,27 @@ import type { Shell } from "./host.js"
 export const STALE_CLAIM_MINUTES = 15
 
 /**
+ * The stale window for a claim whose stage may hold it for a full stage timeout
+ * without writing any durable progress.
+ *
+ * `STALE_CLAIM_MINUTES` alone only ever covered claim→first-durable-progress,
+ * which is right for BUILD (it writes a `> BUILD started` note early). PLAN
+ * writes nothing until it parks the plan, so its entire runtime has to fit
+ * inside the window — and `stageTimeoutMinutes` defaults to 60, four times the
+ * constant. A 25-minute PLAN therefore had its marker swept by any other
+ * process's startup sweep (`isDriving` is per-process, so that process sees no
+ * live loop), a second PLAN claimed the same task, and both appended an
+ * `## Implementation Plan` to one file — where `extractPlan` reads only the
+ * last, silently discarding a run's work.
+ *
+ * So the window is the timeout PLUS the original margin: long enough that a
+ * healthy stage can never be judged dead, still bounded so a crashed one
+ * recovers without a human.
+ */
+export const staleClaimMinutes = (stageTimeoutMinutes: number): number =>
+  Math.max(STALE_CLAIM_MINUTES, stageTimeoutMinutes + STALE_CLAIM_MINUTES)
+
+/**
  * Staleness is judged from this stamp's `claimedAt`, never from fs mtime —
  * DrvFS/WSL mtime is unreliable, the same rule `scheduler/lease.ts` applies to
  * watch-lease liveness.
@@ -59,6 +80,42 @@ export const releaseMarker = async ($: Shell, markerDir: string): Promise<void> 
  * older (GNU and BSD). Any failure — marker absent, or a `find` without `-mmin`
  * semantics — reads as "not stale", degrading safely to "marker stays held".
  */
+/**
+ * Win `markerDir`, sweeping it first when a dead claimer left it behind.
+ *
+ * The sweep used to be `rmdir` + re-acquire, which is NOT atomic: two processes
+ * that judged the SAME stale marker each removed whatever was there at that
+ * moment — including the other's brand-new marker — and both believed they had
+ * won. Two sitters then drove one PR, both pushing the same head and both
+ * writing the ledger at `onTerminal`. Reachable today with a watcher plus a
+ * manual `claim`, which the watch lease does not gate.
+ *
+ * So the takeover renames the stale marker ASIDE, the idiom `scheduler/lease.ts`
+ * uses for the same reason: rename of one source is atomic, so the first taker
+ * moves it and every other taker's `mv` fails with the source already gone. The
+ * moved-aside marker is then re-judged before it is discarded — if it turns out
+ * to carry a FRESH stamp, a rival re-claimed inside the window and we moved a
+ * live claim, so it goes straight back and this caller stands down.
+ */
+export const acquireOrSweepMarker = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
+  if (await acquireMarker($, markerDir, now)) return true
+  if (!(await markerOlderThan($, markerDir, minutes, now))) return false
+
+  const graveyard = `${markerDir}.dead-${process.pid}-${now.getTime()}`
+  const moved = await $`mv ${markerDir} ${graveyard}`.quiet().nothrow()
+  if (moved.exitCode !== 0) return false // lost the rename race — whoever moved it owns the sweep
+
+  if (!(await markerOlderThan($, graveyard, minutes, now))) {
+    // What we moved aside was a live claim, created between our judgement and
+    // our rename. Put it back; a claim that is still running must survive.
+    const restored = await $`mv ${graveyard} ${markerDir}`.quiet().nothrow()
+    if (restored.exitCode !== 0) await $`rm -rf ${graveyard}`.quiet().nothrow() // someone re-took the path — drop our copy rather than leave debris
+    return false
+  }
+  await $`rm -rf ${graveyard}`.quiet().nothrow()
+  return acquireMarker($, markerDir, now)
+}
+
 export const markerOlderThan = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
   const stamp = await $`cat ${stampPath(markerDir)}`.quiet().nothrow()
   if (stamp.exitCode === 0) {

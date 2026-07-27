@@ -1,5 +1,6 @@
 import fsp from "node:fs/promises"
 import path from "node:path"
+import { BUILTIN_WORKFLOW_KINDS } from "@agentic-workflow/core/config"
 import { composeStagePrompt, promptContext } from "@agentic-workflow/core/workflow/engine"
 import type { WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { listWorkflowKinds, loadManifest } from "@agentic-workflow/core/manifest/load"
@@ -228,6 +229,14 @@ export const saveKind = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
   const kind = req.params["kind"] ?? ""
   if (!SLUG_RE.test(kind)) return badRequest(`kind must match ${SLUG_RE}`)
   if (RESERVED_KINDS.includes(kind)) return badRequest(`"${kind}" is a reserved route name, not a workflow kind`)
+  // `deps.workflowsDir` is the core package's own workflows/ — ONE copy for the
+  // machine, not per-repo like the rest of this route's `?repo=` surface. The
+  // creator lists shipped kinds so they can be read and copied, and Save on an
+  // opened kind sends overwrite: true — which rewrote engineering's manifest and
+  // all four stage prompts for every repo the hub watches, both CLI hosts
+  // included, until `npm ci` silently reverted it the other way.
+  if (BUILTIN_WORKFLOW_KINDS.includes(kind))
+    return badRequest(`"${kind}" ships with @agentic-workflow/core and is read-only here — save it under a new name to base your own kind on it`)
   const body = req.body as
     | { manifest?: unknown; prompts?: Record<string, string>; overwrite?: boolean }
     | undefined

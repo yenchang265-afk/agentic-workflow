@@ -42,6 +42,19 @@ export const EffectSchema = z.discriminatedUnion("kind", [
 export type Effect = z.infer<typeof EffectSchema>
 
 /**
+ * The shape a manifest value must have to be usable as a filesystem path
+ * segment. Manifests are user-authored AND hub-writable, so any field that ends
+ * up joined into a path needs the same rail `stage.prompt` has: `kind` becomes
+ * a directory under `workflows/` and `<tasksDir>/runs/`, and each `status`
+ * becomes `<tasksDir>/<status>/`. Core's own store deliberately does not guard
+ * the status argument — "any status folder a kind's manifest declares" — which
+ * is exactly why the manifest has to.
+ */
+const SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/
+const SlugSchema = (label: string) =>
+  z.string().regex(SLUG_RE, `${label} must be a lowercase slug (letters, digits and dashes) — it becomes a filesystem path segment`)
+
+/**
  * Most axes a `fanout: "axis"` stage may fan out over. Each axis is a full
  * subagent pass with its own stage timeout, so the axis list is a direct
  * multiplier on an unattended loop's cost and wall-clock — an unbounded one is a
@@ -146,7 +159,7 @@ export type Transition = z.infer<typeof TransitionSchema>
 const BacklogSourceSchema = z.object({
   type: z.literal("backlog"),
   /** The status-folder set, in forward lifecycle order. */
-  statuses: z.array(z.string().min(1)).min(1),
+  statuses: z.array(SlugSchema("status")).min(1),
   /**
    * Gate statuses no transition ever targets — work arrives there because a
    * *human* authored it (engineering's `draft/`), not because a stage parked it.
@@ -252,7 +265,7 @@ export type WorkSourceBinding = z.infer<typeof WorkSourceBindingSchema>
 
 export const WorkflowManifestSchema = z
   .object({
-    kind: z.string().min(1),
+    kind: SlugSchema("kind"),
     version: z.literal(1),
     description: z.string().min(1),
     workSource: WorkSourceBindingSchema,

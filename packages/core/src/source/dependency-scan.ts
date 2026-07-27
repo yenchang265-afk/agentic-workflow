@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { z } from "zod"
-import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
+import { acquireOrSweepMarker, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { CodePlatform, WorkflowState } from "../workflow/state.js"
@@ -263,12 +263,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   const depMarker = (pkg: string): string => `${claimsDir}/${depKey(pkg)}`
   /** Win the dependency's marker, sweeping it first if a dead run left it behind. */
-  const claimDep = async (pkg: string): Promise<boolean> => {
-    if (await acquireMarker($, depMarker(pkg))) return true
-    if (!(await markerOlderThan($, depMarker(pkg), STALE_CLAIM_MINUTES))) return false
-    await releaseMarker($, depMarker(pkg))
-    return acquireMarker($, depMarker(pkg))
-  }
+  const claimDep = (pkg: string): Promise<boolean> => acquireOrSweepMarker($, depMarker(pkg), STALE_CLAIM_MINUTES)
 
   const readText = async (rel: string): Promise<string> => {
     const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)

@@ -115,7 +115,7 @@ test("unknown keys are surfaced as passthrough rather than silently preserved", 
 test("editing the repo layer never flattens the user layer into it", async () => {
   // The nightmare: ado.pat lives in the user layer; a naive save of the merged
   // view would write it into the repo file, which may well be committed.
-  const f = makeFixture({ maxIterations: 3 }, { ado: { organization: "acme", project: "p", selfLogin: "bot", pat: "super-secret" } })
+  const f = makeFixture({ maxIterations: 3 }, { ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot", pat: "super-secret" } })
   const res = await save(f, { layer: "repo", edits: [{ path: "maxIterations", value: 9 }] })
   assert.equal(res.status, 200)
 
@@ -126,7 +126,7 @@ test("editing the repo layer never flattens the user layer into it", async () =>
 })
 
 test("a secret is redacted on the way out and preserved when the sentinel comes back", async () => {
-  const f = makeFixture({}, { ado: { organization: "acme", project: "p", selfLogin: "bot", pat: "super-secret" } })
+  const f = makeFixture({}, { ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot", pat: "super-secret" } })
 
   const body = (await get(f, "user")).body as ConfigLayerResponse
   assert.equal(JSON.stringify(body).includes("super-secret"), false, "the pat must never reach the browser")
@@ -148,7 +148,7 @@ test("a secret is redacted on the way out and preserved when the sentinel comes 
 test("the sentinel is never persisted as a real secret when none is stored", async () => {
   // With no prior pat, a crafted `{ ado.pat: __REDACTED__ }` edit must be a
   // no-op — not write the literal sentinel as the stored credential.
-  const f = makeFixture({}, { ado: { organization: "acme", project: "p", selfLogin: "bot" } })
+  const f = makeFixture({}, { ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot" } })
   const res = await save(f, { layer: "user", edits: [{ path: "ado.pat", value: REDACTED }] })
   assert.equal(res.status, 200)
   const user = JSON.parse(fs.readFileSync(f.userFile, "utf8")) as { ado: { pat?: string } }
@@ -165,7 +165,7 @@ test("provenance says which layer each value comes from", async () => {
 })
 
 test("writing a plaintext pat into a repo file that isn't gitignored is refused", async () => {
-  const f = makeFixture({ ado: { organization: "acme", project: "p", selfLogin: "bot" }, codePlatform: "ado" }, undefined, true)
+  const f = makeFixture({ ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot" }, codePlatform: "ado" }, undefined, true)
   const res = await save(f, { layer: "repo", edits: [{ path: "ado.pat", value: "leak-me" }] })
 
   assert.equal(res.status, 400)
@@ -196,7 +196,7 @@ test("an invalid config is refused and nothing is written", async () => {
 test("validation runs against the MERGED view, not the layer alone", async () => {
   // The repo layer alone is invalid (ado platform, no ado section) but the user
   // layer supplies it — refusing this would be wrong.
-  const f = makeFixture({}, { ado: { organization: "acme", project: "p", selfLogin: "bot" } })
+  const f = makeFixture({}, { ado: { organization: "https://dev.azure.com/acme", project: "p", selfLogin: "bot" } })
   const res = await save(f, { layer: "repo", edits: [{ path: "codePlatform", value: "ado" }] })
   assert.equal(res.status, 200)
   assert.equal(repoFile(f)["codePlatform"], "ado")
@@ -255,5 +255,20 @@ test("malformed requests are rejected", async () => {
   assert.equal((await save(f, { layer: "nope", edits: [] })).status, 400)
   assert.equal((await save(f, { layer: "repo" })).status, 400)
   assert.equal((await getConfig(f.deps, { params: {}, query: new URLSearchParams({ layer: "merged" }) })).status, 400)
+  cleanup(f)
+})
+
+test("a malformed edits ELEMENT is a 400, not a 500", async () => {
+  // The pre-screen optional-chained (`edit?.path ?? ""`), so `[{}]` sailed past
+  // it and `applyEdits` then did `edit.path.split(".")` — a TypeError that
+  // escaped into makeListener's net and came back as a 500 with a raw JS
+  // message. Nothing is written either way, but this route's contract is that
+  // 400 covers every malformed request.
+  const f = makeFixture({ maxIterations: 3 })
+  for (const edits of [[{}], [null], ["maxIterations"], [{ path: 5, value: 1 }], [{ value: 1 }]]) {
+    const res = await save(f, { layer: "repo", edits })
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(edits)}`)
+  }
+  assert.equal(repoFile(f)["maxIterations"], 3, "and nothing was written")
   cleanup(f)
 })

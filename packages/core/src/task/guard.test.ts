@@ -13,6 +13,32 @@ test("backlogRelPath extracts the backlog-relative remainder for relative and ab
   assert.equal(backlogRelPath("/repo/.claude/worktrees/x/docs/tasks/completed/c.md", "docs/tasks"), "completed/c.md")
 })
 
+test("backlogRelPath normalizes the path first — a spelling is not an escape hatch", () => {
+  // The match is literal, so any path that RESOLVES into the backlog but isn't
+  // spelled character-for-character used to read as "outside the backlog", which
+  // classifyEdit treats as ALLOW. `docs//tasks/...` is a legal path to the exact
+  // file the guard exists to protect.
+  assert.equal(backlogRelPath("docs//tasks/in-progress/a.md", "docs/tasks"), "in-progress/a.md")
+  assert.equal(backlogRelPath("docs/./tasks/in-progress/a.md", "docs/tasks"), "in-progress/a.md")
+  assert.equal(backlogRelPath("/repo/docs/tasks/../tasks/completed/a.md", "docs/tasks"), "completed/a.md")
+  assert.equal(backlogRelPath("/repo//docs//tasks//queued//a.md", "docs/tasks"), "queued/a.md")
+  assert.equal(backlogRelPath("docs\\tasks\\in-progress\\a.md", "docs/tasks"), "in-progress/a.md")
+})
+
+test("classifyEdit blocks a status folder reached by an unnormalized path", () => {
+  for (const p of [
+    "docs//tasks/in-progress/a.md",
+    "docs/./tasks/queued/a.md",
+    "/repo/docs/tasks/draft/../completed/a.md",
+    "/repo//docs//tasks//in-progress//a.md",
+  ]) {
+    assert.equal(classifyEdit(p, ctx).allow, false, `expected a block for ${p}`)
+  }
+  // And the carve-outs still resolve: a draft is a draft however it is spelled.
+  assert.equal(classifyEdit("docs//tasks/draft/new-idea.md", ctx).allow, true)
+  assert.equal(classifyEdit("docs/./tasks/queued/my-task.md", planCtx).allow, true)
+})
+
 test("backlogRelPath is null outside the backlog and does not false-match lookalikes", () => {
   assert.equal(backlogRelPath("src/index.ts", "docs/tasks"), null)
   assert.equal(backlogRelPath("/repo/mydocs/tasksy/a.md", "docs/tasks"), null)
