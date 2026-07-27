@@ -121,6 +121,37 @@ test("checklistKind recomputes the checklist and tags the gen:prompts item", asy
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
+test("saveKind refuses to write a kind that ships with core, with or without overwrite", async () => {
+  // `workflowsDir` is the CORE PACKAGE's own workflows/ dir — the same path for
+  // every monitored repo, and in an install that is node_modules. Opening the
+  // shipped `engineering` kind in the Creator and hitting Save sent
+  // overwrite: true, which rewrote its manifest AND every stage prompt for the
+  // whole machine: both CLI hosts, and every other repo the hub watches.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hub-save-"))
+  const workflows = path.join(repo, "workflows")
+  const shipped = path.join(workflows, "engineering", "stages")
+  fs.mkdirSync(shipped, { recursive: true })
+  fs.writeFileSync(path.join(workflows, "engineering", "workflow.json"), '{"kind":"engineering"}\n')
+  fs.writeFileSync(path.join(shipped, "scan.md"), "SHIPPED PROMPT\n")
+  const deps = depsFor(repo, workflows)
+
+  for (const body of [{ manifest: { ...MANIFEST, kind: "engineering" } }, { manifest: { ...MANIFEST, kind: "engineering" }, overwrite: true }]) {
+    const res = await saveKind(deps, req("engineering", body))
+    assert.equal(res.status, 400, "a shipped kind is read-only through this route")
+    assert.match((res.body as { error: string }).error, /new name/i, "the refusal must say how to proceed")
+  }
+
+  assert.equal(fs.readFileSync(path.join(workflows, "engineering", "workflow.json"), "utf8"), '{"kind":"engineering"}\n')
+  assert.equal(fs.readFileSync(path.join(shipped, "scan.md"), "utf8"), "SHIPPED PROMPT\n")
+
+  // Every sitter is shipped too, not just the default-on kind.
+  for (const kind of ["pr-sitter", "review-sitter", "dep-sitter", "main-sitter"]) {
+    const res = await saveKind(deps, req(kind, { manifest: { ...MANIFEST, kind }, overwrite: true }))
+    assert.equal(res.status, 400, `${kind} ships with core`)
+  }
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
 test("saveKind refuses the reserved kind name \"checklist\"", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hub-save-"))
   const deps = depsFor(repo, path.join(repo, "workflows"))

@@ -259,6 +259,21 @@ export const EXPERIMENTAL_KINDS: readonly string[] = ["pr-sitter", "review-sitte
 export const DEFAULT_ENABLED_KINDS: readonly string[] = ["engineering"]
 
 /**
+ * The kinds whose manifests and stage prompts SHIP with this package, in
+ * `workflows/<kind>/`. Everything else found there is local — authored in the
+ * hub's creator or by hand.
+ *
+ * The distinction matters because that directory is inside the core package:
+ * one copy for the whole machine, shared by every repo the hub watches and by
+ * both CLI hosts, and replaced wholesale by `npm ci`. So a writer with a
+ * per-repo mental model (the hub's `?repo=`-scoped kind routes) must treat
+ * these as read-only, or a save in one repo silently rewrites the workflow
+ * every other repo runs. Derived from the two lists above rather than spelled
+ * out again, so adding a kind cannot forget this.
+ */
+export const BUILTIN_WORKFLOW_KINDS: readonly string[] = [...DEFAULT_ENABLED_KINDS, ...EXPERIMENTAL_KINDS]
+
+/**
  * The workflow kinds this config activates, in claim-priority order: the
  * default-on kinds first in `DEFAULT_ENABLED_KINDS` order, then any opted-in
  * kinds in config order. Pure.
