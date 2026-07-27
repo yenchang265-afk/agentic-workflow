@@ -47,8 +47,19 @@ export const userConfigPath = (env = process.env, home = os.homedir()) => {
   return fs.existsSync(legacy) ? legacy : null
 }
 
-/** Strip a `provider/` prefix — Qwen takes bare ids, like Claude's Task tool. */
-export const bareModel = (model) => (typeof model === "string" ? model.replace(/^[^/]+\//, "") : model)
+/**
+ * Strip the `provider/` prefix — Qwen takes bare model ids.
+ *
+ * Must stay semantically identical to core's `bareModel` (config-layers.ts),
+ * which this file deliberately does not import (see the dependency-free note in
+ * the header). It takes the LAST segment, not "everything after the first":
+ * those differ for a multi-segment id like `openrouter/anthropic/claude-sonnet-4-5`,
+ * which used to bake here as `anthropic/claude-sonnet-4-5` while every other
+ * host resolved it to `claude-sonnet-4-5`. `qwen-settings.test.mjs` pins the two
+ * implementations to the same answer so the copies cannot drift again.
+ */
+export const bareModel = (model) =>
+  typeof model === "string" && model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model
 
 /**
  * Resolve agent -> model from a merged config plus the workflow manifests.

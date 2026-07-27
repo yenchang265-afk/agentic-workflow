@@ -94,8 +94,10 @@ survives both.
 This is the one behavioral difference from the other two hosts, and it is worth
 knowing before you configure `stageModels`.
 
-OpenCode passes the configured model at spawn time; Claude Code passes it to the
-Task tool. **Qwen's `agent` tool has no model parameter at all.** Qwen subagents
+OpenCode passes the configured model at spawn time; Claude Code rewrites the
+spawn call's `model` from a `PreToolUse` hook, so on both of those a config edit
+is live on the next spawn (an opencode restart aside). **Qwen's `agent` tool has
+no model parameter at all**, so neither approach is available. Qwen subagents
 do take a top-level `model:` frontmatter field, so the binding moves from
 runtime to install time: `./install.sh qwen` resolves
 `workflows.<kind>.stageModels` and `agentModels` and writes `model:` into each

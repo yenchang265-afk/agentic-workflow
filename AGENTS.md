@@ -218,6 +218,30 @@ whole line — that is what stops a marker pasted into `$ARGUMENTS` from
 truncating the prompt — and HTML comments do not nest, so never write a literal
 marker inside a comment.
 
+### Model selection is a mechanism, never prose
+
+Never express `stageModels` / `agentModels` as an instruction for a model to
+follow ("spawn it with `model` set to …"). It was written that way once, and the
+setting was quietly ignored: every stage ran the host default while the config
+said otherwise, and nothing failed. Each host now BINDS it — Claude Code rewrites
+the spawn call's `model` from a `PreToolUse` hook
+(`plugins/claude/hooks/src/stamp-spawn-model.entry.mjs`), OpenCode sets
+`agent.<name>.model` from its `config` hook, Qwen bakes `model:` into the
+installed agent file. Prompt text may **state** which model was bound (that is
+the only way a hook regression shows up in a transcript), but must never be the
+thing that carries it.
+
+Two traps behind that, both load-bearing:
+
+- **Claude Code's spawn tool takes an alias enum** (`sonnet|opus|haiku|fable`), and
+  a value outside it errors the whole spawn rather than falling back. Normalize
+  with `spawnAlias`, never `bareModel`, and leave an unmappable value unbound.
+- **A bundled hook cannot read the manifests** — `manifest/dir.ts` resolves from
+  `import.meta.url` and `build-hooks.mjs` inlines core, so that walk lands in the
+  hook's own directory. Anything manifest-derived must be resolved server-side and
+  parked on the stage marker, keyed by AGENT (a stage-keyed field goes stale the
+  moment `workflow_advance` fires the next stage without rewriting the marker).
+
 ## Maintaining these rules
 
 Rules earn their place — every line costs context on every session.

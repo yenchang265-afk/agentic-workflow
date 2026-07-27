@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { mergeOwned, resolveFragment, stripOwned } from "./qwen-settings.mjs"
-import { resolveAgentModels, withModel } from "./qwen-agents.mjs"
+import { bareModel, resolveAgentModels, withModel } from "./qwen-agents.mjs"
 
 /**
  * The installer writes into settings.json — a file the USER owns. Every test
@@ -127,6 +127,41 @@ test("stageModels resolve onto the agent backing that stage, provider prefix str
   assert.equal(models["workflow-verify"], "fast-1")
   assert.equal(models["workflow-build"], undefined)
   assert.deepEqual(conflicts, [])
+})
+
+// qwen-agents.mjs keeps its own bareModel so the installer can run before
+// @agentic-workflow/core is built (see its header). Duplication is what let the
+// two drift: this file's copy stripped only the FIRST path segment, so a
+// multi-segment id baked differently here than on every other host. Pin them.
+test("the installer's bareModel takes the LAST provider segment, like core's", () => {
+  assert.equal(bareModel("claude-sonnet-4-5"), "claude-sonnet-4-5")
+  assert.equal(bareModel("anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5")
+  assert.equal(bareModel("openrouter/anthropic/claude-sonnet-4-5"), "claude-sonnet-4-5")
+  assert.equal(bareModel("a/b/c/d"), "d")
+  assert.equal(bareModel(""), "")
+  // Tolerates non-strings because it reads straight off unvalidated JSON.
+  assert.equal(bareModel(42), 42)
+})
+
+// A source lint, not an import: this suite runs under plain `node --test` (see
+// the root `test:scripts` script), so it cannot load core's TypeScript. Assert
+// core still uses the same rule, so fixing one copy and not the other fails here
+// rather than in a user's Qwen install.
+test("core's bareModel still uses the last-segment rule these expectations encode", () => {
+  const core = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "packages", "core", "src", "config-layers.ts"),
+    "utf8",
+  )
+  const body = /export const bareModel[\s\S]*?\n\n/.exec(core)?.[0] ?? ""
+  assert.match(body, /lastIndexOf\("\/"\)/, "core's bareModel no longer takes the last segment")
+})
+
+test("stageModels strip every provider segment, not just the first", () => {
+  const { models } = resolveAgentModels(
+    { workflows: { engineering: { stageModels: { verify: "openrouter/anthropic/fast-1" } } } },
+    MANIFESTS,
+  )
+  assert.equal(models["workflow-verify"], "fast-1")
 })
 
 test("agentModels wins over the stage-derived model", () => {

@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { parseConfig } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
-import { draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { agentModelPatch, applyAgentModels, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -366,4 +366,59 @@ test("draftModelNote is silent when no drafting model is configured", () => {
   assert.equal(draftModelNote(bare, "engineering", "new"), null)
   const other = parseConfig({ agentModels: { "workflow-plan": "haiku" } }) as Config
   assert.equal(draftModelNote(other, "engineering", "new"), null, "a different agent's entry must not leak in")
+})
+
+/**
+ * The deterministic half of the same knob: the `config` hook binds
+ * `agent.<name>.model` so the drafting and ad-hoc spawns — which the MODEL
+ * initiates, out of reach of `session.command({ model })` — pick the configured
+ * model up as an opencode setting rather than as a request in a prompt.
+ */
+test("agentModelPatch keeps the provider prefix and ignores junk", () => {
+  assert.deepEqual(agentModelPatch({ agentModels: { "workflow-plan": "anthropic/claude-haiku-4-5" } }), {
+    // OpenCode takes provider-qualified ids; only Claude (alias enum) and Qwen
+    // (bare ids) narrow them.
+    "workflow-plan": "anthropic/claude-haiku-4-5",
+  })
+  assert.deepEqual(agentModelPatch({ agentModels: { a: "  haiku  " } }), { a: "haiku" })
+  for (const raw of [null, undefined, 42, "nope", {}, { agentModels: null }, { agentModels: 42 }, { agentModels: [] }]) {
+    assert.deepEqual(agentModelPatch(raw), {}, `raw: ${JSON.stringify(raw)}`)
+  }
+  assert.deepEqual(agentModelPatch({ agentModels: { a: 42, b: "", c: "   ", d: null } }), {})
+})
+
+test("applyAgentModels writes only agent.<name>.model, creating the map when absent", () => {
+  const config: { agent?: Record<string, { model?: string } | undefined> } = {}
+  assert.deepEqual(applyAgentModels(config, { "workflow-plan": "anthropic/x" }), ["workflow-plan"])
+  assert.deepEqual(config, { agent: { "workflow-plan": { model: "anthropic/x" } } })
+})
+
+test("applyAgentModels leaves an agent we do not name completely alone", () => {
+  const config = { agent: { "workflow-verify": { model: "user/choice" } } }
+  assert.deepEqual(applyAgentModels(config, { "workflow-plan": "ours/x" }), ["workflow-plan"])
+  assert.equal(config.agent["workflow-verify"].model, "user/choice")
+})
+
+test("naming an agent the user also configured overrides only its model, preserving the rest", () => {
+  // `agentModels` is the more specific instruction, so it wins — but a user's
+  // permission/tools settings for that agent are not ours to discard.
+  const config = { agent: { "workflow-plan": { model: "user/choice", temperature: 0.2, tools: { bash: false } } } }
+  applyAgentModels(config, { "workflow-plan": "ours/x" })
+  assert.deepEqual(config.agent["workflow-plan"], { model: "ours/x", temperature: 0.2, tools: { bash: false } })
+})
+
+test("an empty patch touches nothing at all — not even to create the agent map", () => {
+  const config: { agent?: Record<string, { model?: string } | undefined> } = {}
+  assert.deepEqual(applyAgentModels(config, {}), [])
+  assert.deepEqual(config, {}, "a default install must see a byte-identical config")
+})
+
+test("unrelated config keys survive applyAgentModels verbatim", () => {
+  const config = { model: "session/default", theme: "dark", agent: { other: { model: "keep/me" } } }
+  applyAgentModels(config, { "workflow-plan": "ours/x" })
+  assert.deepEqual(config, {
+    model: "session/default",
+    theme: "dark",
+    agent: { other: { model: "keep/me" }, "workflow-plan": { model: "ours/x" } },
+  })
 })

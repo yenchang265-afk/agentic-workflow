@@ -5,7 +5,13 @@
     "the Claude plugin's hooks.json this file is not loaded by the host directly —",
     "the installer copies it in, rewriting AGENTIC_WORKFLOW_PLUGIN_ROOT to an",
     "absolute path. The four events mirror the Claude plugin exactly; only the",
-    "PreToolUse matcher differs, because the tool ids do."
+    "PreToolUse matcher differs, because the tool ids do.",
+    "ONE INTENTIONAL ASYMMETRY: build-hooks.mjs also emits stamp-spawn-model.mjs",
+    "into this directory, and it is deliberately NOT registered here. Qwen's",
+    "`agent` tool has no `model` parameter to stamp into, so the binding happens",
+    "at install time instead (scripts/qwen-agents.mjs bakes `model:` into each",
+    "copied agent file). The hook no-ops under AGENTIC_WORKFLOW_HOST=qwen anyway",
+    "— pinned by a test — so registering it later would be safe, not wrong."
   ],
   "hooks": {
     "UserPromptSubmit": [

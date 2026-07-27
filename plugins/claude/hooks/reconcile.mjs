@@ -73,6 +73,15 @@ var DIALECTS = {
     // model is baked into the installed agent file, so telling the orchestrator
     // to "set `model`" would name a parameter that does not exist.
     conveysSpawnModel: true,
+    // The tool names that spawn a subagent, for the PreToolUse stamp. `Task` was
+    // renamed `Agent` in Claude Code 2.1.63 and is still accepted as an alias, so
+    // both are matched — a rename that silently stopped matching would disable
+    // the model binding without failing anything.
+    spawn: ["Agent", "Task"],
+    // What the host prepends to a plugin agent's name in `subagent_type`
+    // (`agentic-workflow:workflow-build`). Stripped before the name is checked
+    // against the agents this plugin ships.
+    agentPrefixes: ["agentic-workflow:", "mcp__plugin_agentic-workflow_agentic-workflow__"],
     installer: "plugins/claude/install.sh"
   },
   qwen: {
@@ -82,6 +91,11 @@ var DIALECTS = {
     write: ["write_file", "edit", "replace", "notebook_edit"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
+    // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
+    // stops the stamp before it looks at a tool name, because Qwen's `agent`
+    // tool has no `model` parameter to stamp into.
+    spawn: [],
+    agentPrefixes: [],
     installer: "./install.sh qwen"
   }
 };

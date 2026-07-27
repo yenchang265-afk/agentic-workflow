@@ -17,8 +17,6 @@ var RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im");
 var REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im");
 var ABANDON = new RegExp(`(?:^|\\s)${CMD}\\s+abandon\\b[ \\t]*(.*)$`, "im");
 var ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i");
-var ADHOC_PLAN = /(?:^|\s)\/(?:agentic-workflow:)?plan(?![-\w])/i;
-var isAdhocPlan = (prompt) => ADHOC_PLAN.test(String(prompt ?? ""));
 var verbFor = (prompt) => {
   const match = String(prompt ?? "").match(ANY_VERB);
   if (!match) return null;
@@ -99,6 +97,15 @@ var DIALECTS = {
     // model is baked into the installed agent file, so telling the orchestrator
     // to "set `model`" would name a parameter that does not exist.
     conveysSpawnModel: true,
+    // The tool names that spawn a subagent, for the PreToolUse stamp. `Task` was
+    // renamed `Agent` in Claude Code 2.1.63 and is still accepted as an alias, so
+    // both are matched — a rename that silently stopped matching would disable
+    // the model binding without failing anything.
+    spawn: ["Agent", "Task"],
+    // What the host prepends to a plugin agent's name in `subagent_type`
+    // (`agentic-workflow:workflow-build`). Stripped before the name is checked
+    // against the agents this plugin ships.
+    agentPrefixes: ["agentic-workflow:", "mcp__plugin_agentic-workflow_agentic-workflow__"],
     installer: "plugins/claude/install.sh"
   },
   qwen: {
@@ -108,6 +115,11 @@ var DIALECTS = {
     write: ["write_file", "edit", "replace", "notebook_edit"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
+    // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
+    // stops the stamp before it looks at a tool name, because Qwen's `agent`
+    // tool has no `model` parameter to stamp into.
+    spawn: [],
+    agentPrefixes: [],
     installer: "./install.sh qwen"
   }
 };
@@ -121,38 +133,8 @@ var dialectFor = (host) => host && host in DIALECTS ? DIALECTS[host] : null;
 
 // plugins/claude/hooks/verb-slice.mjs
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 var MARKER = /^<!--\s*(\/?)aw:verb\s+([a-z][a-z0-9|-]*)\s*-->$/;
-var VERB_DRAFT_AGENT = { new: "workflow-plan-author", retask: "workflow-plan-author" };
-var userConfigPath = () => {
-  const env = process.env.AGENTIC_WORKFLOW_USER_CONFIG;
-  if (env !== void 0) return env === "" ? null : env;
-  const home = os.homedir();
-  if (!home) return null;
-  const xdg = process.env.XDG_CONFIG_HOME?.trim() ? process.env.XDG_CONFIG_HOME : path.join(home, ".config");
-  const primary = path.join(xdg, "agentic-workflow", "agentic-workflow.json");
-  if (fs.existsSync(primary)) return primary;
-  const legacy = path.join(home, ".agentic-workflow.json");
-  return fs.existsSync(legacy) ? legacy : primary;
-};
-var layer = (file) => {
-  if (!file) return null;
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-};
-var agentModelFor = (cwd, agent) => {
-  const pick = (cfg) => {
-    const value = cfg?.agentModels?.[agent];
-    return typeof value === "string" && value.trim() ? value.trim() : null;
-  };
-  const model = pick(layer(path.join(cwd, ".agentic-workflow.json"))) ?? pick(layer(userConfigPath()));
-  return model?.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model;
-};
 var normalize = (verb) => String(verb ?? "").trim().toLowerCase() || null;
 var tagLines = (body) => {
   const tagged = [];
@@ -182,7 +164,7 @@ var sliceForVerb = (body, verb) => {
   if (kept.length === 0) return null;
   return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 };
-var verbContext = (pluginRoot, verb, cwd) => {
+var verbContext = (pluginRoot, verb) => {
   const wanted = normalize(verb);
   if (!wanted) return null;
   let body;
@@ -193,10 +175,6 @@ var verbContext = (pluginRoot, verb, cwd) => {
   }
   const slice = sliceForVerb(body, wanted);
   if (!slice) return null;
-  const draftAgent = VERB_DRAFT_AGENT[wanted];
-  const d = dialectFor(hostFor());
-  const model = d?.conveysSpawnModel && draftAgent && cwd ? agentModelFor(cwd, draftAgent) : null;
-  const modelLine = `Spawn \`${draftAgent}\` with the ${d?.spawnTool ?? "Task tool"}'s \`model\` set to \`${model}\` (config \`agentModels\`). This covers the drafting spawn only \u2014 a PLAN stage spawn still takes the \`model\` field off the MCP response.`;
   return [
     `VERB INSTRUCTIONS \u2014 /agentic-workflow:engineering ${wanted}`,
     "",
@@ -204,14 +182,8 @@ var verbContext = (pluginRoot, verb, cwd) => {
     "The command body you received is only the router. Follow this block, and do",
     "not act on any other verb's description.",
     "",
-    slice,
-    ...model ? ["", modelLine] : []
+    slice
   ].join("\n");
-};
-var adhocAgentContext = (cwd, agent) => {
-  const d = dialectFor(hostFor());
-  const model = d?.conveysSpawnModel && cwd ? agentModelFor(cwd, agent) : null;
-  return model ? `Spawn \`${agent}\` with the ${d.spawnTool}'s \`model\` set to \`${model}\` (config \`agentModels\`).` : null;
 };
 
 // plugins/claude/hooks/gate-command.mjs
@@ -246,10 +218,8 @@ var main = async () => {
   if (typeof prompt !== "string" || !prompt) return passThrough();
   const pluginRoot = process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path2.resolve(path2.dirname(fileURLToPath(import.meta.url)), "..");
   const injectVerb = () => {
-    const context = verbContext(pluginRoot, verbFor(prompt), cwd);
-    if (context) return augment(context);
-    const adhoc = isAdhocPlan(prompt) ? adhocAgentContext(cwd, "workflow-plan") : null;
-    return adhoc ? augment(adhoc) : passThrough();
+    const context = verbContext(pluginRoot, verbFor(prompt));
+    return context ? augment(context) : passThrough();
   };
   const dispatch = gateArgsFor(prompt);
   if (!dispatch) return injectVerb();

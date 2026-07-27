@@ -26,6 +26,40 @@ const flat = (src: string) => code(src).replace(/\n\s*/g, " ")
 /** The body of one registerTool call, from its name literal to the next registration. */
 const toolBody = (src: string, name: string) => src.slice(src.indexOf(`"${name}",`)).split("server.registerTool(")[0] ?? ""
 
+// The stage marker is now the DETERMINISTIC channel for stageModels: the
+// PreToolUse stamp (plugins/claude/hooks/src/stamp-spawn-model.entry.mjs) reads
+// `stageAgentModels` off it and rewrites the spawn call's `model`, so the
+// orchestrator's cooperation stops mattering. The hook cannot resolve this
+// itself — manifest/dir.ts locates the workflows dir from `import.meta.url` and
+// build-hooks.mjs inlines core into the bundle, so that walk lands on the hook's
+// own directory — which is why the server has to park the answer here.
+test("the stage marker carries stageAgentModels, resolved by the same stageModel the payload uses", () => {
+  const src = code(source())
+  assert.match(src, /const stageAgentModels = \(m: LoadedManifest\)/, "the resolver must exist")
+  // Keyed by AGENT over the whole kind, not the current stage: workflow_advance
+  // returns the next stage's fire payload without rewriting the marker, so a
+  // current-stage field would be stale for exactly the spawn that follows an
+  // advance — a VERIFY-FAIL → BUILD re-fire would drop BUILD's model silently.
+  assert.match(src, /for \(const def of m\.manifest\.stages\)[\s\S]{0,200}out\[def\.agent\] = model/, "the map must cover every stage agent of the kind")
+  assert.match(src, /stageAgentModels: stageAgentModelMap/, "writeStageMarker must emit the map")
+  // One resolver feeding both channels, so the marker and the payload cannot drift.
+  const resolver = src.slice(src.indexOf("const stageAgentModels = "))
+  assert.match(resolver.slice(0, resolver.indexOf("\n}")), /stageModel\(m\.manifest\.kind, def\)/)
+})
+
+// Claude Code's spawn tool validates `model` against sonnet|opus|haiku|fable and
+// errors the WHOLE spawn on a miss rather than falling back, so the server must
+// hand out an alias, never a model id. Emitting `bareModel(...)` here described a
+// call the tool would reject for any config naming a real id; it stayed invisible
+// only because the prose carrying it was being ignored.
+test("stageModel resolves to a spawn alias, not a bare model id", () => {
+  const src = code(source())
+  const fn = src.slice(src.indexOf("const stageModel = "))
+  const body = fn.slice(0, fn.indexOf("\n}"))
+  assert.match(body, /spawnAlias\(modelFor\(config, kind, def\)\)/)
+  assert.doesNotMatch(body, /bareModel/, "a bare model id is not a value the spawn tool accepts")
+})
+
 // Every fire payload has always carried the configured stage model, but the
 // notes that tell the orchestrator what to spawn once named only `agent` — so
 // workflows.<kind>.stageModels was dropped at each hop and every stage ran the
