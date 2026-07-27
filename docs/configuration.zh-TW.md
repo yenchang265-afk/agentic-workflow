@@ -124,7 +124,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
 | `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 
-兩個外掛讀取的是同一份檔案：結構描述位於共用核心套件
+三個外掛讀取的都是同一份檔案：結構描述位於共用核心套件
 （`packages/core/src/config.ts`），每個 host 可以用只有自己能支援的
 欄位去擴充它（目前：OpenCode 的 `watchIntervalMinutes`——見
 [`plugins/claude/README.md`](../plugins/claude/README.md)）。
@@ -232,6 +232,37 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   設定值是**預設值**；帶引數的 `/agentic-workflow:<kind> watch` 會為
   該 session 覆寫它：`watch poll [interval]`（或一個裸的間隔值）、
   `watch cron "<schedule>"`，或 `watch idle`。
+
+- **`workflows.<kind>.stageModels`**——階段名稱 → 該階段執行時使用的
+  模型，讓便宜的階段跑便宜的模型、困難的階段跑強大的模型：
+
+  ```json
+  {
+    "workflows": {
+      "engineering": {
+        "stageModels": {
+          "build": "anthropic/claude-sonnet-4-5",
+          "review": "anthropic/claude-opus-4-5"
+        }
+      }
+    }
+  }
+  ```
+
+  值是 host 專屬的模型字串：OpenCode 要的是 `provider/modelID`（如上）；
+  Claude Code 和 Qwen Code 都要 Task 工具風格的模型（`sonnet`、`opus`、
+  `haiku`，或一個裸的模型 id——`provider/` 前綴會被容許並去除，所以同一份
+  設定在三個 host 上都能用）。Qwen 是在安裝時解析它，而不是在產生階段時
+  ——見 [`docs/qwen.md`](qwen.zh-TW.md) 的「這個宿主上的每階段模型是靜態的」一節。
+  每個階段的優先順序：這個鍵 → manifest 階段的 `model` 欄位 → 未設定
+  （host 的預設模型）。沒列出的階段沿用 host 預設值。
+
+  鍵必須是該類型的**階段名稱**，小寫，依 manifest 的拼法（engineering：
+  `plan`、`build`、`verify`、`review`；其他類型請執行
+  `/agentic-workflow:<kind> kinds`）。指向不存在階段的鍵——例如 `BUILD`，
+  或另一個類型的階段名稱——在解析時無法被拒絕（此時 manifest 尚未載入），
+  因此會被接受、忽略，該階段沿用 host 預設值。OpenCode 和 Claude Code
+  在迴圈啟動時都會對這類鍵發出警告。
 
 - **`workflows.<kind>.stageContext`**——以「消費該產物的階段」為鍵，
   設定該階段組出的提示中每個產物的**字元**上限。未設定 ⇒ 無上限，

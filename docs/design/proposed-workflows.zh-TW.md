@@ -392,6 +392,6 @@ main。**成本**：M/L。
 
 要把任何一個項目升級為實際工作，就要走一遍既有的
 [新類型檢查清單](../../packages/core/workflows/README.md#checklist-for-a-new-kind)——
-清單 + 階段、透過 `gen:prompts` 為兩個外掛產生 agents、指令包裝、
+清單 + 階段、透過 `gen:prompts` 為全部三個外掛產生 agents、指令包裝、
 來源 + 測試、註冊表 hooks，以及設定/威脅模型文件。那份檢查清單才是權威版本；
 這份目錄只提供*要做什麼*。

@@ -5,8 +5,10 @@
 以受監督的狀態機方式執行長期目標，而不是聊天式的來回問答。本儲存庫是一個
 **多種類工作流程框架**：每種工作流程類型都是
 [`packages/core/workflows/<kind>/`](packages/core/workflows/README.md) 下的一份宣告式清單
-（manifest）——階段（stage）、狀態轉換（transition）和工作來源（work source）——由共用引擎解讀執行，並由統一的排程器驅動。以兩個並行外掛的形式發布——一個面向
-**OpenCode**，一個面向 **Claude Code**（[`plugins/claude/`](plugins/claude/README.md)）——兩者都建立在同一個核心套件（[`packages/core`](packages/core)）之上，共用人工把關點（human gate）、git 隔離、可信裁定（trusted verdict）和稽核軌跡。
+（manifest）——階段（stage）、狀態轉換（transition）和工作來源（work source）——由共用引擎解讀執行，並由統一的排程器驅動。以三個並行外掛的形式發布——
+**OpenCode**、**Claude Code**（[`plugins/claude/`](plugins/claude/README.md)）
+和 **Qwen Code**（[`plugins/qwen/`](plugins/qwen/README.md)，重複使用 Claude
+的 MCP 伺服器）——三者都建立在同一個核心套件（[`packages/core`](packages/core)）之上，共用人工把關點（human gate）、git 隔離、可信裁定（trusted verdict）和稽核軌跡。
 
 目前已發布五種工作流程類型。**engineering**（預設開啟）在 `docs/tasks/` 任務待辦
 （backlog）上驅動一個目標經歷 PLAN → BUILD → VERIFY → REVIEW，包含人工任務把關和
@@ -85,7 +87,7 @@ OpenCode 上還有 `watch [trigger]` / `unwatch`）。**四個 sitter 全都是
 
 ## 安裝
 
-以下步驟假設系統先決條件已就緒（Node ≥ 22.13、git、`gh`、`curl`，如需瀏覽器相關
+以下步驟假設系統先決條件已就緒（Node ≥ 20、git、`gh`、`curl`，如需瀏覽器相關
 作業還需要 Chrome）。Azure DevOps 只需要 `curl` 加上 `AZURE_DEVOPS_EXT_PAT`
 中的一個 PAT。對於全新的機器，`./bootstrap.sh` 會為你驗證/安裝這些相依項，
 註冊 `chrome-devtools` MCP 伺服器，然後為你執行 `./install.sh`：
@@ -220,7 +222,7 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 
 - `packages/core/` —— `@agentic-workflow/core`：純粹的工作流程引擎、清單層、
   工作來源 + 排程器、任務儲存、git 隔離、快照、裁定、指標、設定 ——
-  兩個外掛共用的一切
+  所有三個外掛共用的一切
 - `packages/core/workflows/` —— 宣告式的工作流程類型，每種類型一個目錄
   （`engineering/`、`pr-sitter/`、`review-sitter/`、`dep-sitter/`、
   `main-sitter/`）：每種類型一份 `workflow.json` 清單 + `stages/*.md` 提示詞範本
@@ -233,9 +235,9 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 - `plugins/claude/` —— Claude Code 外掛：指令、agents、hooks，以及驅動
   迴圈的內建 MCP 伺服器（其 host 墊片位於 `mcp-server/src/shim.ts`）
 - `skills/`、`references/` —— 階段 agent 和臨時請求所使用的工作流程庫
-  （兩個外掛共用）
+  （三個外掛共用）
 - `docs/tasks/` —— `/agentic-workflow:engineering` 各動詞讀取的檔案系統任務待辦
-- `install.sh` —— 安裝一個或兩個外掛
+- `install.sh` —— 安裝三個外掛中的任何一個（或全部）
 
 ## 開發
 

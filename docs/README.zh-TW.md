@@ -24,7 +24,7 @@
 | [design/improvements/](design/improvements/README.md) | 已上線強化工作的實作設計紀錄（worktree、狀態持久化、裁定品質……） |
 | [migration.md](migration.md) | 從早期版面遷移（舊的 `/agent-loop` 指令、`in-planning/`、阻塞式 PLAN 把關） |
 | [templates/AGENTS.md](templates/AGENTS.md) | 可複製到由 agentic-workflow 驅動的專案中的起始 `AGENTS.md`/`CLAUDE.md` |
-| [`../prompts/README.md`](../prompts/README.md) | 單一來源的 agent 提示詞流水線如何運作（`prompts/agents/` → `npm run gen:prompts` → 兩個外掛） |
+| [`../prompts/README.md`](../prompts/README.md) | 單一來源的 agent 提示詞流水線如何運作（`prompts/agents/` → `npm run gen:prompts` → 全部三個外掛） |
 
 `manual.html` 是一份手動維護的單頁 HTML 手冊，為求方便而重述上述大部分
 內容（快速上手、設定參考、指令速查表）。它**不會從這些文件重新產生**——

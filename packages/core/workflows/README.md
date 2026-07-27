@@ -246,20 +246,20 @@ backlog first, then the opted-in kinds in config order.
 1. `workflows/<kind>/workflow.json` + `stages/*.md` (this page + the zod schema are
    the contract; `npm test -w @agentic-workflow/core` exercises manifest
    validation).
-2. Stage **agents** for both plugins: author the source under
+2. Stage **agents** for all three plugins: author the source under
    `prompts/agents/workflow-<kind>-*/` (`body.md` + `opencode.yaml` — frontmatter
-   bash permissions mirror the manifest allowlists — + `claude.yaml`) and run
-   `npm run gen:prompts`; it renders into `plugins/opencode/agents/` and
-   `plugins/claude/agents/` (never edit those outputs — CI drift-checks them;
-   the PreToolUse guard enforces the manifest allowlist via the stage marker).
-   See [`prompts/README.md`](../../../prompts/README.md) for how the
-   generation pipeline works.
+   bash permissions mirror the manifest allowlists — + `claude.yaml` + `qwen.yaml`)
+   and run `npm run gen:prompts`; it renders into `plugins/opencode/agents/`,
+   `plugins/claude/agents/`, and `plugins/qwen/agents/` (never edit those outputs
+   — CI drift-checks them; the PreToolUse guard enforces the manifest allowlist
+   via the stage marker). See [`prompts/README.md`](../../../prompts/README.md)
+   for how the generation pipeline works.
 3. OpenCode **commands** for each stage `command` that doesn't already exist
    (`plugins/opencode/commands/<command>.md`, thin `agent:`-frontmatter
    wrappers).
 4. A **work source** if neither `backlog` nor `pull-request` fits
-   (`packages/core/src/source/`, implement `WorkSource`), wired into both
-   hosts' `sourcesFor`.
+   (`packages/core/src/source/`, implement `WorkSource`), wired into every
+   host's `sourcesFor`.
 5. Registry hooks, registered at host startup.
 6. **Tests**: an engine walk of the manifest (see the pr-sitter cases in
    `core/src/workflow/engine.test.ts`) and source tests with scripted shells
