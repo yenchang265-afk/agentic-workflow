@@ -201,3 +201,15 @@ test("workflow_stage refuses a stage whose marker it could not arm", () => {
     "an unarmed stage must not be reported as started",
   )
 })
+
+// workflow_move is the low-level escape hatch, but it moved the file straight
+// out from under a live loop: `active.task.path` then pointed at a path that no
+// longer existed, so every later appendNote/snapshot/terminal move missed and
+// the claim marker was orphaned in the folder the task had left.
+test("workflow_move enforces the same liveness guards as every other move", () => {
+  const body = flat(toolBody(source(), "workflow_move"))
+  assert.match(body, /resolveTaskIdAnywhere\(/, "the short-hash handle resolves here like everywhere else")
+  assert.match(body, /active\?\.task\?\.id === id/, "a task a live loop drives must be refused")
+  assert.match(body, /listClaimIds\(/, "a held claim marker must be refused")
+  assert.match(body, /catch \(err\) \{ return fail\(/, "a thrown move must not escape the ok/fail contract")
+})

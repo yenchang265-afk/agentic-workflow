@@ -39,7 +39,7 @@ import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workf
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageMarkerPath } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
-import { ensureIsolation, workflowId } from "@agentic-workflow/core/workflow/isolate"
+import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
@@ -1507,12 +1507,45 @@ server.registerTool(
 
 server.registerTool(
   "workflow_move",
-  { description: "Move a task file to another status folder.", inputSchema: { id: z.string(), status: z.enum(["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]) } },
+  {
+    description:
+      "Move a task file to another status folder. The low-level escape hatch — prefer the gate verbs (workflow_task_approve / workflow_plan_approve / workflow_replan / workflow_ship / workflow_abandon), which also write the audit note, commit, and open the PR. Refuses a task a loop is driving or that holds a claim marker.",
+    inputSchema: { id: z.string(), status: z.enum(["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"]) },
+  },
   async ({ id, status }) => {
     await loadCfg()
+    // Every sibling move routes through core's gate ops, which resolve the
+    // short-hash handle and refuse a task that is being driven or still holds a
+    // claim. This one moved the file straight out from under a live loop:
+    // `active.task.path` then pointed at a path that no longer existed, so every
+    // later appendNote/snapshot/terminal move in workflow_advance missed, and the
+    // claim marker was orphaned in the folder the task had left.
+    const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
+    if (resolved && "ambiguous" in resolved) {
+      return fail(`Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`)
+    }
+    if (resolved) id = resolved.id
     const found = await findAnyStatus(id)
     if (!found) return fail(`No task "${id}".`)
-    const newPath = await moveTask(sh, { id, path: found.path }, status)
+    if (active?.task?.id === id) {
+      return fail(`Task "${id}" is being driven by a live loop — workflow_stop it first, or use the gate verb for the move you want.`)
+    }
+    const from = path.basename(path.dirname(found.path))
+    const held = await listClaimIds(sh, directory, config.tasksDir, from)
+    if (held.includes(id)) {
+      return fail(`Task "${id}" holds a claim marker — a loop may be driving it; stop it or run workflow_doctor fix first.`)
+    }
+    let newPath: string
+    try {
+      newPath = await moveTask(sh, { id, path: found.path }, status)
+    } catch (err) {
+      // moveTask throws on a duplicate destination, a failed mv, or a move that
+      // did not land — none of which may escape a tool whose contract is ok/fail.
+      return fail(`Can't move "${id}" to ${status}/: ${(err as Error).message}`)
+    }
+    // A parked task can own a worktree; a move into a terminal folder frees it,
+    // the way remove/abandon/ship do. Best-effort, never throws.
+    if (status === "completed" || status === "abandoned") await releaseWorktree(sh, log, directory, config, id)
     return ok({ moved: newPath })
   },
 )
