@@ -673,3 +673,29 @@ test("a failed mv is reported by every gate verb that moves a task", async () =>
     assert.ok(`/repo/docs/tasks/${from}/t.md` in fs, `${verb}: the task stays put`)
   }
 })
+
+// --- an unsafe id must never reach the filesystem ---
+
+test("a gate verb given a traversing id never reads outside the backlog", async () => {
+  // `resolveGateId` returns null for an id the store refuses, and every caller
+  // then carries the RAW id on to its "no task found" messaging. `unparseableAt`
+  // was the one id-taking helper with no safety gate, so it `cat`ed
+  // <tasksDir>/<status>/../../../../etc/shadow.md — a filesystem existence
+  // oracle, plus whatever a YAML lexer error quotes back from the file.
+  const evil = "../../../../etc/shadow"
+  for (const [verb, run] of [
+    ["removeTask", (ctx: GateCtx) => removeTask(ctx, evil, true)],
+    ["abandonTask", (ctx: GateCtx) => abandonTask(ctx, evil)],
+    ["approveTask", (ctx: GateCtx) => approveTask(ctx, evil)],
+    ["shipTask", (ctx: GateCtx) => shipTask(ctx, evil)],
+  ] as const) {
+    const { ctx, log } = makeCtx({})
+    const r = await run(ctx)
+    // Not asserted: ok/!ok. `removeTask` reports an absent id as an idempotent
+    // success by design, and that stays true whatever the id looks like. What
+    // must hold for every verb is that nothing outside the backlog was read.
+    assert.doesNotMatch(r.message, /etc\/shadow\.md exists/, `${verb} must not report on a file outside the backlog`)
+    const escaped = log.filter((c) => c.includes("..") || c.includes("/etc/"))
+    assert.deepEqual(escaped, [], `${verb} touched a path outside the backlog: ${escaped.join(", ")}`)
+  }
+})

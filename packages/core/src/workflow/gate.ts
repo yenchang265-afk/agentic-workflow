@@ -1,7 +1,7 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
-import { parseTask, type Task } from "../task/schema.js"
+import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
 import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
@@ -87,7 +87,14 @@ const statusFolder = (t: Task): string => path.basename(path.dirname(t.path))
  * genuinely absent (or parseable — then a parse-based lookup would have hit).
  */
 const unparseableAt = async (ctx: GateCtx, id: string): Promise<string | null> => {
-  if (!id) return null
+  // Every other id-taking helper (findByIdIn, resolveTaskIdIn, moveTask,
+  // removeTaskFile, rewriteTask, loadState) gates on this; this one did not, and
+  // it is reachable with a RAW id: `resolveGateId` returns null for an id the
+  // store refuses, and each caller then carries the user's original string on to
+  // its "no task found" branch. `cat`ing it made this a filesystem existence
+  // oracle — and the message embeds the parse error, which quotes the offending
+  // line back out of whatever it read.
+  if (!id || !isSafeTaskId(id)) return null
   for (const s of STATUSES) {
     const file = path.join(ctx.directory, ctx.config.tasksDir, s, `${id}.md`)
     const out = await ctx.$`cat ${file}`.quiet().nothrow()
