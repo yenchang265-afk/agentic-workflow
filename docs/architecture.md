@@ -62,7 +62,7 @@ flowchart TB
 ```
 
 - **Core package** — `@agentic-workflow/core` (npm workspace) holds everything
-  both plugins share: the pure engine and state, the manifest layer, work
+  every host shares: the pure engine and state, the manifest layer, work
   sources + scheduler, the task store, git helpers + worktree isolation,
   snapshots, verdict handling, metrics, and config (resolved by layering an
   optional user-scope `~/.config/agentic-workflow/agentic-workflow.json`

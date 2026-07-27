@@ -167,7 +167,7 @@ plugin as a local plugin file, so the `/agentic-workflow:*` commands and the bun
 every OpenCode session. It's idempotent — re-run after `git pull` for
 updates. Use `--copy` instead of symlinks, or pass a directory to install
 somewhere other than the default OpenCode config dir. Bare `./install.sh`
-installs the Claude Code plugin too.
+installs the Claude Code and Qwen Code plugins too.
 
 On an interactive terminal the install ends with a short **config wizard** that
 seeds `.agentic-workflow.json` — it first asks whether to write repo scope (the

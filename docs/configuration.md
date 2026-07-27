@@ -126,9 +126,9 @@ hand-edited afterward.
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
-Both plugins read the same file: the schema lives in the shared core package
-(`packages/core/src/config.ts`), and each host may extend it with fields only
-it can honor (today: OpenCode's `watchIntervalMinutes` — see
+All three plugins read the same file: the schema lives in the shared core
+package (`packages/core/src/config.ts`), and each host may extend it with
+fields only it can honor (today: OpenCode's `watchIntervalMinutes` — see
 [`plugins/claude/README.md`](../plugins/claude/README.md)).
 
 ## Workflow kinds (`workflows`)
@@ -255,11 +255,13 @@ it. The warnings are advisory: they annotate a save, never block it. See
   ```
 
   The value is a host-specific model string: OpenCode wants
-  `provider/modelID` (as above); Claude Code wants a Task-tool model
-  (`sonnet`, `opus`, `haiku`, or a bare model id — a `provider/` prefix is
-  tolerated and stripped, so one shared config works on both hosts).
-  Precedence per stage: this key → the manifest stage's `model` field →
-  unset (the host's default model). Stages not listed keep the host default.
+  `provider/modelID` (as above); Claude Code and Qwen Code both want a
+  Task-tool-style model (`sonnet`, `opus`, `haiku`, or a bare model id — a
+  `provider/` prefix is tolerated and stripped, so one shared config works on
+  all three hosts). Qwen resolves it at install time rather than spawn time —
+  see [`docs/qwen.md`](qwen.md#per-stage-models-are-static-here). Precedence
+  per stage: this key → the manifest stage's `model` field → unset (the
+  host's default model). Stages not listed keep the host default.
 
   Keys must be the kind's **stage names**, lowercase, as the manifest spells
   them (engineering: `plan`, `build`, `verify`, `review`; run

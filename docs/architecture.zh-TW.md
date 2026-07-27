@@ -59,7 +59,7 @@ flowchart TB
     engine -->|"fire stage / park / done / stop"| hosts
 ```
 
-- **核心套件**——`@agentic-workflow/core`（npm workspace）承載兩個外掛共用
+- **核心套件**——`@agentic-workflow/core`（npm workspace）承載每個 host 共用
   的一切：純粹的引擎與狀態、清單層、工作來源 + 排程器、任務儲存、git
   輔助工具 + worktree 隔離、快照、裁定處理、指標，以及設定（透過把可選
   的使用者層級 `~/.config/agentic-workflow/agentic-workflow.json`（遵循
