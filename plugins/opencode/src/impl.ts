@@ -316,7 +316,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // survives whichever half was kept, and emitted even when slicing was a
       // no-op (markers missing) — otherwise a broken template silently drops it.
       const draftNote = draftModelNote(config, kind, verb)
-      const base = sliced ?? rendered
+      // `??` here treated an EMPTY slice as a usable one: a verb block that
+      // tidies to nothing, plus a configured drafting model, replaced the entire
+      // command body with the model sentence — no task, no prohibitions, no
+      // usage. An empty slice is not a slice; fall back like a missing one.
+      const base = sliced || rendered
       if (base !== undefined && (sliced || draftNote)) {
         overrideCommandPrompt(output, draftNote ? `${base}\n\n${draftNote}` : base)
       }
