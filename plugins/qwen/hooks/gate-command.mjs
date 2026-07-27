@@ -10,13 +10,14 @@ import { fileURLToPath } from "node:url";
 // plugins/claude/hooks/gate-parse.mjs
 var VERB = "(approve-plan|replan|approve)";
 var SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im");
-var CMD = "\\/(?:agentic-workflow:)?engineering";
-var APPROVE = new RegExp(`(?:^|\\s)${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)$`, "im");
-var REPLAN = new RegExp(`(?:^|\\s)${CMD}\\s+replan\\b[ \\t]*(.*)$`, "im");
-var RETASK = new RegExp(`(?:^|\\s)${CMD}\\s+retask\\b[ \\t]*(.*)$`, "im");
-var REMOVE = new RegExp(`(?:^|\\s)${CMD}\\s+remove\\b[ \\t]*(.*)$`, "im");
-var ABANDON = new RegExp(`(?:^|\\s)${CMD}\\s+abandon\\b[ \\t]*(.*)$`, "im");
-var ANY_VERB = new RegExp(`(?:^|\\s)${CMD}(\\s+\\S*)?`, "i");
+var CMD = "\\/(?:agentic-workflow:)?engineering(?![-\\w])";
+var AT_START = "^\\s*";
+var APPROVE = new RegExp(`${AT_START}${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)`, "i");
+var REPLAN = new RegExp(`${AT_START}${CMD}\\s+replan\\b[ \\t]*(.*)`, "i");
+var RETASK = new RegExp(`${AT_START}${CMD}\\s+retask\\b[ \\t]*(.*)`, "i");
+var REMOVE = new RegExp(`${AT_START}${CMD}\\s+remove\\b[ \\t]*(.*)`, "i");
+var ABANDON = new RegExp(`${AT_START}${CMD}\\s+abandon\\b[ \\t]*(.*)`, "i");
+var ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i");
 var ADHOC_PLAN = /(?:^|\s)\/(?:agentic-workflow:)?plan(?![-\w])/i;
 var isAdhocPlan = (prompt) => ADHOC_PLAN.test(String(prompt ?? ""));
 var verbFor = (prompt) => {

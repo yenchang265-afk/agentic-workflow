@@ -124,6 +124,76 @@ test("verbs are matched as whole words — approver doesn't trigger a gate", () 
 })
 
 /**
+ * A gate move is destructive and BLOCKS the turn, so the model never gets to
+ * notice one it didn't intend. The only thing that may fire one is the command
+ * the user actually typed — which Claude Code itself requires to open the
+ * prompt. A verb quoted deeper in the payload is content, not an invocation:
+ * the README, AGENTS.md and every verb block contain these exact slash-form
+ * strings, so pasted specs and issue bodies routinely carry them.
+ */
+
+test("a gate verb quoted inside another verb's payload never fires a move", () => {
+  for (const prompt of [
+    "/agentic-workflow:engineering new fix bug\nNote: do NOT run /agentic-workflow:engineering remove abc --force",
+    "/agentic-workflow:engineering new add a dashboard\nlater we can /agentic-workflow:engineering approve it",
+    "/agentic-workflow:engineering new port the docs\n> /agentic-workflow:engineering abandon f7k3 superseded",
+    "/agentic-workflow:engineering plan f7k3\nthen /agentic-workflow:engineering replan f7k3 wrong layer",
+  ]) {
+    const d = gateArgsFor(prompt)
+    const fired = d && d.argv
+    assert.ok(!fired, `expected no gate argv for ${JSON.stringify(prompt)} — got ${JSON.stringify(d)}`)
+  }
+})
+
+test("a gate verb in pasted prose fires nothing when the user typed no command", () => {
+  for (const prompt of [
+    "here is a pasted issue body:\n> /agentic-workflow:engineering approve\nplease summarize it",
+    "the docs say to run\n\n    /agentic-workflow:engineering remove my-task --force\n\nwhat does that do?",
+  ]) {
+    assert.equal(gateArgsFor(prompt), null, `expected null for ${JSON.stringify(prompt)}`)
+    assert.equal(verbFor(prompt), null, `verbFor must agree — ${JSON.stringify(prompt)}`)
+  }
+})
+
+test("the typed command still dispatches when a payload follows on later lines", () => {
+  // Anchoring must not cost the ordinary case: the verb's payload is the rest
+  // of its own line, and anything below is context the model would have seen.
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task\nthanks!"), {
+    argv: ["gate", "approve-any", "my-task"],
+  })
+  assert.deepEqual(gateArgsFor("  /engineering remove my-task --force\n\ncleaning up"), {
+    argv: ["gate", "remove", "my-task", "--force"],
+  })
+})
+
+test("gateArgsFor and verbFor agree on which verb the prompt invokes", () => {
+  // They disagreed once: verbFor read the first token while the gate matchers
+  // scanned every line, so `new` injected its instructions while `remove`
+  // silently deleted a task. Any divergence is that bug returning.
+  const gateVerb = { "approve-any": "approve", "reject-any": "replan", retask: "retask", remove: "remove", abandon: "abandon" }
+  for (const prompt of [
+    "/agentic-workflow:engineering new fix bug\nor /agentic-workflow:engineering remove abc --force",
+    "/agentic-workflow:engineering approve my-task",
+    "/agentic-workflow:engineering replan my-task the plan misses the cache",
+    "/agentic-workflow:engineering retask my-task tighten it",
+    "/agentic-workflow:engineering abandon my-task superseded",
+    "/agentic-workflow:engineering status",
+  ]) {
+    const d = gateArgsFor(prompt)
+    if (!d?.argv) continue
+    assert.equal(gateVerb[d.argv[1]], verbFor(prompt), `divergence on ${JSON.stringify(prompt)}`)
+  }
+})
+
+test("a sibling command starting with 'engineering' is not the engineering command", () => {
+  // `/engineering-notes` is a different command; without a trailing boundary it
+  // inherited engineering's status procedure as authoritative instructions.
+  assert.equal(verbFor("/engineering-notes what is this"), null)
+  assert.equal(verbFor("/agentic-workflow:engineering-docs open"), null)
+  assert.equal(gateArgsFor("/engineering-notes approve my-task"), null)
+})
+
+/**
  * `verbFor` drives the per-verb instruction injection (verb-slice.mjs), not a
  * gate move, so it must recognise EVERY verb — including the ones gateArgsFor
  * ignores. It shares the command regex, so the leading-slash rule that keeps
