@@ -2,7 +2,14 @@ import type { Plugin } from "@opencode-ai/plugin"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, applyAdoPatEnv, loadConfig } from "./config.ts"
-import { agentModel, enabledWorkflowKinds, ignoredUserConfigPaths, resolveUserConfigPath } from "@agentic-workflow/core/config"
+import {
+  agentModel,
+  enabledWorkflowKinds,
+  ignoredUserConfigPaths,
+  readRawConfigLayers,
+  resolveUserConfigPath,
+  unknownAgentModelKeys,
+} from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
 import { failurePrompt, overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
@@ -45,6 +52,83 @@ export const draftModelNote = (config: Config, kind: string, verb: string): stri
     ? `Invoke the \`${agent}\` subagent with the model \`${model}\` (config \`agentModels\`). ` +
         "This covers the drafting invocation only — a PLAN stage runs on `stageModels.plan`."
     : null
+}
+
+/**
+ * The `agent.<name>.model` bindings `agentModels` implies.
+ *
+ * `agentModels` ONLY — deliberately no stage-derived inheritance. A stage fire
+ * already carries its model as a real parameter (`session.command({ model })`),
+ * so inheriting here would both duplicate that and re-open the cross-kind
+ * ambiguity `resolveAgentModels` reports (`workflow-verify` backs a stage in
+ * four kinds).
+ *
+ * The provider prefix is KEPT: opencode takes real `provider/model` ids, unlike
+ * Claude Code's spawn tool (an alias enum) or Qwen's frontmatter (bare ids).
+ *
+ * Takes the RAW config rather than a parsed one because its caller is the
+ * `config` hook, which runs during bootstrap where `loadConfig` cannot go. Pure.
+ */
+export const agentModelPatch = (raw: unknown): Readonly<Record<string, string>> => {
+  const out: Record<string, string> = {}
+  if (typeof raw !== "object" || raw === null) return out
+  const models = (raw as { agentModels?: unknown }).agentModels
+  if (typeof models !== "object" || models === null || Array.isArray(models)) return out
+  for (const [agent, model] of Object.entries(models as Record<string, unknown>)) {
+    if (typeof model === "string" && model.trim()) out[agent] = model.trim()
+  }
+  return out
+}
+
+/**
+ * Agents spawned OUTSIDE any stage, so no manifest names them and no StageDef
+ * exists for `modelFor` to resolve — `agentModels` is their only source. Used to
+ * tell a typo'd key from a legitimate one.
+ */
+const NON_STAGE_AGENTS = ["workflow-plan-author", "workflow-plan"] as const
+
+/** Every agent `agentModels` may legitimately name, across the enabled kinds. */
+const knownAgentNames = (config: Config): string[] => {
+  const names = new Set<string>(NON_STAGE_AGENTS)
+  for (const kind of enabledWorkflowKinds(config)) {
+    try {
+      for (const def of driver.manifestFor(kind).manifest.stages) if (def.agent) names.add(def.agent)
+    } catch {
+      /* an unloadable kind is reported elsewhere */
+    }
+  }
+  return [...names]
+}
+
+/** The slice of opencode's Config this plugin ever touches. */
+interface AgentModelConfig {
+  agent?: Record<string, { model?: string } | undefined>
+}
+
+/**
+ * Apply the patch to a resolved opencode config IN PLACE, returning the agents
+ * actually bound. `Hooks.config` returns void, so mutation is the only channel.
+ *
+ * The ONLY key ever written is `agent.<name>.model`. A user's own
+ * `opencode.json` entry for an agent we do not name survives untouched — and
+ * one we DO name loses, because naming it in `agentModels` is the more specific,
+ * more recent instruction. Whole `AgentConfig` objects are never replaced, so a
+ * user's `permission`/`tools`/`temperature` for that agent are preserved. Pure
+ * apart from the mutation.
+ */
+export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Record<string, string>>): string[] => {
+  const names = Object.keys(patch)
+  if (names.length === 0) return []
+  config.agent ??= {}
+  const bound: string[] = []
+  for (const name of names) {
+    const existing = config.agent[name]
+    const model = patch[name]!
+    if (existing) existing.model = model
+    else config.agent[name] = { model }
+    bound.push(name)
+  }
+  return bound
 }
 
 /**
@@ -110,6 +194,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     // stage-agent curl calls inherit it; the env var always wins.
     applyAdoPatEnv(config)
     await warnIgnoredUserConfigOnce()
+    await reportAgentModelsOnce(config)
     return config
   }
 
@@ -118,6 +203,34 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   // broken", not "the file is ignored". Core logs it; the log file is not where
   // someone chasing this looks, so toast it too. Once per session: the cause is
   // a stale file on disk, and repeating it on every command is noise.
+  // Agents the `config` hook bound a model for. That hook runs during bootstrap
+  // and cannot log or toast (any client call there is the circular wait), so it
+  // parks the result and the first command reports it. Without this the user has
+  // no way to tell whether the binding took — the failure mode the whole change
+  // exists to remove.
+  let agentModelsBound: string[] = []
+  let reportedAgentModels = false
+  const reportAgentModelsOnce = async (config: Config): Promise<void> => {
+    if (reportedAgentModels) return
+    reportedAgentModels = true
+    if (agentModelsBound.length) {
+      await log("info", `agentic-workflow: agentModels bound ${agentModelsBound.join(", ")} (takes effect until opencode restarts)`)
+    }
+    const unknown = unknownAgentModelKeys(config, knownAgentNames(config))
+    if (unknown.length === 0) return
+    await client.tui
+      .showToast({
+        body: {
+          message:
+            `agentic-workflow: agentModels names ${unknown.map((k) => `"${k}"`).join(", ")}, which ` +
+            `${unknown.length > 1 ? "are" : "is"} not an agent this plugin ships — ` +
+            `${unknown.length > 1 ? "those entries bind" : "that entry binds"} nothing.`,
+          variant: "warning",
+        },
+      })
+      .catch(() => {})
+  }
+
   let warnedIgnoredUserConfig = false
   const warnIgnoredUserConfigOnce = async (): Promise<void> => {
     if (warnedIgnoredUserConfig) return
@@ -247,6 +360,32 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   }
 
   return {
+    /**
+     * Bind `agentModels` as a real opencode setting rather than as prose.
+     *
+     * The drafting author and the ad-hoc planner are spawned by the MODEL
+     * reading a command body, not by the driver, so `session.command({ model })`
+     * — the deterministic channel every stage fire uses — is out of reach for
+     * them. Setting the agent's default model here reaches them anyway, and
+     * without asking the model to cooperate.
+     *
+     * Reads the config layers off disk instead of `getConfig()`: this hook IS
+     * opencode's bootstrap, and any `client` call from here is a request back
+     * into the still-bootstrapping instance — the circular wait documented on
+     * `readConfig` above. `readRawConfigLayers` is fs-only and never throws.
+     *
+     * Consequence worth knowing: this runs ONCE per instance, so an
+     * `agentModels` change needs an opencode restart to take effect. The prose
+     * it replaces was re-read per command.
+     */
+    config: async (input) => {
+      try {
+        agentModelsBound = applyAgentModels(input as AgentModelConfig, agentModelPatch(readRawConfigLayers(directory)))
+      } catch {
+        /* a convenience binding must never break bootstrap */
+      }
+    },
+
     // Clear watch polling timers on plugin teardown so a reload doesn't leak
     // intervals firing into a dead instance.
     dispose: async () => {

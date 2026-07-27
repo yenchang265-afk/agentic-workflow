@@ -23,13 +23,15 @@ import {
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
 import {
-  bareModel,
   enabledWorkflowKinds,
   fanoutOverriddenByLenses,
   modelFor,
   passAxes,
   platformFor,
+  spawnAlias,
   stagePasses,
+  unbindableAgentModels,
+  unknownAgentModelKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
   unknownStageModelKeys,
@@ -267,7 +269,19 @@ interface HostDialect {
   readonly conveysStageModel: boolean
   /** Names the spawn tool explicitly, so the `agent` field is not mis-routed. */
   readonly spawnToolNote: string
-  /** Carries the configured stage model; "" on a host that cannot convey one. */
+  /**
+   * States that the configured stage model is already bound; "" on a host that
+   * cannot convey one.
+   *
+   * A DECLARATION, not an instruction. The binding itself is the PreToolUse
+   * stamp (hooks/src/stamp-spawn-model.entry.mjs), so nothing here has to be
+   * obeyed — which is the point, because the instruction form was ignored and
+   * every stage silently ran the host default. It stays because it is the only
+   * observability there is: if the hook ever stops firing (a marker write that
+   * failed, another spawn-tool rename), the transcript shows a stated model that
+   * does not match the model the subagent actually ran on. Delete it and that
+   * regression is invisible again.
+   */
   readonly spawnModelNote: string
 }
 
@@ -284,7 +298,7 @@ const HOST_DIALECT: Record<HostName, HostDialect> = {
     spawnToolNote:
       " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)",
     spawnModelNote:
-      ", passing the response's `model` field as the Task tool's `model` parameter when present (omit `model` when the field is absent)",
+      ", whose `model` the harness has already pinned to this response's `model` field when present (you do not need to pass it)",
   },
   qwen: {
     // Qwen Code loads subagents from its own agents/ directory with no namespace,
@@ -309,9 +323,18 @@ const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".ver
 const agentRef = (name: string): string => dialect.agentRef(name)
 
 /**
- * The stage's configured model in this host's vocabulary (config > manifest,
- * undefined ⇒ host default), with any "provider/" prefix (the OpenCode
- * spelling) stripped so a shared config works on every host.
+ * The stage's configured model in this host's SPAWN vocabulary (config >
+ * manifest, undefined ⇒ host default).
+ *
+ * Resolves to an ALIAS (`sonnet`/`opus`/`haiku`/`fable`), not a model id,
+ * because that is the only thing Claude Code's spawn tool accepts — it
+ * validates `model` against that enum and errors the WHOLE spawn on a miss
+ * rather than falling back. This used to emit `bareModel(m)`, so any config
+ * naming a real model id (`anthropic/claude-sonnet-4-5` → `claude-sonnet-4-5`)
+ * described a call the tool would reject; it stayed invisible only because the
+ * prose carrying it was being ignored, which is the very defect the stamping
+ * hook removes. An unmappable value resolves to undefined so the spawn is left
+ * on the host default instead of being failed.
  *
  * Undefined on a host whose spawn tool takes no model: emitting a `model` the
  * orchestrator has nowhere to put invites it to improvise one. Every payload
@@ -320,8 +343,36 @@ const agentRef = (name: string): string => dialect.agentRef(name)
  */
 const stageModel = (kind: string, def: StageDef): string | undefined => {
   if (!dialect.conveysStageModel) return undefined
-  const m = modelFor(config, kind, def)
-  return m ? bareModel(m) : undefined
+  return spawnAlias(modelFor(config, kind, def)) ?? undefined
+}
+
+/**
+ * Every agent this kind's manifest binds, mapped to the model it must run with.
+ *
+ * Parked on the stage marker for the PreToolUse stamp, which cannot resolve it
+ * itself: `manifest/dir.ts` locates the workflows dir from `import.meta.url`,
+ * and `build-hooks.mjs` inlines core into each bundle, so that walk lands on the
+ * hook's own directory. The server already owns the resolution, so it answers
+ * once and parks it — the same reason the marker carries `bashAllowlist`.
+ *
+ * A MAP over the whole kind, not the current stage's single value, ON PURPOSE:
+ * `workflow_advance` returns the NEXT stage's fire payload WITHOUT rewriting the
+ * marker (it defers to `workflow_stage`). A current-stage field would therefore
+ * be stale for exactly the spawn that follows an advance, so a VERIFY-FAIL →
+ * BUILD re-fire would silently drop BUILD's configured model from iteration 2
+ * onward. Keyed by agent, staleness stops mattering.
+ *
+ * Cross-kind ambiguity (workflow-verify backs a stage in four kinds) cannot
+ * arise here: a marker belongs to one active loop of one kind.
+ */
+const stageAgentModels = (m: LoadedManifest): Record<string, string> => {
+  const out: Record<string, string> = {}
+  for (const def of m.manifest.stages) {
+    if (!def.agent) continue
+    const model = stageModel(m.manifest.kind, def)
+    if (model) out[def.agent] = model
+  }
+  return out
 }
 
 /**
@@ -408,6 +459,54 @@ const stageModelWarnings = (): string[] =>
     return warnings
   })
 
+/**
+ * The agents `agentModels` may name: every agent some enabled kind's manifest
+ * binds, plus the two that are spawned OUTSIDE any stage (the drafting author
+ * and the ad-hoc planner) and so have no StageDef to inherit from.
+ */
+const knownAgentNames = (): string[] => {
+  const names = new Set(["workflow-plan-author", "workflow-plan"])
+  for (const kind of enabledWorkflowKinds(config)) {
+    try {
+      for (const def of manifestFor(kind).manifest.stages) if (def.agent) names.add(def.agent)
+    } catch {
+      /* a kind whose manifest won't load is reported elsewhere */
+    }
+  }
+  return [...names]
+}
+
+/**
+ * `agentModels` misconfigurations, which became worth reporting the moment the
+ * binding stopped being advisory: with the PreToolUse stamp enforcing it, the
+ * only remaining ways a configured agent still runs the host default are a name
+ * that matches no agent, or a value this host cannot express.
+ */
+const agentModelWarnings = (): string[] => {
+  const warnings: string[] = []
+  const unknown = unknownAgentModelKeys(config, knownAgentNames())
+  if (unknown.length) {
+    warnings.push(
+      `agentModels names ${unknown.map((k) => `"${k}"`).join(", ")}, which ${unknown.length > 1 ? "are" : "is"} not an agent this plugin ships — ` +
+        `${unknown.length > 1 ? "those entries are" : "that entry is"} ignored and the spawn runs the host default model.`,
+    )
+  }
+  // Claude Code's spawn tool takes an alias (sonnet/opus/haiku/fable), while the
+  // config schema accepts any string because OpenCode needs real provider/model
+  // ids. A value naming no known family is valid config this host cannot act on,
+  // and it is left unstamped rather than passed through — passing it would fail
+  // the tool's schema and error the whole spawn.
+  if (dialect.conveysStageModel) {
+    for (const [agent, model] of unbindableAgentModels(config)) {
+      warnings.push(
+        `agentModels.${agent} is "${model}", which does not name a model family this host's spawn tool understands ` +
+          `(it accepts sonnet, opus, haiku, or fable) — that spawn runs the host default model.`,
+      )
+    }
+  }
+  return warnings
+}
+
 const SPAWN_MODEL_NOTE = dialect.spawnModelNote
 const SPAWN_TOOL_NOTE = dialect.spawnToolNote
 
@@ -472,6 +571,7 @@ const writeStageMarker = (stage: string | null) => {
       // and stays unrestricted — those stages must write code freely.
       const platform = active?.platform ?? platformFor(config, m.manifest.kind)
       const allowlist = effectiveAllowlist(def, platform)
+      const stageAgentModelMap = stageAgentModels(m)
       fs.writeFileSync(
         stageMarkerPath(),
         JSON.stringify({
@@ -504,6 +604,8 @@ const writeStageMarker = (stage: string | null) => {
           // 1-indexed to match the "BUILD started (iteration N)" audit notes.
           iteration: active ? active.iteration + 1 : null,
           ...(allowlist.length ? { bashAllowlist: allowlist } : {}),
+          // Consumed by the PreToolUse spawn-model stamp; see stageAgentModels().
+          ...(Object.keys(stageAgentModelMap).length ? { stageAgentModels: stageAgentModelMap } : {}),
         }),
       )
     }
@@ -642,7 +744,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
  * backlog anomalies the reconciliation sweep finds. Best-effort; never blocks.
  */
 const claimWarnings = async (): Promise<string[]> => {
-  const warnings: string[] = [...stageModelWarnings()]
+  const warnings: string[] = [...stageModelWarnings(), ...agentModelWarnings()]
   const owner = await readLeaseOwner(sh, directory, config.tasksDir)
   if (owner && !isLeaseStale(owner, new Date(), staleThresholdMs(owner.intervalMs))) {
     warnings.push(
