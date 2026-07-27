@@ -1,3 +1,4 @@
+import path from "node:path"
 import { STATUSES } from "./statuses.js"
 import { hasShellExpansion, splitSegments } from "./write-backstop.js"
 
@@ -40,10 +41,21 @@ const HOW_TO_MUTATE =
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
-/** The backlog-relative remainder of `filePath` (e.g. "draft/a.md"), or null when outside the backlog. */
+/**
+ * The backlog-relative remainder of `filePath` (e.g. "draft/a.md"), or null when
+ * outside the backlog.
+ *
+ * The match is literal, so the path is normalized FIRST — separators collapsed,
+ * `.` and `..` resolved. Without that, any path that resolves into the backlog
+ * but isn't spelled character-for-character (`docs//tasks/…`, `docs/./tasks/…`)
+ * missed the match and returned null, which `classifyEdit` reads as "outside the
+ * backlog → allow". That is a legal path to the exact file this guard exists to
+ * protect. Backslashes are folded before normalizing, since posix normalization
+ * does not treat them as separators.
+ */
 export const backlogRelPath = (filePath: string, tasksDir: string): string | null => {
-  const normalized = filePath.replace(/\\/g, "/")
-  const m = new RegExp(`(?:^|/)${escapeRe(tasksDir)}/(.+)$`).exec(normalized)
+  const normalized = path.posix.normalize(filePath.replace(/\\/g, "/"))
+  const m = new RegExp(`(?:^|/)${escapeRe(path.posix.normalize(tasksDir))}/(.+)$`).exec(normalized)
   return m?.[1] ?? null
 }
 

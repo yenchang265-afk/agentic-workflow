@@ -3,7 +3,10 @@
 
 // plugins/claude/hooks/src/check-stage-guard.entry.mjs
 import fs from "node:fs";
-import path2 from "node:path";
+import path3 from "node:path";
+
+// packages/core/dist/task/guard.js
+import path from "node:path";
 
 // packages/core/dist/task/statuses.js
 var STATUSES = [
@@ -93,8 +96,8 @@ var block = (reason) => ({ allow: false, reason });
 var HOW_TO_MUTATE = "the folder a backlog file lives in IS its state \u2014 mutate it only through the loop tools (workflow_task_approve / workflow_plan_approve / workflow_replan / workflow_ship / workflow_move / workflow_doctor) or the /agentic-workflow:engineering gate verbs, never by hand. To create a task, write a draft/<id>.md file (or run /agentic-workflow:engineering new) \u2014 the status folders are created for you.";
 var escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var backlogRelPath = (filePath, tasksDir) => {
-  const normalized = filePath.replace(/\\/g, "/");
-  const m = new RegExp(`(?:^|/)${escapeRe(tasksDir)}/(.+)$`).exec(normalized);
+  const normalized = path.posix.normalize(filePath.replace(/\\/g, "/"));
+  const m = new RegExp(`(?:^|/)${escapeRe(path.posix.normalize(tasksDir))}/(.+)$`).exec(normalized);
   return m?.[1] ?? null;
 };
 var classifyEdit = (filePath, ctx) => {
@@ -183,7 +186,7 @@ var classifyMutation = (tool, args, ctx) => {
 };
 
 // packages/core/dist/workflow/worktree-guard.js
-import path from "node:path";
+import path2 from "node:path";
 var READ_ONLY2 = [
   "ls*",
   "pwd*",
@@ -217,8 +220,8 @@ var unquote = (word) => {
   return m ? m[2] : word;
 };
 var underWorktree = (worktree, target) => {
-  const rel = path.relative(worktree, target);
-  return !rel.startsWith("..") && !path.isAbsolute(rel);
+  const rel = path2.relative(worktree, target);
+  return !rel.startsWith("..") && !path2.isAbsolute(rel);
 };
 var gitCDir = (segment) => {
   const m = /^git\s+-C\s+(\S+)\s+/.exec(segment.trim());
@@ -230,9 +233,9 @@ var REDIRECT_RE = />>?\|?\s*("[^"]*"|'[^']*'|[^\s;|&]+)/g;
 var outsideAbsPath = (segment, worktree) => {
   const outside = (raw) => {
     const w = unquote(raw);
-    if (!path.isAbsolute(w))
+    if (!path2.isAbsolute(w))
       return null;
-    const resolved = path.resolve(w);
+    const resolved = path2.resolve(w);
     return underWorktree(worktree, resolved) ? null : resolved;
   };
   for (const m of segment.matchAll(REDIRECT_RE)) {
@@ -252,7 +255,7 @@ var outsideAbsPath = (segment, worktree) => {
 var escapeReason = (segment, worktree, pinnedDir) => {
   const gitDir = gitCDir(segment);
   if (gitDir && !isReadOnlySegment(segment)) {
-    const resolved = path.isAbsolute(gitDir) ? path.resolve(gitDir) : path.resolve(pinnedDir ?? worktree, gitDir);
+    const resolved = path2.isAbsolute(gitDir) ? path2.resolve(gitDir) : path2.resolve(pinnedDir ?? worktree, gitDir);
     if (!underWorktree(worktree, resolved)) {
       return `agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" mutates the tree at ${resolved}, which is outside it. Use \`git -C ${worktree} \u2026\`.`;
     }
@@ -276,7 +279,7 @@ var walk = (command, worktree, initialPin) => {
       const escapeMsg = `agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" leaves it, so the rest of the command would run outside the worktree. Only \`cd\` into a literal directory under ${worktree}.`;
       if (isUnresolvableCd(target))
         return { ok: false, reason: escapeMsg };
-      const resolved = path.isAbsolute(target) ? path.resolve(target) : pinnedDir ? path.resolve(pinnedDir, target) : null;
+      const resolved = path2.isAbsolute(target) ? path2.resolve(target) : pinnedDir ? path2.resolve(pinnedDir, target) : null;
       if (resolved && underWorktree(worktree, resolved)) {
         pinnedDir = resolved;
         continue;
@@ -285,7 +288,7 @@ var walk = (command, worktree, initialPin) => {
         ok: false,
         // Only a genuine escape when the cwd was already known: an unpinned
         // RELATIVE cd is just a missing prefix, which the rewrite fixes.
-        reason: pinnedDir || path.isAbsolute(target) ? escapeMsg : null
+        reason: pinnedDir || path2.isAbsolute(target) ? escapeMsg : null
       };
     }
     const escape = escapeReason(segment, worktree, pinnedDir);
@@ -294,7 +297,7 @@ var walk = (command, worktree, initialPin) => {
     if (pinnedDir)
       continue;
     const gitDir = gitCDir(segment);
-    if (gitDir && path.isAbsolute(gitDir) && underWorktree(worktree, path.resolve(gitDir)))
+    if (gitDir && path2.isAbsolute(gitDir) && underWorktree(worktree, path2.resolve(gitDir)))
       continue;
     if (isReadOnlySegment(segment))
       continue;
@@ -311,17 +314,17 @@ var pinBash = (command, worktree) => {
   return rewrite(`cd ${shellQuote(worktree)} && ${command}`);
 };
 var isUnderTasksDir = (filePath, worktree, tasksDir) => {
-  const tasksRoot = path.resolve(worktree, tasksDir);
-  const rel = path.relative(tasksRoot, path.resolve(filePath));
-  return !rel.startsWith("..") && !path.isAbsolute(rel);
+  const tasksRoot = path2.resolve(worktree, tasksDir);
+  const rel = path2.relative(tasksRoot, path2.resolve(filePath));
+  return !rel.startsWith("..") && !path2.isAbsolute(rel);
 };
 var pinEditPath = (filePath, worktree, directory, tasksDir) => {
   if (filePath.startsWith("~")) {
     return blockPin(`agentic-workflow: "${filePath}" starts with \`~\`, which file tools do not expand \u2014 pass a real absolute path under the worktree ${worktree}.`);
   }
-  const wasAbsolute = path.isAbsolute(filePath);
-  const resolved = wasAbsolute ? path.resolve(filePath) : path.resolve(worktree, filePath);
-  if (path.resolve(resolved).split(path.sep).includes(".git")) {
+  const wasAbsolute = path2.isAbsolute(filePath);
+  const resolved = wasAbsolute ? path2.resolve(filePath) : path2.resolve(worktree, filePath);
+  if (path2.resolve(resolved).split(path2.sep).includes(".git")) {
     return blockPin(`agentic-workflow: ${filePath} is inside a .git directory \u2014 git metadata is never an edit target.`);
   }
   const refuseTasks = blockPin(`agentic-workflow: task files are driver-owned and live on the main tree \u2014 the loop records notes and moves itself; do not edit the worktree's frozen ${tasksDir} copy.`);
@@ -330,11 +333,11 @@ var pinEditPath = (filePath, worktree, directory, tasksDir) => {
       return refuseTasks;
     return wasAbsolute ? ALLOW_PIN : rewrite(resolved);
   }
-  const rel = path.relative(path.resolve(directory), resolved);
-  if (rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+  const rel = path2.relative(path2.resolve(directory), resolved);
+  if (rel !== "" && !rel.startsWith("..") && !path2.isAbsolute(rel)) {
     if (isUnderTasksDir(resolved, directory, tasksDir))
       return ALLOW_PIN;
-    return rewrite(path.resolve(worktree, rel));
+    return rewrite(path2.resolve(worktree, rel));
   }
   return blockPin(`agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 ${filePath} is outside both it and the repo at ${directory}, so there is no worktree equivalent. Use a path under the worktree.`);
 };
@@ -566,7 +569,7 @@ var rewriteInput = (updatedInput) => {
 };
 var readTasksDir = (cwd) => {
   try {
-    const cfg = JSON.parse(fs.readFileSync(path2.join(cwd, ".agentic-workflow.json"), "utf8"));
+    const cfg = JSON.parse(fs.readFileSync(path3.join(cwd, ".agentic-workflow.json"), "utf8"));
     if (typeof cfg.tasksDir === "string" && cfg.tasksDir) return cfg.tasksDir;
   } catch {
   }
@@ -574,7 +577,7 @@ var readTasksDir = (cwd) => {
 };
 var readMarker = (cwd, tasksDir, markerFile) => {
   try {
-    return JSON.parse(fs.readFileSync(path2.join(cwd, tasksDir, "runs", markerFile), "utf8"));
+    return JSON.parse(fs.readFileSync(path3.join(cwd, tasksDir, "runs", markerFile), "utf8"));
   } catch {
     return null;
   }
