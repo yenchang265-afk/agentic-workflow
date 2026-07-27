@@ -223,7 +223,14 @@ export const verbContext = (pluginRoot, verb, cwd) => {
   } catch {
     return null
   }
-  const slice = sliceForVerb(body, wanted)
+  // An UNRECOGNIZED verb falls back to the `unknown` block, which exists for
+  // exactly this and was unreachable — only a user literally typing the verb
+  // `unknown` ever selected it. Injecting nothing instead put the model on the
+  // router's "if no VERB INSTRUCTIONS block reached you, the plugin's hooks are
+  // not running" path, so a typo (`statuss`) produced a confident diagnosis that
+  // the plugin was broken, plus instructions to reinstall and restart, while the
+  // hooks were working perfectly.
+  const slice = sliceForVerb(body, wanted) ?? sliceForVerb(body, "unknown")
   if (!slice) return null
   const draftAgent = VERB_DRAFT_AGENT[wanted]
   const d = dialectFor(hostFor())

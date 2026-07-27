@@ -56,8 +56,23 @@ test("an absent verb slices to nothing — mapping bare to status is verbFor's j
   }
 })
 
-test("a verb with no block injects nothing, so the router's missing-block rule does not misfire", () => {
+test("a verb with no block slices to nothing — the fallback is verbContext's job", () => {
   assert.equal(sliceForVerb(BODY, "bogus"), null)
+})
+
+test("an unrecognized verb gets the `unknown` block, not a false 'the hooks are broken' report", () => {
+  // The router tells the model that a missing VERB INSTRUCTIONS block means the
+  // hooks are not running — reinstall and restart. So injecting nothing for a
+  // typo (`statuss`) or a free-text goal produced a confident, wrong diagnosis.
+  // The `unknown` block was written for this case and was unreachable: only a
+  // user literally typing the verb `unknown` ever selected it.
+  const context = verbContext(ROOT, "statuss")
+  assert.ok(context, "an unrecognized verb must still receive instructions")
+  assert.match(context, /do not run it/i, "and they must be the usage block, not another verb's procedure")
+
+  // A prompt that is not the engineering command at all still injects nothing —
+  // verbFor returns null there, and that must not become a usage dump.
+  assert.equal(verbContext(ROOT, null), null)
 })
 
 test("broken markup injects nothing rather than half a procedure", () => {

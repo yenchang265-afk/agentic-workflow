@@ -192,7 +192,7 @@ var verbContext = (pluginRoot, verb, cwd) => {
   } catch {
     return null;
   }
-  const slice = sliceForVerb(body, wanted);
+  const slice = sliceForVerb(body, wanted) ?? sliceForVerb(body, "unknown");
   if (!slice) return null;
   const draftAgent = VERB_DRAFT_AGENT[wanted];
   const d = dialectFor(hostFor());
