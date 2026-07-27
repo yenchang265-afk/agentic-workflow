@@ -6,6 +6,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep } from "@agentic-workflow/core/workflow/engine"
@@ -1309,6 +1310,7 @@ server.registerTool(
       const tasks = await listByStatus(fsClient, directory, config.tasksDir, status, log)
       const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
         isDriving: (id) => active?.task?.id === id,
+        staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
       })
       if (released.length) releasedClaims[status] = released

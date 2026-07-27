@@ -1,4 +1,5 @@
 import path from "node:path"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { commitPaths, gitActor } from "@agentic-workflow/core/workflow/git"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import {
@@ -112,6 +113,9 @@ export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
       released.push(
         ...(await releaseOrphanedClaims(deps.sh, tasks, ids, path.join(deps.directory, deps.tasksDir, status), {
           isDriving: drivingByMarker,
+          // A live stage can hold its marker for a whole stage timeout without
+          // writing anything durable — never judge one dead before then.
+          staleMinutes: staleClaimMinutes(deps.config.stageTimeoutMinutes),
           // A queued task is planless by design, so it needs the plan-claim orphan
           // rule; other pools use the default (unmatched BUILD note / missing file).
           ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),

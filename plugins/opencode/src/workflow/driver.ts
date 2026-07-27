@@ -56,6 +56,7 @@ import {
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/core/scheduler/lease"
 import {
   addWorktree,
@@ -2100,6 +2101,7 @@ export const handleCommand = async (
         released.push(
           ...(await releaseOrphanedClaims(deps.$, tasks, ids, path.join(deps.directory, config.tasksDir, status), {
             isDriving: (id) => findSessionDriving(id) !== undefined,
+            staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
             ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
           })),
         )

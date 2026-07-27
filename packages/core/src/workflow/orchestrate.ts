@@ -1,3 +1,4 @@
+import { staleClaimMinutes } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import { enabledWorkflowKinds, platformFor } from "../config.js"
 import { loadManifest } from "../manifest/load.js"
@@ -145,5 +146,5 @@ export const buildWorkSources = (
         }
         return [makeCiRunsSource({ ...base, ...branchOverride })]
       }
-      return [makeBacklogSource({ ...base, isDriving: deps.isDriving })]
+      return [makeBacklogSource({ ...base, isDriving: deps.isDriving, staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes) })]
     })

@@ -14,6 +14,7 @@ import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit
 import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
 import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-workflow/core/task/write-backstop"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-workflow/core/task/store"
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
@@ -181,6 +182,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       if (claimIds.length) {
         const released = await releaseOrphanedClaims($, tasks, claimIds, path.join(directory, config.tasksDir, "in-progress"), {
           isDriving: (id) => findSessionDriving(id) !== undefined,
+          staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         })
         if (released.length) {
           await log(
@@ -200,6 +202,9 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         const released = await releaseOrphanedClaims($, queued, planClaimIds, path.join(directory, config.tasksDir, "queued"), {
           isDriving: (id) => findSessionDriving(id) !== undefined,
           isOrphaned: isOrphanedPlanClaim,
+          // PLAN writes nothing durable until it parks, so its whole runtime
+          // must fit inside the window — see staleClaimMinutes.
+          staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         })
         if (released.length) {
           await log("warn", `released orphaned plan-claim marker(s): ${released.join(", ")} — a prior run died mid-PLAN; watch will re-claim`)

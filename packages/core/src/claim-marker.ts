@@ -25,6 +25,27 @@ import type { Shell } from "./host.js"
 export const STALE_CLAIM_MINUTES = 15
 
 /**
+ * The stale window for a claim whose stage may hold it for a full stage timeout
+ * without writing any durable progress.
+ *
+ * `STALE_CLAIM_MINUTES` alone only ever covered claim→first-durable-progress,
+ * which is right for BUILD (it writes a `> BUILD started` note early). PLAN
+ * writes nothing until it parks the plan, so its entire runtime has to fit
+ * inside the window — and `stageTimeoutMinutes` defaults to 60, four times the
+ * constant. A 25-minute PLAN therefore had its marker swept by any other
+ * process's startup sweep (`isDriving` is per-process, so that process sees no
+ * live loop), a second PLAN claimed the same task, and both appended an
+ * `## Implementation Plan` to one file — where `extractPlan` reads only the
+ * last, silently discarding a run's work.
+ *
+ * So the window is the timeout PLUS the original margin: long enough that a
+ * healthy stage can never be judged dead, still bounded so a crashed one
+ * recovers without a human.
+ */
+export const staleClaimMinutes = (stageTimeoutMinutes: number): number =>
+  Math.max(STALE_CLAIM_MINUTES, stageTimeoutMinutes + STALE_CLAIM_MINUTES)
+
+/**
  * Staleness is judged from this stamp's `claimedAt`, never from fs mtime —
  * DrvFS/WSL mtime is unreliable, the same rule `scheduler/lease.ts` applies to
  * watch-lease liveness.
