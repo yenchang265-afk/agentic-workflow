@@ -14,7 +14,7 @@ should link.
 | [sitters.md](sitters.md) | What the four sitters have in common (shape, opt-in, untrusted-input handling), why all four are experimental, and an index into their individual files under `workflows/` |
 | [configuration.md](configuration.md) | Every `.agentic-workflow.json` field (layers/precedence, `workflows`, `codePlatform`/`ado`, `projectManagement`, hardening, env vars) |
 | [opencode.md](opencode.md) | OpenCode-specific execution details (watch triggers, ESC/recover) and the full OpenCode command surface |
-| [qwen.md](qwen.md) | Qwen Code install, execution model, command surface, and its static per-stage models |
+| [qwen.md](qwen.md) | Qwen Code (**experimental**) install, execution model, command surface, and its static per-stage models |
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code install, the MCP-server command surface, and known limitations |
 | [`../packages/core/workflows/README.md`](../packages/core/workflows/README.md) | Authoring a new workflow kind (manifest schema, prompt templates, hooks, work sources) |
 | [`../packages/hub/README.md`](../packages/hub/README.md) | The admin hub (beta): install, views, and its own config |

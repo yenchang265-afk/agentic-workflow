@@ -5,7 +5,8 @@ Guidance for AI coding agents working in this repository.
 ## Repository Overview
 
 `agentic-workflow` is a multi-kind agentic-workflow framework (shared engine in
-`@agentic-workflow/core`, shipping OpenCode, Claude Code and Qwen Code plugins); this
+`@agentic-workflow/core`, shipping OpenCode, Claude Code and Qwen Code
+plugins — Qwen Code is experimental); this
 guide covers the OpenCode plugin — see `plugins/claude/README.md` for the
 Claude Code equivalent. It has two ways to work: an **automatic loop** that
 drives a backlog task through its whole lifecycle unattended, and **ad-hoc,
@@ -165,7 +166,7 @@ flowchart TD
 
     OpenCode["plugins/opencode<br/>OpenCode plugin (state machine + driver)"]
     Claude["plugins/claude<br/>Claude Code plugin (MCP server drives the state machine)"]
-    Qwen["plugins/qwen<br/>Qwen Code plugin (same MCP server, AGENTIC_WORKFLOW_HOST=qwen)"]
+    Qwen["plugins/qwen<br/>Qwen Code plugin — experimental<br/>(same MCP server, AGENTIC_WORKFLOW_HOST=qwen)"]
     Hub["packages/hub<br/>admin hub (beta) — monitor + visual creator, never drives a stage"]
 
     Core --> OpenCode
@@ -183,7 +184,7 @@ flowchart TD
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `prompts/verbs/engineering.md` — the per-verb procedures of `/agentic-workflow:engineering`, each inside an `<!-- aw:verb <names> -->` block; **generated** into `plugins/claude/verbs/` and `plugins/qwen/verbs/` (see "Per-verb command slicing" below)
-- `plugins/qwen/` — the Qwen Code host: generated `agents/`, `verbs/`, `skills/` and `hooks/`, plus hand-authored `commands/`. Reuses the Claude plugin's MCP server and hook sources; see `docs/qwen.md`
+- `plugins/qwen/` — the Qwen Code host (**experimental** — interface and behavior may still change): generated `agents/`, `verbs/`, `skills/` and `hooks/`, plus hand-authored `commands/`. Reuses the Claude plugin's MCP server and hook sources; see `docs/qwen.md`
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
 
 ### Per-verb command slicing

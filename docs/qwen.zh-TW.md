@@ -2,6 +2,8 @@
 
 # Qwen Code 外掛
 
+**實驗性**——此宿主的介面與行為仍可能變動。
+
 Qwen Code 版本如何執行、它的指令面，以及安裝細節。共用的流水線全貌見
 [architecture.md](architecture.zh-TW.md)；另外兩個宿主見
 [opencode.md](opencode.zh-TW.md) 與

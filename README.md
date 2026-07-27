@@ -126,7 +126,8 @@ npm install             # npm workspaces — also builds @agentic-workflow/core 
 - `./install.sh qwen` builds the same MCP server, installs agents/commands/
   skills/references into `~/.qwen/` (or `$QWEN_CONFIG_DIR`), and merges the
   hooks + MCP entry into `settings.json` — details in
-  [docs/qwen.md](docs/qwen.md).
+  [docs/qwen.md](docs/qwen.md). **Experimental**: this host's interface and
+  behavior may still change.
 - After installing, an interactive terminal gets a short **config wizard** that
   seeds `.agentic-workflow.json` — see [docs/configuration.md](docs/configuration.md).
 

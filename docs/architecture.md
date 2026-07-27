@@ -23,7 +23,7 @@ flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
         oc["OpenCode plugin (plugins/opencode/src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
         cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
-        qw["Qwen Code<br/>(plugins/qwen/) — same MCP server,<br/>AGENTIC_WORKFLOW_HOST=qwen"]
+        qw["Qwen Code — experimental<br/>(plugins/qwen/) — same MCP server,<br/>AGENTIC_WORKFLOW_HOST=qwen"]
     end
 
     subgraph core["@agentic-workflow/core (packages/core)"]
@@ -157,7 +157,8 @@ what each one does, its stage pipeline, its authority limits, and its
 
 ## The two MCP-driven variants (`plugins/claude/`, `plugins/qwen/`)
 
-Same workflow kinds and lifecycles, different driver: neither Claude Code nor
+The Qwen Code host is **experimental** — its interface and behavior may still
+change. Same workflow kinds and lifecycles, different driver: neither Claude Code nor
 Qwen Code has a background `session.idle` driver, so the main agent drives the
 loop through a bundled MCP server (`mcp__agentic-workflow__workflow_*` tools)
 rather than agent frontmatter permissions, and human gates are **interactive** —

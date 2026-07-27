@@ -2,6 +2,8 @@ English | [繁體中文](README.zh-TW.md)
 
 # agentic-workflow — Qwen Code plugin
 
+**Experimental** — this host's interface and behavior may still change.
+
 The Qwen Code host for the shared `@agentic-workflow/core` engine. Same workflow
 kinds, same gates, same backlog as the OpenCode and Claude Code hosts.
 
