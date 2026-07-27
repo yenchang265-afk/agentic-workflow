@@ -18,8 +18,8 @@ permission:
     # in this static allowlist) additionally restricts writes to reads, thread
     # replies, and creating a brand-new PR, so complete/abandon/vote can't get
     # through even via a broader curl call.
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
+    "curl *https://dev.azure.com/*": allow
+    "curl *https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow

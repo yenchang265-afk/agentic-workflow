@@ -28,8 +28,8 @@ permission:
     "gh pr view*": allow
     "gh pr diff*": allow
     "gh pr checks*": allow
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
+    "curl *https://dev.azure.com/*": allow
+    "curl *https://*.visualstudio.com/*": allow
 ---
 
 You are the **workflow-review-fetch** subagent — the FETCH stage of the

@@ -10,8 +10,8 @@ permission:
     # is scoped to `/threads*` so votes/completions can't get through.
     "gh pr comment *": allow
     "gh pr view*": allow
-    "curl -sS -u :* https://dev.azure.com/*/threads*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*/threads*": allow
+    "curl *https://dev.azure.com/*/threads*": allow
+    "curl *https://*.visualstudio.com/*/threads*": allow
     # to the pullRequestThreads resource, mirroring /threads*.
     "git status*": allow
     "git diff*": allow
