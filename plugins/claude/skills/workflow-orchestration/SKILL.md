@@ -91,7 +91,7 @@ configured for that stage (manifest `model` or config
    stage `prompt` comes back either way.
 2. **Plan (queued tasks only).** `workflow_stage({stage:"plan"})`, then spawn the
    stage's subagent — the response's `agent` field (**`workflow-plan-author`** for
-   engineering) — via the Task tool with the prompt, passing the response's `model` when present.
+   engineering) — via the Task tool with the prompt (its `model` is already pinned from the response's `model` field when present).
    It runs in `task` mode, reads the code, and writes the `## Implementation Plan` onto the
    task file named by the prompt's `Task file:` line. When it returns, call
    `workflow_advance({stageOutput: <plan summary>})` — the server validates the
@@ -119,13 +119,13 @@ configured for that stage (manifest `model` or config
    the stage deadline, reconciles isolation, and appends the audited
    `BUILD started` note — then spawn the response's `agent` (**`workflow-build`**)
    via the Task tool with the prompt (it carries the `Worktree:` line when
-   isolated), passing the response's `model` when present. When it returns,
+   isolated) (its `model` is already pinned from the response's `model` field when present). When it returns,
    call `mcp__agentic-workflow__workflow_advance({stageOutput: <build summary>})` —
    the server appends `BUILD finished`, commits a checkpoint, and returns
    `{kind:"fire", stage:"verify", prompt}`.
 4. **Verify.** `workflow_stage({stage:"verify"})` (arms the read-only bash
    allowlist + deadline), spawn the response's `agent` (**`workflow-verify`**) with
-   the prompt, passing the response's `model` when present. The verify
+   the prompt (its `model` is already pinned from the response's `model` field when present). The verify
    subagent records its verdict by calling `workflow_verdict` itself — you do not.
    Then `workflow_advance({stageOutput: <verify summary>})`: PASS →
    `{fire, review}`; FAIL → `{fire, build}` (re-build, threading the failure)

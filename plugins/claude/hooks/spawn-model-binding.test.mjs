@@ -5,13 +5,26 @@ import { test } from "node:test"
 import { fileURLToPath } from "node:url"
 
 /**
- * The Claude host cannot spawn: the MCP server returns a `model` field and a note,
- * and the orchestrating model must voluntarily set the Task tool's `model`. The
- * server side of that contract is linted in mcp-server/src/server.test.ts. This is
- * the other side — the prose the orchestrator reads BEFORE any tool result exists,
- * which is what it plans the turn from. A spawn instruction that names `agent`
- * without `model` is exactly how `workflows.<kind>.stageModels` was silently
- * dropped at every hop while every stage ran the host default.
+ * Coverage lint for the spawn-model BINDING.
+ *
+ * This file used to assert that every spawn instruction in the host's prose
+ * named the `model` field, because the model's cooperation was the only channel
+ * — and a note that named `agent` without `model` was exactly how
+ * `workflows.<kind>.stageModels` got dropped at every hop while every stage ran
+ * the host default.
+ *
+ * That channel is gone. The PreToolUse stamp
+ * (hooks/src/stamp-spawn-model.entry.mjs) rewrites the spawn call's `model`
+ * before the tool runs, and ../spawn-model-stamp.test.mjs asserts the mechanism
+ * directly. So the question this file answers changed with it: not "does the
+ * prose ask for a model?" but **"is every agent the prose tells anyone to spawn
+ * actually reachable by the mechanism?"** An agent the stamp cannot match is one
+ * that silently runs the host default — the same defect, one layer down.
+ *
+ * The prose still STATES the bound model (see the `spawnModelNote` docstring in
+ * mcp-server/src/server.ts); that is deliberate and is the only way a hook
+ * regression stays visible in a transcript. It is no longer an instruction, so
+ * it is no longer linted as one.
  *
  * It lives here because `npm run test:hooks` (`node --test hooks/*.test.mjs`) is
  * the only runner that covers this plugin's markdown, and verb-slice.test.mjs
@@ -44,10 +57,10 @@ const FILES = [
 const SKIPPED_SECTIONS = ["Between-stage bookkeeping", "Workflow kinds", "What is different", "Red flags"]
 
 /**
- * Spawns with no model source at all: they are not stage runs, so there is no
- * StageDef for modelFor() to resolve and no MCP response to carry a value. Their
- * model comes from the `agentModels` knob, injected by the hook at spawn time
- * (see verb-slice.mjs) rather than named in static prose.
+ * Spawns that are not stage runs: no StageDef for modelFor() to resolve and no
+ * MCP response to carry a value. Their model comes from the `agentModels` knob,
+ * which the PreToolUse stamp reads off the config layers directly — so their
+ * prose names no model and never needed to.
  */
 const NO_MODEL_SOURCE = [
   "to write the draft file(s)", // verbs/engineering.md `new` step 4 — pre-loop drafting
@@ -114,14 +127,42 @@ const selected = () =>
       .map((unit) => ({ ...unit, file })),
   )
 
-test("every spawn instruction in the host's prose names the `model` field, not just `agent`", () => {
+/**
+ * The gate the stamp applies to `subagent_type`, mirrored from
+ * hooks/src/stamp-spawn-model.entry.mjs. Anything failing it is left on the host
+ * default, by design — that is what stops `agentModels: {"general-purpose": …}`
+ * from rebinding a host built-in.
+ */
+const STAMPABLE = /^workflow-[a-z0-9-]+$/
+
+test("every agent the prose tells anyone to spawn is one the stamp can bind", () => {
+  const named = new Set()
   for (const unit of selected()) {
+    for (const [, agent] of unit.text.matchAll(/`(workflow-[a-z0-9-]+)`/g)) named.add(agent)
+  }
+  assert.ok(named.size >= 3, `expected the prose to name concrete agents; got ${[...named].join(", ")}`)
+  for (const agent of named) {
     assert.match(
-      unit.text,
-      /`model`/,
-      `${unit.file} tells the orchestrator to spawn without naming the model — ` +
-        `the configured stageModels model is dropped:\n  ${unit.text}`,
+      agent,
+      STAMPABLE,
+      `the prose tells the orchestrator to spawn "${agent}", which the spawn-model stamp cannot match — ` +
+        "that spawn would silently run the host default no matter what stageModels/agentModels say",
     )
+  }
+})
+
+// The other half of the same guarantee: not just the agents the prose happens to
+// name, but every agent this plugin actually ships. An agent file added under a
+// different naming convention would be unreachable by the binding while looking
+// perfectly healthy.
+test("every agent this plugin ships is reachable by the stamp's subagent_type gate", () => {
+  const agents = fs
+    .readdirSync(path.join(ROOT, "agents"))
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => f.replace(/\.md$/, ""))
+  assert.ok(agents.length >= 5, `expected the shipped agents to be found; got ${agents.length}`)
+  for (const agent of agents) {
+    assert.match(agent, STAMPABLE, `plugins/claude/agents/${agent}.md cannot be bound by the spawn-model stamp`)
   }
 })
 
