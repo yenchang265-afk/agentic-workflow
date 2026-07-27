@@ -22,6 +22,8 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { dialectFor, hostFor } from "./dialect.mjs"
+import { idList } from "./idlist.mjs"
+import { backlogRoot, readTasksDir } from "./tasksdir.mjs"
 
 /**
  * Mirror of core `wasInterrupted` (store.ts): a BUILD started with no later
@@ -80,16 +82,13 @@ const main = async () => {
     /* ignore */
   }
   const cwd = input.cwd || process.cwd()
-  let tasksDir = "docs/tasks"
-  try {
-    const cfg = JSON.parse(fs.readFileSync(path.join(cwd, ".agentic-workflow.json"), "utf8"))
-    if (typeof cfg.tasksDir === "string" && cfg.tasksDir) tasksDir = cfg.tasksDir
-  } catch {
-    /* default */
-  }
+  // Resolved the way the MCP server resolves it when it writes there — env
+  // root, repo layer over user layer. See tasksdir.mjs.
+  const root = backlogRoot(cwd)
+  const tasksDir = readTasksDir(root)
 
   const notes = []
-  const inProgress = path.join(cwd, tasksDir, "in-progress")
+  const inProgress = path.join(root, tasksDir, "in-progress")
   try {
     for (const name of fs.readdirSync(inProgress)) {
       if (!name.endsWith(".md")) continue
@@ -102,7 +101,7 @@ const main = async () => {
   let snapshots = []
   try {
     snapshots = fs
-      .readdirSync(path.join(cwd, tasksDir, "runs"))
+      .readdirSync(path.join(root, tasksDir, "runs"))
       .filter((n) => n.endsWith(".state.json"))
       .map((n) => n.replace(/\.state\.json$/, ""))
   } catch {
@@ -112,12 +111,12 @@ const main = async () => {
   // mid-PLAN — it blocks every future claim of that task until removed.
   let planClaims = []
   try {
-    planClaims = fs.readdirSync(path.join(cwd, tasksDir, "queued", ".claims"))
+    planClaims = fs.readdirSync(path.join(root, tasksDir, "queued", ".claims")).filter((n) => !n.startsWith("."))
   } catch {
     /* none */
   }
 
-  const anomalies = await auditBacklog(fsClient, cwd, tasksDir)
+  const anomalies = await auditBacklog(fsClient, root, tasksDir)
 
   // The MCP server (and the deterministic gate CLI) live in mcp-server/dist —
   // never built means every gate verb and loop tool is dead. Surface it at
@@ -133,9 +132,15 @@ const main = async () => {
     lines.push(
       `agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) — gates and loop tools will not work. Run ${dialectFor(hostFor())?.installer ?? "the installer"}, then restart the session.`,
     )
-  if (notes.length) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notes.join(", ")} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
-  if (snapshots.length) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshots.join(", ")} — \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`)
-  if (planClaims.length) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${planClaims.join(", ")} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
+  // Every id below is a FILE NAME off the disk, and this text goes into the
+  // model's context at SessionStart before the user types anything — so the
+  // lists are sanitized and capped by `idList`, which states what it dropped.
+  const notesList = idList(notes)
+  const snapshotsList = idList(snapshots)
+  const claimsList = idList(planClaims)
+  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notesList} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
+  if (snapshotsList) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshotsList} — \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`)
+  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${claimsList} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
   if (hasAnomalies(anomalies)) {
     for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} — \`workflow_doctor\` reports and repairs.`)
   }
