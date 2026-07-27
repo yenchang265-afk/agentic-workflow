@@ -1,0 +1,311 @@
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
+
+/**
+ * Config-layer plumbing and model-string normalization, split out of `config.ts`
+ * and re-exported from it (so no import site changed).
+ *
+ * The split exists for one reason: **this module must stay zod-free**. Two
+ * consumers cannot afford zod —
+ *
+ * - a bare-node `PreToolUse` hook, bundled by `scripts/build-hooks.mjs`, which
+ *   inlines whatever it imports. Importing anything from `config.ts` evaluates
+ *   that module's top-level zod schemas and drags the whole library into every
+ *   hook bundle.
+ * - OpenCode's `config` plugin hook, which runs during bootstrap where a host
+ *   client call is a circular wait (see `plugins/opencode/src/impl.ts`).
+ *
+ * So: `node:fs`/`node:os`/`node:path` only. Do not import zod here, and do not
+ * import `config.ts` (that would reintroduce the cycle this file removes).
+ */
+
+export const CONFIG_FILE = ".agentic-workflow.json"
+
+/** Env override for the user-scope config path; set to "" to disable the layer (e.g. in CI). */
+export const USER_CONFIG_ENV = "AGENTIC_WORKFLOW_USER_CONFIG"
+
+/** New user-scope location, under the XDG config home: `<xdg>/agentic-workflow/agentic-workflow.json`. */
+const USER_CONFIG_SUBPATH = ["agentic-workflow", "agentic-workflow.json"] as const
+/** Pre-XDG location read as a fallback so existing installs keep working: `~/.agentic-workflow.json`. */
+const LEGACY_USER_CONFIG_FILE = ".agentic-workflow.json"
+
+/** $XDG_CONFIG_HOME when set to a non-blank value, else `~/.config`. */
+const xdgConfigHome = (home: string): string => {
+  const xdg = process.env.XDG_CONFIG_HOME
+  return xdg && xdg.trim() ? xdg : path.join(home, ".config")
+}
+
+/**
+ * Where the user-scope config lives: $AGENTIC_WORKFLOW_USER_CONFIG when set ("" →
+ * layer disabled) wins. Otherwise `${XDG_CONFIG_HOME:-~/.config}/agentic-workflow/agentic-workflow.json`,
+ * falling back on read to the pre-XDG `~/.agentic-workflow.json` when only that
+ * exists (so existing installs keep working; the XDG path is the write target for
+ * new installs). Returns null when the layer is disabled or no home resolves.
+ */
+export const resolveUserConfigPath = (): string | null => {
+  const env = process.env[USER_CONFIG_ENV]
+  if (env !== undefined) return env === "" ? null : env
+  const home = os.homedir()
+  if (!home) return null
+  const primary = path.join(xdgConfigHome(home), ...USER_CONFIG_SUBPATH)
+  if (fs.existsSync(primary)) return primary
+  const legacy = path.join(home, LEGACY_USER_CONFIG_FILE)
+  if (fs.existsSync(legacy)) return legacy
+  return primary
+}
+
+/**
+ * User-scope config files that EXIST but are not the one being read.
+ *
+ * Exactly one user-scope file is ever loaded — the layering is user-under-repo,
+ * not user-under-user — so a second one is dead weight that looks live. Two
+ * ways to land here, both silent and both indistinguishable from "my setting
+ * doesn't work":
+ *
+ * - **Shadowed:** once the XDG file exists (the hub's Config tab writes it),
+ *   `~/.agentic-workflow.json` is ignored WHOLESALE, not merged under it.
+ * - **Misnamed:** the two locations use different file names — dotted
+ *   `~/.agentic-workflow.json` but undotted `…/agentic-workflow/agentic-workflow.json`.
+ *   Writing the repo-style dotted name into the XDG dir resolves to nothing.
+ *
+ * Callers report these; a config that is quietly not read is the hardest
+ * possible misconfig to diagnose from the symptom. Pure apart from `fs.existsSync`.
+ */
+export const ignoredUserConfigPaths = (chosen: string | null): string[] => {
+  if (chosen === null) return [] // layer explicitly disabled — nothing is "ignored"
+  const home = os.homedir()
+  if (!home) return []
+  const candidates = [
+    path.join(home, LEGACY_USER_CONFIG_FILE),
+    path.join(xdgConfigHome(home), ...USER_CONFIG_SUBPATH),
+    // The repo-style dotted name inside the XDG dir: the intuitive guess, and
+    // it is never read at any layer.
+    path.join(xdgConfigHome(home), USER_CONFIG_SUBPATH[0], CONFIG_FILE),
+  ]
+  return candidates.filter((p) => p !== chosen && fs.existsSync(p))
+}
+
+export const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v)
+
+/**
+ * Field-level deep merge of raw config layers (override wins): plain objects
+ * merge per key recursively; arrays, scalars, and null replace wholesale —
+ * null is not a delete operator, it simply fails schema validation downstream.
+ * Layers merge BEFORE the zod parse so schema defaults apply only to the
+ * combined view (a repo file omitting `maxIterations` cannot clobber a
+ * user-scope `maxIterations`). Pure.
+ */
+export const mergeConfigLayers = (base: unknown, override: unknown): unknown => {
+  if (override === undefined) return base
+  if (!isPlainObject(base) || !isPlainObject(override)) return override
+  const out: Record<string, unknown> = { ...base }
+  for (const [key, value] of Object.entries(override)) {
+    if (value === undefined) continue
+    out[key] = isPlainObject(value) && isPlainObject(base[key]) ? mergeConfigLayers(base[key], value) : value
+  }
+  return out
+}
+
+/**
+ * Read and JSON-parse the user-scope layer with Node fs (it lives outside the
+ * project directory, beyond the host client's reach). Absent or unreadable →
+ * undefined (layer not present); malformed JSON or a non-object top level →
+ * throw naming the offending file, never a silent skip — this layer may carry
+ * `ado.pat`/`selfLogin`, and dropping it would surface later as a baffling
+ * validation error. Exported for consumers of user-scope-only sections (the
+ * hub reads its `hub` section exclusively from this layer).
+ */
+export const readUserLayer = (userPath: string): unknown => {
+  let content: string
+  try {
+    content = fs.readFileSync(userPath, "utf8")
+  } catch {
+    return undefined
+  }
+  if (!content.trim()) return undefined
+  let json: unknown
+  try {
+    json = JSON.parse(content)
+  } catch (err) {
+    throw new Error(`Invalid ${userPath}: not valid JSON (${(err as Error).message})`)
+  }
+  if (!isPlainObject(json)) throw new Error(`Invalid ${userPath}: top level must be a JSON object`)
+  return json
+}
+
+/**
+ * Config keys whose value is shell the loop executes verbatim (isolate.ts runs
+ * `worktreeSetup` via raw interpolation). The repo layer rides along with any
+ * cloned repo, so honoring these from `.agentic-workflow.json` would let a
+ * merely-watched repo run arbitrary shell on first claim — npm-postinstall
+ * class risk, silently. They are honored from the user-scope layer only.
+ */
+export const SHELL_BEARING_KEYS = ["worktreeSetup"] as const
+
+/**
+ * A model string without its provider prefix ("anthropic/claude-sonnet-4-5" →
+ * "claude-sonnet-4-5") — for hosts that take bare model ids (Qwen's agent
+ * frontmatter), so a config written OpenCode-style works on both hosts. Pure.
+ *
+ * NOTE this is NOT the right normalization for Claude Code's spawn tool, whose
+ * `model` parameter is an alias enum — use `spawnAlias` for that.
+ */
+export const bareModel = (model: string): string =>
+  model.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model
+
+/**
+ * The only values Claude Code's `Agent` (spawn) tool accepts for `model`,
+ * probed against 2.1.220. Anything else fails the tool's schema validation:
+ *
+ *     PreToolUse hook for Agent returned updatedInput that failed schema
+ *     validation: [{ "code": "invalid_value",
+ *       "values": ["sonnet","opus","haiku","fable"], "path": ["model"] }]
+ *
+ * and — the part that matters — a rejected `model` errors the WHOLE spawn. It
+ * does not degrade to the default. So an unmappable value must be left
+ * unstamped, never guessed at.
+ */
+export const SPAWN_ALIASES = ["sonnet", "opus", "haiku", "fable"] as const
+
+export type SpawnAlias = (typeof SPAWN_ALIASES)[number]
+
+/**
+ * A configured model value → the alias Claude Code's spawn tool will accept, or
+ * null when it cannot be mapped.
+ *
+ * Matched on the model FAMILY as a substring, which is why this needs no
+ * per-release maintenance: `claude-sonnet-4-5`, `claude-sonnet-5`,
+ * `anthropic/claude-3-5-sonnet-20241022` and a bare `sonnet` all resolve to
+ * `sonnet`. A value naming no known family (`gpt-4o`) returns null so the
+ * caller leaves the spawn alone and warns, rather than hard-failing it.
+ *
+ * `SPAWN_ALIASES` order decides a string that somehow names two families; it is
+ * fixed rather than "first occurrence" so the result never depends on id spelling.
+ */
+export const spawnAlias = (model: unknown): SpawnAlias | null => {
+  if (typeof model !== "string") return null
+  const lower = model.trim().toLowerCase()
+  if (!lower) return null
+  return SPAWN_ALIASES.find((alias) => lower.includes(alias)) ?? null
+}
+
+/**
+ * The merged RAW config layers, read straight off disk with node fs — the
+ * user-scope layer under `resolveUserConfigPath()`, the repo layer at
+ * `<cwd>/.agentic-workflow.json`, repo winning per key via `mergeConfigLayers`.
+ *
+ * Never throws and never validates: an absent, unreadable, malformed, or
+ * non-object layer is simply not there. That is deliberate, and it is the only
+ * safe policy for the callers — a hook that threw would block a tool call, and
+ * an OpenCode `config` hook that threw would break bootstrap. Degrading to the
+ * host default beats both.
+ *
+ * Shell-bearing repo keys are dropped exactly as `loadConfig` drops them, so
+ * this entry point can never become a way to reintroduce the "cloned repo runs
+ * arbitrary shell" risk `SHELL_BEARING_KEYS` documents.
+ *
+ * For the two contexts that CANNOT use `loadConfig`: a bare-node `PreToolUse`
+ * hook (no host client exists) and OpenCode's `config` hook (bootstrap).
+ */
+export const readRawConfigLayers = (cwd: string): Record<string, unknown> => {
+  const read = (file: string): unknown => {
+    try {
+      const content = fs.readFileSync(file, "utf8")
+      if (!content.trim()) return undefined
+      const json: unknown = JSON.parse(content)
+      return isPlainObject(json) ? json : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  let userLayer: unknown
+  try {
+    const userPath = resolveUserConfigPath()
+    userLayer = userPath ? read(userPath) : undefined
+  } catch {
+    userLayer = undefined
+  }
+
+  let repoLayer = read(path.join(cwd, CONFIG_FILE))
+  if (isPlainObject(repoLayer)) {
+    const stripped: Record<string, unknown> = { ...repoLayer }
+    for (const key of SHELL_BEARING_KEYS) delete stripped[key]
+    repoLayer = stripped
+  }
+
+  const merged = mergeConfigLayers(userLayer ?? {}, repoLayer)
+  return isPlainObject(merged) ? merged : {}
+}
+
+/**
+ * `agentModels.<agent>` off a raw or already-parsed config; anything that is not
+ * a non-blank string reads as unset, so a malformed value degrades to the host
+ * default instead of travelling onward as junk.
+ *
+ * `bare` strips a `provider/` prefix. Callers that need Claude Code's spawn
+ * enum want `spawnAlias` on the result instead — see its docstring for why a
+ * bare id is not good enough there.
+ */
+export const rawAgentModel = (config: unknown, agent: string, opts?: { readonly bare?: boolean }): string | null => {
+  if (!isPlainObject(config)) return null
+  const models = config.agentModels
+  if (!isPlainObject(models)) return null
+  const value = models[agent]
+  if (typeof value !== "string" || !value.trim()) return null
+  const trimmed = value.trim()
+  return opts?.bare ? bareModel(trimmed) : trimmed
+}
+
+/** One workflow kind's stage roster, as much of it as agent→model resolution needs. */
+export interface KindStages {
+  readonly kind: string
+  readonly stages: readonly { readonly name: string; readonly agent?: string }[]
+}
+
+/**
+ * Resolve agent → model from a merged config plus the workflow manifests.
+ *
+ * `agentModels.<agent>` is the explicit per-agent knob and wins outright.
+ * Otherwise an agent inherits the model configured for the STAGE it backs, via
+ * each kind's manifest. An agent backing two kinds' stages with different
+ * models is a genuine ambiguity, so it is reported rather than silently
+ * resolved — `workflow-verify` is shared by four kinds today.
+ *
+ * Promoted here from `scripts/qwen-agents.mjs` so the installer and core share
+ * one `bareModel`: the local copy stripped only the FIRST path segment, so
+ * `openrouter/anthropic/claude-sonnet-4-5` baked as `anthropic/claude-sonnet-4-5`
+ * on Qwen while Claude resolved it to `claude-sonnet-4-5`.
+ */
+export const resolveAgentModels = (
+  config: unknown,
+  manifests: readonly KindStages[],
+  opts?: { readonly bare?: boolean },
+): { readonly models: Readonly<Record<string, string>>; readonly conflicts: readonly string[] } => {
+  const bare = opts?.bare ?? true
+  const norm = (model: string): string => (bare ? bareModel(model) : model)
+  const models: Record<string, string> = {}
+  const conflicts: string[] = []
+  const workflows = isPlainObject(config) && isPlainObject(config.workflows) ? config.workflows : {}
+  for (const { kind, stages } of manifests) {
+    const kindConfigRaw = workflows[kind]
+    const stageModels = isPlainObject(kindConfigRaw) && isPlainObject(kindConfigRaw.stageModels) ? kindConfigRaw.stageModels : {}
+    for (const stage of stages) {
+      const model = stageModels[stage.name]
+      if (typeof model !== "string" || !model.trim() || !stage.agent) continue
+      const value = norm(model.trim())
+      if (models[stage.agent] && models[stage.agent] !== value) {
+        conflicts.push(`${stage.agent}: "${models[stage.agent]}" vs "${value}" (${kind}.${stage.name})`)
+        continue
+      }
+      models[stage.agent] = value
+    }
+  }
+  const agentModels = isPlainObject(config) && isPlainObject(config.agentModels) ? config.agentModels : {}
+  for (const [agent, model] of Object.entries(agentModels)) {
+    if (typeof model === "string" && model.trim()) models[agent] = norm(model.trim())
+  }
+  return { models, conflicts }
+}
