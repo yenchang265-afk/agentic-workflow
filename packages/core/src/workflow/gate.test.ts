@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { abandonTask, approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx } from "./gate.js"
+import { abandonTask, approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -15,7 +15,13 @@ import { abandonTask, approveAny, approvePlan, approveTask, rejectAny, removeTas
  */
 const makeCtx = (
   files: Record<string, string>,
-  opts: { driving?: string; ignoreBacklog?: boolean; git?: (cmd: string) => { exitCode: number; stdout: string } | undefined } = {},
+  opts: {
+    driving?: string
+    ignoreBacklog?: boolean
+    git?: (cmd: string) => { exitCode: number; stdout: string } | undefined
+    /** Make every `mv` fail — the read-only-FS / DrvFS-hiccup half of what moveTask throws on. */
+    failMv?: boolean
+  } = {},
 ) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
@@ -34,7 +40,8 @@ const makeCtx = (
     else if (parts[0] === "test") out = parts[2]! in fs ? { exitCode: 0, stdout: "" } : { exitCode: 1, stdout: "" }
     else if (parts[0] === "mv") {
       const [, src, dest] = parts
-      if (src! in fs) {
+      if (opts.failMv) out = { exitCode: 1, stdout: "" }
+      else if (src! in fs) {
         fs[dest!] = fs[src!]!
         delete fs[src!]
       } else out = { exitCode: 1, stdout: "" }
@@ -591,4 +598,78 @@ test("shipTask retry does nothing when the completed task already recorded a PR"
   const r = await shipTask(ctx, "t")
   assert.ok(r.ok)
   assert.ok(!log.some((c) => c.includes("push -u origin")), "no re-push once a PR is on record")
+})
+
+// --- a move that throws must not leave a note asserting it happened ---
+
+/**
+ * `moveTask` THROWS on a duplicate destination, a failed `mv`, or a move that
+ * didn't land. Every gate verb appends its audit note FIRST — it belongs to the
+ * file, and after a successful move the file is elsewhere — so an unguarded
+ * throw escapes a function whose contract is `GateResult` and leaves the task
+ * claiming a transition it never made, while the commit, the PR and the
+ * worktree release below it never run. Only `abandonTask` guarded this, and
+ * even it left the false note standing.
+ *
+ * The collision cases use a pre-existing file at the destination: the exact
+ * duplicate state `auditBacklog` reports, and a real throw rather than a stub.
+ */
+const collidingMoves: ReadonlyArray<{
+  verb: string
+  from: string
+  to: string
+  run: (ctx: GateCtx) => Promise<GateResult>
+  body?: string
+}> = [
+  { verb: "approveTask", from: "draft", to: "queued", run: (ctx) => approveTask(ctx, "t") },
+  { verb: "approvePlan", from: "plan-review", to: "in-progress", run: (ctx) => approvePlan(ctx, "t"), body: `${PLAN_HEADING}\n\n1. Step.` },
+  { verb: "replanTask", from: "plan-review", to: "queued", run: (ctx) => replanTask(ctx, "t", "wrong layer"), body: `${PLAN_HEADING}\n\n1. Step.` },
+  { verb: "shipTask", from: "in-review", to: "completed", run: (ctx) => shipTask(ctx, "t") },
+  { verb: "abandonTask", from: "draft", to: "abandoned", run: (ctx) => abandonTask(ctx, "t") },
+]
+
+for (const { verb, from, to, run, body } of collidingMoves) {
+  test(`${verb} reports a colliding move instead of throwing out of its GateResult`, async () => {
+    const other = task("A different task with the same id")
+    const { ctx, fs, log } = makeCtx({ [`${from}/t.md`]: task("Do it", body), [`${to}/t.md`]: other })
+    const r = await run(ctx)
+    assert.equal(r.ok, false, `${verb} must return a refusal, not throw`)
+    assert.match(r.message, /already exists/, "the message must say what went wrong")
+    assert.ok(`/repo/docs/tasks/${from}/t.md` in fs, "the task stays where it was")
+    assert.equal(fs[`/repo/docs/tasks/${to}/t.md`], other, "the file it collided with is untouched")
+    // The note is on disk before the move is attempted and cannot be unwritten,
+    // so the correction has to follow it or the file's own history lies.
+    assert.ok(
+      log.some((c) => c.includes("did not move")),
+      `${verb} must append a correction after its audit note`,
+    )
+    assert.ok(!log.some((c) => c.startsWith("git commit")), "a move that did not happen is not committed")
+  })
+}
+
+test("retaskTask reports a failed mv instead of throwing out of its GateResult", async () => {
+  // retask cannot collide — an existing draft/<id>.md makes it an idempotent
+  // no-op before any move — so its throwing path is the failed `mv` itself.
+  const { ctx, fs, log } = makeCtx({ "queued/t.md": task("Do it") }, { failMv: true })
+  const r = await retaskTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /could not move|did not land/)
+  assert.ok("/repo/docs/tasks/queued/t.md" in fs, "the task stays in queued/")
+  assert.ok(log.some((c) => c.includes("did not move")), "the audit note is corrected")
+})
+
+test("a failed mv is reported by every gate verb that moves a task", async () => {
+  const runs: ReadonlyArray<[string, string, (ctx: GateCtx) => Promise<GateResult>, string?]> = [
+    ["approveTask", "draft", (ctx) => approveTask(ctx, "t"), undefined],
+    ["approvePlan", "plan-review", (ctx) => approvePlan(ctx, "t"), `${PLAN_HEADING}\n\n1. Step.`],
+    ["replanTask", "plan-review", (ctx) => replanTask(ctx, "t", "why"), `${PLAN_HEADING}\n\n1. Step.`],
+    ["shipTask", "in-review", (ctx) => shipTask(ctx, "t"), undefined],
+    ["abandonTask", "draft", (ctx) => abandonTask(ctx, "t"), undefined],
+  ]
+  for (const [verb, from, run, body] of runs) {
+    const { ctx, fs } = makeCtx({ [`${from}/t.md`]: task("Do it", body) }, { failMv: true })
+    const r = await run(ctx)
+    assert.equal(r.ok, false, `${verb} must refuse when the mv fails`)
+    assert.ok(`/repo/docs/tasks/${from}/t.md` in fs, `${verb}: the task stays put`)
+  }
 })

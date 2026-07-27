@@ -119,9 +119,44 @@ const resolveGateId = async (ctx: GateCtx, query: string): Promise<{ id: string 
   return { error: { ok: false, message: `Ambiguous id "${query}" — matches ${r.ambiguous.join(", ")}. Use more characters.`, variant: "warning" } }
 }
 
+/**
+ * Append a gate move's audit note, then perform the move — and when the move
+ * fails, correct the note instead of leaving it asserting something untrue.
+ *
+ * Every gate verb has to write its note first: the note belongs to the file, and
+ * after a successful move the file is somewhere else. But `moveTask` THROWS on a
+ * duplicate destination, a failed `mv`, or a move that didn't land — and an
+ * unguarded throw escapes a function whose contract is `GateResult`, so the
+ * caller's commit, PR and worktree release never run while the task file claims
+ * a transition it never made. That combination is unrecoverable by reading the
+ * backlog, which is the only record a human has.
+ *
+ * So the pairing lives here rather than being re-derived per verb: one place
+ * that owns "note, move, and on failure say so". `terminal.ts` runs the same
+ * protocol for the loop's own terminal moves.
+ */
+const noteThenMove = async (
+  ctx: GateCtx,
+  ref: { readonly id: string; readonly path: string },
+  to: TaskStatus,
+  note: string,
+  actor?: string | null,
+): Promise<{ ok: true; path: string } | { ok: false; result: GateResult }> => {
+  const { $, log } = ctx
+  await appendNote($, ref, auditNote(note, new Date(), actor), log)
+  try {
+    return { ok: true, path: await moveTask($, ref, to) }
+  } catch (err) {
+    const why = (err as Error).message
+    await log("warn", `loop(${ref.id}): move to ${to}/ failed after its audit note: ${why}`)
+    await appendNote($, ref, auditNote(`Move to ${to}/ failed — ${why}; the task did not move`, new Date(), actor), log)
+    return { ok: false, result: { ok: false, message: `Can't move "${ref.id}" to ${to}/: ${why}`, variant: "warning" } }
+  }
+}
+
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */
 export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
-  const { $, directory, config, log } = ctx
+  const { $, directory, config } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
   if (resolved) id = resolved.id
@@ -157,8 +192,9 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
     }
   }
   const actor = await gitActor($, directory)
-  await appendNote($, draft, auditNote("Task approved — queued for planning", new Date(), actor), log)
-  const newPath = await moveTask($, draft, "queued")
+  const moved = await noteThenMove(ctx, draft, "queued", "Task approved — queued for planning", actor)
+  if (!moved.ok) return moved.result
+  const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): task approved — queued for planning`)
   return {
     ok: true,
@@ -183,7 +219,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
  * this refuses.
  */
 export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
-  const { $, directory, config, log } = ctx
+  const { $, directory, config } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
   if (resolved) id = resolved.id
@@ -221,8 +257,9 @@ export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   // Same shape as replan's: the reason is why the goal was wrong, and the task
   // file is the only place the next authoring pass will look for it.
   const why = reason ? ` — ${reason}` : ""
-  await appendNote($, queued, auditNote(`Sent back to draft for re-shaping — approval withdrawn${why}`, new Date(), actor), log)
-  const newPath = await moveTask($, queued, "draft")
+  const moved = await noteThenMove(ctx, queued, "draft", `Sent back to draft for re-shaping — approval withdrawn${why}`, actor)
+  if (!moved.ok) return moved.result
+  const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): sent back to draft for re-shaping`)
   return {
     ok: true,
@@ -360,16 +397,19 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
     return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
   }
   const why = reason?.trim()
-  await appendNote($, { id, path: task.path }, auditNote(`Abandoned from ${from}${why ? ` — ${why}` : ""}`, new Date(), await gitActor($, directory)), log)
-  let newPath: string
-  try {
-    newPath = await moveTask($, { id, path: task.path }, "abandoned")
-  } catch (err) {
-    // Same rule the terminal handlers follow: a thrown move must not escape a
-    // function whose contract is GateResult, leaving a note asserting a move
-    // that never happened.
-    return { ok: false, message: `Can't abandon "${id}": ${(err as Error).message}`, variant: "warning" }
-  }
+  const moved = await noteThenMove(
+    ctx,
+    { id, path: task.path },
+    "abandoned",
+    `Abandoned from ${from}${why ? ` — ${why}` : ""}`,
+    await gitActor($, directory),
+  )
+  // Same rule the terminal handlers follow: a thrown move must not escape a
+  // function whose contract is GateResult, leaving a note asserting a move that
+  // never happened. `noteThenMove` also corrects the note, which the local
+  // try/catch this replaced did not.
+  if (!moved.ok) return moved.result
+  const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): abandoned${why ? ` — ${why}` : ""}`)
   // A parked task can own a worktree; free it the way remove/ship do.
   await releaseWorktree($, log, directory, config, id)
@@ -383,7 +423,7 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
 
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult> => {
-  const { $, directory, config, log } = ctx
+  const { $, directory, config } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
   if (resolved) id = resolved.id
@@ -416,8 +456,9 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
   // generically rather than a host-specific command/tool.
   if (!hasPlan(task)) return { ok: false, message: `Task "${id}" has no Implementation Plan — send it back to planning with replan.`, variant: "warning" }
   const actor = await gitActor($, directory)
-  await appendNote($, task, auditNote("Plan approved — parked for execution", new Date(), actor), log)
-  const newPath = await moveTask($, task, "in-progress")
+  const moved = await noteThenMove(ctx, task, "in-progress", "Plan approved — parked for execution", actor)
+  if (!moved.ok) return moved.result
+  const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan approved — parked for execution`)
   return {
     ok: true,
@@ -433,7 +474,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
  * we never re-queue a task mid-build).
  */
 export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
-  const { $, directory, config, log } = ctx
+  const { $, directory, config } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
   if (resolved) id = resolved.id
@@ -470,8 +511,9 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   }
   const actor = await gitActor($, directory)
   const why = reason ? ` — ${reason}` : ""
-  await appendNote($, task, auditNote(`Plan rejected — sent back to queued for re-planning${why}`, new Date(), actor), log)
-  const newPath = await moveTask($, task, "queued")
+  const moved = await noteThenMove(ctx, task, "queued", `Plan rejected — sent back to queued for re-planning${why}`, actor)
+  if (!moved.ok) return moved.result
+  const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)
   return {
     ok: true,
@@ -552,8 +594,9 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
     }
     return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : ((await unparseableAt(ctx, id)) ?? `No in-review task "${id}".`) }
   }
-  await appendNote($, { id, path: t.path }, auditNote("Shipped — moved to completed", new Date(), await gitActor($, directory)), log)
-  const newPath = await moveTask($, { id, path: t.path }, "completed")
+  const moved = await noteThenMove(ctx, { id, path: t.path }, "completed", "Shipped — moved to completed", await gitActor($, directory))
+  if (!moved.ok) return moved.result
+  const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
   const pr = await shipPr($, log, directory, config, kind, id, t.title)
