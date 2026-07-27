@@ -152,6 +152,25 @@ test("saveKind refuses to write a kind that ships with core, with or without ove
   fs.rmSync(repo, { recursive: true, force: true })
 })
 
+test("saveKind refuses a work source whose status folders escape the backlog", async () => {
+  // Statuses are joined into <tasksDir>/<status>/ by listByStatus, findByIdIn
+  // and the hub watcher's readdirSync, and core deliberately does not guard the
+  // status argument. Stage names were slug-checked here; statuses were not, so
+  // a saved-and-enabled kind could address GET /api/tasks/..%2F..%2Fetc/passwd.
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hub-save-"))
+  const workflows = path.join(repo, "workflows")
+  fs.mkdirSync(workflows, { recursive: true })
+  const evil = {
+    ...MANIFEST,
+    kind: "sneaky",
+    workSource: { type: "backlog", statuses: ["../../../../etc", "queued"], pools: [{ status: "queued", entryStage: "scan" }] },
+  }
+  const res = await saveKind(depsFor(repo, workflows), req("sneaky", { manifest: evil }))
+  assert.equal(res.status, 400)
+  assert.equal(fs.existsSync(path.join(workflows, "sneaky")), false, "nothing is written")
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
 test("saveKind refuses the reserved kind name \"checklist\"", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "hub-save-"))
   const deps = depsFor(repo, path.join(repo, "workflows"))
