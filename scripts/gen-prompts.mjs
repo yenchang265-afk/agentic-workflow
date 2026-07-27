@@ -151,7 +151,14 @@ const TOKENS = {
     hostName: "Claude Code",
     spawnTool: "Task tool",
     askTool: "AskUserQuestion",
-    modelClause: ", passing the response's `model` when present",
+    // A DECLARATION, not an instruction. The PreToolUse stamp
+    // (plugins/claude/hooks/src/stamp-spawn-model.entry.mjs) rewrites the spawn
+    // call's `model` before the tool runs, so asking the model to pass it is
+    // both unnecessary and — as the stageModels regression showed — unreliable.
+    // The clause stays so a transcript still states which model was bound: if
+    // the hook ever stops firing, that statement stops matching the model the
+    // subagent actually ran on, which is the only signal such a regression has.
+    modelClause: " (its `model` is already pinned from the response's `model` field when present)",
   },
   qwen: {
     hostName: "Qwen Code",

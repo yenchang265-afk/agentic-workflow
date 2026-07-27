@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { backlogRoot, readTasksDir, runsDir } from "./src/tasksdir.mjs"
+import { backlogRoot, readTasksDir, runsDir } from "./src/marker.mjs"
 
 /**
  * The guards must look for the stage marker exactly where the MCP server writes

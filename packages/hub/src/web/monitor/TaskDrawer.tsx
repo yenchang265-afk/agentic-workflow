@@ -5,10 +5,13 @@ import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
 import { TaskEditor } from "./TaskEditor.js"
+import { TaskReview } from "./TaskReview.js"
 
 /**
  * The task detail drawer: everything about one task, and — for a planless task
- * in draft/ or queued/ — the editor that reshapes it.
+ * in draft/ or queued/ — the editor that reshapes it. Everything else (a task
+ * with a plan, or one a loop is driving) gets the review view: the same files
+ * rendered as Markdown, commentable line by line.
  *
  * A native <dialog> for the same reason `Confirm` is one: Esc, focus trapping,
  * and a platform backdrop, with no focus-management code of our own to get
@@ -87,33 +90,14 @@ export const TaskDrawer = ({ id, status, claimed, onClose }: TaskDrawerProps) =>
               onSaved={onSaved}
             />
           ) : (
-            <div className="task-view">
-              <p className="task-view__why">
-                {claimed
-                  ? "A loop is driving this task right now — stop it, or wait for it to park, before editing."
-                  : "This task has a plan. Send it back with Replan — the reason feeds the next PLAN pass."}
-              </p>
-              {data.card.acceptance.length > 0 && (
-                <section>
-                  <h3>acceptance</h3>
-                  <ul>
-                    {data.card.acceptance.map((a) => (
-                      <li key={a}>{a}</li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-              <section>
-                <h3>body</h3>
-                <pre>{data.body}</pre>
-              </section>
-              {data.plan && (
-                <section>
-                  <h3>plan</h3>
-                  <pre>{data.plan}</pre>
-                </section>
-              )}
-            </div>
+            <TaskReview
+              id={id}
+              status={status}
+              claimed={claimed}
+              card={data.card}
+              body={data.body}
+              {...(data.plan !== undefined ? { plan: data.plan } : {})}
+            />
           )}
 
           {data.notes.length > 0 && (

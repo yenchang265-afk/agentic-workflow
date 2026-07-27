@@ -9,7 +9,7 @@ Run the **BUILD** stage of the agentic engineering loop
 
 **$ARGUMENTS**
 
-Delegated to the `build` subagent, which implements the approved plan test-first
+Delegated to the `workflow-build` subagent, which implements the approved plan test-first
 with surgical diffs — or, on a re-build after a VERIFY or REVIEW FAIL, applies
 that check's feedback. This is the only stage that writes code; in an automatic
 loop it runs only on a task whose plan was approved via `/agentic-workflow:engineering approve`.

@@ -57,6 +57,19 @@ persuading the agent the check passed.
   injection would have to survive every lens's independent pass. Residual
   shrinks to N simultaneous persuasions.
 
+  Per-axis fan-out (`stageFanout: {"review": "axis"}`) is the same mitigation
+  without the cost lenses charge for it. Lens mode has to switch per-pass
+  axis-coverage enforcement off — a lens maps to no axis — so hardening against
+  T1 quietly weakened the completeness guarantee. A fan-out pass covers exactly
+  one *required* axis, so per-pass enforcement narrows instead of vanishing,
+  and the stage-wide requirement is checked on the accumulated record before
+  the stage may advance. Two residuals are accepted deliberately: a focused
+  pass may still volunteer off-axis findings (harmless — merging is worst-wins,
+  so a stray PASS cannot mask another pass's FAIL), and on the Claude/Qwen host
+  the orchestrator owns the pass loop and could skip a spawn — which is
+  precisely what the accumulated-coverage gate at `workflow_advance` detects,
+  stopping with ERROR rather than acting on a review that never ran.
+
 ### T2. A "read-only" check stage mutates state or exfiltrates data
 
 `edit: deny` alone does not restrict bash; `git commit`, `rm`, or `curl`
@@ -424,9 +437,9 @@ than what is.
   real effect; `ship` is styled as destructive and says it opens a PR.
 - **Residual:** a *stranded* claim (from a crashed loop) reads as driving and
   refuses the gate until released — deliberate, and the reason the backlog
-  doctor exists (the hub exposes it too: `GET`/`POST /api/doctor`, which
-  releases only *stale, undriven* claims and skips release entirely while a
-  watcher lease is live). The claim→gate window is the same race two claimers
+  doctor exists (the hub exposes it too: `GET /api/doctor` sweeps read-only,
+  `POST /api/doctor/fix` releases only *stale, undriven* claims and skips
+  release entirely while a watcher lease is live). The claim→gate window is the same race two claimers
   already have, narrowed by `expectStatus`. Approval identity is still the
   configured git identity, not an authenticated one (see T4).
 

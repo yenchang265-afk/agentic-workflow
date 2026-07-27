@@ -54,6 +54,15 @@ const SLUG_RE = /^[a-z][a-z0-9-]{0,63}$/
 const SlugSchema = (label: string) =>
   z.string().regex(SLUG_RE, `${label} must be a lowercase slug (letters, digits and dashes) — it becomes a filesystem path segment`)
 
+/**
+ * Most axes a `fanout: "axis"` stage may fan out over. Each axis is a full
+ * subagent pass with its own stage timeout, so the axis list is a direct
+ * multiplier on an unattended loop's cost and wall-clock — an unbounded one is a
+ * footgun the manifest should refuse, not a preference. 8 leaves headroom over
+ * the engineering loop's five; config `reviewLenses` caps its own multiplier at 5.
+ */
+export const FANOUT_MAX = 8
+
 export const StageDefSchema = z.object({
   name: z.string().min(1),
   /** `work` stages complete on their own; `check` stages must record a verdict (missing ⇒ FAIL). */
@@ -88,6 +97,24 @@ export const StageDefSchema = z.object({
    * `workflow_verdict` serves every check stage of every kind.
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
+  /**
+   * How this `check` stage's single pass expands into several focused passes.
+   *
+   * `"axis"` runs the stage once per entry in `requiredAxes`, SEQUENTIALLY, each
+   * pass told to review and report exactly one axis. The passes' verdicts merge
+   * worst-wins, and their union restores the complete axis coverage that one
+   * pass would otherwise have had to supply in a single call — which is why
+   * per-pass coverage narrows to the pass's own axis while the STAGE still
+   * cannot advance with an axis uncovered (verdict.ts `uncoveredAxes`). That is
+   * the whole difference from config `reviewLenses`, which suppresses axis
+   * enforcement outright and guarantees nothing about coverage.
+   *
+   * Unset ⇒ one unfocused pass, byte-identical to having no fan-out at all.
+   * A one-member enum rather than a boolean so call sites name the strategy
+   * (`def.fanout === "axis"`) and a second strategy stays a non-breaking edit.
+   * Config `workflows.<kind>.stageFanout.<name>` wins over this.
+   */
+  fanout: z.enum(["axis"]).optional(),
   /**
    * Per-artifact character ceilings for this stage's composed prompt, keyed by the
    * artifact's producing stage (`plan`, `build`, `verify`, `review`). Unset ⇒
@@ -298,6 +325,25 @@ export const WorkflowManifestSchema = z
       if (stage.kind === "work" && stage.requiredAxes?.length) {
         // Only a verdict can carry axes, and only check stages record one.
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requiredAxes (no verdict to carry them)` })
+      }
+      if (stage.fanout && stage.kind !== "check") {
+        ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set fanout (there is no verdict to fan out)` })
+      }
+      if (stage.fanout === "axis" && !stage.requiredAxes?.length) {
+        // The axis list IS the pass list; without one the stage would fan out
+        // over nothing and silently run as a single pass.
+        ctx.addIssue({
+          code: "custom",
+          message: `stage "${stage.name}" sets fanout "axis" but declares no requiredAxes — there is nothing to fan out over`,
+        })
+      }
+      if (stage.fanout === "axis" && (stage.requiredAxes?.length ?? 0) > FANOUT_MAX) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            `stage "${stage.name}" fans out over ${stage.requiredAxes?.length} axes — at most ${FANOUT_MAX} ` +
+            "(each axis is a full subagent pass)",
+        })
       }
       for (const effect of [t.onDone, t.onPass, t.onFail, t.onError]) {
         if (effect?.kind === "fire" && !names.has(effect.stage)) {

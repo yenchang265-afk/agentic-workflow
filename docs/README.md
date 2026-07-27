@@ -14,7 +14,7 @@ should link.
 | [sitters.md](sitters.md) | What the four sitters have in common (shape, opt-in, untrusted-input handling), why all four are experimental, and an index into their individual files under `workflows/` |
 | [configuration.md](configuration.md) | Every `.agentic-workflow.json` field (layers/precedence, `workflows`, `codePlatform`/`ado`, `projectManagement`, hardening, env vars) |
 | [opencode.md](opencode.md) | OpenCode-specific execution details (watch triggers, ESC/recover) and the full OpenCode command surface |
-| [qwen.md](qwen.md) | Qwen Code install, execution model, command surface, and its static per-stage models |
+| [qwen.md](qwen.md) | Qwen Code (**experimental**) install, execution model, command surface, and its static per-stage models |
 | [`../plugins/claude/README.md`](../plugins/claude/README.md) | Claude Code install, the MCP-server command surface, and known limitations |
 | [`../packages/core/workflows/README.md`](../packages/core/workflows/README.md) | Authoring a new workflow kind (manifest schema, prompt templates, hooks, work sources) |
 | [`../packages/hub/README.md`](../packages/hub/README.md) | The admin hub (beta): install, views, and its own config |
@@ -25,7 +25,7 @@ should link.
 | [design/improvements/](design/improvements/README.md) | Implementation design records for shipped hardening work (worktrees, state persistence, verdict quality, …) |
 | [migration.md](migration.md) | Upgrading from earlier layouts (the old `/agent-loop` command, `in-planning/`, the blocking PLAN gate) |
 | [templates/AGENTS.md](templates/AGENTS.md) | Starter `AGENTS.md`/`CLAUDE.md` to copy into a project driven by agentic-workflow |
-| [`../prompts/README.md`](../prompts/README.md) | How the single-source agent-prompt pipeline works (`prompts/agents/` → `npm run gen:prompts` → both plugins) |
+| [`../prompts/README.md`](../prompts/README.md) | How the single-source agent-prompt pipeline works (`prompts/agents/` → `npm run gen:prompts` → all three plugins) |
 
 `manual.html` is a hand-maintained, single-page HTML manual that restates
 most of the above for convenience (quickstart, config reference, command

@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import path from "node:path"
 import { test } from "node:test"
-import { effectiveAllowlist, gateStatuses, parseManifest } from "./schema.js"
+import { effectiveAllowlist, FANOUT_MAX, gateStatuses, parseManifest } from "./schema.js"
 
 const base = {
   kind: "k",
@@ -161,6 +161,45 @@ test("rejects requiredAxes on a work stage — only a verdict can carry axes", (
     stages: [{ ...base.stages[0], requiredAxes: ["correctness"] }, base.stages[1]],
   }
   assert.throws(() => parseManifest(raw), /work stage "work" cannot set requiredAxes/)
+})
+
+test("a check stage's fanout round-trips through a JSON save and defaults to undefined", () => {
+  const raw = {
+    ...base,
+    stages: [base.stages[0], { ...base.stages[1], requiredAxes: ["correctness", "security"], fanout: "axis" }],
+  }
+  const parsed = parseManifest(raw)
+  assert.equal(parsed.stages[1]?.fanout, "axis")
+  assert.equal(parseManifest(base).stages[1]?.fanout, undefined)
+  // The hub re-serializes the PARSED manifest on save (routes/kinds.ts), so a
+  // field the schema doesn't know is deleted from disk. Prove this one survives.
+  assert.equal(parseManifest(JSON.parse(JSON.stringify(parsed))).stages[1]?.fanout, "axis")
+})
+
+test("rejects fanout on a work stage — there is no verdict to fan out", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], fanout: "axis" }, base.stages[1]] }
+  assert.throws(() => parseManifest(raw), /work stage "work" cannot set fanout/)
+})
+
+test('rejects fanout "axis" with no requiredAxes — the axis list is the pass list', () => {
+  const raw = { ...base, stages: [base.stages[0], { ...base.stages[1], fanout: "axis" }] }
+  assert.throws(() => parseManifest(raw), /declares no requiredAxes/)
+})
+
+test("rejects a fan-out over more axes than FANOUT_MAX — each axis is a full subagent pass", () => {
+  const axes = Array.from({ length: FANOUT_MAX + 1 }, (_, i) => `axis-${i}`)
+  const raw = { ...base, stages: [base.stages[0], { ...base.stages[1], requiredAxes: axes, fanout: "axis" }] }
+  assert.throws(() => parseManifest(raw), new RegExp(`at most ${FANOUT_MAX}`))
+  const ok = { ...base, stages: [base.stages[0], { ...base.stages[1], requiredAxes: axes.slice(1), fanout: "axis" }] }
+  assert.equal(parseManifest(ok).stages[1]?.fanout, "axis")
+})
+
+test("rejects an unknown fanout strategy", () => {
+  const raw = {
+    ...base,
+    stages: [base.stages[0], { ...base.stages[1], requiredAxes: ["correctness"], fanout: "file" }],
+  }
+  assert.throws(() => parseManifest(raw), /fanout/)
 })
 
 test("the shipped engineering manifest requires all five review axes and none on verify", () => {

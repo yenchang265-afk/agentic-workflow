@@ -124,7 +124,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
 | `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 
-兩個外掛讀取的是同一份檔案：結構描述位於共用核心套件
+三個外掛讀取的都是同一份檔案：結構描述位於共用核心套件
 （`packages/core/src/config.ts`），每個 host 可以用只有自己能支援的
 欄位去擴充它（目前：OpenCode 的 `watchIntervalMinutes`——見
 [`plugins/claude/README.md`](../plugins/claude/README.md)）。
@@ -233,6 +233,37 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   該 session 覆寫它：`watch poll [interval]`（或一個裸的間隔值）、
   `watch cron "<schedule>"`，或 `watch idle`。
 
+- **`workflows.<kind>.stageModels`**——階段名稱 → 該階段執行時使用的
+  模型，讓便宜的階段跑便宜的模型、困難的階段跑強大的模型：
+
+  ```json
+  {
+    "workflows": {
+      "engineering": {
+        "stageModels": {
+          "build": "anthropic/claude-sonnet-4-5",
+          "review": "anthropic/claude-opus-4-5"
+        }
+      }
+    }
+  }
+  ```
+
+  值是 host 專屬的模型字串：OpenCode 要的是 `provider/modelID`（如上）；
+  Claude Code 和 Qwen Code 都要 Task 工具風格的模型（`sonnet`、`opus`、
+  `haiku`，或一個裸的模型 id——`provider/` 前綴會被容許並去除，所以同一份
+  設定在三個 host 上都能用）。Qwen 是在安裝時解析它，而不是在產生階段時
+  ——見 [`docs/qwen.md`](qwen.zh-TW.md) 的「這個宿主上的每階段模型是靜態的」一節。
+  每個階段的優先順序：這個鍵 → manifest 階段的 `model` 欄位 → 未設定
+  （host 的預設模型）。沒列出的階段沿用 host 預設值。
+
+  鍵必須是該類型的**階段名稱**，小寫，依 manifest 的拼法（engineering：
+  `plan`、`build`、`verify`、`review`；其他類型請執行
+  `/agentic-workflow:<kind> kinds`）。指向不存在階段的鍵——例如 `BUILD`，
+  或另一個類型的階段名稱——在解析時無法被拒絕（此時 manifest 尚未載入），
+  因此會被接受、忽略，該階段沿用 host 預設值。OpenCode 和 Claude Code
+  在迴圈啟動時都會對這類鍵發出警告。
+
 - **`workflows.<kind>.stageContext`**——以「消費該產物的階段」為鍵，
   設定該階段組出的提示中每個產物的**字元**上限。未設定 ⇒ 無上限，
   與完全沒有預算時逐位元組相同。
@@ -303,9 +334,37 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   背後都沒有 manifest 階段，因此沒有任何 fire payload 會為它們帶上模型。
 
   之所以放在頂層而非各類型之下：代理名稱在各類型間是唯一的，而
-  `workflow-plan` 根本不屬於任何類型。值的寫法與 `stageModels` 相同
-  （在 Claude Code 上 `provider/` 前綴會被去除），未設定的代理則使用
-  主機預設模型。
+  `workflow-plan` 根本不屬於任何類型。未設定的代理則使用主機預設模型。
+
+  **各主機如何綁定，以及變更何時生效。** 這兩個生成都不是階段觸發，
+  因此都無法像階段那樣由驅動器帶上模型。每個主機改以其他方式綁定——
+  都不是靠「要求模型配合」，那正是這個設定過去的做法，也是它看起來
+  不可靠的原因：
+
+  | 主機 | 機制 | 設定變更何時生效 |
+  | --- | --- | --- |
+  | Claude Code | `PreToolUse` hook 直接改寫生成呼叫的 `model` | 下一次生成 |
+  | OpenCode | 外掛的 `config` hook 設定 `agent.<name>.model` | 下一次**重啟 opencode** |
+  | Qwen Code | 將 `model:` 烘進已安裝的代理檔案 | 下一次 `./install.sh qwen` |
+
+  **值的寫法因主機而異**，其中 Claude Code 最嚴格：
+
+  - **OpenCode** 使用帶 provider 前綴的完整 id（`anthropic/claude-haiku-4-5`）。
+  - **Qwen Code** 使用裸 id——`provider/` 前綴會自動去除。
+  - **Claude Code 的生成工具只接受 `sonnet`、`opus`、`haiku`、`fable`
+    這四個別名。** 若設定值指向其中某個模型家族，會自動對應
+    （`anthropic/claude-haiku-4-5` → `haiku`）；但無法對應到任何已知家族的
+    值就無法綁定：該次生成會使用主機預設模型，並由伺服器發出警告。
+    這是刻意不傳遞而非照傳——該工具會驗證 `model`，遇到不接受的值會讓
+    **整次生成失敗**，照傳只會把一個無傷大雅的設定錯誤變成失敗的執行。
+
+  代理名稱打錯同樣會被回報而不是默默忽略：在綁定已被強制執行之後，
+  這是設定項目失效的主要剩餘原因。
+
+  **在 OpenCode 上的優先順序為**：階段觸發的逐次模型（`stageModels`，由
+  驅動器傳入）> 本設定所寫的 `agent.<name>.model` > 你自己在
+  `opencode.json` 中為「本設定未指名的代理」所設的值 > 工作階段預設。
+  因此在任何主機上，`agentModels` 都不會影響 `stageModels`。
 
   這個鍵**刻意與 `stageModels` 分開**，而不是併入 `stageModels.plan`：
   草稿撰寫與 PLAN 階段都跑 `workflow-plan-author`，若共用一個鍵，把
@@ -582,7 +641,29 @@ issue 的 key/id 複製進任務裡。
   約為 N 倍的審查時間；預設關閉。開啟後會**停用審查階段的軸涵蓋強制檢查**
   （`requiredAxes`）：每一趟都被要求只專注在自己的視角上，因此強制它交出
   全部五個軸會讓每一趟都被拒絕。視角模式有自己的涵蓋保證——沒有記錄裁定的
-  視角會變成 ERROR，而不是悄悄消失的意見。
+  視角會變成 ERROR，而不是悄悄消失的意見。如果你想要多趟審查但**不要**這個
+  降級，請改用下面的 `stageFanout`。
+- **`workflows.<kind>.stageFanout`**——階段名稱 → `"axis"` 或 `"none"`：讓一個
+  check 階段依它的 `requiredAxes` 逐一、依序各跑一趟，每一趟只被要求審查並
+  回報**一個**軸。各趟以最差者勝合併。
+
+  ```jsonc
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
+  ```
+
+  成本與 `reviewLenses` 相同（約 N 倍），威脅模型上的好處也相同（沒有任何
+  單一審查者能讓變更蒙混過關），但它**保住**了視角模式放棄的涵蓋保證：每一趟
+  都以自己的軸受到強制檢查，而且只要有任何一個軸沒有結果，這個階段就無法前進
+  ——缺口會讓迴圈以 ERROR 停下，而不是拿一場根本沒發生的審查去重建。預設關閉；
+  兩個旋鈕都沒設的階段與現況逐位元組相同。
+
+  `"none"` 可以把清單檔（階段上的 `fanout`）宣告的 fan-out 關掉。設定檔勝過
+  清單檔，與 `stageModels`、`stageContext` 一致——而且這也是你唯一能碰到內建
+  類型的方式，因為它們的清單檔是隨 `@agentic-workflow/core` 套件一起出貨的。
+
+  在名為 `review` 的階段上，**`reviewLenses` 勝過這個設定**，所以既有的視角
+  設定行為完全不變；當設定好的視角清單覆蓋掉已宣告的 fan-out 時，兩個 host
+  都會警告。命名到不存在階段的鍵會被接受、忽略並警告，與 `stageModels` 相同。
 - 回顯進稽核記錄、計畫或執行紀錄中的密鑰會在寫入並提交之前被
   **依形狀遮蔽**（`AKIA…`、`sk-…`、token、PEM 區塊、
   `key/secret/token: …` 這類賦值）。

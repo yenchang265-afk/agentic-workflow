@@ -157,7 +157,7 @@ npm install
 skills 就能在每一個 OpenCode session 中運作。它是冪等的——`git
 pull` 之後重新執行即可更新。用 `--copy` 取代符號連結，或傳入一個
 目錄以安裝到預設 OpenCode 設定目錄以外的地方。裸的 `./install.sh`
-會同時安裝 Claude Code 外掛。
+會同時安裝 Claude Code 和 Qwen Code 外掛。
 
 在互動式終端機上，安裝流程的最後會有一個簡短的**設定精靈**來產生
 `.agentic-workflow.json`——它會先詢問是要寫入儲存庫層級（迴圈驅動的

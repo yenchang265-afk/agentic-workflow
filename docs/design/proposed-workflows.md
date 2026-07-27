@@ -423,6 +423,6 @@ Cheapest-first, each wave reusing what the previous one built:
 
 Promoting any entry to real work means walking the existing
 [checklist for a new kind](../../packages/core/workflows/README.md#checklist-for-a-new-kind)
-— manifest + stages, agents for both plugins via `gen:prompts`, command
+— manifest + stages, agents for all three plugins via `gen:prompts`, command
 wrappers, source + tests, registry hooks, and the config/threat-model docs.
 That checklist is authoritative; this catalog only supplies the *what*.

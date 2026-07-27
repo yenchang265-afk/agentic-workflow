@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { dialectFor, hostFor } from "./dialect.mjs"
 import { idList } from "./idlist.mjs"
-import { backlogRoot, readTasksDir } from "./tasksdir.mjs"
+import { backlogRoot, readTasksDir } from "./marker.mjs"
 
 /**
  * Mirror of core `wasInterrupted` (store.ts): a BUILD started with no later
@@ -83,7 +83,7 @@ const main = async () => {
   }
   const cwd = input.cwd || process.cwd()
   // Resolved the way the MCP server resolves it when it writes there — env
-  // root, repo layer over user layer. See tasksdir.mjs.
+  // root, repo layer over user layer. See marker.mjs.
   const root = backlogRoot(cwd)
   const tasksDir = readTasksDir(root)
 

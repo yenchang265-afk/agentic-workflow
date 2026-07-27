@@ -76,15 +76,11 @@ const ABANDON = new RegExp(`${AT_START}${CMD}\\s+abandon\\b[ \\t]*(.*)`, "i")
 // injected its instructions while `remove` deleted a task in the same turn.
 const ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i")
 
-// The ad-hoc plan command — not an engineering verb and not a gate move, but it
-// spawns `workflow-plan` outside any loop, so no MCP response ever carries a
-// model for it and `agentModels` is its only source. `(?![-\w])` keeps the
-// sibling `/plan-task` command out; the leading slash carries the same
-// "must not match prose" rationale as CMD above.
-const ADHOC_PLAN = /(?:^|\s)\/(?:agentic-workflow:)?plan(?![-\w])/i
-
-/** Whether a prompt invokes the ad-hoc `/agentic-workflow:plan` command. */
-export const isAdhocPlan = (prompt) => ADHOC_PLAN.test(String(prompt ?? ""))
+// The ad-hoc `/agentic-workflow:plan` command used to be matched here purely to
+// inject an `agentModels` sentence for its out-of-loop `workflow-plan` spawn.
+// The PreToolUse stamp binds that spawn from `subagent_type` instead, so no
+// prompt sniffing is needed — one rule now covers `/plan`, `new`, `retask` and
+// any nested spawn, and this matcher had no other caller.
 
 /**
  * The engineering verb a prompt invokes, or null when the prompt is not the

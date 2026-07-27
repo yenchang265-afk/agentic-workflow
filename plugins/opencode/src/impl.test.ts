@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { parseConfig } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
-import { draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { agentModelPatch, applyAgentModels, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -17,7 +17,7 @@ type Hooks = { "tool.execute.before": (input: { sessionID: string; tool: string;
 
 const makeHooks = async (
   sessions: Record<string, string | undefined>,
-  opts: { failSessionApi?: boolean; configJson?: string } = {},
+  opts: { failSessionApi?: boolean; failShell?: boolean; configJson?: string } = {},
 ): Promise<Hooks> => {
   const client = {
     app: { log: async () => {} },
@@ -34,8 +34,14 @@ const makeHooks = async (
     tui: { showToast: async () => {} },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   } as any
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const $ = (() => ({ quiet: () => ({ nothrow: () => Promise.resolve({ exitCode: 1, stdout: "" }) }) })) as any
+  // A Bun shell that throws stands in for any hard failure inside the plugin's
+  // deterministic half (spawn refused, git missing, fs error) — the command hook
+  // must not let that failure hand the model the rendered body.
+  const $ = (() => {
+    if (opts.failShell) throw new Error("shell unavailable")
+    return { quiet: () => ({ nothrow: () => Promise.resolve({ exitCode: 1, stdout: "" }) }) }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  }) as any
   return (await makeAgenticWorkflow({ client, directory: "/repo", $, worktree: "/repo" } as never)) as unknown as Hooks
 }
 
@@ -310,6 +316,56 @@ test("command hook slices a template split across text parts", async () => {
 })
 
 /**
+ * The failure path. The slice has already written the invoked verb's prose to
+ * `output` by the time the plugin dispatches, so a throw in the deterministic
+ * half is the ONE path on which a report-and-stop verb's description of PLUGIN
+ * work becomes the model's instructions — the `if (outcome)` override that
+ * normally replaces it never runs. Both dispatch orders must be covered:
+ * `approve`/`replan` run the gate move before reconciling, every other verb
+ * reconciles first.
+ */
+const FAILURE_TEMPLATE = [
+  "shared preamble",
+  "<!-- aw:verb recover -->",
+  "re-claim the task and resume from its state snapshot",
+  "<!-- /aw:verb recover -->",
+  "<!-- aw:verb approve -->",
+  "glob the folder to verify the move landed",
+  "<!-- /aw:verb approve -->",
+  "never touch docs/tasks yourself",
+].join("\n")
+
+const runFailingCommand = async (args: string): Promise<string> => {
+  const output = { parts: [{ type: "text", text: FAILURE_TEMPLATE }] }
+  const hooks = (await makeHooks({}, { failShell: true })) as unknown as CmdHooks
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_f", arguments: args }, output)
+  return output.parts[0]!.text!
+}
+
+test("a throw in the deterministic half overrides the body instead of leaving it as instructions", async () => {
+  const text = await runFailingCommand("recover t1")
+  assert.match(text, /FAILED while running/, "a toast is invisible to the model — the failure must be in the prompt")
+  assert.match(text, /shell unavailable/, "the real error must reach the user")
+  assert.doesNotMatch(text, /resume from its state snapshot/, "the verb's description of plugin work must not survive as instructions")
+  assert.doesNotMatch(text, /aw:verb/, "markers must not reach the model")
+  assert.doesNotMatch(text, /already ran/, "the success override must not claim the work landed")
+})
+
+test("the failure override is inert when the deterministic half succeeds", async () => {
+  // The guard must not cost the pass-through verbs their body. `approve` needs
+  // its prose — it verifies the folder move the plugin just made — so a
+  // catch-all that fired on any swallowed internal error would silently break
+  // the gate. Same shell failure, but one the plugin handles itself.
+  const output = { parts: [{ type: "text", text: FAILURE_TEMPLATE }] }
+  const hooks = (await makeHooks({})) as unknown as CmdHooks
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_g", arguments: "approve t1" }, output)
+  const text = output.parts[0]!.text!
+  assert.match(text, /verify the move landed/, "a pass-through verb keeps its instructions")
+  assert.doesNotMatch(text, /FAILED while running/, "no throw means no failure override")
+  assert.doesNotMatch(text, /resume from its state snapshot/, "still sliced to the invoked verb")
+})
+
+/**
  * `agentModels` — the model source for the drafting invocation, which is not a
  * stage run and so has no StageDef and no fire payload to carry one.
  */
@@ -335,4 +391,59 @@ test("draftModelNote is silent when no drafting model is configured", () => {
   assert.equal(draftModelNote(bare, "engineering", "new"), null)
   const other = parseConfig({ agentModels: { "workflow-plan": "haiku" } }) as Config
   assert.equal(draftModelNote(other, "engineering", "new"), null, "a different agent's entry must not leak in")
+})
+
+/**
+ * The deterministic half of the same knob: the `config` hook binds
+ * `agent.<name>.model` so the drafting and ad-hoc spawns — which the MODEL
+ * initiates, out of reach of `session.command({ model })` — pick the configured
+ * model up as an opencode setting rather than as a request in a prompt.
+ */
+test("agentModelPatch keeps the provider prefix and ignores junk", () => {
+  assert.deepEqual(agentModelPatch({ agentModels: { "workflow-plan": "anthropic/claude-haiku-4-5" } }), {
+    // OpenCode takes provider-qualified ids; only Claude (alias enum) and Qwen
+    // (bare ids) narrow them.
+    "workflow-plan": "anthropic/claude-haiku-4-5",
+  })
+  assert.deepEqual(agentModelPatch({ agentModels: { a: "  haiku  " } }), { a: "haiku" })
+  for (const raw of [null, undefined, 42, "nope", {}, { agentModels: null }, { agentModels: 42 }, { agentModels: [] }]) {
+    assert.deepEqual(agentModelPatch(raw), {}, `raw: ${JSON.stringify(raw)}`)
+  }
+  assert.deepEqual(agentModelPatch({ agentModels: { a: 42, b: "", c: "   ", d: null } }), {})
+})
+
+test("applyAgentModels writes only agent.<name>.model, creating the map when absent", () => {
+  const config: { agent?: Record<string, { model?: string } | undefined> } = {}
+  assert.deepEqual(applyAgentModels(config, { "workflow-plan": "anthropic/x" }), ["workflow-plan"])
+  assert.deepEqual(config, { agent: { "workflow-plan": { model: "anthropic/x" } } })
+})
+
+test("applyAgentModels leaves an agent we do not name completely alone", () => {
+  const config = { agent: { "workflow-verify": { model: "user/choice" } } }
+  assert.deepEqual(applyAgentModels(config, { "workflow-plan": "ours/x" }), ["workflow-plan"])
+  assert.equal(config.agent["workflow-verify"].model, "user/choice")
+})
+
+test("naming an agent the user also configured overrides only its model, preserving the rest", () => {
+  // `agentModels` is the more specific instruction, so it wins — but a user's
+  // permission/tools settings for that agent are not ours to discard.
+  const config = { agent: { "workflow-plan": { model: "user/choice", temperature: 0.2, tools: { bash: false } } } }
+  applyAgentModels(config, { "workflow-plan": "ours/x" })
+  assert.deepEqual(config.agent["workflow-plan"], { model: "ours/x", temperature: 0.2, tools: { bash: false } })
+})
+
+test("an empty patch touches nothing at all — not even to create the agent map", () => {
+  const config: { agent?: Record<string, { model?: string } | undefined> } = {}
+  assert.deepEqual(applyAgentModels(config, {}), [])
+  assert.deepEqual(config, {}, "a default install must see a byte-identical config")
+})
+
+test("unrelated config keys survive applyAgentModels verbatim", () => {
+  const config = { model: "session/default", theme: "dark", agent: { other: { model: "keep/me" } } }
+  applyAgentModels(config, { "workflow-plan": "ours/x" })
+  assert.deepEqual(config, {
+    model: "session/default",
+    theme: "dark",
+    agent: { other: { model: "keep/me" }, "workflow-plan": { model: "ours/x" } },
+  })
 })

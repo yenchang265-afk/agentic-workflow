@@ -137,9 +137,9 @@ hand-edited afterward.
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
-Both plugins read the same file: the schema lives in the shared core package
-(`packages/core/src/config.ts`), and each host may extend it with fields only
-it can honor (today: OpenCode's `watchIntervalMinutes` — see
+All three plugins read the same file: the schema lives in the shared core
+package (`packages/core/src/config.ts`), and each host may extend it with
+fields only it can honor (today: OpenCode's `watchIntervalMinutes` — see
 [`plugins/claude/README.md`](../plugins/claude/README.md)).
 
 ## Workflow kinds (`workflows`)
@@ -266,11 +266,13 @@ it. The warnings are advisory: they annotate a save, never block it. See
   ```
 
   The value is a host-specific model string: OpenCode wants
-  `provider/modelID` (as above); Claude Code wants a Task-tool model
-  (`sonnet`, `opus`, `haiku`, or a bare model id — a `provider/` prefix is
-  tolerated and stripped, so one shared config works on both hosts).
-  Precedence per stage: this key → the manifest stage's `model` field →
-  unset (the host's default model). Stages not listed keep the host default.
+  `provider/modelID` (as above); Claude Code and Qwen Code both want a
+  Task-tool-style model (`sonnet`, `opus`, `haiku`, or a bare model id — a
+  `provider/` prefix is tolerated and stripped, so one shared config works on
+  all three hosts). Qwen resolves it at install time rather than spawn time —
+  see [`docs/qwen.md`](qwen.md#per-stage-models-are-static-here). Precedence
+  per stage: this key → the manifest stage's `model` field → unset (the
+  host's default model). Stages not listed keep the host default.
 
   Keys must be the kind's **stage names**, lowercase, as the manifest spells
   them (engineering: `plan`, `build`, `verify`, `review`; run
@@ -353,9 +355,39 @@ it. The warnings are advisory: they annotate a save, never block it. See
   carries a model for them.
 
   Top-level rather than per-kind: agent names are unique across kinds, and
-  `workflow-plan` belongs to no kind at all. The value takes the same
-  host-specific spelling as `stageModels` (a `provider/` prefix is stripped on
-  Claude Code), and an unset agent runs the host default.
+  `workflow-plan` belongs to no kind at all. An unset agent runs the host default.
+
+  **How each host binds it, and when a change takes effect.** Neither spawn is a
+  stage fire, so neither can be handed a model through the driver the way a stage
+  is. Each host binds it some other way — none of them by asking the model to
+  cooperate, which is what the setting used to do and why it looked unreliable:
+
+  | Host | Mechanism | A config change takes effect |
+  | --- | --- | --- |
+  | Claude Code | a `PreToolUse` hook rewrites the spawn call's `model` | on the next spawn |
+  | OpenCode | the plugin's `config` hook sets `agent.<name>.model` | on the next **opencode restart** |
+  | Qwen Code | `model:` baked into the installed agent file | on the next `./install.sh qwen` |
+
+  **The value's spelling is host-specific**, and Claude Code is the strict one:
+
+  - **OpenCode** takes real provider-qualified ids (`anthropic/claude-haiku-4-5`).
+  - **Qwen Code** takes bare ids — a `provider/` prefix is stripped for you.
+  - **Claude Code's spawn tool accepts only the aliases `sonnet`, `opus`,
+    `haiku`, `fable`.** A configured id naming one of those families is mapped
+    for you (`anthropic/claude-haiku-4-5` → `haiku`), but a value naming no known
+    family cannot bind: that spawn runs the host default and the server reports a
+    warning. It is deliberately left unbound rather than passed through — the
+    tool validates `model` and **errors the whole spawn** on a value it does not
+    accept, so passing an unmappable one would turn a cosmetic misconfig into a
+    failed run.
+
+  A typo'd *agent name* is likewise reported rather than silently ignored, since
+  with the binding enforced it is the main remaining way an entry does nothing.
+
+  **On OpenCode, precedence runs:** a stage fire's per-call model (`stageModels`,
+  passed by the driver) > `agent.<name>.model` from this setting > your own
+  `opencode.json` entry for an agent this setting does not name > the session
+  default. `stageModels` is therefore never affected by `agentModels` on any host.
 
   Deliberately **separate from `stageModels`**, not folded into
   `stageModels.plan`: drafting and the PLAN stage both run
@@ -638,7 +670,32 @@ Impact on the commands:
   axis-coverage enforcement** (`requiredAxes`): each pass is told to focus on
   its own lens, so demanding all five axes from it would reject every pass.
   Lens mode enforces coverage its own way — a lens that records no verdict
-  becomes an ERROR, not a silently missing opinion.
+  becomes an ERROR, not a silently missing opinion. If you want multi-pass
+  review *without* that downgrade, use `stageFanout` below.
+- **`workflows.<kind>.stageFanout`** — stage name → `"axis"` or `"none"`: run a
+  check stage once per entry in its `requiredAxes`, sequentially, each pass
+  told to review and report exactly one axis. The passes merge worst-wins.
+
+  ```jsonc
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
+  ```
+
+  It is the same ~N× cost as `reviewLenses` and the same threat-model benefit
+  (no single reviewer can wave a change through), but it **keeps** the coverage
+  guarantee lenses give up: each pass is enforced against its own axis, and the
+  stage cannot advance with an axis uncovered — a gap stops the loop with ERROR
+  rather than re-building on a review that never ran. Off by default; a stage
+  with neither knob set is byte-identical to today.
+
+  `"none"` turns a fan-out declared in the manifest (`fanout` on the stage) back
+  off. Config wins over the manifest, as with `stageModels` and `stageContext` —
+  and it is how you reach the built-in kinds at all, since their manifests ship
+  inside the `@agentic-workflow/core` package.
+
+  **`reviewLenses` wins over this** on the stage named `review`, so an existing
+  lens setup keeps behaving exactly as it did; both hosts warn when a configured
+  lens list is overriding a declared fan-out. A key naming no stage is accepted,
+  ignored, and warned about, exactly like `stageModels`.
 - Secrets echoed into audit notes, plans, or run logs are **shape-redacted**
   (`AKIA…`, `sk-…`, tokens, PEM blocks, `key/secret/token: …` assignments)
   before they are written and committed.

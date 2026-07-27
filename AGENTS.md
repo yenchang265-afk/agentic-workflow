@@ -5,7 +5,8 @@ Guidance for AI coding agents working in this repository.
 ## Repository Overview
 
 `agentic-workflow` is a multi-kind agentic-workflow framework (shared engine in
-`@agentic-workflow/core`, shipping OpenCode, Claude Code and Qwen Code plugins); this
+`@agentic-workflow/core`, shipping OpenCode, Claude Code and Qwen Code
+plugins — Qwen Code is experimental); this
 guide covers the OpenCode plugin — see `plugins/claude/README.md` for the
 Claude Code equivalent. It has two ways to work: an **automatic loop** that
 drives a backlog task through its whole lifecycle unattended, and **ad-hoc,
@@ -165,7 +166,7 @@ flowchart TD
 
     OpenCode["plugins/opencode<br/>OpenCode plugin (state machine + driver)"]
     Claude["plugins/claude<br/>Claude Code plugin (MCP server drives the state machine)"]
-    Qwen["plugins/qwen<br/>Qwen Code plugin (same MCP server, AGENTIC_WORKFLOW_HOST=qwen)"]
+    Qwen["plugins/qwen<br/>Qwen Code plugin — experimental<br/>(same MCP server, AGENTIC_WORKFLOW_HOST=qwen)"]
     Hub["packages/hub<br/>admin hub (beta) — monitor + visual creator, never drives a stage"]
 
     Core --> OpenCode
@@ -177,13 +178,13 @@ flowchart TD
 - `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-workflow/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
 - `packages/core/workflows/<kind>/` — declarative workflow-kind manifests (`workflow.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
-- `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship), an in-place task editor that reshapes a planless task and (from `queued/`) retasks it back to `draft/` with a comment, and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-workflow/core` entry points the hosts call, a Config tab that edits `.agentic-workflow.json` one layer at a time, a Metrics tab rolling loop health up across runs (iteration burn, first-pass yield, verdict flips, cache hit — the pass, not the file, is its unit of analysis), and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
+- `packages/hub/` — the admin hub (beta): a localhost web app (`npm run hub -- --dir <repo>`) with a loop monitor (backlog board, live gate notifications, run history, token usage) and a visual loop creator; the monitor also carries the human gate moves (approve/replan/ship), an in-place task editor that reshapes a planless task and (from `queued/`) retasks it back to `draft/` with a comment, a plan-review view that renders a planned task's body and plan as Markdown and turns a replan reason into per-line comments anchored to the block they object to, and the backlog doctor (rescue strays, release stale claims) through the same `@agentic-workflow/core` entry points the hosts call, a Config tab that edits `.agentic-workflow.json` one layer at a time, a Metrics tab rolling loop health up across runs (iteration burn, first-pass yield, verdict flips, cache hit — the pass, not the file, is its unit of analysis), and a per-stage prompt preview in the creator — but it never claims work or drives a stage itself. See `packages/hub/README.md`
 - `plugins/opencode/agents/` — the agent personas backing each loop stage (engineering `workflow-*`, pr-sitter's `workflow-pr-triage`/`workflow-pr-fix`/`workflow-pr-publish`, review-sitter's `workflow-review-fetch`/`workflow-review-assess`/`workflow-review-publish`, dep-sitter's `workflow-dep-scan`/`workflow-dep-upgrade`/`workflow-dep-publish`, and main-sitter's `workflow-main-diagnose`/`workflow-main-remedy`/`workflow-main-publish`, with the shared `workflow-verify` reused as the VERIFY stage across several kinds)
 - `plugins/opencode/commands/` — the slash commands (`/agentic-workflow:engineering`, `/agentic-workflow:pr-sitter`, `/agentic-workflow:review-sitter`, `/agentic-workflow:dep-sitter`, `/agentic-workflow:main-sitter`, `/plan`, `/plan-task`, `/build`, `/verify`, `/review`, the pr-sitter stage commands `/pr-triage`, `/pr-fix`, `/pr-publish`, and the new-kind stage commands `/review-fetch`, `/review-assess`, `/review-publish`, `/dep-scan`, `/dep-upgrade`, `/dep-publish`, `/main-diagnose`, `/main-remedy`, `/main-publish`)
 - `.opencode/skills` — symlink to `skills/`, the skill library the stage agents invoke
 - `skills/` — skill workflows (`SKILL.md` per directory) invoked by name via the `skill` tool
 - `prompts/verbs/engineering.md` — the per-verb procedures of `/agentic-workflow:engineering`, each inside an `<!-- aw:verb <names> -->` block; **generated** into `plugins/claude/verbs/` and `plugins/qwen/verbs/` (see "Per-verb command slicing" below)
-- `plugins/qwen/` — the Qwen Code host: generated `agents/`, `verbs/`, `skills/` and `hooks/`, plus hand-authored `commands/`. Reuses the Claude plugin's MCP server and hook sources; see `docs/qwen.md`
+- `plugins/qwen/` — the Qwen Code host (**experimental** — interface and behavior may still change): generated `agents/`, `verbs/`, `skills/` and `hooks/`, plus hand-authored `commands/`. Reuses the Claude plugin's MCP server and hook sources; see `docs/qwen.md`
 - `references/` — supplementary checklists (`testing-patterns.md`, `security-checklist.md`, etc.) that skills pull in when needed
 
 ### Per-verb command slicing
@@ -216,6 +217,30 @@ body (OpenCode) or to no instructions at all (Claude). Markers must own their
 whole line — that is what stops a marker pasted into `$ARGUMENTS` from
 truncating the prompt — and HTML comments do not nest, so never write a literal
 marker inside a comment.
+
+### Model selection is a mechanism, never prose
+
+Never express `stageModels` / `agentModels` as an instruction for a model to
+follow ("spawn it with `model` set to …"). It was written that way once, and the
+setting was quietly ignored: every stage ran the host default while the config
+said otherwise, and nothing failed. Each host now BINDS it — Claude Code rewrites
+the spawn call's `model` from a `PreToolUse` hook
+(`plugins/claude/hooks/src/stamp-spawn-model.entry.mjs`), OpenCode sets
+`agent.<name>.model` from its `config` hook, Qwen bakes `model:` into the
+installed agent file. Prompt text may **state** which model was bound (that is
+the only way a hook regression shows up in a transcript), but must never be the
+thing that carries it.
+
+Two traps behind that, both load-bearing:
+
+- **Claude Code's spawn tool takes an alias enum** (`sonnet|opus|haiku|fable`), and
+  a value outside it errors the whole spawn rather than falling back. Normalize
+  with `spawnAlias`, never `bareModel`, and leave an unmappable value unbound.
+- **A bundled hook cannot read the manifests** — `manifest/dir.ts` resolves from
+  `import.meta.url` and `build-hooks.mjs` inlines core, so that walk lands in the
+  hook's own directory. Anything manifest-derived must be resolved server-side and
+  parked on the stage marker, keyed by AGENT (a stage-keyed field goes stale the
+  moment `workflow_advance` fires the next stage without rewriting the marker).
 
 ## Maintaining these rules
 

@@ -32,8 +32,8 @@ permission:
     "gh api repos/*/pulls/*/comments*": allow
     "gh run view*": allow
     "gh run list*": allow
-    "curl -sS -u :* https://dev.azure.com/*": allow
-    "curl -sS -u :* https://*.visualstudio.com/*": allow
+    "curl *https://dev.azure.com/*": allow
+    "curl *https://*.visualstudio.com/*": allow
 ---
 
 You are the **workflow-pr-triage** subagent — the TRIAGE stage of the PR-sitter

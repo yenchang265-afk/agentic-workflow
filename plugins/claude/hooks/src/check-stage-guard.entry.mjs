@@ -43,8 +43,6 @@
  *
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
-import fs from "node:fs"
-import path from "node:path"
 import { classifyMutation } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
 import {
@@ -58,37 +56,12 @@ import {
   writePathOf,
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
-import { backlogRoot, readTasksDir, runsDir } from "./tasksdir.mjs"
+import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
+import { backlogRoot, readMarker, readTasksDir } from "./marker.mjs"
 
-const read = () =>
-  new Promise((resolve) => {
-    let s = ""
-    process.stdin.on("data", (c) => (s += c)).on("end", () => resolve(s))
-  })
-
-const allow = () => process.exit(0)
-const block = (reason) => {
-  process.stderr.write(reason + "\n")
-  process.exit(2)
-}
-
-/**
- * Let the call proceed with CORRECTED input. `updatedInput` replaces
- * `tool_input` before the tool executes, so the worktree pin can fix a missing
- * `cd <wt> && ` prefix or a main-tree file path instead of refusing and making
- * the agent guess again — the retry loop was the isolation's worst failure mode.
- *
- * Deliberately NO `permissionDecision`: this hook's job is to correct the input,
- * not to grant permission. Emitting `"allow"` would auto-approve every rewritten
- * command, so a command the user would normally be prompted about would run
- * unprompted purely because the pin touched it — strictly more privilege than
- * the block-only guard it replaces. Omitting the field leaves the normal
- * permission flow to rule on the corrected input.
- */
-const rewriteInput = (updatedInput) => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n")
-  process.exit(0)
-}
+// The PreToolUse envelope (allow / block / rewriteInput) lives in
+// ./pretooluse.mjs so this guard and the spawn-model stamp emit byte-identical
+// JSON — in particular, neither ever emits `permissionDecision`.
 
 // Check-stage allowlist matching (built-in fallback lists + the segment-splitting
 // `commandAllowed`) lives in ./allowlist.mjs so it is unit-testable and the
@@ -98,17 +71,11 @@ const rewriteInput = (updatedInput) => {
 // lives in ./dialect.mjs, so the pin, the stage deadline, and the backlog guard
 // all agree on one answer per host.
 
-// The backlog root and tasksDir are resolved by ./tasksdir.mjs, which mirrors
-// what the MCP SERVER does when it writes the marker — including the user-scope
-// config layer and AGENTIC_WORKFLOW_DIR. Reading only <cwd>/.agentic-workflow.json
-// made a live stage look like no stage at all wherever the two disagreed.
-const readMarker = (cwd, markerFile) => {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(runsDir(cwd), markerFile), "utf8"))
-  } catch {
-    return null
-  }
-}
+// Reading tasksDir + the stage marker lives in ./marker.mjs, shared with the
+// spawn-model stamp, the verdict guard and the reconciler — and it resolves the
+// backlog exactly as the MCP SERVER does when it WRITES the marker (env root,
+// repo layer over user layer). Reading only <cwd>/.agentic-workflow.json made a
+// live stage look like no stage at all wherever the two disagreed.
 
 const main = async () => {
   let input

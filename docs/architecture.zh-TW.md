@@ -21,7 +21,7 @@ flowchart TB
     subgraph hosts["HOSTS — thin adapters over one core"]
         oc["OpenCode plugin (plugins/opencode/src/)<br/>session.idle + /agentic-workflow:engineering watch timer"]
         cc["Claude Code MCP server<br/>(plugins/claude/mcp-server/)<br/>workflow_claim / workflow_start / workflow_advance"]
-        qw["Qwen Code<br/>(plugins/qwen/) — 同一個 MCP 伺服器，<br/>AGENTIC_WORKFLOW_HOST=qwen"]
+        qw["Qwen Code — 實驗性<br/>(plugins/qwen/) — 同一個 MCP 伺服器，<br/>AGENTIC_WORKFLOW_HOST=qwen"]
     end
 
     subgraph core["@agentic-workflow/core (packages/core)"]
@@ -59,7 +59,7 @@ flowchart TB
     engine -->|"fire stage / park / done / stop"| hosts
 ```
 
-- **核心套件**——`@agentic-workflow/core`（npm workspace）承載兩個外掛共用
+- **核心套件**——`@agentic-workflow/core`（npm workspace）承載每個 host 共用
   的一切：純粹的引擎與狀態、清單層、工作來源 + 排程器、任務儲存、git
   輔助工具 + worktree 隔離、快照、裁定處理、指標，以及設定（透過把可選
   的使用者層級 `~/.config/agentic-workflow/agentic-workflow.json`（遵循
@@ -149,7 +149,7 @@ tick 都會刷新的心跳 JSON；第二個 watch 模式行程——不論哪種
 
 ## 兩個由 MCP 驅動的版本（`plugins/claude/`、`plugins/qwen/`）
 
-相同的工作流程類型和生命週期，不同的驅動方式：Claude Code 和 Qwen Code
+Qwen Code 宿主是**實驗性**的——其介面與行為仍可能變動。相同的工作流程類型和生命週期，不同的驅動方式：Claude Code 和 Qwen Code
 都沒有背景的 `session.idle` 驅動程式，所以主 agent 是透過一個內建的 MCP
 伺服器（`mcp__agentic-workflow__workflow_*` 工具）而不是 agent frontmatter
 權限來驅動迴圈，而且人工把關點是**互動式**的——一次 park 或 done 會回傳

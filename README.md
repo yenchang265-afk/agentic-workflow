@@ -6,10 +6,11 @@ Runs long-lived goals as supervised state machines instead of a chat
 back-and-forth. The repo is a **multi-kind workflow framework**: each workflow kind is
 a declarative manifest in [`packages/core/workflows/<kind>/`](packages/core/workflows/README.md) — stages,
 transitions, and a work source — interpreted by a shared engine and fed by a
-common scheduler. Ships as two parallel plugins — one for **OpenCode**, one
-for **Claude Code** ([`plugins/claude/`](plugins/claude/README.md)) — both built
-on one core package ([`packages/core`](packages/core)) and sharing the human
-gates, git isolation, trusted verdicts, and audit trail.
+common scheduler. Ships as three parallel plugins — **OpenCode**, **Claude
+Code** ([`plugins/claude/`](plugins/claude/README.md)), and **Qwen Code**
+([`plugins/qwen/`](plugins/qwen/README.md), reusing the Claude MCP server) —
+all built on one core package ([`packages/core`](packages/core)) and sharing
+the human gates, git isolation, trusted verdicts, and audit trail.
 
 Five workflow kinds ship today. **engineering** (default-on) drives a goal through
 PLAN → BUILD → VERIFY → REVIEW over the `docs/tasks/` backlog, with human task
@@ -95,7 +96,7 @@ config keys: [docs/sitters.md](docs/sitters.md); security posture:
 
 ## Install
 
-The steps below assume the system prerequisites are already present (Node ≥ 22.13,
+The steps below assume the system prerequisites are already present (Node ≥ 20,
 git, `gh`, `curl`, and — for browser work — Chrome). Azure DevOps needs only
 `curl` plus a PAT in `AZURE_DEVOPS_EXT_PAT`. For a fresh machine, `./bootstrap.sh`
 verifies/installs those, registers the `chrome-devtools` MCP server, and then
@@ -126,7 +127,8 @@ npm install             # npm workspaces — also builds @agentic-workflow/core 
 - `./install.sh qwen` builds the same MCP server, installs agents/commands/
   skills/references into `~/.qwen/` (or `$QWEN_CONFIG_DIR`), and merges the
   hooks + MCP entry into `settings.json` — details in
-  [docs/qwen.md](docs/qwen.md).
+  [docs/qwen.md](docs/qwen.md). **Experimental**: this host's interface and
+  behavior may still change.
 - After installing, an interactive terminal gets a short **config wizard** that
   seeds `.agentic-workflow.json` — see [docs/configuration.md](docs/configuration.md).
 
@@ -220,7 +222,7 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   commands, known limitations
 - [docs/configuration.md](docs/configuration.md) — `.agentic-workflow.json`
   reference (user-scope + repo-scope layering), per-kind `workflows` sections, and
-  optional hardening (worktrees, review lenses, redaction)
+  optional hardening (worktrees, per-axis review fan-out, review lenses, redaction)
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) — starter
   `AGENTS.md`/`CLAUDE.md` (loop workflow + skill mapping) to copy into
   projects driven by agentic-workflow
@@ -244,7 +246,7 @@ and link to it; don't copy.
 
 - `packages/core/` — `@agentic-workflow/core`: the pure workflow engine, manifest
   layer, work sources + scheduler, task store, git isolation, snapshots,
-  verdicts, metrics, config — everything both plugins share
+  verdicts, metrics, config — everything all three plugins share
 - `packages/core/workflows/` — the declarative workflow kinds, one dir per kind (`engineering/`,
   `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`): a
   `workflow.json` manifest + `stages/*.md` prompt templates per kind
@@ -259,10 +261,10 @@ and link to it; don't copy.
   bundled MCP server that drives the loop (its host shims live in
   `mcp-server/src/shim.ts`)
 - `skills/`, `references/` — the workflow library the stage agents and ad-hoc
-  requests pull from (shared by both plugins)
+  requests pull from (shared by all three plugins)
 - `docs/tasks/` — the filesystem task backlog the `/agentic-workflow:engineering` verbs
   read from
-- `install.sh` — installs either or both plugins
+- `install.sh` — installs any of the three plugins (or all of them)
 
 ## Develop
 

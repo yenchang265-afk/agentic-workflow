@@ -30,69 +30,17 @@
  * generated-output diff check, for ~40 lines.
  */
 import fs from "node:fs"
-import os from "node:os"
 import path from "node:path"
-import { dialectFor, hostFor } from "./src/dialect.mjs"
 
 /** `<!-- aw:verb new -->` / `<!-- aw:verb stop|abort -->`, opening or closing, whole line only. */
 const MARKER = /^<!--\s*(\/?)aw:verb\s+([a-z][a-z0-9|-]*)\s*-->$/
 
-/**
- * The agent a verb spawns OUTSIDE the loop, and only those.
- *
- * `new` step 4 and `retask` step 4 spawn `workflow-plan-author` to write draft
- * files before any loop exists — no stage, no StageDef, so `modelFor` has nothing
- * to resolve and no fire payload carries a model for them. `plan` is deliberately
- * absent: its spawn IS the PLAN stage, and `workflows.engineering.stageModels.plan`
- * already governs it through the MCP response.
- */
-const VERB_DRAFT_AGENT = { new: "workflow-plan-author", retask: "workflow-plan-author" }
-
-/**
- * The user-scope config path, mirroring core's `resolveUserConfigPath`. Duplicated
- * rather than imported for the same reason the slicer is: this hook is
- * hand-authored and runs from a plugin dir with no build step, so it cannot reach
- * the TypeScript core or its zod schema.
- */
-const userConfigPath = () => {
-  const env = process.env.AGENTIC_WORKFLOW_USER_CONFIG
-  if (env !== undefined) return env === "" ? null : env
-  const home = os.homedir()
-  if (!home) return null
-  const xdg = process.env.XDG_CONFIG_HOME?.trim() ? process.env.XDG_CONFIG_HOME : path.join(home, ".config")
-  const primary = path.join(xdg, "agentic-workflow", "agentic-workflow.json")
-  if (fs.existsSync(primary)) return primary
-  const legacy = path.join(home, ".agentic-workflow.json")
-  return fs.existsSync(legacy) ? legacy : primary
-}
-
-/** A config layer's parsed object, or null — an unreadable or malformed file is "no config", never an error. */
-const layer = (file) => {
-  if (!file) return null
-  try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8"))
-    return parsed && typeof parsed === "object" ? parsed : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * `agentModels.<agent>` with the repo layer winning over the user layer — the
- * per-key merge core's `mergeConfigLayers` performs, which for a flat map is just
- * this. Only a non-empty string counts; anything else is treated as unset so a
- * malformed value degrades to the host default rather than into a prompt.
- */
-export const agentModelFor = (cwd, agent) => {
-  const pick = (cfg) => {
-    const value = cfg?.agentModels?.[agent]
-    return typeof value === "string" && value.trim() ? value.trim() : null
-  }
-  const model = pick(layer(path.join(cwd, ".agentic-workflow.json"))) ?? pick(layer(userConfigPath()))
-  // The spawn tool takes bare model ids; strip a `provider/` prefix the way core's
-  // `bareModel` does, so one config written OpenCode-style works on both hosts.
-  return model?.includes("/") ? model.slice(model.lastIndexOf("/") + 1) : model
-}
+// `agentModels` used to be injected from here as a sentence asking the model to
+// set the spawn tool's `model`. It is now bound by the PreToolUse stamp
+// (hooks/src/stamp-spawn-model.entry.mjs), which rewrites the spawn call itself
+// — so this module no longer reads config at all, and the drafting verbs need
+// no model prose. Deleted rather than kept as belt-and-braces: prose the model
+// may ignore is exactly what made the setting look broken.
 
 /**
  * A verb name, or null when there isn't one.
@@ -208,13 +156,8 @@ export const sliceForVerb = (body, verb) => {
  * has to know which of the two carries the procedure. A missing or unreadable
  * verb file is not an error — it means the plugin is partially installed, and
  * behaving exactly as before this module existed is the safe outcome.
- *
- * `cwd` is the session's directory, used only to resolve `agentModels` for the
- * verbs that spawn outside the loop. Omit it and that line is simply absent —
- * which is also what happens when nothing is configured, so the default install
- * pays no tokens for a knob it does not use.
  */
-export const verbContext = (pluginRoot, verb, cwd) => {
+export const verbContext = (pluginRoot, verb) => {
   const wanted = normalize(verb)
   if (!wanted) return null
   let body
@@ -232,16 +175,6 @@ export const verbContext = (pluginRoot, verb, cwd) => {
   // hooks were working perfectly.
   const slice = sliceForVerb(body, wanted) ?? sliceForVerb(body, "unknown")
   if (!slice) return null
-  const draftAgent = VERB_DRAFT_AGENT[wanted]
-  const d = dialectFor(hostFor())
-  // A host whose spawn tool takes no model gets no model line at all: its
-  // `agentModels` value is baked into the installed agent file instead, and
-  // naming a parameter that does not exist would only invite improvisation.
-  const model = d?.conveysSpawnModel && draftAgent && cwd ? agentModelFor(cwd, draftAgent) : null
-  const modelLine =
-    `Spawn \`${draftAgent}\` with the ${d?.spawnTool ?? "Task tool"}'s \`model\` set to \`${model}\` ` +
-    "(config `agentModels`). This covers the drafting spawn only — a PLAN stage " +
-    "spawn still takes the `model` field off the MCP response."
   return [
     `VERB INSTRUCTIONS — /agentic-workflow:engineering ${wanted}`,
     "",
@@ -250,18 +183,5 @@ export const verbContext = (pluginRoot, verb, cwd) => {
     "not act on any other verb's description.",
     "",
     slice,
-    ...(model ? ["", modelLine] : []),
   ].join("\n")
-}
-
-/**
- * The injectable line for a spawn that has no MCP response to carry a model —
- * today only the ad-hoc `/agentic-workflow:plan`, which runs `workflow-plan`
- * outside any loop. `null` when nothing is configured, so the default install
- * pays nothing.
- */
-export const adhocAgentContext = (cwd, agent) => {
-  const d = dialectFor(hostFor())
-  const model = d?.conveysSpawnModel && cwd ? agentModelFor(cwd, agent) : null
-  return model ? `Spawn \`${agent}\` with the ${d.spawnTool}'s \`model\` set to \`${model}\` (config \`agentModels\`).` : null
 }

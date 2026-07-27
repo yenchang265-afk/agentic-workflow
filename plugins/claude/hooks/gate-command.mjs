@@ -33,10 +33,10 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { gateArgsFor, isAdhocPlan, verbFor } from "./gate-parse.mjs"
+import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
 import { dialectFor, hostFor } from "./src/dialect.mjs"
-import { adhocAgentContext, verbContext } from "./verb-slice.mjs"
+import { verbContext } from "./verb-slice.mjs"
 
 const read = () =>
   new Promise((resolve) => {
@@ -92,13 +92,8 @@ const main = async () => {
   // model cannot just read it). Non-engineering prompts get nothing — this hook
   // has matcher "" and sees every prompt in the session.
   const injectVerb = () => {
-    const context = verbContext(pluginRoot, verbFor(prompt), cwd)
-    if (context) return augment(context)
-    // The ad-hoc plan command is not an engineering verb, so it has no block to
-    // inject — but its `workflow-plan` spawn has no MCP response to carry a
-    // model either, which makes `agentModels` the only way to reach it.
-    const adhoc = isAdhocPlan(prompt) ? adhocAgentContext(cwd, "workflow-plan") : null
-    return adhoc ? augment(adhoc) : passThrough()
+    const context = verbContext(pluginRoot, verbFor(prompt))
+    return context ? augment(context) : passThrough()
   }
 
   const dispatch = gateArgsFor(prompt)

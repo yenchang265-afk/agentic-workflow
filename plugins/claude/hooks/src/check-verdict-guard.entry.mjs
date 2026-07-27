@@ -17,7 +17,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { dialectFor, hostFor } from "./dialect.mjs"
-import { runsDir } from "./tasksdir.mjs"
+import { runsDir } from "./marker.mjs"
 import { decideVerdictGuard, nagMessage } from "./verdict-guard.mjs"
 
 const read = () =>
@@ -40,7 +40,7 @@ const main = async () => {
     return allow()
   }
   const cwd = input.cwd || process.cwd()
-  // Same resolution the MCP server uses to WRITE the marker — see tasksdir.mjs.
+  // Same resolution the MCP server uses to WRITE the marker — see marker.mjs.
   const runs = runsDir(cwd)
   // An unknown host cannot be nagged usefully — there is no marker path to read.
   // Unlike the PreToolUse guard, failing open here only skips a reminder.

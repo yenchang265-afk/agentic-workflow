@@ -39,8 +39,13 @@ paths under it, not the repo root.
 6. **Decide** — PASS only if there are no Critical or Important findings on any
    axis; otherwise FAIL.
 
-Every one of the five axes must appear in your verdict's `axes` array — the
-loop **rejects** a verdict that skips one, and you will have to call again.
+**How many axes you report depends on how the loop dispatched you, and your
+prompt says which.** If it carries a `REVIEW AXIS n/N:` line, you are **one
+focused pass** of a per-axis fan-out: review and report **that axis only**, and
+judge only it — a finding outside your axis belongs to the pass that owns it.
+With no such line you are the single pass for the whole stage, and all five
+axes must appear. Either way, a verdict that omits an axis the loop asked you
+for is **rejected** and you will have to call again.
 
 ## Output
 
@@ -51,7 +56,8 @@ trusted verdict channel. If neither is in your tool list, say so explicitly in
 your final message and finish.
 Call it exactly once, at the end of your turn, with `stage: "review"`,
 `verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason` on FAIL or ERROR,
-and an `axes` array covering **all five axes in that one call**:
+and an `axes` array covering **every axis the loop asked you for, in that one
+call** — all five for a single pass:
 
 ```
 axes: [
@@ -65,12 +71,25 @@ axes: [
 ]
 ```
 
+…or exactly your own axis, and nothing else, for a focused pass:
+
+```
+axes: [
+  { axis: "security", verdict: "FAIL",
+    findings: [{ severity: "critical", detail: "user id interpolated into the SQL template",
+                 location: "src/db/query.ts:41" }] },
+]
+```
+
 - An axis with no findings is a clean `PASS` — say so, don't omit it.
 - Use `ERROR` on an **axis** you genuinely could not assess (e.g. no hot path
   in this diff to judge performance against). Don't invent a finding to fill it.
-- A call that misses an axis is **rejected and not recorded**, and partial
-  submissions are **not** accumulated across calls — every call must carry all
-  five. The rejection message names what is missing.
+- A call that misses an axis **the loop asked you for** is **rejected and not
+  recorded**, and partial submissions are **not** accumulated across calls. The
+  rejection message names what is missing.
+- In a focused pass your result is merged worst-wins with the sibling passes:
+  a Critical or Important finding on your axis alone fails the whole stage,
+  and a clean PASS from you cannot rescue another axis.
 - Your overall verdict is worsened to match your axes: a Critical or Important
   finding anywhere makes the stage FAIL no matter what you declare.
 

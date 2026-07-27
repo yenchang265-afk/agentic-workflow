@@ -1,11 +1,9 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
-import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { isAdhocPlan } from "./gate-parse.mjs"
-import { adhocAgentContext, agentModelFor, sliceForVerb, unmarkedLines, verbContext, verbsIn } from "./verb-slice.mjs"
+import { sliceForVerb, unmarkedLines, verbContext, verbsIn } from "./verb-slice.mjs"
 
 /**
  * On this host the command body cannot be rewritten, so the split is physical:
@@ -190,78 +188,22 @@ test("the router tells the model what to do when no block arrives", () => {
 })
 
 test("the router is a fraction of the body it replaced", () => {
+  // This ceiling is the whole per-verb context budget on this host, and it is
+  // why the router earns its own size test while OpenCode's shared prose does
+  // not. A `UserPromptSubmit` hook can only prepend, never rewrite, so the
+  // router is sent for EVERY verb — including the ones the MCP server handles
+  // end to end, whose own block is two or three lines. OpenCode gets the mirror
+  // case for free: it overrides the rendered body in `command.execute.before`,
+  // so prose those verbs never read costs nothing there. Neither host can adopt
+  // the other's trade; keeping the router small is this host's only lever.
   assert.ok(router().split("\n").length < 90, `router is ${router().split("\n").length} lines`)
 })
 
-/**
- * `agentModels` — the model source for the two spawns that are NOT stage runs.
- * They have no StageDef and no MCP response, so a static prose sentence cannot
- * name their model; the hook interpolates it or says nothing at all.
- */
-
-const withConfig = (config, run) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-agentmodels-"))
-  const prevUserConfig = process.env.AGENTIC_WORKFLOW_USER_CONFIG
-  // Pin the user layer off, or a developer's real config leaks into the test.
-  process.env.AGENTIC_WORKFLOW_USER_CONFIG = ""
-  try {
-    if (config !== null) fs.writeFileSync(path.join(dir, ".agentic-workflow.json"), config)
-    return run(dir)
-  } finally {
-    if (prevUserConfig === undefined) delete process.env.AGENTIC_WORKFLOW_USER_CONFIG
-    else process.env.AGENTIC_WORKFLOW_USER_CONFIG = prevUserConfig
-    fs.rmSync(dir, { recursive: true, force: true })
-  }
-}
-
-test("agentModelFor reads the repo layer, strips a provider prefix, and ignores non-strings", () => {
-  withConfig(JSON.stringify({ agentModels: { "workflow-plan-author": "anthropic/claude-haiku-4-5" } }), (dir) => {
-    assert.equal(agentModelFor(dir, "workflow-plan-author"), "claude-haiku-4-5")
-    assert.equal(agentModelFor(dir, "workflow-plan"), null)
-  })
-  withConfig(JSON.stringify({ agentModels: { "workflow-plan": 42 } }), (dir) => {
-    assert.equal(agentModelFor(dir, "workflow-plan"), null, "a malformed value must degrade to the host default")
-  })
-})
-
-test("agentModelFor treats an absent or unparseable config as no config, never an error", () => {
-  withConfig(null, (dir) => assert.equal(agentModelFor(dir, "workflow-plan-author"), null))
-  withConfig("{ not json", (dir) => assert.equal(agentModelFor(dir, "workflow-plan-author"), null))
-})
-
-test("verbContext names the drafting model for the verbs that spawn outside the loop", () => {
-  const config = JSON.stringify({ agentModels: { "workflow-plan-author": "haiku" } })
-  withConfig(config, (dir) => {
-    for (const verb of ["new", "retask"]) {
-      const context = verbContext(ROOT, verb, dir)
-      assert.match(context, /Task tool's `model` set to `haiku`/, `${verb} must carry the configured drafting model`)
-      assert.match(context, /drafting spawn only/, "it must not read as retargeting the PLAN stage")
-    }
-    // `plan`'s spawn IS the PLAN stage — stageModels governs it through the MCP
-    // response, so injecting agentModels here would give two competing answers.
-    assert.doesNotMatch(verbContext(ROOT, "plan", dir), /agentModels/)
-  })
-})
-
-test("verbContext adds nothing when no drafting model is configured", () => {
-  withConfig(null, (dir) => {
-    assert.doesNotMatch(verbContext(ROOT, "new", dir), /agentModels/, "an unconfigured install pays no tokens for the knob")
-    assert.equal(verbContext(ROOT, "new", dir), verbContext(ROOT, "new"), "and omitting cwd is the same as unconfigured")
-  })
-})
-
-test("adhocAgentContext covers the ad-hoc plan spawn, which has no MCP response at all", () => {
-  withConfig(JSON.stringify({ agentModels: { "workflow-plan": "haiku" } }), (dir) => {
-    assert.match(adhocAgentContext(dir, "workflow-plan"), /`workflow-plan` with the Task tool's `model` set to `haiku`/)
-    assert.equal(adhocAgentContext(dir, "workflow-plan-author"), null)
-  })
-  withConfig(null, (dir) => assert.equal(adhocAgentContext(dir, "workflow-plan"), null))
-})
-
-test("isAdhocPlan matches the plan command without swallowing its siblings", () => {
-  assert.ok(isAdhocPlan("/agentic-workflow:plan add a cache"))
-  assert.ok(isAdhocPlan("/plan add a cache"))
-  assert.ok(!isAdhocPlan("/agentic-workflow:plan-task 42"), "the sibling command must not match")
-  assert.ok(!isAdhocPlan("/agentic-workflow:engineering plan 42"), "the engineering verb is not the ad-hoc command")
-  assert.ok(!isAdhocPlan("we should plan this out"), "prose must never match")
-})
+// `agentModels` prose used to live here: this hook interpolated a sentence
+// asking the model to set the spawn tool's `model`, and `isAdhocPlan` existed
+// only to find the one command that had no MCP response to carry one. Both are
+// gone — the PreToolUse stamp binds the model from `subagent_type` instead, so
+// there is no prompt to sniff and no sentence to inject. The behaviour those
+// cases guarded now lives in ../spawn-model-stamp.test.mjs, which asserts the
+// spawn CALL comes out carrying the configured model rather than asserting that
+// some prose asked for it.

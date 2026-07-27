@@ -81,8 +81,8 @@
           "gh pr view*"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
+          "curl *https://dev.azure.com/*",
+          "curl *https://*.visualstudio.com/*"
         ]
       }
     },
@@ -225,8 +225,8 @@
           "gh pr comment *"
         ],
         "ado": [
-          "curl -sS -u :* https://dev.azure.com/*",
-          "curl -sS -u :* https://*.visualstudio.com/*"
+          "curl *https://dev.azure.com/*",
+          "curl *https://*.visualstudio.com/*"
         ]
       }
     }

@@ -67,6 +67,7 @@ fails loud at host startup). A minimal two-stage kind:
       "prompt": "stages/check.md",
       "isolation": "worktree",
       "requiredAxes": ["correctness", "security"],  // optional; check stages only — workflow_verdict rejects a verdict missing any of them
+      "fanout": "axis",                 // optional; check stages with requiredAxes — run one focused pass per axis, merged worst-wins
       "context": { "work": 8000 },      // optional per-artifact character ceilings for THIS stage's prompt; config workflows.<kind>.stageContext.<name> replaces it, unset = unbounded
       "bashAllowlist": ["git diff*", "npm test*"]  // default-deny bash for this stage
     }
@@ -105,8 +106,25 @@ per-axis payload contract, and `workflow_verdict` **rejects** a verdict whose `a
 array misses any of them, so a multi-axis review cannot silently skip one. The
 recorded verdict is also worsened to match its axes — a declared PASS carrying a
 Critical or Important finding resolves as FAIL. `requiredAxes` on a `work` stage
-is a manifest error (there is no verdict to carry them), and OpenCode's
-`reviewLenses` mode suppresses the enforcement (see `docs/configuration.md`).
+is a manifest error (there is no verdict to carry them), and `reviewLenses` mode
+suppresses the enforcement (see `docs/configuration.md`).
+
+Such a stage may also declare `fanout: "axis"`: it then runs **one focused pass
+per required axis**, sequentially, each pass told to review and report exactly
+that axis, and the passes merge worst-wins. Per-pass admission narrows to the
+pass's own axis — otherwise every focused pass would be rejected for the axes it
+was told not to review — and the stage-wide requirement moves to the accumulated
+record, so a fan-out that never reported an axis stops the loop with ERROR rather
+than re-building on an incomplete review. That is the difference from
+`reviewLenses`, which buys its extra passes by giving the guarantee up.
+
+`fanout` is a manifest error on a `work` stage, on a stage with no
+`requiredAxes` (the axis list is the pass list), and over more than
+`FANOUT_MAX` (8) axes — each axis is a full subagent pass with its own stage
+timeout, so the list is a direct cost multiplier. Config
+`workflows.<kind>.stageFanout.<name>` overrides it (`"none"` turns it off), and
+that config key is how the built-in kinds are reached at all, since their
+manifests ship inside the core package.
 
 Any stage may declare `context`: per-artifact **character** ceilings on the prompt
 this stage composes, keyed by the producing stage's name. Unset ⇒ unbounded, which
@@ -168,7 +186,14 @@ the loop reaches Azure DevOps).
   (`_apis/git/pullrequests?searchCriteria.status=active`) with failing checks
   read from blocking branch policy evaluations — a repo without a build
   policy never fires `failing-checks`. Stage `platformAllowlist` entries
-  merge into `bashAllowlist` for the resolved platform.
+  merge into `bashAllowlist` for the resolved platform. An `ado` glob is
+  anchored on the **host** (`curl *https://dev.azure.com/*`), never on flag
+  order: the globs compile to `^…$` regexes, so an `-u :*` prefix rejected the
+  same call written with a quoted URL, with `-X POST` ahead of `-u`, or with
+  `-s` instead of `-sS` — every ADO run died on its first REST call. What a
+  call may *do* is enforced by the write backstop
+  (`isAdoWriteBackstopViolation`: GET, or POST to a thread or a new PR), not by
+  the glob.
 - **`dependency-scan`** — direct dependencies with a fixable advisory at or
   above `severityFloor`, optionally plus plainly outdated ones
   (`includeOutdated`, npm only). Three ecosystems behind one policy, chosen
@@ -246,20 +271,20 @@ backlog first, then the opted-in kinds in config order.
 1. `workflows/<kind>/workflow.json` + `stages/*.md` (this page + the zod schema are
    the contract; `npm test -w @agentic-workflow/core` exercises manifest
    validation).
-2. Stage **agents** for both plugins: author the source under
+2. Stage **agents** for all three plugins: author the source under
    `prompts/agents/workflow-<kind>-*/` (`body.md` + `opencode.yaml` — frontmatter
-   bash permissions mirror the manifest allowlists — + `claude.yaml`) and run
-   `npm run gen:prompts`; it renders into `plugins/opencode/agents/` and
-   `plugins/claude/agents/` (never edit those outputs — CI drift-checks them;
-   the PreToolUse guard enforces the manifest allowlist via the stage marker).
-   See [`prompts/README.md`](../../../prompts/README.md) for how the
-   generation pipeline works.
+   bash permissions mirror the manifest allowlists — + `claude.yaml` + `qwen.yaml`)
+   and run `npm run gen:prompts`; it renders into `plugins/opencode/agents/`,
+   `plugins/claude/agents/`, and `plugins/qwen/agents/` (never edit those outputs
+   — CI drift-checks them; the PreToolUse guard enforces the manifest allowlist
+   via the stage marker). See [`prompts/README.md`](../../../prompts/README.md)
+   for how the generation pipeline works.
 3. OpenCode **commands** for each stage `command` that doesn't already exist
    (`plugins/opencode/commands/<command>.md`, thin `agent:`-frontmatter
    wrappers).
 4. A **work source** if neither `backlog` nor `pull-request` fits
-   (`packages/core/src/source/`, implement `WorkSource`), wired into both
-   hosts' `sourcesFor`.
+   (`packages/core/src/source/`, implement `WorkSource`), wired into every
+   host's `sourcesFor`.
 5. Registry hooks, registered at host startup.
 6. **Tests**: an engine walk of the manifest (see the pr-sitter cases in
    `core/src/workflow/engine.test.ts`) and source tests with scripted shells

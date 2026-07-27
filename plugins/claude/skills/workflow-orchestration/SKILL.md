@@ -91,7 +91,7 @@ configured for that stage (manifest `model` or config
    stage `prompt` comes back either way.
 2. **Plan (queued tasks only).** `workflow_stage({stage:"plan"})`, then spawn the
    stage's subagent — the response's `agent` field (**`workflow-plan-author`** for
-   engineering) — via the Task tool with the prompt, passing the response's `model` when present.
+   engineering) — via the Task tool with the prompt (its `model` is already pinned from the response's `model` field when present).
    It runs in `task` mode, reads the code, and writes the `## Implementation Plan` onto the
    task file named by the prompt's `Task file:` line. When it returns, call
    `workflow_advance({stageOutput: <plan summary>})` — the server validates the
@@ -119,13 +119,13 @@ configured for that stage (manifest `model` or config
    the stage deadline, reconciles isolation, and appends the audited
    `BUILD started` note — then spawn the response's `agent` (**`workflow-build`**)
    via the Task tool with the prompt (it carries the `Worktree:` line when
-   isolated), passing the response's `model` when present. When it returns,
+   isolated) (its `model` is already pinned from the response's `model` field when present). When it returns,
    call `mcp__agentic-workflow__workflow_advance({stageOutput: <build summary>})` —
    the server appends `BUILD finished`, commits a checkpoint, and returns
    `{kind:"fire", stage:"verify", prompt}`.
 4. **Verify.** `workflow_stage({stage:"verify"})` (arms the read-only bash
    allowlist + deadline), spawn the response's `agent` (**`workflow-verify`**) with
-   the prompt, passing the response's `model` when present. The verify
+   the prompt (its `model` is already pinned from the response's `model` field when present). The verify
    subagent records its verdict by calling `workflow_verdict` itself — you do not.
    Then `workflow_advance({stageOutput: <verify summary>})`: PASS →
    `{fire, review}`; FAIL → `{fire, build}` (re-build, threading the failure)
@@ -134,10 +134,24 @@ configured for that stage (manifest `model` or config
    (**`workflow-review`**, which calls `workflow_verdict`) with the response's `model`
    when present, then `workflow_advance`. PASS → `{done}`. FAIL →
    `{fire, build}` if budget remains, else `{stop}`.
-   - **Multi-lens review** (`reviewLenses` configured): spawn `workflow-review`
-     once per lens (same `agent`/`model` fields as a single pass), each focused
-     on that lens; each pass calls `workflow_verdict`.
-     The MCP server combines them worst-wins. Then a single `workflow_advance`.
+   - **Focused passes.** When the fire action (or a `workflow_stage` response)
+     carries a `passes` array, REVIEW runs as **one subagent pass per entry,
+     sequentially** — a per-axis fan-out (`stageFanout`/`fanout: "axis"`) or the
+     configured `reviewLenses`. For each entry, in order:
+     `workflow_stage({stage:"review", focus:"<entry>"})` — it arms a fresh
+     deadline for that pass and returns **that pass's** `prompt`, which you hand
+     to the subagent instead of the fire payload's — then spawn the response's
+     `agent` (**`workflow-review`**) with the response's `model` when present.
+     Each pass calls `workflow_verdict` itself, with its own axis; you never
+     call it on its behalf. Run them one at a time: the server arms one pass at
+     a time. When every entry has run, call `workflow_advance` **once** — the
+     server merges the passes worst-wins.
+     `workflow_stage({stage:"review"})` with **no** `focus` is rejected on such
+     a stage; that is what stops a fan-out from silently collapsing into one
+     pass. If an axis never reported, the server re-fires just the missing ones
+     once (its note says "axis retry", no iteration consumed) and then stops
+     with **ERROR** — never a FAIL, never a rebuild on a review that did not
+     happen. No `passes` array → a single unfocused pass, exactly as before.
 6. **Terminate.** On `{done}` the server has moved the task to `in-review/`,
    kept the worktree (it is released only when the task ships, so a `replan`
    bounce resumes in it), and written the `## Run summary` — and returned a
