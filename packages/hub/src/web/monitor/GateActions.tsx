@@ -1,9 +1,12 @@
 import { useState } from "react"
 import type { GateAction, GateResult, TaskCard, TaskStatus } from "../../shared/api.js"
 import { postAction } from "../api.js"
+import { useFeedback } from "../feedback.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
+import { StatusMessage } from "../ui/StatusMessage.js"
+import { gateTone } from "../ui/tone.js"
 
 /**
  * The gate buttons on a task card. Each performs a human gate move through
@@ -120,32 +123,55 @@ const GateButton = ({
   claimed: boolean
 }) => {
   const { repoId } = useRepo()
+  const { report } = useFeedback()
   const [reason, setReason] = useState("")
   const [result, setResult] = useState<GateResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const context = `${move.action} · ${task.shortId}`
+
   const run = async (): Promise<void> => {
     try {
-      setResult(
-        await postAction<GateResult>(repoPath(`/api/gate/${move.action}`, repoId), {
-          id: task.id,
-          expectStatus: status,
-          kind,
-          ...(move.withReason && reason.trim() ? { reason: reason.trim() } : {}),
-        }),
-      )
+      const res = await postAction<GateResult>(repoPath(`/api/gate/${move.action}`, repoId), {
+        id: task.id,
+        expectStatus: status,
+        kind,
+        ...(move.withReason && reason.trim() ? { reason: reason.trim() } : {}),
+      })
+      setResult(res)
       setError(null)
+      // A successful move relocates the task, so this card is about to unmount
+      // and take its own confirmation with it. The toast and the log outlive it
+      // — that is the only place a landed move is ever acknowledged.
+      report({ tone: gateTone(res), message: res.message, context, repo: repoId })
     } catch (e) {
+      const message = (e as Error).message
       setResult(null)
-      setError((e as Error).message)
+      setError(message)
+      report({ tone: "error", message, context, repo: repoId })
     }
   }
 
   // A claimed task is being driven right now; core refuses the move anyway, but
   // saying so up front beats a confirm dialog that leads to a refusal.
+  //
+  // `aria-disabled` rather than `disabled`: a disabled button is not focusable,
+  // so the reason — which used to live only in a `title` — was unreachable by
+  // keyboard, screen reader and touch alike. It stays focusable, announces
+  // itself as unavailable, and says why in text.
   if (claimed) {
     return (
-      <Button disabled title="A loop is driving this task — stop it, or wait for it to park.">
+      <Button
+        aria-disabled
+        onClick={() =>
+          report({
+            tone: "info",
+            message: "A loop is driving this task — stop it, or wait for it to park at a gate.",
+            context,
+            repo: repoId,
+          })
+        }
+      >
         {move.label}
       </Button>
     )
@@ -168,13 +194,21 @@ const GateButton = ({
           </label>
         )}
       </Confirm>
-      {/* A refusal is data, not an error: core explains why, and the board is unchanged. */}
-      {result && !result.ok && <p className={`gate-msg gate-msg--${result.variant ?? "warning"}`}>{result.message}</p>}
-      {/* A success may still carry a variant — a ship whose PR did not open is
-          `ok` with `variant: "warning"`. Hardcoding the ok tone here would render
-          that caveat in the same green as a clean ship. */}
-      {result?.ok && <p className={`gate-msg gate-msg--${result.variant ?? "ok"}`}>{result.message}</p>}
-      {error && <p className="gate-msg gate-msg--warning">{error}</p>}
+      {/* In place as well as in the toast: a refusal is data, not an error —
+          core explains why and the board is unchanged, so the explanation
+          belongs next to the button that earned it. Dismissable, because
+          nothing else clears it: this card does not unmount on a refusal, and
+          the message used to sit there for the rest of the session. */}
+      {result && (
+        <StatusMessage tone={gateTone(result)} onDismiss={() => setResult(null)}>
+          {result.message}
+        </StatusMessage>
+      )}
+      {error && (
+        <StatusMessage tone="error" onRetry={run} onDismiss={() => setError(null)}>
+          {error}
+        </StatusMessage>
+      )}
     </>
   )
 }

@@ -1,9 +1,11 @@
 import { StrictMode, useEffect, useState } from "react"
 import { createRoot } from "react-dom/client"
 import type { MonitorKindsResponse } from "../shared/api.js"
+import { ActivityLog } from "./ActivityLog.js"
 import { ConfigEditor } from "./config/ConfigEditor.js"
 import { Creator } from "./creator/Creator.js"
 import { EventsProvider, useEvents } from "./events.js"
+import { FeedbackProvider } from "./feedback.js"
 import { MetricsTab } from "./metrics/MetricsTab.js"
 import { ActivePanel } from "./monitor/ActivePanel.js"
 import { Board } from "./monitor/Board.js"
@@ -36,6 +38,7 @@ const HeaderStatus = () => {
         aria-live="polite"
         aria-label={connected ? "live updates on" : "reconnecting"}
       />
+      <ActivityLog />
       {notifications !== "unsupported" && notifications !== "granted" && (
         <Button
           variant="ghost"
@@ -170,10 +173,12 @@ const root = document.getElementById("root")
 if (root)
   createRoot(root).render(
     <StrictMode>
-      <EventsProvider>
-        <RepoProvider>
-          <App />
-        </RepoProvider>
-      </EventsProvider>
+      <FeedbackProvider>
+        <EventsProvider>
+          <RepoProvider>
+            <App />
+          </RepoProvider>
+        </EventsProvider>
+      </FeedbackProvider>
     </StrictMode>,
   )
