@@ -37,3 +37,23 @@ export const formatChars = (chars: number): string => {
   const n = Math.round(chars)
   return n < 1_000 ? String(n) : `${(n / 1_000).toFixed(1)}k`
 }
+
+/** A token count, abbreviated the way `TokenPanel` renders them (1.2k / 3.4M). */
+export const formatTokens = (n: number): string =>
+  n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+
+/**
+ * "Ns ago" / "Nm ago" / "Nh Mm ago" for a timestamp, against a caller-supplied
+ * now (components tick it; tests pin it). An unparseable timestamp renders
+ * verbatim rather than as NaN.
+ */
+export const timeAgo = (iso: string, nowMs: number): string => {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return iso
+  const s = Math.max(0, Math.round((nowMs - t) / 1000))
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  return `${h}h ${m % 60}m ago`
+}

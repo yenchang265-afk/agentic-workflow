@@ -7,6 +7,9 @@ import { Chip } from "../ui/Chip.js"
 /** " · N failed attempts" suffix, or "" when none — shared across the ledger chips (here and ActivePanel). */
 export const failedSuffix = (n: number) => (n > 0 ? ` · ${n} failed attempt${n === 1 ? "" : "s"}` : "")
 
+/** " · updated <local time>" suffix, or "" when the ledger predates the stamp. */
+export const updatedSuffix = (at?: string) => (at ? ` · updated ${new Date(at).toLocaleString()}` : "")
+
 /**
  * Monitor view for a non-backlog kind (workSource "pull-request", "dependency-scan",
  * or "ci-runs"): there are no status folders to board, so it surfaces the kind's
@@ -33,6 +36,7 @@ export const PrKindPanel = ({ info }: { info: KindBoardInfo }) => {
             {l.pkg}
             {l.versionHandled ? ` → ${l.versionHandled}` : ""}
             {failedSuffix(l.failedAttempts)}
+            {updatedSuffix(l.updatedAt)}
           </Chip>
         ))
       : info.sourceType === "ci-runs"
@@ -41,12 +45,14 @@ export const PrKindPanel = ({ info }: { info: KindBoardInfo }) => {
               {l.sha.slice(0, 7)}
               {l.handled ? " · handled" : ""}
               {failedSuffix(l.failedAttempts)}
+              {updatedSuffix(l.updatedAt)}
             </Chip>
           ))
         : prLedgers.map((l) => (
             <Chip key={`${l.kind ?? ""}-${l.pr}`}>
               PR #{l.pr}
               {failedSuffix(l.failedAttempts)}
+              {updatedSuffix(l.updatedAt)}
             </Chip>
           ))
 

@@ -1,6 +1,6 @@
 import { formatDuration } from "@agentic-workflow/core/workflow/metrics"
 import type { CacheHit, IterationBurn, PromptSize, StageDuration, StageVerdicts, VerdictFlips } from "../../shared/api.js"
-import { barWidth, bucketLabel, formatChars, pct } from "./format.js"
+import { barWidth, bucketLabel, formatChars, formatTokens, pct } from "./format.js"
 
 /** The metrics tab's panels. Presentation only — every number is computed server-side. */
 
@@ -134,6 +134,14 @@ export const CacheTable = ({ cache }: { cache: CacheHit }) => {
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td className="muted" colSpan={4}>
+            overall {pct(cache.ratio)} · {formatTokens(cache.cacheRead)} cached of {formatTokens(cache.input + cache.cacheRead)} in ·{" "}
+            {cache.samples} sample(s)
+          </td>
+        </tr>
+      </tfoot>
     </table>
   )
 }
@@ -201,6 +209,13 @@ export const PromptSizeTable = ({ prompt }: { prompt: PromptSize }) => {
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td className="muted" colSpan={6}>
+            {prompt.samples} sample(s) across {prompt.stages.length} stage(s)
+          </td>
+        </tr>
+      </tfoot>
     </table>
   )
 }

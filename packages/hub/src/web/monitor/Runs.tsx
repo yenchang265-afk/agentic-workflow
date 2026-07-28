@@ -49,17 +49,35 @@ const RunDetail = ({ id }: { id: string }) => {
   return (
     <div className="run-detail">
       {detail.snapshot && (
-        <div className="summary-chips">
-          <Chip gate>
-            snapshot: parked at <strong>{detail.snapshot.stage}</strong> (iteration {detail.snapshot.iteration + 1})
-            {detail.snapshot.branch ? ` on ${detail.snapshot.branch}` : ""}
-          </Chip>
-          {detail.snapshot.artifactStages && detail.snapshot.artifactStages.length > 0 && (
-            <Chip>
-              a resume would carry: <strong>{detail.snapshot.artifactStages.join(", ")}</strong>
+        <>
+          <div className="summary-chips">
+            <Chip gate>
+              snapshot: parked at <strong>{detail.snapshot.stage}</strong> (iteration {detail.snapshot.iteration + 1})
+              {detail.snapshot.branch ? ` on ${detail.snapshot.branch}` : ""}
             </Chip>
-          )}
-        </div>
+            {detail.snapshot.kind && (
+              <Chip>
+                kind <strong>{detail.snapshot.kind}</strong>
+              </Chip>
+            )}
+            {detail.snapshot.taskId && (
+              <Chip>
+                task <strong>{detail.snapshot.taskId}</strong>
+              </Chip>
+            )}
+            {detail.snapshot.worktree && (
+              <Chip title="the isolated worktree a resume would re-enter">
+                worktree <span className="muted">{detail.snapshot.worktree}</span>
+              </Chip>
+            )}
+            {detail.snapshot.artifactStages && detail.snapshot.artifactStages.length > 0 && (
+              <Chip>
+                a resume would carry: <strong>{detail.snapshot.artifactStages.join(", ")}</strong>
+              </Chip>
+            )}
+          </div>
+          {detail.snapshot.goal && <div className="muted">{detail.snapshot.goal}</div>}
+        </>
       )}
       {detail.log.summaries.map((s, i) => (
         <div key={i} className="run-summary">
@@ -158,6 +176,11 @@ export const Runs = () => {
               r.outcome && <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
             )}
             {r.detail && <span className="muted">{r.detail}</span>}
+            {r.runs > 1 && (
+              <span className="muted" title="terminal summaries in this log — a plan pass, then a build pass">
+                {r.runs} passes
+              </span>
+            )}
             {r.at && <span className="muted">{new Date(r.at).toLocaleString()}</span>}
           </button>
         ))}

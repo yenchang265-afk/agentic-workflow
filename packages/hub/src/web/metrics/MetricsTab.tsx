@@ -5,6 +5,7 @@ import { Chip } from "../ui/Chip.js"
 import { useJson } from "../useJson.js"
 import { pct } from "./format.js"
 import { BurnHistogram, CacheTable, DurationTable, PromptSizeTable, VerdictTable } from "./panels.js"
+import { TokensSummaryPanel } from "./TokensSummaryPanel.js"
 
 /**
  * Cross-run loop health. The monitor answers "what is this run doing"; this
@@ -37,6 +38,11 @@ export const MetricsTab = () => {
         <Chip title="terminal summaries — one run log can hold a plan pass and a build pass">
           passes <strong>{data.passesTotal}</strong>
         </Chip>
+        {data.runsWithSummary < data.runsTotal && (
+          <Chip title="run logs that parsed to at least one terminal summary">
+            with summary <strong>{data.runsWithSummary}</strong>
+          </Chip>
+        )}
         {data.runsInProgress > 0 && (
           <Chip gate title="still accruing — absent from every pass-scoped metric below">
             in progress <strong>{data.runsInProgress}</strong>
@@ -47,9 +53,13 @@ export const MetricsTab = () => {
           title="passes that ended at their iteration cap rather than by passing review"
         >
           cap-trip <strong>{pct(burn.capTripRate)}</strong>
+          {burn.passesMeasured > 0 && <span className="muted"> {burn.cappedPasses}/{burn.passesMeasured}</span>}
         </Chip>
         <Chip title="passes where every check passed on the first iteration">
           first-pass yield <strong>{pct(firstPass.rate)}</strong>
+          {firstPass.passesMeasured > 0 && (
+            <span className="muted"> {firstPass.cleanPasses}/{firstPass.passesMeasured}</span>
+          )}
         </Chip>
         <Chip title="cacheRead / (input + cacheRead), token-weighted">
           cache hit <strong>{pct(cache.ratio)}</strong>
@@ -78,6 +88,9 @@ export const MetricsTab = () => {
 
       <h2 className="section-title">Prompt size</h2>
       <PromptSizeTable prompt={data.prompt} />
+
+      <h2 className="section-title">Token spend by run</h2>
+      <TokensSummaryPanel />
 
       {/*
         Coverage stated plainly rather than left implicit in the numbers above.
