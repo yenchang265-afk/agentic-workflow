@@ -225,6 +225,9 @@ What's on the task file tells you what happened:
   `in-progress → in-review` is the driver recording a review PASS. Neither is
   a second layer of file-moving bureaucracy — each records a decision that
   already happened.
+- A task sitting in `in-review/` is **resting, not stalled** — it is the human
+  diff gate. Review the branch and run `/agentic-workflow:engineering approve <id>`
+  when it ships; leave it alone until then.
 
 ## Common Rationalizations
 
@@ -242,8 +245,6 @@ What's on the task file tells you what happened:
   folder is the only source of truth.
 - A task sitting in `in-progress/` with an unmatched `> BUILD started` note
   that nobody has checked `git status` against yet.
-- A task sitting in `in-review/` — that's not a stall, it's the human diff
-  gate; review the branch and run `/agentic-workflow:engineering approve <id>` when it ships.
 - A task in `completed/` whose diff was never actually reviewed/PR'd by a
   human — only a human moves a task into `completed/`, so this means someone
   moved the file (or ran `/agentic-workflow:engineering approve`) without doing the review step first.
