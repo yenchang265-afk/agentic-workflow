@@ -98,6 +98,19 @@ export const StageDefSchema = z.object({
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
   /**
+   * Whether a PASS on this `check` stage must cite the work behind it. When set,
+   * `workflow_verdict` rejects a PASS with no `evidence` array, and — on a host
+   * that records its stage's tool calls — one whose citations match nothing the
+   * stage actually ran or read (`workflow/evidence.ts`).
+   *
+   * Opt-in per stage rather than implied by `kind: "check"`, because not every
+   * check is a *doing* check: a triage stage that classifies a PR from its
+   * fetched metadata legitimately runs no commands, and turning the gate on
+   * everywhere would deadlock it. Default `false` leaves every existing kind
+   * byte-identical.
+   */
+  requireEvidence: z.boolean().default(false),
+  /**
    * How this `check` stage's single pass expands into several focused passes.
    *
    * `"axis"` runs the stage once per entry in `requiredAxes`, SEQUENTIALLY, each
@@ -335,6 +348,10 @@ export const WorkflowManifestSchema = z
       if (stage.kind === "work" && stage.requiredAxes?.length) {
         // Only a verdict can carry axes, and only check stages record one.
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requiredAxes (no verdict to carry them)` })
+      }
+      if (stage.kind === "work" && stage.requireEvidence) {
+        // Only a verdict carries evidence, and only check stages record one.
+        ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requireEvidence (no verdict to carry it)` })
       }
       if (stage.fanout && stage.kind !== "check") {
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set fanout (there is no verdict to fan out)` })

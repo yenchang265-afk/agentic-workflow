@@ -54,9 +54,10 @@ import {
   type Verdict,
   type VerdictRecord,
 } from "@agentic-workflow/core/workflow/verdict"
+import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageMarkerPath, taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -354,6 +355,29 @@ const dialect = HOST_DIALECT[HOST]
 
 const stageMarkerPath = () => hostStageMarkerPath(directory, config.tasksDir, HOST)
 const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
+const stageEvidencePath = () => hostStageEvidencePath(directory, config.tasksDir, HOST)
+
+/**
+ * What the PreToolUse guard recorded this check stage doing — the only account
+ * of the stage's work the stage itself did not write (hooks/src/evidence.mjs).
+ *
+ * Null, never an empty observation set, when the ledger is missing, unreadable,
+ * or belongs to another stage: those all mean "this host did not observe", and
+ * `evidenceIssue` treats them as a reason to fall back to the declared-evidence
+ * rule. An empty set means "the stage did nothing", which rejects a PASS — so
+ * conflating the two would fail every stage on a repo whose hooks are not
+ * installed.
+ */
+const observedEvidence = (stage: string): ObservedEvidence | null => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(stageEvidencePath(), "utf8")) as Record<string, unknown>
+    if (raw.stage !== stage) return null
+    const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+    return { commands: list(raw.commands), reads: list(raw.reads) }
+  } catch {
+    return null
+  }
+}
 
 const agentRef = (name: string): string => dialect.agentRef(name)
 
@@ -601,6 +625,10 @@ const writeStageMarker = (stage: string | null): string | null => {
   try {
     fs.mkdirSync(dir, { recursive: true })
     fs.rmSync(verdictNagPath(), { force: true }) // the nag sentinel belongs to one stage attempt only
+    // Likewise the evidence ledger: a stage attempt may only be corroborated by
+    // its OWN work. Carrying a previous attempt's commands forward would let a
+    // re-fired check PASS on the work of the attempt that failed.
+    fs.rmSync(stageEvidencePath(), { force: true })
     driftNoted = false // likewise the drift note: one per stage attempt, not one per run
     if (stage === null) {
       stageDeadline = null
@@ -1072,9 +1100,21 @@ server.registerTool(
         .describe(
           "Per-axis results. REQUIRED on a stage that declares requiredAxes (engineering review: all five axes) — a call missing an axis is REJECTED, and partial submissions are not accumulated across calls.",
         ),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(["command", "file"]).describe('"command" — something you ran; "file" — a path (or "path:line") you read.'),
+            ref: z.string().min(1).describe("The command line as you issued it, or the path you read."),
+            result: z.string().max(300).optional().describe("What you observed (e.g. \"42 passed, 0 failed\"). Audit trail only."),
+          }),
+        )
+        .optional()
+        .describe(
+          "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. FAIL/ERROR need none.",
+        ),
     },
   },
-  async ({ stage, verdict, reason, criteria, axes }) => {
+  async ({ stage, verdict, reason, criteria, axes, evidence }) => {
     if (!active) return fail("No active loop — verdict ignored.")
     if (active.stage !== stage) {
       // The rejection alone reaches only the calling agent. Audit it on the task
@@ -1095,7 +1135,12 @@ server.registerTool(
       ...(reason ? { reason } : {}),
       ...(criteria ? { criteria: criteria as CriterionResult[] } : {}),
       ...(axes ? { axes: axes as AxisResult[] } : {}),
+      ...(evidence ? { evidence: evidence as EvidenceItem[] } : {}),
     }
+    // What the guard saw this attempt do, resolved per call rather than cached:
+    // the ledger grows while the stage works, so a verdict recorded late in the
+    // turn must read the ledger as it stands at that moment.
+    const evidenceCtx: EvidenceContext = { stage, required: def.requireEvidence, observed: observedEvidence(stage) }
     // The record can only be obtained from the `ok: true` branch, so a rejected
     // verdict CANNOT reach `stampVerdictRecorded` below — which would otherwise
     // mark the stage satisfied for the SubagentStop guard and burn its one-shot
@@ -1106,7 +1151,7 @@ server.registerTool(
     // also fixes a lens pass on this host being rejected for missing four axes
     // it was never asked for. The stage-wide requirement is enforced on the
     // accumulated record in workflow_advance instead.
-    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending)
+    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending, evidenceCtx)
     if (!admission.ok) {
       verdictRejected = true
       return fail(admission.message)
@@ -1377,8 +1422,10 @@ server.registerTool(
             stage,
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
-                "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
-                "COMPLETE axes array; partial submissions are not accumulated."
+                "it declared FAIL without naming a critical/important finding, or it declared PASS without citing " +
+                "evidence this session actually ran. Call workflow_verdict ONCE with the COMPLETE axes array (partial " +
+                "submissions are not accumulated) and, for a PASS, an `evidence` array naming the commands you ran and " +
+                "the files you read THIS pass — re-run them if you have not."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
           ),

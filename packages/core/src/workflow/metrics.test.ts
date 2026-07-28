@@ -91,6 +91,26 @@ test("verdictStructure returns {} for null and for a structureless record", asyn
   assert.deepEqual(verdictStructure({ verdict: "PASS", criteria: [], axes: [] }), {})
 })
 
+test("verdictStructure persists evidence and redacts a credential out of a cited command", async () => {
+  const { verdictStructure } = await import("./metrics.js")
+  // The sidecar is a committed file, and a citation is a real command line — the
+  // sitter kinds reach ADO as `curl -u :$PAT …`, so an unredacted `ref` would
+  // commit a resolved token.
+  const out = verdictStructure({
+    verdict: "PASS",
+    evidence: [
+      { kind: "command", ref: "curl -u :ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa https://dev.azure.com/o/x", result: "200" },
+      { kind: "file", ref: "src/limit.ts:88" },
+    ],
+  })
+  assert.equal(out.evidence?.length, 2)
+  assert.doesNotMatch(out.evidence?.[0]?.ref ?? "", /ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/)
+  assert.equal(out.evidence?.[1]?.ref, "src/limit.ts:88")
+  assert.equal(out.evidence?.[1]?.result, undefined, "an absent result stays absent")
+  // An evidence-less record must add no empty array.
+  assert.deepEqual(verdictStructure({ verdict: "PASS", evidence: [] }), {})
+})
+
 test("verdictStructure carries criteria as-is and redacts finding detail/location", async () => {
   const { verdictStructure } = await import("./metrics.js")
   const out = verdictStructure({

@@ -163,6 +163,21 @@ test("rejects requiredAxes on a work stage — only a verdict can carry axes", (
   assert.throws(() => parseManifest(raw), /work stage "work" cannot set requiredAxes/)
 })
 
+test("requireEvidence round-trips through a JSON save and defaults to false", () => {
+  const raw = { ...base, stages: [base.stages[0], { ...base.stages[1], requireEvidence: true }] }
+  const parsed = parseManifest(raw)
+  assert.equal(parsed.stages[1]?.requireEvidence, true)
+  assert.equal(parseManifest(base).stages[1]?.requireEvidence, false)
+  // The hub re-serializes the PARSED manifest on save (routes/kinds.ts), so a
+  // field the schema doesn't know is deleted from disk. Prove this one survives.
+  assert.equal(parseManifest(JSON.parse(JSON.stringify(parsed))).stages[1]?.requireEvidence, true)
+})
+
+test("rejects requireEvidence on a work stage — only a verdict can carry evidence", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], requireEvidence: true }, base.stages[1]] }
+  assert.throws(() => parseManifest(raw), /work stage "work" cannot set requireEvidence/)
+})
+
 test("a check stage's fanout round-trips through a JSON save and defaults to undefined", () => {
   const raw = {
     ...base,

@@ -188,7 +188,7 @@ export const composeStagePrompt = (
 ): string => {
   const rendered = renderPrompt(tpl, ctx)
   return def.kind === "check"
-    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, fanout)}`
+    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, fanout, def.requireEvidence)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}`
 }
 

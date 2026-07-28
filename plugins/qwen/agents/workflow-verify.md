@@ -47,6 +47,22 @@ plain text is ignored and counts as FAIL. Use `ERROR` **only** when the check
 itself could not run at all (missing test runner, broken environment) — failing
 tests are always `FAIL`, never `ERROR`.
 
+**A PASS must also carry `evidence`** — the commands you ran and the files you
+read, cited as you issued them:
+
+```
+evidence: [
+  { kind: "command", ref: "npm test",         result: "42 passed, 0 failed" },
+  { kind: "file",    ref: "src/limit.ts:88",  result: "returns 429 over the limit" },
+]
+```
+
+This session's real tool calls are recorded independently of you, so a PASS
+citing nothing — or nothing that matches what you actually ran — is **rejected**
+and you must call again. Run the checks and read the code *before* you record;
+never reconstruct citations from memory. FAIL and ERROR need no evidence: a check
+that could not run is an ERROR whose reason names what is missing.
+
 Above the verdict, give:
 - A per-criterion checklist (met / not met) with the evidence for each.
 - The test command output summary (what ran, what passed/failed).

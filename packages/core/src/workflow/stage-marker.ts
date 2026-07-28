@@ -36,6 +36,28 @@ const MARKER_FILE: Record<StageMarkerHost, string> = {
 }
 
 /**
+ * The check-stage proof-of-work ledger, written next to the marker by the host's
+ * tool guard and read back by `workflow_verdict` (see `workflow/evidence.ts`).
+ *
+ * Per host for the same reason the marker is: it is a control-plane input, and a
+ * shared path would let one host's interactive session write into another host's
+ * live loop's evidence — which here would mean corroborating a PASS with work
+ * the stage never did.
+ */
+const EVIDENCE_FILE: Record<StageMarkerHost, string> = {
+  claude: ".stage-evidence.json",
+  opencode: ".stage-evidence-opencode.json",
+  qwen: ".stage-evidence-qwen.json",
+}
+
+/** Basename of a host's evidence ledger under `<tasksDir>/runs/`. Pure. */
+export const stageEvidenceFile = (host: StageMarkerHost): string => EVIDENCE_FILE[host]
+
+/** Absolute path of a host's evidence ledger. Pure. */
+export const hostStageEvidencePath = (directory: string, tasksDir: string, host: StageMarkerHost): string =>
+  path.join(directory, tasksDir, "runs", EVIDENCE_FILE[host])
+
+/**
  * Every host that writes a marker, in the precedence order an out-of-process
  * observer should read them. At most one loop runs per repo, so precedence only
  * decides a tie that should not happen; the point of the list is that observers

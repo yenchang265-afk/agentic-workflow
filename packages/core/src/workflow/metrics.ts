@@ -50,6 +50,19 @@ export interface SampleAxis {
   readonly findings?: readonly SampleFinding[]
 }
 
+/**
+ * One proof-of-work citation from a PASS (see `workflow/evidence.ts`).
+ *
+ * Persisting these is what makes the declared-evidence rule worth having: the
+ * gate only proves a PASS *cited* something, so the citations have to outlive
+ * the run for a human to ever check them against the diff.
+ */
+export interface SampleEvidence {
+  readonly kind: string
+  readonly ref: string
+  readonly result?: string
+}
+
 export interface StageSample {
   readonly stage: Stage
   readonly iteration: number
@@ -81,6 +94,8 @@ export interface StageSample {
   readonly criteria?: readonly SampleCriterion[]
   /** Per-axis findings from the pass's VerdictRecord (check stages only), redacted. */
   readonly axes?: readonly SampleAxis[]
+  /** Proof-of-work citations backing a PASS (check stages only), redacted. */
+  readonly evidence?: readonly SampleEvidence[]
 }
 
 /**
@@ -89,13 +104,28 @@ export interface StageSample {
  * code and reviewer prose, and the sidecar is a committed file just like the
  * run log (whose append already redacts). Pure. Returns {} when the record
  * carries no structure, so spreading it into a sample adds no empty arrays.
+ *
+ * Evidence `ref` is redacted for a sharper reason than the findings are: a
+ * citation is a command line the stage really ran, and the sitter kinds reach
+ * Azure DevOps as `curl -u :$PAT …`. An unredacted `ref` would commit a resolved
+ * token to the sidecar, so this is the one field where skipping redaction leaks
+ * a credential rather than merely quoting code.
  */
 export const verdictStructure = (
   record: VerdictRecord | null | undefined,
-): { criteria?: readonly SampleCriterion[]; axes?: readonly SampleAxis[] } => {
+): { criteria?: readonly SampleCriterion[]; axes?: readonly SampleAxis[]; evidence?: readonly SampleEvidence[] } => {
   if (!record) return {}
   return {
     ...(record.criteria?.length ? { criteria: record.criteria } : {}),
+    ...(record.evidence?.length
+      ? {
+          evidence: record.evidence.map((e) => ({
+            kind: e.kind,
+            ref: redact(e.ref).text,
+            ...(e.result ? { result: redact(e.result).text } : {}),
+          })),
+        }
+      : {}),
     ...(record.axes?.length
       ? {
           axes: record.axes.map((a) => ({

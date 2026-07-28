@@ -68,6 +68,7 @@ fails loud at host startup). A minimal two-stage kind:
       "isolation": "worktree",
       "requiredAxes": ["correctness", "security"],  // optional; check stages only — workflow_verdict rejects a verdict missing any of them
       "fanout": "axis",                 // optional; check stages with requiredAxes — run one focused pass per axis, merged worst-wins
+      "requireEvidence": true,          // optional; check stages only — a PASS must cite the commands/files it observed, cross-checked against what the host saw
       "context": { "work": 8000 },      // optional per-artifact character ceilings for THIS stage's prompt; config workflows.<kind>.stageContext.<name> replaces it, unset = unbounded
       "bashAllowlist": ["git diff*", "npm test*"]  // default-deny bash for this stage
     }
@@ -117,6 +118,26 @@ was told not to review — and the stage-wide requirement moves to the accumulat
 record, so a fan-out that never reported an axis stops the loop with ERROR rather
 than re-building on an incomplete review. That is the difference from
 `reviewLenses`, which buys its extra passes by giving the guarantee up.
+
+A check stage may also declare `requireEvidence: true` (engineering's `verify`
+and `review` do). A **PASS** on such a stage must then carry an `evidence` array
+citing what it observed — `{ kind: "command" | "file", ref, result? }` — and the
+host cross-checks those citations against the commands and file reads it recorded
+independently while the stage ran. A PASS citing nothing, a PASS from a pass that
+ran nothing, and a PASS whose every citation matches nothing observed are all
+**rejected**, not recorded. FAIL and ERROR are never gated: a check that could not
+run is an ERROR whose reason names what is missing, and demanding evidence there
+would trap the stage in a rejection loop.
+
+The cross-check is deliberately loose — **at least one** citation must be
+corroborated, not all of them. A false rejection burns the stage's retry and
+ERROR-stops the loop, which costs more than an over-generous match; the mode this
+closes is the PASS that observed *nothing*. Like `requiredAxes`, it is a
+completeness check rather than an honesty check: it makes the claim explicit and
+falsifiable, not true. A host that does not record tool calls falls back to the
+declared-evidence rule alone — the gate weakens, it never silently vanishes.
+`requireEvidence` on a `work` stage is a manifest error (there is no verdict to
+carry it).
 
 `fanout` is a manifest error on a `work` stage, on a stage with no
 `requiredAxes` (the axis list is the pass list), and over more than

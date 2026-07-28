@@ -17,6 +17,7 @@ import {
   handleRemove,
   handleReplan,
   manifestFor,
+  noteEvidence,
   onInterrupt,
   parsePrTarget,
   parseWatchArgs,
@@ -1458,7 +1459,7 @@ test("recordVerdict accepts the verdict once the child session is resolved to th
     // Unresolved child id: ignored (the pre-fix behavior the resolver exists to prevent).
     assert.match(recordVerdict("some-child", "verify", { verdict: "PASS" }).message, /No active loop/)
     // Resolved driving id: recorded.
-    assert.match(recordVerdict("drv-sess", "verify", { verdict: "PASS" }).message, /Recorded verify verdict: PASS/)
+    assert.match(recordVerdict("drv-sess", "verify", worked("drv-sess", { verdict: "PASS" })).message, /Recorded verify verdict: PASS/)
   } finally {
     clearWorkflow("drv-sess")
   }
@@ -1499,7 +1500,7 @@ test("recordVerdict still records a verdict from the stage the loop is actually 
   const task = { id: "ok-task", path: "/repo/docs/tasks/in-progress/ok-task.md", acceptance: [] }
   setWorkflow("drv-ok", { goal: "g", stage: "verify", iteration: 0, artifacts: {}, task })
   try {
-    assert.match(recordVerdict("drv-ok", "verify", { verdict: "PASS" }, deps).message, /Recorded verify verdict: PASS/)
+    assert.match(recordVerdict("drv-ok", "verify", worked("drv-ok", { verdict: "PASS" }), deps).message, /Recorded verify verdict: PASS/)
     await new Promise((r) => setTimeout(r, 20))
     assert.equal(shellLog.filter((cmd) => cmd.includes("Stage drift")).length, 0, "no drift note on the happy path")
   } finally {
@@ -1560,6 +1561,21 @@ const runLensReview = async (sessionID: string, onCall: (call: number, deps: Dep
 const FIVE = ["correctness", "readability", "architecture", "security", "performance"]
 const cleanAxes = FIVE.map((axis) => ({ axis, verdict: "PASS" as const }))
 
+/**
+ * A check pass that actually did its work: the guard observed a command, and the
+ * verdict cites it.
+ *
+ * Engineering verify/review declare `requireEvidence`, so a PASS backed by
+ * neither is REJECTED — that is the proof-of-work gate working
+ * (@agentic-workflow/core/workflow/evidence), not a fixture detail. Every test
+ * below that wants a PASS to LAND has to say what the pass did; the ones
+ * asserting a rejection deliberately do not.
+ */
+const worked = <T extends { verdict: "PASS" | "FAIL" | "ERROR" }>(sessionID: string, record: T) => {
+  noteEvidence(sessionID, { command: "npm test" })
+  return { ...record, evidence: [{ kind: "command" as const, ref: "npm test", result: "42 passed" }] }
+}
+
 /** Run the review stage as ONE pass (no lenses), so axis coverage is enforced. */
 const runSinglePassReview = async (sessionID: string, onCall: (deps: Deps) => void) => {
   const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
@@ -1610,7 +1626,7 @@ test("review: a verdict missing axes is rejected and records nothing", async () 
 test("review: a rejected call cannot clobber a complete verdict recorded earlier in the pass", async () => {
   const sessionID = "sess-axes-clobber"
   const result = await runSinglePassReview(sessionID, () => {
-    recordVerdict(sessionID, "review", { verdict: "PASS", axes: cleanAxes })
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
     recordVerdict(sessionID, "review", { verdict: "FAIL", axes: [{ axis: "security", verdict: "FAIL" }] })
   })
   assert.equal(result.verdict, "PASS", "the good record survived the rejected one")
@@ -1628,7 +1644,7 @@ test("review: a later PASS cannot replace a FAIL recorded earlier in the same pa
         a.axis === "security" ? { ...a, verdict: "FAIL" as const, findings: [{ severity: "critical" as const, detail: "sql hole" }] } : a,
       ),
     })
-    recordVerdict(sessionID, "review", { verdict: "PASS", axes: cleanAxes })
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
   })
   assert.equal(result.verdict, "FAIL")
 })
@@ -1636,7 +1652,7 @@ test("review: a later PASS cannot replace a FAIL recorded earlier in the same pa
 test("review: a complete five-axis verdict is accepted", async () => {
   const sessionID = "sess-axes-complete"
   const result = await runSinglePassReview(sessionID, () => {
-    recordVerdict(sessionID, "review", { verdict: "PASS", axes: cleanAxes })
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
   })
   assert.equal(result.verdict, "PASS")
 })
@@ -1670,7 +1686,7 @@ test("lens mode suppresses axis enforcement — a lens pass records its own focu
   // axes from it would reject every pass and wedge the loop.
   const sessionID = "sess-axes-lens"
   const { result } = await runLensReview(sessionID, () => {
-    const r = recordVerdict(sessionID, "review", { verdict: "PASS" })
+    const r = recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS" }))
     assert.ok(r.accepted, "an axis-less lens verdict is accepted")
   })
   assert.equal(result.verdict, "PASS")
@@ -1683,7 +1699,10 @@ test("lenses: axes merge across passes worst-wins, including a PASSing lens's ev
       sessionID,
       "review",
       call === 1
-        ? { verdict: "PASS", axes: [{ axis: "security", verdict: "PASS", findings: [{ severity: "suggestion", detail: "lens A context" }] }] }
+        ? worked(sessionID, {
+            verdict: "PASS",
+            axes: [{ axis: "security", verdict: "PASS", findings: [{ severity: "suggestion", detail: "lens A context" }] }],
+          })
         : { verdict: "FAIL", axes: [{ axis: "security", verdict: "FAIL", findings: [{ severity: "critical", detail: "lens B hole" }] }] },
     )
   })
@@ -1696,7 +1715,7 @@ test("lenses: axes merge across passes worst-wins, including a PASSing lens's ev
 test("lenses: both PASS combines to PASS", async () => {
   const sessionID = "sess-lens-pass"
   const { result, calls } = await runLensReview(sessionID, () => {
-    recordVerdict(sessionID, "review", { verdict: "PASS" })
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS" }))
   })
   assert.equal(result.verdict, "PASS")
   assert.equal(calls(), 2)
@@ -1723,7 +1742,7 @@ test("lenses: an ESC interrupt during lens 1 fires no further lens and no verdic
 test("lenses: one lens never records a verdict → ERROR naming the lens, never FAIL", async () => {
   const sessionID = "sess-lens-missing"
   const { result, calls } = await runLensReview(sessionID, (call) => {
-    if (call === 1) recordVerdict(sessionID, "review", { verdict: "PASS" })
+    if (call === 1) recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS" }))
     // calls 2 and 3 (the security lens and its retry): no verdict recorded
   })
   assert.equal(result.verdict, "ERROR", "a broken lens verdict channel must stop, not rebuild")
@@ -1737,7 +1756,7 @@ test("lenses: a genuine lens FAIL combines worst-wins with the lens-prefixed rea
     recordVerdict(
       sessionID,
       "review",
-      call === 1 ? { verdict: "PASS" } : { verdict: "FAIL", reason: "auth bypass in handler" },
+      call === 1 ? worked(sessionID, { verdict: "PASS" }) : { verdict: "FAIL", reason: "auth bypass in handler" },
     )
   })
   assert.equal(result.verdict, "FAIL")
@@ -1830,16 +1849,20 @@ const runAxisReview = async (
 
 /** Record the single-axis verdict the nth fan-out pass is supposed to record. */
 const recordAxis = (sessionID: string, call: number, over: Partial<{ verdict: "PASS" | "FAIL" | "ERROR" }> = {}, findings?: unknown) =>
-  recordVerdict(sessionID, "review", {
-    verdict: over.verdict ?? "PASS",
-    axes: [
-      {
-        axis: FIVE[call - 1]!,
-        verdict: over.verdict ?? "PASS",
-        ...(findings ? { findings: findings as never } : {}),
-      },
-    ],
-  })
+  recordVerdict(
+    sessionID,
+    "review",
+    worked(sessionID, {
+      verdict: over.verdict ?? "PASS",
+      axes: [
+        {
+          axis: FIVE[call - 1]!,
+          verdict: over.verdict ?? "PASS",
+          ...(findings ? { findings: findings as never } : {}),
+        },
+      ],
+    }),
+  )
 
 test("fan-out: one pass fires per required axis, in manifest order, each told to review only its own", async () => {
   const sessionID = "sess-axis-order"
@@ -1875,10 +1898,11 @@ test("fan-out: a pass reporting someone else's axis is rejected and names its ow
   const rejections: string[] = []
   await runAxisReview(sessionID, (call) => {
     // Every pass reports `correctness`, whoever it is.
-    const r = recordVerdict(sessionID, "review", {
-      verdict: "PASS",
-      axes: [{ axis: "correctness", verdict: "PASS" }],
-    })
+    const r = recordVerdict(
+      sessionID,
+      "review",
+      worked(sessionID, { verdict: "PASS", axes: [{ axis: "correctness", verdict: "PASS" }] }),
+    )
     if (!r.accepted) rejections.push(r.message)
     else if (call > 1) throw new Error("an off-axis pass must not be admitted")
   })
@@ -1982,7 +2006,7 @@ test("fan-out: configured reviewLenses win, and the lens prompt is unchanged", a
   const both: Config = { ...axisConfig, reviewLenses: ["a hostile attacker", "the next maintainer"] }
   const { calls, fired } = await runAxisReview(
     sessionID,
-    () => recordVerdict(sessionID, "review", { verdict: "PASS" }),
+    () => recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS" })),
     [],
     both,
   )

@@ -3,6 +3,7 @@ import { test } from "node:test"
 import {
   admitVerdict,
   axisCoverageIssue,
+  evidenceIssue,
   axisVerdict,
   blockingFindingsIssue,
   effectiveVerdict,
@@ -514,4 +515,102 @@ test("mergeAxes: an axis present on only one side survives", () => {
 test("mergeAxes: undefined sides are treated as empty", () => {
   assert.deepEqual(mergeAxes(undefined, undefined), [])
   assert.equal(mergeAxes(undefined, [{ axis: "a", verdict: "PASS" }]).length, 1)
+})
+
+
+// --- proof of work: a PASS must be backed by work the host saw ---
+
+const NPM_TEST = { kind: "command" as const, ref: "npm test", result: "42 passed" }
+const ctx = (over: Partial<Parameters<typeof evidenceIssue>[1] & object> = {}) => ({
+  stage: "verify",
+  required: true,
+  observed: { commands: ["cd /wt && npm test"], reads: [] },
+  ...over,
+})
+
+test("evidenceIssue is inert on a stage that does not require evidence", () => {
+  // Every kind that has not opted in must behave exactly as before.
+  assert.equal(evidenceIssue({ verdict: "PASS" }, undefined), null)
+  assert.equal(evidenceIssue({ verdict: "PASS" }, ctx({ required: false })), null)
+})
+
+test("evidenceIssue gates PASS only — a FAIL or ERROR owes no evidence", () => {
+  // A stage reporting a broken test runner has nothing it could truthfully cite;
+  // demanding evidence there would trap it in a rejection loop.
+  assert.equal(evidenceIssue({ verdict: "FAIL", reason: "tests red" }, ctx()), null)
+  assert.equal(evidenceIssue({ verdict: "ERROR", reason: "no runner" }, ctx()), null)
+})
+
+test("evidenceIssue gates the EFFECTIVE verdict, so a PASS worsened by an axis is not gated", () => {
+  const record = {
+    verdict: "PASS" as const,
+    axes: [{ axis: "security", verdict: "PASS" as const, findings: [{ severity: "critical" as const, detail: "hole" }] }],
+  }
+  assert.equal(effectiveVerdict(record), "FAIL")
+  assert.equal(evidenceIssue(record, ctx()), null)
+})
+
+test("a PASS citing nothing is rejected, and the message says what to send", () => {
+  const issue = evidenceIssue({ verdict: "PASS" }, ctx())
+  assert.match(issue ?? "", /must cite what you actually observed/)
+  assert.match(issue ?? "", /evidence/)
+})
+
+test("a PASS from a pass that ran nothing is rejected however well it cites", () => {
+  const issue = evidenceIssue({ verdict: "PASS", evidence: [NPM_TEST] }, ctx({ observed: { commands: [], reads: [] } }))
+  assert.match(issue ?? "", /ran no commands and read no files/)
+})
+
+test("a PASS whose every citation is uncorroborated is rejected and the citations are named", () => {
+  const issue = evidenceIssue({ verdict: "PASS", evidence: [NPM_TEST] }, ctx({ observed: { commands: ["git status"], reads: [] } }))
+  assert.match(issue ?? "", /none of the evidence cited/)
+  assert.match(issue ?? "", /npm test/)
+})
+
+test("a PASS corroborated by what the host saw is admitted", () => {
+  assert.equal(evidenceIssue({ verdict: "PASS", evidence: [NPM_TEST] }, ctx()), null)
+})
+
+test("a host that does not observe still enforces the declared rule, and no more", () => {
+  // `observed: null` means "this host records nothing" — the gate weakens to
+  // rule A rather than failing every stage on a repo whose hooks are absent.
+  assert.match(evidenceIssue({ verdict: "PASS" }, ctx({ observed: null })) ?? "", /must cite/)
+  assert.equal(evidenceIssue({ verdict: "PASS", evidence: [{ kind: "command", ref: "anything" }] }, ctx({ observed: null })), null)
+})
+
+test("admitVerdict refuses an unearned PASS and returns no record to store", () => {
+  const admission = admitVerdict({ verdict: "PASS" }, undefined, null, ctx())
+  assert.equal(admission.ok, false)
+})
+
+test("admitVerdict gates the INCOMING call, so a second evidence-free PASS cannot ride on the first's citations", () => {
+  const first = admitVerdict({ verdict: "PASS", evidence: [NPM_TEST] }, undefined, null, ctx())
+  assert.ok(first.ok)
+  const second = admitVerdict({ verdict: "PASS" }, undefined, first.ok ? first.record : null, ctx())
+  assert.equal(second.ok, false)
+})
+
+test("admitVerdict accumulates evidence across repeat calls, de-duped", () => {
+  const first = admitVerdict({ verdict: "PASS", evidence: [NPM_TEST] }, undefined, null, ctx())
+  assert.ok(first.ok)
+  const second = admitVerdict(
+    { verdict: "PASS", evidence: [NPM_TEST, { kind: "file", ref: "src/limit.ts:88" }] },
+    undefined,
+    first.ok ? first.record : null,
+    ctx({ observed: { commands: ["cd /wt && npm test"], reads: ["/wt/src/limit.ts"] } }),
+  )
+  assert.ok(second.ok)
+  assert.deepEqual(second.ok ? (second.record.evidence ?? []).map((i) => i.ref) : [], ["npm test", "src/limit.ts:88"])
+})
+
+test("admitVerdict without an evidence context behaves exactly as before", () => {
+  assert.ok(admitVerdict({ verdict: "PASS" }, undefined, null).ok)
+})
+
+test("the contract paragraph carries the proof-of-work half only when the stage requires it", () => {
+  assert.doesNotMatch(verdictContractBlock("verify"), /PROOF OF WORK/)
+  assert.match(verdictContractBlock("verify", undefined, false, true), /PROOF OF WORK/)
+  // Byte-identical to the axis-less, evidence-less form is what every other
+  // check stage across every kind renders.
+  assert.equal(verdictContractBlock("verify"), verdictContractBlock("verify", undefined, false, false))
 })
