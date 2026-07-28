@@ -32,6 +32,14 @@ more and no less; do not trust the build summary over the actual diff. When a
 lives — run the diff and read files with `git -C <worktree> …` and absolute
 paths under it, not the repo root.
 
+On a re-review your input also carries **your own findings from the previous
+iteration** — the build you are looking at is the attempt to address them. Walk
+them one by one and say, per finding, whether it is resolved or still open,
+before you review anything else. Any Critical or Important finding still open is
+a FAIL regardless of what else improved. Without this you would re-derive a
+verdict from scratch each pass and could pass code you previously failed, which
+is what makes a loop flip verdicts instead of converging.
+
 ## Your job
 
 1. **Correctness** — beyond "it passes tests": edge cases, error handling, does

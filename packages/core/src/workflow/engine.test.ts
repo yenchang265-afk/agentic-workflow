@@ -75,6 +75,31 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
   } else if (target === "review") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)
+    // Two deliberate post-freeze additions, on the same footing as verify's
+    // "Change scope" block above.
+    //
+    // The prior findings: a REVIEW FAIL drops the `verify` artifact and KEEPS
+    // `review`, but only BUILD's prompt ever read it — so the second review pass
+    // could not see what the first one flagged, re-derived a verdict from
+    // scratch, and could pass code it had just failed. That is a manufactured
+    // verdict flip, which the hub reports as a loop-health metric.
+    //
+    // The acceptance criteria: review was the only engineering stage composed
+    // without them, while being asked to judge whether the change "matches the
+    // plan's intent".
+    if (a.review) {
+      parts.push(
+        `Your own findings from the previous iteration — the build above is the attempt to address them. ` +
+          `Confirm each one explicitly as resolved or still open; a still-open Critical or Important finding is a FAIL:\n${a.review}`,
+      )
+    }
+    if (accept.length) {
+      parts.push(
+        acceptBlock(
+          "Acceptance criteria (VERIFY has already checked these; judge whether the implementation is a good way of meeting them):",
+        ),
+      )
+    }
     if (state.git) {
       const wt = state.git.worktree
       const diffCmd = wt
