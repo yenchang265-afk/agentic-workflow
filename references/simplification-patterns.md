@@ -2,6 +2,73 @@
 
 Before/after examples backing `code-simplification`. Each preserves behavior exactly — only the expression changes.
 
+## Simplification Signals
+
+The scan list for `code-simplification` → Step 2. Each row is a concrete signal, not a vague smell.
+
+**Structural complexity:**
+
+| Pattern | Signal | Simplification |
+|---------|--------|----------------|
+| Deep nesting (3+ levels) | Hard to follow control flow | Extract conditions into guard clauses or helper functions |
+| Long functions (50+ lines) | Multiple responsibilities | Split into focused functions with descriptive names |
+| Nested ternaries | Requires mental stack to parse | Replace with if/else chains, switch, or lookup objects |
+| Boolean parameter flags | `doThing(true, false, true)` | Replace with options objects or separate functions |
+| Repeated conditionals | Same `if` check in multiple places | Extract to a well-named predicate function |
+
+**Naming and readability:**
+
+| Pattern | Signal | Simplification |
+|---------|--------|----------------|
+| Generic names | `data`, `result`, `temp`, `val`, `item` | Rename to describe the content: `userProfile`, `validationErrors` |
+| Abbreviated names | `usr`, `cfg`, `btn`, `evt` | Use full words unless the abbreviation is universal (`id`, `url`, `api`) |
+| Misleading names | Function named `get` that also mutates state | Rename to reflect actual behavior |
+| Comments explaining "what" | `// increment counter` above `count++` | Delete the comment — the code is clear enough |
+| Comments explaining "why" | `// Retry because the API is flaky under load` | Keep these — they carry intent the code can't express |
+
+**Redundancy:**
+
+| Pattern | Signal | Simplification |
+|---------|--------|----------------|
+| Duplicated logic | Same 5+ lines in multiple places | Extract to a shared function |
+| Dead code | Unreachable branches, unused variables, commented-out blocks | Remove (after confirming it's truly dead) |
+| Unnecessary abstractions | Wrapper that adds no value | Inline the wrapper, call the underlying function directly |
+| Over-engineered patterns | Factory-for-a-factory, strategy-with-one-strategy | Replace with the simple direct approach |
+| Redundant type assertions | Casting to a type that's already inferred | Remove the assertion |
+
+## Clarity Over Cleverness
+
+Explicit code beats compact code when the compact version costs a mental pause to parse.
+
+```typescript
+// UNCLEAR: Dense ternary chain
+const label = isNew ? 'New' : isUpdated ? 'Updated' : isArchived ? 'Archived' : 'Active';
+
+// CLEAR: Readable mapping
+function getStatusLabel(item: Item): string {
+  if (item.isNew) return 'New';
+  if (item.isUpdated) return 'Updated';
+  if (item.isArchived) return 'Archived';
+  return 'Active';
+}
+```
+
+```typescript
+// UNCLEAR: Chained reduces with inline logic
+const result = items.reduce((acc, item) => ({
+  ...acc,
+  [item.id]: { ...acc[item.id], count: (acc[item.id]?.count ?? 0) + 1 }
+}), {});
+
+// CLEAR: Named intermediate step
+const countById = new Map<string, number>();
+for (const item of items) {
+  countById.set(item.id, (countById.get(item.id) ?? 0) + 1);
+}
+```
+
+## Language Patterns
+
 ### TypeScript / JavaScript
 
 ```typescript
