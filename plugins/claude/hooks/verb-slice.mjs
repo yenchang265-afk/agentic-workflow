@@ -62,6 +62,7 @@ const normalize = (verb) => String(verb ?? "").trim().toLowerCase() || null
 const tagLines = (body) => {
   const tagged = []
   let open
+  let block = 0
   for (const text of body.split("\n")) {
     const marker = MARKER.exec(text.trim())
     if (marker) {
@@ -72,10 +73,14 @@ const tagLines = (body) => {
       } else {
         if (open !== undefined) return null
         open = names
+        block += 1
       }
       continue
     }
-    tagged.push({ text, verbs: open === undefined ? null : open.split("|") })
+    // `block` identifies which marker block a line came from, so sliceForVerb
+    // can re-insert the blank line between two of a verb's blocks — the source
+    // separates blocks with unmarked blank lines, which this module drops.
+    tagged.push({ text, verbs: open === undefined ? null : open.split("|"), block: open === undefined ? null : block })
   }
   return open === undefined ? tagged : null
 }
@@ -144,9 +149,20 @@ export const sliceForVerb = (body, verb) => {
   const tagged = tagLines(body)
   const wanted = normalize(verb)
   if (!tagged || !wanted) return null
-  const kept = tagged.filter((line) => line.verbs?.includes(wanted)).map((line) => line.text)
+  const kept = tagged.filter((line) => line.verbs?.includes(wanted))
   if (kept.length === 0) return null
-  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim()
+  // Blocks are separated in the source only by unmarked blank lines, which this
+  // module drops — a plain join glued the last line of one block onto the first
+  // line of the next, and markdown lazy continuation then swallowed a block's
+  // opening directive into the previous block's trailing bullet.
+  const parts = []
+  let prevBlock
+  for (const line of kept) {
+    if (prevBlock !== undefined && line.block !== prevBlock) parts.push("")
+    parts.push(line.text)
+    prevBlock = line.block
+  }
+  return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim()
 }
 
 /**

@@ -70,9 +70,16 @@ export const agentNameOf = (subagentType, prefixes = []) => {
  * not degrade to the default — it fails the tool's schema and errors the whole
  * spawn. So an unmappable config value must resolve to null here. `spawnAlias`
  * owns that mapping; see its docstring.
+ *
+ * A marker past its `deadline` is a dead loop's leftover (a crashed process
+ * never runs `writeStageMarker(null)`), and its `stageAgentModels` must not
+ * keep retargeting every later spawn in the repo forever — the same liveness
+ * rule check-stage-guard applies. A marker with no deadline (older versions)
+ * stays trusted.
  */
-export const modelFor = (marker, rawConfig, agent) => {
-  const fromMarker = marker && typeof marker === "object" ? marker.stageAgentModels : null
+export const modelFor = (marker, rawConfig, agent, now = Date.now()) => {
+  const live = marker && typeof marker === "object" && (typeof marker.deadline !== "number" || now <= marker.deadline)
+  const fromMarker = live ? marker.stageAgentModels : null
   const staged = fromMarker && typeof fromMarker === "object" ? fromMarker[agent] : null
   const configured = staged ?? rawAgentModel(rawConfig, agent)
   return spawnAlias(configured)

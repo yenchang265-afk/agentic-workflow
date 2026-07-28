@@ -46,10 +46,14 @@ const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.
 // (loop gates first, a lone draft as fallback — the CLI's approve-any owns that
 // priority).
 //
-// `(?![-\\w])` closes the command name so a sibling command cannot inherit
+// `(?=\\s|$)` closes the command name so a sibling command cannot inherit
 // engineering's verbs or its instructions: without it `/engineering-notes` read
-// as engineering plus the verb `-notes`. Same guard, same reason, as ADHOC_PLAN.
-const CMD = "\\/(?:agentic-workflow:)?engineering(?![-\\w])"
+// as engineering plus the verb `-notes`. A positive whitespace-or-end lookahead,
+// not a negative character class: the old `(?![-\\w])` leaked on every
+// separator it forgot to enumerate (`/engineering.md`, `/engineering:sub`,
+// `/engineering/foo` all matched and injected the status procedure into
+// unrelated prompts).
+const CMD = "\\/(?:agentic-workflow:)?engineering(?=\\s|$)"
 // `^\\s*` — the command opens the prompt; see the header for why anything later
 // in the prompt is content rather than an invocation.
 const AT_START = "^\\s*"
@@ -94,8 +98,16 @@ const ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i")
 export const verbFor = (prompt) => {
   const match = String(prompt ?? "").match(ANY_VERB)
   if (!match) return null
-  return (match[1] || "").trim().toLowerCase() || "status"
+  // Strip wrapping quotes and trailing punctuation: `"new`, `new:`, `plan.`
+  // are all the verb the user typed. Left raw, they fell through to the
+  // `unknown` block, which authoritatively refuses to run — a wrong answer
+  // to a legitimate invocation that merely quoted its arguments.
+  const raw = (match[1] || "").trim().toLowerCase()
+  return raw.replace(/^["'`]+/, "").replace(/["'`.,:;!?]+$/, "") || "status"
 }
+
+/** A token with wrapping quotes stripped — `"my-task"` names the id `my-task`. */
+const unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "")
 
 /**
  * Build the `gate` CLI argv from the prompt, or null when it is not a gate
@@ -108,7 +120,7 @@ export const verbFor = (prompt) => {
 export const gateArgsFor = (prompt) => {
   const sentinel = prompt.match(SENTINEL)
   if (sentinel) {
-    const id = (sentinel[2] || "").trim()
+    const id = unquote((sentinel[2] || "").trim())
     if (!id) return { passThrough: true } // malformed sentinel gate — let the model report it
     const reason = (sentinel[3] || "").trim()
     return { argv: ["gate", sentinel[1], id, ...(reason ? [reason] : [])] }
@@ -116,26 +128,30 @@ export const gateArgsFor = (prompt) => {
   const approve = prompt.match(APPROVE)
   if (approve) {
     // approve takes an optional id (first token); extra words are ignored.
-    const id = (approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
+    // Ids are unquoted everywhere below: `approve "my-task"` names my-task, and
+    // the raw quoted form failed `isSafeTaskId` in the CLI — which BLOCKED the
+    // turn with a refusal that never hinted quoting was the problem.
+    const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "")
     return { argv: ["gate", "approve-any", ...(id ? [id] : [])] }
   }
   const replan = prompt.match(REPLAN)
   if (replan) {
     const words = (replan[1] || "").trim().split(/\s+/).filter(Boolean)
+    if (words.length) words[0] = unquote(words[0]) // the id; later words are the reason, kept verbatim
     return { argv: ["gate", "reject-any", ...words] }
   }
   const retask = prompt.match(RETASK)
   if (retask) {
     // retask always names its target; a bare one is malformed — let the model
     // report the usage error rather than guessing which task to un-approve.
-    const id = (retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || ""
+    const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "")
     if (!id) return { passThrough: true }
     return { argv: ["gate", "retask", id], continueTurn: true }
   }
   const abandon = prompt.match(ABANDON)
   if (abandon) {
     const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean)
-    const id = words[0] || ""
+    const id = unquote(words[0] || "")
     if (!id) return { passThrough: true }
     return { argv: ["gate", "abandon", id, ...words.slice(1)] }
   }
@@ -149,7 +165,7 @@ export const gateArgsFor = (prompt) => {
     // turn in which a model could ask. Without it the CLI reports what it would
     // delete and deletes nothing.
     const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean)
-    const id = words.find((w) => !w.startsWith("-")) || ""
+    const id = unquote(words.find((w) => !w.startsWith("-")) || "")
     if (!id) return { passThrough: true }
     const force = words.some((w) => w === "--force" || w === "-f")
     return { argv: ["gate", "remove", id, ...(force ? ["--force"] : [])] }

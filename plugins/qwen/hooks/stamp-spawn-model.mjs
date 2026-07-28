@@ -211,8 +211,9 @@ var agentNameOf = (subagentType, prefixes = []) => {
   }
   return OURS.test(name) ? name : null;
 };
-var modelFor = (marker, rawConfig, agent) => {
-  const fromMarker = marker && typeof marker === "object" ? marker.stageAgentModels : null;
+var modelFor = (marker, rawConfig, agent, now = Date.now()) => {
+  const live = marker && typeof marker === "object" && (typeof marker.deadline !== "number" || now <= marker.deadline);
+  const fromMarker = live ? marker.stageAgentModels : null;
   const staged = fromMarker && typeof fromMarker === "object" ? fromMarker[agent] : null;
   const configured = staged ?? rawAgentModel(rawConfig, agent);
   return spawnAlias(configured);
