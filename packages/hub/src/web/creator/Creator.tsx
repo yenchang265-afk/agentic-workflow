@@ -22,6 +22,7 @@ import type {
   GenPromptsResponse,
   KindDetailResponse,
   KindsResponse,
+  KindSummary,
   ManifestIssue,
   SaveKindResponse,
 } from "../../shared/api.js"
@@ -163,7 +164,7 @@ export const Creator = () => {
   // assets while scaffolding files into another. The header picker has to
   // reach these calls.
   const { repoId } = useRepo()
-  const [kinds, setKinds] = useState<string[]>([])
+  const [kinds, setKinds] = useState<KindSummary[]>([])
   const [loadedKind, setLoadedKind] = useState<string | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [meta, setMeta] = useState<GraphMeta | null>(null)
@@ -194,7 +195,7 @@ export const Creator = () => {
 
   useEffect(() => {
     fetchJson<KindsResponse>(repoPath("/api/kinds", repoId))
-      .then((r) => setKinds(r.kinds.map((k) => k.kind)))
+      .then((r) => setKinds([...r.kinds]))
       .catch((e: Error) => setError(e.message))
   }, [repoId])
 
@@ -335,7 +336,12 @@ export const Creator = () => {
       })
       setSaved(res)
       setError(null)
-      if (!kinds.includes(currentManifest.kind)) setKinds((k) => [...k, currentManifest.kind])
+      // A kind you just wrote is by definition not a shipped one.
+      if (!kinds.some((k) => k.kind === currentManifest.kind))
+        setKinds((ks) => [
+          ...ks,
+          { kind: currentManifest.kind, description: currentManifest.description, stages: [], builtin: false },
+        ])
       setIsNew(false)
       setLoadedKind(currentManifest.kind)
     } catch (e) {
@@ -387,8 +393,17 @@ export const Creator = () => {
           <h2 className="section-title">Open a workflow kind</h2>
           <div className="summary-chips">
             {kinds.map((k) => (
-              <Button key={k} onClick={() => openKind(k)}>
-                {k}
+              <Button
+                key={k.kind}
+                onClick={() => openKind(k.kind)}
+                title={
+                  k.builtin
+                    ? `${k.description} — ships with core, so it opens read-only; save it under a new name to fork it.`
+                    : k.description
+                }
+              >
+                {k.kind}
+                {k.builtin ? " · shipped" : ""}
               </Button>
             ))}
           </div>
@@ -419,6 +434,13 @@ export const Creator = () => {
   // any edit falls back to the live client-side schema run.
   const allIssues = validated?.manifest === currentManifest ? validated.issues : liveIssues
 
+  // Saving under a name that isn't the one loaded is a fork — a new kind
+  // written beside the original, which is the ONLY way to base work on a
+  // shipped kind. `savingOverShipped` is the blocked case: still carrying the
+  // shipped name, which the save route refuses.
+  const isFork = isNew || loadedKind !== currentManifest?.kind
+  const savingOverShipped = !isFork && kinds.some((k) => k.kind === currentManifest?.kind && k.builtin)
+
   return (
     <div className="creator">
       {error && <div className="error-banner">{error}</div>}
@@ -444,8 +466,27 @@ export const Creator = () => {
           {allIssues.length ? `${allIssues.length} issue${allIssues.length > 1 ? "s" : ""}` : "valid"}
         </span>
         <Button onClick={() => void validateOnServer()}>Validate</Button>
-        <Button variant="primary" disabled={allIssues.length > 0} onClick={() => void save()}>
-          Save
+        {/*
+          A shipped kind is read-only, and the save route has always refused to
+          overwrite one — but the button gave no sign of it, so the only way to
+          learn was to click Save and read a 400. Fork is now the offered path,
+          and the button says which one it is.
+        */}
+        <Button
+          variant="primary"
+          disabled={allIssues.length > 0 || savingOverShipped}
+          title={
+            savingOverShipped
+              ? `"${currentManifest?.kind}" ships with core and cannot be overwritten — give it a new name in the panel (click empty canvas) to save your own copy.`
+              : allIssues.length > 0
+                ? "Fix the validation issues first"
+                : isFork
+                  ? "Writes a new workflow kind"
+                  : "Overwrites this kind's manifest and stage prompts"
+          }
+          onClick={() => void save()}
+        >
+          {isFork ? "Save as new kind" : "Save"}
         </Button>
       </div>
       <div className="creator-body">

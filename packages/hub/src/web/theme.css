@@ -649,6 +649,11 @@ body {
   border-radius: var(--r-4);
   padding: var(--sp-2);
   min-height: 8rem;
+  /* Columns scroll on their own. Without this one 60-task column made the PAGE
+     60 cards tall, pushing every other column's content — and the run history
+     below it — off the bottom of the screen. */
+  max-height: 70vh;
+  overflow-y: auto;
   animation: rise var(--dur-slow) var(--ease-out) both;
 }
 /* stagger columns left-to-right on load */
@@ -1758,7 +1763,14 @@ body {
   color: var(--text);
   padding: var(--sp-5);
   font-family: var(--font-sans);
-  overflow-y: auto;
+  /* A flex column whose BODY scrolls, not the dialog. Scrolling the dialog
+     itself carried the header (and its Close button) off-screen on a long
+     plan, and would do the same to the gate buttons in the footer — which are
+     the reason the drawer exists. */
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  overflow: hidden;
 }
 .drawer::backdrop {
   background: rgb(0 0 0 / 0.55);
@@ -1766,11 +1778,21 @@ body {
 }
 
 .drawer__head {
+  flex: 0 0 auto;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--sp-3);
-  margin-bottom: var(--sp-4);
+  padding-bottom: var(--sp-3);
+  border-bottom: 1px solid var(--border);
+}
+.drawer__foot {
+  flex: 0 0 auto;
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.drawer__foot .gate-actions {
+  margin-top: 0;
 }
 .drawer__title {
   margin: 0 0 var(--sp-2);
@@ -1778,6 +1800,10 @@ body {
   font-weight: 600;
 }
 .drawer__body {
+  /* min-height:0 is what actually lets a flex child scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--sp-4);
@@ -2022,4 +2048,143 @@ body {
 }
 .md a {
   color: var(--accent);
+}
+
+/* --- review queue ----------------------------------------------------------- */
+/* The front door: one row per task waiting on a human, longest-waiting first.
+   Rows are wide and vertical rather than columns of cards, because a gate
+   decision needs prose (the plan opening, what failed) that a 230px column
+   cannot hold — which is why the board could never carry it. */
+
+.review {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.review--empty {
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-6) 0;
+}
+.review__count {
+  font-size: var(--fs-md);
+}
+.review__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.review__item {
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--gate);
+  border-radius: var(--r-3);
+  background: var(--panel);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.review__item--claimed {
+  border-left-color: var(--border-strong);
+}
+.review__head,
+.review__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.review__meta {
+  font-size: var(--fs-xs);
+}
+.review__title {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+.review__title:hover {
+  color: var(--accent);
+}
+/* Age sits at the far right because it is what you scan the column for. */
+.review__age {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--muted);
+}
+.review__burn {
+  font-family: var(--font-mono);
+}
+.review__burn--tripped {
+  color: var(--warn);
+  font-weight: 500;
+}
+.review__failed {
+  color: var(--warn);
+}
+.review__event {
+  font-style: italic;
+}
+.review__plan {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-2);
+  background: var(--panel-raised);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  line-height: var(--lh);
+}
+
+/* --- gate overflow menu ------------------------------------------------------ */
+/* The cancellations. Flat, they were three buttons of near-equal weight — and
+   Abandon rendered `primary`, identical to Approve. */
+
+.gate-overflow {
+  position: relative;
+}
+.gate-overflow > summary {
+  cursor: pointer;
+  list-style: none;
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-2);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.gate-overflow > summary::-webkit-details-marker {
+  display: none;
+}
+.gate-overflow > summary:hover {
+  color: var(--text);
+  background: var(--panel-raised);
+}
+.gate-overflow__menu {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  min-width: 12rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin-top: var(--sp-1);
+  padding: var(--sp-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-2);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-2);
+}
+
+/* A chip that navigates — the gate count is a control, not a caption. */
+.chip-link {
+  text-decoration: none;
 }

@@ -20,10 +20,19 @@
  * table is testable without a DOM.
  */
 
-export const SCREENS = ["monitor", "creator", "metrics", "config"] as const
+export const SCREENS = ["review", "monitor", "creator", "metrics", "config"] as const
 export type Screen = (typeof SCREENS)[number]
 
-export const DEFAULT_SCREEN: Screen = "monitor"
+/**
+ * The review queue, not the board.
+ *
+ * The hub's one unique job is the human gate move, so the queue of moves
+ * waiting on you is the honest front door; the board is where you go to see
+ * everything else. It is also the screen that degrades best: with nothing
+ * waiting it says so in a sentence, where the board makes you read seven
+ * columns to reach the same conclusion.
+ */
+export const DEFAULT_SCREEN: Screen = "review"
 
 export interface Route {
   readonly screen: Screen

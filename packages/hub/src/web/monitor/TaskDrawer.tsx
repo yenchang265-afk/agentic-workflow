@@ -4,6 +4,7 @@ import { repoPath, useRepo } from "../repo.js"
 import { useResource } from "../resource.js"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
+import { GateActions } from "./GateActions.js"
 import { TaskEditor } from "./TaskEditor.js"
 import { TaskReview } from "./TaskReview.js"
 
@@ -27,11 +28,13 @@ import { TaskReview } from "./TaskReview.js"
 interface TaskDrawerProps {
   id: string
   status: TaskStatus
+  /** Which workflow kind owns this task — the gate move names it explicitly. */
+  kind: string
   claimed: boolean
   onClose: () => void
 }
 
-export const TaskDrawer = ({ id, status, claimed, onClose }: TaskDrawerProps) => {
+export const TaskDrawer = ({ id, status, kind, claimed, onClose }: TaskDrawerProps) => {
   const { repoId } = useRepo()
   const ref = useRef<HTMLDialogElement>(null)
   const [saved, setSaved] = useState<SaveTaskResponse | null>(null)
@@ -118,6 +121,21 @@ export const TaskDrawer = ({ id, status, claimed, onClose }: TaskDrawerProps) =>
               </ul>
             </section>
           )}
+        </div>
+      )}
+
+      {/*
+        Decide where you read. This drawer is where the plan, the body and the
+        audit trail are — and until now it had no gate buttons at all, so
+        reading the plan and acting on it were two different places: close,
+        re-find the card among seven columns, then act. The footer is sticky
+        for the same reason the head is: on a long plan, both scrolled away.
+      */}
+      {/* An epic only orders its child slices — core refuses to plan one, so it
+          gets no gate buttons here either, exactly as on the board. */}
+      {data && data.card.type !== "epic" && (
+        <div className="drawer__foot">
+          <GateActions task={data.card} status={status} kind={kind} claimed={claimed} />
         </div>
       )}
     </dialog>

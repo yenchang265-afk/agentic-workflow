@@ -12,6 +12,7 @@ import { Board } from "./monitor/Board.js"
 import { PrKindPanel } from "./monitor/PrKindPanel.js"
 import { Runs } from "./monitor/Runs.js"
 import { RepoPicker, RepoProvider, repoPath, useRepo } from "./repo.js"
+import { ReviewQueue } from "./review/ReviewQueue.js"
 import { useResource } from "./resource.js"
 import { buildHash, type Screen } from "./route.js"
 import { Link, useRoute } from "./routing.js"
@@ -21,6 +22,7 @@ import { ThemeToggle } from "./ui/ThemeToggle.js"
 import "./theme.css"
 
 const TABS: readonly { id: Screen; label: string }[] = [
+  { id: "review", label: "Review queue" },
   { id: "monitor", label: "Workflow monitor" },
   { id: "creator", label: "Workflow creator" },
   { id: "metrics", label: "Metrics" },
@@ -160,6 +162,7 @@ const App = () => {
         <HeaderStatus />
       </header>
       <main className="hub-main">
+        {route.screen === "review" && <ReviewQueue />}
         {route.screen === "monitor" && <Monitor />}
         {route.screen === "creator" && <Creator />}
         {route.screen === "metrics" && <MetricsTab />}

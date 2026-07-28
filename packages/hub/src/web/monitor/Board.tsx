@@ -2,8 +2,8 @@ import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskC
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useResource } from "../resource.js"
-import { withQuery } from "../route.js"
-import { navigate, useRoute } from "../routing.js"
+import { buildHash, withQuery } from "../route.js"
+import { Link, navigate, useRoute } from "../routing.js"
 import { useState } from "react"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
@@ -106,10 +106,15 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
   return (
     <div>
       <div className="summary-chips">
+        {/* A control, not a caption. This read "3 awaiting your review" as
+            static text, and then left you to find those three by eye across a
+            horizontally scrolling seven-column board. */}
         {gateCount > 0 && (
-          <Chip gate>
-            <strong>{gateCount}</strong> awaiting your review
-          </Chip>
+          <Link to={buildHash({ screen: "review", query: route.query })} className="chip-link">
+            <Chip gate>
+              <strong>{gateCount}</strong> awaiting your review →
+            </Chip>
+          </Link>
         )}
         {info.pools.map((status) => (
           <Chip key={status}>
@@ -159,6 +164,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
           key={`${openTask.status}/${openTask.id}`}
           id={openTask.id}
           status={openTask.status}
+          kind={info.kind}
           claimed={claimed.has(openTask.id)}
           onClose={closeTask}
         />

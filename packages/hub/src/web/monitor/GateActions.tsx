@@ -213,6 +213,43 @@ const GateButton = ({
   )
 }
 
+/**
+ * The cancellations, behind a disclosure.
+ *
+ * Children are rendered only while it is open, and that is load-bearing rather
+ * than an optimisation: every move carries a <Confirm>, which carries a
+ * <dialog>. Offering Abandon and Remove inline on every card meant a backlog
+ * with 300 completed tasks mounted 300 hidden dialogs that nobody could ever
+ * have wanted to open.
+ */
+const OverflowMoves = ({
+  moves,
+  task,
+  status,
+  kind,
+  claimed,
+}: {
+  moves: readonly Move[]
+  task: TaskCard
+  status: TaskStatus
+  kind: string
+  claimed: boolean
+}) => {
+  const [open, setOpen] = useState(false)
+  return (
+    <details className="gate-overflow" open={open} onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary aria-label={`More actions for ${task.title}`}>More…</summary>
+      {open && (
+        <div className="gate-overflow__menu">
+          {moves.map((m) => (
+            <GateButton key={m.action} move={m} task={task} status={status} kind={kind} claimed={claimed} />
+          ))}
+        </div>
+      )}
+    </details>
+  )
+}
+
 export const GateActions = ({
   task,
   status,
@@ -228,12 +265,28 @@ export const GateActions = ({
   // column-specific. Abandon is offered only where it can work — core refuses a
   // completed or already-abandoned task, so no button should promise otherwise.
   const cancellable = status !== "completed" && status !== "abandoned"
-  const moves = [...(MOVES[status as TaskStatus] ?? []), ...(cancellable ? [ABANDON_MOVE] : []), REMOVE_MOVE]
+  const forward = MOVES[status as TaskStatus] ?? []
+  const cancellations = [...(cancellable ? [ABANDON_MOVE] : []), REMOVE_MOVE]
+
+  // The forward move gets the weight; the cancellations go behind a disclosure.
+  // Flat, they were three buttons of near-equal emphasis — and because
+  // ABANDON_MOVE carries no `danger` flag it rendered `primary`, identical to
+  // Approve, while on the ship gate the action you wanted was the red one and
+  // the cancellation was blue. The hierarchy was not just flat, it was inverted.
   return (
     <div className="gate-actions">
-      {moves.map((m) => (
+      {forward.map((m) => (
         <GateButton key={m.action} move={m} task={task} status={status as TaskStatus} kind={kind} claimed={claimed} />
       ))}
+      {cancellations.length > 0 && (
+        <OverflowMoves
+          moves={cancellations}
+          task={task}
+          status={status as TaskStatus}
+          kind={kind}
+          claimed={claimed}
+        />
+      )}
     </div>
   )
 }

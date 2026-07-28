@@ -32,6 +32,51 @@ export interface TaskCard {
   readonly hasPlan: boolean
 }
 
+/**
+ * What the last run says about a task, for a gate decision.
+ *
+ * A run's id IS its task's id (see routes/runs.ts), so this needs no new link
+ * between the two — it was always derivable and never surfaced.
+ */
+export interface ReviewRunContext {
+  readonly id: string
+  readonly outcome: string
+  readonly at: string
+  /**
+   * Null, never 0, when the pass recorded no cap — "didn't say" and "burned
+   * none" are different findings, the same convention the metrics tab states.
+   */
+  readonly iterationsUsed: number | null
+  readonly cap: number | null
+  /** The stage of the last non-PASS verdict — what actually went wrong. */
+  readonly failedStage: string | null
+  readonly lastVerdict: string | null
+}
+
+/** One task waiting on a human, with the evidence needed to decide about it. */
+export interface ReviewItem {
+  readonly kind: string
+  readonly status: string
+  readonly card: TaskCard
+  /** ISO of the first stamped audit note; null when the trail carries no stamps. */
+  readonly createdAt: string | null
+  /** ISO of the most recent stamped note — i.e. how long this has been waiting. */
+  readonly lastEventAt: string | null
+  /** That note's text, e.g. "plan parked for review". */
+  readonly lastEvent: string | null
+  /** Opening of the plan, when there is one — enough to decide or to know to open it. */
+  readonly planExcerpt: string | null
+  readonly lastRun: ReviewRunContext | null
+  readonly claimed: boolean
+}
+
+export interface ReviewResponse {
+  /** Longest-waiting first. Items whose age is unknown sort last. */
+  readonly items: readonly ReviewItem[]
+  /** Kinds whose gate columns were read — for an honest empty state. */
+  readonly kinds: readonly string[]
+}
+
 /** Per-kind dashboard metadata derived from a workflow-kind manifest at startup. */
 export interface KindBoardInfo {
   readonly kind: string
@@ -138,6 +183,11 @@ export interface KindSummary {
   readonly kind: string
   readonly description: string
   readonly stages: readonly string[]
+  /**
+   * Ships with @agentic-workflow/core. The save route refuses to overwrite
+   * one; the creator needs to know before the click, not after the 400.
+   */
+  readonly builtin: boolean
 }
 
 export interface KindsResponse {
