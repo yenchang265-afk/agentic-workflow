@@ -1,215 +1,96 @@
 ---
 name: performance-optimization
-description: Optimizes only what measurement proves matters. Use when performance requirements exist, a regression is suspected, or Core Web Vitals need improvement.
+description: Finds unbounded work in a diff, and optimizes only what measurement proves matters. Use when a change touches a hot path, a query, or a loop over unbounded data; also when a regression is suspected or Core Web Vitals need work.
 ---
 
 # Performance Optimization
 
-## Overview
+Two branches, and they ask opposite questions.
 
-Measure before optimizing. Performance work without measurement is guessing — and guessing leads to premature optimization that adds complexity without improving what matters. Profile first, identify the actual bottleneck, fix it, measure again. Optimize only what measurements prove matters.
+**Judging a diff** — you cannot run the code, profile it, or produce a number.
+So don't try to answer "is this slow?"; answer the question a diff *can* answer:
+does each piece of work have a **bound**? Everything below is this branch.
 
-## When to Use
+**Optimizing a real system** — you have a running system and a symptom. Measure
+first; the whole method is in `references/performance-checklist.md`, summarized
+at the end of this file.
 
-- Performance requirements exist in the spec (load time budgets, response time SLAs)
-- Users or monitoring report slow behavior
-- Core Web Vitals scores are below thresholds
-- You suspect a change introduced a regression
-- Building features that handle large datasets or high traffic
+## Judging a diff
 
-**When NOT to use:** Don't optimize before you have evidence of a problem. Premature optimization adds complexity that costs more than the performance it gains.
+For every loop, query, fetch, allocation, and render the diff introduces or
+touches, name two things: its **bound** (what stops it growing) and its per-item
+cost. Work with no bound is the finding — you do not need a millisecond figure
+to report it, and guessing one weakens the finding.
 
-## Core Web Vitals Targets
+**Where the bound goes missing:**
 
-| Metric | Good | Needs Improvement | Poor |
-|--------|------|-------------------|------|
-| **LCP** (Largest Contentful Paint) | ≤ 2.5s | ≤ 4.0s | > 4.0s |
-| **INP** (Interaction to Next Paint) | ≤ 200ms | ≤ 500ms | > 500ms |
-| **CLS** (Cumulative Layout Shift) | ≤ 0.1 | ≤ 0.25 | > 0.25 |
+- **Per-item query (N+1).** A query inside a loop over rows: one query becomes
+  one per row. The bound is a join, an `include`, or batch loading.
+- **Unbounded fetch.** `findMany()` with no `take`, a list endpoint with no
+  pagination, a "get all" that grows with the table.
+- **Per-item `await`.** Sequential awaits in a loop where the work is
+  independent — the bound is a batch or a bounded-concurrency map.
+- **Unbounded accumulation.** A cache, map, or array that only ever grows, with
+  no TTL, no eviction, and no size cap. This is the one that survives review and
+  pages someone at 3am.
+- **Work moved onto a hot path.** The diff adds work inside a request handler,
+  a render, or a frame callback that could sit outside it. A hot path is any
+  code whose cost multiplies by traffic, rows, or frames.
+- **Unbounded input.** A regex, parse, or recursion applied to input whose size
+  the caller controls, with no length cap.
+- **Layout thrash.** Interleaved DOM reads and writes in a loop — batch the
+  reads, then the writes.
+- **Memoization without evidence.** `React.memo`/`useMemo` added across a diff
+  with no profile naming the cost. Memoize only what profiling names; a wrapper
+  around a cheap component costs more than it saves.
 
-## The Optimization Workflow
+**Note what the diff already bounds.** Saying "the list endpoint paginates and
+the cache has a TTL" calibrates trust in the findings that remain.
 
-```
-1. MEASURE  → Establish baseline with real data
-2. IDENTIFY → Find the actual bottleneck (not assumed)
-3. FIX      → Address the specific bottleneck
-4. VERIFY   → Measure again, confirm improvement
-5. GUARD    → Add monitoring or tests to prevent regression
-```
+## Severity
 
-### Step 1: Measure
+Grade with the three severities `code-review-and-quality` → Severity defines —
+that skill owns the vocabulary. What performance adds is where the line sits:
 
-Two complementary approaches — use both:
+- `critical` — unbounded growth on a request path: memory that never releases,
+  a query whose cost scales with a table the user can grow, an unbounded loop
+  over attacker-influenced input.
+- `important` — unbounded work off a hot path, an N+1 on a cold path, or a
+  measured regression against a budget the repo actually defines.
+- `suggestion` — a suspicion you have not measured, and micro-optimizations.
+  "This feels slow" with no bound behind it is never a blocker.
 
-- **Synthetic (Lighthouse, DevTools Performance tab):** Controlled conditions, reproducible. Best for CI regression detection and isolating specific issues.
-- **RUM (web-vitals library, CrUX):** Real user data in real conditions. Required to validate that a fix actually improved user experience.
+## Optimizing a real system
 
-**Frontend:**
-```bash
-# Synthetic: Lighthouse in Chrome DevTools (or CI)
-# Chrome DevTools → Performance tab → Record
-# Chrome DevTools MCP → Performance trace
-
-# RUM: Web Vitals library in code
-import { onLCP, onINP, onCLS } from 'web-vitals';
-
-onLCP(console.log);
-onINP(console.log);
-onCLS(console.log);
-```
-
-**Backend:**
-```bash
-# Response time logging
-# Application Performance Monitoring (APM)
-# Database query logging with timing
-
-# Simple timing
-console.time('db-query');
-const result = await db.query(...);
-console.timeEnd('db-query');
-```
-
-### Where to Start Measuring
-
-Use the symptom to decide what to measure first:
+When you *can* run it, measurement leads and nothing is optimized without it —
+premature optimization buys complexity with no evidence it bought speed:
 
 ```
-What is slow?
-├── First page load
-│   ├── Large bundle? --> Measure bundle size, check code splitting
-│   ├── Slow server response? --> Measure TTFB in DevTools Network waterfall
-│   │   ├── DNS long? --> Add dns-prefetch / preconnect for known origins
-│   │   ├── TCP/TLS long? --> Enable HTTP/2, check edge deployment, keep-alive
-│   │   └── Waiting (server) long? --> Profile backend, check queries and caching
-│   └── Render-blocking resources? --> Check network waterfall for CSS/JS blocking
-├── Interaction feels sluggish
-│   ├── UI freezes on click? --> Profile main thread, look for long tasks (>50ms)
-│   ├── Form input lag? --> Check re-renders, controlled component overhead
-│   └── Animation jank? --> Check layout thrashing, forced reflows
-├── Page after navigation
-│   ├── Data loading? --> Measure API response times, check for waterfalls
-│   └── Client rendering? --> Profile component render time, check for N+1 fetches
-└── Backend / API
-    ├── Single endpoint slow? --> Profile database queries, check indexes
-    ├── All endpoints slow? --> Check connection pool, memory, CPU
-    └── Intermittent slowness? --> Check for lock contention, GC pauses, external deps
+1. MEASURE  → Establish baseline with real data (synthetic + RUM)
+2. IDENTIFY → Find the actual bottleneck (not the assumed one)
+3. FIX      → Address that specific bottleneck
+4. VERIFY   → Measure again, confirm the improvement
+5. GUARD    → Add monitoring or a CI budget to prevent regression
 ```
 
-### Step 2: Identify the Bottleneck
-
-Common bottlenecks by category:
-
-**Frontend:**
-
-| Symptom | Likely Cause | Investigation |
-|---------|-------------|---------------|
-| Slow LCP | Large images, render-blocking resources, slow server | Check network waterfall, image sizes |
-| High CLS | Images without dimensions, late-loading content, font shifts | Check layout shift attribution |
-| Poor INP | Heavy JavaScript on main thread, large DOM updates | Check long tasks in Performance trace |
-| Slow initial load | Large bundle, many network requests | Check bundle size, code splitting |
-
-**Backend:**
-
-| Symptom | Likely Cause | Investigation |
-|---------|-------------|---------------|
-| Slow API responses | N+1 queries, missing indexes, unoptimized queries | Check database query log |
-| Memory growth | Leaked references, unbounded caches, large payloads | Heap snapshot analysis |
-| CPU spikes | Synchronous heavy computation, regex backtracking | CPU profiling |
-| High latency | Missing caching, redundant computation, network hops | Trace requests through the stack |
-
-### Step 3: Fix Common Anti-Patterns
-
-#### N+1 Queries (Backend)
-
-```typescript
-// BAD: N+1 — one query per task for the owner
-const tasks = await db.tasks.findMany();
-for (const task of tasks) {
-  task.owner = await db.users.findUnique({ where: { id: task.ownerId } });
-}
-
-// GOOD: Single query with join/include
-const tasks = await db.tasks.findMany({
-  include: { owner: true },
-});
-```
-
-#### Unbounded Data Fetching
-
-```typescript
-// BAD: Fetching all records
-const allTasks = await db.tasks.findMany();
-
-// GOOD: Paginated with limits
-const tasks = await db.tasks.findMany({
-  take: 20,
-  skip: (page - 1) * 20,
-  orderBy: { createdAt: 'desc' },
-});
-```
-
-#### Other Common Anti-Patterns
-
-Rules — worked examples for each live in `references/performance-checklist.md` → Implementation Examples:
-
-- **Images**: every `<img>` ships explicit dimensions; hero/LCP images get `fetchpriority="high"` with AVIF/WebP `srcset`; below-the-fold images get `loading="lazy" decoding="async"`.
-- **Re-renders (React)**: stable references for props (hoist constants, `useMemo` expensive computations, `React.memo` expensive components — and only those).
-- **Bundle size**: route-level `lazy()` + `Suspense` for heavy, rarely-used features; profile before changing import styles — modern bundlers already tree-shake ESM.
-- **Caching (backend)**: TTL-cache frequently-read rarely-changed data; immutable `Cache-Control` for hashed static assets; explicit `max-age` on cacheable API responses.
-
-## Performance Budget
-
-Set budgets and enforce them:
-
-```
-JavaScript bundle: < 200KB gzipped (initial load)
-CSS: < 50KB gzipped
-Images: < 200KB per image (above the fold)
-Fonts: < 100KB total
-API response time: < 200ms (p95)
-Time to Interactive: < 3.5s on 4G
-Lighthouse Performance score: ≥ 90
-```
-
-**Enforce in CI:**
-```bash
-# Bundle size check
-npx bundlesize --config bundlesize.config.json
-
-# Lighthouse CI
-npx lhci autorun
-```
-
-## See Also
-
-For detailed performance checklists, optimization commands, and anti-pattern reference, see `references/performance-checklist.md`.
-
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "It's fast on my machine" | Your machine isn't the user's. Profile on representative hardware and networks. |
-| "This optimization is obvious" | If you didn't measure, you don't know. Profile first. |
-
-## Red Flags
-
-- N+1 query patterns in data fetching
-- List endpoints without pagination
-- Images without dimensions, lazy loading, or responsive sizes
-- Bundle size growing without review
-- No performance monitoring in production
-- `React.memo` and `useMemo` everywhere (overusing is as bad as underusing)
+Your machine is not the user's, so profile on representative hardware and
+networks. Core Web Vitals targets, the symptom-to-measurement tree, bottleneck
+tables, measurement commands, budgets, and worked fixes all live in
+`references/performance-checklist.md`.
 
 ## Verification
 
-After any performance-related change:
+Judging a diff:
 
-- [ ] Before and after measurements exist (specific numbers)
-- [ ] The specific bottleneck is identified and addressed
+- [ ] Every loop, query, fetch, allocation, and render in the diff has a named bound, or is a finding
+- [ ] Every finding names the bound that is missing and the move that adds it, at `file:line`
+- [ ] No finding rests on an invented millisecond figure
+- [ ] What the diff already bounds is stated, not left silent
+
+Changing a real system:
+
+- [ ] Before and after measurements exist, as specific numbers
+- [ ] The bottleneck was identified by measurement, not assumption
 - [ ] Core Web Vitals are within "Good" thresholds
-- [ ] Bundle size hasn't increased significantly
-- [ ] No N+1 queries in new data fetching code
-- [ ] Performance budget passes in CI (if configured)
-- [ ] Existing tests still pass (optimization didn't break behavior)
+- [ ] Bundle size hasn't grown unreviewed; the CI budget passes if one is configured
+- [ ] Existing tests still pass — the optimization didn't change behavior
