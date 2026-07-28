@@ -1,6 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES, stampPath } from "./claim-marker.js"
+import {
+  acquireMarker,
+  acquireOrSweepMarker,
+  markerOlderThan,
+  releaseMarker,
+  releaseMarkerIfStale,
+  restampMarker,
+  STALE_CLAIM_MINUTES,
+  stampPath,
+} from "./claim-marker.js"
 import type { Shell } from "./host.js"
 
 /**
@@ -176,6 +185,49 @@ test("losing the takeover rename outright is a refusal, not a second claim", asy
     await $`mv ${MARKER} ${`${MARKER}.taken`}`.quiet().nothrow()
   })
   assert.equal(await acquireOrSweepMarker($, MARKER, STALE_CLAIM_MINUTES, now), false)
+})
+
+test("restampMarker refreshes a held marker so a long multi-stage run never reads stale", async () => {
+  const { $, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  const midRun = later(STALE_CLAIM_MINUTES + 5)
+  await restampMarker($, MARKER, midRun)
+  assert.equal(JSON.parse(files.get(stampPath(MARKER))!).claimedAt, midRun.toISOString())
+  assert.equal(await markerOlderThan($, MARKER, STALE_CLAIM_MINUTES, later(STALE_CLAIM_MINUTES + 6)), false, "freshly restamped — not stale")
+})
+
+test("restampMarker never re-creates a released marker", async () => {
+  const fs = makeFs()
+  await acquireMarker(fs.$, MARKER, T0)
+  await releaseMarker(fs.$, MARKER)
+  await restampMarker(fs.$, MARKER, later(1))
+  assert.equal(fs.dirs.has(MARKER), false)
+  assert.equal(fs.files.has(stampPath(MARKER)), false, "no orphan stamp for a marker nobody holds")
+})
+
+test("releaseMarkerIfStale releases only a stale marker, atomically", async () => {
+  const { $ } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  assert.equal(await releaseMarkerIfStale($, MARKER, STALE_CLAIM_MINUTES, later(1)), false, "a live claim is left alone")
+  assert.equal(await releaseMarkerIfStale($, MARKER, STALE_CLAIM_MINUTES, later(STALE_CLAIM_MINUTES + 5)), true)
+  assert.equal(await acquireMarker($, MARKER, later(STALE_CLAIM_MINUTES + 6)), true, "the marker is free after the release")
+})
+
+test("releaseMarkerIfStale stands down when a rival re-claims mid-release", async () => {
+  // The sweep race releaseOrphanedClaims used to lose: judge stale, then a
+  // legitimate claimer wins the marker, then the sweeper's blind rm/rmdir
+  // deleted the live claim and a second claimer took the task.
+  const fs = makeFs()
+  const { $ } = fs
+  await acquireMarker($, MARKER, T0)
+  const now = later(STALE_CLAIM_MINUTES + 5)
+  fs.interleave("mv " + MARKER, async () => {
+    await releaseMarker($, MARKER)
+    await acquireMarker($, MARKER, now)
+  })
+  assert.equal(await releaseMarkerIfStale($, MARKER, STALE_CLAIM_MINUTES, now), false, "what it moved aside was live — restored")
+  assert.equal(fs.dirs.has(MARKER), true, "the rival's claim survives")
+  assert.equal(JSON.parse(fs.files.get(stampPath(MARKER))!).claimedAt, now.toISOString(), "with the RIVAL's stamp")
 })
 
 test("a swept marker leaves no graveyard directory behind", async () => {

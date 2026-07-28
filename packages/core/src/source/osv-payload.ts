@@ -1,5 +1,5 @@
-import { normalizeLabel, OsvReportSchema, type OsvReport } from "./osv.js"
-import { severityRank } from "./dependency-scan.js"
+import { bandSeverityVectors, normalizeLabel, OsvReportSchema, type OsvReport } from "./osv.js"
+import { severityRank, type Severity } from "./dependency-scan.js"
 
 /**
  * Tolerant entry point for every OSV-shaped scanner payload the dep-sitter's
@@ -21,7 +21,10 @@ import { severityRank } from "./dependency-scan.js"
  * assumed, and neither is ever dropped silently:
  *
  * - the **installed version** (standard OSV has no such field), and
- * - the **rating**, whose vocabulary is site-specific.
+ * - the **rating**, which a compliant record carries only as a CVSS vector in
+ *   `severity[].score` (scored via osv.ts's `bandSeverityVectors`), while a
+ *   site's own scanner may instead supply a label whose vocabulary is
+ *   site-specific.
  *
  * A per-record failure is a note; a payload where EVERY record fails the same
  * way is an error. That asymmetry is the point: one malformed record must not
@@ -50,7 +53,7 @@ export const INSTALLED_VERSION_FIELDS = [
 ] as const
 
 /** Where the rating came from — carried into the notes so a misdiagnosed payload is visible in the log rather than inferred from a suspiciously empty claim list. */
-export type SeveritySource = "severity" | "database_specific" | "severity-array" | "none"
+export type SeveritySource = "severity" | "database_specific" | "severity-array" | "cvss-vector" | "none"
 
 /**
  * The rating a record carries, and where it was found. `raw` is the string
@@ -60,7 +63,18 @@ export type SeveritySource = "severity" | "database_specific" | "severity-array"
 export interface ResolvedSeverity {
   readonly raw: string
   readonly source: SeveritySource
+  /**
+   * The band a CVSS vector scored to, set only for `source: "cvss-vector"` —
+   * `raw` is the vector itself there, which is not a label and would fail
+   * `normalizeLabel`. Everywhere else the label IS `raw`, normalized.
+   */
+  readonly label?: Severity
+  /** CVSS vector versions found but not scorable (v2, v4), for the caller's note. */
+  readonly unscored?: readonly string[]
 }
+
+/** The label a resolution yields, from whichever channel supplied it; "" when unreadable. */
+export const severityLabelOf = (sev: ResolvedSeverity): Severity | "" => sev.label ?? normalizeLabel(sev.raw)
 
 export interface OsvPayload {
   readonly report: OsvReport
@@ -96,18 +110,30 @@ const readFirstVersion = (affected: unknown): string => {
 
 /** The accepted rating vocabulary, quoted back in the unreadable-rating error. */
 const ACCEPTED_LABELS = "low/moderate/medium/high/critical"
+/** The full set of channels a rating may arrive on, quoted in the same error. */
+const ACCEPTED_CHANNELS = `a ${ACCEPTED_LABELS} label, or a CVSS v3.0/v3.1 vector`
 
 /**
  * Read a record's rating. The company scanner supplies a scalar `severity`
  * string ("HIGH"), which is OFF-SPEC — standard OSV makes `severity` an array
- * of `{type, score}` objects — so both are accepted, in this order:
+ * of `{type, score}` objects whose `score` is a CVSS VECTOR — so both are
+ * accepted, in this order:
  *
  *   1. `severity` as a non-empty string        — the company scanner's shape
  *   2. `database_specific.severity`            — the GHSA-style label osv.ts already reads
  *   3. `severity[]` entries whose `score` is a non-numeric label — worst by
- *      `severityRank`; entries holding a CVSS vector or a number are IGNORED,
- *      not scored (there is no CVSS arithmetic anywhere in this module)
- *   4. nothing ⇒ `{ raw: "", source: "none" }`
+ *      `severityRank` (also off-spec, but seen in the wild)
+ *   4. `severity[]` CVSS vectors, scored and banded — the SPEC's own channel,
+ *      and the only one a compliant payload is required to carry
+ *   5. nothing ⇒ `{ raw: "", source: "none" }`
+ *
+ * Labels outrank vectors deliberately: a rating the scanner states outright is
+ * authoritative over one this code derives, and a site that overrides an
+ * advisory's severity does it with the label.
+ *
+ * A bare NUMBER in `score` is still ignored. It is off-spec, and its CVSS
+ * version — hence which qualitative scale it belongs on — is unknowable from
+ * the number alone.
  *
  * No vendor-field guessing (`cvss`, `score`, `severity_level`, …): with the
  * rating field known, probing those would only add ways to silently pick up the
@@ -122,20 +148,34 @@ export const resolveSeverity = (record: unknown): ResolvedSeverity => {
   const dbSpecific = readPath(record, "database_specific.severity")
   if (dbSpecific) return { raw: dbSpecific, source: "database_specific" }
 
-  // Standard-OSV `severity[]`. Entries carry a CVSS vector or a number in
-  // `score`; those are skipped rather than scored, so only a label-shaped score
-  // contributes. Worst wins, matching how osvCandidates takes a package's worst.
-  if (Array.isArray(scalar)) {
-    let best = ""
-    for (const entry of scalar) {
-      const score = isRecord(entry) ? entry["score"] : undefined
-      if (typeof score !== "string") continue
-      const trimmed = score.trim()
-      // A vector ("CVSS:3.1/AV:N/…") or a number ("8.1") is not a label.
-      if (!trimmed || trimmed.includes("/") || !Number.isNaN(Number.parseFloat(trimmed))) continue
-      if (severityRank(normalizeLabel(trimmed)) > severityRank(normalizeLabel(best))) best = trimmed
+  if (!Array.isArray(scalar)) return { raw: "", source: "none" }
+
+  // Standard-OSV `severity[]`, label pass. Worst wins, matching how
+  // osvCandidates takes a package's worst.
+  let best = ""
+  const vectors: { score: string }[] = []
+  for (const entry of scalar) {
+    const score = isRecord(entry) ? entry["score"] : undefined
+    if (typeof score !== "string") continue
+    const trimmed = score.trim()
+    if (!trimmed) continue
+    if (trimmed.includes("/")) {
+      vectors.push({ score: trimmed })
+      continue
     }
-    if (best) return { raw: best, source: "severity-array" }
+    // A number ("8.1") is not a label.
+    if (!Number.isNaN(Number.parseFloat(trimmed))) continue
+    if (severityRank(normalizeLabel(trimmed)) > severityRank(normalizeLabel(best))) best = trimmed
+  }
+  if (best) return { raw: best, source: "severity-array" }
+
+  // Vector pass — the spec's channel. `raw` stays the vector verbatim so an
+  // unscorable one can be quoted; `label` carries what it banded to.
+  if (vectors.length > 0) {
+    const { label, unscored } = bandSeverityVectors(vectors)
+    const raw = vectors.map((v) => v.score).join(", ")
+    if (label) return { raw, source: "cvss-vector", label, ...(unscored.length > 0 ? { unscored } : {}) }
+    return { raw, source: "none", ...(unscored.length > 0 ? { unscored } : {}) }
   }
 
   return { raw: "", source: "none" }
@@ -217,8 +257,19 @@ export const parseOsvPayload = (raw: string, opts?: { readonly ecosystem?: strin
     const sev = resolveSeverity(record)
     if (sev.source === "none") {
       unreadableSeverity.push(label)
-      notes.push(`${label}: no severity field — it will fall below every floor`)
-    } else if (!normalizeLabel(sev.raw)) {
+      if (sev.unscored && sev.unscored.length > 0) {
+        // A vector WAS present — saying "no severity field" here would send the
+        // reader looking for a missing field instead of at an unsupported
+        // CVSS version.
+        unreadableRaw.add(sev.raw)
+        notes.push(
+          `${label}: only CVSS v${sev.unscored.join("/v")} vector(s), which are not scored here (v3.0/v3.1 are) — ` +
+            `no severity resolved`,
+        )
+      } else {
+        notes.push(`${label}: no severity field — it will fall below every floor`)
+      }
+    } else if (!severityLabelOf(sev)) {
       unreadableSeverity.push(label)
       unreadableRaw.add(sev.raw)
       notes.push(`${label}: unrecognized severity "${sev.raw}" — expected ${ACCEPTED_LABELS}`)
@@ -272,15 +323,19 @@ export const parseOsvPayload = (raw: string, opts?: { readonly ecosystem?: strin
       if (bucket.ids.has(id) && id) continue
       bucket.ids.add(id)
 
-      // The rating rides out on the one channel osvCandidates reads FIRST, and
-      // only when the record left it empty — never clobber a value the scanner
-      // supplied, since that field outranks everything downstream.
+      // An off-spec LABEL rides out on the one channel osvCandidates reads
+      // FIRST, and only when the record left it empty — never clobber a value
+      // the scanner supplied, since that field outranks everything downstream.
+      //
+      // A CVSS vector is deliberately NOT written back: `sev.raw` is the vector
+      // itself, which is not a label, and osvCandidates reads `severity[]`
+      // directly off the record carried through here. Writing a derived band
+      // into `database_specific.severity` would fabricate a field the scanner
+      // never emitted — the exact guessing this module avoids.
       const dbSpecific = isRecord(record["database_specific"]) ? record["database_specific"] : {}
-      bucket.vulns.push(
-        readPath(record, "database_specific.severity") || !sev.raw
-          ? record
-          : { ...record, database_specific: { ...dbSpecific, severity: sev.raw } },
-      )
+      const writeBack =
+        sev.source !== "cvss-vector" && sev.raw !== "" && readPath(record, "database_specific.severity") === ""
+      bucket.vulns.push(writeBack ? { ...record, database_specific: { ...dbSpecific, severity: sev.raw } } : record)
     }
   }
 
@@ -296,7 +351,7 @@ export const parseOsvPayload = (raw: string, opts?: { readonly ecosystem?: strin
     return {
       error:
         `${seen} vulnerability record(s), none carrying a readable severity — ${sawList}` +
-        `expected ${ACCEPTED_LABELS}. Every package would sit below the severity floor, ` +
+        `expected ${ACCEPTED_CHANNELS}. Every package would sit below the severity floor, ` +
         `so this is reported rather than treated as "no vulnerabilities"`,
     }
   }
@@ -304,9 +359,10 @@ export const parseOsvPayload = (raw: string, opts?: { readonly ecosystem?: strin
   const packages = [...buckets.values()].map((b) => ({
     package: { name: b.name, version: b.version, ecosystem: b.ecosystem },
     vulnerabilities: b.vulns,
-    // `groups` stays empty: the rating always arrives as a label, so the numeric
-    // group channel has nothing to carry and osvCandidates already tolerates a
-    // missing group.
+    // `groups` stays empty: it is osv-scanner's own precomputed roll-up, which
+    // a raw vuln-list has no equivalent of. A rating reaches osvCandidates
+    // either as a label written back above or as the record's own `severity[]`
+    // vectors, and osvCandidates already tolerates a missing group.
     groups: [],
   }))
   return { report: OsvReportSchema.parse({ results: [{ packages }] }), shape: "vuln-list", notes }

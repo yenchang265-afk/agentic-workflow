@@ -57,6 +57,18 @@ export interface BacklogResponse {
   /** Engineering-lifecycle roll-up; null for other kinds (their folders aren't its shape). */
   readonly summary: BacklogSummary | null
   readonly claimedIds: readonly string[]
+  /**
+   * Claim age: task id → the marker stamp's `claimedAt` ISO. Only ids whose
+   * stamp was readable appear — a claim without a stamp shows no age rather
+   * than a wrong one.
+   */
+  readonly claimStamps?: Readonly<Record<string, string>>
+  /**
+   * Minutes after `claimedAt` at which core's sweep MAY treat the claim as
+   * stale (its floor — a configured stage timeout extends it). Display context
+   * for the age, not a promise of takeover.
+   */
+  readonly staleClaimMinutes?: number
   /** Structural anomalies from the backlog-root audit (any backlog kind); null when clean. */
   readonly anomalies: BacklogAnomalies | null
 }
@@ -170,6 +182,14 @@ export interface RunsResponse {
   readonly runs: readonly RunListItem[]
 }
 
+/** One iteration's outcome from the snapshot's bounded attempts ledger (core's `AttemptRecord`). */
+export interface AttemptView {
+  readonly stage: string
+  readonly iteration: number
+  readonly verdict: string
+  readonly reason?: string
+}
+
 /** Display-only view of a `runs/<id>.state.json` crash-resume snapshot. */
 export interface SnapshotView {
   readonly kind?: string
@@ -181,6 +201,10 @@ export interface SnapshotView {
   readonly worktree?: string
   /** Stages whose captured output the snapshot carries — what a resume would see. Bodies stay in the run log. */
   readonly artifactStages?: readonly string[]
+  /** Per-iteration verdicts + first-line reasons — the failure forensics trail. */
+  readonly attempts?: readonly AttemptView[]
+  /** Set when the run proceeded WITHOUT git isolation — otherwise invisible in every view. */
+  readonly isolationWarning?: string
 }
 
 /** Per-tool call counts for one stage pass (mirrors core's StageToolUsage). */
@@ -200,12 +224,41 @@ export interface StageActivity {
   readonly files?: readonly string[]
 }
 
+/** One stage execution span from the metrics sidecar — the run timeline's unit. */
+export interface TimelineSpan {
+  readonly stage: string
+  readonly lens?: string
+  /** 1-based, matching the run-log section headers. */
+  readonly iteration: number
+  readonly startedAt: string
+  readonly ms: number
+  readonly model?: string
+  /** From a sidecar entry still `open` — the span may still be growing. */
+  readonly live?: boolean
+}
+
+/** What a live run is doing right now, from the sidecar's trailing `open` entry. */
+export interface LiveProgress {
+  readonly stage: string
+  readonly lens?: string
+  /** 1-based. */
+  readonly iteration: number
+  readonly startedAt?: string
+  readonly host: string
+}
+
 export interface RunDetailResponse {
   readonly id: string
   readonly log: ParsedRunLog
   readonly snapshot: SnapshotView | null
   /** Per-stage tool/file activity from the metrics sidecar; absent for runs that predate capture. */
   readonly activity?: readonly StageActivity[]
+  /** Stage spans with a recorded start — absent when no sample carries `startedAt`. */
+  readonly timeline?: readonly TimelineSpan[]
+  /** Sidecar samples lacking `startedAt` — excluded from the timeline, counted not hidden. */
+  readonly timelineExcluded?: number
+  /** Present while the sidecar's trailing entry is `open` — the run is mid-stage right now. */
+  readonly live?: LiveProgress
 }
 
 /** A host's live-stage marker — one file per host under `runs/` (Claude's `.stage.json`, plus `.stage-opencode.json` / `.stage-qwen.json`). */
@@ -227,6 +280,18 @@ export interface LeaseView {
   readonly stale: boolean
 }
 
+/**
+ * One recorded failed attempt from a dedup ledger — why the sitter gave up on
+ * that head/target and when. Fields vary by source: PR ledgers carry
+ * `headSha` + `trigger`, dep ledgers `target`, head ledgers `at` only.
+ */
+export interface FailedAttemptView {
+  readonly at?: string
+  readonly headSha?: string
+  readonly trigger?: string
+  readonly target?: string
+}
+
 /** Raw hosted-PR dedup ledger entry (`runs/<kind>/pr-<n>.json`), passed through. */
 export interface PrLedgerView {
   readonly pr: number
@@ -235,6 +300,8 @@ export interface PrLedgerView {
   readonly updatedAt?: string
   readonly headShaHandled?: string
   readonly failedAttempts: number
+  /** The attempts behind the count, when their shape parsed. */
+  readonly failedAttemptDetails?: readonly FailedAttemptView[]
 }
 
 /** Dependency-scan dedup ledger (`runs/<kind>/dep-<slug>.json`) — dep-sitter's per-package state. */
@@ -245,6 +312,8 @@ export interface DepLedgerView {
   readonly versionHandled?: string
   readonly updatedAt?: string
   readonly failedAttempts: number
+  /** The attempts behind the count, when their shape parsed. */
+  readonly failedAttemptDetails?: readonly FailedAttemptView[]
 }
 
 /** CI-runs (branch-head) dedup ledger (`runs/<kind>/head-<sha>.json`) — main-sitter's per-head state. */
@@ -254,6 +323,8 @@ export interface HeadLedgerView {
   readonly handled: boolean
   readonly updatedAt?: string
   readonly failedAttempts: number
+  /** The attempts behind the count, when their shape parsed. */
+  readonly failedAttemptDetails?: readonly FailedAttemptView[]
 }
 
 export interface ActiveResponse {
@@ -709,6 +780,58 @@ export interface PromptSize {
   readonly stages: readonly StagePromptSize[]
 }
 
+/** Cost/latency roll-up for one stage × model pairing, sidecar samples only. */
+export interface StageModelStats {
+  readonly stage: string
+  readonly model: string
+  readonly samples: number
+  /** Samples that carried a `cost` — the only ones summed into `totalCost`. */
+  readonly costSamples: number
+  readonly totalCost: number
+  readonly meanMs: number
+  /** Mean 1-based iteration of this pairing's samples — "does the cheap model burn more retries". */
+  readonly meanIteration: number
+}
+
+export interface ModelStats {
+  /** Runs whose sidecar carried at least one model-bearing sample (opencode host only). */
+  readonly runsCovered: number
+  /** Samples with no `model` recorded — excluded from every row, never bucketed as a model. */
+  readonly samplesWithoutModel: number
+  readonly rows: readonly StageModelStats[]
+}
+
+/** One recurring review finding, grouped by normalized detail text. */
+export interface FindingGroup {
+  readonly axis: string
+  readonly severity: string
+  /** The first-seen original detail text (grouping normalizes trim/case). */
+  readonly detail: string
+  readonly count: number
+  /** Stage labels the finding appeared under. */
+  readonly stages: readonly string[]
+}
+
+export interface FindingsStats {
+  /** Runs whose sidecar carried at least one structured finding. */
+  readonly runsCovered: number
+  readonly samplesWithFindings: number
+  readonly bySeverity: Readonly<Record<string, number>>
+  /** Most-recurring first, capped server-side. */
+  readonly topFindings: readonly FindingGroup[]
+}
+
+/** Cross-run reliability of one tool, from the sidecars' per-stage tool tallies. */
+export interface ToolStats {
+  readonly tool: string
+  readonly calls: number
+  readonly errors: number
+  /** `errors / calls`; null when `calls` is 0. */
+  readonly errorRate: number | null
+  /** Runs whose sidecar recorded at least one call of this tool. */
+  readonly runsCovered: number
+}
+
 /**
  * Cross-run loop health. Sourced entirely from `runs/<id>.md` plus the
  * `runs/<id>.metrics.json` sidecars — no transcript joins, so every token number
@@ -737,6 +860,19 @@ export interface MetricsResponse {
   readonly cache: CacheHit
   /** Composed-prompt size per stage — the signal a context budget is (or isn't) needed. */
   readonly prompt: PromptSize
+  /** Which model ran which stage, at what cost and retry burn — sidecar samples only. */
+  readonly models: ModelStats
+  /** Flakiest-tool signal: per-tool call/error totals across all sidecars, worst first. */
+  readonly tools: readonly ToolStats[]
+  /**
+   * Sidecar-recorded stops split by the retryable flag: transient environment
+   * faults the source may retry vs genuine stops. Sidecar population only —
+   * the log-derived `outcomes` tally cannot make this distinction.
+   */
+  readonly stoppedRetryable: number
+  readonly stoppedFinal: number
+  /** Recurring review findings from the sidecars' structured verdicts. */
+  readonly findings: FindingsStats
   /** Ids listed but unreadable — surfaced so a silent drop is visible in the UI. */
   readonly skippedRuns: readonly string[]
 }
@@ -753,6 +889,27 @@ export interface ReposResponse {
   readonly repos: readonly RepoInfo[]
 }
 
+/** One scheduler event from `runs/events.jsonl`, passed through for display. */
+export interface SchedulerEventView {
+  readonly at: string
+  readonly host: string
+  readonly pid: number
+  readonly type: string
+  readonly kind?: string
+  readonly id?: string
+  readonly outcome?: string
+  readonly retryable?: boolean
+  readonly reasons?: readonly { readonly message: string; readonly actionable: boolean }[]
+  readonly ageMinutes?: number
+  readonly oldPid?: number
+  readonly oldHost?: string
+}
+
+export interface SchedulerEventsResponse {
+  /** Newest first, tail-capped server-side. */
+  readonly events: readonly SchedulerEventView[]
+}
+
 /** A watcher diff, before the server tags it with its repo. */
 export type HubEventBase =
   | { readonly type: "backlog" }
@@ -760,6 +917,8 @@ export type HubEventBase =
   | { readonly type: "active" }
   | { readonly type: "tokens"; readonly id: string }
   | { readonly type: "gate"; readonly taskId: string; readonly toStatus: string }
+  /** `runs/events.jsonl` grew or rotated — refetch /api/scheduler. */
+  | { readonly type: "sched" }
   /** `.agentic-workflow.json` changed — the server has already reloaded by the time this arrives. */
   | { readonly type: "config" }
   /** The monitored-repo set grew (a repo became loop-enabled) — refetch /api/repos. Tagged with the new repo's id. */

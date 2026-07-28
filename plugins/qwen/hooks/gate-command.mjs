@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 // plugins/claude/hooks/gate-parse.mjs
 var VERB = "(approve-plan|replan|approve)";
 var SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im");
-var CMD = "\\/(?:agentic-workflow:)?engineering(?![-\\w])";
+var CMD = "\\/(?:agentic-workflow:)?engineering(?=\\s|$)";
 var AT_START = "^\\s*";
 var APPROVE = new RegExp(`${AT_START}${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)`, "i");
 var REPLAN = new RegExp(`${AT_START}${CMD}\\s+replan\\b[ \\t]*(.*)`, "i");
@@ -21,43 +21,46 @@ var ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i");
 var verbFor = (prompt) => {
   const match = String(prompt ?? "").match(ANY_VERB);
   if (!match) return null;
-  return (match[1] || "").trim().toLowerCase() || "status";
+  const raw = (match[1] || "").trim().toLowerCase();
+  return raw.replace(/^["'`]+/, "").replace(/["'`.,:;!?]+$/, "") || "status";
 };
+var unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 var gateArgsFor = (prompt) => {
   const sentinel = prompt.match(SENTINEL);
   if (sentinel) {
-    const id = (sentinel[2] || "").trim();
+    const id = unquote((sentinel[2] || "").trim());
     if (!id) return { passThrough: true };
     const reason = (sentinel[3] || "").trim();
     return { argv: ["gate", sentinel[1], id, ...reason ? [reason] : []] };
   }
   const approve = prompt.match(APPROVE);
   if (approve) {
-    const id = (approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+    const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
     return { argv: ["gate", "approve-any", ...id ? [id] : []] };
   }
   const replan = prompt.match(REPLAN);
   if (replan) {
     const words = (replan[1] || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length) words[0] = unquote(words[0]);
     return { argv: ["gate", "reject-any", ...words] };
   }
   const retask = prompt.match(RETASK);
   if (retask) {
-    const id = (retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+    const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
     if (!id) return { passThrough: true };
     return { argv: ["gate", "retask", id], continueTurn: true };
   }
   const abandon = prompt.match(ABANDON);
   if (abandon) {
     const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean);
-    const id = words[0] || "";
+    const id = unquote(words[0] || "");
     if (!id) return { passThrough: true };
     return { argv: ["gate", "abandon", id, ...words.slice(1)] };
   }
   const remove = prompt.match(REMOVE);
   if (remove) {
     const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean);
-    const id = words.find((w) => !w.startsWith("-")) || "";
+    const id = unquote(words.find((w) => !w.startsWith("-")) || "");
     if (!id) return { passThrough: true };
     const force = words.some((w) => w === "--force" || w === "-f");
     return { argv: ["gate", "remove", id, ...force ? ["--force"] : []] };
@@ -149,6 +152,7 @@ var normalize = (verb) => String(verb ?? "").trim().toLowerCase() || null;
 var tagLines = (body) => {
   const tagged = [];
   let open;
+  let block2 = 0;
   for (const text of body.split("\n")) {
     const marker = MARKER.exec(text.trim());
     if (marker) {
@@ -159,10 +163,11 @@ var tagLines = (body) => {
       } else {
         if (open !== void 0) return null;
         open = names;
+        block2 += 1;
       }
       continue;
     }
-    tagged.push({ text, verbs: open === void 0 ? null : open.split("|") });
+    tagged.push({ text, verbs: open === void 0 ? null : open.split("|"), block: open === void 0 ? null : block2 });
   }
   return open === void 0 ? tagged : null;
 };
@@ -170,9 +175,16 @@ var sliceForVerb = (body, verb) => {
   const tagged = tagLines(body);
   const wanted = normalize(verb);
   if (!tagged || !wanted) return null;
-  const kept = tagged.filter((line) => line.verbs?.includes(wanted)).map((line) => line.text);
+  const kept = tagged.filter((line) => line.verbs?.includes(wanted));
   if (kept.length === 0) return null;
-  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const parts = [];
+  let prevBlock;
+  for (const line of kept) {
+    if (prevBlock !== void 0 && line.block !== prevBlock) parts.push("");
+    parts.push(line.text);
+    prevBlock = line.block;
+  }
+  return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 };
 var verbContext = (pluginRoot, verb) => {
   const wanted = normalize(verb);

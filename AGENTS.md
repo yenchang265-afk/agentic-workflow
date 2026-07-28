@@ -218,6 +218,24 @@ whole line — that is what stops a marker pasted into `$ARGUMENTS` from
 truncating the prompt — and HTML comments do not nest, so never write a literal
 marker inside a comment.
 
+### Claim markers mean "a loop is driving this NOW"
+
+A held `.claims/<id>` marker asserts a LIVE loop, nothing weaker — every gate
+verb (`replan`/`abandon`/`remove`) refuses on it with that exact rationale. So
+**every way a drive ends must release the marker**: `runStop` (any stage, not
+just PLAN), the OpenCode driveChain's stop/interrupt guard, and `onIdle`'s
+error path all do, and any new exit path must too. It was once "kept for
+recover" on stop instead, and the combination wedged cap-stopped tasks forever:
+the orphan sweep skips a CLAIMED/BUILD body, so no verb could ever free them.
+Two supporting invariants: drivers **restamp** the claim at every stage
+boundary (`refreshClaimStamp`) so a live multi-stage run never reads stale to a
+sweep; and any stale-marker takeover or release must go through the atomic
+rename-aside helpers (`acquireOrSweepMarker` / `releaseMarkerIfStale`), never a
+bare `rm`/`rmdir` + `mkdir` — the blind form let two sweepers both "win" one
+task. Cross-process liveness for `recover` is judged by
+`taskDrivenByStageMarker` (stage-marker deadline + writer pid), never by the
+in-memory per-process driving map alone.
+
 ### Model selection is a mechanism, never prose
 
 Never express `stageModels` / `agentModels` as an instruction for a model to

@@ -90,14 +90,100 @@ test("resolveSeverity takes the worst label from a standard-OSV severity array",
   assert.deepEqual(resolved, { raw: "critical", source: "severity-array" })
 })
 
-test("resolveSeverity ignores CVSS vectors and numbers rather than scoring them", () => {
-  const vectorsOnly = {
+test("resolveSeverity scores a CVSS vector — the spec's own severity channel", () => {
+  // OSV puts severity in `severity[].score` as a CVSS VECTOR. A compliant
+  // payload carries nothing else, so refusing to score this was refusing to
+  // read severity at all.
+  const resolved = resolveSeverity({
     severity: [
       { type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" },
-      { type: "CVSS_V2", score: "8.1" },
+      { type: "CVSS_V2", score: "8.1" }, // a bare number stays ignored
+    ],
+  })
+  assert.equal(resolved.source, "cvss-vector")
+  assert.equal(resolved.label, "critical") // 9.8
+  assert.match(resolved.raw, /^CVSS:3\.1\//, "raw keeps the vector verbatim so it can be quoted")
+})
+
+test("resolveSeverity takes the worst of several vectors", () => {
+  const resolved = resolveSeverity({
+    severity: [
+      { type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:H/PR:N/UI:R/S:C/C:L/I:L/A:N" }, // 4.7 → moderate
+      { type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N" }, // 7.5 → high
+    ],
+  })
+  assert.equal(resolved.label, "high")
+})
+
+test("an explicit label outranks a CVSS vector", () => {
+  // A rating the scanner states outright beats one this code derives — that is
+  // how a site overrides an advisory's severity.
+  const resolved = resolveSeverity({
+    severity: "LOW",
+    database_specific: { severity: "MODERATE" },
+  })
+  assert.deepEqual(resolved, { raw: "LOW", source: "severity" })
+
+  const viaDbSpecific = resolveSeverity({
+    database_specific: { severity: "LOW" },
+    severity: [{ type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }],
+  })
+  assert.deepEqual(viaDbSpecific, { raw: "LOW", source: "database_specific" })
+})
+
+test("a vector version with no formula here is reported as unscored, not as junk", () => {
+  const v4 = resolveSeverity({
+    severity: [{ type: "CVSS_V4", score: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" }],
+  })
+  assert.equal(v4.source, "none")
+  assert.deepEqual(v4.unscored, ["4.0"])
+})
+
+test("a spec-compliant payload — severity only as CVSS vectors — scans instead of erroring", () => {
+  // The whole point of the fix: before it, every record here resolved to
+  // `source: "none"` and the payload hard-errored as unreadable.
+  const spec = {
+    vulns: [
+      {
+        id: "CVE-2024-9999",
+        severity: [{ type: "CVSS_V3", score: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H" }],
+        affected: [
+          {
+            package: { name: "com.acme:widget", ecosystem: "Maven", version: "1.2.3" },
+            ranges: [{ type: "ECOSYSTEM", events: [{ introduced: "0" }, { fixed: "1.2.4" }] }],
+          },
+        ],
+      },
     ],
   }
-  assert.deepEqual(resolveSeverity(vectorsOnly), { raw: "", source: "none" })
+  const payload = ok(parseOsvPayload(JSON.stringify(spec)))
+  const judged = osvCandidates(payload.report, POLICY, () => true, "maven")
+  assert.deepEqual(
+    judged.claimable.map((c) => `${c.pkg} ${c.severity} →${c.target}`),
+    ["com.acme:widget critical →1.2.4"],
+  )
+})
+
+test("a payload carrying only unscorable vectors errors, naming the version rather than the field", () => {
+  // It must not read as "no vulnerabilities", and the note must point at the
+  // CVSS version — not send the reader hunting for a missing field.
+  const v4only = {
+    vulns: [
+      {
+        id: "CVE-2024-4444",
+        severity: [{ type: "CVSS_V4", score: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N" }],
+        affected: [
+          {
+            package: { name: "com.acme:widget", ecosystem: "Maven", version: "1.2.3" },
+            ranges: [{ type: "ECOSYSTEM", events: [{ fixed: "1.2.4" }] }],
+          },
+        ],
+      },
+    ],
+  }
+  const message = err(parseOsvPayload(JSON.stringify(v4only)))
+  assert.match(message, /none carrying a readable severity/)
+  assert.match(message, /CVSS v3\.0\/v3\.1 vector/)
 })
 
 test("resolveSeverity prefers the scalar severity over a disagreeing database_specific", () => {

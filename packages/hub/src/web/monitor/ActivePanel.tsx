@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react"
 import type { ActiveResponse } from "../../shared/api.js"
 import { useEvents } from "../events.js"
+import { timeAgo } from "../metrics/format.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
-import { failedSuffix } from "./PrKindPanel.js"
+import { failedSuffix, updatedSuffix } from "./PrKindPanel.js"
 
 /** Live activity strip: current stage (Claude host), watch lease, resumable snapshots, PR ledgers. */
 
@@ -19,6 +20,16 @@ const Deadline = ({ deadline }: { deadline: number | null | undefined }) => {
   const left = Math.max(0, Math.round((deadline - now) / 1000))
   const text = left >= 60 ? `${Math.floor(left / 60)}m ${String(left % 60).padStart(2, "0")}s` : `${left}s`
   return <Badge tone={left === 0 ? "gate" : "neutral"}>{left === 0 ? "overdue" : `deadline ${text}`}</Badge>
+}
+
+/** A ticking "Ns ago" for a timestamp — the lease heartbeat's liveness at a glance. */
+const Ago = ({ iso }: { iso: string }) => {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [])
+  return <>{timeAgo(iso, now)}</>
 }
 
 export const ActivePanel = () => {
@@ -42,7 +53,8 @@ export const ActivePanel = () => {
       )}
       {data.lease && (
         <Chip gate={data.lease.stale}>
-          watcher {data.lease.stale ? "stale" : "live"} — pid {data.lease.pid} ({data.lease.host})
+          watcher {data.lease.stale ? "stale" : "live"} — pid {data.lease.pid} ({data.lease.host}) · since{" "}
+          {new Date(data.lease.startedAt).toLocaleString()} · beat <Ago iso={data.lease.heartbeatAt} />
         </Chip>
       )}
       {data.snapshotIds.length > 0 && (
@@ -54,6 +66,7 @@ export const ActivePanel = () => {
         <Chip key={l.pr}>
           PR #{l.pr}
           {failedSuffix(l.failedAttempts)}
+          {updatedSuffix(l.updatedAt)}
         </Chip>
       ))}
     </div>

@@ -74,6 +74,45 @@ export const releaseMarker = async ($: Shell, markerDir: string): Promise<void> 
 }
 
 /**
+ * Refresh a held marker's stamp to `now`. Called at every stage boundary of a
+ * multi-stage run: `staleClaimMinutes` covers a single stage's worst case, but a
+ * whole BUILD→VERIFY→REVIEW loop can legitimately outlive it — without the
+ * refresh, a live run's marker eventually reads as stale and a sweep hands its
+ * task to a second claimer. No-op when the marker is absent (never re-creates a
+ * released claim).
+ */
+export const restampMarker = async ($: Shell, markerDir: string, now: Date = new Date()): Promise<void> => {
+  const held = await $`test -d ${markerDir}`.quiet().nothrow()
+  if (held.exitCode !== 0) return
+  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${stampPath(markerDir)}`.quiet().nothrow()
+}
+
+/**
+ * Atomically release `markerDir` iff it is stale. The non-atomic shape this
+ * replaces (`judge stale` → `rm -f stamp` → `rmdir`) let two sweepers judge the
+ * SAME stale marker and the slower one delete a rival's brand-new claim created
+ * in between — so the release renames the marker ASIDE first (rename of one
+ * source is atomic: exactly one mover wins), re-judges what it moved, and puts
+ * a fresh claim straight back. True only when this caller removed a stale
+ * marker; false when the marker was fresh, absent, or someone else won the move.
+ */
+export const releaseMarkerIfStale = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
+  if (!(await markerOlderThan($, markerDir, minutes, now))) return false
+  const graveyard = `${markerDir}.dead-${process.pid}-${now.getTime()}`
+  const moved = await $`mv ${markerDir} ${graveyard}`.quiet().nothrow()
+  if (moved.exitCode !== 0) return false // lost the rename race — whoever moved it owns the sweep
+  if (!(await markerOlderThan($, graveyard, minutes, now))) {
+    // What we moved aside was a live claim, created between our judgement and
+    // our rename. Put it back; a claim that is still running must survive.
+    const restored = await $`mv ${graveyard} ${markerDir}`.quiet().nothrow()
+    if (restored.exitCode !== 0) await $`rm -rf ${graveyard}`.quiet().nothrow() // someone re-took the path — drop our copy rather than leave debris
+    return false
+  }
+  await $`rm -rf ${graveyard}`.quiet().nothrow()
+  return true
+}
+
+/**
  * Whether `markerDir` exists and is older than `minutes`. Judged from the
  * `claim.json` stamp when present; markers from older versions carry no stamp
  * and fall back to `find -mmin +N`, which prints the path only when strictly
@@ -99,20 +138,7 @@ export const releaseMarker = async ($: Shell, markerDir: string): Promise<void> 
  */
 export const acquireOrSweepMarker = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
   if (await acquireMarker($, markerDir, now)) return true
-  if (!(await markerOlderThan($, markerDir, minutes, now))) return false
-
-  const graveyard = `${markerDir}.dead-${process.pid}-${now.getTime()}`
-  const moved = await $`mv ${markerDir} ${graveyard}`.quiet().nothrow()
-  if (moved.exitCode !== 0) return false // lost the rename race — whoever moved it owns the sweep
-
-  if (!(await markerOlderThan($, graveyard, minutes, now))) {
-    // What we moved aside was a live claim, created between our judgement and
-    // our rename. Put it back; a claim that is still running must survive.
-    const restored = await $`mv ${graveyard} ${markerDir}`.quiet().nothrow()
-    if (restored.exitCode !== 0) await $`rm -rf ${graveyard}`.quiet().nothrow() // someone re-took the path — drop our copy rather than leave debris
-    return false
-  }
-  await $`rm -rf ${graveyard}`.quiet().nothrow()
+  if (!(await releaseMarkerIfStale($, markerDir, minutes, now))) return false
   return acquireMarker($, markerDir, now)
 }
 

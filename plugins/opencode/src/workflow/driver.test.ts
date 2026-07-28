@@ -1224,6 +1224,51 @@ test("a timed-out stage aborts the orphaned session turn before unwinding", asyn
   }
 })
 
+test("a driver-initiated timeout abort is not treated as a user ESC", async () => {
+  // The timeout's `session.abort` surfaces as the same MessageAbortedError a
+  // human ESC does. onInterrupt must ignore it: before this, a stage timeout
+  // was routed through the interrupt path, which killed watch mode (dropping
+  // the clone's watch lease — the unattended watcher died on the most likely
+  // failure of a long run) and toasted "Loop interrupted" for an interrupt
+  // that never happened.
+  const sessionID = "sess-timeout-not-esc"
+  const toasts: string[] = []
+  let rejectCommand: ((e: Error) => void) | undefined
+  const client = {
+    tui: {
+      showToast: async ({ body }: { body: { message: string } }) => {
+        toasts.push(body.message)
+        return { data: undefined }
+      },
+    },
+    session: {
+      command: () =>
+        new Promise((_, reject) => {
+          rejectCommand = reject
+        }),
+      abort: async () => {
+        rejectCommand?.(new Error("aborted"))
+        return { data: true }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
+  const state: WorkflowState = { kind: "pr-sitter", goal: "Sit on PR #1", stage: "triage", iteration: 0, artifacts: {} }
+  try {
+    await assert.rejects(
+      () => drive(deps, sessionID, { ...testConfig, stageTimeoutMinutes: 0.001 }, firstStep(manifestFor("pr-sitter"), state)),
+      /timed out after/,
+    )
+    // The abort event lands after the drive unwound — the workflow is still set
+    // (onIdle's catch owns clearing it in prod), so an un-suppressed interrupt
+    // would flag the session and toast "Loop interrupted".
+    await onInterrupt(deps, sessionID)
+    assert.ok(!toasts.some((t) => /interrupted/i.test(t)), `the timeout abort must not read as a user interrupt: ${toasts.join(" | ")}`)
+  } finally {
+    clearWorkflow(sessionID)
+  }
+})
+
 /**
  * Activity instrumentation: the response's tool parts are aggregated per tool
  * (count + errors) and the files write-tools touched are collected — the "what

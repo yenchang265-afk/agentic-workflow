@@ -64,13 +64,30 @@ export const scanSnapshot = (directory: string, tasksDir: string, statuses: read
     } catch {
       // folder absent
     }
+    // Claim markers (`.claims/<id>/`) come and go without touching any task
+    // `.md`, so the board's claimed badges would otherwise only refresh on an
+    // unrelated event. Keyed under a prefix no `.md` filename can collide with.
+    try {
+      for (const name of fs.readdirSync(path.join(dir, ".claims"))) {
+        entries[`.claims/${name}`] = 1
+      }
+    } catch {
+      // no claims dir
+    }
     tasks[status] = entries
   }
   const runs: Record<string, string> = {}
   const runsDir = path.join(root, "runs")
   try {
     for (const name of fs.readdirSync(runsDir)) {
-      if (!name.endsWith(".md") && !name.endsWith(".state.json") && !name.endsWith(".metrics.json")) continue
+      if (
+        !name.endsWith(".md") &&
+        !name.endsWith(".state.json") &&
+        !name.endsWith(".metrics.json") &&
+        name !== "events.jsonl" &&
+        name !== "events.1.jsonl"
+      )
+        continue
       const key = statKey(path.join(runsDir, name))
       if (key !== null) runs[name] = key
     }
@@ -109,7 +126,13 @@ export const diffSnapshots = (
     for (const name of names) {
       if (before[name] !== after[name]) backlogChanged = true
       // a task newly appearing in a gate folder is the "loop wants you" moment
-      if (gateStatuses.includes(status) && before[name] === undefined && after[name] !== undefined) {
+      // (`.md` files only — the `.claims/` keys scanned above are not tasks)
+      if (
+        name.endsWith(".md") &&
+        gateStatuses.includes(status) &&
+        before[name] === undefined &&
+        after[name] !== undefined
+      ) {
         events.push({ type: "gate", taskId: name.replace(/\.md$/, ""), toStatus: status })
       }
     }
@@ -119,14 +142,20 @@ export const diffSnapshots = (
   const runNames = new Set([...Object.keys(prev.runs), ...Object.keys(next.runs)])
   let activeChanged =
     STAGE_MARKER_HOSTS.some((host) => prev.stageMarkers[host] !== next.stageMarkers[host]) || prev.lease !== next.lease
+  let schedChanged = false
   for (const name of runNames) {
     if (prev.runs[name] === next.runs[name]) continue
     if (name.endsWith(".state.json")) activeChanged = true
+    // The scheduler event log MUST be matched before the `.md` else-branch — a
+    // `run` event here would collapse the open run panel (the exact hazard the
+    // tokens comment below guards against).
+    else if (name === "events.jsonl" || name === "events.1.jsonl") schedChanged = true
     // A live per-stage flush rewrites the metrics sidecar; emit `tokens` (NOT
     // `run`, which would collapse the open run panel) so only TokenPanel refetches.
     else if (name.endsWith(".metrics.json")) events.push({ type: "tokens", id: name.replace(/\.metrics\.json$/, "") })
     else events.push({ type: "run", id: name.replace(/\.md$/, "") })
   }
+  if (schedChanged) events.push({ type: "sched" })
   if (activeChanged) events.push({ type: "active" })
 
   // Config changed on disk — from the hub's own save, or a hand-edit in $EDITOR.

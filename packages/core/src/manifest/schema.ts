@@ -185,7 +185,11 @@ const BacklogSourceSchema = z.object({
   pools: z
     .array(
       z.object({
-        status: z.string().min(1),
+        // The same rail as `statuses`: a pool status is joined into
+        // `<tasksDir>/<status>/` by every walker (listByStatus, findByIdIn,
+        // the hub doctor's claim sweep) and the hub creator writes free-text
+        // pool lines into manifests — an unvalidated one is a path escape.
+        status: SlugSchema("pools[].status"),
         entryStage: z.string().min(1),
         /** Registry ref of a claimability predicate (defaults to "any file in the folder"). */
         claimPredicate: z.string().min(1).optional(),
@@ -303,12 +307,18 @@ export const WorkflowManifestSchema = z
       ctx.addIssue({ code: "custom", message: "duplicate stage names" })
     }
     if (m.workSource.type === "backlog") {
+      const statuses = new Set(m.workSource.statuses)
       for (const pool of m.workSource.pools) {
         if (!names.has(pool.entryStage)) {
           ctx.addIssue({ code: "custom", message: `pool "${pool.status}" enters unknown stage "${pool.entryStage}"` })
         }
+        // A pool over a folder outside the declared status set is at best a
+        // typo that polls a folder that never exists ("nothing to claim",
+        // forever, silently) — refuse it like humanGates.
+        if (!statuses.has(pool.status)) {
+          ctx.addIssue({ code: "custom", message: `pool status "${pool.status}" is not one of workSource.statuses` })
+        }
       }
-      const statuses = new Set(m.workSource.statuses)
       for (const gate of m.workSource.humanGates) {
         if (!statuses.has(gate)) {
           ctx.addIssue({ code: "custom", message: `humanGates lists "${gate}", which is not one of workSource.statuses` })

@@ -390,6 +390,26 @@ test("a status folder must be a slug — it becomes a real path segment", () => 
   assert.ok(m.workSource.type === "backlog" && m.workSource.statuses.includes("plan-review"))
 })
 
+test("a pool status must be a slug AND one of workSource.statuses", () => {
+  // The gap the statuses rail left open: pools[].status is joined into the very
+  // same <tasksDir>/<status>/ paths (listByStatus on every poll, the hub
+  // doctor's claim sweep) and the hub creator writes free-text pool lines into
+  // manifests — so a traversal escapes the backlog and a typo silently polls a
+  // folder that never exists ("nothing to claim", forever).
+  for (const bad of ["../../../../tmp/evil", "in progres/..", "In-Progress", ""]) {
+    assert.throws(
+      () => parseManifest({ ...base, workSource: { type: "backlog", statuses: ["queued"], pools: [{ status: bad, entryStage: "work" }] } }),
+      /status/i,
+      `expected pool status "${bad}" to be refused`,
+    )
+  }
+  // A well-formed slug that is not a declared status is a typo, not a pool.
+  assert.throws(
+    () => parseManifest({ ...base, workSource: { type: "backlog", statuses: ["queued"], pools: [{ status: "in-progres", entryStage: "work" }] } }),
+    /not one of workSource.statuses/i,
+  )
+})
+
 test("a kind name must be a slug — it becomes a directory under runs/ and workflows/", () => {
   for (const bad of ["../evil", "a/b", "Engineering", ""]) {
     assert.throws(() => parseManifest({ ...base, kind: bad }), /kind/i, `expected "${bad}" to be refused`)
