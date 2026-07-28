@@ -20,10 +20,14 @@ var STATUSES = [
 // packages/core/dist/task/audit.js
 var KNOWN_NON_STATUS_DIRS = ["runs"];
 var hasAnomalies = (a) => a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0;
+var printable = (name) => {
+  const clean = name.replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
+  return clean.length > 80 ? `${clean.slice(0, 79)}\u2026` : clean;
+};
 var formatAnomalies = (a, tasksDir) => [
-  ...a.unknownDirs.map((d) => `unknown folder ${tasksDir}/${d}/ \u2014 not a status folder; a confused agent likely created it`),
-  ...a.strayFiles.map((f) => `stray task file ${f} \u2014 outside every status folder, invisible to the loop`),
-  ...a.duplicates.map((d) => `duplicate task "${d.id}" in ${d.statuses.join(", ")} \u2014 resolve manually (keep one, abandon the rest)`)
+  ...a.unknownDirs.map((d) => `unknown folder ${printable(tasksDir)}/${printable(d)}/ \u2014 not a status folder; a confused agent likely created it`),
+  ...a.strayFiles.map((f) => `stray task file ${printable(f)} \u2014 outside every status folder, invisible to the loop`),
+  ...a.duplicates.map((d) => `duplicate task "${printable(d.id)}" in ${d.statuses.map(printable).join(", ")} \u2014 resolve manually (keep one, abandon the rest)`)
 ];
 var isMarkdown = (name) => name.toLowerCase().endsWith(".md");
 var listDir = async (client, directory, rel) => {

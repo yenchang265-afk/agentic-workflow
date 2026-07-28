@@ -145,3 +145,31 @@ test("parseRunLog renders an empty-samples summary as no rows", () => {
   assert.equal(parsed.summaries[0]?.rows.length, 0)
   assert.equal(parsed.summaries[0]?.iterationsUsed, 0)
 })
+
+// --- the footer's optional leading `kind:` segment ---
+
+test("a footer without a kind segment parses exactly as before (old logs)", () => {
+  const log = `## Run summary · done · 2026-07-05T13:00:00.000Z\n\n_(no stages ran)_\n\niterations used: 2/3 · total: 45s · outcome: done`
+  const s = parseRunLog(log).summaries[0]
+  assert.equal(s?.iterationsUsed, 2)
+  assert.equal(s?.cap, 3)
+  assert.equal(s?.kind, undefined)
+})
+
+test("a footer with a leading kind segment yields kind plus every other field", () => {
+  const log = `## Run summary · done · 2026-07-05T13:00:00.000Z\n\n_(no stages ran)_\n\nkind: pr-sitter · iterations used: 1/3 · total: 45s · cost: $0.1234 · outcome: done`
+  const s = parseRunLog(log).summaries[0]
+  assert.equal(s?.kind, "pr-sitter")
+  assert.equal(s?.iterationsUsed, 1)
+  assert.equal(s?.cap, 3)
+  assert.equal(s?.total, "45s")
+  assert.equal(s?.cost, 0.1234)
+})
+
+test("renderRunSummary's kind segment round-trips through the parser", () => {
+  const samples: StageSample[] = [{ stage: "build", iteration: 0, ms: 36_000 }]
+  const md = renderRunSummary(samples, "done", "", 3, "2026-07-05T13:16:25.138Z", "main-sitter")
+  const s = parseRunLog(md).summaries[0]
+  assert.equal(s?.kind, "main-sitter")
+  assert.equal(s?.iterationsUsed, 1)
+})

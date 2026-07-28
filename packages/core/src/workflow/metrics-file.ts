@@ -13,6 +13,15 @@ import { z } from "zod"
  * joined exactly); the Claude and Qwen hosts never call the LLM themselves —
  * their stages run as agent turns the host owns — so their entries carry
  * timing/verdicts only and tokens are joined from transcripts.
+ *
+ * SCHEMA EVOLUTION: the `version` literal is reserved for BREAKING shape
+ * changes; additive fields ride v1 as `.optional()`. This is load-bearing, not
+ * convention: `parseRunMetrics` fails closed and both writers treat a null
+ * parse as "start fresh", so a version bump makes every not-yet-updated writer
+ * (mixed plugin versions routinely share one repo) silently discard the whole
+ * sidecar history on its next append. zod's default strip mode makes additive
+ * fields safe in both directions — old files parse under the new schema, new
+ * files parse under the old.
  */
 
 export const RUN_METRICS_VERSION = 1 as const
@@ -29,6 +38,25 @@ const StageToolUsageSchema = z.object({
   tool: z.string(),
   count: z.number().int().min(0),
   errors: z.number().int().min(0),
+})
+
+/** One acceptance criterion's judged outcome, mirrored from the stage's VerdictRecord. */
+const SampleCriterionSchema = z.object({
+  criterion: z.string(),
+  pass: z.boolean(),
+})
+
+const SampleFindingSchema = z.object({
+  severity: z.string(),
+  detail: z.string(),
+  location: z.string().optional(),
+})
+
+/** One review axis's verdict + findings, mirrored from the stage's VerdictRecord. */
+const SampleAxisSchema = z.object({
+  axis: z.string(),
+  verdict: z.string(),
+  findings: z.array(SampleFindingSchema).readonly().optional(),
 })
 
 const MetricsSampleSchema = z.object({
@@ -49,6 +77,11 @@ const MetricsSampleSchema = z.object({
   // Readonly so the driver's `StageSample` (readonly arrays) assigns to `RunEntry`.
   tools: z.array(StageToolUsageSchema).readonly().optional(),
   files: z.array(z.string()).readonly().optional(),
+  // Structured verdict mirror (check stages only): per-criterion outcomes and
+  // per-axis findings, redacted at the writer. The run log keeps them fused as
+  // prose; these are what a "top recurring findings" roll-up joins on.
+  criteria: z.array(SampleCriterionSchema).readonly().optional(),
+  axes: z.array(SampleAxisSchema).readonly().optional(),
 })
 
 const RunEntrySchema = z.object({
@@ -59,6 +92,12 @@ const RunEntrySchema = z.object({
   detail: z.string().default(""),
   host: z.enum(["opencode", "claude", "qwen"]),
   sessionID: z.string().optional(),
+  /** The workflow kind this run belonged to — without it, `build` in engineering
+   *  and `build` in a sitter tally into one metrics row. */
+  kind: z.string().optional(),
+  /** Only meaningful with `outcome: "stopped"`: true when the stop was a
+   *  transient environment error the source may retry, not cap exhaustion. */
+  retryable: z.boolean().optional(),
   samples: z.array(MetricsSampleSchema),
   /** True while the run is still live: a per-stage flush wrote samples-so-far.
    *  The terminal event replaces this entry with its finalized twin. */

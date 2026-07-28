@@ -15,6 +15,7 @@ import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineeri
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { stageDef, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
+import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -78,7 +79,7 @@ import {
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
-import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
+import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
   admitVerdict,
@@ -177,7 +178,13 @@ registerEngineeringHooks()
  *  An `only` kind restricts the poll to that one kind (claim/watch kind filter);
  *  a `target` PR number forces that exact PR on a PR-shaped `only` kind. */
 const sourcesFor = (deps: Deps, config: Config, only?: string, target?: number): WorkSource[] =>
-  buildWorkSources({ ...deps, isDriving: (id) => findSessionDriving(id) !== undefined }, config, manifestFor, only, target)
+  buildWorkSources(
+    { ...deps, isDriving: (id) => findSessionDriving(id) !== undefined, hostName: "opencode" },
+    config,
+    manifestFor,
+    only,
+    target,
+  )
 
 type Client = PluginInput["client"]
 type Shell = PluginInput["$"]
@@ -882,6 +889,9 @@ export const runStagePasses = async (
         ...(promptElided ? { promptElided } : {}),
         ...(usage ? { tokens: usage.tokens, cost: usage.cost, model: usage.model } : {}),
         ...(activity ? { tools: activity.tools, ...(activity.files ? { files: activity.files } : {}) } : {}),
+        // Structured verdict mirror (redacted) — what a cross-run "top recurring
+        // findings" roll-up joins on; the prose keeps living in the run log.
+        ...(isCheck ? verdictStructure(passRecord) : {}),
       })
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
       // terminal event finalizes the sidecar).
@@ -991,6 +1001,7 @@ const flushMetrics = async (deps: Deps, sessionID: string, config: Config, state
     detail: "",
     host: "opencode",
     sessionID,
+    kind: state.kind ?? "engineering",
     samples,
     open: true,
   })
@@ -1009,6 +1020,7 @@ const renderMetrics = async (
   state: WorkflowState,
   outcome: Outcome,
   detail: string,
+  retryable?: boolean,
 ): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   runSamples.delete(sessionID)
@@ -1018,7 +1030,7 @@ const renderMetrics = async (
   // alone would mislabel the footer (e.g. "iterations used: 3/1").
   const cap = manifestFor(state.kind ?? "engineering").manifest.maxIterations ?? config.maxIterations
   const stamp = new Date().toISOString()
-  const summary = renderRunSummary(samples, outcome, detail, cap, stamp)
+  const summary = renderRunSummary(samples, outcome, detail, cap, stamp, state.kind ?? "engineering")
   await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, deps.log)
   // Structured twin of the summary table — the machine-readable record token
   // dashboards join against. sessionID lets host storage be joined exactly.
@@ -1032,6 +1044,8 @@ const renderMetrics = async (
     detail,
     host: "opencode",
     sessionID,
+    kind: state.kind ?? "engineering",
+    ...(retryable !== undefined ? { retryable } : {}),
     samples,
   })
   await writeFileAtomic(deps.$, file, doc)
@@ -1233,7 +1247,8 @@ const driveChain = async (
     const wasInterrupted = interrupted.has(sessionID)
     if (!getWorkflow(sessionID) || wasInterrupted) {
       const how = wasInterrupted ? "interrupted" : "stopped"
-      await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`)
+      // Mirrors the `retryable: true` on this path's TerminalOutcome below.
+      await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`, true)
       await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): incomplete — ${how} during ${stage}`)
       await teardownIsolation(deps, step.state)
       // The drive is over — release the claim marker (any stage). This guard
@@ -1309,7 +1324,7 @@ const driveChain = async (
     commitBacklog: async (message) => void (await commitTasks(deps, config, message)),
     // Commit-all checkpoint on the work tree; core calls it only when state.isolated.
     checkpoint: (message) => checkpoint(deps, config, state, message),
-    writeMetrics: (outcome, detail) => renderMetrics(deps, sessionID, config, state, outcome, detail),
+    writeMetrics: (outcome, detail, retryable) => renderMetrics(deps, sessionID, config, state, outcome, detail, retryable),
   }
   const report = await runTerminal(ctx, action)
   clearWorkflow(sessionID)
@@ -1366,12 +1381,31 @@ export type { ClaimSkipReason } from "@agentic-workflow/core/source/types"
  * reason is always logged, and toasted when actionable (deduped until the
  * reason changes).
  */
+/** Last-appended skip-set key per session — the event-log flood control. */
+const lastSkipEventKey = new Map<string, string>()
+
+/** `Omit` that distributes over the SchedulerEvent union (a plain Omit collapses it to the common keys). */
+type SchedEventBody = SchedulerEvent extends infer E ? (E extends SchedulerEvent ? Omit<E, "at" | "host" | "pid"> : never) : never
+
+/** Best-effort scheduler-event append, stamped with this host's identity. */
+const emitSchedEvent = async (deps: Deps, config: Config, event: SchedEventBody): Promise<void> =>
+  appendSchedulerEvents(deps.$, deps.directory, config.tasksDir, [
+    { at: new Date().toISOString(), host: "opencode", pid: process.pid, ...event } as SchedulerEvent,
+  ])
+
 const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: string, target?: number): Promise<void> => {
   const kindFilter = only ?? watchKindFilter.get(sessionID)
   const { claim, skips } = await pollOnce(sourcesFor(deps, config, kindFilter, target))
   if (!claim) {
     const reason = combineSkips(skips)
     if (!reason) return
+    // Append the skip-set only when it CHANGES — a watcher polls every tick and
+    // an unconditional append would be the flood the event log must not become.
+    const key = skipSetKey(skips)
+    if (lastSkipEventKey.get(sessionID) !== key) {
+      lastSkipEventKey.set(sessionID, key)
+      await emitSchedEvent(deps, config, { type: "skip", reasons: [...skips] })
+    }
     await deps.log(reason.actionable ? "warn" : "info", reason.message)
     if (reason.actionable && lastSkipReason.get(sessionID) !== reason.message) {
       lastSkipReason.set(sessionID, reason.message)
@@ -1380,7 +1414,9 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
     return
   }
   lastSkipReason.delete(sessionID)
+  lastSkipEventKey.delete(sessionID)
   const { item } = claim
+  await emitSchedEvent(deps, config, { type: "claim", kind: item.workflowKind, id: item.id })
   await toast(deps.client, item.claimMessage, "info")
   // Task-backed claims entering an isolated stage get the durable CLAIMED note
   // before drive() establishes isolation.
@@ -1390,12 +1426,22 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
   try {
     const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.workflowKind), item.state, config))
     if (outcome && claim.source.onTerminal) await claim.source.onTerminal(item, outcome)
+    if (outcome) {
+      await emitSchedEvent(deps, config, {
+        type: "terminal",
+        kind: item.workflowKind,
+        id: item.id,
+        outcome: outcome.kind,
+        ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
+      })
+    }
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
     // setWorkflow ran — onIdle's catch can't see the task): the claim is ours, so
     // release it or watch stays wedged. The source knows what "real work"
     // means per pool (a BUILD-started note keeps the marker for recovery).
     await claim.source.release(item)
+    await emitSchedEvent(deps, config, { type: "release", kind: item.workflowKind, id: item.id })
     throw err
   }
 }

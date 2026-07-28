@@ -1,6 +1,16 @@
 import { formatDuration } from "@agentic-workflow/core/workflow/metrics"
-import type { CacheHit, IterationBurn, PromptSize, StageDuration, StageVerdicts, VerdictFlips } from "../../shared/api.js"
-import { barWidth, bucketLabel, formatChars, pct } from "./format.js"
+import type {
+  CacheHit,
+  FindingsStats,
+  IterationBurn,
+  ModelStats,
+  PromptSize,
+  StageDuration,
+  StageVerdicts,
+  ToolStats,
+  VerdictFlips,
+} from "../../shared/api.js"
+import { barWidth, bucketLabel, formatChars, formatTokens, pct } from "./format.js"
 
 /** The metrics tab's panels. Presentation only — every number is computed server-side. */
 
@@ -134,6 +144,14 @@ export const CacheTable = ({ cache }: { cache: CacheHit }) => {
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td className="muted" colSpan={4}>
+            overall {pct(cache.ratio)} · {formatTokens(cache.cacheRead)} cached of {formatTokens(cache.input + cache.cacheRead)} in ·{" "}
+            {cache.samples} sample(s)
+          </td>
+        </tr>
+      </tfoot>
     </table>
   )
 }
@@ -159,6 +177,123 @@ export const DurationTable = ({ durations }: { durations: readonly StageDuration
             <td>{formatDuration(d.medianSeconds * 1000)}</td>
             <td>{formatDuration(d.maxSeconds * 1000)}</td>
             <td>{d.rows}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+/**
+ * Which model ran which stage, at what cost and retry burn. Sidecar samples
+ * only (see `modelStats`) — the coverage caveat renders in the tab footer.
+ */
+export const ModelTable = ({ models }: { models: ModelStats }) => {
+  if (models.rows.length === 0)
+    return <div className="muted">No sample recorded its model — only the opencode driver binds one per stage.</div>
+  return (
+    <table className="stage-table">
+      <thead>
+        <tr>
+          <th>stage</th>
+          <th>model</th>
+          <th>cost</th>
+          <th>mean time</th>
+          <th title="mean 1-based iteration of this pairing's samples — retries show up here">mean iter</th>
+          <th>samples</th>
+        </tr>
+      </thead>
+      <tbody>
+        {models.rows.map((r) => (
+          <tr key={`${r.stage}-${r.model}`}>
+            <td>{r.stage}</td>
+            <td>{r.model}</td>
+            <td>{r.costSamples === 0 ? "—" : `$${r.totalCost.toFixed(4)}`}</td>
+            <td>{formatDuration(r.meanMs)}</td>
+            <td>{r.meanIteration.toFixed(1)}</td>
+            <td>{r.samples}</td>
+          </tr>
+        ))}
+      </tbody>
+      {models.samplesWithoutModel > 0 && (
+        <tfoot>
+          <tr>
+            <td className="muted" colSpan={6}>
+              {models.samplesWithoutModel} sample(s) recorded no model and are excluded
+            </td>
+          </tr>
+        </tfoot>
+      )}
+    </table>
+  )
+}
+
+/**
+ * Recurring review findings, most-repeated first. The trigger this table exists
+ * for: "VERIFY/REVIEW keeps flagging the same class of defect" — the CLAUDE.md
+ * maintenance rule — without re-reading run logs by hand.
+ */
+export const FindingsTable = ({ findings }: { findings: FindingsStats }) => {
+  if (findings.topFindings.length === 0)
+    return <div className="muted">No structured findings recorded yet (sidecars written before capture, or reviews found nothing).</div>
+  return (
+    <>
+      <table className="stage-table">
+        <thead>
+          <tr>
+            <th>axis</th>
+            <th>severity</th>
+            <th>finding</th>
+            <th>seen</th>
+            <th>stages</th>
+          </tr>
+        </thead>
+        <tbody>
+          {findings.topFindings.map((f, i) => (
+            <tr key={i}>
+              <td>{f.axis}</td>
+              <td>
+                <span className={`badge${f.severity === "suggestion" ? "" : " gate"}`}>{f.severity}</span>
+              </td>
+              <td>{f.detail}</td>
+              <td>{f.count}</td>
+              <td className="muted">{f.stages.join(", ")}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="muted token-totals">
+        {Object.entries(findings.bySeverity)
+          .map(([severity, count]) => `${severity} ${count}`)
+          .join(" · ")}
+        {` · in ${findings.samplesWithFindings} check pass(es) over ${findings.runsCovered} run(s)`}
+      </div>
+    </>
+  )
+}
+
+/** Flakiest tools first: per-tool call/error totals across every sidecar. */
+export const ToolTable = ({ tools }: { tools: readonly ToolStats[] }) => {
+  if (tools.length === 0) return <div className="muted">No sidecar recorded tool activity yet.</div>
+  return (
+    <table className="stage-table">
+      <thead>
+        <tr>
+          <th>tool</th>
+          <th>calls</th>
+          <th>errors</th>
+          <th>error rate</th>
+          <th>runs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {tools.map((t) => (
+          <tr key={t.tool}>
+            <td>{t.tool}</td>
+            <td>{t.calls}</td>
+            <td>{t.errors}</td>
+            <td>{pct(t.errorRate, 1)}</td>
+            <td>{t.runsCovered}</td>
           </tr>
         ))}
       </tbody>
@@ -201,6 +336,13 @@ export const PromptSizeTable = ({ prompt }: { prompt: PromptSize }) => {
           </tr>
         ))}
       </tbody>
+      <tfoot>
+        <tr>
+          <td className="muted" colSpan={6}>
+            {prompt.samples} sample(s) across {prompt.stages.length} stage(s)
+          </td>
+        </tr>
+      </tfoot>
     </table>
   )
 }

@@ -169,3 +169,88 @@ test("a qwen-host entry round-trips; an unknown host is rejected", () => {
   const bogus = JSON.stringify({ version: 1, runs: [{ ...entry, host: "gemini" }] })
   assert.equal(parseRunMetrics(bogus), null)
 })
+
+// --- additive-at-v1 schema evolution (kind / retryable / structured verdicts) ---
+
+test("new optional fields (kind, retryable, criteria, axes) round-trip at version 1", () => {
+  const withNew: RunEntry = {
+    endedAt: "2026-07-28T00:00:00.000Z",
+    outcome: "stopped",
+    detail: "transient env fault",
+    host: "opencode",
+    kind: "pr-sitter",
+    retryable: true,
+    samples: [
+      {
+        stage: "review",
+        iteration: 0,
+        ms: 1000,
+        verdict: "FAIL",
+        criteria: [{ criterion: "tests pass", pass: false }],
+        axes: [
+          {
+            axis: "correctness",
+            verdict: "FAIL",
+            findings: [{ severity: "critical", detail: "off-by-one in pager", location: "src/pager.ts:42" }],
+          },
+        ],
+      },
+    ],
+  }
+  const parsed = parseRunMetrics(appendRunMetrics(null, withNew))
+  assert.equal(parsed?.runs[0]?.kind, "pr-sitter")
+  assert.equal(parsed?.runs[0]?.retryable, true)
+  assert.equal(parsed?.runs[0]?.samples[0]?.axes?.[0]?.findings?.[0]?.severity, "critical")
+})
+
+test("an old sidecar (no new fields) still parses under the new schema", () => {
+  const old = JSON.stringify({
+    version: 1,
+    runs: [{ endedAt: "2026-01-01T00:00:00.000Z", outcome: "done", detail: "", host: "claude", samples: [] }],
+  })
+  const parsed = parseRunMetrics(old)
+  assert.ok(parsed)
+  assert.equal(parsed.runs[0]?.kind, undefined)
+  assert.equal(parsed.runs[0]?.retryable, undefined)
+})
+
+// REGRESSION PIN for the additive-at-v1 policy (see the module doc): a
+// new-format document must still parse under a copy of the ORIGINAL v1 schema.
+// zod's default strip mode drops the unknown keys; if that ever changes (e.g.
+// someone adds .strict()), old writers would treat every new sidecar as
+// corrupt and silently discard the whole history on their next append.
+test("a new-format document parses under a strict copy of the original v1 schema (strip-mode pin)", async () => {
+  const { z } = await import("zod")
+  const originalV1 = z.object({
+    version: z.literal(1),
+    runs: z.array(
+      z.object({
+        endedAt: z.string(),
+        outcome: z.enum(["done", "stopped", "error"]).optional(),
+        detail: z.string().default(""),
+        host: z.enum(["opencode", "claude", "qwen"]),
+        sessionID: z.string().optional(),
+        samples: z.array(
+          z.object({
+            stage: z.string(),
+            iteration: z.number().int().min(0),
+            ms: z.number(),
+            verdict: z.string().optional(),
+          }),
+        ),
+        open: z.boolean().optional(),
+      }),
+    ),
+  })
+  const newFormat: RunEntry = {
+    endedAt: "2026-07-28T00:00:00.000Z",
+    outcome: "done",
+    detail: "",
+    host: "opencode",
+    kind: "engineering",
+    retryable: false,
+    samples: [{ stage: "build", iteration: 0, ms: 5, criteria: [{ criterion: "c", pass: true }] }],
+  }
+  const doc: unknown = JSON.parse(appendRunMetrics(null, newFormat))
+  assert.equal(originalV1.safeParse(doc).success, true)
+})

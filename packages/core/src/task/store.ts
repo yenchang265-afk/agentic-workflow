@@ -575,6 +575,8 @@ export const claimFirst = async (
     readonly log?: Log
     /** Orphan predicate — defaults to `isOrphanedClaim`; use `isOrphanedPlanClaim` for `queued/` candidates. */
     readonly isOrphaned?: typeof isOrphanedClaim
+    /** Observability hook: called after an orphaned claim marker is released (stale takeover). Best-effort. */
+    readonly onOrphanRelease?: (id: string) => Promise<void> | void
     /**
      * Re-read a just-claimed task from the REAL filesystem. The candidate list
      * may come from a lagging watcher index (see `listByStatus` vs `findByIdIn`):
@@ -612,7 +614,13 @@ export const claimFirst = async (
       // slower one deleted the winner's brand-new claim — both then drove the
       // task. `acquireOrSweepMarker` re-judges staleness itself, so a rival's
       // fresh claim survives and this caller stands down.
+      //
+      // The takeover is now one operation, so the telemetry fires on the WIN
+      // rather than on a bare release: a `claim-takeover` event means this
+      // process really did take the marker over, never that it dropped someone
+      // else's and then lost the re-claim.
       if (await claimTaskSweepingStale($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)) {
+        await opts.onOrphanRelease?.(task.id)
         const fresh = await settle(task)
         if (fresh) return { claimed: fresh, heldIds }
         continue
