@@ -6,6 +6,7 @@ import {
   appendNote,
   auditNote,
   isOrphanedPlanClaim,
+  isOrphanedStartedClaim,
   listByStatus,
   listClaimIds,
   releaseOrphanedClaims,
@@ -116,9 +117,12 @@ export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
           // A live stage can hold its marker for a whole stage timeout without
           // writing anything durable — never judge one dead before then.
           staleMinutes: staleClaimMinutes(deps.config.stageTimeoutMinutes),
-          // A queued task is planless by design, so it needs the plan-claim orphan
-          // rule; other pools use the default (unmatched BUILD note / missing file).
-          ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
+          // A queued task is planless by design, so it needs the plan-claim
+          // orphan rule; started pools get the doctor rule
+          // (`isOrphanedStartedClaim`): stale + undriven is dead whatever the
+          // body says — the default rule's `isClaimable` gate made the doctor
+          // useless against exactly the wedged markers users are sent here for.
+          isOrphaned: status === "queued" ? isOrphanedPlanClaim : isOrphanedStartedClaim,
         })),
       )
     }

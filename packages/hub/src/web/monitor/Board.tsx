@@ -1,10 +1,11 @@
 import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard } from "../../shared/api.js"
 import { useEvents } from "../events.js"
+import { timeAgo } from "../metrics/format.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useResource } from "../resource.js"
 import { buildHash, withQuery } from "../route.js"
 import { Link, navigate, useRoute } from "../routing.js"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
 import { Card } from "../ui/Card.js"
@@ -21,10 +22,39 @@ import { parseTaskParam, taskParam } from "./taskparam.js"
  * Engineering-only lifecycle chips render when the server sends its summary.
  */
 
+/**
+ * The claimed badge with a ticking age against core's stale floor. Past the
+ * floor the tone stays gate but the text says so — the sweep MAY release it
+ * (a configured stage timeout extends the window), so "stale?" not "stale".
+ */
+const ClaimedBadge = ({ claimedAt, staleMinutes }: { claimedAt?: string; staleMinutes?: number }) => {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(t)
+  }, [])
+  if (!claimedAt) return <Badge tone="gate">claimed</Badge>
+  const ageMinutes = (now - Date.parse(claimedAt)) / 60_000
+  const maybeStale = staleMinutes !== undefined && ageMinutes > staleMinutes
+  return (
+    <Badge
+      tone="gate"
+      title={`claimed ${new Date(claimedAt).toLocaleString()}${
+        maybeStale ? ` — older than the ${staleMinutes}m stale floor; the next sweep may release it` : ""
+      }`}
+    >
+      claimed {timeAgo(claimedAt, now).replace(" ago", "")}
+      {maybeStale ? " · stale?" : ""}
+    </Badge>
+  )
+}
+
 const TaskCardView = ({
   task,
   gated,
   claimed,
+  claimedAt,
+  staleMinutes,
   status,
   kind,
   stage,
@@ -33,6 +63,8 @@ const TaskCardView = ({
   task: TaskCard
   gated: boolean
   claimed: boolean
+  claimedAt?: string
+  staleMinutes?: number
   status: string
   kind: string
   /** The live stage marker, already confirmed to belong to this task. */
@@ -49,7 +81,7 @@ const TaskCardView = ({
       <Badge title={task.id}>{task.shortId}</Badge>
       {task.type && <Badge>{task.type}</Badge>}
       {task.hasPlan && <Badge tone="ok">plan</Badge>}
-      {claimed && <Badge tone="gate">claimed</Badge>}
+      {claimed && <ClaimedBadge claimedAt={claimedAt} staleMinutes={staleMinutes} />}
       {gated && <Badge tone="gate">awaiting you</Badge>}
       {stage && (
         <Badge tone="live" title="current sub-stage — retries on VERIFY/REVIEW fail re-run BUILD">
@@ -149,6 +181,8 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                   task={t}
                   gated={gate && t.type !== "epic"}
                   claimed={claimed.has(t.id)}
+                  claimedAt={data.claimStamps?.[t.id]}
+                  staleMinutes={data.staleClaimMinutes}
                   status={status}
                   kind={info.kind}
                   stage={liveStage?.taskId === t.id ? liveStage : null}

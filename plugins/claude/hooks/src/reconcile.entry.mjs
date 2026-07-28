@@ -22,7 +22,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { dialectFor, hostFor } from "./dialect.mjs"
-import { idList } from "./idlist.mjs"
+import { idList, MAX_LISTED } from "./idlist.mjs"
 import { backlogRoot, readTasksDir } from "./marker.mjs"
 
 /**
@@ -135,21 +135,35 @@ const main = async () => {
   // Every id below is a FILE NAME off the disk, and this text goes into the
   // model's context at SessionStart before the user types anything — so the
   // lists are sanitized and capped by `idList`, which states what it dropped.
+  // `tasksDir` is repo-layer config — the same semi-untrusted rail — so control
+  // characters in it are neutralized too rather than interpolated raw.
+  // eslint-disable-next-line no-control-regex
+  const dirShown = tasksDir.replace(/[\u0000-\u001f\u007f]/g, "�")
   const notesList = idList(notes)
   const snapshotsList = idList(snapshots)
   const claimsList = idList(planClaims)
-  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notesList} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
+  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${dirShown}/in-progress: ${notesList} — run \`/agentic-workflow:engineering recover <id>\` to resume.`)
   if (snapshotsList) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshotsList} — \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`)
-  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${claimsList} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
+  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${dirShown}/queued/.claims: ${claimsList} — a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`)
   if (hasAnomalies(anomalies)) {
-    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} — \`workflow_doctor\` reports and repairs.`)
+    // Same cap as the id lists above: anomaly lines are also built from on-disk
+    // names (formatAnomalies display-sanitizes each name), and a damaged backlog
+    // can have hundreds of strays — dumping every one into every session is the
+    // exact failure the id-list cap exists for. The overflow is stated, never
+    // silently applied.
+    const all = formatAnomalies(anomalies, tasksDir)
+    for (const line of all.slice(0, MAX_LISTED)) lines.push(`agentic-workflow: ${line} — \`workflow_doctor\` reports and repairs.`)
+    if (all.length > MAX_LISTED) lines.push(`agentic-workflow: +${all.length - MAX_LISTED} more backlog anomaly finding(s) — run \`workflow_doctor\` for the full report.`)
   }
   if (!lines.length) return process.exit(0)
 
+  // Exit in the write callback: an explicit `process.exit` right after a large
+  // async-buffered write can truncate stdout mid-payload, and Claude Code then
+  // drops the malformed JSON — and with it every warning above — silently.
   process.stdout.write(
     JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }),
+    () => process.exit(0),
   )
-  process.exit(0)
 }
 
 main()

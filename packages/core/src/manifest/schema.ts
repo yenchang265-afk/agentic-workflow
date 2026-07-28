@@ -98,6 +98,19 @@ export const StageDefSchema = z.object({
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
   /**
+   * Whether a PASS on this `check` stage must cite the work behind it. When set,
+   * `workflow_verdict` rejects a PASS with no `evidence` array, and — on a host
+   * that records its stage's tool calls — one whose citations match nothing the
+   * stage actually ran or read (`workflow/evidence.ts`).
+   *
+   * Opt-in per stage rather than implied by `kind: "check"`, because not every
+   * check is a *doing* check: a triage stage that classifies a PR from its
+   * fetched metadata legitimately runs no commands, and turning the gate on
+   * everywhere would deadlock it. Default `false` leaves every existing kind
+   * byte-identical.
+   */
+  requireEvidence: z.boolean().default(false),
+  /**
    * How this `check` stage's single pass expands into several focused passes.
    *
    * `"axis"` runs the stage once per entry in `requiredAxes`, SEQUENTIALLY, each
@@ -172,7 +185,11 @@ const BacklogSourceSchema = z.object({
   pools: z
     .array(
       z.object({
-        status: z.string().min(1),
+        // The same rail as `statuses`: a pool status is joined into
+        // `<tasksDir>/<status>/` by every walker (listByStatus, findByIdIn,
+        // the hub doctor's claim sweep) and the hub creator writes free-text
+        // pool lines into manifests — an unvalidated one is a path escape.
+        status: SlugSchema("pools[].status"),
         entryStage: z.string().min(1),
         /** Registry ref of a claimability predicate (defaults to "any file in the folder"). */
         claimPredicate: z.string().min(1).optional(),
@@ -290,12 +307,18 @@ export const WorkflowManifestSchema = z
       ctx.addIssue({ code: "custom", message: "duplicate stage names" })
     }
     if (m.workSource.type === "backlog") {
+      const statuses = new Set(m.workSource.statuses)
       for (const pool of m.workSource.pools) {
         if (!names.has(pool.entryStage)) {
           ctx.addIssue({ code: "custom", message: `pool "${pool.status}" enters unknown stage "${pool.entryStage}"` })
         }
+        // A pool over a folder outside the declared status set is at best a
+        // typo that polls a folder that never exists ("nothing to claim",
+        // forever, silently) — refuse it like humanGates.
+        if (!statuses.has(pool.status)) {
+          ctx.addIssue({ code: "custom", message: `pool status "${pool.status}" is not one of workSource.statuses` })
+        }
       }
-      const statuses = new Set(m.workSource.statuses)
       for (const gate of m.workSource.humanGates) {
         if (!statuses.has(gate)) {
           ctx.addIssue({ code: "custom", message: `humanGates lists "${gate}", which is not one of workSource.statuses` })
@@ -325,6 +348,10 @@ export const WorkflowManifestSchema = z
       if (stage.kind === "work" && stage.requiredAxes?.length) {
         // Only a verdict can carry axes, and only check stages record one.
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requiredAxes (no verdict to carry them)` })
+      }
+      if (stage.kind === "work" && stage.requireEvidence) {
+        // Only a verdict carries evidence, and only check stages record one.
+        ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requireEvidence (no verdict to carry it)` })
       }
       if (stage.fanout && stage.kind !== "check") {
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set fanout (there is no verdict to fan out)` })

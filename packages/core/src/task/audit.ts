@@ -28,11 +28,27 @@ export interface BacklogAnomalies {
 export const hasAnomalies = (a: BacklogAnomalies): boolean =>
   a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0
 
-/** One human-readable warning line per finding. Pure. */
+/**
+ * Display-sanitize an on-disk name for a one-line report. Every value here is a
+ * FILE NAME off the disk — a cloned repo can ship a directory whose name embeds
+ * newlines (legal on Linux) — and these lines are injected into a model's
+ * context at SessionStart by the reconcile hook, so a raw interpolation is an
+ * attacker-authored line of context. Control characters render as `�` (the
+ * damage stays visible rather than silently vanishing) and long names clamp. Pure.
+ */
+const printable = (name: string): string => {
+  // eslint-disable-next-line no-control-regex
+  const clean = name.replace(/[\u0000-\u001f\u007f]/g, "�")
+  return clean.length > 80 ? `${clean.slice(0, 79)}…` : clean
+}
+
+/** One human-readable warning line per finding, names display-sanitized (see `printable`). Pure. */
 export const formatAnomalies = (a: BacklogAnomalies, tasksDir: string): string[] => [
-  ...a.unknownDirs.map((d) => `unknown folder ${tasksDir}/${d}/ — not a status folder; a confused agent likely created it`),
-  ...a.strayFiles.map((f) => `stray task file ${f} — outside every status folder, invisible to the loop`),
-  ...a.duplicates.map((d) => `duplicate task "${d.id}" in ${d.statuses.join(", ")} — resolve manually (keep one, abandon the rest)`),
+  ...a.unknownDirs.map((d) => `unknown folder ${printable(tasksDir)}/${printable(d)}/ — not a status folder; a confused agent likely created it`),
+  ...a.strayFiles.map((f) => `stray task file ${printable(f)} — outside every status folder, invisible to the loop`),
+  ...a.duplicates.map(
+    (d) => `duplicate task "${printable(d.id)}" in ${d.statuses.map(printable).join(", ")} — resolve manually (keep one, abandon the rest)`,
+  ),
 ]
 
 const isMarkdown = (name: string): boolean => name.toLowerCase().endsWith(".md")

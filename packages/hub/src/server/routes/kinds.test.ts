@@ -94,7 +94,10 @@ test("preview appends the verdict contract to check stages only", async () => {
   const verify = (await preview({ manifest, prompts, stage: "verify" })).body as PreviewResponse
   const build = (await preview({ manifest, prompts, stage: "build" })).body as PreviewResponse
   // verify is a check stage, build is a work stage.
-  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify")), "check stages carry the contract")
+  // verify declares `requireEvidence`, so the preview must render the proof-of-work
+  // half too — the creator's preview is what a kind author reads to see what the
+  // stage will actually be told.
+  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, false, true)), "check stages carry the contract")
   assert.doesNotMatch(build.rendered, /MANDATORY VERDICT/)
 })
 

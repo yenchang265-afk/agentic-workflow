@@ -101,6 +101,22 @@ A verdict written in plain text is ignored and counts as FAIL. Use
 `ERROR` for the overall verdict **only** when the review itself could not run
 (e.g. the diff is unreadable) — findings are always `FAIL`, never `ERROR`.
 
+**A PASS must also carry `evidence`** — the commands you ran and the files you
+read while reviewing, cited as you issued them:
+
+```
+evidence: [
+  { kind: "command", ref: "git diff main...HEAD", result: "6 files, ~180 lines" },
+  { kind: "file",    ref: "src/db/query.ts:41",   result: "user id interpolated into the SQL" },
+]
+```
+
+This session's real tool calls are recorded independently of you, so a PASS
+citing nothing — or nothing that matches what you actually ran or read — is
+**rejected** and you must call again. Read the diff and the code it touches
+*before* you record; never reconstruct citations from memory. FAIL and ERROR need
+no evidence: a review that could not run is an ERROR whose reason names why.
+
 Above the verdict, give a structured review in prose: findings grouped by axis,
 each categorized Critical / Important / Suggestion with `file:line` and a fix
 recommendation — the same findings you put in the `axes` payload. On FAIL, make the Critical/Important findings concrete enough

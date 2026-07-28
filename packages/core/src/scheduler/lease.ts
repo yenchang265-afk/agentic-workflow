@@ -1,6 +1,7 @@
 import path from "node:path"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Shell } from "../host.js"
+import { appendSchedulerEvents } from "./events-log.js"
 
 /**
  * Single-watcher lease: at most one watch-mode process per clone. The lease
@@ -140,7 +141,21 @@ export const acquireLease = async (
       return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
     }
     await $`rm -rf ${graveyard}`.quiet().nothrow()
-    if (await stagedAcquire($, directory, tasksDir, record)) return { ok: true }
+    if (await stagedAcquire($, directory, tasksDir, record)) {
+      // The takeover is otherwise invisible: the old owner's record is gone and
+      // the new one looks like a clean acquire. Record it (best-effort).
+      await appendSchedulerEvents($, directory, tasksDir, [
+        {
+          type: "lease-takeover",
+          at: now.toISOString(),
+          host: owner.host,
+          pid: owner.pid,
+          ...(current?.pid !== undefined ? { oldPid: current.pid } : {}),
+          ...(current?.host ? { oldHost: current.host } : {}),
+        },
+      ])
+      return { ok: true }
+    }
     // A fresh acquirer recreated the lease between our rename and re-acquire — they hold it.
     return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
   }

@@ -342,11 +342,18 @@ var pinEditPath = (filePath, worktree, directory, tasksDir) => {
 var DIALECTS = {
   claude: {
     stageMarkerFile: ".stage.json",
+    // Mirrors core's `stageEvidenceFile(host)`; per host for the same reason the
+    // marker is (one host's session must never write into another's ledger).
+    evidenceFile: ".stage-evidence.json",
     // Claude Code surfaces plugin MCP tools under a second, plugin-bundled
     // alias; Qwen has only the one registration.
     verdictAliases: "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
     bash: ["Bash"],
     write: ["Edit", "Write", "NotebookEdit"],
+    // The inspection tools whose target path is recorded as check-stage evidence
+    // (hooks/src/evidence.mjs). Read-only by construction — a write tool's path
+    // is not evidence of having *looked* at anything.
+    read: ["Read", "Grep", "Glob"],
     spawnTool: "Task tool",
     // Whether the host's spawn tool takes a per-call model. False on Qwen: the
     // model is baked into the installed agent file, so telling the orchestrator
@@ -365,9 +372,11 @@ var DIALECTS = {
   },
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
+    evidenceFile: ".stage-evidence-qwen.json",
     verdictAliases: "mcp__agentic-workflow__workflow_verdict",
     bash: ["run_shell_command"],
     write: ["write_file", "edit", "replace", "notebook_edit"],
+    read: ["read_file", "read_many_files", "search_file_content", "glob"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
     // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
@@ -388,6 +397,7 @@ var hostFor = (env = process.env) => {
 var dialectFor = (host) => host && host in DIALECTS ? DIALECTS[host] : null;
 var isBashTool = (d, tool) => d.bash.includes(tool);
 var isWriteTool = (d, tool) => d.write.includes(tool);
+var isReadTool = (d, tool) => d.read.includes(tool);
 var canonicalTool = (d, tool) => {
   if (isBashTool(d, tool)) return "Bash";
   if (isWriteTool(d, tool)) return "Write";
@@ -622,6 +632,65 @@ var readMarker = (cwd, markerFile) => {
   }
 };
 
+// plugins/claude/hooks/src/evidence.mjs
+import fs2 from "node:fs";
+import path4 from "node:path";
+var EVIDENCE_MAX = 200;
+var READ_PATH_KEYS = ["file_path", "absolute_path", "path", "notebook_path", "paths"];
+var evidenceEntry = (d, tool, toolInput, command) => {
+  const ti = toolInput || {};
+  if (isBashTool(d, tool)) {
+    const cmd = String(command ?? ti.command ?? "").trim();
+    return cmd ? { commands: [cmd], reads: [] } : null;
+  }
+  if (!isReadTool(d, tool)) return null;
+  const reads = [];
+  for (const key of READ_PATH_KEYS) {
+    const value = ti[key];
+    if (typeof value === "string" && value.trim()) reads.push(value.trim());
+    else if (Array.isArray(value)) {
+      for (const v of value) if (typeof v === "string" && v.trim()) reads.push(v.trim());
+    }
+  }
+  return reads.length ? { commands: [], reads } : null;
+};
+var emptyLedger = (stage) => ({ stage: stage ?? null, commands: [], reads: [] });
+var withEntry = (ledger, entry) => {
+  const add = (list, incoming) => {
+    const out = list.slice();
+    for (const value of incoming) {
+      if (out.length >= EVIDENCE_MAX) break;
+      if (!out.includes(value)) out.push(value);
+    }
+    return out;
+  };
+  return {
+    stage: ledger.stage,
+    commands: add(ledger.commands, entry.commands),
+    reads: add(ledger.reads, entry.reads)
+  };
+};
+var parseLedger = (raw) => {
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    const list = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+    return { stage: typeof parsed.stage === "string" ? parsed.stage : null, commands: list(parsed.commands), reads: list(parsed.reads) };
+  } catch {
+    return null;
+  }
+};
+var noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
+  if (!entry) return;
+  const file = path4.join(runsDirPath, evidenceFile);
+  try {
+    const existing = fs2.existsSync(file) ? parseLedger(fs2.readFileSync(file, "utf8")) : null;
+    const base = existing && existing.stage === stage ? existing : emptyLedger(stage);
+    fs2.writeFileSync(file, JSON.stringify(withEntry(base, entry)));
+  } catch {
+  }
+};
+
 // plugins/claude/hooks/src/check-stage-guard.entry.mjs
 var main = async () => {
   let input;
@@ -710,6 +779,9 @@ var main = async () => {
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${rawCommand}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`
       );
     }
+  }
+  if (marker.check === true) {
+    noteEvidence(runsDir(cwd), d.evidenceFile, String(marker.stage ?? ""), evidenceEntry(d, tool, ti, effectiveCommand));
   }
   if (commandRewritten) return rewriteInput({ ...ti, command: effectiveCommand });
   if (workflowWorktree && isWrite) {

@@ -782,6 +782,27 @@ const claimShell = (held: Set<string>, stale: Set<string>, log?: string[]) =>
       held.delete(id)
       return { exitCode: 0 }
     }
+    // The atomic sweep (releaseMarkerIfStale) renames the marker aside; model the
+    // move by transferring held/stale membership to the destination name, and
+    // fail when the source is already gone — the rename race's loser.
+    if (cmd.startsWith("mv ")) {
+      const [, src, dest] = cmd.split(" ")
+      const srcId = src?.split("/").pop() ?? ""
+      const destId = dest?.split("/").pop() ?? ""
+      if (!held.has(srcId)) return { exitCode: 1 }
+      held.delete(srcId)
+      held.add(destId)
+      if (stale.has(srcId)) {
+        stale.delete(srcId)
+        stale.add(destId)
+      }
+      return { exitCode: 0 }
+    }
+    if (cmd.startsWith("rm -rf ")) {
+      held.delete(id)
+      stale.delete(id)
+      return { exitCode: 0 }
+    }
     if (cmd.startsWith("find ")) {
       const markerId = cmd.split(" ")[1]?.split("/").pop() ?? ""
       return stale.has(markerId) ? { exitCode: 0, stdout: `.claims/${markerId}\n` } : { exitCode: 0, stdout: "" }
@@ -811,7 +832,8 @@ test("claimFirst releases a stale orphaned marker and claims that task on retry"
   const { claimed, heldIds } = await claimFirst($, [planned("a", 1), planned("b", 2)], notDriving)
   assert.equal(claimed?.id, "a")
   assert.deepEqual(heldIds, [])
-  assert.ok(log.some((cmd) => cmd.startsWith("rmdir ") && cmd.endsWith("/a")))
+  // The takeover is the atomic rename-aside, not a blind rmdir.
+  assert.ok(log.some((cmd) => cmd.startsWith("mv ") && cmd.includes("/a ")))
 })
 
 test("claimFirst never releases a stale marker whose task a live loop drives", async () => {
@@ -872,8 +894,10 @@ test("claimFirst reverifies the orphan-release retry win too", async () => {
   })
   assert.equal(claimed, null)
   assert.deepEqual(heldIds, [])
-  // Two rmdirs of a: the orphan release, then the reverify drop of the retry win.
-  assert.equal(log.filter((cmd) => cmd.startsWith("rmdir ") && cmd.endsWith("/a")).length, 2)
+  // The orphan takeover is a rename-aside; the reverify drop of the retry win
+  // then releases the fresh marker with a plain rmdir.
+  assert.equal(log.filter((cmd) => cmd.startsWith("mv ") && cmd.includes("/a ")).length, 1)
+  assert.equal(log.filter((cmd) => cmd.startsWith("rmdir ") && cmd.endsWith("/a")).length, 1)
 })
 
 test("claimFirst treats a lost release-retry race as held", async () => {
@@ -891,14 +915,7 @@ test("claimFirst treats a lost release-retry race as held", async () => {
 
 test("releaseOrphanedClaims releases stale orphans and taskless markers, keeps the rest", async () => {
   const log: string[] = []
-  const stale = new Set(["orphan", "ghost", "crashed"])
-  const $ = makeShell((cmd) => {
-    if (cmd.startsWith("find ")) {
-      const markerId = cmd.split(" ")[1]?.split("/").pop() ?? ""
-      return stale.has(markerId) ? { exitCode: 0, stdout: `.claims/${markerId}\n` } : { exitCode: 0, stdout: "" }
-    }
-    return { exitCode: 0 }
-  }, log)
+  const $ = claimShell(new Set(["orphan", "fresh", "crashed", "ghost"]), new Set(["orphan", "ghost", "crashed"]), log)
   const inProgress = [planned("orphan"), planned("fresh"), started("crashed")]
   const released = await releaseOrphanedClaims(
     $,
@@ -910,8 +927,9 @@ test("releaseOrphanedClaims releases stale orphans and taskless markers, keeps t
   // orphan: claimable + stale → released. fresh: not stale → kept.
   // crashed: BUILD started → recover territory, kept. ghost: no task file, stale → released.
   assert.deepEqual(released, ["orphan", "ghost"])
-  const rmdirs = log.filter((cmd) => cmd.startsWith("rmdir "))
-  assert.equal(rmdirs.length, 2)
+  // Releases are the atomic rename-aside, exactly one per released marker.
+  const sweeps = log.filter((cmd) => cmd.startsWith("mv ") && (cmd.includes("/orphan ") || cmd.includes("/ghost ")))
+  assert.equal(sweeps.length, 2)
 })
 
 test("summarizeBacklog splits body-claimable tasks into ready vs claim-held", () => {

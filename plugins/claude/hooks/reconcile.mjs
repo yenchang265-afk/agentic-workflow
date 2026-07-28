@@ -20,10 +20,14 @@ var STATUSES = [
 // packages/core/dist/task/audit.js
 var KNOWN_NON_STATUS_DIRS = ["runs"];
 var hasAnomalies = (a) => a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0;
+var printable = (name) => {
+  const clean = name.replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
+  return clean.length > 80 ? `${clean.slice(0, 79)}\u2026` : clean;
+};
 var formatAnomalies = (a, tasksDir) => [
-  ...a.unknownDirs.map((d) => `unknown folder ${tasksDir}/${d}/ \u2014 not a status folder; a confused agent likely created it`),
-  ...a.strayFiles.map((f) => `stray task file ${f} \u2014 outside every status folder, invisible to the loop`),
-  ...a.duplicates.map((d) => `duplicate task "${d.id}" in ${d.statuses.join(", ")} \u2014 resolve manually (keep one, abandon the rest)`)
+  ...a.unknownDirs.map((d) => `unknown folder ${printable(tasksDir)}/${printable(d)}/ \u2014 not a status folder; a confused agent likely created it`),
+  ...a.strayFiles.map((f) => `stray task file ${printable(f)} \u2014 outside every status folder, invisible to the loop`),
+  ...a.duplicates.map((d) => `duplicate task "${printable(d.id)}" in ${d.statuses.map(printable).join(", ")} \u2014 resolve manually (keep one, abandon the rest)`)
 ];
 var isMarkdown = (name) => name.toLowerCase().endsWith(".md");
 var listDir = async (client, directory, rel) => {
@@ -63,11 +67,18 @@ var auditBacklog = async (client, directory, tasksDir, statuses = STATUSES) => {
 var DIALECTS = {
   claude: {
     stageMarkerFile: ".stage.json",
+    // Mirrors core's `stageEvidenceFile(host)`; per host for the same reason the
+    // marker is (one host's session must never write into another's ledger).
+    evidenceFile: ".stage-evidence.json",
     // Claude Code surfaces plugin MCP tools under a second, plugin-bundled
     // alias; Qwen has only the one registration.
     verdictAliases: "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
     bash: ["Bash"],
     write: ["Edit", "Write", "NotebookEdit"],
+    // The inspection tools whose target path is recorded as check-stage evidence
+    // (hooks/src/evidence.mjs). Read-only by construction — a write tool's path
+    // is not evidence of having *looked* at anything.
+    read: ["Read", "Grep", "Glob"],
     spawnTool: "Task tool",
     // Whether the host's spawn tool takes a per-call model. False on Qwen: the
     // model is baked into the installed agent file, so telling the orchestrator
@@ -86,9 +97,11 @@ var DIALECTS = {
   },
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
+    evidenceFile: ".stage-evidence-qwen.json",
     verdictAliases: "mcp__agentic-workflow__workflow_verdict",
     bash: ["run_shell_command"],
     write: ["write_file", "edit", "replace", "notebook_edit"],
+    read: ["read_file", "read_many_files", "search_file_content", "glob"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
     // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
@@ -228,19 +241,22 @@ var main = async () => {
     lines.push(
       `agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) \u2014 gates and loop tools will not work. Run ${dialectFor(hostFor())?.installer ?? "the installer"}, then restart the session.`
     );
+  const dirShown = tasksDir.replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
   const notesList = idList(notes);
   const snapshotsList = idList(snapshots);
   const claimsList = idList(planClaims);
-  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notesList} \u2014 run \`/agentic-workflow:engineering recover <id>\` to resume.`);
+  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${dirShown}/in-progress: ${notesList} \u2014 run \`/agentic-workflow:engineering recover <id>\` to resume.`);
   if (snapshotsList) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshotsList} \u2014 \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`);
-  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${claimsList} \u2014 a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
+  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${dirShown}/queued/.claims: ${claimsList} \u2014 a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
   if (hasAnomalies(anomalies)) {
-    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} \u2014 \`workflow_doctor\` reports and repairs.`);
+    const all = formatAnomalies(anomalies, tasksDir);
+    for (const line of all.slice(0, MAX_LISTED)) lines.push(`agentic-workflow: ${line} \u2014 \`workflow_doctor\` reports and repairs.`);
+    if (all.length > MAX_LISTED) lines.push(`agentic-workflow: +${all.length - MAX_LISTED} more backlog anomaly finding(s) \u2014 run \`workflow_doctor\` for the full report.`);
   }
   if (!lines.length) return process.exit(0);
   process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } })
+    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }),
+    () => process.exit(0)
   );
-  process.exit(0);
 };
 main();

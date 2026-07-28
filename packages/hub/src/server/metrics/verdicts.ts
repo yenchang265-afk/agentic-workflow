@@ -1,5 +1,6 @@
 import type { RunLogSummary, RunSummaryRow } from "@agentic-workflow/core/workflow/runlog"
 import type { StageVerdicts, VerdictFlips } from "../../shared/api.js"
+import { stageLabel } from "./stage-label.js"
 
 /**
  * Verdict tallies and thrash detection over run-log summaries. Pure.
@@ -37,10 +38,11 @@ export const stageVerdicts = (passes: readonly RunLogSummary[]): StageVerdicts[]
   }
   for (const pass of passes) {
     for (const row of pass.rows) {
-      if (row.verdict === "none") bump(row.stage, "none")
-      else if (row.verdict === "PASS") bump(row.stage, "pass")
-      else if (row.verdict === "FAIL") bump(row.stage, "fail")
-      else if (row.verdict === "ERROR") bump(row.stage, "error")
+      const stage = stageLabel(pass.kind, row.stage)
+      if (row.verdict === "none") bump(stage, "none")
+      else if (row.verdict === "PASS") bump(stage, "pass")
+      else if (row.verdict === "FAIL") bump(stage, "fail")
+      else if (row.verdict === "ERROR") bump(stage, "error")
     }
   }
   return [...byStage.entries()]

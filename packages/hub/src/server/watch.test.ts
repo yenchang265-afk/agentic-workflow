@@ -41,6 +41,36 @@ test("diffSnapshots does not emit gate for tasks merely edited in a gate folder"
   assert.deepEqual(diffSnapshots(prev, touched, GATES), [{ type: "backlog" }])
 })
 
+test("diffSnapshots emits backlog (never gate) when a claim marker appears or vanishes", () => {
+  // Claims come and go without touching any task .md — the board's claimed
+  // badges hang off this. Even in a gate folder a `.claims/` key is not a task,
+  // so it must never mint a gate notification.
+  const prev = snap({ tasks: { queued: { "a.md": 1 }, "plan-review": {} } })
+  const claimedInGate = snap({ tasks: { queued: { "a.md": 1 }, "plan-review": { ".claims/a": 1 } } })
+  assert.deepEqual(diffSnapshots(prev, claimedInGate, GATES), [{ type: "backlog" }])
+  assert.deepEqual(diffSnapshots(claimedInGate, prev, GATES), [{ type: "backlog" }])
+})
+
+test("scanSnapshot lists claim markers under a status's .claims dir", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hub-watch-claims-"))
+  try {
+    fs.mkdirSync(path.join(dir, "docs/tasks/queued/.claims/T-1"), { recursive: true })
+    fs.writeFileSync(path.join(dir, "docs/tasks/queued/task.md"), "x")
+    const s = scanSnapshot(dir, "docs/tasks", ["queued"])
+    assert.deepEqual(Object.keys(s.tasks["queued"] ?? {}).sort(), [".claims/T-1", "task.md"])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("diffSnapshots emits sched (never run) for the event log — a run event would collapse the open panel", () => {
+  const prev = snap({ runs: {} })
+  const grown = snap({ runs: { "events.jsonl": "100:1" } })
+  assert.deepEqual(diffSnapshots(prev, grown, GATES), [{ type: "sched" }])
+  const rotated = snap({ runs: { "events.jsonl": "10:2", "events.1.jsonl": "100:1" } })
+  assert.deepEqual(diffSnapshots(grown, rotated, GATES), [{ type: "sched" }])
+})
+
 test("diffSnapshots emits run for changed run logs and active for marker/lease/state changes", () => {
   const prev = snap({ runs: { "fix.md": "10:1", "fix.state.json": "5:1" }, lease: null })
   const next = snap({ runs: { "fix.md": "20:2", "fix.state.json": "6:2" }, ...markers("claude", "9:9"), lease: "3:3" })

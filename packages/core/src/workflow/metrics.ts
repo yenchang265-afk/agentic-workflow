@@ -1,5 +1,6 @@
+import { redact } from "../task/redact.js"
 import type { Stage } from "./state.js"
-import type { Verdict } from "./verdict.js"
+import type { Verdict, VerdictRecord } from "./verdict.js"
 
 /**
  * Per-run stage metrics — wall-clock and verdict history — rendered into the
@@ -31,6 +32,37 @@ export interface StageToolUsage {
   readonly errors: number
 }
 
+/** Structured verdict mirror persisted with a check-stage sample (see `verdictStructure`). */
+export interface SampleCriterion {
+  readonly criterion: string
+  readonly pass: boolean
+}
+
+export interface SampleFinding {
+  readonly severity: string
+  readonly detail: string
+  readonly location?: string
+}
+
+export interface SampleAxis {
+  readonly axis: string
+  readonly verdict: string
+  readonly findings?: readonly SampleFinding[]
+}
+
+/**
+ * One proof-of-work citation from a PASS (see `workflow/evidence.ts`).
+ *
+ * Persisting these is what makes the declared-evidence rule worth having: the
+ * gate only proves a PASS *cited* something, so the citations have to outlive
+ * the run for a human to ever check them against the diff.
+ */
+export interface SampleEvidence {
+  readonly kind: string
+  readonly ref: string
+  readonly result?: string
+}
+
 export interface StageSample {
   readonly stage: Stage
   readonly iteration: number
@@ -58,6 +90,60 @@ export interface StageSample {
   readonly tools?: readonly StageToolUsage[]
   /** Distinct file paths the pass wrote/edited — omitted when none were touched. */
   readonly files?: readonly string[]
+  /** Per-criterion outcomes from the pass's VerdictRecord (check stages only). */
+  readonly criteria?: readonly SampleCriterion[]
+  /** Per-axis findings from the pass's VerdictRecord (check stages only), redacted. */
+  readonly axes?: readonly SampleAxis[]
+  /** Proof-of-work citations backing a PASS (check stages only), redacted. */
+  readonly evidence?: readonly SampleEvidence[]
+}
+
+/**
+ * The persistable mirror of a VerdictRecord's structure: criteria as-is, axis
+ * findings with `detail`/`location` pushed through `redact` — findings quote
+ * code and reviewer prose, and the sidecar is a committed file just like the
+ * run log (whose append already redacts). Pure. Returns {} when the record
+ * carries no structure, so spreading it into a sample adds no empty arrays.
+ *
+ * Evidence `ref` is redacted for a sharper reason than the findings are: a
+ * citation is a command line the stage really ran, and the sitter kinds reach
+ * Azure DevOps as `curl -u :$PAT …`. An unredacted `ref` would commit a resolved
+ * token to the sidecar, so this is the one field where skipping redaction leaks
+ * a credential rather than merely quoting code.
+ */
+export const verdictStructure = (
+  record: VerdictRecord | null | undefined,
+): { criteria?: readonly SampleCriterion[]; axes?: readonly SampleAxis[]; evidence?: readonly SampleEvidence[] } => {
+  if (!record) return {}
+  return {
+    ...(record.criteria?.length ? { criteria: record.criteria } : {}),
+    ...(record.evidence?.length
+      ? {
+          evidence: record.evidence.map((e) => ({
+            kind: e.kind,
+            ref: redact(e.ref).text,
+            ...(e.result ? { result: redact(e.result).text } : {}),
+          })),
+        }
+      : {}),
+    ...(record.axes?.length
+      ? {
+          axes: record.axes.map((a) => ({
+            axis: a.axis,
+            verdict: a.verdict,
+            ...(a.findings?.length
+              ? {
+                  findings: a.findings.map((f) => ({
+                    severity: f.severity,
+                    detail: redact(f.detail).text,
+                    ...(f.location ? { location: redact(f.location).text } : {}),
+                  })),
+                }
+              : {}),
+          })),
+        }
+      : {}),
+  }
 }
 
 export type Outcome = "done" | "stopped" | "error"
@@ -98,6 +184,7 @@ export const renderRunSummary = (
   detail: string,
   maxIterations: number,
   stampISO: string,
+  kind?: string,
 ): string => {
   const iterationsUsed = samples.reduce((max, s) => Math.max(max, s.iteration + 1), 0)
   const totalMs = samples.reduce((sum, s) => sum + s.ms, 0)
@@ -117,6 +204,11 @@ export const renderRunSummary = (
   const table = samples.length ? `${head}\n${rows}` : "_(no stages ran)_"
   const totalCost = samples.reduce((sum, s) => sum + (s.cost ?? 0), 0)
   const costNote = withTokens ? ` · cost: $${totalCost.toFixed(4)}` : ""
-  const footer = `iterations used: ${iterationsUsed}/${maxIterations} · total: ${formatDuration(totalMs)}${costNote} · outcome: ${outcome}`
+  // The optional leading `kind:` segment namespaces stage metrics across kinds
+  // (engineering `build` vs a sitter's `build`). Leading, so the load-bearing
+  // FOOTER regex in runlog.ts extends with one optional prefix group and every
+  // existing log still parses byte-identically.
+  const kindNote = kind ? `kind: ${kind} · ` : ""
+  const footer = `${kindNote}iterations used: ${iterationsUsed}/${maxIterations} · total: ${formatDuration(totalMs)}${costNote} · outcome: ${outcome}`
   return `${header}\n\n${table}\n\n${footer}`
 }

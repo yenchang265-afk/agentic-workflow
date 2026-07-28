@@ -1,7 +1,15 @@
 import { z } from "zod"
 import { parseRunLog } from "@agentic-workflow/core/workflow/runlog"
-import { parseRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import type { RunDetailResponse, RunListItem, RunsResponse, SnapshotView, StageActivity } from "../../shared/api.js"
+import { parseRunMetrics, type RunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import type {
+  LiveProgress,
+  RunDetailResponse,
+  RunListItem,
+  RunsResponse,
+  SnapshotView,
+  StageActivity,
+  TimelineSpan,
+} from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { readStageMarker } from "../driving.js"
 import { mapBounded, readText } from "../io.js"
@@ -24,6 +32,21 @@ const SnapshotSchema = z.object({
   // Keys only: which stages a resume would see captured output for. The
   // bodies duplicate the run log's stage sections, so they stay there.
   artifacts: z.record(z.string(), z.string()).optional(),
+  // The bounded per-iteration verdict ledger (core's AttemptRecord) — the
+  // failure forensics trail. Malformed elements drop individually rather than
+  // taking the whole snapshot view down with them.
+  attempts: z
+    .array(
+      z.object({
+        stage: z.string(),
+        iteration: z.number().int(),
+        verdict: z.string(),
+        reason: z.string().optional(),
+      }),
+    )
+    .optional()
+    .catch(undefined),
+  isolationWarning: z.string().optional(),
 })
 
 const readRunLog = (deps: HubDeps, id: string): Promise<string | null> => readText(deps, `${deps.tasksDir}/runs/${id}.md`)
@@ -36,13 +59,14 @@ const readRunLog = (deps: HubDeps, id: string): Promise<string | null> => readTe
  * UI simply shows no activity chips. Unreadable sidecar → no activity, never an
  * error (parity with `readSnapshot`).
  */
-const readActivity = async (deps: HubDeps, id: string): Promise<readonly StageActivity[]> => {
+const readSidecar = async (deps: HubDeps, id: string): Promise<RunMetrics | null> => {
   const raw = await readText(deps, `${deps.tasksDir}/runs/${id}.metrics.json`)
-  if (raw === null) return []
-  const parsed = parseRunMetrics(raw)
-  if (!parsed) return []
+  return raw === null ? null : parseRunMetrics(raw)
+}
+
+const toActivity = (sidecar: RunMetrics): readonly StageActivity[] => {
   const activity: StageActivity[] = []
-  for (const entry of parsed.runs) {
+  for (const entry of sidecar.runs) {
     for (const s of entry.samples) {
       if (!s.tools?.length && !s.files?.length) continue
       activity.push({
@@ -55,6 +79,50 @@ const readActivity = async (deps: HubDeps, id: string): Promise<readonly StageAc
     }
   }
   return activity
+}
+
+/**
+ * Stage spans for the run timeline: every sample with a recorded start. Samples
+ * without one are counted (`excluded`), never silently dropped — an old sidecar
+ * must read as "partially measured", not "this run was fast".
+ */
+const toTimeline = (sidecar: RunMetrics): { spans: readonly TimelineSpan[]; excluded: number } => {
+  const spans: TimelineSpan[] = []
+  let excluded = 0
+  for (const entry of sidecar.runs) {
+    for (const s of entry.samples) {
+      if (!s.startedAt) {
+        excluded++
+        continue
+      }
+      spans.push({
+        stage: s.stage,
+        ...(s.lens ? { lens: s.lens } : {}),
+        iteration: s.iteration + 1,
+        startedAt: s.startedAt,
+        ms: s.ms,
+        ...(s.model ? { model: s.model } : {}),
+        ...(entry.open ? { live: true } : {}),
+      })
+    }
+  }
+  spans.sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+  return { spans, excluded }
+}
+
+/** The live progress strip's data: the trailing entry is `open` and its last sample names the current stage. */
+const toLive = (sidecar: RunMetrics): LiveProgress | undefined => {
+  const last = sidecar.runs[sidecar.runs.length - 1]
+  if (!last?.open) return undefined
+  const s = last.samples[last.samples.length - 1]
+  if (!s) return undefined
+  return {
+    stage: s.stage,
+    ...(s.lens ? { lens: s.lens } : {}),
+    iteration: s.iteration + 1,
+    ...(s.startedAt ? { startedAt: s.startedAt } : {}),
+    host: last.host,
+  }
 }
 
 const readSnapshot = async (deps: HubDeps, id: string): Promise<SnapshotView | null> => {
@@ -74,6 +142,8 @@ const readSnapshot = async (deps: HubDeps, id: string): Promise<SnapshotView | n
       ...(s.git?.branch ? { branch: s.git.branch } : {}),
       ...(s.git?.worktree ? { worktree: s.git.worktree } : {}),
       ...(artifactStages.length ? { artifactStages } : {}),
+      ...(s.attempts?.length ? { attempts: s.attempts } : {}),
+      ...(s.isolationWarning ? { isolationWarning: s.isolationWarning } : {}),
     }
   } catch {
     return null
@@ -121,12 +191,18 @@ export const getRunDetail = async (deps: HubDeps, req: ParsedRequest): Promise<J
   if (!isSafeId(id)) return notFound(`run ${id}`)
   const content = await readRunLog(deps, id)
   if (content === null) return notFound(`run ${id}`)
-  const activity = await readActivity(deps, id)
+  const sidecar = await readSidecar(deps, id)
+  const activity = sidecar ? toActivity(sidecar) : []
+  const timeline = sidecar ? toTimeline(sidecar) : { spans: [], excluded: 0 }
+  const live = sidecar ? toLive(sidecar) : undefined
   const response: RunDetailResponse = {
     id,
     log: parseRunLog(content),
     snapshot: await readSnapshot(deps, id),
     ...(activity.length ? { activity } : {}),
+    ...(timeline.spans.length ? { timeline: timeline.spans } : {}),
+    ...(timeline.excluded > 0 ? { timelineExcluded: timeline.excluded } : {}),
+    ...(live ? { live } : {}),
   }
   return ok(response)
 }

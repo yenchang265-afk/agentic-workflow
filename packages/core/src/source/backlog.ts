@@ -15,6 +15,7 @@ import {
   STALE_CLAIM_MINUTES,
 } from "../task/store.js"
 import type { ClaimSkipReason, WorkItem, WorkSource } from "./types.js"
+import { appendSchedulerEvents } from "../scheduler/events-log.js"
 
 /**
  * The backlog-folder work source: claimable units of work are markdown task
@@ -52,6 +53,8 @@ interface BacklogDeps {
    * a healthy run's marker. Absent ⇒ the bare `STALE_CLAIM_MINUTES` default.
    */
   readonly staleMinutes?: number
+  /** The host name stamped on scheduler events (opencode/claude/qwen); "core" when absent. */
+  readonly hostName?: string
 }
 
 /**
@@ -162,6 +165,12 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
           isDriving,
           log,
           ...(deps.staleMinutes === undefined ? {} : { staleMinutes: deps.staleMinutes }),
+          // A stale-claim takeover is otherwise invisible on disk — record it in
+          // the scheduler event log (best-effort, never fails the claim walk).
+          onOrphanRelease: (id) =>
+            appendSchedulerEvents($, directory, tasksDir, [
+              { type: "claim-takeover", at: new Date().toISOString(), host: deps.hostName ?? "core", pid: process.pid, id },
+            ]),
           // With a claim predicate, an orphaned marker is only released while
           // the body is still claimable (the dead run did no durable work);
           // without one (planless pools), a stale undriven marker is always

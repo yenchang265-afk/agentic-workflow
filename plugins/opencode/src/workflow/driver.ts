@@ -8,12 +8,14 @@ import { advance, composePrompt, firstStep } from "@agentic-workflow/core/workfl
 import {
   clearOpencodeStageMarker,
   opencodeStageMarker,
+  taskDrivenByStageMarker,
   writeOpencodeStageMarker,
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { stageDef, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
+import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -34,10 +36,12 @@ import {
   auditNote,
   claimFirst,
   claimTask,
+  claimTaskSweepingStale,
   findByIdIn,
   hasPlan,
   isClaimable,
   isOrphanedPlanClaim,
+  isOrphanedStartedClaim,
   isRecoverable,
   listByStatus,
   listClaimIds,
@@ -45,6 +49,7 @@ import {
   listQueued,
   markClaimed,
   moveTask,
+  refreshClaimStamp,
   releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
@@ -74,7 +79,7 @@ import {
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
-import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage } from "@agentic-workflow/core/workflow/metrics"
+import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
   admitVerdict,
@@ -92,6 +97,7 @@ import {
   type VerdictRecord,
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
+import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import {
   EXPERIMENTAL_KINDS,
   enabledWorkflowKinds,
@@ -173,7 +179,13 @@ registerEngineeringHooks()
  *  An `only` kind restricts the poll to that one kind (claim/watch kind filter);
  *  a `target` PR number forces that exact PR on a PR-shaped `only` kind. */
 const sourcesFor = (deps: Deps, config: Config, only?: string, target?: number): WorkSource[] =>
-  buildWorkSources({ ...deps, isDriving: (id) => findSessionDriving(id) !== undefined }, config, manifestFor, only, target)
+  buildWorkSources(
+    { ...deps, isDriving: (id) => findSessionDriving(id) !== undefined, hostName: "opencode" },
+    config,
+    manifestFor,
+    only,
+    target,
+  )
 
 type Client = PluginInput["client"]
 type Shell = PluginInput["$"]
@@ -232,6 +244,19 @@ const watching = new Set<string>()
  *  `getWorkflow` (which `onIdle`'s catch still needs on a reject-on-abort). Cleared
  *  when the drive unwinds. */
 const interrupted = new Set<string>()
+/**
+ * Sessions whose in-flight `session.abort` was issued by the DRIVER (a stage
+ * timeout), mapped to a wall-clock expiry. In OpenCode a driver abort surfaces
+ * as the exact same `MessageAbortedError` a user ESC does, so without this set
+ * `onInterrupt` treated every stage timeout as a human interrupt: it killed
+ * watch mode (dropping the clone's watch lease — the unattended watcher died on
+ * the most likely failure of a long run) and toasted "Loop interrupted" for an
+ * interrupt that never happened. Entries are judged against the expiry rather
+ * than deleted on first sight because one abort dispatches multiple events
+ * (session.error + message.updated, parent + subtask session); an expired entry
+ * is dropped so a later real ESC is never swallowed.
+ */
+const driverAborts = new Map<string, number>()
 /**
  * Should this session stop firing agent turns? Either a `stop` cleared the loop,
  * or the user pressed ESC. Both must be tested: `onInterrupt` deliberately keeps
@@ -384,6 +409,46 @@ const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly 
 const axisRequirement = new Map<string, readonly string[]>()
 
 /**
+ * What each driving session's CURRENT check pass has been observed doing —
+ * this host's half of the verdict's proof-of-work gate
+ * (@agentic-workflow/core/workflow/evidence).
+ *
+ * In memory rather than the ledger file the Claude host writes, because this
+ * host's tool guard runs in the same process as `recordVerdict`; the file exists
+ * over there only because its guard is a separate process per tool call. Both
+ * feed the same pure `EvidenceContext`.
+ *
+ * Cleared per PASS ATTEMPT (next to `recordedVerdicts`), so a re-fired check can
+ * only be corroborated by its own work — never by the attempt that failed.
+ */
+const observedEvidence = new Map<string, ObservedEvidence>()
+
+/** Most commands/reads kept per pass; see the Claude ledger's cap for why entries past it are dropped, not rotated. */
+const OBSERVED_MAX = 200
+
+/**
+ * Note a tool call the guard is about to allow against the loop driving
+ * `sessionID`. Called from `tool.execute.before` with the EFFECTIVE command (the
+ * worktree pin may have rewritten it) — what will actually run is what counts as
+ * having been run.
+ */
+export const noteEvidence = (sessionID: string, entry: { readonly command?: string; readonly reads?: readonly string[] }): void => {
+  const prev = observedEvidence.get(sessionID) ?? NO_OBSERVATIONS
+  const add = (list: readonly string[], incoming: readonly string[]): string[] => {
+    const out = list.slice()
+    for (const value of incoming) {
+      if (out.length >= OBSERVED_MAX) break
+      if (value && !out.includes(value)) out.push(value)
+    }
+    return out
+  }
+  observedEvidence.set(sessionID, {
+    commands: add(prev.commands, entry.command ? [entry.command.trim()] : []),
+    reads: add(prev.reads, (entry.reads ?? []).map((r) => r.trim())),
+  })
+}
+
+/**
  * The stage a session has already audited an out-of-stage verdict for. A
  * drifting work stage typically calls `workflow_verdict` more than once (verify,
  * then review, inside the same build turn); the task file gets one note per
@@ -460,7 +525,15 @@ export const recordVerdict = (
   // Repeat calls combine worst-wins rather than overwrite — a FAIL must not be
   // replaceable by a later PASS from the same agent.
   const prev = recordedVerdicts.get(sessionID)
-  const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null)
+  // `observed` is whatever this pass has accumulated so far — never null on this
+  // host, because the guard that fills it runs in this process: an empty set here
+  // genuinely means the pass did nothing, which is exactly what should reject a PASS.
+  const evidence: EvidenceContext = {
+    stage,
+    required: def.requireEvidence,
+    observed: observedEvidence.get(sessionID) ?? NO_OBSERVATIONS,
+  }
+  const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null, evidence)
   if (!admission.ok) return reject(admission.message)
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
   return { accepted: true, message: `Recorded ${stage} verdict: ${effectiveVerdict(admission.record)}.` }
@@ -723,6 +796,10 @@ const runStage = async (
       // swallow its eventual settlement so the lost race never surfaces as an
       // unhandled rejection. Both are best-effort: after the grace, failing
       // the loop still beats wedging the driver forever.
+      // Mark the abort as driver-initiated FIRST: it surfaces as the same
+      // MessageAbortedError a user ESC does, and onInterrupt must not treat a
+      // stage timeout as a human interrupt (which killed watch mode).
+      driverAborts.set(sessionID, Date.now() + ABORT_GRACE_MS * 2)
       await client.session.abort({ path: { id: sessionID } }).catch(() => {})
       let grace: ReturnType<typeof setTimeout> | undefined
       await Promise.race([
@@ -825,6 +902,7 @@ export const runStagePasses = async (
           : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
+      observedEvidence.delete(sessionID) // ...nor a previous pass's work corroborate this one's PASS
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
@@ -861,6 +939,9 @@ export const runStagePasses = async (
         ...(promptElided ? { promptElided } : {}),
         ...(usage ? { tokens: usage.tokens, cost: usage.cost, model: usage.model } : {}),
         ...(activity ? { tools: activity.tools, ...(activity.files ? { files: activity.files } : {}) } : {}),
+        // Structured verdict mirror (redacted) — what a cross-run "top recurring
+        // findings" roll-up joins on; the prose keeps living in the run log.
+        ...(isCheck ? verdictStructure(passRecord) : {}),
       })
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
       // terminal event finalizes the sidecar).
@@ -970,6 +1051,7 @@ const flushMetrics = async (deps: Deps, sessionID: string, config: Config, state
     detail: "",
     host: "opencode",
     sessionID,
+    kind: state.kind ?? "engineering",
     samples,
     open: true,
   })
@@ -988,6 +1070,7 @@ const renderMetrics = async (
   state: WorkflowState,
   outcome: Outcome,
   detail: string,
+  retryable?: boolean,
 ): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   runSamples.delete(sessionID)
@@ -997,7 +1080,7 @@ const renderMetrics = async (
   // alone would mislabel the footer (e.g. "iterations used: 3/1").
   const cap = manifestFor(state.kind ?? "engineering").manifest.maxIterations ?? config.maxIterations
   const stamp = new Date().toISOString()
-  const summary = renderRunSummary(samples, outcome, detail, cap, stamp)
+  const summary = renderRunSummary(samples, outcome, detail, cap, stamp, state.kind ?? "engineering")
   await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, deps.log)
   // Structured twin of the summary table — the machine-readable record token
   // dashboards join against. sessionID lets host storage be joined exactly.
@@ -1011,10 +1094,23 @@ const renderMetrics = async (
     detail,
     host: "opencode",
     sessionID,
+    kind: state.kind ?? "engineering",
+    ...(retryable !== undefined ? { retryable } : {}),
     samples,
   })
   await writeFileAtomic(deps.$, file, doc)
 }
+
+/**
+ * Live drives per working tree. The stage marker is ONE file per directory, but
+ * worktree mode deliberately runs drives concurrently (`onIdle` skips the
+ * serialize lock there) — so the first drive to finish must not delete the
+ * advertisement out from under its still-running siblings. The marker's content
+ * still names whichever drive wrote last (a display race the single-file format
+ * can't avoid); this refcount only stops the premature DELETE, which blinded
+ * the hub's driving oracle and doctor to a live loop.
+ */
+const drivesPerDir = new Map<string, number>()
 
 /** Run the stage chain from `first` until the pure logic yields a gate/done/stop.
  *  Returns the terminal outcome so callers can report it to the work source. */
@@ -1024,13 +1120,21 @@ export const drive = async (
   config: Config,
   first: { state: WorkflowState; action: Action },
 ): Promise<TerminalOutcome | null> => {
+  drivesPerDir.set(deps.directory, (drivesPerDir.get(deps.directory) ?? 0) + 1)
   try {
     return await driveChain(deps, sessionID, config, first)
   } finally {
     // The chain advertises each live stage on disk (see the write below); every
     // exit — terminal, stop, interrupt, or a thrown stage error unwinding to
-    // onIdle's catch — must take the advertisement down with it.
-    await clearOpencodeStageMarker(deps.$, deps.directory, config.tasksDir)
+    // onIdle's catch — must take the advertisement down with it. Only the LAST
+    // drive in this directory removes the file (see `drivesPerDir`).
+    const remaining = (drivesPerDir.get(deps.directory) ?? 1) - 1
+    if (remaining <= 0) {
+      drivesPerDir.delete(deps.directory)
+      await clearOpencodeStageMarker(deps.$, deps.directory, config.tasksDir)
+    } else {
+      drivesPerDir.set(deps.directory, remaining)
+    }
   }
 }
 
@@ -1121,7 +1225,6 @@ const driveChain = async (
   const actor = await gitActor(deps.$, deps.directory)
   let step = first
   while (step.action.kind === "fire") {
-    const { stage, arguments: args } = step.action
     // Every code-writing stage runs isolated: its own worktree (worktree mode)
     // or the feature/<id> branch in the shared tree (default). Created on the
     // first build; reconciled before every stage in case the tree/worktree
@@ -1131,10 +1234,18 @@ const driveChain = async (
     // main tree, on the human's branch) and parks, so it needs no branch, no
     // worktree, and no crash snapshot — a died PLAN is recovered by the stale
     // claim-marker sweep, not by recover.
-    const isolated = stageDef(loaded.manifest, stage).isolation !== "none"
+    const isolated = stageDef(loaded.manifest, step.action.stage).isolation !== "none"
     if (isolated) {
-      step = { ...step, state: await ensureIsolation(deps, config, step.state) }
+      // Recompose the fire action from the POST-isolation state. The entry
+      // action arrives composed from the claim-time state, which carries no
+      // `git`/`worktree` — firing it as-is rendered the first BUILD's
+      // `{{#worktree}}`/`{{#git}}` blocks empty, so the agent was never told
+      // about its worktree and read the main tree while its edits landed in
+      // the checkout (the Claude host isolates BEFORE composing; this matches).
+      step = firstStep(loaded, await ensureIsolation(deps, config, step.state), config)
     }
+    if (step.action.kind !== "fire") break // unreachable — firstStep always fires — but keeps the narrowing
+    const { stage, arguments: args } = step.action
     setWorkflow(sessionID, step.state)
     if (isolated) await snapshot(deps, config, step.state)
     // Advertise the live stage for out-of-process observers (the hub's driving
@@ -1148,6 +1259,10 @@ const driveChain = async (
       config.tasksDir,
       opencodeStageMarker(step.state, Date.now() + config.stageTimeoutMinutes * 60_000),
     )
+    // Keep the claim stamp fresh at every stage boundary: `staleClaimMinutes`
+    // covers one stage, but a whole loop can outlive it — without the refresh a
+    // live run's marker reads as stale to another process's sweep/recover.
+    if (step.state.task) await refreshClaimStamp(deps.$, step.state.task)
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
@@ -1182,9 +1297,17 @@ const driveChain = async (
     const wasInterrupted = interrupted.has(sessionID)
     if (!getWorkflow(sessionID) || wasInterrupted) {
       const how = wasInterrupted ? "interrupted" : "stopped"
-      await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`)
+      // Mirrors the `retryable: true` on this path's TerminalOutcome below.
+      await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`, true)
       await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): incomplete — ${how} during ${stage}`)
       await teardownIsolation(deps, step.state)
+      // The drive is over — release the claim marker (any stage). This guard
+      // bypasses `runTerminal`, so without it an ESC/stop during PLAN left the
+      // queued/ claim held: `plan <id>` then lied "just claimed by another
+      // watcher" and only the 75-minute stale sweep freed it. A held marker
+      // means "a loop is driving"; an interrupted (paused) run isn't — recover
+      // re-claims when it resumes, and the CLAIMED note keeps watchers away.
+      if (step.state.task) await releaseClaim(deps.$, step.state.task)
       // A deliberate stop ends the run — drop the snapshot so recover can't
       // resurrect stale state. An ESC interrupt is a pause: KEEP the snapshot so
       // recover <id> resumes at THIS stage (recover-state), not a BUILD
@@ -1251,7 +1374,7 @@ const driveChain = async (
     commitBacklog: async (message) => void (await commitTasks(deps, config, message)),
     // Commit-all checkpoint on the work tree; core calls it only when state.isolated.
     checkpoint: (message) => checkpoint(deps, config, state, message),
-    writeMetrics: (outcome, detail) => renderMetrics(deps, sessionID, config, state, outcome, detail),
+    writeMetrics: (outcome, detail, retryable) => renderMetrics(deps, sessionID, config, state, outcome, detail, retryable),
   }
   const report = await runTerminal(ctx, action)
   clearWorkflow(sessionID)
@@ -1308,12 +1431,31 @@ export type { ClaimSkipReason } from "@agentic-workflow/core/source/types"
  * reason is always logged, and toasted when actionable (deduped until the
  * reason changes).
  */
+/** Last-appended skip-set key per session — the event-log flood control. */
+const lastSkipEventKey = new Map<string, string>()
+
+/** `Omit` that distributes over the SchedulerEvent union (a plain Omit collapses it to the common keys). */
+type SchedEventBody = SchedulerEvent extends infer E ? (E extends SchedulerEvent ? Omit<E, "at" | "host" | "pid"> : never) : never
+
+/** Best-effort scheduler-event append, stamped with this host's identity. */
+const emitSchedEvent = async (deps: Deps, config: Config, event: SchedEventBody): Promise<void> =>
+  appendSchedulerEvents(deps.$, deps.directory, config.tasksDir, [
+    { at: new Date().toISOString(), host: "opencode", pid: process.pid, ...event } as SchedulerEvent,
+  ])
+
 const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: string, target?: number): Promise<void> => {
   const kindFilter = only ?? watchKindFilter.get(sessionID)
   const { claim, skips } = await pollOnce(sourcesFor(deps, config, kindFilter, target))
   if (!claim) {
     const reason = combineSkips(skips)
     if (!reason) return
+    // Append the skip-set only when it CHANGES — a watcher polls every tick and
+    // an unconditional append would be the flood the event log must not become.
+    const key = skipSetKey(skips)
+    if (lastSkipEventKey.get(sessionID) !== key) {
+      lastSkipEventKey.set(sessionID, key)
+      await emitSchedEvent(deps, config, { type: "skip", reasons: [...skips] })
+    }
     await deps.log(reason.actionable ? "warn" : "info", reason.message)
     if (reason.actionable && lastSkipReason.get(sessionID) !== reason.message) {
       lastSkipReason.set(sessionID, reason.message)
@@ -1322,7 +1464,9 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
     return
   }
   lastSkipReason.delete(sessionID)
+  lastSkipEventKey.delete(sessionID)
   const { item } = claim
+  await emitSchedEvent(deps, config, { type: "claim", kind: item.workflowKind, id: item.id })
   await toast(deps.client, item.claimMessage, "info")
   // Task-backed claims entering an isolated stage get the durable CLAIMED note
   // before drive() establishes isolation.
@@ -1332,12 +1476,22 @@ const tryClaim = async (deps: Deps, sessionID: string, config: Config, only?: st
   try {
     const outcome = await drive(deps, sessionID, config, firstStep(manifestFor(item.workflowKind), item.state, config))
     if (outcome && claim.source.onTerminal) await claim.source.onTerminal(item, outcome)
+    if (outcome) {
+      await emitSchedEvent(deps, config, {
+        type: "terminal",
+        kind: item.workflowKind,
+        id: item.id,
+        outcome: outcome.kind,
+        ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
+      })
+    }
   } catch (err) {
     // Died before real work started (e.g. ensureIsolation threw, before
     // setWorkflow ran — onIdle's catch can't see the task): the claim is ours, so
     // release it or watch stays wedged. The source knows what "real work"
     // means per pool (a BUILD-started note keeps the marker for recovery).
     await claim.source.release(item)
+    await emitSchedEvent(deps, config, { type: "release", kind: item.workflowKind, id: item.id })
     throw err
   }
 }
@@ -1414,6 +1568,14 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
       sessionID = drive.sessionID
       state = drive.state
     }
+  }
+  // A driver-initiated abort (stage timeout) is not a user interrupt: leave
+  // watch mode armed and the loop's normal timeout error path in charge. Judged
+  // by expiry, not delete-on-sight — one abort dispatches several events.
+  const driverAbortExpiry = driverAborts.get(sessionID)
+  if (driverAbortExpiry !== undefined) {
+    if (Date.now() < driverAbortExpiry) return
+    driverAborts.delete(sessionID) // expired — a later real ESC must not be swallowed
   }
   const hadWorkflow = state !== undefined
   const priorPending = pending.get(sessionID)
@@ -1518,19 +1680,19 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
         deps.log,
       )
     }
-    // A claim that died before its first "> BUILD started" note leaves the
-    // task body claimable but the marker held — release it so no watcher is
-    // wedged on it forever. (For `recover`, the body already carries BUILD
-    // notes, so `isClaimable` is false and this is a no-op.)
-    if (work?.kind === "start-task" || work?.kind === "recover") {
-      const fresh = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", work.task.id)
-      if (fresh && isClaimable(fresh)) await releaseClaim(deps.$, work.task)
-    }
-    // A PLAN claim that died leaves the task in queued/ with the marker held.
-    if (work?.kind === "start-plan") {
-      const fresh = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", work.task.id)
-      if (fresh) await releaseClaim(deps.$, work.task)
-    }
+    // The drive died — release its claim marker unconditionally, whatever the
+    // body says. The old gate (`isClaimable`) was always false once the CLAIMED
+    // note landed, so every release was a silent no-op and the marker wedged
+    // (the exact bug backlog.ts's `release` fixed with `isReleasableClaim`).
+    // A held marker means "a loop is driving"; an errored one isn't — recover
+    // re-claims, and the CLAIMED note keeps watchers away after release.
+    const errored =
+      work?.kind === "start-task" || work?.kind === "recover" || work?.kind === "start-plan"
+        ? work.task
+        : work?.kind === "recover-state"
+          ? work.state.task
+          : undefined
+    if (errored) await releaseClaim(deps.$, errored)
     // Preserve whatever the failed run left behind and put the tree back.
     if (state) {
       await renderMetrics(deps, sessionID, config, state, "error", message)
@@ -2079,7 +2241,24 @@ export const handleCommand = async (
     if (!isRecoverable(task)) {
       return report(client, `Task "${id}" has no persisted plan — send it back with ${ECMD} replan ${id}.`, "warning")
     }
-    await claimTask(deps.$, task) // re-mark; the marker may already exist from the dead run
+    // Re-claim. A held marker no longer means "leftover from the dead run" —
+    // graceful stops/interrupts release it — so a failed claim means either a
+    // live loop in another process (fresh stage marker: refuse, or two loops
+    // build the same feature/<id> branch) or a hard-crashed run whose writer
+    // pid is gone (take the marker over atomically).
+    if (!(await claimTask(deps.$, task))) {
+      const liveHost = await taskDrivenByStageMarker(deps.$, deps.directory, config.tasksDir, id)
+      if (liveHost) {
+        return report(
+          client,
+          `Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`,
+          "warning",
+        )
+      }
+      if (!(await claimTaskSweepingStale(deps.$, task, 0))) {
+        return report(client, `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`, "warning")
+      }
+    }
     // Prefer an exact-stage resume from the state snapshot; fall back to
     // re-entering at BUILD from the persisted plan when there's no valid one.
     const snap = await loadState(client, deps.directory, config.tasksDir, id)
@@ -2161,7 +2340,11 @@ export const handleCommand = async (
           ...(await releaseOrphanedClaims(deps.$, tasks, ids, path.join(deps.directory, config.tasksDir, status), {
             isDriving: (id) => findSessionDriving(id) !== undefined,
             staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
-            ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
+            // Doctor releases a stale, undriven marker whatever the body says
+            // (`isOrphanedStartedClaim`) — the default rule's `isClaimable`
+            // gate made doctor useless against exactly the wedged markers the
+            // gate verbs send users here for.
+            isOrphaned: status === "queued" ? isOrphanedPlanClaim : isOrphanedStartedClaim,
           })),
         )
       }

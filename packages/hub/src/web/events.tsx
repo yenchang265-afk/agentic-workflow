@@ -14,6 +14,8 @@ export interface EventVersions {
   readonly active: number
   readonly tokens: number
   readonly gate: number
+  /** `runs/events.jsonl` grew — SchedulerPanel refetches /api/scheduler. */
+  readonly sched: number
   /** `.agentic-workflow.json` changed — from the hub's own save or a hand-edit. */
   readonly config: number
   /** The monitored-repo set grew — RepoProvider refetches /api/repos. */
@@ -27,18 +29,19 @@ interface EventsValue {
   readonly requestNotifications: () => void
 }
 
-const initial: EventVersions = { backlog: 0, run: 0, active: 0, tokens: 0, gate: 0, config: 0, repos: 0 }
+const initial: EventVersions = { backlog: 0, run: 0, active: 0, tokens: 0, gate: 0, sched: 0, config: 0, repos: 0 }
 
-/** Every counter forward one — "we were disconnected, assume all of it moved". */
-const bumpAll = (v: EventVersions): EventVersions => ({
-  backlog: v.backlog + 1,
-  run: v.run + 1,
-  active: v.active + 1,
-  tokens: v.tokens + 1,
-  gate: v.gate + 1,
-  config: v.config + 1,
-  repos: v.repos + 1,
-})
+/**
+ * Every counter forward one — "we were disconnected, assume all of it moved".
+ *
+ * Derived from the object's own keys rather than an enumerated literal, so a
+ * counter added later is bumped without anyone remembering to come back here.
+ * The enumerated version silently stopped covering `sched` the moment it was
+ * added, which would have left the scheduler panel showing pre-outage data
+ * after every reconnect — the exact failure this function exists to prevent.
+ */
+const bumpAll = (v: EventVersions): EventVersions =>
+  Object.fromEntries(Object.entries(v).map(([key, n]) => [key, n + 1])) as unknown as EventVersions
 
 const EventsContext = createContext<EventsValue>({
   versions: initial,

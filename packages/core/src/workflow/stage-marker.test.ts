@@ -11,6 +11,7 @@ import {
   opencodeStageMarker,
   STAGE_MARKER_HOSTS,
   stageMarkerFile,
+  taskDrivenByStageMarker,
   writeOpencodeStageMarker,
 } from "./stage-marker.js"
 import type { WorkflowState } from "./state.js"
@@ -20,13 +21,14 @@ import type { WorkflowState } from "./state.js"
  * persist.test.ts: write/clear shell out via `$` (mkdir/printf/mv/rm), faked
  * over a real temp dir so the round-trip runs without a running opencode.
  */
-const fakeShell = () => {
+const fakeShell = (livePids: ReadonlySet<number> = new Set([process.pid])) => {
   const run = (strings: TemplateStringsArray, exprs: unknown[]) => {
     const chain = {
       quiet: () => chain,
       nothrow: () => chain,
       then: (resolve: (v: unknown) => unknown) => {
         const raw = strings.join("\0")
+        let out: { exitCode: number; stdout?: string } = { exitCode: 0 }
         if (raw.startsWith("mkdir -p ")) {
           fs.mkdirSync(String(exprs[0]), { recursive: true })
         } else if (raw.startsWith("printf '%s' ")) {
@@ -35,8 +37,16 @@ const fakeShell = () => {
           fs.renameSync(String(exprs[0]), String(exprs[1]))
         } else if (raw.startsWith("rm -f ")) {
           fs.rmSync(String(exprs[0]), { force: true })
+        } else if (raw.startsWith("cat ")) {
+          try {
+            out = { exitCode: 0, stdout: fs.readFileSync(String(exprs[0]), "utf8") }
+          } catch {
+            out = { exitCode: 1 }
+          }
+        } else if (raw.startsWith("kill -0 ")) {
+          out = { exitCode: livePids.has(Number(exprs[0])) ? 0 : 1 }
         }
-        return Promise.resolve({ exitCode: 0 }).then(resolve)
+        return Promise.resolve({ exitCode: out.exitCode, stdout: { toString: () => out.stdout ?? "" } }).then(resolve)
       },
     }
     return chain
@@ -89,6 +99,7 @@ test("opencodeStageMarker snapshots the state's driving facts", () => {
     worktree: "/wt/f7k3",
     deadline: 1234,
     iteration: 2,
+    pid: process.pid,
   })
 })
 
@@ -98,6 +109,31 @@ test("a kind-less, task-less, unisolated state markers as engineering with nulls
   assert.equal(m.taskId, null)
   assert.equal(m.worktree, null)
   assert.equal(m.deadline, null)
+})
+
+test("taskDrivenByStageMarker: live marker names the host; expired deadline or dead pid reads dead", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "stage-marker-live-"))
+  const now = 1_000_000
+  const $ = fakeShell()
+  await writeOpencodeStageMarker($, dir, "docs/tasks", opencodeStageMarker(state, now + 60_000))
+
+  assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit", now), "opencode", "fresh deadline + live pid = driven")
+  assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "other-task", now), null, "a different task is not driven by this marker")
+  assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit", now + 61_000), null, "past the deadline the stage window is over")
+
+  // A SIGKILLed writer leaves the marker with a fresh deadline — but its pid is
+  // gone, and recover must not be locked out for the rest of the stage window.
+  const deadPidShell = fakeShell(new Set())
+  assert.equal(await taskDrivenByStageMarker(deadPidShell, dir, "docs/tasks", "f7k3-add-rate-limit", now), null, "dead writer pid = not driven")
+
+  await clearOpencodeStageMarker($, dir, "docs/tasks")
+  assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit", now), null, "no marker = not driven")
+
+  // Garbled marker degrades to "not driven", never a throw.
+  fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
+  fs.writeFileSync(opencodeMarkerPath(dir, "docs/tasks"), "not json")
+  assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit", now), null)
+  fs.rmSync(dir, { recursive: true, force: true })
 })
 
 test("write → read → clear round-trips through the runs dir", async () => {

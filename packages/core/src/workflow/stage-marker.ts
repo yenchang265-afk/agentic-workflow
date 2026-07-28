@@ -36,6 +36,28 @@ const MARKER_FILE: Record<StageMarkerHost, string> = {
 }
 
 /**
+ * The check-stage proof-of-work ledger, written next to the marker by the host's
+ * tool guard and read back by `workflow_verdict` (see `workflow/evidence.ts`).
+ *
+ * Per host for the same reason the marker is: it is a control-plane input, and a
+ * shared path would let one host's interactive session write into another host's
+ * live loop's evidence — which here would mean corroborating a PASS with work
+ * the stage never did.
+ */
+const EVIDENCE_FILE: Record<StageMarkerHost, string> = {
+  claude: ".stage-evidence.json",
+  opencode: ".stage-evidence-opencode.json",
+  qwen: ".stage-evidence-qwen.json",
+}
+
+/** Basename of a host's evidence ledger under `<tasksDir>/runs/`. Pure. */
+export const stageEvidenceFile = (host: StageMarkerHost): string => EVIDENCE_FILE[host]
+
+/** Absolute path of a host's evidence ledger. Pure. */
+export const hostStageEvidencePath = (directory: string, tasksDir: string, host: StageMarkerHost): string =>
+  path.join(directory, tasksDir, "runs", EVIDENCE_FILE[host])
+
+/**
  * Every host that writes a marker, in the precedence order an out-of-process
  * observer should read them. At most one loop runs per repo, so precedence only
  * decides a tie that should not happen; the point of the list is that observers
@@ -63,13 +85,15 @@ export interface OpencodeStageMarker {
   /** Wall-clock ms deadline of the stage attempt (start + stageTimeoutMinutes); display-only. */
   readonly deadline: number | null
   readonly iteration: number
+  /** Writer process id — lets `taskDrivenByStageMarker` treat a SIGKILLed writer's leftover marker as dead. */
+  readonly pid: number
 }
 
 /** Absolute path of the OpenCode host's stage marker. Pure. */
 export const opencodeMarkerPath = (directory: string, tasksDir: string): string =>
   hostStageMarkerPath(directory, tasksDir, "opencode")
 
-/** Build the marker for a stage the driver is about to fire. Pure. */
+/** Build the marker for a stage the driver is about to fire. Pure but for `process.pid`. */
 export const opencodeStageMarker = (state: WorkflowState, deadline: number | null): OpencodeStageMarker => ({
   host: "opencode",
   kind: state.kind ?? "engineering",
@@ -78,6 +102,7 @@ export const opencodeStageMarker = (state: WorkflowState, deadline: number | nul
   worktree: state.git?.worktree ?? null,
   deadline,
   iteration: state.iteration,
+  pid: process.pid,
 })
 
 /** Write the marker. Best-effort — telemetry must never fail the drive. */
@@ -95,4 +120,42 @@ export const writeOpencodeStageMarker = async (
 /** Remove the marker. Best-effort; idempotent on an absent file. */
 export const clearOpencodeStageMarker = async ($: Shell, directory: string, tasksDir: string): Promise<void> => {
   await $`rm -f ${opencodeMarkerPath(directory, tasksDir)}`.quiet().nothrow()
+}
+
+/**
+ * Which host's live-stage marker (if any) says a loop is driving `taskId`
+ * RIGHT NOW. "Live" means: the marker names the task, its stage deadline has
+ * not passed, and — when the marker carries a `pid` — the writer process still
+ * exists. A crashed (SIGKILLed) driver leaves its marker on disk, but its pid
+ * is gone, so `recover` isn't locked out for the rest of the stage window.
+ * Markers from older versions carry no pid and fall back to the deadline alone.
+ * Every read is best-effort: a missing or garbled marker reads as "not driven".
+ */
+export const taskDrivenByStageMarker = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  taskId: string,
+  now: number = Date.now(),
+): Promise<StageMarkerHost | null> => {
+  for (const host of STAGE_MARKER_HOSTS) {
+    const out = await $`cat ${hostStageMarkerPath(directory, tasksDir, host)}`.quiet().nothrow()
+    if (out.exitCode !== 0) continue
+    try {
+      const m = JSON.parse(out.stdout.toString()) as { taskId?: unknown; deadline?: unknown; pid?: unknown }
+      if (m.taskId !== taskId) continue
+      if (typeof m.deadline !== "number" || m.deadline <= now) continue // stage window over — dead either way
+      if (typeof m.pid === "number" && Number.isInteger(m.pid) && m.pid > 0) {
+        // `kill -0` probes existence without signalling. An EPERM (alive but
+        // other-user) also exits non-zero and would read as dead — acceptable:
+        // markers are same-repo, same-user in practice.
+        const alive = await $`kill -0 ${String(m.pid)}`.quiet().nothrow()
+        if (alive.exitCode !== 0) continue
+      }
+      return host
+    } catch {
+      continue
+    }
+  }
+  return null
 }
