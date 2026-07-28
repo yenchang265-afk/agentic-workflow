@@ -232,6 +232,22 @@ test("stop annotates the task and leaves it in place (no move)", async () => {
   assert.deepEqual(metrics, [{ outcome: "stopped", detail: "Loop stopped at build." }])
 })
 
+test("stop from a build/check stage releases the in-progress claim marker", async () => {
+  // The wedge: a cap-tripped stop (verify/review FAILed maxIterations times)
+  // kept the marker held, and every escape the cap message offers — replan,
+  // abandon, remove — refuses a held claim, while the orphan sweep skips a
+  // body carrying CLAIMED/BUILD notes. Release on stop is what frees the task
+  // for the very `replan <id>` the stop message instructs.
+  const state: WorkflowState = { goal: "Do it", stage: "verify", iteration: 2, artifacts: {}, task: taskRef("t", "in-progress") }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes("in-progress/.claims/t")),
+    `in-progress claim marker must be released: ${log.join(" | ")}`,
+  )
+})
+
 test("stop with the task gone from in-progress/ skips the note and creates no ghost file", async () => {
   // The resurrection regression: appendNote's `>>` creates the file if absent, so a
   // stop after a human moved/deleted the task must never write to the stale path.

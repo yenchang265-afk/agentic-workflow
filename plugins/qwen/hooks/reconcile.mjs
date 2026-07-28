@@ -228,19 +228,22 @@ var main = async () => {
     lines.push(
       `agentic-workflow: MCP server not built (mcp-server/dist/server.js missing) \u2014 gates and loop tools will not work. Run ${dialectFor(hostFor())?.installer ?? "the installer"}, then restart the session.`
     );
+  const dirShown = tasksDir.replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
   const notesList = idList(notes);
   const snapshotsList = idList(snapshots);
   const claimsList = idList(planClaims);
-  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${tasksDir}/in-progress: ${notesList} \u2014 run \`/agentic-workflow:engineering recover <id>\` to resume.`);
+  if (notesList) lines.push(`agentic-workflow: interrupted task(s) in ${dirShown}/in-progress: ${notesList} \u2014 run \`/agentic-workflow:engineering recover <id>\` to resume.`);
   if (snapshotsList) lines.push(`agentic-workflow: loop state snapshot(s) present: ${snapshotsList} \u2014 \`/agentic-workflow:engineering recover <id>\` resumes at the exact stage.`);
-  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${tasksDir}/queued/.claims: ${claimsList} \u2014 a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
+  if (claimsList) lines.push(`agentic-workflow: leftover plan-claim marker(s) in ${dirShown}/queued/.claims: ${claimsList} \u2014 a prior run died mid-PLAN; \`workflow_doctor\` (fix:true) releases stale markers so the task can be claimed again.`);
   if (hasAnomalies(anomalies)) {
-    for (const line of formatAnomalies(anomalies, tasksDir)) lines.push(`agentic-workflow: ${line} \u2014 \`workflow_doctor\` reports and repairs.`);
+    const all = formatAnomalies(anomalies, tasksDir);
+    for (const line of all.slice(0, MAX_LISTED)) lines.push(`agentic-workflow: ${line} \u2014 \`workflow_doctor\` reports and repairs.`);
+    if (all.length > MAX_LISTED) lines.push(`agentic-workflow: +${all.length - MAX_LISTED} more backlog anomaly finding(s) \u2014 run \`workflow_doctor\` for the full report.`);
   }
   if (!lines.length) return process.exit(0);
   process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } })
+    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }),
+    () => process.exit(0)
   );
-  process.exit(0);
 };
 main();

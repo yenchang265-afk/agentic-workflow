@@ -1,5 +1,5 @@
 import path from "node:path"
-import { acquireMarker, markerOlderThan, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
+import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, releaseMarkerIfStale, restampMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { redact } from "./redact.js"
@@ -474,6 +474,23 @@ export const claimTask = ($: Shell, task: FileRef, now: Date = new Date()): Prom
 export const releaseClaim = ($: Shell, task: FileRef): Promise<void> => releaseMarker($, claimMarker(task))
 
 /**
+ * Claim a task, atomically sweeping a stale leftover marker first (rename-aside
+ * — see `acquireOrSweepMarker`). `minutes: 0` is an unconditional takeover for
+ * callers that have already established the holder is dead (e.g. `recover`
+ * after the liveness checks). False when the marker is fresh or a rival won.
+ */
+export const claimTaskSweepingStale = ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> =>
+  acquireOrSweepMarker($, claimMarker(task), minutes, now)
+
+/**
+ * Refresh a held claim's stamp. Drivers call this at every stage boundary so a
+ * live multi-stage run — which can legitimately outlive `staleClaimMinutes` —
+ * never reads as a stale claim to another process's sweep. No-op when released.
+ */
+export const refreshClaimStamp = ($: Shell, task: FileRef, now: Date = new Date()): Promise<void> =>
+  restampMarker($, claimMarker(task), now)
+
+/**
  * Whether a `FileRef`'s claim marker exists and is older than `minutes`.
  * On a task with no BUILD note and no live loop, that means orphaned — its
  * claimer died between `claimTask` and the first "BUILD started" note.
@@ -518,6 +535,21 @@ export const isOrphanedClaim = (
  * overwrites. Pure.
  */
 export const isOrphanedPlanClaim = (
+  _task: Task,
+  opts: { readonly drivenByLiveWorkflow: boolean; readonly markerStale: boolean },
+): boolean => !opts.drivenByLiveWorkflow && opts.markerStale
+
+/**
+ * The backlog DOCTOR's orphan rule for started (`in-progress/`) tasks: a stale,
+ * undriven marker is dead whatever the body says. Drivers restamp the claim at
+ * every stage boundary and the doctor's window is stage-timeout-derived, so a
+ * live loop can never read as stale here. The default `isOrphanedClaim` gates
+ * on `isClaimable` — right for the automatic watcher sweep, but false forever
+ * once the CLAIMED/BUILD notes land, which left a crashed run's marker
+ * unreleasable by any verb: replan/abandon/remove refuse a held claim and point
+ * at `doctor fix`, which (with the default rule) could not help either. Pure.
+ */
+export const isOrphanedStartedClaim = (
   _task: Task,
   opts: { readonly drivenByLiveWorkflow: boolean; readonly markerStale: boolean },
 ): boolean => !opts.drivenByLiveWorkflow && opts.markerStale
@@ -575,8 +607,12 @@ export const claimFirst = async (
     const markerStale = await claimOlderThan($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
     if (isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(task.id), markerStale })) {
       opts.log?.("warn", `releasing orphaned claim marker for ${task.id} — its claimer died before the stage started`)
-      await releaseClaim($, task)
-      if (await claimTask($, task)) {
+      // Atomic takeover (rename-aside): the plain `releaseClaim` + `claimTask`
+      // it replaces let two pollers both judge the same stale marker, and the
+      // slower one deleted the winner's brand-new claim — both then drove the
+      // task. `acquireOrSweepMarker` re-judges staleness itself, so a rival's
+      // fresh claim survives and this caller stands down.
+      if (await claimTaskSweepingStale($, task, opts.staleMinutes ?? STALE_CLAIM_MINUTES)) {
         const fresh = await settle(task)
         if (fresh) return { claimed: fresh, heldIds }
         continue
@@ -617,8 +653,12 @@ export const releaseOrphanedClaims = async (
       ? isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(id), markerStale })
       : markerStale && !opts.isDriving(id)
     if (!orphaned) continue
-    await releaseClaim($, ref)
-    released.push(id)
+    // Atomic stale release (rename-aside): a plain `releaseClaim` here raced a
+    // legitimate claimer that won the marker between this sweep's age check and
+    // its `rmdir` — the sweep deleted the live claim and a second claimer took
+    // the task. `releaseMarkerIfStale` re-judges what it moved aside, so only a
+    // marker that is STILL stale at removal time counts as released.
+    if (await releaseMarkerIfStale($, claimMarker(ref), opts.staleMinutes ?? STALE_CLAIM_MINUTES)) released.push(id)
   }
   return released
 }

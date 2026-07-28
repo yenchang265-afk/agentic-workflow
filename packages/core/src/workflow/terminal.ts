@@ -246,15 +246,22 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
     const cur = await findByIdIn($, directory, config.tasksDir, status, state.task.id)
     if (cur) {
       await appendNote($, cur, auditNote(action.message, new Date(), actor), log)
-      // A loop stopped mid-PLAN leaves the task in queued/ — release its claim marker
-      // or no later claim can pick it up (there is no staleness sweep on every substrate).
-      if (state.stage === "plan") await releaseClaim($, cur)
+      // The loop is over — release the claim marker for EVERY stage, not just
+      // PLAN. A held marker means "a loop may be driving this", and every gate
+      // verb (replan/abandon/remove) refuses on it; releasing only the PLAN
+      // case left a cap-stopped task permanently wedged: the cap message says
+      // `replan <id>`, replan refused the held claim, and the orphan sweep
+      // skips a body carrying CLAIMED/BUILD notes — no verb could ever free it.
+      // The watcher cannot silently re-claim after release: the CLAIMED note in
+      // the lifecycle window keeps `isClaimable` false; only an explicit
+      // `recover <id>` (which re-claims) or a gate verb touches it next.
+      await releaseClaim($, cur)
       await commitBacklog(ctx, `loop(${state.task.id}): stopped — ${action.message}`)
     } else {
       // The file left its folder mid-run (human move/delete). Never write to the stale
-      // path — but still release the plan-claim marker best-effort: it lives in the
+      // path — but still release the claim marker best-effort: it lives in the
       // claim-time folder's .claims/, which state.task.path still locates.
-      if (state.stage === "plan") await releaseClaim($, state.task)
+      await releaseClaim($, state.task)
       await log("warn", `loop(${state.task.id}): stopped but task not in ${status}/ — stop note skipped`)
     }
   }

@@ -58,6 +58,46 @@ test("a verb with no block slices to nothing — the fallback is verbContext's j
   assert.equal(sliceForVerb(BODY, "bogus"), null)
 })
 
+test("two blocks of one verb stay separated by a blank line", () => {
+  // The source separates blocks with unmarked blank lines, which the slicer
+  // drops — a plain join glued the last bullet of one block onto the first
+  // directive of the next, and markdown lazy continuation swallowed it.
+  const body = [
+    "<!-- aw:verb new -->",
+    "- a bullet about tracker pairing",
+    "<!-- /aw:verb new -->",
+    "",
+    "<!-- aw:verb new|plan -->",
+    "Read the protocol skill now.",
+    "<!-- /aw:verb new|plan -->",
+  ].join("\n")
+  assert.equal(sliceForVerb(body, "new"), "- a bullet about tracker pairing\n\nRead the protocol skill now.")
+  assert.equal(sliceForVerb(body, "plan"), "Read the protocol skill now.", "a single-block slice carries no stray separator")
+})
+
+test("no shipped verb's slice glues two blocks onto one line", () => {
+  const body = verbs()
+  // Every line that opens a block in the source must, in any slice containing
+  // it mid-slice, be preceded by a blank line — not by another block's tail.
+  const opensBlock = new Set()
+  let prevWasOpen = false
+  for (const line of body.split("\n")) {
+    if (/^<!--\s*aw:verb /.test(line.trim())) {
+      prevWasOpen = true
+      continue
+    }
+    if (prevWasOpen && line.trim().length > 0) opensBlock.add(line)
+    prevWasOpen = false
+  }
+  for (const verb of verbsIn(body)) {
+    const lines = sliceForVerb(body, verb).split("\n")
+    lines.forEach((line, i) => {
+      if (i === 0 || !opensBlock.has(line)) return
+      assert.equal(lines[i - 1].trim(), "", `verb "${verb}": block-opening line ${JSON.stringify(line)} must follow a blank line`)
+    })
+  }
+})
+
 test("an unrecognized verb gets the `unknown` block, not a false 'the hooks are broken' report", () => {
   // The router tells the model that a missing VERB INSTRUCTIONS block means the
   // hooks are not running — reinstall and restart. So injecting nothing for a
