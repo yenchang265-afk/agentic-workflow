@@ -1,11 +1,15 @@
 # Security Checklist
 
-Quick reference for web application security. Use alongside the `security-and-hardening` skill.
+The **building** branch of web application security: the controls to put in
+place while writing code. The `security-and-hardening` skill carries the
+**judging** branch — hunting exploitable findings in a diff someone already
+wrote — and points here for everything below.
 
 ## Table of Contents
 
 - [Threat Modeling (Start Here)](#threat-modeling-start-here)
 - [Pre-Commit Checks](#pre-commit-checks)
+- [Ask First (human approval)](#ask-first-human-approval)
 - [Authentication](#authentication)
 - [Authorization](#authorization)
 - [Input Validation](#input-validation)
@@ -31,8 +35,33 @@ Before reaching for controls, spend five minutes thinking like an attacker:
 ## Pre-Commit Checks
 
 - [ ] No secrets in code (`git diff --cached | grep -i "password\|secret\|api_key\|token"`)
-- [ ] `.gitignore` covers: `.env`, `.env.local`, `*.pem`, `*.key`
+- [ ] `.gitignore` covers: `.env`, `.env.local`, `.env.*.local`, `*.pem`, `*.key`
 - [ ] `.env.example` uses placeholder values (not real secrets)
+
+Which `.env` files are committed:
+
+```
+.env.example  → Committed (template with placeholder values)
+.env          → NOT committed (contains real secrets)
+.env.local    → NOT committed (local overrides)
+```
+
+**A secret that reached a remote is compromised.** Deleting the line or
+rewriting history is not enough — revoke and reissue the key first, then purge
+it from history.
+
+## Ask First (human approval)
+
+Build-time gates. Each of these changes the shape of the attack surface, so
+raise it with a human before implementing rather than deciding alone:
+
+- [ ] New authentication flows, or changes to existing auth logic
+- [ ] Storing a new category of sensitive data (PII, payment info)
+- [ ] New external service integrations
+- [ ] CORS configuration changes
+- [ ] New file upload handlers
+- [ ] Changes to rate limiting or throttling
+- [ ] Granting elevated permissions or roles
 
 ## Authentication
 
@@ -120,6 +149,45 @@ npx npm-check-updates
 - [ ] Lockfile committed; CI installs with `npm ci` (not `npm install`)
 - [ ] New dependencies reviewed (maintenance, downloads, `postinstall` scripts)
 - [ ] No typosquats (`cross-env` vs `crossenv`, `react-dom` vs `reactdom`)
+- [ ] `postinstall` scripts in unfamiliar packages inspected — they run arbitrary code at install time
+
+**Before adding any dependency**, every dependency being a permanent liability:
+
+1. Does the existing stack solve this? (Often it does.)
+2. How large is it? (Check bundle impact.)
+3. Is it actively maintained? (Last commit, open issues.)
+4. Does it have known vulnerabilities? (`npm audit`)
+5. Is the license compatible with the project?
+
+Prefer the standard library and existing utilities over a new dependency.
+
+### Triaging `npm audit` results
+
+Not every finding is a blocker. Reachability decides:
+
+```
+npm audit reports a vulnerability
+├── Severity: critical or high
+│   ├── Is the vulnerable code reachable in your app?
+│   │   ├── YES --> Fix immediately (update, patch, or replace the dependency)
+│   │   └── NO (dev-only dep, unused code path) --> Fix soon, but not a blocker
+│   └── Is a fix available?
+│       ├── YES --> Update to the patched version
+│       └── NO --> Check for workarounds, consider replacing the dependency, or add to allowlist with a review date
+├── Severity: moderate
+│   ├── Reachable in production? --> Fix in the next release cycle
+│   └── Dev-only? --> Fix when convenient, track in backlog
+└── Severity: low
+    └── Track and fix during regular dependency updates
+```
+
+The three questions that resolve it: is the vulnerable function actually called
+on your code path; is the dependency a runtime or dev-only dependency; and is it
+exploitable in your deployment context (a server-side flaw in a client-only app
+is not). When you defer a fix, record the reason and a review date.
+
+This is npm's own severity scale, not the review vocabulary — a review finding
+about a dependency is graded per `code-review-and-quality` → Severity.
 
 ## AI / LLM Security
 
@@ -130,6 +198,24 @@ For any feature that calls an LLM (chatbots, summarizers, agents, RAG):
 - [ ] Secrets, cross-tenant data, and full system prompts kept out of the context window
 - [ ] Tool/agent permissions scoped; destructive or irreversible actions require confirmation
 - [ ] Token, rate, and recursion/loop limits set (bound consumption)
+- [ ] RAG embeddings partitioned per tenant; indexed documents validated before ingest
+
+```typescript
+// BAD: trusting model output as a command or as markup
+const sql = await llm.generate(`Write SQL for: ${userQuestion}`);
+await db.query(sql);                                   // arbitrary query execution
+container.innerHTML = await llm.reply(userMessage);   // stored XSS, via the model
+
+// GOOD: model output is data — parse defensively, then validate, then encode
+let intent;
+try {
+  intent = CommandSchema.parse(JSON.parse(await llm.replyJson(userMessage)));
+} catch {
+  throw new ValidationError('unexpected model output'); // JSON.parse or schema failed
+}
+await runAllowlistedAction(intent.action, intent.params);
+container.textContent = await llm.reply(userMessage);
+```
 
 ## Error Handling
 

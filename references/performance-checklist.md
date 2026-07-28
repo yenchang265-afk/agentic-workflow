@@ -1,14 +1,19 @@
 # Performance Checklist
 
-Quick reference checklist for web application performance. Use alongside the `performance-optimization` skill.
+The **optimizing** branch of web application performance: how to measure a real
+running system and fix what the measurement names. The `performance-optimization`
+skill carries the **judging** branch — finding unbounded work in a diff you
+cannot run — and points here for everything below.
 
 ## Table of Contents
 
 - [Core Web Vitals Targets](#core-web-vitals-targets)
 - [TTFB Diagnosis](#ttfb-diagnosis)
+- [Symptom → What to Measure](#symptom--what-to-measure)
 - [Frontend Checklist](#frontend-checklist)
 - [Backend Checklist](#backend-checklist)
 - [Measurement Commands](#measurement-commands)
+- [Performance Budget](#performance-budget)
 - [Common Anti-Patterns](#common-anti-patterns)
 
 ## Core Web Vitals Targets
@@ -26,6 +31,50 @@ When TTFB is slow (> 800ms), check each component in DevTools Network waterfall:
 - [ ] **DNS resolution** slow → add `<link rel="dns-prefetch">` or `<link rel="preconnect">` for known origins
 - [ ] **TCP/TLS handshake** slow → enable HTTP/2, consider edge deployment, verify keep-alive
 - [ ] **Server processing** slow → profile backend, check slow queries, add caching
+
+## Symptom → What to Measure
+
+Let the symptom pick the first measurement, so you profile the layer that is
+actually slow rather than the one you suspect:
+
+```
+What is slow?
+├── First page load
+│   ├── Large bundle? --> Measure bundle size, check code splitting
+│   ├── Slow server response? --> Measure TTFB (see TTFB Diagnosis above)
+│   └── Render-blocking resources? --> Check network waterfall for CSS/JS blocking
+├── Interaction feels sluggish
+│   ├── UI freezes on click? --> Profile main thread, look for long tasks (>50ms)
+│   ├── Form input lag? --> Check re-renders, controlled component overhead
+│   └── Animation jank? --> Check layout thrashing, forced reflows
+├── Page after navigation
+│   ├── Data loading? --> Measure API response times, check for waterfalls
+│   └── Client rendering? --> Profile component render time, check for N+1 fetches
+└── Backend / API
+    ├── Single endpoint slow? --> Profile database queries, check indexes
+    ├── All endpoints slow? --> Check connection pool, memory, CPU
+    └── Intermittent slowness? --> Check for lock contention, GC pauses, external deps
+```
+
+Once measured, the likely cause and where to confirm it:
+
+**Frontend**
+
+| Symptom | Likely Cause | Investigation |
+|---------|-------------|---------------|
+| Slow LCP | Large images, render-blocking resources, slow server | Check network waterfall, image sizes |
+| High CLS | Images without dimensions, late-loading content, font shifts | Check layout shift attribution |
+| Poor INP | Heavy JavaScript on main thread, large DOM updates | Check long tasks in Performance trace |
+| Slow initial load | Large bundle, many network requests | Check bundle size, code splitting |
+
+**Backend**
+
+| Symptom | Likely Cause | Investigation |
+|---------|-------------|---------------|
+| Slow API responses | N+1 queries, missing indexes, unoptimized queries | Check database query log |
+| Memory growth | Leaked references, unbounded caches, large payloads | Heap snapshot analysis |
+| CPU spikes | Synchronous heavy computation, regex backtracking | CPU profiling |
+| High latency | Missing caching, redundant computation, network hops | Trace requests through the stack |
 
 ## Frontend Checklist
 
@@ -107,6 +156,21 @@ When TTFB is slow (> 800ms), check each component in DevTools Network waterfall:
 
 ## Measurement Commands
 
+Two complementary approaches — use both. **Synthetic** (Lighthouse, the DevTools
+Performance tab) gives controlled, reproducible conditions, so it is what CI
+regression detection and issue isolation run on. **RUM** (the `web-vitals`
+library, CrUX) gives real users on real networks, and is the only thing that
+confirms a fix actually improved the experience.
+
+### Backend timing
+
+```typescript
+// Response time logging, APM, and database query logging with timing.
+console.time('db-query');
+const result = await db.query(...);
+console.timeEnd('db-query');
+```
+
 ### INP field data and DevTools workflow
 
 1. **Field data first** — check [CrUX Vis](https://developer.chrome.com/docs/crux/vis) or your RUM tool for real-user INP before optimising
@@ -139,6 +203,32 @@ onINP(({ value, attribution }) => {
 });
 ```
 
+## Performance Budget
+
+Set budgets and enforce them in CI, so a regression fails the build rather than
+waiting for a user to report it:
+
+```
+JavaScript bundle: < 200KB gzipped (initial load)
+CSS: < 50KB gzipped
+Images: < 200KB per image (above the fold)
+Fonts: < 100KB total
+API response time: < 200ms (p95)
+Time to Interactive: < 3.5s on 4G
+Lighthouse Performance score: ≥ 90
+```
+
+```bash
+# Bundle size check
+npx bundlesize --config bundlesize.config.json
+
+# Lighthouse CI
+npx lhci autorun
+```
+
+A diff that breaks a budget the repo actually defines is a review finding — see
+`code-review-and-quality` → Severity.
+
 ## Common Anti-Patterns
 
 | Anti-Pattern | Impact | Fix |
@@ -155,6 +245,38 @@ onINP(({ value, attribution }) => {
 ## Implementation Examples
 
 Worked examples backing the anti-pattern rules in `performance-optimization`.
+
+### N+1 Queries (Backend)
+
+The per-item query is the bound that isn't there: one query becomes one query
+per row, and the cost grows with the table.
+
+```typescript
+// BAD: N+1 — one query per task for the owner
+const tasks = await db.tasks.findMany();
+for (const task of tasks) {
+  task.owner = await db.users.findUnique({ where: { id: task.ownerId } });
+}
+
+// GOOD: Single query with join/include
+const tasks = await db.tasks.findMany({
+  include: { owner: true },
+});
+```
+
+### Unbounded Data Fetching
+
+```typescript
+// BAD: Fetching all records
+const allTasks = await db.tasks.findMany();
+
+// GOOD: Paginated with limits
+const tasks = await db.tasks.findMany({
+  take: 20,
+  skip: (page - 1) * 20,
+  orderBy: { createdAt: 'desc' },
+});
+```
 
 ### Missing Image Optimization (Frontend)
 
