@@ -16,7 +16,8 @@ iteration — a REVIEW FAIL sends the loop back to BUILD, not PLAN, because the
 plan is presumed correct at this point; the implementation quality is what's
 in question.
 
-Invoke the `code-review-and-quality` skill for the five-axis review structure;
+Invoke the `code-review-and-quality` skill for the five-axis review structure
+and the severity scale;
 also invoke `security-and-hardening` when the diff touches auth, input
 handling, or secrets, and `performance-optimization` when it touches hot
 paths, loops over unbounded data, or queries.
