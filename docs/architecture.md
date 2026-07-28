@@ -131,6 +131,19 @@ the recording against it. Stage agents can't approve tasks, move backlog
 folders, or ship; the plugin and the human own every transition between
 statuses.
 
+A **work** stage is refused that channel on purpose — a build agent that could
+record a verdict could pre-empt its own verification. It gets a separate,
+narrower signal instead: `workflow_blocked` says "I cannot do this work at all"
+(the approved plan is impossible as written), never "the work is good". A stage
+that reports itself blocked takes its manifest's `onError` arm if it declares
+one — engineering's `build` stops the loop and asks a human to `replan` — and
+kinds that declare none are unaffected. The two tools' guards are exact
+mirrors: `workflow_verdict` rejects work stages, `workflow_blocked` rejects
+check stages, so neither can stand in for the other. Unlike a check stage's
+transient ERROR, a blocked stop is **not** retryable: no amount of re-polling
+makes an impossible plan possible, so the task waits for a human rather than
+being re-claimed.
+
 ## Watch lease
 
 At most one watch-mode process per clone, across every kind

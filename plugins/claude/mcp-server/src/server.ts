@@ -156,6 +156,15 @@ let verdictRetried = false // whether the current check stage already got its on
 let verdictRejected = false // whether the current check stage had a verdict REJECTED (incomplete axis coverage) — changes the re-fire wording
 let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
 /**
+ * A "cannot do this work at all" signal from `workflow_blocked` for the current
+ * WORK stage — the approved plan is impossible, not merely hard.
+ *
+ * Deliberately separate from `pending`: `workflow_verdict` rejects work stages on
+ * purpose, so that a build agent can never pre-empt its own verification. This
+ * lets a work stage refuse the work without being able to grade it.
+ */
+let blocked: { readonly stage: string; readonly reason: string } | null = null
+/**
  * The focused pass currently armed on a check stage, if any — what
  * `workflow_verdict` admits against and what the next metrics sample is
  * attributed to. Null on a single-pass stage and between passes.
@@ -713,6 +722,7 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
   pending = null
   verdictRetried = false
   verdictRejected = false
+  blocked = null // no blocked signal may outlive the run that recorded it
   buildNoteFor = null
   // Only workflow_claim sets activeClaim; a stale one left by a claim flow that
   // died mid-setup would fire onTerminal against the WRONG work item at this
@@ -750,6 +760,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   pending = null
   verdictRetried = false
   verdictRejected = false
+  blocked = null // no blocked signal may outlive the run that recorded it
   buildNoteFor = null
   activeClaim = null // see startTask — a workflow_start loop has no scheduler claim behind it
   const state = planEntryState(t)
@@ -937,6 +948,7 @@ server.registerTool(
     pending = null
     verdictRetried = false
     verdictRejected = false
+    blocked = null // no blocked signal may outlive the run that recorded it
     buildNoteFor = null
     const loaded = manifestFor(claim.item.workflowKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
@@ -1068,6 +1080,32 @@ server.registerTool(
     // Report the DERIVED verdict: a declared PASS carrying a Critical finding on
     // any axis is a FAIL (verdict.ts `effectiveVerdict`).
     return ok({ recorded: effectiveVerdict(pending) })
+  },
+)
+
+server.registerTool(
+  "workflow_blocked",
+  {
+    description:
+      "Report that the WORK stage now running cannot do its work at all — the approved plan is impossible or wrong as written, not merely hard. NOT a verdict on the work (a work stage may never record one) and NOT a way to skip a hard task: it stops the loop and sends the task back to a human for replanning. Call it instead of implementing something different from the approved plan.",
+    inputSchema: {
+      stage: z.string().min(1).describe("The loop's currently running work stage (engineering: build)."),
+      reason: z.string().max(500).describe("One or two sentences on what makes the plan impossible, concrete enough for a human to replan from."),
+    },
+  },
+  async ({ stage, reason }) => {
+    if (!active) return fail("No active loop — blocked signal ignored.")
+    if (active.stage !== stage) {
+      return fail(`The loop is at ${active.stage}, not ${stage} — blocked signal ignored. Only the running stage may report itself blocked.`)
+    }
+    const def = activeManifest().manifest.stages.find((d) => d.name === stage)
+    // The mirror of workflow_verdict's guard: that one rejects work stages, this
+    // one rejects check stages, so neither channel can stand in for the other.
+    if (def?.kind !== "work") {
+      return fail(`Stage ${stage} is a check stage — report PASS/FAIL/ERROR with workflow_verdict instead.`)
+    }
+    blocked = { stage, reason }
+    return ok({ recorded: "BLOCKED" })
   },
 )
 
@@ -1403,12 +1441,24 @@ server.registerTool(
       const detail = [failed ? `${failed} criteria unmet` : "", failedAxes.length ? `axes: ${failedAxes.join(", ")}` : ""].filter(Boolean).join("; ")
       await appendNote(sh, active.task, auditNote(`${stage.toUpperCase()} verdict: ${pending ? effectiveVerdict(pending) : "none → FAIL"}${detail ? ` (${detail})` : ""} (iteration ${active.iteration + 1})`, new Date(), actor), log)
     }
+    // A work stage that called `workflow_blocked`: hand `advance` an ERROR so it
+    // takes the manifest's `onError` arm (engineering build → stop, "replan")
+    // instead of firing the next stage regardless. Kinds whose work stages declare
+    // no such arm fall back to `onDone` inside the engine, so this is inert there.
+    const blockedHere = blocked?.stage === stage ? blocked : null
+    if (blockedHere && active.task) {
+      // The loop is about to stop and ask a human to replan; the reason has to be
+      // readable in the task file, not only in this session's transcript.
+      await appendNote(sh, active.task, auditNote(`${stage.toUpperCase()} blocked — ${blockedHere.reason} (iteration ${active.iteration + 1})`, new Date(), actor), log)
+    }
     // The derived verdict, not the declared one — an agent must not be able to
     // report PASS while flagging a Critical finding on an axis.
-    const verdict = stageDef(activeManifest().manifest, stage).kind === "check" ? (pending ? effectiveVerdict(pending) : null) : null
-    const { state, action } = advance(activeManifest(), active, config, stageOutput, verdict, pending)
+    const verdict = stageDef(activeManifest().manifest, stage).kind === "check" ? (pending ? effectiveVerdict(pending) : null) : blockedHere ? "ERROR" : null
+    const record = blockedHere ? { verdict: "ERROR" as const, reason: blockedHere.reason } : pending
+    const { state, action } = advance(activeManifest(), active, config, stageOutput, verdict, record)
     active = state
     pending = null
+    blocked = null // consumed — no blocked signal may survive its own transition
     verdictRetried = false // the transition happened — the next check stage gets its own retry budget
     verdictRejected = false
     armedPass = null // no pass of the finished stage may admit a verdict for the next one
@@ -1897,6 +1947,7 @@ server.registerTool(
     pending = null
     verdictRetried = false
     verdictRejected = false
+    blocked = null // no blocked signal may outlive the run that recorded it
     buildNoteFor = null
     const actor = await gitActor(sh, directory)
     if (snap && snap.task?.id === id) {

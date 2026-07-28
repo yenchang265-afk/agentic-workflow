@@ -713,6 +713,35 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           return result.message
         },
       }),
+
+      workflow_blocked: tool({
+        description:
+          "Report that the WORK stage now running cannot do its work at all — the approved plan is impossible or wrong as " +
+          "written, not merely hard. This is NOT a verdict on the work (a work stage may never record one) and NOT a way " +
+          "to skip a hard task: it stops the loop and sends the task back to a human for replanning. Call it instead of " +
+          "implementing something different from the approved plan. Only the work stage the loop is currently running may " +
+          "call it; anything else is ignored.",
+        args: {
+          stage: tool.schema
+            .string()
+            .describe("The loop's currently running work stage (engineering: build)."),
+          reason: tool.schema
+            .string()
+            .max(500)
+            .describe("One or two sentences on what makes the plan impossible, concrete enough for a human to replan from."),
+        },
+        execute: async (args, ctx) => {
+          // Same parent-chain walk as workflow_verdict: stage agents run as
+          // subtasks, so the call arrives under the CHILD session id and a signal
+          // recorded there would be invisible to the drive.
+          const drivingID = await driver.resolveDrivingSession(client, ctx.sessionID)
+          const result = driver.recordBlocked(drivingID, args.stage, args.reason)
+          // Throw on rejection for the same reason as the verdict tool: a plain
+          // string reads as success to the model.
+          if (!result.accepted) throw new Error(result.message)
+          return result.message
+        },
+      }),
     },
   }
 }

@@ -425,6 +425,37 @@ test("an onError (ERROR verdict) stop is marked retryable; a cap stop is not (C2
   if (cap.action.kind === "stop") assert.equal(cap.action.retryable, undefined)
 })
 
+test("a blocked work stage takes its onError arm instead of firing the next stage", () => {
+  // BUILD reporting the approved plan is impossible. Before this arm existed, saying
+  // so changed nothing: VERIFY fired anyway, failed, re-fired BUILD, and the loop
+  // spent its whole iteration budget re-deriving the refusal of pass 1.
+  const blocked = advance(eng, resumeAtBuild("add foo", task, "PLAN BODY"), config, "the plan's API does not exist", "ERROR")
+  assert.equal(blocked.action.kind, "stop")
+  if (blocked.action.kind === "stop") {
+    assert.match(blocked.action.message, /cannot be implemented/)
+    assert.match(blocked.action.message, /replan/)
+    // NOT retryable: unlike a check stage's transient ERROR, re-polling never makes
+    // an impossible plan possible. Marked retryable, the watcher would re-claim the
+    // task and re-derive the same refusal forever. It needs a human.
+    assert.equal(blocked.action.retryable, undefined)
+  }
+})
+
+test("a work stage with no blocked signal still fires its onDone arm", () => {
+  const normal = advance(eng, resumeAtBuild("add foo", task, "PLAN BODY"), config, "diff summary")
+  assert.equal(normal.action.kind, "fire")
+  if (normal.action.kind === "fire") assert.equal(normal.action.stage, "verify")
+})
+
+test("a work stage ERROR falls back to onDone in a kind that declares no onError arm", () => {
+  // The regression guard for every other workflow kind: pr-sitter's `fix` is a work
+  // stage with only `onDone`, so the new routing must be invisible there rather than
+  // dropping the stage into the no-transition fail-safe.
+  const fix = advance(sitter, prState("fix"), config, "patch applied", "ERROR")
+  assert.equal(fix.action.kind, "fire")
+  if (fix.action.kind === "fire") assert.equal(fix.action.stage, "verify")
+})
+
 test("firstStep fires the state's own stage with its composed prompt", () => {
   const s = resumeAtBuild("add foo", task, "PLAN BODY")
   const { action } = firstStep(eng, s)

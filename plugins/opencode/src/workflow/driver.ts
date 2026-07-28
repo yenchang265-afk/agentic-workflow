@@ -373,6 +373,19 @@ type CheckStage = string
 const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly record: VerdictRecord }>()
 
 /**
+ * "I cannot do this work at all" signals from the `workflow_blocked` tool, per
+ * session, consumed by the drive loop right after the WORK stage that recorded
+ * one completes.
+ *
+ * Deliberately NOT the verdict channel. `recordVerdict` rejects a work stage on
+ * purpose — a build agent must never be able to pre-empt its own verification —
+ * and that invariant stays intact. This is a different claim ("the approved plan
+ * is impossible") from a different tool, so a stage can refuse the work without
+ * being able to grade it.
+ */
+const recordedBlocked = new Map<string, { readonly stage: string; readonly reason: string }>()
+
+/**
  * Axes the running check stage's verdict must cover, per driving session.
  *
  * Published by `runStagePasses` rather than read from the manifest inside
@@ -464,6 +477,45 @@ export const recordVerdict = (
   if (!admission.ok) return reject(admission.message)
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
   return { accepted: true, message: `Recorded ${stage} verdict: ${effectiveVerdict(admission.record)}.` }
+}
+
+/**
+ * Record a "cannot do this work" signal from the `workflow_blocked` plugin tool.
+ * Accepted only while this session's live loop is sitting in that WORK stage —
+ * a check stage has the verdict channel and must use it, and a stage naming
+ * someone else's is drift.
+ *
+ * The mirror image of `recordVerdict`'s guard: that one rejects work stages, this
+ * one rejects check stages, so neither channel can stand in for the other.
+ */
+export const recordBlocked = (
+  sessionID: string,
+  stage: string,
+  reason: string,
+): { readonly accepted: boolean; readonly message: string } => {
+  const reject = (message: string) => ({ accepted: false, message })
+  const state = getWorkflow(sessionID)
+  if (!state) return reject("No active loop in this session — blocked signal ignored.")
+  if (state.stage !== stage) {
+    return reject(`The loop is at ${state.stage}, not ${stage} — blocked signal ignored. Only the running stage may report itself blocked.`)
+  }
+  const def = manifestFor(state.kind ?? "engineering").manifest.stages.find((d) => d.name === stage)
+  if (def?.kind !== "work") {
+    return reject(`Stage ${stage} is a check stage — report PASS/FAIL/ERROR with workflow_verdict instead.`)
+  }
+  recordedBlocked.set(sessionID, { stage, reason })
+  return {
+    accepted: true,
+    message: `Recorded ${stage} as blocked. The loop will stop and ask a human to replan; do not attempt the work.`,
+  }
+}
+
+/** Consume (read-and-clear) a session's blocked signal for a work stage, if any. */
+const takeBlocked = (sessionID: string, stage: string): string | null => {
+  const entry = recordedBlocked.get(sessionID)
+  if (!entry || entry.stage !== stage) return null
+  recordedBlocked.delete(sessionID)
+  return entry.reason
 }
 
 /** Consume (read-and-clear) the verdict record for a session's check stage, if any. */
@@ -825,6 +877,7 @@ export const runStagePasses = async (
           : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
+      recordedBlocked.delete(sessionID) // nor a stale "blocked" from an earlier stage
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
@@ -877,7 +930,18 @@ export const runStagePasses = async (
     if (halted(sessionID)) break // stop or ESC mid-pass — don't fire the rest
   }
 
-  if (!isCheck) return { output: outputs[0] ?? "", verdict: null, record: null }
+  if (!isCheck) {
+    // A work stage that called `workflow_blocked`: surface it as ERROR so
+    // `advance` takes the manifest's `onError` arm (engineering build → stop,
+    // "replan"). Kinds whose work stages declare no such arm fall back to
+    // `onDone` inside the engine, so this is inert for them.
+    const blocked = takeBlocked(sessionID, stage)
+    if (blocked) {
+      await deps.log("warn", `${stage} reported itself blocked — ${blocked}`)
+      return { output: outputs[0] ?? "", verdict: "ERROR", record: { verdict: "ERROR", reason: blocked } }
+    }
+    return { output: outputs[0] ?? "", verdict: null, record: null }
+  }
 
   // A deliberate stop or an ESC interrupt mid-pass: records may be short and/or
   // end in null. The caller discards the result once halted — return quietly,
@@ -992,6 +1056,7 @@ const renderMetrics = async (
   const samples = runSamples.get(sessionID) ?? []
   runSamples.delete(sessionID)
   driftNoted.delete(sessionID) // the run is over — nothing left to dedupe against
+  recordedBlocked.delete(sessionID) // ditto: no blocked signal may outlive its run
   // Report against the EFFECTIVE cap the engine enforced — a kind's manifest may
   // override `config.maxIterations` (pr-sitter caps at 3), so `config.maxIterations`
   // alone would mislabel the footer (e.g. "iterations used: 3/1").
@@ -1212,6 +1277,21 @@ const driveChain = async (
         task,
         auditNote(
           `${stage.toUpperCase()} verdict: ${verdict ?? "none recorded → FAIL"}${criteriaNote}${detail} (iteration ${iteration + 1})`,
+          new Date(),
+          actor,
+        ),
+        deps.log,
+      )
+    }
+    // A work stage that reported itself blocked leaves the same kind of trail. The
+    // loop is about to stop and hand the task to a human to replan, and the reason
+    // it stopped has to be readable in the task file rather than only in the run log.
+    if (stageDef(loaded.manifest, stage).kind === "work" && verdict === "ERROR" && task) {
+      await appendNote(
+        deps.$,
+        task,
+        auditNote(
+          `${stage.toUpperCase()} blocked — ${record?.reason ?? "no reason given"} (iteration ${iteration + 1})`,
           new Date(),
           actor,
         ),

@@ -282,7 +282,17 @@ export const advance = (
   const t = manifest.transitions[s.stage]
   const effect =
     def.kind === "work"
-      ? t?.onDone
+      ? // A work stage normally has exactly one exit: it did the work, fire the
+        // next stage. The one exception is a stage that reports it CANNOT do the
+        // work at all — an approved plan that turns out to be impossible. Without
+        // this arm, saying so changed nothing: the next check stage fired anyway,
+        // failed, re-fired the work stage, and the loop burned every iteration to
+        // surface what the first pass already knew. Routed only when the manifest
+        // opts in with an `onError` arm, so kinds that declare none behave exactly
+        // as before. The signal reaches here as ERROR from the host's
+        // `workflow_blocked` tool, NOT from `workflow_verdict` — a work stage is
+        // still forbidden to record a verdict on its own work.
+        (verdict === "ERROR" ? (t?.onError ?? t?.onDone) : t?.onDone)
       : verdict === "PASS"
         ? t?.onPass
         : verdict === "ERROR"
@@ -317,11 +327,25 @@ export const advance = (
     case "done":
       return { state: s, action: { kind: "done", message: effect.message, toStatus: effect.toStatus } }
     case "stop":
-      // A stop reached via the ERROR verdict is an `onError` transition — a transient
-      // environment/tooling failure the manifest asks to retry on the next poll, NOT a
-      // genuine exhaustion. Mark it retryable so the work source leaves the target/head
-      // claimable instead of suppressing it forever (C2). The iteration-cap stop above
-      // and the no-transition fail-safe stay unmarked ⇒ recorded as failed attempts.
-      return { state: s, action: { kind: "stop", message: effect.message, ...(verdict === "ERROR" ? { retryable: true } : {}) } }
+      // A stop reached via a CHECK stage's ERROR verdict is an `onError` transition — a
+      // transient environment/tooling failure the manifest asks to retry on the next poll,
+      // NOT a genuine exhaustion. Mark it retryable so the work source leaves the
+      // target/head claimable instead of suppressing it forever (C2). The iteration-cap
+      // stop above and the no-transition fail-safe stay unmarked ⇒ recorded as failed
+      // attempts.
+      //
+      // A WORK stage's ERROR is the opposite kind of thing: it reports that the approved
+      // plan cannot be implemented, which no amount of re-polling fixes. Leaving it
+      // retryable would hand the task straight back to the watcher, which would re-claim
+      // it and re-derive the same refusal forever. It needs a human (replan), so it stays
+      // unmarked and is recorded as a failed attempt.
+      return {
+        state: s,
+        action: {
+          kind: "stop",
+          message: effect.message,
+          ...(verdict === "ERROR" && def.kind === "check" ? { retryable: true } : {}),
+        },
+      }
   }
 }
