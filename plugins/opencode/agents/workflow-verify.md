@@ -127,9 +127,10 @@ unavailable.
    this is the only point in the loop where that is checked.
 4. **Decide** — PASS only if every acceptance criterion is met, the tests are
    green, and the suite was not weakened; otherwise FAIL.
-5. **On a FAIL**, invoke the `debugging-and-error-recovery` skill to root-cause the
-   failure (not to fix it) so the report below is precise enough for the next BUILD
-   iteration to act on directly.
+5. **On a FAIL**, run the **triage** branch of the `debugging-and-error-recovery`
+   skill — reproduce, localize, reduce — and produce its **root-cause report** for
+   each gap. That branch ends at the report; its repair steps belong to the next
+   BUILD iteration, which acts on what you hand it.
 
 ## Recording your verdict — the only trusted channel
 
@@ -172,9 +173,9 @@ that could not run is an ERROR whose reason names what is missing.
 Above the verdict, give:
 - A per-criterion checklist (met / not met) with the evidence for each.
 - The test command output summary (what ran, what passed/failed).
-- On FAIL: a concrete list of gaps — what is missing or wrong and *why*, per the
-  debugging-and-error-recovery root-cause analysis — so the next BUILD iteration
-  can fix it precisely.
+- On FAIL: one root-cause report per gap, in the shape the triage branch defines —
+  the cause as a mechanism at `file:line`, the command and output you observed, the
+  criterion it breaks, and what must become true for it to stop.
 
 ## Hard rules
 
