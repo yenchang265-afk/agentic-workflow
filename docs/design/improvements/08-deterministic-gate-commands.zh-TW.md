@@ -259,7 +259,8 @@ export const withGateFloor = (record: VerdictRecord | null, results: readonly Ga
 
 ## 本計畫刻意留待後續的項目
 
-同一次稽核還發現三個決定性缺口，各自獨立於本計畫：
+同一次稽核還發現兩個決定性缺口，各自獨立於本計畫（第三個「嚴重度詞彙不一致」
+**已修正**，見下方）：
 
 1. **Sitter 的檢查類階段重新判斷了 work source 已經算好的事。**
    `attentionTriggers`（`source/ledger.ts:104-128`）與 `upgradeCandidates`
@@ -270,8 +271,20 @@ export const withGateFloor = (record: VerdictRecord | null, results: readonly Ga
 2. **未定義的門檻卻掌控著控制流程。** `review-sitter/stages/fetch.md` 量了
    `gh pr diff <n> | wc -l`，然後從來沒有拿它跟任何東西比較 —— FAIL 的條件是
    「大到無法審查」這個形容詞。
-3. **嚴重度詞彙不一致。** `skills/code-review-and-quality/SKILL.md:61-70` 教的是
-   Critical / Nit / Optional / Consider / FYI，但 `workflow_verdict` 的 schema
-   強制的是 `critical | important | suggestion`（`verdict.ts:38`）。一個照著它
-   被指示去呼叫的技能來做的代理人，產出的嚴重度會被工具退回。這一項小而獨立，
-   很適合當第一個後續工作。
+## 已修正：嚴重度詞彙不一致
+
+即上面列為後續項目 3 的那一項，現已修正。技能教出來的嚴重度是工具不接受的：
+`code-review-and-quality` 教 Critical / Nit / Optional / Consider / FYI，
+`security-and-hardening` 又另外教了一套四級的 CRITICAL / HIGH / MEDIUM / LOW
+（再加上 npm audit 的那套，總共三套），而 `workflow_verdict` 強制的是
+`critical | important | suggestion`。一個照著它被指示去呼叫的技能來做的代理人，
+產出的嚴重度會被工具退回 —— 而那會讓整個呼叫失敗，沒有呼叫又會被記成 FAIL，
+所以迴圈中呼叫最頻繁的那個技能，可能把一份乾淨的 diff 判成紅燈。
+
+修法是指定唯一的散文事實來源：`skills/code-review-and-quality/SKILL.md` →
+Severity。選它是因為它是 REVIEW 唯一*無條件*呼叫的技能
+（`prompts/agents/workflow-review/body.md`）。`security-and-hardening` 現在把自己的
+評級對應到那三級，而不再自定一套，並把可利用性的規則保留為每一級的判定條件。
+承載這套詞彙的三個地方按設計仍然各自獨立 —— `verdict.ts` 中的 union 是機器契約、
+代理人提示詞是閘門、技能則持有定義 —— 而
+`scripts/skill-severity.test.mjs` 會在任何技能重新引入第四級時讓建置失敗。

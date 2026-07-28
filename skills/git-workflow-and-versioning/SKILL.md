@@ -110,7 +110,28 @@ git commit -m "refactor validation and add phone number field"
 
 ### 5. Size Your Changes
 
-Target ~100 lines per commit/PR; split changes over ~1000. The size thresholds and splitting strategies live in `code-review-and-quality` → Change Sizing.
+Small, focused changes are easier to review, faster to merge, and safer to deploy. Target these sizes:
+
+```
+~100 lines changed   → Good. Reviewable in one sitting.
+~300 lines changed   → Acceptable if it's a single logical change.
+~1000 lines changed  → Too large. Split it.
+```
+
+**What counts as "one change":** A single self-contained modification that addresses one thing, includes related tests, and keeps the system functional after submission. One part of a feature — not the whole feature.
+
+**Splitting strategies when a change is too large:**
+
+| Strategy | How | When |
+|----------|-----|------|
+| **Stack** | Submit a small change, start the next one based on it | Sequential dependencies |
+| **By file group** | Separate changes for groups needing different reviewers | Cross-cutting concerns |
+| **Horizontal** | Create shared code/stubs first, then consumers | Layered architecture |
+| **Vertical** | Break into smaller full-stack slices of the feature | Feature work |
+
+**When large changes are acceptable:** Complete file deletions and automated refactoring where the reviewer only needs to verify intent, not every line.
+
+A diff that arrives oversized anyway is a review finding, not a blocker — see `code-review-and-quality` → Severity.
 
 ## Branching Strategy
 
