@@ -16,7 +16,7 @@ import { repoPath, useRepo } from "../repo.js"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 
 /**
  * The `.agentic-workflow.json` editor.
@@ -72,7 +72,7 @@ export const ConfigEditor = () => {
   const [saved, setSaved] = useState<SaveConfigResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const { data, error: loadError } = useJson<ConfigLayerResponse>(
+  const { data, error: loadError } = useResource<ConfigLayerResponse>(
     repoPath(`/api/config?layer=${layer}`, repoId),
     [layer, repoId, versions.config],
   )
@@ -82,7 +82,7 @@ export const ConfigEditor = () => {
   // .agentic-workflow.json — and an opt-in kind never got one at all, which made
   // the creator's own post-save checklist item ("enable it in the Config tab")
   // impossible to satisfy in the tab it names.
-  const { data: kinds } = useJson<KindsResponse>(repoPath("/api/kinds", repoId), [repoId, versions.config])
+  const { data: kinds } = useResource<KindsResponse>(repoPath("/api/kinds", repoId), [repoId, versions.config])
 
   // A layer or repo switch abandons pending edits rather than carrying them to a
   // different file — silently writing them somewhere else would be worse.

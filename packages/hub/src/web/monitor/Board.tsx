@@ -1,14 +1,18 @@
-import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard, TaskStatus } from "../../shared/api.js"
+import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
+import { withQuery } from "../route.js"
+import { navigate, useRoute } from "../routing.js"
 import { useState } from "react"
 import { Badge } from "../ui/Badge.js"
+import { Button } from "../ui/Button.js"
 import { Card } from "../ui/Card.js"
 import { Chip } from "../ui/Chip.js"
 import { DoctorPanel } from "./DoctorPanel.js"
 import { GateActions } from "./GateActions.js"
 import { TaskDrawer } from "./TaskDrawer.js"
+import { parseTaskParam, taskParam } from "./taskparam.js"
 
 /**
  * The backlog board for one workflow kind: one column per manifest status, task
@@ -67,17 +71,27 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
   const [doctorOpen, setDoctorOpen] = useState(false)
-  const [openTask, setOpenTask] = useState<{ id: string; status: TaskStatus } | null>(null)
-  const { data, error } = useJson<BacklogResponse>(
+  const route = useRoute()
+  // The open task lives in the URL as `?task=<status>/<id>`, so a drawer can be
+  // linked to (a gate notification can point straight at the decision) and Back
+  // closes it rather than leaving the app.
+  const openTask = parseTaskParam(route.query.task)
+  const closeTask = (): void => navigate(withQuery(route, { task: undefined }))
+  const { data, error, refetch } = useResource<BacklogResponse>(
     repoPath(`/api/backlog?kind=${encodeURIComponent(info.kind)}`, repoId),
     [versions.backlog, versions.gate, repoId, info.kind],
   )
-  const { data: active } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+  const { data: active } = useResource<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
   // Only the Claude host writes this marker (see StageMarker), and only one loop
   // runs at a time, so at most one card across every board can match it.
   const liveStage = active?.stage && active.stage.kind === info.kind ? active.stage : null
 
-  if (error) return <div className="error-banner">Could not load backlog: {error}</div>
+  if (error)
+    return (
+      <div className="error-banner">
+        Could not load backlog: {error} <Button onClick={refetch}>Retry</Button>
+      </div>
+    )
   if (!data) return <div className="placeholder">Loading backlog…</div>
 
   const { summary } = data
@@ -133,7 +147,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                   status={status}
                   kind={info.kind}
                   stage={liveStage?.taskId === t.id ? liveStage : null}
-                  onOpen={() => setOpenTask({ id: t.id, status: status as TaskStatus })}
+                  onOpen={() => navigate(withQuery(route, { task: taskParam(status, t.id) }))}
                 />
               ))}
             </div>
@@ -146,7 +160,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
           id={openTask.id}
           status={openTask.status}
           claimed={claimed.has(openTask.id)}
-          onClose={() => setOpenTask(null)}
+          onClose={closeTask}
         />
       )}
     </div>

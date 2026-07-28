@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import type { ActiveResponse } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
 import { failedSuffix } from "./PrKindPanel.js"
@@ -24,7 +24,7 @@ const Deadline = ({ deadline }: { deadline: number | null | undefined }) => {
 export const ActivePanel = () => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
-  const { data, error } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+  const { data, error } = useResource<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
 
   if (error) return <div className="error-banner">Could not load loop activity: {error}</div>
   if (!data) return null

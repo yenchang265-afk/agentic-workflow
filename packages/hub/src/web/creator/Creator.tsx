@@ -27,7 +27,7 @@ import type {
 } from "../../shared/api.js"
 import { fetchJson, postJson } from "../api.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { Confirm } from "../ui/Confirm.js"
 import { EdgeForm, MetaForm, StageForm, TerminalAddForm, type EdgeFormValue } from "./forms.js"
 import { manifestToGraph, sameTerminalSpec, type GraphMeta, type TerminalSpec, type TransitionSlot } from "./graphmodel.js"
@@ -189,7 +189,7 @@ export const Creator = () => {
   const [terminalDraft, setTerminalDraft] = useState<"park" | "done" | null>(null)
   // repo asset inventory for the stage form's pickers; bumped after any scaffold
   const [assetsVersion, setAssetsVersion] = useState(0)
-  const { data: assets } = useJson<AssetsResponse>(repoPath("/api/assets", repoId), [assetsVersion, repoId])
+  const { data: assets } = useResource<AssetsResponse>(repoPath("/api/assets", repoId), [assetsVersion, repoId])
   const [genResult, setGenResult] = useState<GenPromptsResponse | null>(null)
 
   useEffect(() => {

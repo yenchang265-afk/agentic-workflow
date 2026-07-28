@@ -2,11 +2,19 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import type { RepoInfo, ReposResponse } from "../shared/api.js"
 import { fetchJson } from "./api.js"
 import { useEvents } from "./events.js"
+import { withQuery } from "./route.js"
+import { navigate, useRoute } from "./routing.js"
+import { selectedRepo } from "./selectedrepo.js"
 
 /**
  * Which monitored repo the UI is looking at. The hub can watch several repos
  * (`--dir` globs / user-scope `hub.repos`); every repo-scoped fetch appends
- * `?repo=<id>` via repoPath. Selection persists in localStorage.
+ * `?repo=<id>` via repoPath.
+ *
+ * The selection lives in the URL (`#/monitor?repo=web-app`) and falls back to
+ * localStorage, so a link carries the repo it was taken in — the server has
+ * always spoken "repo" as a URL concept and the client now does too — while a
+ * plain reload still lands where you left off.
  */
 
 const STORAGE_KEY = "hub.repo"
@@ -24,17 +32,22 @@ export const RepoProvider = ({ children }: { children: ReactNode }) => {
   const [repos, setRepos] = useState<readonly RepoInfo[]>([])
   const [repoId, setRepoIdState] = useState<string | null>(null)
   const { versions } = useEvents()
+  const route = useRoute()
+  const fromUrl = route.query.repo
 
   // Re-runs when the server registers a newly loop-enabled repo (SSE `repos`
-  // event); the localStorage check keeps the user's current selection.
+  // event) or the URL names a different one. Precedence: the URL (so a shared
+  // link opens the repo it was taken in), then localStorage, then the server's
+  // first repo — each only if it still exists in the list.
   useEffect(() => {
     let cancelled = false
     fetchJson<ReposResponse>("/api/repos")
       .then((d) => {
         if (cancelled) return
         setRepos(d.repos)
+        const exists = (id: string | null | undefined): id is string => !!id && d.repos.some((r) => r.id === id)
         const saved = localStorage.getItem(STORAGE_KEY)
-        setRepoIdState(d.repos.some((r) => r.id === saved) ? saved : (d.repos[0]?.id ?? null))
+        setRepoIdState(exists(fromUrl) ? fromUrl : exists(saved) ? saved : (d.repos[0]?.id ?? null))
       })
       .catch(() => {
         if (!cancelled) setRepoIdState(null)
@@ -42,11 +55,21 @@ export const RepoProvider = ({ children }: { children: ReactNode }) => {
     return () => {
       cancelled = true
     }
-  }, [versions.repos])
+  }, [versions.repos, fromUrl])
+
+  // Publish for EventsProvider, which filters events by repo but sits outside
+  // this context. An effect rather than a render-time write so the value the
+  // event handler reads is the one that actually committed.
+  useEffect(() => {
+    selectedRepo.current = repoId
+  }, [repoId])
 
   const setRepoId = (id: string): void => {
     localStorage.setItem(STORAGE_KEY, id)
     setRepoIdState(id)
+    // Replace rather than push: picking a repo corrects where you are, it isn't
+    // a place you'd want Back to step through one repo at a time.
+    navigate(withQuery(route, { repo: id }), { replace: true })
   }
 
   return <RepoContext.Provider value={{ repos, repoId, setRepoId }}>{children}</RepoContext.Provider>

@@ -2,7 +2,7 @@ import type { MetricsResponse } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Chip } from "../ui/Chip.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { pct } from "./format.js"
 import { BurnHistogram, CacheTable, DurationTable, PromptSizeTable, VerdictTable } from "./panels.js"
 
@@ -17,7 +17,7 @@ import { BurnHistogram, CacheTable, DurationTable, PromptSizeTable, VerdictTable
 export const MetricsTab = () => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
-  const { data, error } = useJson<MetricsResponse>(repoPath("/api/metrics", repoId), [
+  const { data, error } = useResource<MetricsResponse>(repoPath("/api/metrics", repoId), [
     repoId,
     versions.run,
     versions.tokens,

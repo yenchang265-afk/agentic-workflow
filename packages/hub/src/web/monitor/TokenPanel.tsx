@@ -2,7 +2,7 @@ import type { RunTokensResponse, StageTokens } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Badge } from "../ui/Badge.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 
 /** Per-stage token usage for one run: hand-rolled stacked SVG bars, no chart dep. */
 
@@ -43,7 +43,7 @@ const PanelHeader = ({ inProgress }: { inProgress?: boolean }) => (
 export const TokenPanel = ({ runId }: { runId: string }) => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
-  const { data, error } = useJson<RunTokensResponse>(repoPath(`/api/tokens/${encodeURIComponent(runId)}`, repoId), [
+  const { data, error } = useResource<RunTokensResponse>(repoPath(`/api/tokens/${encodeURIComponent(runId)}`, repoId), [
     runId,
     repoId,
     versions.tokens,

@@ -464,8 +464,12 @@ body {
 
 /* --- tabs (own thing: sliding underline, not .btn) -------------------------- */
 
+/* Anchors, not buttons: every section has an address, so the nav is real links
+   (bookmarkable, middle-clickable) styled to look the same. */
 .hub-tab {
   position: relative;
+  display: inline-block;
+  text-decoration: none;
   border: none;
   background: none;
   color: var(--muted);
@@ -511,6 +515,8 @@ body {
 
 .kind-tab {
   position: relative;
+  display: inline-block;
+  text-decoration: none;
   border: none;
   background: none;
   color: var(--muted);
@@ -746,6 +752,7 @@ body {
 
 .run-row {
   display: flex;
+  text-decoration: none;
   align-items: center;
   gap: var(--sp-3);
   border: 1px solid var(--border);

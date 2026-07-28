@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import type { SaveTaskResponse, TaskDetailResponse, TaskStatus } from "../../shared/api.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
 import { TaskEditor } from "./TaskEditor.js"
@@ -35,7 +35,7 @@ export const TaskDrawer = ({ id, status, claimed, onClose }: TaskDrawerProps) =>
   const { repoId } = useRepo()
   const ref = useRef<HTMLDialogElement>(null)
   const [saved, setSaved] = useState<SaveTaskResponse | null>(null)
-  const { data, error } = useJson<TaskDetailResponse>(
+  const { data, error } = useResource<TaskDetailResponse>(
     repoPath(`/api/tasks/${status}/${encodeURIComponent(id)}`, repoId),
     [status, id, repoId],
   )

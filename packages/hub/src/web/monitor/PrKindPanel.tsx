@@ -1,7 +1,7 @@
 import type { ActiveResponse, KindBoardInfo } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { Chip } from "../ui/Chip.js"
 
 /** " · N failed attempts" suffix, or "" when none — shared across the ledger chips (here and ActivePanel). */
@@ -18,7 +18,7 @@ export const failedSuffix = (n: number) => (n > 0 ? ` · ${n} failed attempt${n 
 export const PrKindPanel = ({ info }: { info: KindBoardInfo }) => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
-  const { data, error } = useJson<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
+  const { data, error } = useResource<ActiveResponse>(repoPath("/api/active", repoId), [versions.active, repoId])
 
   if (error) return <div className="error-banner">Could not load ledgers: {error}</div>
 
