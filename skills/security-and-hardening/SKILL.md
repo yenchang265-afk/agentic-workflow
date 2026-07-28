@@ -184,24 +184,34 @@ container.textContent = await llm.reply(userMessage);
 
 The patterns above are about *building* secure code. Auditing is the opposite direction — you're hunting for what's already broken and deciding what's worth reporting. Different discipline, different failure modes.
 
-### Exploitability first
+### Severity: repro × blast radius
 
-Every finding names the attacker, the action, and what they get. "An attacker could theoretically…" is not a finding; "send this request, get that result" is. If you can't describe the concrete damage, the severity is lower than you think.
+Severity is **repro × blast radius**, never deviation from a checklist. Grade
+onto the three severities `code-review-and-quality` → Severity defines — that
+skill owns the vocabulary; these are the two rules security adds to it.
 
-### Severity = likelihood × impact
+**No repro, no finding.** Name the attacker, the action, and what they get. "An
+attacker could theoretically…" is not a repro; "send this request, get that
+result" is. A finding without one is a `suggestion` at most.
 
-Rate on both axes — how hard to exploit and what access it needs, against what damage it achieves — not on deviation from a checklist:
+**Blast radius sets the level.** The dividing question is whether the finding
+defeats an *explicit* security boundary:
 
-- **CRITICAL** — unauthenticated RCE, full data dump, admin takeover without credentials.
-- **HIGH** — authenticated RCE, SQL injection with exfiltration, stored XSS firing for all users, auth bypass, or an explicit role/permission boundary fully defeated for a consequential action.
-- **MEDIUM** — conditional or targeted XSS, CSRF with meaningful state change, secret/credential disclosure, business-logic bypass confined to the attacker's own data.
-- **LOW** — non-secret information disclosure, DoS requiring sustained effort, hardening and defense-in-depth gaps.
-
-The line between HIGH and MEDIUM: **does the finding defeat an explicit security boundary?** A user performing an action the system explicitly gates behind a higher role is HIGH. A data inconsistency, a bug that needs privileged access to reach, or one with limited blast radius is MEDIUM.
+- `critical` — unauthenticated or authenticated RCE, full data dump, admin
+  takeover, injection with exfiltration, stored XSS firing for every user, auth
+  bypass, or a role the system explicitly gates defeated for a consequential
+  action.
+- `important` — conditional or targeted XSS, CSRF with meaningful state change,
+  secret or credential disclosure, business-logic bypass confined to the
+  attacker's own data, or a bug that needs privileged access to reach.
+- `suggestion` — non-secret information disclosure, DoS requiring sustained
+  effort, and hardening gaps.
 
 ### Defense-in-depth gaps are not vulnerabilities
 
-If an existing layer already blocks the attack, a missing second layer is a hardening note, not a blocking finding — don't inflate its severity. "Missing validation where the query builder already parameterizes" is not HIGH.
+If an existing layer already blocks the attack, a missing second layer is a
+hardening note, not a blocking finding. "Missing validation where the query
+builder already parameterizes" is a `suggestion`, never `critical`.
 
 ### Hunting lenses beyond scanner classes
 
@@ -218,9 +228,7 @@ Before a security finding is reported, a fresh reviewer — a different agent or
 ### Audit anti-patterns
 
 - Flagging every OWASP deviation as a bug — OWASP is a checklist, not a bug list.
-- Rating defense-in-depth gaps CRITICAL or HIGH.
-- Padding a report with LOWs — three real findings beat thirty theoretical ones.
-- "Potential" or "theoretical" findings with no concrete exploit path.
+- Padding a report with `suggestion`s — three real findings beat thirty theoretical ones.
 - Not acknowledging what the code does well (solid auth, parameterized queries) — saying so calibrates trust in the findings that remain.
 
 ## Security Review Checklist

@@ -272,8 +272,8 @@ the same gap. Ship without one and say so.
 
 ## Follow-ups this plan deliberately leaves open
 
-Three further determinism gaps found in the same audit, each independent of this
-plan:
+Two further determinism gaps found in the same audit, each independent of this
+plan (a third, the severity vocabulary mismatch, is now **resolved** — see below):
 
 1. **Sitter check stages re-decide what the work source already computed.**
    `attentionTriggers` (`source/ledger.ts:104-128`) and `upgradeCandidates`
@@ -285,8 +285,23 @@ plan:
 2. **Undefined thresholds gate control flow.** `review-sitter/stages/fetch.md`
    measures `gh pr diff <n> | wc -l` and then never compares it to anything — the
    FAIL condition is the adjective "unreviewably large".
-3. **Severity vocabulary mismatch.** `skills/code-review-and-quality/SKILL.md:61-70`
-   teaches Critical / Nit / Optional / Consider / FYI, but the `workflow_verdict`
-   schema enforces `critical | important | suggestion` (`verdict.ts:38`). An agent
-   following the skill it was told to invoke emits severities the tool rejects.
-   Small, self-contained, and a good first follow-up.
+## Resolved: severity vocabulary mismatch
+
+Listed above as follow-up 3, and since fixed. The skills taught severities the
+tool rejects — `code-review-and-quality` taught Critical / Nit / Optional /
+Consider / FYI and `security-and-hardening` taught a second, four-level
+CRITICAL / HIGH / MEDIUM / LOW scale (plus npm-audit's as a third), while
+`workflow_verdict` enforces `critical | important | suggestion`. An agent
+following the skill it was told to invoke emitted a severity the tool rejected,
+which fails the whole call — and a no-call is recorded as a FAIL, so the highest-
+frequency skill in the loop could turn a clean diff red.
+
+The fix names one prose source of truth: `skills/code-review-and-quality/SKILL.md`
+→ Severity, chosen because it is the only skill REVIEW invokes *unconditionally*
+(`prompts/agents/workflow-review/body.md`). `security-and-hardening` now maps its
+ratings onto those three rather than defining its own, keeping its exploitability
+rules as the conditions on each level. The three sites that carry the vocabulary
+stay distinct by design — this union in `verdict.ts` is the machine contract, the
+agent prompt is the gate, and the skill holds the definitions —
+and `scripts/skill-severity.test.mjs` fails the build if any skill reintroduces a
+fourth level.

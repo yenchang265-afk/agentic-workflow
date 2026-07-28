@@ -56,23 +56,7 @@ For each file changed:
 5. Performance: Any bottlenecks?
 ```
 
-### Step 4: Categorize Findings
-
-Label every comment with its severity so the author knows what's required vs optional:
-
-| Prefix | Meaning | Author Action |
-|--------|---------|---------------|
-| *(no prefix)* | Required change | Must address before merge |
-| **Critical:** | Blocks merge | Security vulnerability, data loss, broken functionality |
-| **Nit:** | Minor, optional | Author may ignore — formatting, style preferences |
-| **Optional:** / **Consider:** | Suggestion | Worth considering but not required |
-| **FYI** | Informational only | No action needed — context for future reference |
-
-This prevents authors from treating all feedback as mandatory and wasting time on optional suggestions.
-
-**Lead with what matters.** Order findings by leverage: correctness and security first, then structural regressions and missed simplifications, then everything else. Don't bury a real issue under cosmetic nits — a few high-conviction comments beat a long list. If you have one structural problem and ten nits, the structural problem *is* the review.
-
-### Step 5: Verify the Verification
+### Step 4: Verify the Verification
 
 Check the author's verification story:
 
@@ -83,6 +67,37 @@ Check the author's verification story:
 - Are there screenshots for UI changes?
 - Is there a before/after comparison?
 ```
+
+## Severity
+
+Every finding carries one of exactly three severities. These are the only three
+the loop's `workflow_verdict` tool accepts, so a finding graded anything else is
+a finding the loop throws away:
+
+| Severity | Means | In the loop |
+|---|---|---|
+| `critical` | Broken behaviour, data loss, or an exploitable vulnerability with a repro | Blocks — FAILs the stage |
+| `important` | A real defect or structural regression the next iteration must fix | Blocks — FAILs the stage |
+| `suggestion` | Worth doing, not worth blocking | Never blocks |
+
+Three rules decide which one a finding gets:
+
+- **Lead with what matters.** Order findings by leverage: correctness and
+  security first, then structural regressions and missed simplifications, then
+  everything else. A few high-conviction findings beat a long list — one
+  structural problem alongside ten cosmetic ones means the structural problem
+  *is* the review.
+- **No concrete failure path, no block.** A finding you cannot state as "this
+  input, that wrong result" is a `suggestion` at most.
+- **Structure is a `suggestion` unless the change makes structure worse.**
+  Propose the simpler design either way; escalate to `important` only when the
+  change actively degrades structure — a refactor that relocates complexity
+  instead of reducing it, a file pushed past its size boundary with no
+  decomposition, feature logic added to a shared module, a near-duplicate of an
+  existing canonical helper, or a silent fallback hiding an unclear invariant.
+
+This is the vocabulary every review grades against. Other skills map their
+ratings onto it rather than defining a second scale.
 
 ## The Five-Axis Review
 
@@ -202,32 +217,6 @@ Every change needs a description that stands alone in version control history.
 
 **Anti-patterns:** "Fix bug," "Fix build," "Add patch," "Moving code from A to B," "Phase 1," "Add convenience functions."
 
-## Multi-Model Review Pattern
-
-Use different models for different review perspectives:
-
-```
-Model A writes the code
-    │
-    ▼
-Model B reviews for correctness and architecture
-    │
-    ▼
-Model A addresses the feedback
-    │
-    ▼
-Human makes the final call
-```
-
-This catches issues that a single model might miss — different models have different blind spots.
-
-**Example prompt for a review agent:**
-```
-Review this code change for correctness, security, and adherence to
-our project conventions. The spec says [X]. The change should [Y].
-Flag any issues as Critical, Required, Optional, or Nit.
-```
-
 ## Dead Code Hygiene
 
 After any refactoring or implementation change, check for orphaned code:
@@ -316,10 +305,8 @@ Part of code review is dependency review:
 
 After review is complete:
 
-- [ ] All Critical issues are resolved
-- [ ] All Required (no-prefix) changes are resolved or explicitly deferred with justification
+- [ ] Every `critical` finding is resolved
+- [ ] Every `important` finding is resolved or explicitly deferred with justification
 - [ ] Tests pass
 - [ ] Build succeeds
 - [ ] The verification story is documented (what changed, how it was verified)
-
-**Presumptive blockers:** surface and propose the simpler design for each of these; escalate to Required only when the change actively makes structure worse: a refactor that relocates complexity instead of reducing it; a change that pushes a file past the size boundary with no decomposition; feature logic added to a shared module; a near-duplicate of an existing canonical helper; a silent fallback that hides an unclear invariant.
