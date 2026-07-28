@@ -7,15 +7,16 @@ description: Designs stable, hard-to-misuse interfaces. Use when designing API e
 
 ## Overview
 
-Design stable, well-documented interfaces that are hard to misuse. Good interfaces make the right thing easy and the wrong thing hard. This applies to REST APIs, GraphQL schemas, module boundaries, component props, and any surface where one piece of code talks to another.
+Design interfaces that make the right thing easy and the wrong thing hard. This applies to REST APIs, GraphQL schemas, module boundaries, component props, and any surface where one piece of code talks to another.
+
+Interface design is decided before it is written. The decisions below are the ones a plan has to settle; the code that expresses them is in `references/api-implementation-patterns.md`.
 
 ## When to Use
 
-- Designing new API endpoints
-- Defining module boundaries or contracts between teams
+- Designing new API endpoints, module boundaries, or contracts between teams
 - Creating component prop interfaces
-- Establishing database schema that informs API shape
-- Changing existing public interfaces
+- Establishing a database schema that informs API shape
+- Changing an existing public interface
 
 ## Core Principles
 
@@ -23,25 +24,24 @@ Design stable, well-documented interfaces that are hard to misuse. Good interfac
 
 > With a sufficient number of users of an API, all observable behaviors of your system will be depended on by somebody, regardless of what you promise in the contract.
 
-This means: every public behavior — including undocumented quirks, error message text, timing, and ordering — becomes a de facto contract once users depend on it. Design implications:
+Every public behavior — including undocumented quirks, error message text, timing, and ordering — becomes a de facto contract once users depend on it. Design implications:
 
 - **Be intentional about what you expose.** Every observable behavior is a potential commitment.
-- **Don't leak implementation details.** If users can observe it, they will depend on it.
+- **Keep implementation details unobservable.** If users can see it, they will depend on it.
 - **Plan for deprecation at design time.** See `deprecation-and-migration` for how to safely remove things users depend on.
-- **Tests are not enough.** Even with perfect contract tests, Hyrum's Law means "safe" changes can break real users who depend on undocumented behavior.
+- **Contract tests are not enough.** They pin the promised contract; Hyrum's Law is about the unpromised one, so a "safe" change can still break real users.
 
 ### The One-Version Rule
 
-Avoid forcing consumers to choose between multiple versions of the same dependency or API. Diamond dependency problems arise when different consumers need different versions of the same thing. Design for a world where only one version exists at a time — extend rather than fork.
+Consumers should never have to choose between versions of the same dependency or API. Diamond dependency problems arise when different consumers need different versions of the same thing. Design for a world where only one version exists at a time — extend rather than fork.
 
-### 1. Contract First
+### Contract First
 
-Define the interface before implementing it. The contract is the spec — implementation follows.
+Define the interface before implementing it. The contract is the spec — implementation follows. Each method's comment states what the caller can rely on, which is the part Hyrum's Law makes expensive to change later:
 
 ```typescript
-// Define the contract first
 interface TaskAPI {
-  // Creates a task and returns the created task with server-generated fields
+  // Creates a task and returns it with server-generated fields
   createTask(input: CreateTaskInput): Promise<Task>;
 
   // Returns paginated tasks matching filters
@@ -58,13 +58,11 @@ interface TaskAPI {
 }
 ```
 
-### 2. Consistent Error Semantics
+### One Error Strategy, Everywhere
 
-Pick one error strategy and use it everywhere:
+Pick one and apply it across the whole surface. When some endpoints throw, others return null, and others return `{ error }`, the consumer cannot predict behavior and ends up handling all three.
 
 ```typescript
-// REST: HTTP status codes + structured error body
-// Every error response follows the same shape
 interface APIError {
   error: {
     code: string;        // Machine-readable: "VALIDATION_ERROR"
@@ -72,78 +70,50 @@ interface APIError {
     details?: unknown;   // Additional context when helpful
   };
 }
-
-// Status code mapping
-// 400 → Client sent invalid data
-// 401 → Not authenticated
-// 403 → Authenticated but not authorized
-// 404 → Resource not found
-// 409 → Conflict (duplicate, version mismatch)
-// 422 → Validation failed (semantically invalid)
-// 500 → Server error (never expose internal details)
 ```
 
-**Don't mix patterns.** If some endpoints throw, others return null, and others return `{ error }` — the consumer can't predict behavior.
+| Status | Meaning |
+|---|---|
+| 400 | Client sent invalid data |
+| 401 | Not authenticated |
+| 403 | Authenticated but not authorized |
+| 404 | Resource not found |
+| 409 | Conflict (duplicate, version mismatch) |
+| 422 | Validation failed (semantically invalid) |
+| 500 | Server error — the message stays generic |
 
-### 3. Validate at Boundaries
+### Validate at Boundaries
 
-Trust internal code. Validate at system edges where external input enters:
+Validation is a placement decision: it belongs where untrusted data enters, and nowhere else. Past that line, internal code trusts its types.
 
-```typescript
-// Validate at the API boundary
-app.post('/api/tasks', async (req, res) => {
-  const result = CreateTaskSchema.safeParse(req.body);
-  if (!result.success) {
-    return res.status(422).json({
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Invalid task data',
-        details: result.error.flatten(),
-      },
-    });
-  }
-
-  // After validation, internal code trusts the types
-  const task = await taskService.create(result.data);
-  return res.status(201).json(task);
-});
-```
-
-Where validation belongs:
-- API route handlers (user input)
-- Form submission handlers (user input)
-- External service response parsing (third-party data -- **always treat as untrusted**)
+**Validate here:**
+- API route handlers and form submission handlers (user input)
+- External service response parsing (third-party data — **always untrusted**)
 - Environment variable loading (configuration)
 
-> **Third-party API responses are untrusted data.** Validate shape and content before use — see `references/untrusted-data.md`.
-
-Where validation does NOT belong:
+**Not here:**
 - Between internal functions that share type contracts
 - In utility functions called by already-validated code
 - On data that just came from your own database
 
-### 4. Prefer Addition Over Modification
+> **Third-party API responses are untrusted data.** Validate shape and content before use — see `references/untrusted-data.md`.
 
-Extend interfaces without breaking existing consumers:
+### Prefer Addition Over Modification
+
+Extend interfaces without breaking existing consumers: new fields are optional, existing fields keep their type and their presence.
 
 ```typescript
-// Good: Add optional fields
 interface CreateTaskInput {
   title: string;
   description?: string;
   priority?: 'low' | 'medium' | 'high';  // Added later, optional
-  labels?: string[];                       // Added later, optional
-}
-
-// Bad: Change existing field types or remove fields
-interface CreateTaskInput {
-  title: string;
-  // description: string;  // Removed — breaks existing consumers
-  priority: number;         // Changed from string — breaks existing consumers
+  labels?: string[];                      // Added later, optional
 }
 ```
 
-### 5. Predictable Naming
+Removing a field or changing its type breaks every consumer that reads it — that is a deprecation, not an edit. Route it through `deprecation-and-migration`.
+
+### Predictable Naming
 
 | Pattern | Convention | Example |
 |---------|-----------|---------|
@@ -153,117 +123,14 @@ interface CreateTaskInput {
 | Boolean fields | is/has/can prefix | `isComplete`, `hasAttachments` |
 | Enum values | UPPER_SNAKE | `"IN_PROGRESS"`, `"COMPLETED"` |
 
-## REST API Patterns
+## Implementation Patterns
 
-### Resource Design
-
-```
-GET    /api/tasks              → List tasks (with query params for filtering)
-POST   /api/tasks              → Create a task
-GET    /api/tasks/:id          → Get a single task
-PATCH  /api/tasks/:id          → Update a task (partial)
-DELETE /api/tasks/:id          → Delete a task
-
-GET    /api/tasks/:id/comments → List comments for a task (sub-resource)
-POST   /api/tasks/:id/comments → Add a comment to a task
-```
-
-### Pagination
-
-Paginate list endpoints:
-
-```typescript
-// Request
-GET /api/tasks?page=1&pageSize=20&sortBy=createdAt&sortOrder=desc
-
-// Response
-{
-  "data": [...],
-  "pagination": {
-    "page": 1,
-    "pageSize": 20,
-    "totalItems": 142,
-    "totalPages": 8
-  }
-}
-```
-
-### Filtering
-
-Use query parameters for filters:
-
-```
-GET /api/tasks?status=in_progress&assignee=user123&createdAfter=2025-01-01
-```
-
-### Partial Updates (PATCH)
-
-Accept partial objects — only update what's provided:
-
-```typescript
-// Only title changes, everything else preserved
-PATCH /api/tasks/123
-{ "title": "Updated title" }
-```
-
-## TypeScript Interface Patterns
-
-### Use Discriminated Unions for Variants
-
-```typescript
-// Good: Each variant is explicit
-type TaskStatus =
-  | { type: 'pending' }
-  | { type: 'in_progress'; assignee: string; startedAt: Date }
-  | { type: 'completed'; completedAt: Date; completedBy: string }
-  | { type: 'cancelled'; reason: string; cancelledAt: Date };
-
-// Consumer gets type narrowing
-function getStatusLabel(status: TaskStatus): string {
-  switch (status.type) {
-    case 'pending': return 'Pending';
-    case 'in_progress': return `In progress (${status.assignee})`;
-    case 'completed': return `Done on ${status.completedAt}`;
-    case 'cancelled': return `Cancelled: ${status.reason}`;
-  }
-}
-```
-
-### Input/Output Separation
-
-```typescript
-// Input: what the caller provides
-interface CreateTaskInput {
-  title: string;
-  description?: string;
-}
-
-// Output: what the system returns (includes server-generated fields)
-interface Task {
-  id: string;
-  title: string;
-  description: string | null;
-  createdAt: Date;
-  updatedAt: Date;
-  createdBy: string;
-}
-```
-
-### Use Branded Types for IDs
-
-```typescript
-type TaskId = string & { readonly __brand: 'TaskId' };
-type UserId = string & { readonly __brand: 'UserId' };
-
-// Prevents accidentally passing a UserId where a TaskId is expected
-function getTask(id: TaskId): Promise<Task> { ... }
-```
+Resource and sub-resource URL design, pagination and filtering shapes, PATCH semantics, validated route handlers, discriminated unions, input/output type separation, and branded ID types are in `references/api-implementation-patterns.md`. Reach for it when writing the interface, not when deciding it.
 
 ## Common Rationalizations
 
 | Rationalization | Reality |
 |---|---|
-| "PATCH is complicated, let's just use PUT" | PUT requires the full object every time. PATCH is what clients actually want. |
 | "Nobody uses that undocumented behavior" | Hyrum's Law: if it's observable, somebody depends on it. Treat every public behavior as a commitment. |
 | "We can just maintain two versions" | Multiple versions multiply maintenance cost and create diamond dependency problems. Prefer the One-Version Rule. |
 
@@ -271,20 +138,23 @@ function getTask(id: TaskId): Promise<Task> { ... }
 
 - Endpoints that return different shapes depending on conditions
 - Inconsistent error formats across endpoints
-- Validation scattered throughout internal code instead of at boundaries
 - Breaking changes to existing fields (type changes, removals)
 - List endpoints without pagination
 - Verbs in REST URLs (`/api/createTask`, `/api/getUsers`)
-- Third-party API responses used without validation or sanitization
+- Third-party API responses used without validation
 
 ## Verification
 
-After designing an API:
+**When the interface has been designed** (before it is written):
 
-- [ ] Every endpoint has typed input and output schemas
-- [ ] Error responses follow a single consistent format
-- [ ] Validation happens at system boundaries only
+- [ ] The contract names every operation, its input, its output, and its failure mode
+- [ ] One error strategy is named and covers every operation on the surface
+- [ ] Each validation point is placed at a boundary where untrusted data enters
+- [ ] Every change to an existing interface is additive, or is routed through `deprecation-and-migration`
+- [ ] Naming follows the conventions above across the whole surface
+
+**When the interface has been written:**
+
+- [ ] Input and output types exist for every operation and are enforced at runtime at the boundary
 - [ ] List endpoints support pagination
-- [ ] New fields are additive and optional (backward compatible)
-- [ ] Naming follows consistent conventions across all endpoints
-- [ ] API documentation or types are committed alongside the implementation
+- [ ] The types or API documentation ship in the same change as the implementation
