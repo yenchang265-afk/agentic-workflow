@@ -124,6 +124,17 @@ pr-sitter：`triage`/`verify`；review-sitter：`fetch`；dep-sitter：
 記錄的內容。階段 agent 無法核准任務、移動待辦資料夾或發布；每一次
 狀態轉換的所有權都屬於外掛和人類。
 
+**work** 階段被刻意排除在該管道之外——一個能記錄裁定的 build agent，
+等於能先發制人地取代自己的驗證。它改為取得一個更窄的獨立訊號：
+`workflow_blocked` 表示「我完全無法執行這項工作」（已核准的計畫照字面
+無法實作），而永遠不表示「這份工作是好的」。回報自己受阻的階段，若其
+清單宣告了 `onError` 分支就走該分支——engineering 的 `build` 會停止
+迴圈並要求人類 `replan`——未宣告的類型則不受影響。兩個工具的守衛互為
+鏡像：`workflow_verdict` 拒絕 work 階段，`workflow_blocked` 拒絕 check
+階段，因此兩者無法互相取代。與 check 階段短暫性的 ERROR 不同，受阻而
+停止**不可**重試：再怎麼輪詢也不會讓不可能的計畫變得可能，因此該任務
+會等待人類處理，而不是被重新認領。
+
 ## watch 租約
 
 每個複本（clone）、跨所有類型，同時最多只能有一個 watch 模式的行程

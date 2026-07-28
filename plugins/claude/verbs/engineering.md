@@ -43,7 +43,7 @@
        ships stacked children one at a time in that order — `priority` orders
        claims but does **not** block, so this human sequencing is the
        dependency gate.
-  4. Spawn the **`workflow-plan-author`** subagent (Task tool) once with the
+  4. Spawn the **`workflow-task-author`** subagent (Task tool) once with the
      confirmed set to write the draft file(s) — one draft, or N child drafts
      plus one epic tracking file. No plan is written now — the loop's PLAN
      stage plans each task right before execution, so plans don't rot while it
@@ -62,7 +62,7 @@
        `/agentic-workflow:engineering approve <id>`. Then ask a second
        **AskUserQuestion**: "Plan it now?"
        - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
-         spawn `workflow-plan-author` (task mode, Task tool) with the
+         spawn `workflow-plan-author` (Task tool) with the
          returned prompt (its `model` is already pinned from the response's `model` field when present), then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
@@ -97,7 +97,7 @@
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
      the optional `note` and the current draft. Re-confirm the goal and 2–5
      testable acceptance criteria, then get an explicit "looks right".
-  4. Spawn the **`workflow-plan-author`** subagent (Task tool) in **`retask` mode**
+  4. Spawn the **`workflow-task-author`** subagent (Task tool) in **`retask` mode**
      with the id and the confirmed title/priority/acceptance/body (carry
      forward the `tracker` block if the draft had one) to rewrite
      `docs/tasks/draft/<id>.md` **in place** — the id/filename never changes.
@@ -164,7 +164,7 @@
 <!-- aw:verb plan -->
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
-  PLAN (no git isolation): spawn `workflow-plan-author` (Task tool) in task mode
+  PLAN (no git isolation): spawn `workflow-plan-author` (Task tool)
   with the returned prompt (its `model` is already pinned from the response's `model` field when present), then
   `workflow_advance` — the task parks in `plan-review/` and
   the plan gate goes live: ask the user inline (AskUserQuestion — Approve /

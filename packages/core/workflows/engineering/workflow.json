@@ -185,6 +185,10 @@
       "onDone": {
         "kind": "fire",
         "stage": "verify"
+      },
+      "onError": {
+        "kind": "stop",
+        "message": "✗ Workflow stopped — BUILD reports the approved plan cannot be implemented as written. Send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
       }
     },
     "verify": {

@@ -1,5 +1,5 @@
 name: workflow-plan-author
-description: Writes backlog task files into docs/tasks/draft/ — one planless draft or a slice set of N child drafts plus an epic tracking file (mode new), a reshaped draft rewritten in place (mode retask), or an ## Implementation Plan onto an existing task in place (mode task). Never touches source code.
+description: Writes the ## Implementation Plan onto one already-queued task, in place — the loop's PLAN stage. Reads the code first so the plan is written right before execution. Never creates or reshapes a task (that is workflow-task-author) and never touches source code.
 tools:
   - read_file
   - grep_search

@@ -156,9 +156,9 @@ The whole engineering lifecycle lives on `/agentic-workflow:engineering` (`new`,
 
 ## What's inside
 
-- `agents/` — `workflow-plan-author` (writes the confirmed draft; runs the
-  loop's PLAN stage in task mode), `workflow-plan` (standalone read-only
-  planner), the three build-phase stage subagents
+- `agents/` — `workflow-task-author` (writes the confirmed draft),
+  `workflow-plan-author` (the loop's PLAN stage — writes the implementation plan
+  onto a queued task), `workflow-plan` (standalone read-only planner), the three build-phase stage subagents
   `workflow-build` / `workflow-verify` / `workflow-review`, the pr-sitter stage
   subagents `workflow-pr-triage` / `workflow-pr-fix` / `workflow-pr-publish`, and the
   sitter stage subagents for the remaining kinds: review-sitter's

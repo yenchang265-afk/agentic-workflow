@@ -7,3 +7,4 @@ tools:
   - run_shell_command
   - grep_search
   - glob
+  - mcp__agentic-workflow__workflow_blocked

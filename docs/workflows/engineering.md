@@ -50,7 +50,7 @@ flowchart TB
 
     subgraph authoring["AUTHORING + GATES — /agentic-workflow:engineering new/retask/approve · interactive, human in the loop"]
         direction TB
-        new["<b>/agentic-workflow:engineering new &lt;idea&gt;</b><br/>main agent interviews you (interview-me),<br/>then workflow-plan-author writes it<br/>(task-backlog-management)<br/><i>planless draft in draft/</i>"]
+        new["<b>/agentic-workflow:engineering new &lt;idea&gt;</b><br/>main agent interviews you (interview-me),<br/>then workflow-task-author writes it<br/>(task-backlog-management)<br/><i>planless draft in draft/</i>"]
         approve{{"<b>/agentic-workflow:engineering approve &lt;id&gt;</b><br/>plugin queues the reviewed draft<br/>★ HUMAN GATE 1 — the task"}}
         approveplan{{"<b>/agentic-workflow:engineering approve &lt;id&gt;</b><br/>plugin validates the parked plan<br/>★ HUMAN GATE 2 — the plan<br/>(replan &lt;id&gt; &lt;why&gt; → back to queued/)"}}
     end
@@ -130,11 +130,11 @@ step doesn't.
 
 | Command | Handled by | Subagent | Write access | Skills loaded | Produces |
 |---------|-----------|----------|--------------|---------------|----------|
-| `/agentic-workflow:engineering new <idea>` | plugin → agent | `workflow-plan-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
-| `/agentic-workflow:engineering retask <id> [note]` | plugin (places the task) → agent (reshapes) | `workflow-plan-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | rewritten **in place** in `draft/` (same id); a `queued/` task is moved back to `draft/` first, withdrawing its approval; refused from `plan-review/` on (use `replan`) |
+| `/agentic-workflow:engineering new <idea>` | plugin → agent | `workflow-task-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
+| `/agentic-workflow:engineering retask <id> [note]` | plugin (places the task) → agent (reshapes) | `workflow-task-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | rewritten **in place** in `draft/` (same id); a `queued/` task is moved back to `draft/` first, withdrawing its approval; refused from `plan-review/` on (use `replan`) |
 | `/agentic-workflow:engineering approve [id]` | plugin only (agent writes nothing) | — | — | — | the folder-driven gate: draft → `queued/`, plan-review → `in-progress/`, in-review → `completed/` |
 | `/agentic-workflow:engineering replan [id] [why]` | plugin only (agent writes nothing) | — | — | — | task re-queued in `queued/`, rejection audited |
-| PLAN (in the loop, on a `queued/` task) | driver → agent | `workflow-plan-author` (task mode) | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
+| PLAN (in the loop, on a `queued/` task) | driver → agent | `workflow-plan-author` | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | plugin driver (`plugins/opencode/src/workflow/driver.ts`) | spawns the three stage agents below | — | `workflow-orchestration` protocol | stage sequencing, claims, snapshots, run log |
 | BUILD (also `/build`) | driver → agent | `workflow-build` | edit ✅ bash ✅ | `incremental-implementation`, `test-driven-development` (+ `frontend-ui-engineering`, `observability-and-instrumentation`, `code-simplification` when relevant) | code + one commit checkpoint per iteration |
 | VERIFY (also `/verify`) | driver → agent | `workflow-verify` | edit ❌ bash: test-runner allowlist | `debugging-and-error-recovery` (on FAIL) | trusted `workflow_verdict` PASS/FAIL/ERROR |

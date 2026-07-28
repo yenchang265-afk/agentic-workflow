@@ -342,13 +342,13 @@ it. The warnings are advisory: they annotate a save, never block it. See
   ```json
   {
     "agentModels": {
-      "workflow-plan-author": "anthropic/claude-haiku-4-5",
+      "workflow-task-author": "anthropic/claude-haiku-4-5",
       "workflow-plan": "anthropic/claude-haiku-4-5"
     }
   }
   ```
 
-  Two spawns qualify: the draft authoring `workflow-plan-author` does for
+  Two spawns qualify: the draft authoring `workflow-task-author` does for
   `/agentic-workflow:engineering new` and `retask` (it writes task files before
   any loop exists), and the ad-hoc `/agentic-workflow:plan` command's
   `workflow-plan`. Neither has a manifest stage behind it, so no fire payload
@@ -390,11 +390,11 @@ it. The warnings are advisory: they annotate a save, never block it. See
   default. `stageModels` is therefore never affected by `agentModels` on any host.
 
   Deliberately **separate from `stageModels`**, not folded into
-  `stageModels.plan`: drafting and the PLAN stage both run
-  `workflow-plan-author`, so one key for both would mean pointing drafting at a
-  cheap model silently retargets planning too, and vice versa. Setting
-  `agentModels` never affects a stage; setting `stageModels` never affects
-  drafting.
+  `stageModels.plan`: drafting and the PLAN stage are different jobs, run by
+  different agents (`workflow-task-author` and `workflow-plan-author`), and only
+  the second is a stage. Pointing drafting at a cheap model must not silently
+  retarget planning, or vice versa. Setting `agentModels` never affects a stage;
+  setting `stageModels` never affects drafting.
 
 ## Admin hub (`hub` — user scope only)
 

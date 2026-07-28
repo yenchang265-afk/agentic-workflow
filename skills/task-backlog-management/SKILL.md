@@ -115,7 +115,7 @@ approved, buildable.
    interviews you** (a single restate-and-confirm when the idea is already
    sharp, a full interview when it's vague) to pin down the goal and
    testable acceptance criteria, confirms the draft with you, and hands it
-   to the `workflow-plan-author` subagent to write a **planless draft** to `draft/`.
+   to the `workflow-task-author` subagent to write a **planless draft** to `draft/`.
    - You can also write a stub into `draft/` by hand.
 2. **Approve the task** — `/agentic-workflow:engineering approve <id>`: deterministic
    plugin code moves the reviewed draft to `queued/` with an audited

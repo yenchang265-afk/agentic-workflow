@@ -55,7 +55,7 @@ Dispatch:
        ships stacked children one at a time in that order — `priority` orders
        claims but does **not** block, so this human sequencing is the
        dependency gate.
-  4. Invoke the **`workflow-plan-author`** subagent once with the confirmed set to
+  4. Invoke the **`workflow-task-author`** subagent once with the confirmed set to
      write the draft file(s) — one draft, or N child drafts plus one epic
      tracking file. No plan is written now — the loop's PLAN stage plans each
      task right before execution, so plans don't rot while it sits parked. The
@@ -84,7 +84,7 @@ Dispatch:
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
      the optional `note` and the current draft. Re-confirm the goal and 2–5
      testable acceptance criteria, then get an explicit "looks right".
-  4. Invoke the **`workflow-plan-author`** subagent in **`retask` mode** with the
+  4. Invoke the **`workflow-task-author`** subagent in **`retask` mode** with the
      id and the confirmed title/priority/acceptance/body (carry forward the
      `tracker` block if the draft had one) to rewrite `docs/tasks/draft/<id>.md`
      **in place** — the id/filename never changes. Still no plan. The next step

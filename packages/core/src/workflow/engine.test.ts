@@ -75,6 +75,31 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
   } else if (target === "review") {
     if (a.plan) parts.push(`Approved plan:\n${a.plan}`)
     if (a.build) parts.push(`Build summary:\n${a.build}`)
+    // Two deliberate post-freeze additions, on the same footing as verify's
+    // "Change scope" block above.
+    //
+    // The prior findings: a REVIEW FAIL drops the `verify` artifact and KEEPS
+    // `review`, but only BUILD's prompt ever read it — so the second review pass
+    // could not see what the first one flagged, re-derived a verdict from
+    // scratch, and could pass code it had just failed. That is a manufactured
+    // verdict flip, which the hub reports as a loop-health metric.
+    //
+    // The acceptance criteria: review was the only engineering stage composed
+    // without them, while being asked to judge whether the change "matches the
+    // plan's intent".
+    if (a.review) {
+      parts.push(
+        `Your own findings from the previous iteration — the build above is the attempt to address them. ` +
+          `Confirm each one explicitly as resolved or still open; a still-open Critical or Important finding is a FAIL:\n${a.review}`,
+      )
+    }
+    if (accept.length) {
+      parts.push(
+        acceptBlock(
+          "Acceptance criteria (VERIFY has already checked these; judge whether the implementation is a good way of meeting them):",
+        ),
+      )
+    }
     if (state.git) {
       const wt = state.git.worktree
       const diffCmd = wt
@@ -406,6 +431,37 @@ test("an onError (ERROR verdict) stop is marked retryable; a cap stop is not (C2
   const cap = advance(eng, { ...mk("g"), stage: "verify", iteration: 2 }, config, "gaps remain", "FAIL")
   assert.equal(cap.action.kind, "stop")
   if (cap.action.kind === "stop") assert.equal(cap.action.retryable, undefined)
+})
+
+test("a blocked work stage takes its onError arm instead of firing the next stage", () => {
+  // BUILD reporting the approved plan is impossible. Before this arm existed, saying
+  // so changed nothing: VERIFY fired anyway, failed, re-fired BUILD, and the loop
+  // spent its whole iteration budget re-deriving the refusal of pass 1.
+  const blocked = advance(eng, resumeAtBuild("add foo", task, "PLAN BODY"), config, "the plan's API does not exist", "ERROR")
+  assert.equal(blocked.action.kind, "stop")
+  if (blocked.action.kind === "stop") {
+    assert.match(blocked.action.message, /cannot be implemented/)
+    assert.match(blocked.action.message, /replan/)
+    // NOT retryable: unlike a check stage's transient ERROR, re-polling never makes
+    // an impossible plan possible. Marked retryable, the watcher would re-claim the
+    // task and re-derive the same refusal forever. It needs a human.
+    assert.equal(blocked.action.retryable, undefined)
+  }
+})
+
+test("a work stage with no blocked signal still fires its onDone arm", () => {
+  const normal = advance(eng, resumeAtBuild("add foo", task, "PLAN BODY"), config, "diff summary")
+  assert.equal(normal.action.kind, "fire")
+  if (normal.action.kind === "fire") assert.equal(normal.action.stage, "verify")
+})
+
+test("a work stage ERROR falls back to onDone in a kind that declares no onError arm", () => {
+  // The regression guard for every other workflow kind: pr-sitter's `fix` is a work
+  // stage with only `onDone`, so the new routing must be invisible there rather than
+  // dropping the stage into the no-transition fail-safe.
+  const fix = advance(sitter, prState("fix"), config, "patch applied", "ERROR")
+  assert.equal(fix.action.kind, "fire")
+  if (fix.action.kind === "fire") assert.equal(fix.action.stage, "verify")
 })
 
 test("firstStep fires the state's own stage with its composed prompt", () => {

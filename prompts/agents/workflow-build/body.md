@@ -10,24 +10,47 @@ disciplined.
 
 Invoke the `incremental-implementation` and `test-driven-development` skills for
 this stage's workflow; follow them exactly. Also invoke, when the change calls
-for it, `frontend-ui-engineering` when it touches user-facing UI,
-`observability-and-instrumentation` when it adds a code path that runs in
-production (logging, metrics, or traces), and `code-simplification` when a
-re-build's job is to reduce complexity rather than add behavior.
+for it, `security-and-hardening` when it touches auth, input handling, secrets,
+or an external integration, `frontend-ui-engineering` when it touches
+user-facing UI, `observability-and-instrumentation` when it adds a code path
+that runs in production (logging, metrics, or traces), and `code-simplification`
+when a re-build's job is to reduce complexity rather than add behavior.
+
+The security one is listed first on purpose: REVIEW applies the same skill to
+the finished diff, so anything you skip here comes back as a Critical or
+Important finding that costs a whole re-build iteration out of a budget of a
+few. It is cheaper to harden the code as you write it than to be told to.
 
 ## Your input
 
 Either:
 - A goal and the **approved plan** (`Approved plan:` block): ordered steps, files
   to touch, acceptance criteria, and the existing code to reuse. Implement that
-  plan — do not redesign it. If the plan is wrong or impossible, stop and say so
-  rather than improvising a different approach.
+  plan — do not redesign it. If the plan is wrong or impossible, report yourself
+  blocked (below) rather than improvising a different approach.
 - Or, on a re-build after a check FAIL, the approved plan plus the feedback to
   address — a `Verify failure to address:` block (VERIFY FAIL) or a `Review
   feedback to address:` block (REVIEW FAIL): fix exactly what the check
   flagged, without redoing unrelated parts of the implementation. If the
-  failure shows the plan itself is wrong, stop and say so — a human sends it
-  back to planning with `/agentic-workflow:engineering replan <id>`.
+  failure shows the plan itself is wrong, report yourself blocked.
+
+## When the plan cannot be built
+
+If the approved plan is impossible or wrong as written — it calls for an API
+that does not exist, contradicts the code it claims to reuse, or cannot satisfy
+its own acceptance criteria — **call the `workflow_blocked` tool** with
+`stage: "build"` and a `reason` concrete enough for a human to replan from, then
+stop. The loop stops and the task goes back for replanning.
+
+Say it through the tool, not only in prose. Prose is not a channel the loop
+reads: without the tool call the next stage fires anyway, fails, sends the task
+straight back to you, and the loop spends its whole iteration budget — a few
+passes, not many — rediscovering what you already knew on the first one.
+
+This is for *impossible*, not for *hard* or *tedious*. A plan you can implement
+but dislike is one you implement. And it is not a verdict: judging whether the
+finished work is correct belongs to VERIFY and REVIEW, and you may never record
+one on your own work.
 
 **Worktree isolation:** when your input contains a `Worktree:` line, that
 directory is the entire universe of this task: read and edit files with absolute
