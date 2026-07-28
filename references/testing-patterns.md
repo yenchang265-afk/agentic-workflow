@@ -4,6 +4,8 @@ Quick reference for common testing patterns across the stack. Use alongside the 
 
 ## Table of Contents
 
+- [The RED/GREEN Cycle](#the-redgreen-cycle)
+- [The Prove-It Pattern](#the-prove-it-pattern)
 - [Test Structure (Arrange-Act-Assert)](#test-structure-arrange-act-assert)
 - [Test Naming Conventions](#test-naming-conventions)
 - [Common Assertions](#common-assertions)
@@ -12,6 +14,74 @@ Quick reference for common testing patterns across the stack. Use alongside the 
 - [API / Integration Testing](#api--integration-testing)
 - [E2E Testing (Playwright)](#e2e-testing-playwright)
 - [Test Anti-Patterns](#test-anti-patterns)
+
+## The RED/GREEN Cycle
+
+The worked form of the cycle in `test-driven-development`.
+
+**RED** — the test names the behavior and fails because nothing implements it yet:
+
+```typescript
+// RED: This test fails because createTask doesn't exist yet
+describe('TaskService', () => {
+  it('creates a task with title and default status', async () => {
+    const task = await taskService.createTask({ title: 'Buy groceries' });
+
+    expect(task.id).toBeDefined();
+    expect(task.title).toBe('Buy groceries');
+    expect(task.status).toBe('pending');
+    expect(task.createdAt).toBeInstanceOf(Date);
+  });
+});
+```
+
+**GREEN** — the minimum implementation that satisfies it, with nothing the test
+didn't ask for:
+
+```typescript
+// GREEN: Minimal implementation
+export async function createTask(input: { title: string }): Promise<Task> {
+  const task = {
+    id: generateId(),
+    title: input.title,
+    status: 'pending' as const,
+    createdAt: new Date(),
+  };
+  await db.tasks.insert(task);
+  return task;
+}
+```
+
+**REFACTOR** then improves naming and removes duplication with the test still
+green.
+
+## The Prove-It Pattern
+
+The worked form of the bug-fix flow in `test-driven-development`: reproduce
+first, fix second.
+
+```typescript
+// Bug: "Completing a task doesn't update the completedAt timestamp"
+
+// Step 1: Write the reproduction test (it should FAIL)
+it('sets completedAt when task is completed', async () => {
+  const task = await taskService.createTask({ title: 'Test' });
+  const completed = await taskService.completeTask(task.id);
+
+  expect(completed.status).toBe('completed');
+  expect(completed.completedAt).toBeInstanceOf(Date);  // This fails → bug confirmed
+});
+
+// Step 2: Fix the bug
+export async function completeTask(id: string): Promise<Task> {
+  return db.tasks.update(id, {
+    status: 'completed',
+    completedAt: new Date(),  // This was missing
+  });
+}
+
+// Step 3: Test passes → bug fixed, regression guarded
+```
 
 ## Test Structure (Arrange-Act-Assert)
 
