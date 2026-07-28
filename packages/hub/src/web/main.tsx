@@ -8,6 +8,7 @@ import { MetricsTab } from "./metrics/MetricsTab.js"
 import { ActivePanel } from "./monitor/ActivePanel.js"
 import { Board } from "./monitor/Board.js"
 import { PrKindPanel } from "./monitor/PrKindPanel.js"
+import { SchedulerPanel } from "./monitor/SchedulerPanel.js"
 import { Runs } from "./monitor/Runs.js"
 import { RepoPicker, RepoProvider, repoPath, useRepo } from "./repo.js"
 import { useJson } from "./useJson.js"
@@ -74,6 +75,7 @@ const Monitor = () => {
   return (
     <div>
       <ActivePanel />
+      <SchedulerPanel />
       {kinds.length > 1 && (
         <nav className="kind-tabs" role="tablist" aria-label="Workflow kinds">
           {kinds.map((k) => (

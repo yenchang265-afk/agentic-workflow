@@ -8,7 +8,11 @@ import type {
   StageDuration,
 } from "../../shared/api.js"
 import { cacheHit, countInProgress } from "./cache.js"
+import { findingsStats } from "./findings.js"
+import { modelStats } from "./models.js"
 import { promptSize } from "./prompt.js"
+import { stageLabel } from "./stage-label.js"
+import { toolStats } from "./tools.js"
 import { isCheckRow, stageVerdicts, verdictFlips } from "./verdicts.js"
 
 /**
@@ -131,7 +135,8 @@ const stageDurations = (passes: readonly RunLogSummary[]): StageDuration[] => {
   for (const pass of passes) {
     for (const row of pass.rows) {
       if (!hasDuration(row)) continue
-      byStage.set(row.stage, [...(byStage.get(row.stage) ?? []), row.seconds])
+      const stage = stageLabel(pass.kind, row.stage)
+      byStage.set(stage, [...(byStage.get(stage) ?? []), row.seconds])
     }
   }
   return [...byStage.entries()]
@@ -177,6 +182,28 @@ export const aggregateMetrics = (
     durations: stageDurations(passes),
     cache: cacheHit(inputs),
     prompt: promptSize(inputs),
+    models: modelStats(inputs),
+    tools: toolStats(inputs),
+    ...stoppedSplit(inputs),
+    findings: findingsStats(inputs),
     skippedRuns,
   }
+}
+
+/**
+ * Sidecar-recorded stops split by the retryable flag. Sidecar population only:
+ * the run log's footer never carried the distinction, so the log-derived
+ * `outcomes` tally stays untouched.
+ */
+const stoppedSplit = (inputs: readonly RunMetricsInput[]): { stoppedRetryable: number; stoppedFinal: number } => {
+  let stoppedRetryable = 0
+  let stoppedFinal = 0
+  for (const input of inputs) {
+    for (const entry of input.sidecar?.runs ?? []) {
+      if (entry.outcome !== "stopped") continue
+      if (entry.retryable) stoppedRetryable++
+      else stoppedFinal++
+    }
+  }
+  return { stoppedRetryable, stoppedFinal }
 }

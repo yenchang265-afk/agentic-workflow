@@ -2,9 +2,11 @@ import {
   hasPlan,
   listByStatus,
   listClaimIds,
+  STALE_CLAIM_MINUTES,
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
+import { readText } from "../io.js"
 import { isPaired, shortIdOf, type Task } from "@agentic-workflow/core/task/schema"
 import { auditBacklog, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import type { BacklogResponse, KindBoardInfo, TaskCard } from "../../shared/api.js"
@@ -50,9 +52,28 @@ export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
   for (const status of board.statuses) {
     tasks[status] = await listByStatus(deps.client, deps.directory, deps.tasksDir, status, deps.log)
   }
-  const claimedIds = (
-    await Promise.all(board.pools.map((status) => listClaimIds(deps.sh, deps.directory, deps.tasksDir, status)))
-  ).flat()
+  const claimsByPool = await Promise.all(
+    board.pools.map(async (status) => ({
+      status,
+      ids: await listClaimIds(deps.sh, deps.directory, deps.tasksDir, status),
+    })),
+  )
+  const claimedIds = claimsByPool.flatMap((p) => p.ids)
+  // Claim age: read each marker's stamp. A missing/unreadable stamp yields no
+  // entry — the board then shows the claim with no age rather than a wrong one.
+  const claimStamps: Record<string, string> = {}
+  for (const pool of claimsByPool) {
+    for (const id of pool.ids) {
+      const raw = await readText(deps, `${deps.tasksDir}/${pool.status}/.claims/${id}/claim.json`)
+      if (raw === null) continue
+      try {
+        const { claimedAt } = JSON.parse(raw) as { claimedAt?: unknown }
+        if (typeof claimedAt === "string" && !Number.isNaN(Date.parse(claimedAt))) claimStamps[id] = claimedAt
+      } catch {
+        // corrupt stamp — no age
+      }
+    }
+  }
   const cards: Record<string, readonly TaskCard[]> = {}
   for (const status of board.statuses) cards[status] = (tasks[status] ?? []).map(toCard)
 
@@ -71,6 +92,8 @@ export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
     tasks: cards,
     summary,
     claimedIds,
+    ...(Object.keys(claimStamps).length ? { claimStamps } : {}),
+    staleClaimMinutes: STALE_CLAIM_MINUTES,
     anomalies: hasAnomalies(anomalies) ? anomalies : null,
   }
   return ok(response)

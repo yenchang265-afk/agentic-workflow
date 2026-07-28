@@ -4,6 +4,7 @@ import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import type {
   ActiveResponse,
   DepLedgerView,
+  FailedAttemptView,
   HeadLedgerView,
   KindBoardInfo,
   LeaseView,
@@ -22,6 +23,20 @@ import { ok, type JsonResponse } from "../http.js"
  * The stage marker is read via driving.ts — the writes gate on the same marker,
  * so one reader, not two that drift.
  */
+
+/**
+ * A failed attempt's known fields across all three ledger shapes, parsed
+ * permissively per element: an element of an unexpected shape contributes no
+ * detail but still counts — the count and the details must never disagree.
+ */
+const AttemptSchema = z
+  .object({
+    at: z.string().optional(),
+    headSha: z.string().optional(),
+    trigger: z.string().optional(),
+    target: z.string().optional(),
+  })
+  .catch({})
 
 const LedgerSchema = z.object({
   pr: z.number(),
@@ -43,6 +58,12 @@ const HeadLedgerSchema = z.object({
   updatedAt: z.string().optional(),
   failedAttempts: z.array(z.unknown()).default([]),
 })
+
+/** The details behind a `failedAttempts` count; undefined when no element yielded any field. */
+const attemptDetails = (attempts: readonly unknown[]): readonly FailedAttemptView[] | undefined => {
+  const parsed = attempts.map((a) => AttemptSchema.parse(a)).filter((a) => Object.keys(a).length > 0)
+  return parsed.length > 0 ? parsed : undefined
+}
 
 /**
  * List and parse the `<prefix>*.json` ledger files under `runs/<kind>` for every
@@ -98,12 +119,14 @@ const readPrLedgers = async (deps: HubDeps): Promise<PrLedgerView[]> => {
     const parsed = LedgerSchema.safeParse(JSON.parse(content))
     if (!parsed.success) return null
     const l = parsed.data
+    const details = attemptDetails(l.failedAttempts)
     return {
       pr: l.pr,
       kind,
       ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
       ...(l.headShaHandled ? { headShaHandled: l.headShaHandled } : {}),
       failedAttempts: l.failedAttempts.length,
+      ...(details ? { failedAttemptDetails: details } : {}),
     }
   })
   ledgers.sort((a, b) => a.pr - b.pr || (a.kind ?? "").localeCompare(b.kind ?? ""))
@@ -115,12 +138,14 @@ const readDepLedgers = async (deps: HubDeps): Promise<DepLedgerView[]> => {
     const parsed = DepLedgerSchema.safeParse(JSON.parse(content))
     if (!parsed.success) return null
     const l = parsed.data
+    const details = attemptDetails(l.failedAttempts)
     return {
       kind,
       pkg: l.pkg,
       ...(l.versionHandled ? { versionHandled: l.versionHandled } : {}),
       ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
       failedAttempts: l.failedAttempts.length,
+      ...(details ? { failedAttemptDetails: details } : {}),
     }
   })
   ledgers.sort((a, b) => a.pkg.localeCompare(b.pkg) || a.kind.localeCompare(b.kind))
@@ -132,12 +157,14 @@ const readHeadLedgers = async (deps: HubDeps): Promise<HeadLedgerView[]> => {
     const parsed = HeadLedgerSchema.safeParse(JSON.parse(content))
     if (!parsed.success) return null
     const l = parsed.data
+    const details = attemptDetails(l.failedAttempts)
     return {
       kind,
       sha: l.sha,
       handled: l.handled,
       ...(l.updatedAt ? { updatedAt: l.updatedAt } : {}),
       failedAttempts: l.failedAttempts.length,
+      ...(details ? { failedAttemptDetails: details } : {}),
     }
   })
   ledgers.sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? "") || a.sha.localeCompare(b.sha))

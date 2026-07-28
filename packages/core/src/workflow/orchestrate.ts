@@ -68,6 +68,8 @@ export interface WorkSourceDeps {
   readonly log: Log
   /** Whether a live loop in this process is already driving the task id. */
   readonly isDriving: (id: string) => boolean
+  /** The host name stamped on scheduler events (opencode/claude/qwen). */
+  readonly hostName?: string
 }
 
 /**
@@ -146,5 +148,12 @@ export const buildWorkSources = (
         }
         return [makeCiRunsSource({ ...base, ...branchOverride })]
       }
-      return [makeBacklogSource({ ...base, isDriving: deps.isDriving, staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes) })]
+      return [
+        makeBacklogSource({
+          ...base,
+          isDriving: deps.isDriving,
+          staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
+          ...(deps.hostName ? { hostName: deps.hostName } : {}),
+        }),
+      ]
     })

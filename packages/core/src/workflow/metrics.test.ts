@@ -81,3 +81,38 @@ test("formatTokens scales counts", () => {
   assert.equal(formatTokens(12_345), "12.3k")
   assert.equal(formatTokens(2_100_000), "2.1M")
 })
+
+// --- verdictStructure: the persistable (redacted) mirror of a VerdictRecord ---
+
+test("verdictStructure returns {} for null and for a structureless record", async () => {
+  const { verdictStructure } = await import("./metrics.js")
+  assert.deepEqual(verdictStructure(null), {})
+  assert.deepEqual(verdictStructure({ verdict: "PASS" }), {})
+  assert.deepEqual(verdictStructure({ verdict: "PASS", criteria: [], axes: [] }), {})
+})
+
+test("verdictStructure carries criteria as-is and redacts finding detail/location", async () => {
+  const { verdictStructure } = await import("./metrics.js")
+  const out = verdictStructure({
+    verdict: "FAIL",
+    criteria: [{ criterion: "auth works", pass: false }],
+    axes: [
+      {
+        axis: "security",
+        verdict: "FAIL",
+        findings: [
+          {
+            severity: "critical",
+            detail: "hardcoded key sk-ant-abcdefghijklmnopqrstuvwx in client",
+            location: "src/auth.ts:7",
+          },
+        ],
+      },
+    ],
+  })
+  assert.deepEqual(out.criteria, [{ criterion: "auth works", pass: false }])
+  const finding = out.axes?.[0]?.findings?.[0]
+  assert.equal(finding?.severity, "critical")
+  assert.equal(finding?.location, "src/auth.ts:7")
+  assert.ok(finding && !finding.detail.includes("sk-ant-"), "secret must be redacted from the persisted detail")
+})

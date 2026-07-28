@@ -4,7 +4,16 @@ import { repoPath, useRepo } from "../repo.js"
 import { Chip } from "../ui/Chip.js"
 import { useJson } from "../useJson.js"
 import { pct } from "./format.js"
-import { BurnHistogram, CacheTable, DurationTable, PromptSizeTable, VerdictTable } from "./panels.js"
+import {
+  BurnHistogram,
+  CacheTable,
+  DurationTable,
+  FindingsTable,
+  ModelTable,
+  PromptSizeTable,
+  ToolTable,
+  VerdictTable,
+} from "./panels.js"
 import { TokensSummaryPanel } from "./TokensSummaryPanel.js"
 
 /**
@@ -64,6 +73,14 @@ export const MetricsTab = () => {
         <Chip title="cacheRead / (input + cacheRead), token-weighted">
           cache hit <strong>{pct(cache.ratio)}</strong>
         </Chip>
+        {(() => {
+          const elided = data.prompt.stages.reduce((n, s) => n + s.elidedSamples, 0)
+          return elided > 0 ? (
+            <Chip gate title="stage prompts a context budget cut — composed context was lost">
+              elided prompts <strong>{elided}</strong>
+            </Chip>
+          ) : null
+        })()}
       </div>
 
       <div className="summary-chips">
@@ -72,6 +89,11 @@ export const MetricsTab = () => {
             {outcome} <strong>{count}</strong>
           </Chip>
         ))}
+        {data.stoppedRetryable > 0 && (
+          <Chip title="sidecar-recorded stops flagged retryable — transient environment faults, not cap exhaustion">
+            ~transient stops <strong>{data.stoppedRetryable}</strong>
+          </Chip>
+        )}
       </div>
 
       <h2 className="section-title">Iteration burn</h2>
@@ -89,6 +111,15 @@ export const MetricsTab = () => {
       <h2 className="section-title">Prompt size</h2>
       <PromptSizeTable prompt={data.prompt} />
 
+      <h2 className="section-title">Recurring findings</h2>
+      <FindingsTable findings={data.findings} />
+
+      <h2 className="section-title">Models</h2>
+      <ModelTable models={data.models} />
+
+      <h2 className="section-title">Tools</h2>
+      <ToolTable tools={data.tools} />
+
       <h2 className="section-title">Token spend by run</h2>
       <TokensSummaryPanel />
 
@@ -100,6 +131,7 @@ export const MetricsTab = () => {
       <div className="muted token-totals">
         cache ratio over {cache.runsCovered} of {data.runsTotal} run(s) — only opencode-driven runs observe tokens
         {` · prompt size over ${data.prompt.runsCovered} of ${data.runsTotal} run(s) — both hosts report it`}
+        {` · models over ${data.models.runsCovered} of ${data.runsTotal} run(s) — only the opencode driver records the binding`}
         {firstPass.passesWithoutChecks > 0 &&
           ` · ${firstPass.passesWithoutChecks} pass(es) recorded no verdict and are excluded from first-pass yield`}
         {data.skippedRuns.length > 0 && ` · ${data.skippedRuns.length} run log(s) unreadable: ${data.skippedRuns.join(", ")}`}

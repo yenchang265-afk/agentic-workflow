@@ -543,6 +543,8 @@ export const claimFirst = async (
     readonly log?: Log
     /** Orphan predicate — defaults to `isOrphanedClaim`; use `isOrphanedPlanClaim` for `queued/` candidates. */
     readonly isOrphaned?: typeof isOrphanedClaim
+    /** Observability hook: called after an orphaned claim marker is released (stale takeover). Best-effort. */
+    readonly onOrphanRelease?: (id: string) => Promise<void> | void
     /**
      * Re-read a just-claimed task from the REAL filesystem. The candidate list
      * may come from a lagging watcher index (see `listByStatus` vs `findByIdIn`):
@@ -576,6 +578,7 @@ export const claimFirst = async (
     if (isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(task.id), markerStale })) {
       opts.log?.("warn", `releasing orphaned claim marker for ${task.id} — its claimer died before the stage started`)
       await releaseClaim($, task)
+      await opts.onOrphanRelease?.(task.id)
       if (await claimTask($, task)) {
         const fresh = await settle(task)
         if (fresh) return { claimed: fresh, heldIds }
