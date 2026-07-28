@@ -34,7 +34,7 @@ Apply this skill when:
 
 This skill needs a live, responsive user. **Do not invoke it in an unattended pipeline** — the BUILD/VERIFY/REVIEW stage turns `/agentic-workflow:engineering` drives on `session.idle`, CI runs, scheduled runs, autonomous loops. If you're in one of those and the ask is underspecified, that's a blocker to report, not a gap to guess at.
 
-It is **mandatory** in `/agentic-workflow:engineering new <idea>` and `retask <id>`: every run interviews the user before a draft is written or rewritten. The interview runs in the **calling agent's own turn** — subagents cannot converse with the user — and only once the user confirms does the calling agent hand the confirmed intent to the `workflow-plan-author` subagent to write the file. Nothing is queued for execution until a human later runs `approve`.
+It is **mandatory** in `/agentic-workflow:engineering new <idea>` and `retask <id>`: every run interviews the user before a draft is written or rewritten. The interview runs in the **calling agent's own turn** — subagents cannot converse with the user — and only once the user confirms does the calling agent hand the confirmed intent to the `workflow-task-author` subagent to write the file. Nothing is queued for execution until a human later runs `approve`.
 
 ## The Process
 
@@ -111,7 +111,7 @@ Here's what I now think you want:
 Yes / no / refine?
 ```
 
-`Success` and `Acceptance` are different artifacts and both stay: `Success` is the human win in a sentence, `Acceptance` is the set of checks a later build or verify stage can actually run. Inside `new` and `retask`, `Acceptance` is what you hand to `workflow-plan-author` as the task's acceptance criteria — so keep it to 2–5 lines and keep every line testable. For a pure ad-hoc interview with no downstream task file, it's optional.
+`Success` and `Acceptance` are different artifacts and both stay: `Success` is the human win in a sentence, `Acceptance` is the set of checks a later build or verify stage can actually run. Inside `new` and `retask`, `Acceptance` is what you hand to `workflow-task-author` as the task's acceptance criteria — so keep it to 2–5 lines and keep every line testable. For a pure ad-hoc interview with no downstream task file, it's optional.
 
 `Out of scope` is non-negotiable in both branches. Half of misalignment is silent disagreement about what is *not* being built.
 
@@ -142,7 +142,7 @@ It's checkable rather than a vibe, and it has a budget. A typical interview is 3
 
 The deliverable is a **confirmed statement of intent**: the Step 4 restate with an explicit yes behind it, not a **hollow yes**. Specs, plans, and task lists are downstream; they consume this.
 
-Inside `new` and `retask`, that confirmed intent — the goal plus its 2–5 acceptance criteria — is what the calling agent hands to the `workflow-plan-author` subagent. Elsewhere, if the user wants the intent to survive the session or travel to another collaborator, offer to save it to `docs/intent/[topic].md`. Save only after they confirm: the doc itself implies a yes.
+Inside `new` and `retask`, that confirmed intent — the goal plus its 2–5 acceptance criteria — is what the calling agent hands to the `workflow-task-author` subagent. Elsewhere, if the user wants the intent to survive the session or travel to another collaborator, offer to save it to `docs/intent/[topic].md`. Save only after they confirm: the doc itself implies a yes.
 
 ## Example
 

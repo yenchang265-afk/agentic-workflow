@@ -51,7 +51,7 @@ flowchart TB
 
     subgraph authoring["撰寫 + 把關點 — /agentic-workflow:engineering new/retask/approve · 互動式，人類參與迴圈"]
         direction TB
-        new["<b>/agentic-workflow:engineering new &lt;idea&gt;</b><br/>主 agent 會透過訪談與你互動（interview-me），<br/>然後由 workflow-plan-author 寫下它<br/>（task-backlog-management）<br/><i>draft/ 中的無計畫草稿</i>"]
+        new["<b>/agentic-workflow:engineering new &lt;idea&gt;</b><br/>主 agent 會透過訪談與你互動（interview-me），<br/>然後由 workflow-task-author 寫下它<br/>（task-backlog-management）<br/><i>draft/ 中的無計畫草稿</i>"]
         approve{{"<b>/agentic-workflow:engineering approve &lt;id&gt;</b><br/>外掛把已審查的草稿排入佇列<br/>★ 人工把關點 1 —— 任務"}}
         approveplan{{"<b>/agentic-workflow:engineering approve &lt;id&gt;</b><br/>外掛驗證已暫存的計畫<br/>★ 人工把關點 2 —— 計畫<br/>（replan &lt;id&gt; &lt;why&gt; → 送回 queued/）"}}
     end
@@ -128,11 +128,11 @@ PLAN 只在按需時執行（`plan <id>` —— `claim`/`watch`
 
 | 指令 | 由誰處理 | 子 agent | 寫入權限 | 載入的 skill | 產出 |
 |---------|-----------|----------|--------------|---------------|----------|
-| `/agentic-workflow:engineering new <idea>` | 外掛 → agent | `workflow-plan-author` | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | `draft/` 中的無計畫草稿 |
-| `/agentic-workflow:engineering retask <id> [note]` | 外掛（安置任務）→ agent（重塑） | `workflow-plan-author`（retask 模式） | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | **就地**在 `draft/` 中被重寫（相同 id）；`queued/` 的任務會先被移回 `draft/`，核准撤銷；`plan-review/` 之後拒絕（改用 `replan`） |
+| `/agentic-workflow:engineering new <idea>` | 外掛 → agent | `workflow-task-author` | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | `draft/` 中的無計畫草稿 |
+| `/agentic-workflow:engineering retask <id> [note]` | 外掛（安置任務）→ agent（重塑） | `workflow-task-author`（retask 模式） | 僅限任務檔案（bash ❌） | `interview-me`、`task-backlog-management` | **就地**在 `draft/` 中被重寫（相同 id）；`queued/` 的任務會先被移回 `draft/`，核准撤銷；`plan-review/` 之後拒絕（改用 `replan`） |
 | `/agentic-workflow:engineering approve [id]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 由資料夾驅動的把關點：draft → `queued/`、plan-review → `in-progress/`、in-review → `completed/` |
 | `/agentic-workflow:engineering replan [id] [why]` | 僅外掛（agent 不寫入任何東西） | — | — | — | 任務重新排入 `queued/`，拒絕會被稽核 |
-| PLAN（在迴圈中，作用於 `queued/` 中的任務） | driver → agent | `workflow-plan-author`（任務模式） | 僅限任務檔案 | `planning-and-task-breakdown`（相關時 + `api-and-interface-design`、`deprecation-and-migration`、`documentation-and-adrs`） | 就地寫入 `## Implementation Plan` → 任務暫存進 `plan-review/` |
+| PLAN（在迴圈中，作用於 `queued/` 中的任務） | driver → agent | `workflow-plan-author` | 僅限任務檔案 | `planning-and-task-breakdown`（相關時 + `api-and-interface-design`、`deprecation-and-migration`、`documentation-and-adrs`） | 就地寫入 `## Implementation Plan` → 任務暫存進 `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | 外掛 driver（`plugins/opencode/src/workflow/driver.ts`） | 生成以下三個階段 agent | — | `workflow-orchestration` 協定 | 階段排序、認領、快照、執行紀錄 |
 | BUILD（也是 `/build`） | driver → agent | `workflow-build` | edit ✅ bash ✅ | `incremental-implementation`、`test-driven-development`（相關時 + `frontend-ui-engineering`、`observability-and-instrumentation`、`code-simplification`） | 程式碼 + 每次疊代一個 commit checkpoint |
 | VERIFY（也是 `/verify`） | driver → agent | `workflow-verify` | edit ❌ bash：測試執行器白名單 | `debugging-and-error-recovery`（FAIL 時） | 可信的 `workflow_verdict` PASS/FAIL/ERROR |

@@ -29,12 +29,13 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
 
 /**
  * The agent a verb spawns OUTSIDE the loop. `new` step 4 and `retask` step 4
- * invoke `workflow-plan-author` to write draft files before any loop exists, so
+ * invoke `workflow-task-author` to write draft files before any loop exists, so
  * there is no StageDef for `modelFor` to resolve and no stage fire to carry a
  * model — `agentModels` is the only source. `plan` is deliberately absent: its
- * spawn IS the PLAN stage, already governed by `stageModels.plan`.
+ * spawn IS the PLAN stage, already governed by `stageModels.plan`, and it runs a
+ * different agent (`workflow-plan-author`) for exactly that reason.
  */
-const VERB_DRAFT_AGENT: Record<string, string> = { new: "workflow-plan-author", retask: "workflow-plan-author" }
+const VERB_DRAFT_AGENT: Record<string, string> = { new: "workflow-task-author", retask: "workflow-task-author" }
 
 /**
  * The line appended to a sliced command body naming the drafting model, or null
@@ -86,7 +87,7 @@ export const agentModelPatch = (raw: unknown): Readonly<Record<string, string>> 
  * exists for `modelFor` to resolve — `agentModels` is their only source. Used to
  * tell a typo'd key from a legitimate one.
  */
-const NON_STAGE_AGENTS = ["workflow-plan-author", "workflow-plan"] as const
+const NON_STAGE_AGENTS = ["workflow-task-author", "workflow-plan"] as const
 
 /** Every agent `agentModels` may legitimately name, across the enabled kinds. */
 const knownAgentNames = (config: Config): string[] => {

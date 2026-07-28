@@ -33,7 +33,7 @@ authoring + gates (interactive /agentic-workflow:engineering verbs, BEFORE the l
 
 the loop (/agentic-workflow:engineering plan <id> or /agentic-workflow:engineering claim — this skill):
   queued task (planless — `plan <id>`/workflow_start only; claim never auto-plans):
-    workflow_start ─▶ workflow_stage(plan) ─▶ spawn workflow-plan-author (task mode)
+    workflow_start ─▶ workflow_stage(plan) ─▶ spawn workflow-plan-author
         ─▶ workflow_advance ─▶ park (task → plan-review/, loop over — never blocks on a human)
   in-progress task (plan approved):
     workflow_start/workflow_claim ─▶ workflow_stage(build) ─▶ spawn workflow-build ─▶ workflow_advance
@@ -287,7 +287,7 @@ Three further opt-in kinds drive the same way (`workflow_claim({kind})` →
   trigger claims and drives the next approved task. Within your turn,
   BUILD → VERIFY → REVIEW still advance without human turns.
 - **The interview runs in the main agent.** `/agentic-workflow:engineering new` interviews
-  the user directly (subagents can't converse); the `workflow-plan-author`
+  the user directly (subagents can't converse); the `workflow-task-author`
   subagent only writes the confirmed file(s). A **heavy idea is split** during
   that interview into sibling drafts (vertical, independently shippable slices
   ordered by `priority`) plus one `type: epic` tracking draft that is never

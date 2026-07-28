@@ -9,7 +9,7 @@ Run the **PLAN** stage of the agentic engineering loop
 
 **$ARGUMENTS**
 
-Delegated to the `workflow-plan-author` subagent in task mode, which reads the
+Delegated to the `workflow-plan-author` subagent, which reads the
 task and the relevant code and writes the `## Implementation Plan` onto the
 task file **in place** (the prompt above carries the task file's path). It
 never touches source code. This stage is fired by the loop driver on a

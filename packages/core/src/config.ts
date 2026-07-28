@@ -190,7 +190,9 @@ const BaseConfigSchema = z.object({
     .default({}),
   /**
    * Agent name → model, for spawns that are NOT stage runs: the draft authoring
-   * `workflow-plan-author` does in `new`/`retask`, and the ad-hoc `workflow-plan`.
+   * `workflow-task-author` does in `new`/`retask`, and the ad-hoc `workflow-plan`.
+   * (The loop's PLAN stage runs `workflow-plan-author`, which IS a stage and so
+   * belongs to `stageModels.plan` instead.)
    * Those have no `StageDef`, so `modelFor` has nothing to resolve and no fire
    * payload carries a model for them. Deliberately separate from
    * `workflows.<kind>.stageModels`: folding drafting into `stageModels.plan`

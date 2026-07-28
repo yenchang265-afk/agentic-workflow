@@ -287,9 +287,9 @@ test("a verb whose block slices to nothing keeps the full body, not just the dra
     "<!-- /aw:verb claim -->",
   ].join("\n")
   const output = { parts: [{ type: "text", text: emptyBlock }] }
-  await runCommand("new add rate limiting", output, JSON.stringify({ agentModels: { "workflow-plan-author": "anthropic/claude-haiku-4-5" } }))
+  await runCommand("new add rate limiting", output, JSON.stringify({ agentModels: { "workflow-task-author": "anthropic/claude-haiku-4-5" } }))
   const text = output.parts[0]!.text!
-  assert.match(text, /workflow-plan-author/, "the drafting model note still rides along")
+  assert.match(text, /workflow-task-author/, "the drafting model note still rides along")
   assert.ok(text.replace(/Invoke the[\s\S]*$/, "").trim().length > 0, "the note must not be the ENTIRE body")
 })
 
@@ -370,10 +370,10 @@ test("the failure override is inert when the deterministic half succeeds", async
  * stage run and so has no StageDef and no fire payload to carry one.
  */
 test("draftModelNote names the configured drafting model for new and retask only", () => {
-  const config = parseConfig({ agentModels: { "workflow-plan-author": "anthropic/claude-haiku-4-5" } }) as Config
+  const config = parseConfig({ agentModels: { "workflow-task-author": "anthropic/claude-haiku-4-5" } }) as Config
   for (const verb of ["new", "retask"]) {
     const note = draftModelNote(config, "engineering", verb)
-    assert.match(note!, /`workflow-plan-author` subagent with the model `anthropic\/claude-haiku-4-5`/, verb)
+    assert.match(note!, /`workflow-task-author` subagent with the model `anthropic\/claude-haiku-4-5`/, verb)
     // OpenCode takes provider-qualified ids, so the prefix must survive here —
     // only the Claude host strips it (bareModel).
     assert.match(note!, /anthropic\//, "the provider prefix must not be stripped on this host")

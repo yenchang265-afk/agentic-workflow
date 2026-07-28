@@ -91,7 +91,7 @@ flowchart LR
    interviews you** (a restate-and-confirm at minimum, a full interview when
    the idea is vague) to pin down the goal and testable acceptance criteria and
    confirms the draft with you; subagents can't converse, so it then hands the
-   confirmed intent to the `workflow-plan-author` subagent, which writes the
+   confirmed intent to the `workflow-task-author` subagent, which writes the
    planless draft to `draft/`. A **heavy idea is split into sibling drafts** —
    vertical, independently shippable slices ordered by `priority`, plus one
    `type: epic` tracking draft that is never approved. See
@@ -101,7 +101,7 @@ flowchart LR
    No plan yet, by design.
 3. The loop plans it: `/agentic-workflow:engineering plan <id>` now, or a `/agentic-workflow:engineering watch`
    session when no build work remains. The PLAN stage (the
-   `workflow-plan-author` agent in task mode) reads the code, writes the
+   `workflow-plan-author` agent) reads the code, writes the
    `## Implementation Plan` onto the task file in place, and the driver
    parks the task in `plan-review/` — the loop exits rather than waiting.
 4. `/agentic-workflow:engineering approve <id>` — the plugin validates the plan
@@ -142,7 +142,7 @@ flowchart LR
   restate-and-confirm when the idea already carries a clear goal and testable
   criteria, one question at a time until there's an explicit yes on a
   restated intent when it doesn't. It also confirms the drafted task before
-  handing it to the `workflow-plan-author` subagent to write (subagents can't
+  handing it to the `workflow-task-author` subagent to write (subagents can't
   converse with you).
 - **Two approvals (always).** `/agentic-workflow:engineering approve <id>` on a draft gates
   the task (scope + acceptance) into `queued/`; the same verb on a parked

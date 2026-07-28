@@ -322,14 +322,14 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   ```json
   {
     "agentModels": {
-      "workflow-plan-author": "anthropic/claude-haiku-4-5",
+      "workflow-task-author": "anthropic/claude-haiku-4-5",
       "workflow-plan": "anthropic/claude-haiku-4-5"
     }
   }
   ```
 
   符合條件的有兩個：`/agentic-workflow:engineering new` 與 `retask` 用來
-  撰寫草稿檔案的 `workflow-plan-author`（在任何迴圈存在之前就執行），
+  撰寫草稿檔案的 `workflow-task-author`（在任何迴圈存在之前就執行），
   以及臨時性的 `/agentic-workflow:plan` 指令所用的 `workflow-plan`。兩者
   背後都沒有 manifest 階段，因此沒有任何 fire payload 會為它們帶上模型。
 
@@ -367,8 +367,9 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   因此在任何主機上，`agentModels` 都不會影響 `stageModels`。
 
   這個鍵**刻意與 `stageModels` 分開**，而不是併入 `stageModels.plan`：
-  草稿撰寫與 PLAN 階段都跑 `workflow-plan-author`，若共用一個鍵，把
-  草稿撰寫指向便宜模型就會連帶悄悄改動規劃階段，反之亦然。設定
+  草稿撰寫與 PLAN 階段是兩件不同的工作，由不同的 agent 執行
+  （`workflow-task-author` 與 `workflow-plan-author`），且只有後者是階段。
+  把草稿撰寫指向便宜模型不應連帶悄悄改動規劃階段，反之亦然。設定
   `agentModels` 永遠不影響階段；設定 `stageModels` 也永遠不影響草稿撰寫。
 
 ## 管理面板（`hub`——僅限使用者層級）

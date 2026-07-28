@@ -153,7 +153,7 @@ const setupScratchConfig = () => {
 
 // --- driving ---
 
-const REQUIRED_AGENTS = ["workflow-plan-author", "workflow-build", "workflow-verify", "workflow-review"]
+const REQUIRED_AGENTS = ["workflow-task-author", "workflow-plan-author", "workflow-build", "workflow-verify", "workflow-review"]
 
 const assertPluginLoaded = async (client) => {
   const { data, error } = await client.app.agents()
@@ -266,7 +266,7 @@ const main = async () => {
     if (sessionErr) throw new Error(`session.create failed: ${JSON.stringify(sessionErr)}`)
     log(`session created: ${session.id}`)
 
-    // Step 1: new — real LLM turn (interview-me + workflow-plan-author). The
+    // Step 1: new — real LLM turn (interview-me + workflow-task-author). The
     // interview always ends the first turn on a restate-and-confirm question,
     // so a headless run must answer it: nudge with a confirmation prompt
     // whenever the draft hasn't appeared yet.

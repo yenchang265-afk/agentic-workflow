@@ -475,7 +475,7 @@ const stageModelWarnings = (): string[] =>
  * and the ad-hoc planner) and so have no StageDef to inherit from.
  */
 const knownAgentNames = (): string[] => {
-  const names = new Set(["workflow-plan-author", "workflow-plan"])
+  const names = new Set(["workflow-task-author", "workflow-plan"])
   for (const kind of enabledWorkflowKinds(config)) {
     try {
       for (const def of manifestFor(kind).manifest.stages) if (def.agent) names.add(def.agent)
@@ -848,7 +848,7 @@ const firePayload = (state: WorkflowState, id: string) => {
     note:
       state.stage === "plan"
         ? spawnNote(
-            "PLAN stage: spawn the subagent named in the `agent` field in task mode",
+            "PLAN stage: spawn the subagent named in the `agent` field",
             "; on workflow_advance the task parks in plan-review/ for the human gate",
           )
         : spawnNote("call workflow_stage, then spawn the subagent named in the `agent` field"),

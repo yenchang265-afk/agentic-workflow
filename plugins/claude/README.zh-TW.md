@@ -136,8 +136,9 @@ sitter 在 `/agentic-workflow:pr-sitter` 上。
 
 ## What's inside
 
-- `agents/` —— `workflow-plan-author`（寫入已確認的草稿；以任務模式執行
-  迴圈的 PLAN 階段）、`workflow-plan`（獨立的唯讀規劃器）、三個建置階段
+- `agents/` —— `workflow-task-author`（寫入已確認的草稿）、
+  `workflow-plan-author`（迴圈的 PLAN 階段——把實作計畫寫到已排入佇列的
+  任務上）、`workflow-plan`（獨立的唯讀規劃器）、三個建置階段
   子 agent `workflow-build` / `workflow-verify` / `workflow-review`、pr-sitter 的
   階段子 agent `workflow-pr-triage` / `workflow-pr-fix` / `workflow-pr-publish`，
   以及各個選擇啟用類型的 sitter 階段子 agent：review-sitter 的
