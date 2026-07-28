@@ -5,83 +5,34 @@ description: Drives development with a failing test first; bugs get a reproducti
 
 # Test-Driven Development
 
-## Overview
+Write a failing test before the code that makes it pass. Tests are **proof** —
+"seems right" is not done.
 
-Write a failing test before writing the code that makes it pass. For bug fixes, reproduce the bug with a test before attempting a fix. Tests are proof — "seems right" is not done. A codebase with good tests is an AI agent's superpower; a codebase without tests is a liability.
+Pure configuration, documentation, and static-content changes have no behavior
+to prove; skip them. For browser-based changes, pair this skill with
+`browser-testing-with-devtools` for runtime verification.
 
-## When to Use
+## The cycle
 
-- Implementing any new logic or behavior
-- Fixing any bug (the Prove-It Pattern)
-- Modifying existing functionality
-- Adding edge case handling
-- Any change that could break existing behavior
+**RED** — write the test first and run it. It must fail, and fail for the reason
+you expect. A test that passes immediately proves nothing.
 
-**When NOT to use:** Pure configuration changes, documentation updates, or static content changes that have no behavioral impact.
+**GREEN** — write the minimum code to pass. No extra cases, no speculative
+abstraction.
 
-**Related:** For browser-based changes, combine TDD with runtime verification — see `browser-testing-with-devtools`.
+**REFACTOR** — improve naming, extract shared logic, remove duplication, with
+tests green. Re-run the tests after every refactor step.
 
-## The TDD Cycle
+Repeat per behavior. Worked RED→GREEN example:
+`references/testing-patterns.md` → The RED/GREEN Cycle.
 
-```
-    RED                GREEN              REFACTOR
- Write a test    Write minimal code    Clean up the
- that fails  ──→  to make it pass  ──→  implementation  ──→  (repeat)
-      │                  │                    │
-      ▼                  ▼                    ▼
-   Test FAILS        Test PASSES         Tests still PASS
-```
+**Done when** every acceptance criterion has a test that failed before the
+implementation existed and passes after it.
 
-### Step 1: RED — Write a Failing Test
+## Prove-It (bug fixes)
 
-Write the test first. It must fail. A test that passes immediately proves nothing.
-
-```typescript
-// RED: This test fails because createTask doesn't exist yet
-describe('TaskService', () => {
-  it('creates a task with title and default status', async () => {
-    const task = await taskService.createTask({ title: 'Buy groceries' });
-
-    expect(task.id).toBeDefined();
-    expect(task.title).toBe('Buy groceries');
-    expect(task.status).toBe('pending');
-    expect(task.createdAt).toBeInstanceOf(Date);
-  });
-});
-```
-
-### Step 2: GREEN — Make It Pass
-
-Write the minimum code to make the test pass. Don't over-engineer:
-
-```typescript
-// GREEN: Minimal implementation
-export async function createTask(input: { title: string }): Promise<Task> {
-  const task = {
-    id: generateId(),
-    title: input.title,
-    status: 'pending' as const,
-    createdAt: new Date(),
-  };
-  await db.tasks.insert(task);
-  return task;
-}
-```
-
-### Step 3: REFACTOR — Clean Up
-
-With tests green, improve the code without changing behavior:
-
-- Extract shared logic
-- Improve naming
-- Remove duplication
-- Optimize if necessary
-
-Run tests after every refactor step to confirm nothing broke.
-
-## The Prove-It Pattern (Bug Fixes)
-
-When a bug is reported, **do not start by trying to fix it.** Start by writing a test that reproduces it.
+A bug report is a test request before it is a fix request. **Do not start by
+trying to fix it.**
 
 ```
 Bug report arrives
@@ -90,7 +41,7 @@ Bug report arrives
   Write a test that demonstrates the bug
        │
        ▼
-  Test FAILS (confirming the bug exists)
+  Test FAILS (confirming the bug exists — and that you understood it)
        │
        ▼
   Implement the fix
@@ -102,132 +53,51 @@ Bug report arrives
   Run full test suite (no regressions)
 ```
 
-**Example:**
+A fix without a failing-first reproduction is a guess: you cannot tell a bug you
+fixed from a bug you failed to trigger. Worked example:
+`references/testing-patterns.md` → The Prove-It Pattern.
 
-```typescript
-// Bug: "Completing a task doesn't update the completedAt timestamp"
+## What to write
 
-// Step 1: Write the reproduction test (it should FAIL)
-it('sets completedAt when task is completed', async () => {
-  const task = await taskService.createTask({ title: 'Test' });
-  const completed = await taskService.completeTask(task.id);
+**The Beyonce Rule:** if you liked it, you should have put a test on it.
+Infrastructure changes, refactors, and migrations are not responsible for
+catching your bugs — your tests are.
 
-  expect(completed.status).toBe('completed');
-  expect(completed.completedAt).toBeInstanceOf(Date);  // This fails → bug confirmed
-});
+Classify every test by the resources it consumes, and keep the suite
+bottom-heavy: the vast majority small, because small tests are fast, reliable,
+and easy to debug when they fail.
 
-// Step 2: Fix the bug
-export async function completeTask(id: string): Promise<Task> {
-  return db.tasks.update(id, {
-    status: 'completed',
-    completedAt: new Date(),  // This was missing
-  });
-}
+| Size | Constraints | Speed | Reach for it when |
+|------|------------|-------|-------------------|
+| **Small** | Single process, no I/O, network, or database | Milliseconds | The behavior is pure logic with no side effects |
+| **Medium** | Multi-process OK, localhost only, no external services | Seconds | The behavior crosses a boundary — API, database, file system |
+| **Large** | Multi-machine OK, external services allowed | Minutes | A critical user flow must work end-to-end; limit these to critical paths |
 
-// Step 3: Test passes → bug fixed, regression guarded
-```
+Rules for each test, with worked examples in `references/testing-patterns.md`:
 
-## The Test Pyramid
-
-Invest testing effort according to the pyramid — most tests should be small and fast, with progressively fewer tests at higher levels:
-
-```
-          ╱╲
-         ╱  ╲         E2E Tests (~5%)
-        ╱    ╲        Full user flows, real browser
-       ╱──────╲
-      ╱        ╲      Integration Tests (~15%)
-     ╱          ╲     Component interactions, API boundaries
-    ╱────────────╲
-   ╱              ╲   Unit Tests (~80%)
-  ╱                ╲  Pure logic, isolated, milliseconds each
- ╱──────────────────╲
-```
-
-**The Beyonce Rule:** If you liked it, you should have put a test on it. Infrastructure changes, refactoring, and migrations are not responsible for catching your bugs — your tests are. If a change breaks your code and you didn't have a test for it, that's on you.
-
-### Test Sizes (Resource Model)
-
-Beyond the pyramid levels, classify tests by what resources they consume:
-
-| Size | Constraints | Speed | Example |
-|------|------------|-------|---------|
-| **Small** | Single process, no I/O, no network, no database | Milliseconds | Pure function tests, data transforms |
-| **Medium** | Multi-process OK, localhost only, no external services | Seconds | API tests with test DB, component tests |
-| **Large** | Multi-machine OK, external services allowed | Minutes | E2E tests, performance benchmarks, staging integration |
-
-Small tests should make up the vast majority of your suite. They're fast, reliable, and easy to debug when they fail.
-
-### Decision Guide
-
-```
-Is it pure logic with no side effects?
-  → Unit test (small)
-
-Does it cross a boundary (API, database, file system)?
-  → Integration test (medium)
-
-Is it a critical user flow that must work end-to-end?
-  → E2E test (large) — limit these to critical paths
-```
-
-## Writing Good Tests
-
-Worked examples for every rule live in `references/testing-patterns.md`:
-
-- **Test state, not interactions.** Assert on the outcome of an operation, never on which methods were called — interaction tests break under refactor even when behavior is unchanged.
-- **DAMP over DRY.** A test reads like a specification: self-contained and descriptive, with duplication acceptable when it keeps each test independently understandable.
-- **Prefer real implementations** — then fakes, then stubs, then mocks (sparingly). Mock only at boundaries where the real dependency is slow, non-deterministic, or side-effectful.
+- **Test state, not interactions.** Assert on the outcome of an operation, never
+  on which methods were called — interaction tests break under refactor even
+  when behavior is unchanged.
+- **DAMP over DRY.** A test reads like a specification: self-contained and
+  descriptive, with duplication acceptable when it keeps each test
+  independently understandable.
+- **Prefer real implementations** — then fakes, then stubs, then mocks
+  (sparingly). Mock only at boundaries where the real dependency is slow,
+  non-deterministic, or side-effectful.
 - **Arrange-Act-Assert** structure in every test.
-- **One assertion-concept per test**, named for the behavior it verifies ("sets completedAt when task is completed" — never "works").
+- **One assertion-concept per test**, named for the behavior it verifies ("sets
+  completedAt when task is completed" — never "works").
 
-Anti-patterns (flaky tests, snapshot abuse, over-mocking, shared state) are catalogued in `references/testing-patterns.md` → Test Anti-Patterns.
-
-## When to Use Subagents for Testing
-
-For complex bug fixes, spawn a subagent to write the reproduction test:
-
-```
-Main agent: "Spawn a subagent to write a test that reproduces this bug:
-[bug description]. The test should fail with the current code."
-
-Subagent: Writes the reproduction test
-
-Main agent: Verifies the test fails, then implements the fix,
-then verifies the test passes.
-```
-
-This separation ensures the test is written without knowledge of the fix, making it more robust.
-
-## See Also
-
-For detailed testing patterns, examples, and anti-patterns across frameworks, see `references/testing-patterns.md`.
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "I'll write tests after the code works" | You won't. And tests written after the fact test implementation, not behavior. |
-| "This is too simple to test" | Simple code gets complicated. The test documents the expected behavior. |
-| "I tested it manually" | Manual testing doesn't persist. Tomorrow's change might break it with no way to know. |
-| "It's just a prototype" | Prototypes become production code. Tests from day one prevent the "test debt" crisis. |
-
-## Red Flags
-
-- Tests that pass on the first run (they may not be testing what you think)
-- "All tests pass" but no tests were actually run
-- Bug fixes without reproduction tests
-- Skipping tests to make the suite pass
+Flaky tests, snapshot abuse, over-mocking, and shared state are catalogued in
+`references/testing-patterns.md` → Test Anti-Patterns.
 
 ## Verification
 
-After completing any implementation:
-
-- [ ] Every new behavior has a corresponding test
-- [ ] All tests pass: `npm test`
-- [ ] Bug fixes include a reproduction test that failed before the fix
-- [ ] Test names describe the behavior being verified
-- [ ] No tests were skipped or disabled
+- [ ] Every new behavior has a test that failed before the implementation existed
+- [ ] Every bug fix has a reproduction test that failed before the fix
+- [ ] Test names describe the behavior verified, not the function called
+- [ ] The full suite passes with no test skipped, disabled, or weakened to get there
 - [ ] Coverage hasn't decreased (if tracked)
 
-One clean run per code state — see `references/definition-of-done.md` → Verification Discipline.
+One clean run per code state — see `references/definition-of-done.md` →
+Verification Discipline.

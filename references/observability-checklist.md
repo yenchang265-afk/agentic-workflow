@@ -32,6 +32,34 @@ Telemetry without a question is noise. Before instrumenting anything:
 - [ ] External service calls logged with metadata only: endpoint, status, latency, attempt count, sanitized identifiers
 - [ ] Actual log output spot-checked: structured fields, not `[object Object]`
 
+### Example
+
+```typescript
+// BAD: string interpolation — unqueryable, inconsistent
+logger.info(`Payment ${id} failed for user ${userId} after ${n} retries`);
+
+// GOOD: stable event name + structured fields
+logger.warn({
+  event: 'payment_failed',
+  paymentId: id,
+  provider: 'stripe',
+  errorCode: err.code,
+  attempt: n,
+}, 'payment failed');
+```
+
+A child logger per request is what makes the correlation ID automatic rather than something every call site must remember:
+
+```typescript
+// Express: child logger per request, ID propagated downstream
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] ?? crypto.randomUUID();
+  req.log = logger.child({ requestId: req.id });
+  res.setHeader('x-request-id', req.id);
+  next();
+});
+```
+
 ## Metrics
 
 - [ ] **RED** instrumented for every endpoint and every external dependency: Rate, Errors, Duration
@@ -42,6 +70,26 @@ Telemetry without a question is noise. Before instrumenting anything:
 - [ ] Status codes grouped by class (`5xx`, not `503`)
 - [ ] Queue depth and processing duration tracked for every worker/queue
 
+### Example
+
+The vendor-neutral path is the OpenTelemetry metrics API. This example uses Prometheus' `prom-client` — one common backend choice, not the only one; the RED/USE and cardinality rules are identical either way.
+
+```typescript
+import { Histogram } from 'prom-client';
+
+const httpDuration = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration',
+  labelNames: ['method', 'route', 'status_class'],  // '2xx', not '200'
+  buckets: [0.05, 0.1, 0.25, 0.5, 1, 2.5, 5],
+});
+```
+
+```
+OK as label:    route="/api/tasks/:id"   status_class="5xx"   provider="stripe"
+NEVER a label:  user_id, email, request_id, full URL, error message text
+```
+
 ## Distributed Tracing
 
 - [ ] OpenTelemetry (or equivalent) initialized at service startup, before other imports
@@ -51,6 +99,22 @@ Telemetry without a question is noise. Before instrumenting anything:
 - [ ] Manual spans only around meaningful internal units of work, with the attributes on-call will filter by
 - [ ] No secrets or PII as span attributes
 - [ ] Head-based sampling at a low default rate; 100% of errors kept if tail sampling is available
+
+### Example
+
+Auto-instrumentation covers HTTP, gRPC, and common DB clients with near-zero code:
+
+```typescript
+// tracing.ts — must be imported before anything else
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+
+const sdk = new NodeSDK({
+  serviceName: 'checkout-service',
+  instrumentations: [getNodeAutoInstrumentations()],
+});
+sdk.start();
+```
 
 ## Alerting
 
