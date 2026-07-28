@@ -5,6 +5,7 @@ import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
+import { RunTimeline } from "./RunTimeline.js"
 import { TokenPanel } from "./TokenPanel.js"
 
 /** Run history: list of run logs; expanding one shows stage sections + summary tables. */
@@ -36,11 +37,24 @@ const StageActivityLine = ({ activity }: { activity: StageActivity }) => (
   </div>
 )
 
+/** How long ago a live stage started, coarse — "running 3m". */
+const runningFor = (startedAt?: string): string => {
+  if (!startedAt) return ""
+  const ms = Date.now() - Date.parse(startedAt)
+  if (Number.isNaN(ms) || ms < 0) return ""
+  return ms >= 60_000 ? `, running ${Math.round(ms / 60_000)}m` : `, running ${Math.round(ms / 1000)}s`
+}
+
 const RunDetail = ({ id }: { id: string }) => {
   const { repoId } = useRepo()
+  const { versions } = useEvents()
+  // `versions.tokens` too: live per-stage flushes rewrite the sidecar and emit
+  // `tokens` (deliberately not `run`, which collapses the whole panel) — the
+  // timeline and live strip come from that same sidecar.
   const { data: detail, error } = useJson<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId), [
     id,
     repoId,
+    versions.tokens,
   ])
 
   if (error) return <div className="error-banner">{error}</div>
@@ -48,19 +62,81 @@ const RunDetail = ({ id }: { id: string }) => {
 
   return (
     <div className="run-detail">
-      {detail.snapshot && (
+      {detail.live && (
         <div className="summary-chips">
           <Chip gate>
-            snapshot: parked at <strong>{detail.snapshot.stage}</strong> (iteration {detail.snapshot.iteration + 1})
-            {detail.snapshot.branch ? ` on ${detail.snapshot.branch}` : ""}
+            now: <strong>{detail.live.lens ? `${detail.live.stage} (${detail.live.lens})` : detail.live.stage}</strong>{" "}
+            #{detail.live.iteration}
+            {runningFor(detail.live.startedAt)} · {detail.live.host}
           </Chip>
-          {detail.snapshot.artifactStages && detail.snapshot.artifactStages.length > 0 && (
-            <Chip>
-              a resume would carry: <strong>{detail.snapshot.artifactStages.join(", ")}</strong>
-            </Chip>
-          )}
         </div>
       )}
+      {detail.snapshot && (
+        <>
+          <div className="summary-chips">
+            <Chip gate>
+              snapshot: parked at <strong>{detail.snapshot.stage}</strong> (iteration {detail.snapshot.iteration + 1})
+              {detail.snapshot.branch ? ` on ${detail.snapshot.branch}` : ""}
+            </Chip>
+            {detail.snapshot.kind && (
+              <Chip>
+                kind <strong>{detail.snapshot.kind}</strong>
+              </Chip>
+            )}
+            {detail.snapshot.taskId && (
+              <Chip>
+                task <strong>{detail.snapshot.taskId}</strong>
+              </Chip>
+            )}
+            {detail.snapshot.worktree && (
+              <Chip title="the isolated worktree a resume would re-enter">
+                worktree <span className="muted">{detail.snapshot.worktree}</span>
+              </Chip>
+            )}
+            {detail.snapshot.artifactStages && detail.snapshot.artifactStages.length > 0 && (
+              <Chip>
+                a resume would carry: <strong>{detail.snapshot.artifactStages.join(", ")}</strong>
+              </Chip>
+            )}
+          </div>
+          {detail.snapshot.isolationWarning && (
+            <div className="summary-chips">
+              <Chip gate title="this run proceeded WITHOUT git isolation — its edits landed in the working copy">
+                no isolation: {detail.snapshot.isolationWarning}
+              </Chip>
+            </div>
+          )}
+          {detail.snapshot.goal && <div className="muted">{detail.snapshot.goal}</div>}
+          {detail.snapshot.attempts && detail.snapshot.attempts.length > 0 && (
+            <details className="stage-section">
+              <summary>attempt history ({detail.snapshot.attempts.length})</summary>
+              <table className="stage-table">
+                <thead>
+                  <tr>
+                    <th>stage</th>
+                    <th>iter</th>
+                    <th>verdict</th>
+                    <th>reason</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.snapshot.attempts.map((a, i) => (
+                    <tr key={i}>
+                      <td>{a.stage}</td>
+                      <td>{a.iteration}</td>
+                      <td>
+                        <Badge tone={a.verdict === "PASS" ? "ok" : "gate"}>{a.verdict}</Badge>
+                      </td>
+                      <td className="muted">{a.reason ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          )}
+        </>
+      )}
+      {detail.timeline && <RunTimeline spans={detail.timeline} excluded={detail.timelineExcluded} />}
       {detail.log.summaries.map((s, i) => (
         <div key={i} className="run-summary">
           <div className="run-summary-head">
@@ -158,6 +234,11 @@ export const Runs = () => {
               r.outcome && <Badge tone={outcomeTone(r.outcome)}>{r.outcome}</Badge>
             )}
             {r.detail && <span className="muted">{r.detail}</span>}
+            {r.runs > 1 && (
+              <span className="muted" title="terminal summaries in this log — a plan pass, then a build pass">
+                {r.runs} passes
+              </span>
+            )}
             {r.at && <span className="muted">{new Date(r.at).toLocaleString()}</span>}
           </button>
         ))}

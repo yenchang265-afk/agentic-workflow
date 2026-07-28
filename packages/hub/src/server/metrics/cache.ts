@@ -1,5 +1,6 @@
 import type { CacheHit, StageCache } from "../../shared/api.js"
 import type { RunMetricsInput } from "./aggregate.js"
+import { stageLabel } from "./stage-label.js"
 
 /**
  * Prompt-cache effectiveness from the `runs/<id>.metrics.json` sidecars. Pure.
@@ -53,8 +54,9 @@ export const cacheHit = (inputs: readonly RunMetricsInput[]): CacheHit => {
         overall.samples++
         overall.input += sample.tokens.input
         overall.cacheRead += sample.tokens.cacheRead
-        const stage = byStage.get(sample.stage) ?? zero()
-        byStage.set(sample.stage, {
+        const label = stageLabel(run.kind, sample.stage)
+        const stage = byStage.get(label) ?? zero()
+        byStage.set(label, {
           samples: stage.samples + 1,
           input: stage.input + sample.tokens.input,
           cacheRead: stage.cacheRead + sample.tokens.cacheRead,

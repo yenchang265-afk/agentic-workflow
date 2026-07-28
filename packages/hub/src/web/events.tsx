@@ -13,6 +13,8 @@ export interface EventVersions {
   readonly active: number
   readonly tokens: number
   readonly gate: number
+  /** `runs/events.jsonl` grew — SchedulerPanel refetches /api/scheduler. */
+  readonly sched: number
   /** `.agentic-workflow.json` changed — from the hub's own save or a hand-edit. */
   readonly config: number
   /** The monitored-repo set grew — RepoProvider refetches /api/repos. */
@@ -26,7 +28,7 @@ interface EventsValue {
   readonly requestNotifications: () => void
 }
 
-const initial: EventVersions = { backlog: 0, run: 0, active: 0, tokens: 0, gate: 0, config: 0, repos: 0 }
+const initial: EventVersions = { backlog: 0, run: 0, active: 0, tokens: 0, gate: 0, sched: 0, config: 0, repos: 0 }
 
 const EventsContext = createContext<EventsValue>({
   versions: initial,

@@ -14,6 +14,7 @@ import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineeri
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
+import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -53,7 +54,7 @@ import {
   type Verdict,
   type VerdictRecord,
 } from "@agentic-workflow/core/workflow/verdict"
-import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
+import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageMarkerPath } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
@@ -199,12 +200,23 @@ let config: Config = DEFAULT_CONFIG
  * entries carry timing/verdicts only; tokens for these runs are joined from
  * the session transcripts by consumers. Best-effort.
  */
-const writeRunMetrics = (id: string, outcome: Outcome, detail: string, endedAt: string): void => {
+const writeRunMetrics = (id: string, outcome: Outcome, detail: string, endedAt: string, retryable?: boolean): void => {
   try {
     const file = metricsPath(directory, config.tasksDir, id)
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     // Upsert: replace the trailing `open` entry the per-stage flush left behind.
-    fs.writeFileSync(file, upsertRunMetrics(existing, { endedAt, outcome, detail, host: HOST, samples }))
+    fs.writeFileSync(
+      file,
+      upsertRunMetrics(existing, {
+        endedAt,
+        outcome,
+        detail,
+        host: HOST,
+        kind: active?.kind ?? "engineering",
+        ...(retryable !== undefined ? { retryable } : {}),
+        samples,
+      }),
+    )
   } catch {
     /* telemetry never fails the loop */
   }
@@ -222,12 +234,31 @@ const flushRunMetrics = (id: string): void => {
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     fs.writeFileSync(
       file,
-      upsertRunMetrics(existing, { endedAt: new Date().toISOString(), detail: "", host: HOST, samples, open: true }),
+      upsertRunMetrics(existing, {
+        endedAt: new Date().toISOString(),
+        detail: "",
+        host: HOST,
+        kind: active?.kind ?? "engineering",
+        samples,
+        open: true,
+      }),
     )
   } catch {
     /* telemetry never fails the loop */
   }
 }
+
+/** Last-appended skip-set key — event-log flood control (one loop per server). */
+let lastSkipEventKey: string | null = null
+
+/** `Omit` that distributes over the SchedulerEvent union (a plain Omit collapses it to the common keys). */
+type SchedEventBody = SchedulerEvent extends infer E ? (E extends SchedulerEvent ? Omit<E, "at" | "host" | "pid"> : never) : never
+
+/** Best-effort scheduler-event append, stamped with this host's identity. */
+const emitSchedEvent = (event: SchedEventBody): Promise<void> =>
+  appendSchedulerEvents(sh, directory, config.tasksDir, [
+    { at: new Date().toISOString(), host: HOST, pid: process.pid, ...event } as SchedulerEvent,
+  ])
 
 const loadCfg = async () => {
   try {
@@ -681,11 +712,11 @@ const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx =>
   // must never ride feature/<id> (task-file lifecycle lives on the main tree).
   checkpoint: async (message) =>
     void (await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
-  writeMetrics: async (outcome, detail) => {
+  writeMetrics: async (outcome, detail, retryable) => {
     const stamp = new Date().toISOString()
-    const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
+    const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp, state.kind ?? "engineering")
     await appendRunLog(sh, directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, log)
-    writeRunMetrics(workflowId(state), outcome, detail, stamp)
+    writeRunMetrics(workflowId(state), outcome, detail, stamp, retryable)
   },
 })
 
@@ -698,7 +729,7 @@ const findAnyStatus = (id: string): Promise<Task | null> => coreFindAnyStatus(ga
 const sourcesFor = (only?: string, target?: number): WorkSource[] =>
   buildWorkSources(
     // Single active loop per server; a claim only happens when no loop is live.
-    { $: sh, client: fsClient, directory, log, isDriving: (id) => active?.task?.id === id },
+    { $: sh, client: fsClient, directory, log, isDriving: (id) => active?.task?.id === id, hostName: HOST },
     config,
     manifestFor,
     only,
@@ -929,8 +960,18 @@ server.registerTool(
     }
     const { claim, skips } = await pollOnce(sourcesFor(kind, target))
     if (!claim) {
+      // Append the skip-set only when it changes — flood control for the event log.
+      if (skips.length) {
+        const key = skipSetKey(skips)
+        if (lastSkipEventKey !== key) {
+          lastSkipEventKey = key
+          await emitSchedEvent({ type: "skip", reasons: [...skips] })
+        }
+      }
       return ok(skips.length ? { claimed: null, skips } : null)
     }
+    lastSkipEventKey = null
+    await emitSchedEvent({ type: "claim", kind: claim.item.workflowKind, id: claim.item.id })
     activeClaim = claim
     let state = claim.item.state
     samples = []
@@ -952,6 +993,7 @@ server.registerTool(
         state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
       } catch (err) {
         await claim.source.release(claim.item)
+        await emitSchedEvent({ type: "release", kind: claim.item.workflowKind, id: claim.item.id })
         activeClaim = null
         return fail((err as Error).message)
       }
@@ -1279,7 +1321,12 @@ server.registerTool(
       ...(armedPass?.stage === stage && armedPass.pass.focus ? { lens: armedPass.pass.focus } : {}),
       ...promptSizeFields(),
       ...(stageDef(activeManifest().manifest, stage).kind === "check"
-        ? { verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none" }
+        ? {
+            verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none",
+            // Structured verdict mirror (redacted) — the cross-run "top recurring
+            // findings" join key; the prose stays in the run log.
+            ...verdictStructure(pending),
+          }
         : {}),
     })
     flushRunMetrics(workflowId(active)) // publish samples-so-far live to the hub
@@ -1498,6 +1545,7 @@ const runPark = async (
   const id = report.taskId
   if (activeClaim) {
     await activeClaim.source.onTerminal?.(activeClaim.item, { kind: "park", message: action.message })
+    await emitSchedEvent({ type: "terminal", kind: activeClaim.item.workflowKind, id: activeClaim.item.id, outcome: "park" })
     activeClaim = null
   }
   active = null
@@ -1552,6 +1600,13 @@ const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
       ...(report.kind === "stop" && report.retryable ? { retryable: true } : {}),
     }
     await activeClaim.source.onTerminal?.(activeClaim.item, outcome)
+    await emitSchedEvent({
+      type: "terminal",
+      kind: activeClaim.item.workflowKind,
+      id: activeClaim.item.id,
+      outcome: outcome.kind,
+      ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
+    })
     activeClaim = null
   }
   active = null

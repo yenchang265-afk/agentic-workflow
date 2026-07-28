@@ -68,7 +68,7 @@ export interface TerminalCtx {
    * sidecar — the host's strategy (the accumulated samples, the observing host
    * label, and the driving sessionID all differ per host).
    */
-  readonly writeMetrics: (outcome: Outcome, detail: string) => Promise<void>
+  readonly writeMetrics: (outcome: Outcome, detail: string, retryable?: boolean) => Promise<void>
 }
 
 /**
@@ -258,7 +258,10 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
       await log("warn", `loop(${state.task.id}): stopped but task not in ${status}/ — stop note skipped`)
     }
   }
-  await ctx.writeMetrics("stopped", action.message)
+  // Thread the transient-vs-genuine distinction into the sidecar — on disk it
+  // otherwise collapses to `outcome: "stopped"` and a dashboard can't tell a
+  // flaky environment from cap exhaustion.
+  await ctx.writeMetrics("stopped", action.message, action.retryable)
   if (state.task) await clearState($, directory, config.tasksDir, state.task.id)
   return { kind: "stop", message: action.message, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}), ...(action.retryable ? { retryable: true } : {}) }
 }

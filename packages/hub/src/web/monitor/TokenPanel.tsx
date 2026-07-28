@@ -77,6 +77,7 @@ export const TokenPanel = ({ runId }: { runId: string }) => {
             <th>in (cache)</th>
             <th>out</th>
             <th>cost</th>
+            <th>model</th>
             <th>source</th>
           </tr>
         </thead>
@@ -94,6 +95,7 @@ export const TokenPanel = ({ runId }: { runId: string }) => {
               </td>
               <td>{fmt(outTotal(r.tokens))}</td>
               <td>{r.cost !== undefined ? `$${r.cost.toFixed(4)}` : "—"}</td>
+              <td>{r.model ?? "—"}</td>
               <td>
                 <span className={`badge${r.estimated ? " gate" : " ok"}`} title={r.estimated ? "attributed by time window" : "observed"}>
                   {r.source}

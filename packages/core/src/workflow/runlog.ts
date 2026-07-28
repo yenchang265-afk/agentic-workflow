@@ -42,6 +42,8 @@ export interface RunLogSummary {
   readonly total?: string
   /** Total run cost in dollars, when the footer carries a `cost: $…` segment. */
   readonly cost?: number
+  /** The workflow kind, when the footer carries a leading `kind: …` segment (newer logs). */
+  readonly kind?: string
 }
 
 export interface ParsedRunLog {
@@ -64,7 +66,10 @@ export const parseDuration = (text: string): number => {
 const STAGE_HEADER = /^(?<stage>[a-z][a-z0-9-]*)(?:\s+\(lens:\s*(?<lens>[^)]+)\))?\s+·\s+iteration\s+(?<iter>\d+)\s+·\s+(?<at>\S+)$/
 const SUMMARY_HEADER = /^Run summary\s+·\s+(?<outcome>[a-z]+)(?::\s+(?<detail>.*?))?\s+·\s+(?<at>\S+)$/
 const RUN_MARKER = /^run\s+·\s+/
-const FOOTER = /^iterations used:\s*(\d+)\/(\d+)\s+·\s+total:\s*([^·]+?)\s+·\s+(?:cost:\s*\$([\d.]+)\s+·\s+)?outcome:/
+// All groups named: the optional leading `kind:` segment (added later) would
+// silently shift numbered groups and mis-parse every footer.
+const FOOTER =
+  /^(?:kind:\s*(?<kind>\S+)\s+·\s+)?iterations used:\s*(?<used>\d+)\/(?<cap>\d+)\s+·\s+total:\s*(?<total>[^·]+?)\s+·\s+(?:cost:\s*\$(?<cost>[\d.]+)\s+·\s+)?outcome:/
 const ROW_STAGE = /^(?<stage>.+?)(?:\s+\((?<lens>[^)]+)\))?$/
 
 interface Block {
@@ -134,17 +139,19 @@ export const parseRunLog = (markdown: string): ParsedRunLog => {
     const summary = SUMMARY_HEADER.exec(block.header)
     if (summary?.groups) {
       const footerLine = block.lines.map((l) => FOOTER.exec(l)).find(Boolean)
+      const footer = footerLine?.groups
       summaries.push({
         outcome: summary.groups["outcome"] as string,
         ...(summary.groups["detail"] ? { detail: summary.groups["detail"] } : {}),
         at: summary.groups["at"] as string,
         rows: parseTable(block.lines),
-        ...(footerLine
+        ...(footer
           ? {
-              iterationsUsed: Number(footerLine[1]),
-              cap: Number(footerLine[2]),
-              total: footerLine[3] as string,
-              ...(footerLine[4] !== undefined ? { cost: Number(footerLine[4]) } : {}),
+              iterationsUsed: Number(footer["used"]),
+              cap: Number(footer["cap"]),
+              total: footer["total"] as string,
+              ...(footer["cost"] !== undefined ? { cost: Number(footer["cost"]) } : {}),
+              ...(footer["kind"] !== undefined ? { kind: footer["kind"] } : {}),
             }
           : {}),
       })
