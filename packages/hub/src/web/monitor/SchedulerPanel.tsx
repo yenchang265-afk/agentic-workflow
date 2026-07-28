@@ -2,7 +2,7 @@ import { useState } from "react"
 import type { SchedulerEventsResponse, SchedulerEventView } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { Badge } from "../ui/Badge.js"
 
 /**
@@ -42,7 +42,7 @@ export const SchedulerPanel = () => {
   const { versions } = useEvents()
   const { repoId } = useRepo()
   const [open, setOpen] = useState(false)
-  const { data, error } = useJson<SchedulerEventsResponse>(repoPath("/api/scheduler", repoId), [versions.sched, repoId])
+  const { data, error } = useResource<SchedulerEventsResponse>(repoPath("/api/scheduler", repoId), [versions.sched, repoId])
 
   if (error || !data || data.events.length === 0) return null
 

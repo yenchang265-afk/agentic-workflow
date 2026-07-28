@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react"
-import type { RunDetailResponse, RunsResponse, StageActivity } from "../../shared/api.js"
+import { useEffect } from "react"
+import type { RunDetailResponse, RunsResponse, RunSummaryRow, StageActivity } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
+import { withQuery } from "../route.js"
+import { Link, navigate, useRoute } from "../routing.js"
 import { Badge } from "../ui/Badge.js"
+import { Button } from "../ui/Button.js"
 import { Chip } from "../ui/Chip.js"
 import { RunTimeline } from "./RunTimeline.js"
+import { alignRow, extraHeaders } from "./runtable.js"
 import { TokenPanel } from "./TokenPanel.js"
 
 /** Run history: list of run logs; expanding one shows stage sections + summary tables. */
@@ -37,6 +41,43 @@ const StageActivityLine = ({ activity }: { activity: StageActivity }) => (
   </div>
 )
 
+/**
+ * One summary's stage table. Headers are the union of every row's `extra` keys
+ * and each cell is looked up by that key — see runtable.ts for why position
+ * alignment was wrong.
+ */
+const StageTable = ({ rows }: { rows: readonly RunSummaryRow[] }) => {
+  const headers = extraHeaders(rows)
+  return (
+    <table className="stage-table">
+      <thead>
+        <tr>
+          <th>stage</th>
+          <th>iter</th>
+          <th>verdict</th>
+          <th>wall-clock</th>
+          {headers.map((h) => (
+            <th key={h}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, j) => (
+          <tr key={j}>
+            <td>{r.lens ? `${r.stage} (${r.lens})` : r.stage}</td>
+            <td>{r.iteration}</td>
+            <td>{r.verdict ? <Badge tone={r.verdict === "PASS" ? "ok" : "gate"}>{r.verdict}</Badge> : "—"}</td>
+            <td>{r.duration}</td>
+            {alignRow(headers, r.extra).map((v, k) => (
+              <td key={headers[k]}>{v}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 /** How long ago a live stage started, coarse — "running 3m". */
 const runningFor = (startedAt?: string): string => {
   if (!startedAt) return ""
@@ -51,7 +92,7 @@ const RunDetail = ({ id }: { id: string }) => {
   // `versions.tokens` too: live per-stage flushes rewrite the sidecar and emit
   // `tokens` (deliberately not `run`, which collapses the whole panel) — the
   // timeline and live strip come from that same sidecar.
-  const { data: detail, error } = useJson<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId), [
+  const { data: detail, error } = useResource<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId), [
     id,
     repoId,
     versions.tokens,
@@ -149,36 +190,7 @@ const RunDetail = ({ id }: { id: string }) => {
               </span>
             )}
           </div>
-          {s.rows.length > 0 && (
-            <table className="stage-table">
-              <thead>
-                <tr>
-                  <th>stage</th>
-                  <th>iter</th>
-                  <th>verdict</th>
-                  <th>wall-clock</th>
-                  {Object.keys(s.rows[0]?.extra ?? {}).map((h) => (
-                    <th key={h}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {s.rows.map((r, j) => (
-                  <tr key={j}>
-                    <td>{r.lens ? `${r.stage} (${r.lens})` : r.stage}</td>
-                    <td>{r.iteration}</td>
-                    <td>
-                      {r.verdict ? <Badge tone={r.verdict === "PASS" ? "ok" : "gate"}>{r.verdict}</Badge> : "—"}
-                    </td>
-                    <td>{r.duration}</td>
-                    {Object.values(r.extra).map((v, k) => (
-                      <td key={k}>{v}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {s.rows.length > 0 && <StageTable rows={s.rows} />}
         </div>
       ))}
       {detail.log.sections.map((sec, i) => {
@@ -203,18 +215,38 @@ const RunDetail = ({ id }: { id: string }) => {
 }
 
 export const Runs = () => {
-  const [selected, setSelected] = useState<string | null>(null)
   const { versions } = useEvents()
   const { repoId } = useRepo()
+  const route = useRoute()
+  // The open run lives in the URL, so a run log can be linked to — and Back
+  // closes it instead of leaving the app.
+  const selected = route.query.run ?? null
   // Refetch on `versions.active` too: the live `.stage.json` marker flips a
   // run's `active` flag when a loop starts/ends, without touching any run `.md`.
-  const { data, error } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, versions.active, repoId])
+  const { data, error, refetch } = useResource<RunsResponse>(repoPath("/api/runs", repoId), [
+    versions.run,
+    versions.active,
+    repoId,
+  ])
 
-  // Collapse the open run whenever the list refreshes or the repo changes — the
-  // selected id may no longer exist.
-  useEffect(() => setSelected(null), [versions.run, repoId])
+  // A list refresh must not close the run you are reading. A live loop appends
+  // to its run log at every stage, bumping `versions.run` — dropping the
+  // selection there slammed the panel shut precisely while someone was watching
+  // a run in progress. Clear it only once the id is genuinely gone (a repo
+  // switch does that too, since ids don't cross repos). `replace` because the
+  // user didn't ask for this move and shouldn't have to Back through it.
+  useEffect(() => {
+    if (data && selected !== null && !data.runs.some((r) => r.id === selected)) {
+      navigate(withQuery(route, { run: undefined }), { replace: true })
+    }
+  }, [data, selected, route])
 
-  if (error) return <div className="error-banner">Could not load run history: {error}</div>
+  if (error)
+    return (
+      <div className="error-banner">
+        Could not load run history: {error} <Button onClick={refetch}>Retry</Button>
+      </div>
+    )
   if (!data) return null
   if (data.runs.length === 0) return <div className="placeholder">No run logs yet.</div>
 
@@ -222,10 +254,10 @@ export const Runs = () => {
     <div className="runs">
       <div className="runs-list">
         {data.runs.map((r) => (
-          <button
+          <Link
             key={r.id}
+            to={withQuery(route, { run: selected === r.id ? undefined : r.id })}
             className={`run-row${selected === r.id ? " active" : ""}`}
-            onClick={() => setSelected(selected === r.id ? null : r.id)}
           >
             <span className="run-id">{r.id}</span>
             {r.active ? (
@@ -240,7 +272,7 @@ export const Runs = () => {
               </span>
             )}
             {r.at && <span className="muted">{new Date(r.at).toLocaleString()}</span>}
-          </button>
+          </Link>
         ))}
       </div>
       {selected && <RunDetail id={selected} />}

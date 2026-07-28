@@ -1,9 +1,11 @@
 import { StrictMode, useEffect, useState } from "react"
 import { createRoot } from "react-dom/client"
 import type { MonitorKindsResponse } from "../shared/api.js"
+import { ActivityLog } from "./ActivityLog.js"
 import { ConfigEditor } from "./config/ConfigEditor.js"
 import { Creator } from "./creator/Creator.js"
 import { EventsProvider, useEvents } from "./events.js"
+import { FeedbackProvider } from "./feedback.js"
 import { MetricsTab } from "./metrics/MetricsTab.js"
 import { ActivePanel } from "./monitor/ActivePanel.js"
 import { Board } from "./monitor/Board.js"
@@ -11,15 +13,17 @@ import { PrKindPanel } from "./monitor/PrKindPanel.js"
 import { SchedulerPanel } from "./monitor/SchedulerPanel.js"
 import { Runs } from "./monitor/Runs.js"
 import { RepoPicker, RepoProvider, repoPath, useRepo } from "./repo.js"
-import { useJson } from "./useJson.js"
+import { ReviewQueue } from "./review/ReviewQueue.js"
+import { useResource } from "./resource.js"
+import { buildHash, type Screen } from "./route.js"
+import { Link, useRoute } from "./routing.js"
 import { Button } from "./ui/Button.js"
 import { BellIcon } from "./ui/icons.js"
 import { ThemeToggle } from "./ui/ThemeToggle.js"
 import "./theme.css"
 
-type Tab = "monitor" | "creator" | "metrics" | "config"
-
-const TABS: readonly { id: Tab; label: string }[] = [
+const TABS: readonly { id: Screen; label: string }[] = [
+  { id: "review", label: "Review queue" },
   { id: "monitor", label: "Workflow monitor" },
   { id: "creator", label: "Workflow creator" },
   { id: "metrics", label: "Metrics" },
@@ -37,6 +41,7 @@ const HeaderStatus = () => {
         aria-live="polite"
         aria-label={connected ? "live updates on" : "reconnecting"}
       />
+      <ActivityLog />
       {notifications !== "unsupported" && notifications !== "granted" && (
         <Button
           variant="ghost"
@@ -55,43 +60,64 @@ const HeaderStatus = () => {
 
 /**
  * The monitor, one sub-tab per enabled workflow kind (from the repo's config +
- * manifests): backlog kinds render the board, PR-shaped kinds the ledger
- * panel. Selection persists per repo in localStorage.
+ * manifests): backlog kinds render the board, PR-shaped kinds the ledger panel.
+ *
+ * The kind lives in the URL (`#/monitor/engineering`) so a board is linkable,
+ * and falls back to the per-repo localStorage key so a bare `#/monitor` still
+ * lands where you left off.
  */
 const Monitor = () => {
   const { repoId } = useRepo()
+  const route = useRoute()
   const storageKey = `hub.kind.${repoId ?? ""}`
-  const [kind, setKind] = useState<string | null>(null)
-  // Restore the per-repo kind when the repo resolves or the user switches — the
+  const [remembered, setRemembered] = useState<string | null>(null)
+  // Read the per-repo key when the repo resolves or the user switches — the
   // mount-time `repoId` is null, so reading localStorage in the initializer would
   // always miss the real per-repo key (and never re-read on a repo switch).
-  useEffect(() => setKind(localStorage.getItem(storageKey)), [storageKey])
+  useEffect(() => setRemembered(localStorage.getItem(storageKey)), [storageKey])
+  const kind = route.params[0] ?? remembered
 
-  const { data, error } = useJson<MonitorKindsResponse>(repoPath("/api/monitor/kinds", repoId), [repoId])
-  const kinds = data?.kinds ?? (error ? [] : null)
+  const { data, error, refetch } = useResource<MonitorKindsResponse>(repoPath("/api/monitor/kinds", repoId), [repoId])
 
+  const kinds = data?.kinds
+  const active = kinds?.find((k) => k.kind === kind) ?? kinds?.[0]
+
+  // Remember whichever kind actually resolved, so a bare `#/monitor` (a
+  // bookmark, the header tab) returns to it. Above the early returns because
+  // hooks cannot live after a conditional return.
+  const activeKind = active?.kind
+  useEffect(() => {
+    if (repoId !== null && activeKind !== undefined) localStorage.setItem(storageKey, activeKind)
+  }, [repoId, storageKey, activeKind])
+
+  // Three states, not two. Folding the error case into an empty list rendered a
+  // dead server or a failed fetch as "No enabled workflow kinds — check
+  // .agentic-workflow.json", sending the user to edit a file that was never the
+  // problem. An unreachable server and a repo with no kinds enabled are
+  // different findings and say so.
+  if (error)
+    return (
+      <div className="error-banner">
+        Could not load workflow kinds: {error} <Button onClick={refetch}>Retry</Button>
+      </div>
+    )
   if (!kinds) return <div className="placeholder">Loading kinds…</div>
-  const active = kinds.find((k) => k.kind === kind) ?? kinds[0]
   return (
     <div>
       <ActivePanel />
       <SchedulerPanel />
       {kinds.length > 1 && (
-        <nav className="kind-tabs" role="tablist" aria-label="Workflow kinds">
+        <nav className="kind-tabs" aria-label="Workflow kinds">
           {kinds.map((k) => (
-            <button
+            <Link
               key={k.kind}
+              to={buildHash({ screen: "monitor", params: [k.kind], query: route.query })}
               className={`kind-tab${active?.kind === k.kind ? " active" : ""}`}
               title={k.description}
-              role="tab"
-              aria-selected={active?.kind === k.kind}
-              onClick={() => {
-                setKind(k.kind)
-                localStorage.setItem(storageKey, k.kind)
-              }}
+              ariaCurrent={active?.kind === k.kind}
             >
               {k.kind}
-            </button>
+            </Link>
           ))}
         </nav>
       )}
@@ -104,34 +130,45 @@ const Monitor = () => {
 }
 
 const App = () => {
-  const [tab, setTab] = useState<Tab>("monitor")
+  const route = useRoute()
+  // Carry the repo across a section switch — changing tab shouldn't change
+  // which repo you are looking at — but not the previous section's params or
+  // its `run`/`task` selections, which mean nothing on another screen.
+  const carried = route.query.repo ? { repo: route.query.repo } : {}
   return (
     <div className="hub">
       <header className="hub-header">
         <h1>
           agentic-workflow hub <span className="beta-badge">beta</span>
         </h1>
-        <nav className="hub-tabs" role="tablist" aria-label="Hub sections">
+        {/*
+          Real links, not role="tab" buttons. The old markup announced a tablist
+          it never implemented — no aria-controls, no roving tabindex, no arrow
+          keys — while these are genuinely navigation: each section has an
+          address, and `aria-current="page"` is the honest way to mark the one
+          you're on.
+        */}
+        <nav className="hub-tabs" aria-label="Hub sections">
           {TABS.map((t) => (
-            <button
+            <Link
               key={t.id}
-              className={`hub-tab${tab === t.id ? " active" : ""}`}
-              role="tab"
-              aria-selected={tab === t.id}
-              onClick={() => setTab(t.id)}
+              to={buildHash({ screen: t.id, query: carried })}
+              className={`hub-tab${route.screen === t.id ? " active" : ""}`}
+              ariaCurrent={route.screen === t.id}
             >
               {t.label}
-            </button>
+            </Link>
           ))}
         </nav>
         <RepoPicker />
         <HeaderStatus />
       </header>
-      <main className="hub-main" role="tabpanel">
-        {tab === "monitor" && <Monitor />}
-        {tab === "creator" && <Creator />}
-        {tab === "metrics" && <MetricsTab />}
-        {tab === "config" && <ConfigEditor />}
+      <main className="hub-main">
+        {route.screen === "review" && <ReviewQueue />}
+        {route.screen === "monitor" && <Monitor />}
+        {route.screen === "creator" && <Creator />}
+        {route.screen === "metrics" && <MetricsTab />}
+        {route.screen === "config" && <ConfigEditor />}
       </main>
     </div>
   )
@@ -141,10 +178,12 @@ const root = document.getElementById("root")
 if (root)
   createRoot(root).render(
     <StrictMode>
-      <EventsProvider>
-        <RepoProvider>
-          <App />
-        </RepoProvider>
-      </EventsProvider>
+      <FeedbackProvider>
+        <EventsProvider>
+          <RepoProvider>
+            <App />
+          </RepoProvider>
+        </EventsProvider>
+      </FeedbackProvider>
     </StrictMode>,
   )

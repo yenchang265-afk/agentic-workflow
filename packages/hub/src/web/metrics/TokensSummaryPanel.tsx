@@ -1,7 +1,7 @@
 import type { TokensSummaryResponse } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 import { barWidth, formatTokens } from "./format.js"
 
 /**
@@ -16,7 +16,7 @@ const BAR_WIDTH = 260
 export const TokensSummaryPanel = () => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
-  const { data, error } = useJson<TokensSummaryResponse>(repoPath("/api/tokens", repoId), [
+  const { data, error } = useResource<TokensSummaryResponse>(repoPath("/api/tokens", repoId), [
     repoId,
     versions.tokens,
     versions.run,
