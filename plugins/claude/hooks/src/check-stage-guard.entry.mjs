@@ -57,7 +57,8 @@ import {
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
-import { backlogRoot, readMarker, readTasksDir } from "./marker.mjs"
+import { backlogRoot, readMarker, readTasksDir, runsDir } from "./marker.mjs"
+import { evidenceEntry, noteEvidence } from "./evidence.mjs"
 
 // The PreToolUse envelope (allow / block / rewriteInput) lives in
 // ./pretooluse.mjs so this guard and the spawn-model stamp emit byte-identical
@@ -248,6 +249,15 @@ const main = async () => {
       )
     }
   }
+  // (4) proof-of-work ledger for check stages. Recorded HERE — after every block
+  // above, before the first allowing return — so the ledger holds what the stage
+  // will actually run, never a command the allowlist refused. `workflow_verdict`
+  // reads it back and rejects a PASS the stage did no work for
+  // (@agentic-workflow/core/workflow/evidence). Best-effort: never blocks.
+  if (marker.check === true) {
+    noteEvidence(runsDir(cwd), d.evidenceFile, String(marker.stage ?? ""), evidenceEntry(d, tool, ti, effectiveCommand))
+  }
+
   if (commandRewritten) return rewriteInput({ ...ti, command: effectiveCommand })
 
   // (2) worktree pinning for file-writing tools. A relative path resolves

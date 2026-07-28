@@ -257,6 +257,7 @@ export const Creator = () => {
       agent: `workflow-${name}`,
       prompt: `stages/${name}.md`,
       isolation: "worktree",
+      requireEvidence: false,
       bashAllowlist: [],
       platformAllowlist: {},
     }

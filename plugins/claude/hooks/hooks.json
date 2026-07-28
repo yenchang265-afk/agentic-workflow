@@ -32,6 +32,16 @@
         ]
       },
       {
+        "_comment": "The check-stage evidence recorder. Separate from the guard above and non-overlapping with it: read tools never reach that matcher, so a REVIEW stage — whose work is almost entirely reading — would leave an empty proof-of-work ledger and have every honest PASS rejected. Widening the guard's matcher instead would put every file read inside a default-deny security guard's blast radius; recording has the opposite failure preference, so it gets its own hook. This one only ever allows.",
+        "matcher": "^(Read|Grep|Glob)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-evidence.mjs\""
+          }
+        ]
+      },
+      {
         "_comment": "Separate from the guard above, and deliberately non-overlapping with it: no alternative in that matcher is a substring of Agent or Task, so no call is ever seen by both hooks. Two PreToolUse hooks returning updatedInput for the same call is undocumented behaviour. The split also keeps the policies apart — the guard fails CLOSED on an unknown host, this one fails OPEN.",
         "matcher": "^(Agent|Task)$",
         "hooks": [

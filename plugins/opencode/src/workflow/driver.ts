@@ -92,6 +92,7 @@ import {
   type VerdictRecord,
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
+import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import {
   EXPERIMENTAL_KINDS,
   enabledWorkflowKinds,
@@ -384,6 +385,46 @@ const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly 
 const axisRequirement = new Map<string, readonly string[]>()
 
 /**
+ * What each driving session's CURRENT check pass has been observed doing —
+ * this host's half of the verdict's proof-of-work gate
+ * (@agentic-workflow/core/workflow/evidence).
+ *
+ * In memory rather than the ledger file the Claude host writes, because this
+ * host's tool guard runs in the same process as `recordVerdict`; the file exists
+ * over there only because its guard is a separate process per tool call. Both
+ * feed the same pure `EvidenceContext`.
+ *
+ * Cleared per PASS ATTEMPT (next to `recordedVerdicts`), so a re-fired check can
+ * only be corroborated by its own work — never by the attempt that failed.
+ */
+const observedEvidence = new Map<string, ObservedEvidence>()
+
+/** Most commands/reads kept per pass; see the Claude ledger's cap for why entries past it are dropped, not rotated. */
+const OBSERVED_MAX = 200
+
+/**
+ * Note a tool call the guard is about to allow against the loop driving
+ * `sessionID`. Called from `tool.execute.before` with the EFFECTIVE command (the
+ * worktree pin may have rewritten it) — what will actually run is what counts as
+ * having been run.
+ */
+export const noteEvidence = (sessionID: string, entry: { readonly command?: string; readonly reads?: readonly string[] }): void => {
+  const prev = observedEvidence.get(sessionID) ?? NO_OBSERVATIONS
+  const add = (list: readonly string[], incoming: readonly string[]): string[] => {
+    const out = list.slice()
+    for (const value of incoming) {
+      if (out.length >= OBSERVED_MAX) break
+      if (value && !out.includes(value)) out.push(value)
+    }
+    return out
+  }
+  observedEvidence.set(sessionID, {
+    commands: add(prev.commands, entry.command ? [entry.command.trim()] : []),
+    reads: add(prev.reads, (entry.reads ?? []).map((r) => r.trim())),
+  })
+}
+
+/**
  * The stage a session has already audited an out-of-stage verdict for. A
  * drifting work stage typically calls `workflow_verdict` more than once (verify,
  * then review, inside the same build turn); the task file gets one note per
@@ -460,7 +501,15 @@ export const recordVerdict = (
   // Repeat calls combine worst-wins rather than overwrite — a FAIL must not be
   // replaceable by a later PASS from the same agent.
   const prev = recordedVerdicts.get(sessionID)
-  const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null)
+  // `observed` is whatever this pass has accumulated so far — never null on this
+  // host, because the guard that fills it runs in this process: an empty set here
+  // genuinely means the pass did nothing, which is exactly what should reject a PASS.
+  const evidence: EvidenceContext = {
+    stage,
+    required: def.requireEvidence,
+    observed: observedEvidence.get(sessionID) ?? NO_OBSERVATIONS,
+  }
+  const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null, evidence)
   if (!admission.ok) return reject(admission.message)
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
   return { accepted: true, message: `Recorded ${stage} verdict: ${effectiveVerdict(admission.record)}.` }
@@ -825,6 +874,7 @@ export const runStagePasses = async (
           : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
+      observedEvidence.delete(sessionID) // ...nor a previous pass's work corroborate this one's PASS
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(

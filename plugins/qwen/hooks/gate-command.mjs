@@ -88,11 +88,18 @@ var decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, inst
 var DIALECTS = {
   claude: {
     stageMarkerFile: ".stage.json",
+    // Mirrors core's `stageEvidenceFile(host)`; per host for the same reason the
+    // marker is (one host's session must never write into another's ledger).
+    evidenceFile: ".stage-evidence.json",
     // Claude Code surfaces plugin MCP tools under a second, plugin-bundled
     // alias; Qwen has only the one registration.
     verdictAliases: "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
     bash: ["Bash"],
     write: ["Edit", "Write", "NotebookEdit"],
+    // The inspection tools whose target path is recorded as check-stage evidence
+    // (hooks/src/evidence.mjs). Read-only by construction — a write tool's path
+    // is not evidence of having *looked* at anything.
+    read: ["Read", "Grep", "Glob"],
     spawnTool: "Task tool",
     // Whether the host's spawn tool takes a per-call model. False on Qwen: the
     // model is baked into the installed agent file, so telling the orchestrator
@@ -111,9 +118,11 @@ var DIALECTS = {
   },
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
+    evidenceFile: ".stage-evidence-qwen.json",
     verdictAliases: "mcp__agentic-workflow__workflow_verdict",
     bash: ["run_shell_command"],
     write: ["write_file", "edit", "replace", "notebook_edit"],
+    read: ["read_file", "read_many_files", "search_file_content", "glob"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
     // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
