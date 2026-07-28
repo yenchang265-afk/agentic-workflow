@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 // plugins/claude/hooks/gate-parse.mjs
 var VERB = "(approve-plan|replan|approve)";
 var SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im");
-var CMD = "\\/(?:agentic-workflow:)?engineering(?![-\\w])";
+var CMD = "\\/(?:agentic-workflow:)?engineering(?=\\s|$)";
 var AT_START = "^\\s*";
 var APPROVE = new RegExp(`${AT_START}${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)`, "i");
 var REPLAN = new RegExp(`${AT_START}${CMD}\\s+replan\\b[ \\t]*(.*)`, "i");
@@ -21,43 +21,46 @@ var ANY_VERB = new RegExp(`${AT_START}${CMD}(\\s+\\S*)?`, "i");
 var verbFor = (prompt) => {
   const match = String(prompt ?? "").match(ANY_VERB);
   if (!match) return null;
-  return (match[1] || "").trim().toLowerCase() || "status";
+  const raw = (match[1] || "").trim().toLowerCase();
+  return raw.replace(/^["'`]+/, "").replace(/["'`.,:;!?]+$/, "") || "status";
 };
+var unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 var gateArgsFor = (prompt) => {
   const sentinel = prompt.match(SENTINEL);
   if (sentinel) {
-    const id = (sentinel[2] || "").trim();
+    const id = unquote((sentinel[2] || "").trim());
     if (!id) return { passThrough: true };
     const reason = (sentinel[3] || "").trim();
     return { argv: ["gate", sentinel[1], id, ...reason ? [reason] : []] };
   }
   const approve = prompt.match(APPROVE);
   if (approve) {
-    const id = (approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+    const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
     return { argv: ["gate", "approve-any", ...id ? [id] : []] };
   }
   const replan = prompt.match(REPLAN);
   if (replan) {
     const words = (replan[1] || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length) words[0] = unquote(words[0]);
     return { argv: ["gate", "reject-any", ...words] };
   }
   const retask = prompt.match(RETASK);
   if (retask) {
-    const id = (retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+    const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
     if (!id) return { passThrough: true };
     return { argv: ["gate", "retask", id], continueTurn: true };
   }
   const abandon = prompt.match(ABANDON);
   if (abandon) {
     const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean);
-    const id = words[0] || "";
+    const id = unquote(words[0] || "");
     if (!id) return { passThrough: true };
     return { argv: ["gate", "abandon", id, ...words.slice(1)] };
   }
   const remove = prompt.match(REMOVE);
   if (remove) {
     const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean);
-    const id = words.find((w) => !w.startsWith("-")) || "";
+    const id = unquote(words.find((w) => !w.startsWith("-")) || "");
     if (!id) return { passThrough: true };
     const force = words.some((w) => w === "--force" || w === "-f");
     return { argv: ["gate", "remove", id, ...force ? ["--force"] : []] };
@@ -88,11 +91,18 @@ var decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, inst
 var DIALECTS = {
   claude: {
     stageMarkerFile: ".stage.json",
+    // Mirrors core's `stageEvidenceFile(host)`; per host for the same reason the
+    // marker is (one host's session must never write into another's ledger).
+    evidenceFile: ".stage-evidence.json",
     // Claude Code surfaces plugin MCP tools under a second, plugin-bundled
     // alias; Qwen has only the one registration.
     verdictAliases: "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
     bash: ["Bash"],
     write: ["Edit", "Write", "NotebookEdit"],
+    // The inspection tools whose target path is recorded as check-stage evidence
+    // (hooks/src/evidence.mjs). Read-only by construction — a write tool's path
+    // is not evidence of having *looked* at anything.
+    read: ["Read", "Grep", "Glob"],
     spawnTool: "Task tool",
     // Whether the host's spawn tool takes a per-call model. False on Qwen: the
     // model is baked into the installed agent file, so telling the orchestrator
@@ -111,9 +121,11 @@ var DIALECTS = {
   },
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
+    evidenceFile: ".stage-evidence-qwen.json",
     verdictAliases: "mcp__agentic-workflow__workflow_verdict",
     bash: ["run_shell_command"],
     write: ["write_file", "edit", "replace", "notebook_edit"],
+    read: ["read_file", "read_many_files", "search_file_content", "glob"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
     // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
@@ -140,6 +152,7 @@ var normalize = (verb) => String(verb ?? "").trim().toLowerCase() || null;
 var tagLines = (body) => {
   const tagged = [];
   let open;
+  let block2 = 0;
   for (const text of body.split("\n")) {
     const marker = MARKER.exec(text.trim());
     if (marker) {
@@ -150,10 +163,11 @@ var tagLines = (body) => {
       } else {
         if (open !== void 0) return null;
         open = names;
+        block2 += 1;
       }
       continue;
     }
-    tagged.push({ text, verbs: open === void 0 ? null : open.split("|") });
+    tagged.push({ text, verbs: open === void 0 ? null : open.split("|"), block: open === void 0 ? null : block2 });
   }
   return open === void 0 ? tagged : null;
 };
@@ -161,9 +175,16 @@ var sliceForVerb = (body, verb) => {
   const tagged = tagLines(body);
   const wanted = normalize(verb);
   if (!tagged || !wanted) return null;
-  const kept = tagged.filter((line) => line.verbs?.includes(wanted)).map((line) => line.text);
+  const kept = tagged.filter((line) => line.verbs?.includes(wanted));
   if (kept.length === 0) return null;
-  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  const parts = [];
+  let prevBlock;
+  for (const line of kept) {
+    if (prevBlock !== void 0 && line.block !== prevBlock) parts.push("");
+    parts.push(line.text);
+    prevBlock = line.block;
+  }
+  return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 };
 var verbContext = (pluginRoot, verb) => {
   const wanted = normalize(verb);

@@ -146,6 +146,15 @@ agent claiming "PASS" in prose is ignored. Stage agents can't approve tasks,
 move backlog folders, or ship; the plugin and the human own every transition
 between statuses.
 
+VERIFY and REVIEW additionally declare `requireEvidence`, so a **PASS** from
+either must cite the commands it ran and the files it read (`evidence:
+[{ kind, ref, result }]`). Those citations are cross-checked against a ledger the
+host's tool guard writes independently of the agent — so a PASS from a pass that
+ran nothing, or one whose every citation matches nothing observed, is rejected
+rather than recorded. FAIL and ERROR are never gated: a check that could not run
+is an ERROR naming what is missing. See `packages/core/workflows/README.md` for
+the rule's limits — it makes an unearned PASS falsifiable, not impossible.
+
 ### Backlog integrity rails
 
 Three layers keep a confused agent from corrupting the folder-is-status

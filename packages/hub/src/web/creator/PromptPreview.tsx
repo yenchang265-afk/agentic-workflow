@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react"
 import type { WorkflowManifest } from "@agentic-workflow/core/manifest/schema"
 import { PLATFORMS, type PreviewResponse, type PreviewSample } from "../../shared/api.js"
 import { postJson } from "../api.js"
+import { repoPath, useRepo } from "../repo.js"
 import { Button } from "../ui/Button.js"
 
 /**
@@ -33,6 +34,7 @@ export const PromptPreview = ({
   stage: string
   prompts: Readonly<Record<string, string>>
 }) => {
+  const { repoId } = useRepo()
   const [open, setOpen] = useState(false)
   const [sample, setSample] = useState<PreviewSample>({ task: true, git: true, worktree: true, platform: "github" })
   const [result, setResult] = useState<PreviewResponse | null>(null)
@@ -43,13 +45,15 @@ export const PromptPreview = ({
   const run = useCallback(async (): Promise<void> => {
     if (!manifest) return
     try {
-      setResult(await postJson<PreviewResponse>("/api/kinds/preview", { manifest, prompts, stage, sample }))
+      setResult(
+        await postJson<PreviewResponse>(repoPath("/api/kinds/preview", repoId), { manifest, prompts, stage, sample }),
+      )
       setError(null)
     } catch (e) {
       setResult(null)
       setError((e as Error).message)
     }
-  }, [manifest, prompts, stage, sample])
+  }, [manifest, prompts, stage, sample, repoId])
 
   // Re-render as the author types or flips a toggle — the feedback loop is the
   // feature, and the route is a local, pure function call away.

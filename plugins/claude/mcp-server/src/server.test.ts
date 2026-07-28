@@ -153,7 +153,7 @@ test("workflow_stage keeps the accumulated verdict while a fan-out is still runn
 // predates fan-out.
 test("workflow_verdict admits a pass against that pass's own axes, not the stage's", () => {
   const body = toolBody(code(source()), "workflow_verdict")
-  assert.match(body, /admitVerdict\(rec, passAxes\(def, currentPass\(stage\)\), pending\)/)
+  assert.match(body, /admitVerdict\(rec, passAxes\(def, currentPass\(stage\)\), pending, evidenceCtx\)/)
   assert.doesNotMatch(body, /admitVerdict\(rec, def\.requiredAxes/, "the stage-wide requirement belongs on the accumulated record")
 })
 

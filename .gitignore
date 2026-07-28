@@ -11,7 +11,10 @@ node_modules/
 docs/tasks/runs/*.state.json
 docs/tasks/runs/.stage.json
 docs/tasks/runs/.stage-opencode.json
+docs/tasks/runs/.stage-qwen.json
 docs/tasks/runs/.watch-lease/
+# Scheduler diagnostics feed (machine state, rotated at ~256KB — not review material)
+docs/tasks/runs/events*.jsonl
 
 # Build output (built by npm workspace `build` scripts / plugins/claude/install.sh)
 packages/core/dist/

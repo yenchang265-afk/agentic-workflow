@@ -143,6 +143,14 @@ PLAN 只在按需時執行（`plan <id>` —— `claim`/`watch`
 「PASS」會被忽略。階段 agent 無法核准任務、移動待辦資料夾或發布；每一次
 狀態間的轉換都由外掛和人類擁有。
 
+VERIFY 與 REVIEW 另外宣告 `requireEvidence`，因此兩者的 **PASS** 都必須列出
+自己實際執行過的指令與讀過的檔案（`evidence: [{ kind, ref, result }]`）。這些
+引用會與 host 的工具守衛獨立寫下的紀錄（ledger）交叉比對——所以一趟什麼都沒
+跑的 PASS，或引用全都對不上觀測結果的 PASS，會被拒絕而非記錄。FAIL 與 ERROR
+永不受此限制：檢查本身跑不起來時，應記 ERROR 並在理由中指名缺了什麼。此規則
+的邊界見 `packages/core/workflows/README.md`——它讓沒有根據的 PASS 變成可被
+證偽，而不是不可能發生。
+
 ### 待辦完整性防護欄（Backlog integrity rails）
 
 三層防護避免一個困惑的 agent 破壞「資料夾即狀態」的待辦（threat model

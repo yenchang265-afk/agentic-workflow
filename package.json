@@ -18,7 +18,7 @@
     "prepare": "npm run build -w @agentic-workflow/core && npm run build -w agentic-workflow-mcp",
     "hub": "npm run build -w @agentic-workflow/core && npm run build -w @agentic-workflow/hub && npm run start -w @agentic-workflow/hub --",
     "gen:prompts": "node scripts/gen-prompts.mjs",
-    "build:hooks": "node scripts/build-hooks.mjs",
+    "build:hooks": "npm run build -w @agentic-workflow/core && node scripts/build-hooks.mjs",
     "test:hooks": "node --test plugins/claude/hooks/*.test.mjs",
     "test:scripts": "node --test scripts/*.test.mjs",
     "typecheck:all": "npm run typecheck -ws --if-present",

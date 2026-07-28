@@ -163,6 +163,21 @@ test("rejects requiredAxes on a work stage — only a verdict can carry axes", (
   assert.throws(() => parseManifest(raw), /work stage "work" cannot set requiredAxes/)
 })
 
+test("requireEvidence round-trips through a JSON save and defaults to false", () => {
+  const raw = { ...base, stages: [base.stages[0], { ...base.stages[1], requireEvidence: true }] }
+  const parsed = parseManifest(raw)
+  assert.equal(parsed.stages[1]?.requireEvidence, true)
+  assert.equal(parseManifest(base).stages[1]?.requireEvidence, false)
+  // The hub re-serializes the PARSED manifest on save (routes/kinds.ts), so a
+  // field the schema doesn't know is deleted from disk. Prove this one survives.
+  assert.equal(parseManifest(JSON.parse(JSON.stringify(parsed))).stages[1]?.requireEvidence, true)
+})
+
+test("rejects requireEvidence on a work stage — only a verdict can carry evidence", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], requireEvidence: true }, base.stages[1]] }
+  assert.throws(() => parseManifest(raw), /work stage "work" cannot set requireEvidence/)
+})
+
 test("a check stage's fanout round-trips through a JSON save and defaults to undefined", () => {
   const raw = {
     ...base,
@@ -373,6 +388,26 @@ test("a status folder must be a slug — it becomes a real path segment", () => 
     },
   })
   assert.ok(m.workSource.type === "backlog" && m.workSource.statuses.includes("plan-review"))
+})
+
+test("a pool status must be a slug AND one of workSource.statuses", () => {
+  // The gap the statuses rail left open: pools[].status is joined into the very
+  // same <tasksDir>/<status>/ paths (listByStatus on every poll, the hub
+  // doctor's claim sweep) and the hub creator writes free-text pool lines into
+  // manifests — so a traversal escapes the backlog and a typo silently polls a
+  // folder that never exists ("nothing to claim", forever).
+  for (const bad of ["../../../../tmp/evil", "in progres/..", "In-Progress", ""]) {
+    assert.throws(
+      () => parseManifest({ ...base, workSource: { type: "backlog", statuses: ["queued"], pools: [{ status: bad, entryStage: "work" }] } }),
+      /status/i,
+      `expected pool status "${bad}" to be refused`,
+    )
+  }
+  // A well-formed slug that is not a declared status is a typo, not a pool.
+  assert.throws(
+    () => parseManifest({ ...base, workSource: { type: "backlog", statuses: ["queued"], pools: [{ status: "in-progres", entryStage: "work" }] } }),
+    /not one of workSource.statuses/i,
+  )
 })
 
 test("a kind name must be a slug — it becomes a directory under runs/ and workflows/", () => {

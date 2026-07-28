@@ -126,6 +126,29 @@ test("the marker wins over agentModels for the same agent", () => {
   assert.equal(rewriteOf(run(cwd, input))?.model, "opus")
 })
 
+test("a marker past its deadline no longer binds anything — a crashed loop's map must not rule the repo forever", () => {
+  // A killed process never runs writeStageMarker(null); the leftover marker
+  // would otherwise retarget every later workflow-* spawn silently. Same
+  // liveness rule as check-stage-guard. The config layer still applies.
+  const cwd = makeRepo({
+    config: { agentModels: { "workflow-build": "haiku" } },
+    marker: { stage: "build", agent: "workflow-build", deadline: Date.now() - 60_000, stageAgentModels: { "workflow-build": "opus" } },
+  })
+  const input = { ...SPAWN, subagent_type: "agentic-workflow:workflow-build" }
+  assert.equal(rewriteOf(run(cwd, input))?.model, "haiku", "the dead marker is ignored; agentModels still binds")
+})
+
+test("a live deadline keeps the marker binding; a deadline-less legacy marker stays trusted", () => {
+  for (const marker of [
+    { stage: "build", agent: "workflow-build", deadline: Date.now() + 60_000, stageAgentModels: { "workflow-build": "opus" } },
+    { stage: "build", agent: "workflow-build", stageAgentModels: { "workflow-build": "opus" } },
+  ]) {
+    const cwd = makeRepo({ marker })
+    const input = { ...SPAWN, subagent_type: "agentic-workflow:workflow-build" }
+    assert.equal(rewriteOf(run(cwd, input))?.model, "opus")
+  }
+})
+
 test("an unprefixed subagent_type still resolves", () => {
   const cwd = makeRepo({ config: { agentModels: { "workflow-plan": "haiku" } } })
   assert.equal(rewriteOf(run(cwd, { ...SPAWN, subagent_type: "workflow-plan" }))?.model, "haiku")

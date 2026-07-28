@@ -14,6 +14,7 @@ import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineeri
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
+import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
   buildEntryState,
   buildWorkSources,
@@ -53,9 +54,10 @@ import {
   type Verdict,
   type VerdictRecord,
 } from "@agentic-workflow/core/workflow/verdict"
-import { renderRunSummary, type Outcome, type StageSample } from "@agentic-workflow/core/workflow/metrics"
+import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
+import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageMarkerPath } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -80,15 +82,18 @@ import {
   appendRunLog,
   auditNote,
   claimTask,
+  claimTaskSweepingStale,
   findByIdIn,
   isClaimable,
   isOrphanedPlanClaim,
+  isOrphanedStartedClaim,
   isRecoverable,
   listByStatus,
   listClaimIds,
   markClaimed,
   moveTask,
   pairingCoverage,
+  refreshClaimStamp,
   releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
@@ -208,12 +213,23 @@ let config: Config = DEFAULT_CONFIG
  * entries carry timing/verdicts only; tokens for these runs are joined from
  * the session transcripts by consumers. Best-effort.
  */
-const writeRunMetrics = (id: string, outcome: Outcome, detail: string, endedAt: string): void => {
+const writeRunMetrics = (id: string, outcome: Outcome, detail: string, endedAt: string, retryable?: boolean): void => {
   try {
     const file = metricsPath(directory, config.tasksDir, id)
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     // Upsert: replace the trailing `open` entry the per-stage flush left behind.
-    fs.writeFileSync(file, upsertRunMetrics(existing, { endedAt, outcome, detail, host: HOST, samples }))
+    fs.writeFileSync(
+      file,
+      upsertRunMetrics(existing, {
+        endedAt,
+        outcome,
+        detail,
+        host: HOST,
+        kind: active?.kind ?? "engineering",
+        ...(retryable !== undefined ? { retryable } : {}),
+        samples,
+      }),
+    )
   } catch {
     /* telemetry never fails the loop */
   }
@@ -231,12 +247,31 @@ const flushRunMetrics = (id: string): void => {
     const existing = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null
     fs.writeFileSync(
       file,
-      upsertRunMetrics(existing, { endedAt: new Date().toISOString(), detail: "", host: HOST, samples, open: true }),
+      upsertRunMetrics(existing, {
+        endedAt: new Date().toISOString(),
+        detail: "",
+        host: HOST,
+        kind: active?.kind ?? "engineering",
+        samples,
+        open: true,
+      }),
     )
   } catch {
     /* telemetry never fails the loop */
   }
 }
+
+/** Last-appended skip-set key — event-log flood control (one loop per server). */
+let lastSkipEventKey: string | null = null
+
+/** `Omit` that distributes over the SchedulerEvent union (a plain Omit collapses it to the common keys). */
+type SchedEventBody = SchedulerEvent extends infer E ? (E extends SchedulerEvent ? Omit<E, "at" | "host" | "pid"> : never) : never
+
+/** Best-effort scheduler-event append, stamped with this host's identity. */
+const emitSchedEvent = (event: SchedEventBody): Promise<void> =>
+  appendSchedulerEvents(sh, directory, config.tasksDir, [
+    { at: new Date().toISOString(), host: HOST, pid: process.pid, ...event } as SchedulerEvent,
+  ])
 
 const loadCfg = async () => {
   try {
@@ -329,6 +364,29 @@ const dialect = HOST_DIALECT[HOST]
 
 const stageMarkerPath = () => hostStageMarkerPath(directory, config.tasksDir, HOST)
 const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
+const stageEvidencePath = () => hostStageEvidencePath(directory, config.tasksDir, HOST)
+
+/**
+ * What the PreToolUse guard recorded this check stage doing — the only account
+ * of the stage's work the stage itself did not write (hooks/src/evidence.mjs).
+ *
+ * Null, never an empty observation set, when the ledger is missing, unreadable,
+ * or belongs to another stage: those all mean "this host did not observe", and
+ * `evidenceIssue` treats them as a reason to fall back to the declared-evidence
+ * rule. An empty set means "the stage did nothing", which rejects a PASS — so
+ * conflating the two would fail every stage on a repo whose hooks are not
+ * installed.
+ */
+const observedEvidence = (stage: string): ObservedEvidence | null => {
+  try {
+    const raw = JSON.parse(fs.readFileSync(stageEvidencePath(), "utf8")) as Record<string, unknown>
+    if (raw.stage !== stage) return null
+    const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+    return { commands: list(raw.commands), reads: list(raw.reads) }
+  } catch {
+    return null
+  }
+}
 
 const agentRef = (name: string): string => dialect.agentRef(name)
 
@@ -576,6 +634,10 @@ const writeStageMarker = (stage: string | null): string | null => {
   try {
     fs.mkdirSync(dir, { recursive: true })
     fs.rmSync(verdictNagPath(), { force: true }) // the nag sentinel belongs to one stage attempt only
+    // Likewise the evidence ledger: a stage attempt may only be corroborated by
+    // its OWN work. Carrying a previous attempt's commands forward would let a
+    // re-fired check PASS on the work of the attempt that failed.
+    fs.rmSync(stageEvidencePath(), { force: true })
     driftNoted = false // likewise the drift note: one per stage attempt, not one per run
     if (stage === null) {
       stageDeadline = null
@@ -626,6 +688,9 @@ const writeStageMarker = (stage: string | null): string | null => {
           // every PLAN-stage write through onto the current branch.
           workflowWorktree: active?.git?.worktree ?? null,
           deadline: stageDeadline,
+          // Lets `taskDrivenByStageMarker` treat a SIGKILLed server's leftover
+          // marker as dead instead of blocking recover for the stage window.
+          pid: process.pid,
           // 1-indexed to match the "BUILD started (iteration N)" audit notes.
           iteration: active ? active.iteration + 1 : null,
           ...(allowlist.length ? { bashAllowlist: allowlist } : {}),
@@ -690,11 +755,11 @@ const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx =>
   // must never ride feature/<id> (task-file lifecycle lives on the main tree).
   checkpoint: async (message) =>
     void (await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
-  writeMetrics: async (outcome, detail) => {
+  writeMetrics: async (outcome, detail, retryable) => {
     const stamp = new Date().toISOString()
-    const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp)
+    const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp, state.kind ?? "engineering")
     await appendRunLog(sh, directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, log)
-    writeRunMetrics(workflowId(state), outcome, detail, stamp)
+    writeRunMetrics(workflowId(state), outcome, detail, stamp, retryable)
   },
 })
 
@@ -707,7 +772,7 @@ const findAnyStatus = (id: string): Promise<Task | null> => coreFindAnyStatus(ga
 const sourcesFor = (only?: string, target?: number): WorkSource[] =>
   buildWorkSources(
     // Single active loop per server; a claim only happens when no loop is live.
-    { $: sh, client: fsClient, directory, log, isDriving: (id) => active?.task?.id === id },
+    { $: sh, client: fsClient, directory, log, isDriving: (id) => active?.task?.id === id, hostName: HOST },
     config,
     manifestFor,
     only,
@@ -940,8 +1005,18 @@ server.registerTool(
     }
     const { claim, skips } = await pollOnce(sourcesFor(kind, target))
     if (!claim) {
+      // Append the skip-set only when it changes — flood control for the event log.
+      if (skips.length) {
+        const key = skipSetKey(skips)
+        if (lastSkipEventKey !== key) {
+          lastSkipEventKey = key
+          await emitSchedEvent({ type: "skip", reasons: [...skips] })
+        }
+      }
       return ok(skips.length ? { claimed: null, skips } : null)
     }
+    lastSkipEventKey = null
+    await emitSchedEvent({ type: "claim", kind: claim.item.workflowKind, id: claim.item.id })
     activeClaim = claim
     let state = claim.item.state
     samples = []
@@ -964,6 +1039,7 @@ server.registerTool(
         state = await ensureIsolation(sh, log, directory, config, state, await resolveBase())
       } catch (err) {
         await claim.source.release(claim.item)
+        await emitSchedEvent({ type: "release", kind: claim.item.workflowKind, id: claim.item.id })
         activeClaim = null
         return fail((err as Error).message)
       }
@@ -1036,9 +1112,21 @@ server.registerTool(
         .describe(
           "Per-axis results. REQUIRED on a stage that declares requiredAxes (engineering review: all five axes) — a call missing an axis is REJECTED, and partial submissions are not accumulated across calls.",
         ),
+      evidence: z
+        .array(
+          z.object({
+            kind: z.enum(["command", "file"]).describe('"command" — something you ran; "file" — a path (or "path:line") you read.'),
+            ref: z.string().min(1).describe("The command line as you issued it, or the path you read."),
+            result: z.string().max(300).optional().describe("What you observed (e.g. \"42 passed, 0 failed\"). Audit trail only."),
+          }),
+        )
+        .optional()
+        .describe(
+          "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. FAIL/ERROR need none.",
+        ),
     },
   },
-  async ({ stage, verdict, reason, criteria, axes }) => {
+  async ({ stage, verdict, reason, criteria, axes, evidence }) => {
     if (!active) return fail("No active loop — verdict ignored.")
     if (active.stage !== stage) {
       // The rejection alone reaches only the calling agent. Audit it on the task
@@ -1059,7 +1147,12 @@ server.registerTool(
       ...(reason ? { reason } : {}),
       ...(criteria ? { criteria: criteria as CriterionResult[] } : {}),
       ...(axes ? { axes: axes as AxisResult[] } : {}),
+      ...(evidence ? { evidence: evidence as EvidenceItem[] } : {}),
     }
+    // What the guard saw this attempt do, resolved per call rather than cached:
+    // the ledger grows while the stage works, so a verdict recorded late in the
+    // turn must read the ledger as it stands at that moment.
+    const evidenceCtx: EvidenceContext = { stage, required: def.requireEvidence, observed: observedEvidence(stage) }
     // The record can only be obtained from the `ok: true` branch, so a rejected
     // verdict CANNOT reach `stampVerdictRecorded` below — which would otherwise
     // mark the stage satisfied for the SubagentStop guard and burn its one-shot
@@ -1070,7 +1163,7 @@ server.registerTool(
     // also fixes a lens pass on this host being rejected for missing four axes
     // it was never asked for. The stage-wide requirement is enforced on the
     // accumulated record in workflow_advance instead.
-    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending)
+    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending, evidenceCtx)
     if (!admission.ok) {
       verdictRejected = true
       return fail(admission.message)
@@ -1213,6 +1306,10 @@ server.registerTool(
           `Check that ${config.tasksDir}/runs/ is writable, then retry.`,
       )
     }
+    // Keep the claim stamp fresh at every stage boundary: `staleClaimMinutes`
+    // covers one stage, but a whole loop can outlive it — without the refresh a
+    // live run's marker reads as stale to another process's sweep/recover.
+    if (active?.task) await refreshClaimStamp(sh, active.task)
     lastFireAt = Date.now()
     // Wiping `pending` is right for a FRESH stage and catastrophic mid-fan-out:
     // the orchestrator calls workflow_stage before every pass, so wiping here
@@ -1317,7 +1414,12 @@ server.registerTool(
       ...(armedPass?.stage === stage && armedPass.pass.focus ? { lens: armedPass.pass.focus } : {}),
       ...promptSizeFields(),
       ...(stageDef(activeManifest().manifest, stage).kind === "check"
-        ? { verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none" }
+        ? {
+            verdict: (pending ? effectiveVerdict(pending) : "none") as Verdict | "none",
+            // Structured verdict mirror (redacted) — the cross-run "top recurring
+            // findings" join key; the prose stays in the run log.
+            ...verdictStructure(pending),
+          }
         : {}),
     })
     flushRunMetrics(workflowId(active)) // publish samples-so-far live to the hub
@@ -1358,8 +1460,10 @@ server.registerTool(
             stage,
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
-                "or it declared FAIL without naming a critical/important finding. Call workflow_verdict ONCE with the " +
-                "COMPLETE axes array; partial submissions are not accumulated."
+                "it declared FAIL without naming a critical/important finding, or it declared PASS without citing " +
+                "evidence this session actually ran. Call workflow_verdict ONCE with the COMPLETE axes array (partial " +
+                "submissions are not accumulated) and, for a PASS, an `evidence` array naming the commands you ran and " +
+                "the files you read THIS pass — re-run them if you have not."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
           ),
@@ -1548,6 +1652,7 @@ const runPark = async (
   const id = report.taskId
   if (activeClaim) {
     await activeClaim.source.onTerminal?.(activeClaim.item, { kind: "park", message: action.message })
+    await emitSchedEvent({ type: "terminal", kind: activeClaim.item.workflowKind, id: activeClaim.item.id, outcome: "park" })
     activeClaim = null
   }
   active = null
@@ -1602,6 +1707,13 @@ const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
       ...(report.kind === "stop" && report.retryable ? { retryable: true } : {}),
     }
     await activeClaim.source.onTerminal?.(activeClaim.item, outcome)
+    await emitSchedEvent({
+      type: "terminal",
+      kind: activeClaim.item.workflowKind,
+      id: activeClaim.item.id,
+      outcome: outcome.kind,
+      ...(outcome.retryable !== undefined ? { retryable: outcome.retryable } : {}),
+    })
     activeClaim = null
   }
   active = null
@@ -1715,7 +1827,11 @@ server.registerTool(
       const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
         isDriving: (id) => active?.task?.id === id,
         staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
-        ...(status === "queued" ? { isOrphaned: isOrphanedPlanClaim } : {}),
+        // Doctor releases a stale, undriven marker whatever the body says
+        // (`isOrphanedStartedClaim`) — the default rule's `isClaimable` gate
+        // made doctor useless against exactly the wedged markers the gate
+        // verbs send users here for.
+        isOrphaned: status === "queued" ? isOrphanedPlanClaim : isOrphanedStartedClaim,
       })
       if (released.length) releasedClaims[status] = released
     }
@@ -1939,9 +2055,19 @@ server.registerTool(
     if (!t) return fail(`No in-progress task "${id}".`)
     if (isClaimable(t)) return fail(`Task "${id}" never started — start it with workflow_start or workflow_claim.`)
     if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — send it back to planning with workflow_replan.`)
-    // Re-mark; the dead run's claim marker may linger (then this is a no-op and
-    // `tookClaim` is false — the marker isn't ours to hand back on failure).
-    const tookClaim = await claimTask(sh, t)
+    // Re-claim. A held marker no longer means "leftover from the dead run" —
+    // graceful stops release it — so a failed claim means either a live loop in
+    // another process (its stage marker is fresh: refuse, or two loops build
+    // the same branch) or a hard-crashed run (take the marker over atomically).
+    let tookClaim = await claimTask(sh, t)
+    if (!tookClaim) {
+      const liveHost = await taskDrivenByStageMarker(sh, directory, config.tasksDir, id)
+      if (liveHost) {
+        return fail(`Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`)
+      }
+      tookClaim = await claimTaskSweepingStale(sh, t, 0)
+      if (!tookClaim) return fail(`Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`)
+    }
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     samples = []
     pending = null

@@ -50,6 +50,18 @@
             "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
           }
         ]
+      },
+      {
+        "_comment": "The check-stage evidence recorder — the Qwen mirror of the Claude plugin's. Read tools never reach the guard's matcher above, so a REVIEW stage would leave an empty proof-of-work ledger and have every honest PASS rejected. It only ever allows.",
+        "matcher": "^(read_file|read_many_files|search_file_content|glob)$",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-evidence",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-evidence.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
       }
     ],
     "SessionStart": [

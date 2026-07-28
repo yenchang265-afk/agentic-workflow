@@ -16,7 +16,7 @@ import { repoPath, useRepo } from "../repo.js"
 import { Badge } from "../ui/Badge.js"
 import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 
 /**
  * The `.agentic-workflow.json` editor.
@@ -72,7 +72,7 @@ export const ConfigEditor = () => {
   const [saved, setSaved] = useState<SaveConfigResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const { data, error: loadError } = useJson<ConfigLayerResponse>(
+  const { data, error: loadError } = useResource<ConfigLayerResponse>(
     repoPath(`/api/config?layer=${layer}`, repoId),
     [layer, repoId, versions.config],
   )
@@ -82,7 +82,7 @@ export const ConfigEditor = () => {
   // .agentic-workflow.json — and an opt-in kind never got one at all, which made
   // the creator's own post-save checklist item ("enable it in the Config tab")
   // impossible to satisfy in the tab it names.
-  const { data: kinds } = useJson<KindsResponse>(repoPath("/api/kinds", repoId), [repoId, versions.config])
+  const { data: kinds } = useResource<KindsResponse>(repoPath("/api/kinds", repoId), [repoId, versions.config])
 
   // A layer or repo switch abandons pending edits rather than carrying them to a
   // different file — silently writing them somewhere else would be worse.
@@ -92,8 +92,42 @@ export const ConfigEditor = () => {
     setError(null)
   }, [layer, repoId])
 
-  if (loadError) return <div className="error-banner">Could not load config: {loadError}</div>
-  if (!data) return <div className="placeholder">Loading config…</div>
+  /**
+   * The layer switcher renders in every state, including the failed one.
+   *
+   * Returning the error banner *before* it meant a repo layer that wouldn't
+   * load left the whole tab a dead red box: the user layer was one click away
+   * and that click no longer existed. The switcher is the recovery path, so it
+   * cannot be downstream of the thing it recovers from.
+   */
+  const head = (
+    <div className="cfg-head">
+      <div className="cfg-layers">
+        {(["repo", "user"] as const).map((l) => (
+          <Button key={l} variant={layer === l ? "primary" : "default"} onClick={() => setLayer(l)}>
+            {l === "repo" ? "This repo" : "User (all repos)"}
+          </Button>
+        ))}
+      </div>
+      {/* Only a loaded layer can claim to be disabled; before that we don't know. */}
+      <code className="cfg-file">{data ? (data.path ?? "(layer disabled)") : loadError ? "(not loaded)" : "…"}</code>
+    </div>
+  )
+
+  if (loadError)
+    return (
+      <div className="cfg">
+        {head}
+        <div className="error-banner">Could not load config: {loadError}</div>
+      </div>
+    )
+  if (!data)
+    return (
+      <div className="cfg">
+        {head}
+        <div className="placeholder">Loading config…</div>
+      </div>
+    )
 
   const raw = data.raw ?? {}
   const at = (path: string): unknown => path.split(".").reduce<unknown>((cur, k) => (cur && typeof cur === "object" ? (cur as Record<string, unknown>)[k] : undefined), raw)
@@ -133,16 +167,7 @@ export const ConfigEditor = () => {
 
   return (
     <div className="cfg">
-      <div className="cfg-head">
-        <div className="cfg-layers">
-          {(["repo", "user"] as const).map((l) => (
-            <Button key={l} variant={layer === l ? "primary" : "default"} onClick={() => setLayer(l)}>
-              {l === "repo" ? "This repo" : "User (all repos)"}
-            </Button>
-          ))}
-        </div>
-        <code className="cfg-file">{data.path ?? "(layer disabled)"}</code>
-      </div>
+      {head}
 
       {data.parseError && (
         <div className="error-banner">

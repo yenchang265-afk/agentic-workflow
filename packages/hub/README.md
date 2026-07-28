@@ -20,9 +20,16 @@ The hub only watches repos you name: with no `--dir` and no `hub` section in
 the user-scope config it exits with a usage message rather than assuming the
 cwd.
 
+**Review queue** — the landing screen, and the hub's reason to exist. One row
+per task waiting on a human, across every enabled backlog kind, longest-waiting
+first, each carrying the evidence a gate decision needs: how long it has waited,
+what the last run did, which stage failed, how much of the iteration budget it
+burned, and what the plan opens with. `GET /api/review`.
+
 **Loop monitor** — a board per kind, derived from its manifest: gate columns,
 task cards carrying the human gate moves (approve / replan / ship), and run
-history with per-stage token usage.
+history with per-stage token usage. The board is the inventory view; the queue
+above is where the decisions are.
 
 ![Loop monitor board with gate columns and run history](docs/screenshots/monitor.png)
 
@@ -71,7 +78,38 @@ events + gate notifications are tagged with the repo id. Workflow kinds are not
 repo-scoped — they live in the core package shared by every repo, so the
 creator tab is unaffected.
 
+## Addresses, and what the URL carries
+
+Every view has one. The hash names the screen and the selection —
+`#/monitor/engineering?repo=web-app&run=fix-pagination`,
+`#/review?task=plan-review/fix-pagination` — so a view can be linked,
+bookmarked and reloaded, Back closes a drawer instead of leaving the app, and
+switching sections no longer destroys what the previous one held.
+
+Hash rather than real paths on purpose: the static handler maps a URL path to a
+file under `dist/web` and 404s otherwise, which is the traversal and DNS-
+rebinding rail. Real paths would need an SPA fallback punched through it — a
+security-adjacent server change to buy a prettier URL on a localhost tool.
+
+## Feedback
+
+Mutations report through a toast **and** a session **activity log** (the
+`Activity` button in the header), because a successful gate move relocates its
+task and unmounts the card that would otherwise carry the confirmation. The log
+lists **refused** moves too — those wrote no commit, so git cannot tell you they
+happened. It is in-memory and session-scoped; git remains the durable record.
+
 ## Tabs
+
+- **Review queue** (the landing screen): every task parked at a gate, across all
+  enabled backlog kinds, longest-waiting first. Gate columns come from each
+  manifest's park/done targets, so a kind that parks somewhere unusual is picked
+  up for free. Each row carries the age (derived from the task's own audit
+  trail — core stores no timestamps, and an untimestamped task reads "age
+  unknown" rather than pretending to be new), the last run's outcome, the stage
+  that failed, iteration burn against the cap, and the opening of the plan. A
+  run's id is its task's id, so every row links straight to its run log.
+  `GET /api/review`.
 
 - **Loop monitor**: one sub-tab per enabled workflow kind, each view derived from
   the kind's manifest — backlog kinds get a board over their own
@@ -95,7 +133,11 @@ creator tab is unaffected.
   stage, and it refuses a move on a task a loop is already driving.
 
   Clicking a card's title opens the **task drawer**: frontmatter, body, plan,
-  and the audit timeline. For a **planless** task — one in `draft/` or `queued/`
+  and the audit timeline — with the gate moves in a sticky footer, so the plan
+  can be read and approved in one place rather than read here and acted on back
+  on the board. On a card, the forward move (approve / ship) is the button; the
+  cancellations sit behind **More…**, which also means their confirm dialogs are
+  only mounted when that menu is open. For a **planless** task — one in `draft/` or `queued/`
   with no `## Implementation Plan` — the drawer is also an **editor**: change the
   title, type, priority, labels, acceptance, and body, add a comment, and save.
   This is the hub's answer to the CLI's `retask`, which reshapes a task through
@@ -295,6 +337,11 @@ Solid (unit-tested + live-verified against this repo):
 
 Known beta caveats:
 
+- **A shipped kind opens read-only in the creator.** The save route has always
+  refused to overwrite one; the toolbar now says so before the click and offers
+  **Save as new kind** instead. Editing a shipped manifest in place stays an
+  `$EDITOR` job.
+- **The screenshots below predate the review queue** and the routed shell.
 - **Creator canvas UX** has not had interactive browser QA — drag/connect and
   form flows work by construction but need real-mouse mileage; report
   anything janky

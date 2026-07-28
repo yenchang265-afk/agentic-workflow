@@ -45,7 +45,16 @@ export const getKinds = async (deps: HubDeps): Promise<JsonResponse> => {
   const kinds = listWorkflowKinds(deps.workflowsDir).flatMap((kind) => {
     try {
       const { manifest } = loadManifest(deps.workflowsDir, kind)
-      return [{ kind, description: manifest.description, stages: manifest.stages.map((s) => s.name) }]
+      return [
+        {
+          kind,
+          description: manifest.description,
+          stages: manifest.stages.map((s) => s.name),
+          // Same predicate postKind refuses on, so the UI can say "read-only"
+          // before the click instead of surfacing a 400 after it.
+          builtin: BUILTIN_WORKFLOW_KINDS.includes(kind),
+        },
+      ]
     } catch (err) {
       deps.log("warn", `skipping workflow kind ${kind}: ${(err as Error).message}`)
       return []

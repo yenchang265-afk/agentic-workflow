@@ -26,6 +26,18 @@ import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueu
 
 /** Tools that write files — guarded to the worktree while a worktree-mode loop drives. */
 const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
+/**
+ * Inspection tools whose target path counts as check-stage evidence
+ * (@agentic-workflow/core/workflow/evidence). Read-only by construction — a
+ * write tool's path is not evidence of having *looked* at anything.
+ */
+const READ_TOOLS = new Set(["read", "grep", "glob", "list"])
+/**
+ * Where a read tool carries its path, in probe order. Paths only — grep's
+ * `pattern` is deliberately absent: a regex is not a path, and admitting one
+ * would let an arbitrary search string corroborate a cited file by name.
+ */
+const READ_PATH_KEYS = ["filePath", "path"]
 
 /**
  * The agent a verb spawns OUTSIDE the loop. `new` step 4 and `retask` step 4
@@ -528,10 +540,18 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // subagents). Walk the parentID chain to the driving loop, like
       // workflow_verdict does; the walk only runs while some loop is live.
       let loop = getWorkflow(input.sessionID)
+      // The DRIVING session's id, not this call's — the evidence ledger is keyed
+      // by the loop, and a stage subagent's calls arrive under a child id.
+      let drivingID: string | null = loop ? input.sessionID : null
       let resolutionFailed = false
-      if (!loop && anyWorkflowActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool))) {
+      // Read tools are resolved too (they were not before): a REVIEW stage's work
+      // is almost entirely reading, so leaving them out would make its evidence
+      // ledger look empty and reject every honest PASS.
+      if (!loop && anyWorkflowActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool) || READ_TOOLS.has(input.tool))) {
         try {
-          loop = (await driver.findDrivingWorkflow(client, input.sessionID))?.state
+          const found = await driver.findDrivingWorkflow(client, input.sessionID)
+          loop = found?.state
+          drivingID = found?.sessionID ?? null
         } catch (err) {
           resolutionFailed = true
           await log("warn", `could not resolve driving session for ${input.sessionID}: ${(err as Error).message}`)
@@ -586,6 +606,20 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         if (typeof fp === "string") {
           const verdict = classifyEdit(fp, guardCtx)
           if (!verdict.allow) throw new Error(verdict.reason)
+        }
+      }
+      // Proof-of-work ledger for check stages. Recorded HERE — after every guard
+      // that can throw above, before the first return below — so it holds what the
+      // stage will actually run, never a command a guard refused. `recordVerdict`
+      // reads it back and rejects a PASS the stage did no work for
+      // (@agentic-workflow/core/workflow/evidence). Bash records the EFFECTIVE
+      // command: the worktree pin may have rewritten it, and what runs is what counts.
+      if (drivingID && loop?.stage) {
+        if (input.tool === "bash" && typeof output.args?.command === "string") {
+          driver.noteEvidence(drivingID, { command: output.args.command })
+        } else if (READ_TOOLS.has(input.tool)) {
+          const reads = READ_PATH_KEYS.map((k) => output.args?.[k]).filter((v): v is string => typeof v === "string" && v.trim() !== "")
+          if (reads.length) driver.noteEvidence(drivingID, { reads })
         }
       }
       // Worktree pinning enforcement: while a worktree-mode loop drives this
@@ -690,6 +724,26 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
               "Per-axis results. REQUIRED on a stage whose prompt lists required axes (engineering review: all five) — " +
                 "a call missing an axis is REJECTED, and partial submissions are not accumulated across calls.",
             ),
+          evidence: tool.schema
+            .array(
+              tool.schema.object({
+                kind: tool.schema
+                  .enum(["command", "file"])
+                  .describe('"command" — something you ran; "file" — a path (or "path:line") you read.'),
+                ref: tool.schema.string().describe("The command line as you issued it, or the path you read."),
+                result: tool.schema
+                  .string()
+                  .max(300)
+                  .optional()
+                  .describe('What you observed (e.g. "42 passed, 0 failed"). Audit trail only — never matched.'),
+              }),
+            )
+            .optional()
+            .describe(
+              "Proof of work. REQUIRED for a PASS on a stage whose prompt carries the PROOF OF WORK contract " +
+                "(engineering verify/review): this session's real commands and file reads are recorded independently, " +
+                "and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. FAIL/ERROR need none.",
+            ),
         },
         execute: async (args, ctx) => {
           // Check stages run as subtasks: the call carries the CHILD session's
@@ -704,6 +758,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
               ...(args.reason !== undefined ? { reason: args.reason } : {}),
               ...(args.criteria !== undefined ? { criteria: args.criteria } : {}),
               ...(args.axes !== undefined ? { axes: args.axes } : {}),
+              ...(args.evidence !== undefined ? { evidence: args.evidence } : {}),
             },
             // deps only so an out-of-stage verdict can be audited on the task file
             deps,

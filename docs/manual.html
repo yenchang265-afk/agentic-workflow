@@ -555,7 +555,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="skills">
       <div class="eyebrow">Understand</div>
       <h2>Skills &amp; stages</h2>
-      <p class="lede">Skills are reusable knowledge modules (<code>SKILL.md</code> files). Each stage's <em>sub-agent</em> invokes specific craft skills to do its job; the rest form a library the loop reaches for opportunistically. Three "machinery" skills document the system itself.</p>
+      <p class="lede">Skills are reusable knowledge modules (<code>SKILL.md</code> files). Each stage's <em>sub-agent</em> invokes specific craft skills to do its job; the rest form a library the loop reaches for opportunistically. Four "machinery" skills document the system itself.</p>
 
       <h3>Which skills each stage invokes</h3>
       <div class="tblwrap">
@@ -566,7 +566,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><span class="stag build" style="font-size:11px">BUILD</span></td><td><code>workflow-build</code></td><td><code>incremental-implementation</code> · <code>test-driven-development</code><br><span style="color:var(--muted-txt)">when relevant: <code>frontend-ui-engineering</code> · <code>observability-and-instrumentation</code> · <code>code-simplification</code></span></td></tr>
             <tr><td><span class="stag verify" style="font-size:11px">VERIFY</span></td><td><code>workflow-verify</code></td><td><code>debugging-and-error-recovery</code> <span style="color:var(--muted-txt)">(on FAIL, to root-cause)</span></td></tr>
             <tr><td><span class="stag review" style="font-size:11px">REVIEW</span></td><td><code>workflow-review</code></td><td><code>code-review-and-quality</code> · <code>security-and-hardening</code> · <code>performance-optimization</code></td></tr>
-            <tr><td><span class="stag authoring" style="font-size:11px">AUTHOR</span></td><td>main agent</td><td><code>interview-me</code> · <code>idea-refine</code></td></tr>
+            <tr><td><span class="stag authoring" style="font-size:11px">AUTHOR</span></td><td>main agent</td><td><code>interview-me</code></td></tr>
           </tbody>
         </table>
       </div>
@@ -630,6 +630,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>retask &lt;id&gt; [note]</code></td><td>Re-interview &amp; rewrite a planless task in place. Works on <code>draft/</code>, and on <code>queued/</code> — that one is sent back to <code>draft/</code> first, so re-approve it. From <code>plan-review/</code> on, use <code>replan</code>.</td></tr>
             <tr><td><code>approve [id]</code></td><td>THE gate verb, folder-driven: draft → queued · plan-review → in-progress · in-review → completed. Id-less form advances the one task at a loop wait-gate, falling back to a lone draft.</td></tr>
             <tr><td><code>replan [id] [reason]</code></td><td>The sole rejection verb: a parked plan (or a cap-tripped task, by id) → back to queued.</td></tr>
+            <tr><td><code>abandon &lt;id&gt; [reason]</code></td><td>Cancel a task by moving it to abandoned — the reversible cancellation (file kept). Refused while a loop drives the task or a claim is held.</td></tr>
+            <tr><td><code>remove &lt;id&gt; --force</code></td><td>Hard-delete a task from the backlog entirely, from any folder — file deleted, not moved, and the removal committed. Bare <code>remove</code> is a dry run that deletes nothing.</td></tr>
             <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review — the only PLAN entry. Building stays with <code>claim</code>/<code>watch</code>.</td></tr>
             <tr><td><code>claim</code></td><td>Pull &amp; drive the next build-ready in-progress/ task; queued tasks are never auto-planned (use <code>plan &lt;id&gt;</code>).</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only).</td></tr>
@@ -891,7 +893,8 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
     ["deprecation-and-migration",["plan","library"],"Manages sunsetting old systems and migrating users from one implementation to another. PLAN reaches for it when a task removes or migrates a system."],
     ["source-driven-development",["library"],"Grounds implementation decisions in official documentation, citing sources, free of outdated patterns."],
     ["doubt-driven-development",["library"],"Subjects every non-trivial decision to a fresh-context adversarial review before it stands."],
-    ["context-engineering",["library"],"Optimizes agent context and rules files at session start or when output quality degrades."]
+    ["context-engineering",["library"],"Optimizes agent context and rules files at session start or when output quality degrades."],
+    ["writing-great-skills",["machinery"],"Vocabulary and principles for writing predictable skills — use when creating or editing anything under skills/, a skill description, or a stage prompt."]
   ];
   var CATS=[["all","All"],["machinery","Machinery"],["plan","Plan"],["build","Build"],["verify","Verify"],["review","Review"],["authoring","Authoring"],["library","Library"]];
   var grid=document.getElementById("skgrid"),chipbox=document.getElementById("chips"),search=document.getElementById("skSearch"),empty=document.getElementById("skEmpty");

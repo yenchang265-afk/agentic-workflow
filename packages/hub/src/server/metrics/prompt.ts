@@ -1,5 +1,6 @@
 import type { PromptSize, StagePromptSize } from "../../shared/api.js"
 import type { RunMetricsInput } from "./aggregate.js"
+import { stageLabel } from "./stage-label.js"
 
 /**
  * Composed-prompt size per stage, from the `runs/<id>.metrics.json` sidecars. Pure.
@@ -44,9 +45,10 @@ export const promptSize = (inputs: readonly RunMetricsInput[]): PromptSize => {
         if (sample.promptChars === undefined) continue
         observedHere = true
         samples++
-        const s = byStage.get(sample.stage) ?? { chars: [], elidedSamples: 0, elidedChars: 0 }
+        const label = stageLabel(run.kind, sample.stage)
+        const s = byStage.get(label) ?? { chars: [], elidedSamples: 0, elidedChars: 0 }
         const elided = sample.promptElided ?? 0
-        byStage.set(sample.stage, {
+        byStage.set(label, {
           chars: [...s.chars, sample.promptChars],
           elidedSamples: s.elidedSamples + (elided > 0 ? 1 : 0),
           elidedChars: s.elidedChars + elided,

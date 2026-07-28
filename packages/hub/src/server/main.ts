@@ -12,6 +12,7 @@ import { resolveRepos } from "./repos.js"
 import { startWatcher } from "./watch.js"
 import { getActive } from "./routes/active.js"
 import { getBacklog } from "./routes/backlog.js"
+import { getReview } from "./routes/review.js"
 import { getTaskDetail, postTaskSave } from "./routes/tasks.js"
 import { getConfig, saveConfig } from "./routes/config.js"
 import { getDoctor, postDoctorFix } from "./routes/doctor.js"
@@ -20,6 +21,7 @@ import { getAssets, postGenPrompts, scaffoldAgent, scaffoldCommand, scaffoldSkil
 import { checklistKind, getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
 import { getMetrics } from "./routes/metrics.js"
 import { getRunDetail, getRuns } from "./routes/runs.js"
+import { getSchedulerEvents } from "./routes/scheduler.js"
 import { getRunTokens, getTokensSummary } from "./routes/tokens.js"
 
 /**
@@ -157,6 +159,7 @@ const routes: Route[] = [
   },
   { method: "GET", pattern: "/api/monitor/kinds", handler: scoped(async (deps) => ok({ kinds: deps.boards })) },
   { method: "GET", pattern: "/api/backlog", handler: scoped(getBacklog) },
+  { method: "GET", pattern: "/api/review", handler: scoped((deps) => getReview(deps)) },
   { method: "GET", pattern: "/api/tasks/:status/:id", handler: scoped(getTaskDetail) },
   { method: "POST", pattern: "/api/tasks/:status/:id", handler: scoped(postTaskSave), mutating: true },
   { method: "GET", pattern: "/api/kinds", handler: scoped((deps) => getKinds(deps)) },
@@ -164,6 +167,7 @@ const routes: Route[] = [
   { method: "GET", pattern: "/api/runs", handler: scoped((deps) => getRuns(deps)) },
   { method: "GET", pattern: "/api/runs/:id", handler: scoped(getRunDetail) },
   { method: "GET", pattern: "/api/active", handler: scoped((deps) => getActive(deps)) },
+  { method: "GET", pattern: "/api/scheduler", handler: scoped((deps) => getSchedulerEvents(deps)) },
   { method: "GET", pattern: "/api/metrics", handler: scoped((deps) => getMetrics(deps)) },
   { method: "GET", pattern: "/api/tokens", handler: scoped((deps) => getTokensSummary(deps)) },
   { method: "GET", pattern: "/api/tokens/:id", handler: scoped(getRunTokens) },

@@ -193,6 +193,38 @@ test("a sibling command starting with 'engineering' is not the engineering comma
   assert.equal(gateArgsFor("/engineering-notes approve my-task"), null)
 })
 
+test("only whitespace (or end) closes the command name — every other separator is a different token", () => {
+  // The old negative class `(?![-\w])` enumerated separators and leaked on the
+  // rest: a prompt opening with a path or a namespaced sibling got engineering's
+  // status procedure injected as authoritative instructions.
+  assert.equal(verbFor("/engineering.md needs updating"), null)
+  assert.equal(verbFor("/engineering/foo bar"), null)
+  assert.equal(verbFor("/engineering:sub approve x"), null)
+  assert.equal(verbFor("/engineering,approve now"), null)
+  assert.equal(gateArgsFor("/engineering:sub approve x"), null)
+  assert.equal(verbFor("/engineering"), "status", "bare command still resolves")
+})
+
+test("wrapping quotes and trailing punctuation never change which verb runs", () => {
+  // `"new` used to fall through to the `unknown` block — an authoritative
+  // refusal to run a legitimate invocation that merely quoted its argument.
+  assert.equal(verbFor('/agentic-workflow:engineering "new add rate limiting"'), "new")
+  assert.equal(verbFor("/agentic-workflow:engineering new: add rate limiting"), "new")
+  assert.equal(verbFor("/agentic-workflow:engineering plan."), "plan")
+  assert.equal(verbFor("/engineering 'claim'"), "claim")
+})
+
+test("gate ids arrive unquoted — a quoted id must not fail isSafeTaskId and block the turn", () => {
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering approve "my-task"'), { argv: ["gate", "approve-any", "my-task"] })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering retask 'f7k3'"), { argv: ["gate", "retask", "f7k3"], continueTurn: true })
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering abandon "f7k3" wrong scope'), {
+    argv: ["gate", "abandon", "f7k3", "wrong", "scope"],
+  })
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering remove "f7k3" --force'), { argv: ["gate", "remove", "f7k3", "--force"] })
+  const replan = gateArgsFor('/agentic-workflow:engineering replan "f7k3" plan misses the cache layer')
+  assert.deepEqual(replan, { argv: ["gate", "reject-any", "f7k3", "plan", "misses", "the", "cache", "layer"] })
+})
+
 /**
  * `verbFor` drives the per-verb instruction injection (verb-slice.mjs), not a
  * gate move, so it must recognise EVERY verb — including the ones gateArgsFor

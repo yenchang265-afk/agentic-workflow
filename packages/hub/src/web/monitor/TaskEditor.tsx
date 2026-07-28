@@ -1,9 +1,12 @@
 import { useState } from "react"
 import type { SaveTaskRequest, SaveTaskResponse, TaskCard, TaskEditable, TaskStatus } from "../../shared/api.js"
 import { postAction } from "../api.js"
+import { useFeedback } from "../feedback.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
+import { StatusMessage } from "../ui/StatusMessage.js"
+import { saveTaskTone } from "../ui/tone.js"
 
 /**
  * The in-place editor for a planless task.
@@ -45,6 +48,8 @@ const Field = ({ label, children }: { label: string; children: React.ReactNode }
 
 export const TaskEditor = ({ card, status, editable, onSaved }: TaskEditorProps) => {
   const { repoId } = useRepo()
+  const { report } = useFeedback()
+  const context = `save · ${card.shortId}`
   const [title, setTitle] = useState(card.title)
   const [type, setType] = useState(card.type ?? "")
   const [priority, setPriority] = useState(String(card.priority))
@@ -75,11 +80,24 @@ export const TaskEditor = ({ card, status, editable, onSaved }: TaskEditorProps)
         repoPath(`/api/tasks/${status}/${encodeURIComponent(card.id)}`, repoId),
         payload,
       )
+      report({ tone: saveTaskTone(result), message: result.message, context, repo: repoId })
+      // A refusal is a 200 with `ok: false` (postAction keeps it intact rather
+      // than collapsing it into an Error). It is NOT a landed save: a live loop
+      // is driving the task, or the body scanned as a secret. Keep the form —
+      // and everything typed into it — exactly as the 409 path below does, and
+      // render the reason. Only a real save retires the editor, because only
+      // then are the form's baseHash and folder actually stale.
+      if (!result.ok) {
+        setError(result.message)
+        return
+      }
       setError(null)
       onSaved(result)
     } catch (e) {
       // A 409 lands here: the board, the file, or the plan moved under the form.
-      setError((e as Error).message)
+      const message = (e as Error).message
+      setError(message)
+      report({ tone: "error", message, context, repo: repoId })
     }
   }
 
@@ -127,7 +145,11 @@ export const TaskEditor = ({ card, status, editable, onSaved }: TaskEditorProps)
           <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} />
         </label>
       </Confirm>
-      {error && <p className="gate-msg gate-msg--warning">{error}</p>}
+      {error && (
+        <StatusMessage tone="warn" onDismiss={() => setError(null)}>
+          {error}
+        </StatusMessage>
+      )}
     </div>
   )
 }

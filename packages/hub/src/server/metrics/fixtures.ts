@@ -48,3 +48,32 @@ export const runInput = (id: string, markdown: string, sidecar: RunMetrics | nul
   log: parseRunLog(markdown),
   sidecar,
 })
+
+/** One sidecar sample; only the fields under test need naming. */
+export const sample = (
+  stage: string,
+  overrides: Partial<RunMetrics["runs"][number]["samples"][number]> = {},
+): RunMetrics["runs"][number]["samples"][number] => ({
+  stage,
+  iteration: 0,
+  ms: 1000,
+  ...overrides,
+})
+
+/** A minimal opencode-host sidecar wrapping the given samples in one terminal entry. */
+export const sidecarOf = (
+  samples: readonly RunMetrics["runs"][number]["samples"][number][],
+  entry: Partial<Omit<RunMetrics["runs"][number], "samples">> = {},
+): RunMetrics => ({
+  version: 1,
+  runs: [
+    {
+      endedAt: "2026-07-05T13:16:25.138Z",
+      outcome: "done",
+      detail: "",
+      host: "opencode",
+      samples: [...samples],
+      ...entry,
+    },
+  ],
+})

@@ -50,6 +50,7 @@
       "command": "verify",
       "agent": "workflow-verify",
       "prompt": "stages/verify.md",
+      "requireEvidence": true,
       "isolation": "worktree",
       "bashAllowlist": [
         "git status*",
@@ -150,6 +151,7 @@
       "prompt": "stages/review.md",
       "isolation": "worktree",
       "requiredAxes": ["correctness", "readability", "architecture", "security", "performance"],
+      "requireEvidence": true,
       "bashAllowlist": [
         "git status*",
         "git diff*",

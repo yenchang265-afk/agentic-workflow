@@ -22,11 +22,13 @@ import type {
   GenPromptsResponse,
   KindDetailResponse,
   KindsResponse,
+  KindSummary,
   ManifestIssue,
   SaveKindResponse,
 } from "../../shared/api.js"
 import { fetchJson, postJson } from "../api.js"
-import { useJson } from "../useJson.js"
+import { repoPath, useRepo } from "../repo.js"
+import { useResource } from "../resource.js"
 import { Confirm } from "../ui/Confirm.js"
 import { EdgeForm, MetaForm, StageForm, TerminalAddForm, type EdgeFormValue } from "./forms.js"
 import { manifestToGraph, sameTerminalSpec, type GraphMeta, type TerminalSpec, type TransitionSlot } from "./graphmodel.js"
@@ -157,7 +159,12 @@ const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMet
 }
 
 export const Creator = () => {
-  const [kinds, setKinds] = useState<string[]>([])
+  // Every route below is `scoped()` server-side and falls back to the FIRST
+  // repo when `?repo=` is absent — so an unscoped creator reads one repo's
+  // assets while scaffolding files into another. The header picker has to
+  // reach these calls.
+  const { repoId } = useRepo()
+  const [kinds, setKinds] = useState<KindSummary[]>([])
   const [loadedKind, setLoadedKind] = useState<string | null>(null)
   const [isNew, setIsNew] = useState(false)
   const [meta, setMeta] = useState<GraphMeta | null>(null)
@@ -165,21 +172,32 @@ export const Creator = () => {
   const [edges, setEdges] = useState<Edge[]>([])
   const [prompts, setPrompts] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<{ kind: "node" | "edge"; id: string } | null>(null)
-  const [issues, setIssues] = useState<ManifestIssue[] | null>(null)
+  /**
+   * The server's verdict, tagged with the exact manifest it judged.
+   *
+   * Holding the issue list alone would let a stale verdict outlive the graph it
+   * described: one Validate on a clean manifest pins `[]`, and every later edit
+   * then reads "valid" from it — badge green, Save enabled, manifest broken,
+   * with a 400 as the only feedback. `currentManifest` is memoized on
+   * `[nodes, edges, meta]`, so identity equality expires the verdict on any
+   * edit at all — including the ones that go through `MetaForm`'s `setMeta`
+   * rather than a named mutator, which a per-mutator reset would miss.
+   */
+  const [validated, setValidated] = useState<{ manifest: WorkflowManifest; issues: ManifestIssue[] } | null>(null)
   const [saved, setSaved] = useState<SaveKindResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   // which add-terminal popover is open (stop never asks — it has no status)
   const [terminalDraft, setTerminalDraft] = useState<"park" | "done" | null>(null)
   // repo asset inventory for the stage form's pickers; bumped after any scaffold
   const [assetsVersion, setAssetsVersion] = useState(0)
-  const { data: assets } = useJson<AssetsResponse>("/api/assets", [assetsVersion])
+  const { data: assets } = useResource<AssetsResponse>(repoPath("/api/assets", repoId), [assetsVersion, repoId])
   const [genResult, setGenResult] = useState<GenPromptsResponse | null>(null)
 
   useEffect(() => {
-    fetchJson<KindsResponse>("/api/kinds")
-      .then((r) => setKinds(r.kinds.map((k) => k.kind)))
+    fetchJson<KindsResponse>(repoPath("/api/kinds", repoId))
+      .then((r) => setKinds([...r.kinds]))
       .catch((e: Error) => setError(e.message))
-  }, [])
+  }, [repoId])
 
   const load = (manifest: WorkflowManifest, promptsIn: Record<string, string>, fresh: boolean): void => {
     const flow = toFlow(manifest)
@@ -189,7 +207,7 @@ export const Creator = () => {
     setPrompts(promptsIn)
     setIsNew(fresh)
     setSelected(null)
-    setIssues(null)
+    setValidated(null)
     setSaved(null)
     setGenResult(null)
   }
@@ -201,7 +219,7 @@ export const Creator = () => {
     const seq = ++openSeq.current
     setLoadedKind(kind)
     setError(null) // clear any prior open/save error before the new load
-    fetchJson<KindDetailResponse>(`/api/kinds/${encodeURIComponent(kind)}`)
+    fetchJson<KindDetailResponse>(repoPath(`/api/kinds/${encodeURIComponent(kind)}`, repoId))
       .then((r) => {
         if (seq === openSeq.current) load(r.manifest, { ...r.prompts }, false)
       })
@@ -257,6 +275,7 @@ export const Creator = () => {
       agent: `workflow-${name}`,
       prompt: `stages/${name}.md`,
       isolation: "worktree",
+      requireEvidence: false,
       bashAllowlist: [],
       platformAllowlist: {},
     }
@@ -298,10 +317,10 @@ export const Creator = () => {
   const validateOnServer = async (): Promise<void> => {
     if (!currentManifest) return
     try {
-      const res = await postJson<{ valid: boolean; issues: ManifestIssue[] }>("/api/kinds/validate", {
+      const res = await postJson<{ valid: boolean; issues: ManifestIssue[] }>(repoPath("/api/kinds/validate", repoId), {
         manifest: currentManifest,
       })
-      setIssues(res.issues)
+      setValidated({ manifest: currentManifest, issues: res.issues })
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -311,14 +330,19 @@ export const Creator = () => {
   const save = async (): Promise<void> => {
     if (!currentManifest) return
     try {
-      const res = await postJson<SaveKindResponse>(`/api/kinds/${encodeURIComponent(currentManifest.kind)}`, {
+      const res = await postJson<SaveKindResponse>(repoPath(`/api/kinds/${encodeURIComponent(currentManifest.kind)}`, repoId), {
         manifest: currentManifest,
         prompts,
         overwrite: !isNew && loadedKind === currentManifest.kind,
       })
       setSaved(res)
       setError(null)
-      if (!kinds.includes(currentManifest.kind)) setKinds((k) => [...k, currentManifest.kind])
+      // A kind you just wrote is by definition not a shipped one.
+      if (!kinds.some((k) => k.kind === currentManifest.kind))
+        setKinds((ks) => [
+          ...ks,
+          { kind: currentManifest.kind, description: currentManifest.description, stages: [], builtin: false },
+        ])
       setIsNew(false)
       setLoadedKind(currentManifest.kind)
     } catch (e) {
@@ -330,7 +354,9 @@ export const Creator = () => {
   const refreshChecklist = async (): Promise<void> => {
     if (!saved || !currentManifest) return
     try {
-      const res = await postJson<ChecklistResponse>("/api/kinds/checklist", { manifest: currentManifest })
+      const res = await postJson<ChecklistResponse>(repoPath("/api/kinds/checklist", repoId), {
+        manifest: currentManifest,
+      })
       setSaved((s) => s && { ...s, checklist: res.checklist })
     } catch {
       // non-fatal: the stale checklist corrects on the next save
@@ -344,7 +370,7 @@ export const Creator = () => {
 
   const runGenPrompts = async (): Promise<void> => {
     try {
-      const res = await postJson<GenPromptsResponse>("/api/gen-prompts", {})
+      const res = await postJson<GenPromptsResponse>(repoPath("/api/gen-prompts", repoId), {})
       setGenResult(res)
       await refreshChecklist()
     } catch (e) {
@@ -368,8 +394,17 @@ export const Creator = () => {
           <h2 className="section-title">Open a workflow kind</h2>
           <div className="summary-chips">
             {kinds.map((k) => (
-              <Button key={k} onClick={() => openKind(k)}>
-                {k}
+              <Button
+                key={k.kind}
+                onClick={() => openKind(k.kind)}
+                title={
+                  k.builtin
+                    ? `${k.description} — ships with core, so it opens read-only; save it under a new name to fork it.`
+                    : k.description
+                }
+              >
+                {k.kind}
+                {k.builtin ? " · shipped" : ""}
               </Button>
             ))}
           </div>
@@ -396,7 +431,16 @@ export const Creator = () => {
     )
   }
 
-  const allIssues = issues ?? liveIssues
+  // The server's verdict only while it still describes the manifest on screen;
+  // any edit falls back to the live client-side schema run.
+  const allIssues = validated?.manifest === currentManifest ? validated.issues : liveIssues
+
+  // Saving under a name that isn't the one loaded is a fork — a new kind
+  // written beside the original, which is the ONLY way to base work on a
+  // shipped kind. `savingOverShipped` is the blocked case: still carrying the
+  // shipped name, which the save route refuses.
+  const isFork = isNew || loadedKind !== currentManifest?.kind
+  const savingOverShipped = !isFork && kinds.some((k) => k.kind === currentManifest?.kind && k.builtin)
 
   return (
     <div className="creator">
@@ -423,8 +467,27 @@ export const Creator = () => {
           {allIssues.length ? `${allIssues.length} issue${allIssues.length > 1 ? "s" : ""}` : "valid"}
         </span>
         <Button onClick={() => void validateOnServer()}>Validate</Button>
-        <Button variant="primary" disabled={allIssues.length > 0} onClick={() => void save()}>
-          Save
+        {/*
+          A shipped kind is read-only, and the save route has always refused to
+          overwrite one — but the button gave no sign of it, so the only way to
+          learn was to click Save and read a 400. Fork is now the offered path,
+          and the button says which one it is.
+        */}
+        <Button
+          variant="primary"
+          disabled={allIssues.length > 0 || savingOverShipped}
+          title={
+            savingOverShipped
+              ? `"${currentManifest?.kind}" ships with core and cannot be overwritten — give it a new name in the panel (click empty canvas) to save your own copy.`
+              : allIssues.length > 0
+                ? "Fix the validation issues first"
+                : isFork
+                  ? "Writes a new workflow kind"
+                  : "Overwrites this kind's manifest and stage prompts"
+          }
+          onClick={() => void save()}
+        >
+          {isFork ? "Save as new kind" : "Save"}
         </Button>
       </div>
       <div className="creator-body">

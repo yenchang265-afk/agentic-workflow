@@ -5,7 +5,7 @@ import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
-import { useJson } from "../useJson.js"
+import { useResource } from "../resource.js"
 
 /**
  * The backlog doctor panel. `Board.tsx` opens it from what used to be a
@@ -22,7 +22,7 @@ const nonEmpty = (r: DoctorReport): boolean =>
 export const DoctorPanel = () => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
-  const { data, error } = useJson<DoctorReport>(repoPath("/api/doctor", repoId), [repoId, versions.backlog, versions.gate])
+  const { data, error } = useResource<DoctorReport>(repoPath("/api/doctor", repoId), [repoId, versions.backlog, versions.gate])
   const [result, setResult] = useState<DoctorFixResponse | null>(null)
   const [fixError, setFixError] = useState<string | null>(null)
 

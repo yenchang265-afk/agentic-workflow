@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { barWidth, bucketLabel, formatChars, pct } from "./format.js"
+import { barWidth, bucketLabel, formatChars, formatTokens, pct, timeAgo } from "./format.js"
 
 test("pct renders an unmeasurable rate differently from a genuine zero", () => {
   // The distinction the whole `number | null` convention exists to preserve:
@@ -39,4 +39,21 @@ test("formatChars abbreviates at a thousand and keeps magnitudes distinguishable
   assert.equal(formatChars(24_000), "24.0k")
   // A mean is fractional; it must not render a decimal tail below 1k.
   assert.equal(formatChars(666.6), "667")
+})
+
+test("formatTokens abbreviates at k and M", () => {
+  assert.equal(formatTokens(999), "999")
+  assert.equal(formatTokens(1_500), "1.5k")
+  assert.equal(formatTokens(2_400_000), "2.4M")
+})
+
+test("timeAgo scales units and never goes negative", () => {
+  const now = Date.parse("2026-07-28T12:00:00.000Z")
+  assert.equal(timeAgo("2026-07-28T11:59:55.000Z", now), "5s ago")
+  assert.equal(timeAgo("2026-07-28T11:57:00.000Z", now), "3m ago")
+  assert.equal(timeAgo("2026-07-28T09:45:00.000Z", now), "2h 15m ago")
+  // Clock skew: a timestamp slightly in the future clamps to "0s ago".
+  assert.equal(timeAgo("2026-07-28T12:00:02.000Z", now), "0s ago")
+  // Unparseable input renders verbatim, not NaN.
+  assert.equal(timeAgo("not-a-time", now), "not-a-time")
 })

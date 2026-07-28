@@ -140,7 +140,7 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
   const base = oracleComposeArgs(state, stage)
   const def = stageDef(eng.manifest, stage)
   return def.kind === "check"
-    ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes)}`
+    ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis", def.requireEvidence)}`
     : `${base}\n\n${workScopeBlock(stage)}`
 }
 
@@ -271,9 +271,17 @@ test("composeStagePrompt matches composePrompt byte-for-byte on hook-less stages
 test("composePrompt appends the verdict contract to check stages only", () => {
   const state = resumeAtBuild("add foo", task, "PLAN BODY")
   for (const stage of ["verify", "review"]) {
+    const def = stageDef(eng.manifest, stage)
     const prompt = composePrompt(eng, { ...state, stage }, stage)
-    assert.ok(prompt.endsWith(verdictContractBlock(stage, stageDef(eng.manifest, stage).requiredAxes)), `${stage} carries the contract`)
+    assert.ok(
+      prompt.endsWith(verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis", def.requireEvidence)),
+      `${stage} carries the contract`,
+    )
     assert.match(prompt, /workflow_verdict/)
+    // Both engineering check stages opt into proof of work, and the contract has
+    // to reach the prompt: a stage that first learns of the requirement from a
+    // rejection has already finished its work.
+    assert.match(prompt, /PROOF OF WORK/, `${stage} carries the evidence contract`)
   }
   for (const stage of ["plan", "build"]) {
     assert.doesNotMatch(composePrompt(eng, { ...state, stage }, stage), /MANDATORY VERDICT/, `${stage} has no contract`)
