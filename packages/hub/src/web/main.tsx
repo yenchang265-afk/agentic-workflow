@@ -67,9 +67,15 @@ const Monitor = () => {
   useEffect(() => setKind(localStorage.getItem(storageKey)), [storageKey])
 
   const { data, error } = useJson<MonitorKindsResponse>(repoPath("/api/monitor/kinds", repoId), [repoId])
-  const kinds = data?.kinds ?? (error ? [] : null)
 
-  if (!kinds) return <div className="placeholder">Loading kinds…</div>
+  // Three states, not two. Folding the error case into an empty list rendered a
+  // dead server or a failed fetch as "No enabled workflow kinds — check
+  // .agentic-workflow.json", sending the user to edit a file that was never the
+  // problem. An unreachable server and a repo with no kinds enabled are
+  // different findings and say so.
+  if (error) return <div className="error-banner">Could not load workflow kinds: {error}</div>
+  if (!data) return <div className="placeholder">Loading kinds…</div>
+  const kinds = data.kinds
   const active = kinds.find((k) => k.kind === kind) ?? kinds[0]
   return (
     <div>

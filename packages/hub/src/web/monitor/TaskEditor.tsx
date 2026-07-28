@@ -75,6 +75,16 @@ export const TaskEditor = ({ card, status, editable, onSaved }: TaskEditorProps)
         repoPath(`/api/tasks/${status}/${encodeURIComponent(card.id)}`, repoId),
         payload,
       )
+      // A refusal is a 200 with `ok: false` (postAction keeps it intact rather
+      // than collapsing it into an Error). It is NOT a landed save: a live loop
+      // is driving the task, or the body scanned as a secret. Keep the form —
+      // and everything typed into it — exactly as the 409 path below does, and
+      // render the reason. Only a real save retires the editor, because only
+      // then are the form's baseHash and folder actually stale.
+      if (!result.ok) {
+        setError(result.message)
+        return
+      }
       setError(null)
       onSaved(result)
     } catch (e) {

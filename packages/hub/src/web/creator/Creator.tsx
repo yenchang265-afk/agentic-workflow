@@ -26,6 +26,7 @@ import type {
   SaveKindResponse,
 } from "../../shared/api.js"
 import { fetchJson, postJson } from "../api.js"
+import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
 import { Confirm } from "../ui/Confirm.js"
 import { EdgeForm, MetaForm, StageForm, TerminalAddForm, type EdgeFormValue } from "./forms.js"
@@ -157,6 +158,11 @@ const fromFlow = (nodes: readonly Node[], edges: readonly Edge[], meta: GraphMet
 }
 
 export const Creator = () => {
+  // Every route below is `scoped()` server-side and falls back to the FIRST
+  // repo when `?repo=` is absent — so an unscoped creator reads one repo's
+  // assets while scaffolding files into another. The header picker has to
+  // reach these calls.
+  const { repoId } = useRepo()
   const [kinds, setKinds] = useState<string[]>([])
   const [loadedKind, setLoadedKind] = useState<string | null>(null)
   const [isNew, setIsNew] = useState(false)
@@ -165,21 +171,32 @@ export const Creator = () => {
   const [edges, setEdges] = useState<Edge[]>([])
   const [prompts, setPrompts] = useState<Record<string, string>>({})
   const [selected, setSelected] = useState<{ kind: "node" | "edge"; id: string } | null>(null)
-  const [issues, setIssues] = useState<ManifestIssue[] | null>(null)
+  /**
+   * The server's verdict, tagged with the exact manifest it judged.
+   *
+   * Holding the issue list alone would let a stale verdict outlive the graph it
+   * described: one Validate on a clean manifest pins `[]`, and every later edit
+   * then reads "valid" from it — badge green, Save enabled, manifest broken,
+   * with a 400 as the only feedback. `currentManifest` is memoized on
+   * `[nodes, edges, meta]`, so identity equality expires the verdict on any
+   * edit at all — including the ones that go through `MetaForm`'s `setMeta`
+   * rather than a named mutator, which a per-mutator reset would miss.
+   */
+  const [validated, setValidated] = useState<{ manifest: WorkflowManifest; issues: ManifestIssue[] } | null>(null)
   const [saved, setSaved] = useState<SaveKindResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   // which add-terminal popover is open (stop never asks — it has no status)
   const [terminalDraft, setTerminalDraft] = useState<"park" | "done" | null>(null)
   // repo asset inventory for the stage form's pickers; bumped after any scaffold
   const [assetsVersion, setAssetsVersion] = useState(0)
-  const { data: assets } = useJson<AssetsResponse>("/api/assets", [assetsVersion])
+  const { data: assets } = useJson<AssetsResponse>(repoPath("/api/assets", repoId), [assetsVersion, repoId])
   const [genResult, setGenResult] = useState<GenPromptsResponse | null>(null)
 
   useEffect(() => {
-    fetchJson<KindsResponse>("/api/kinds")
+    fetchJson<KindsResponse>(repoPath("/api/kinds", repoId))
       .then((r) => setKinds(r.kinds.map((k) => k.kind)))
       .catch((e: Error) => setError(e.message))
-  }, [])
+  }, [repoId])
 
   const load = (manifest: WorkflowManifest, promptsIn: Record<string, string>, fresh: boolean): void => {
     const flow = toFlow(manifest)
@@ -189,7 +206,7 @@ export const Creator = () => {
     setPrompts(promptsIn)
     setIsNew(fresh)
     setSelected(null)
-    setIssues(null)
+    setValidated(null)
     setSaved(null)
     setGenResult(null)
   }
@@ -201,7 +218,7 @@ export const Creator = () => {
     const seq = ++openSeq.current
     setLoadedKind(kind)
     setError(null) // clear any prior open/save error before the new load
-    fetchJson<KindDetailResponse>(`/api/kinds/${encodeURIComponent(kind)}`)
+    fetchJson<KindDetailResponse>(repoPath(`/api/kinds/${encodeURIComponent(kind)}`, repoId))
       .then((r) => {
         if (seq === openSeq.current) load(r.manifest, { ...r.prompts }, false)
       })
@@ -298,10 +315,10 @@ export const Creator = () => {
   const validateOnServer = async (): Promise<void> => {
     if (!currentManifest) return
     try {
-      const res = await postJson<{ valid: boolean; issues: ManifestIssue[] }>("/api/kinds/validate", {
+      const res = await postJson<{ valid: boolean; issues: ManifestIssue[] }>(repoPath("/api/kinds/validate", repoId), {
         manifest: currentManifest,
       })
-      setIssues(res.issues)
+      setValidated({ manifest: currentManifest, issues: res.issues })
       setError(null)
     } catch (e) {
       setError((e as Error).message)
@@ -311,7 +328,7 @@ export const Creator = () => {
   const save = async (): Promise<void> => {
     if (!currentManifest) return
     try {
-      const res = await postJson<SaveKindResponse>(`/api/kinds/${encodeURIComponent(currentManifest.kind)}`, {
+      const res = await postJson<SaveKindResponse>(repoPath(`/api/kinds/${encodeURIComponent(currentManifest.kind)}`, repoId), {
         manifest: currentManifest,
         prompts,
         overwrite: !isNew && loadedKind === currentManifest.kind,
@@ -330,7 +347,9 @@ export const Creator = () => {
   const refreshChecklist = async (): Promise<void> => {
     if (!saved || !currentManifest) return
     try {
-      const res = await postJson<ChecklistResponse>("/api/kinds/checklist", { manifest: currentManifest })
+      const res = await postJson<ChecklistResponse>(repoPath("/api/kinds/checklist", repoId), {
+        manifest: currentManifest,
+      })
       setSaved((s) => s && { ...s, checklist: res.checklist })
     } catch {
       // non-fatal: the stale checklist corrects on the next save
@@ -344,7 +363,7 @@ export const Creator = () => {
 
   const runGenPrompts = async (): Promise<void> => {
     try {
-      const res = await postJson<GenPromptsResponse>("/api/gen-prompts", {})
+      const res = await postJson<GenPromptsResponse>(repoPath("/api/gen-prompts", repoId), {})
       setGenResult(res)
       await refreshChecklist()
     } catch (e) {
@@ -396,7 +415,9 @@ export const Creator = () => {
     )
   }
 
-  const allIssues = issues ?? liveIssues
+  // The server's verdict only while it still describes the manifest on screen;
+  // any edit falls back to the live client-side schema run.
+  const allIssues = validated?.manifest === currentManifest ? validated.issues : liveIssues
 
   return (
     <div className="creator">

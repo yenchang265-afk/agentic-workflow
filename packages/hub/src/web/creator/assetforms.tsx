@@ -1,6 +1,7 @@
 import { useState } from "react"
 import type { AgentPreset, AssetSkill, ScaffoldResponse } from "../../shared/api.js"
 import { postJson } from "../api.js"
+import { repoPath, useRepo } from "../repo.js"
 import { Button } from "../ui/Button.js"
 
 /**
@@ -45,6 +46,9 @@ export const SkillScaffoldForm = ({
   onCreated: (name: string) => void
   onCancel: () => void
 }) => {
+  // Scaffolds write real files: they must land in the repo the header picker
+  // names, not the server's default (first) repo.
+  const { repoId } = useRepo()
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [pending, setPending] = useState(false)
@@ -54,7 +58,7 @@ export const SkillScaffoldForm = ({
     setPending(true)
     setError(null)
     try {
-      await postJson<ScaffoldResponse>("/api/assets/skill", { name: name.trim(), description })
+      await postJson<ScaffoldResponse>(repoPath("/api/assets/skill", repoId), { name: name.trim(), description })
       onCreated(name.trim())
     } catch (e) {
       setError((e as Error).message)
@@ -94,6 +98,7 @@ export const AgentScaffoldForm = ({
   onSkillCreated: () => void
   onCancel: () => void
 }) => {
+  const { repoId } = useRepo()
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState("")
   const [preset, setPreset] = useState<AgentPreset>(defaultPreset)
@@ -110,7 +115,7 @@ export const AgentScaffoldForm = ({
     setPending(true)
     setError(null)
     try {
-      const res = await postJson<ScaffoldResponse>("/api/assets/agent", {
+      const res = await postJson<ScaffoldResponse>(repoPath("/api/assets/agent", repoId), {
         name: name.trim(),
         description,
         preset,
@@ -187,6 +192,7 @@ export const CommandScaffoldForm = ({
   onCreated: (name: string) => void
   onCancel: () => void
 }) => {
+  const { repoId } = useRepo()
   const [name, setName] = useState(initialName)
   const [description, setDescription] = useState("")
   const [agent, setAgent] = useState(initialAgent)
@@ -197,7 +203,11 @@ export const CommandScaffoldForm = ({
     setPending(true)
     setError(null)
     try {
-      await postJson<ScaffoldResponse>("/api/assets/command", { name: name.trim(), description, agent: agent.trim() })
+      await postJson<ScaffoldResponse>(repoPath("/api/assets/command", repoId), {
+        name: name.trim(),
+        description,
+        agent: agent.trim(),
+      })
       onCreated(name.trim())
     } catch (e) {
       setError((e as Error).message)

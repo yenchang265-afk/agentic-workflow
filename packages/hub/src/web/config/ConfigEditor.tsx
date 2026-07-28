@@ -92,8 +92,42 @@ export const ConfigEditor = () => {
     setError(null)
   }, [layer, repoId])
 
-  if (loadError) return <div className="error-banner">Could not load config: {loadError}</div>
-  if (!data) return <div className="placeholder">Loading config…</div>
+  /**
+   * The layer switcher renders in every state, including the failed one.
+   *
+   * Returning the error banner *before* it meant a repo layer that wouldn't
+   * load left the whole tab a dead red box: the user layer was one click away
+   * and that click no longer existed. The switcher is the recovery path, so it
+   * cannot be downstream of the thing it recovers from.
+   */
+  const head = (
+    <div className="cfg-head">
+      <div className="cfg-layers">
+        {(["repo", "user"] as const).map((l) => (
+          <Button key={l} variant={layer === l ? "primary" : "default"} onClick={() => setLayer(l)}>
+            {l === "repo" ? "This repo" : "User (all repos)"}
+          </Button>
+        ))}
+      </div>
+      {/* Only a loaded layer can claim to be disabled; before that we don't know. */}
+      <code className="cfg-file">{data ? (data.path ?? "(layer disabled)") : loadError ? "(not loaded)" : "…"}</code>
+    </div>
+  )
+
+  if (loadError)
+    return (
+      <div className="cfg">
+        {head}
+        <div className="error-banner">Could not load config: {loadError}</div>
+      </div>
+    )
+  if (!data)
+    return (
+      <div className="cfg">
+        {head}
+        <div className="placeholder">Loading config…</div>
+      </div>
+    )
 
   const raw = data.raw ?? {}
   const at = (path: string): unknown => path.split(".").reduce<unknown>((cur, k) => (cur && typeof cur === "object" ? (cur as Record<string, unknown>)[k] : undefined), raw)
@@ -133,16 +167,7 @@ export const ConfigEditor = () => {
 
   return (
     <div className="cfg">
-      <div className="cfg-head">
-        <div className="cfg-layers">
-          {(["repo", "user"] as const).map((l) => (
-            <Button key={l} variant={layer === l ? "primary" : "default"} onClick={() => setLayer(l)}>
-              {l === "repo" ? "This repo" : "User (all repos)"}
-            </Button>
-          ))}
-        </div>
-        <code className="cfg-file">{data.path ?? "(layer disabled)"}</code>
-      </div>
+      {head}
 
       {data.parseError && (
         <div className="error-banner">

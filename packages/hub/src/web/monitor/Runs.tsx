@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react"
-import type { RunDetailResponse, RunsResponse, StageActivity } from "../../shared/api.js"
+import type { RunDetailResponse, RunsResponse, RunSummaryRow, StageActivity } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { repoPath, useRepo } from "../repo.js"
 import { useJson } from "../useJson.js"
 import { Badge } from "../ui/Badge.js"
 import { Chip } from "../ui/Chip.js"
+import { alignRow, extraHeaders } from "./runtable.js"
 import { TokenPanel } from "./TokenPanel.js"
 
 /** Run history: list of run logs; expanding one shows stage sections + summary tables. */
@@ -35,6 +36,43 @@ const StageActivityLine = ({ activity }: { activity: StageActivity }) => (
     )}
   </div>
 )
+
+/**
+ * One summary's stage table. Headers are the union of every row's `extra` keys
+ * and each cell is looked up by that key — see runtable.ts for why position
+ * alignment was wrong.
+ */
+const StageTable = ({ rows }: { rows: readonly RunSummaryRow[] }) => {
+  const headers = extraHeaders(rows)
+  return (
+    <table className="stage-table">
+      <thead>
+        <tr>
+          <th>stage</th>
+          <th>iter</th>
+          <th>verdict</th>
+          <th>wall-clock</th>
+          {headers.map((h) => (
+            <th key={h}>{h}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((r, j) => (
+          <tr key={j}>
+            <td>{r.lens ? `${r.stage} (${r.lens})` : r.stage}</td>
+            <td>{r.iteration}</td>
+            <td>{r.verdict ? <Badge tone={r.verdict === "PASS" ? "ok" : "gate"}>{r.verdict}</Badge> : "—"}</td>
+            <td>{r.duration}</td>
+            {alignRow(headers, r.extra).map((v, k) => (
+              <td key={headers[k]}>{v}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
 
 const RunDetail = ({ id }: { id: string }) => {
   const { repoId } = useRepo()
@@ -73,36 +111,7 @@ const RunDetail = ({ id }: { id: string }) => {
               </span>
             )}
           </div>
-          {s.rows.length > 0 && (
-            <table className="stage-table">
-              <thead>
-                <tr>
-                  <th>stage</th>
-                  <th>iter</th>
-                  <th>verdict</th>
-                  <th>wall-clock</th>
-                  {Object.keys(s.rows[0]?.extra ?? {}).map((h) => (
-                    <th key={h}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {s.rows.map((r, j) => (
-                  <tr key={j}>
-                    <td>{r.lens ? `${r.stage} (${r.lens})` : r.stage}</td>
-                    <td>{r.iteration}</td>
-                    <td>
-                      {r.verdict ? <Badge tone={r.verdict === "PASS" ? "ok" : "gate"}>{r.verdict}</Badge> : "—"}
-                    </td>
-                    <td>{r.duration}</td>
-                    {Object.values(r.extra).map((v, k) => (
-                      <td key={k}>{v}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+          {s.rows.length > 0 && <StageTable rows={s.rows} />}
         </div>
       ))}
       {detail.log.sections.map((sec, i) => {
@@ -134,9 +143,16 @@ export const Runs = () => {
   // run's `active` flag when a loop starts/ends, without touching any run `.md`.
   const { data, error } = useJson<RunsResponse>(repoPath("/api/runs", repoId), [versions.run, versions.active, repoId])
 
-  // Collapse the open run whenever the list refreshes or the repo changes — the
-  // selected id may no longer exist.
-  useEffect(() => setSelected(null), [versions.run, repoId])
+  // Ids are per repo, so a repo switch always invalidates the selection.
+  useEffect(() => setSelected(null), [repoId])
+
+  // But a *list refresh* must not. A live loop appends to its run log at every
+  // stage, bumping `versions.run` — closing the detail there slammed the panel
+  // shut precisely while someone was reading a run in progress. Drop the
+  // selection only once the id is genuinely gone from the list.
+  useEffect(() => {
+    if (data && selected !== null && !data.runs.some((r) => r.id === selected)) setSelected(null)
+  }, [data, selected])
 
   if (error) return <div className="error-banner">Could not load run history: {error}</div>
   if (!data) return null
