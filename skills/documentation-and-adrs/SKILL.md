@@ -1,43 +1,34 @@
 ---
 name: documentation-and-adrs
-description: Records the why behind decisions. Use when making an architectural decision, changing a public API, or shipping behavior future engineers must understand.
+description: Records the why behind a decision, in the form that outlives the code — chiefly the ADR. Use when making an architectural decision, changing a public API, or shipping behavior a future engineer has to understand.
 ---
 
 # Documentation and ADRs
 
-## Overview
+Code shows *what* was built. It cannot show why this way, what was rejected, or
+which constraint forced the shape — and that is exactly the part no future
+reader can recover from the source. It is also the part that does not go stale:
+the **why** stays true while the *what* changes with every edit. Document the
+why, and only the why.
 
-Document decisions, not just code. Code shows *what* was built; documentation explains *why it was built this way* and *what alternatives were rejected*. That context is what future humans and agents cannot recover from the source, and it is the only documentation that does not go stale — the **why** is stable, the **what** changes with every edit.
+The Architecture Decision Record is the highest-value form of it and most of
+this skill. READMEs, changelogs, JSDoc, and OpenAPI mechanics are in
+`references/documentation-patterns.md`.
 
-An Architecture Decision Record is the highest-value form of it, and the one this skill is mostly about. The mechanics of the other forms — READMEs, changelogs, inline comments, API docs — are in `references/documentation-patterns.md`.
+## When a decision earns an ADR
 
-## When to Use
+**The test is reversibility, not size.** A one-line config change that pins the
+project to a vendor earns one; a thousand-line refactor that could be undone
+tomorrow does not. In practice that means framework and major-dependency
+choices, data models and schemas, authentication strategy, API architecture,
+and build/hosting/infrastructure commitments.
 
-- Making a significant architectural decision, or choosing between competing approaches
-- Adding or changing a public API
-- Shipping a feature that changes user-facing behavior
-- When you find yourself explaining the same thing repeatedly
+## The record
 
-**When NOT to use:** obvious code, or throwaway prototypes.
-
-## When a Decision Earns an ADR
-
-Write one when the decision would be expensive to reverse:
-
-- Choosing a framework, library, or major dependency
-- Designing a data model or database schema
-- Selecting an authentication strategy
-- Deciding on an API architecture (REST vs. GraphQL vs. tRPC)
-- Choosing between build tools, hosting platforms, or infrastructure
-
-The test is reversibility, not size. A one-line config change that pins the whole project to a vendor earns an ADR; a large refactor that could be undone tomorrow does not.
-
-## ADR Template
-
-Store ADRs in `docs/decisions/` with sequential numbering:
+Sequentially numbered, in `docs/decisions/`:
 
 ```markdown
-# ADR-001: Use PostgreSQL for primary database
+# ADR-001: Use PostgreSQL for the primary database
 
 ## Status
 Accepted | Superseded by ADR-XXX | Deprecated
@@ -46,105 +37,90 @@ Accepted | Superseded by ADR-XXX | Deprecated
 2025-01-15
 
 ## Context
-We need a primary database for the task management application. Key requirements:
-- Relational data model (users, tasks, teams with relationships)
-- ACID transactions for task state changes
-- Support for full-text search on task content
-- Managed hosting available (for small team, limited ops capacity)
+Requirements that constrained the choice: relational data (users, tasks, teams),
+ACID transactions on task state, full-text search over task content, managed
+hosting (small team, limited ops capacity).
 
 ## Decision
-Use PostgreSQL with Prisma ORM.
+PostgreSQL with Prisma.
 
 ## Alternatives Considered
-
 ### MongoDB
-- Pros: Flexible schema, easy to start with
-- Cons: Our data is inherently relational; would need to manage relationships manually
-- Rejected: Relational data in a document store leads to complex joins or data duplication
-
+Flexible schema, easy start — but the data is inherently relational, so
+relationships end up managed by hand. Rejected: complex joins or duplication.
 ### SQLite
-- Pros: Zero configuration, embedded, fast for reads
-- Cons: Limited concurrent write support, no managed hosting for production
-- Rejected: Not suitable for multi-user web application in production
-
+Zero config, fast reads — but limited concurrent writes and no managed
+production hosting. Rejected: multi-user web application.
 ### MySQL
-- Pros: Mature, widely supported
-- Cons: PostgreSQL has better JSON support, full-text search, and ecosystem tooling
-- Rejected: PostgreSQL is the better fit for our feature requirements
+Mature and widely supported — but PostgreSQL has the better JSON support,
+full-text search, and tooling for these requirements. Rejected on fit.
 
 ## Consequences
-- Prisma provides type-safe database access and migration management
-- We can use PostgreSQL's full-text search instead of adding Elasticsearch
-- Team needs PostgreSQL knowledge (standard skill, low risk)
-- Hosting on managed service (Supabase, Neon, or RDS)
+Type-safe access and migrations via Prisma. Full-text search without adding
+Elasticsearch. The team takes on PostgreSQL knowledge (standard, low risk) and
+a managed host.
 ```
 
-**Alternatives Considered is the section that earns the ADR.** Without it the record explains what was chosen but not what was ruled out, so the next engineer re-opens the same question.
+**Alternatives Considered is the section that earns the record.** Without it,
+the ADR says what was chosen but not what was ruled out, so the next engineer
+re-opens the question you already closed — and re-opens it without the
+constraints you had.
 
-## ADR Lifecycle
+**Consequences are what the project now carries** as a result, including the
+costs. An ADR listing only benefits is a pitch, not a record.
+
+## The lifecycle is append-only
 
 ```
-PROPOSED → ACCEPTED → (SUPERSEDED or DEPRECATED)
+PROPOSED → ACCEPTED → (SUPERSEDED | DEPRECATED)
 ```
 
-An ADR is append-only history: when a decision changes, write a new ADR that references and supersedes the old one, and leave the old one in place. Deleting it destroys the context that explains why the codebase looks the way it does.
+When a decision changes, write a new ADR that names and supersedes the old one,
+and leave the old one in place. Editing it in place destroys the explanation
+for why the codebase currently looks the way it does — the superseded record is
+the context for every line still written against it.
 
-## Inline Documentation
-
-Comment the *why*, never the *what* — the what is already in the line below the comment, and it is the half that goes stale.
+## Inline: why and gotchas only
 
 ```typescript
 // Restates the code — no
 // Increment counter by 1
 counter += 1;
 
-// Explains non-obvious intent — yes
-// Rate limit uses a sliding window — reset counter at window boundary,
-// not on a fixed schedule, to prevent burst attacks at window edges
+// Non-obvious intent — yes
+// Sliding window: reset at the boundary rather than on a fixed schedule,
+// so bursts at the window edge can't double the allowance
 if (now - windowStart > WINDOW_SIZE_MS) {
   counter = 0;
   windowStart = now;
 }
 ```
 
-Known gotchas — the traps a reader would otherwise fall into — are the other thing worth an inline comment, anchored to the code that has the trap. Examples, plus README, changelog, JSDoc and OpenAPI forms, are in `references/documentation-patterns.md`.
+The other comment worth writing is the **gotcha** — the trap a reader would
+otherwise fall into — anchored to the line that has it. Agents read these too,
+alongside the rules file, the spec, and the ADRs, and stop re-deciding settled
+questions because of them. More forms and examples:
+`references/documentation-patterns.md`.
 
-## Documentation for Agents
-
-Agents read the same artifacts and one more:
-
-- **CLAUDE.md / rules files** — project conventions, so agents follow them
-- **Spec files** — kept current, so agents build the right thing
-- **ADRs** — so agents understand why past decisions were made and stop re-deciding them
-- **Inline gotchas** — so agents do not fall into known traps
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "The code is self-documenting" | Code shows what. It doesn't show why, what alternatives were rejected, or what constraints apply. |
-| "Comments get outdated" | Comments on *why* are stable. Comments on *what* get outdated — which is why you only write the former. |
-
-## Red Flags
-
-- Documentation that restates the code instead of explaining intent
-- An ADR with no Alternatives Considered section
-- A superseded decision edited in place instead of recorded as a new ADR
-- Commented-out code left in place of deletion
+Commented-out code is not documentation. Delete it; git remembers.
 
 ## Verification
 
-**When a decision has been made** (before or during planning):
+**When a decision has been made:**
 
-- [ ] Whether the decision needs an ADR is stated, and the reversibility test is what decided it
-- [ ] If one is needed, its number and title are named
-- [ ] Any ADR it supersedes is identified
+- [ ] Whether it needs an ADR is stated, decided by reversibility
+- [ ] If one is needed, its number and title are named, along with any ADR it
+      supersedes
 
 **When an ADR has been written:**
 
 - [ ] Context states the requirements that constrained the choice
-- [ ] Alternatives Considered lists each rejected option with its reason
-- [ ] Consequences state what the project now takes on
-- [ ] Status is set, and a superseded predecessor links forward
+- [ ] Alternatives Considered names each rejected option and why it lost
+- [ ] Consequences state what the project takes on, costs included
+- [ ] Status is set, and a superseded predecessor is left intact and linked
 
-**When code has been written:** see `references/documentation-patterns.md`.
+**When code has been written:**
+
+- [ ] Every comment explains why or flags a gotcha; none restates the line
+      below it
+- [ ] See `references/documentation-patterns.md` for the other forms

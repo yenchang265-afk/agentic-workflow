@@ -1,81 +1,68 @@
 ---
 name: deprecation-and-migration
-description: Sunsets old systems and migrates their users safely. Use when removing an API, feature, or system, or deciding whether to maintain or retire existing code.
+description: Decides whether to retire a system and how its users get moved — the decision, the pattern, and the phase this change lands. Use when removing an API, feature, or system, or weighing maintaining legacy code against replacing it.
 ---
 
 # Deprecation and Migration
 
-## Overview
+Code is a liability, not an asset. Every line carries ongoing cost — tests,
+docs, security patches, dependency bumps, and the attention of everyone working
+near it. The value was always the functionality; when the same functionality
+needs less code, the old code should go.
 
-Code is a liability, not an asset. Deprecation is the discipline of removing code that no longer earns its keep; migration is moving users safely from the old to the new. Most engineering organizations are good at building things and few are good at removing them — this skill addresses that gap.
+Two things happen here at different times. **Deciding** to deprecate is a
+design call made before anything moves, and this file owns it. **Rolling out**
+the migration outlives any single change, and lives in
+`references/migration-rollout.md`.
 
-Two things happen here, and they happen at different times. **Deciding** to deprecate is a design call, made before anything moves. **Rolling out** the migration is a long-running process that outlives any single change. This file owns the decision; `references/migration-rollout.md` owns the rollout.
+## Why removal is hard
 
-## When to Use
+**Hyrum's Law.** With enough users, every observable behavior is depended on —
+including bugs, timing quirks, and undocumented side effects. Users cannot
+"just switch" when the replacement fails to reproduce behaviors they never told
+you they relied on. This is why deprecation is an active migration rather than
+an announcement.
 
-- Replacing an old system, API, or library with a new one
-- Sunsetting a feature, or consolidating duplicate implementations
-- Removing code that nobody owns but everybody depends on
-- Deciding whether to maintain a legacy system or invest in migration
-- Designing something new (deprecation planning starts at design time)
+**The churn rule.** If you own the infrastructure being deprecated, you own
+moving its users — or you ship a backward-compatible change requiring no
+migration at all. Announcing a deprecation and leaving consumers to work it out
+is how zombie code gets made.
 
-## Core Principles
+**Removal cost is set at design time.** Building something new, ask how it
+would be removed in three years. Clean interfaces, feature flags, and a small
+surface area are cheap to retire; implementation details leaking everywhere are
+not — `api-and-interface-design`.
 
-### Code Is a Liability
-
-Every line has ongoing cost: tests, documentation, security patches, dependency updates, and mental overhead for anyone working nearby. The value is the functionality, not the code. When the same functionality can be provided with less code or a better abstraction, the old code should go.
-
-### Hyrum's Law Makes Removal Hard
-
-With enough users, every observable behavior becomes depended on — including bugs, timing quirks, and undocumented side effects. This is why deprecation requires active migration rather than announcement. Users cannot "just switch" when they depend on behaviors the replacement does not replicate.
-
-### Deprecation Planning Starts at Design Time
-
-When building something new, ask: "how would we remove this in three years?" Systems with clean interfaces, feature flags, and small surface area are cheap to deprecate. Systems that leak implementation details everywhere are not — see `api-and-interface-design`.
-
-### The Churn Rule
-
-If you own the infrastructure being deprecated, you own migrating its users — or you ship a backward-compatible change that requires no migration. Announcing a deprecation and leaving consumers to work it out is how zombie code is made.
-
-## The Deprecation Decision
+## The decision
 
 Answer all five before anything moves:
 
-```
-1. Does this system still provide unique value?
-   → If yes, maintain it. If no, proceed.
+1. **Does it still provide unique value?** If yes, maintain it and stop here.
+2. **How many consumers depend on it?** A number, not "a few" — it sizes
+   everything downstream.
+3. **Does a replacement exist?** If not, building it is the first phase.
+   Deprecating without an alternative just strands people.
+4. **What is the migration cost per consumer?** Trivially automatable means do
+   it now; manual and high-effort gets weighed against the maintenance cost.
+5. **What does *not* deprecating cost?** Security exposure, engineer time, and
+   the complexity tax on everything built nearby.
 
-2. How many users/consumers depend on it?
-   → Quantify the migration scope.
+Then choose the mode. **Advisory** is the default: the old system is stable,
+migration is optional, users move on their own timeline behind warnings and
+docs. **Compulsory** — a hard deadline — is for security exposure, blocked
+progress, or unsustainable maintenance, and it is a commitment to supply the
+tooling, documentation, and support that make the deadline meetable. A date
+without those is not a plan.
 
-3. Does a replacement exist?
-   → If no, build the replacement first. Don't deprecate without an alternative.
+## Name the pattern
 
-4. What's the migration cost for each consumer?
-   → If trivially automated, do it. If manual and high-effort, weigh against maintenance cost.
-
-5. What's the ongoing maintenance cost of NOT deprecating?
-   → Security risk, engineer time, opportunity cost of complexity.
-```
-
-### Compulsory vs Advisory
-
-| Type | When to Use | Mechanism |
-|------|-------------|-----------|
-| **Advisory** | Migration is optional, old system is stable | Warnings, documentation, nudges. Users migrate on their own timeline. |
-| **Compulsory** | Old system has security issues, blocks progress, or maintenance cost is unsustainable | Hard deadline plus migration tooling, documentation, and support |
-
-**Default to advisory.** Compulsory deprecation is a commitment to provide tooling and support, not just a date.
-
-## Choosing a Migration Pattern
-
-Name the pattern as part of the decision — it determines what the work is:
+The pattern decides what the work actually is:
 
 | Pattern | Use when | Shape |
 |---|---|---|
-| **Strangler** | The old system serves live traffic and cannot go dark | Run both, route traffic old → new incrementally (0% → canary → 50% → 100%), then remove the old |
-| **Adapter** | Consumers are many and their call sites are expensive to change | Keep the old interface, reimplement it over the new system, migrate the backend first |
-| **Feature flag** | Consumers can be switched individually and switched back | Flag selects the implementation per user or per call site; the flag's removal is the last step |
+| **Strangler** | the old system serves live traffic and cannot go dark | run both, route old → new incrementally (canary → 50% → 100%), then remove the old |
+| **Adapter** | consumers are many and their call sites are expensive to change | keep the old interface, reimplement it over the new system, migrate the backend first |
+| **Feature flag** | consumers can be switched, and switched back, one at a time | the flag selects the implementation per user or call site; removing the flag is the last step |
 
 ```typescript
 // Adapter: old interface, new implementation
@@ -83,52 +70,47 @@ class LegacyTaskService implements OldTaskAPI {
   constructor(private newService: NewTaskService) {}
 
   getTask(id: number): OldTask {
-    const task = this.newService.findById(String(id));
-    return this.toOldFormat(task);
+    return this.toOldFormat(this.newService.findById(String(id)));
   }
 }
 ```
 
-## Scoping a Deprecation Into Work
+## Say which phase this change is
 
-A deprecation rarely fits in one change. Once the pattern is chosen, say which **phase** the current work lands — build the replacement, add the adapter, move one consumer, flip the default, delete the old code — and treat the remaining phases as separate work rather than scope creep.
+A deprecation does not fit in one change. Once the pattern is chosen, state
+which phase the current work lands — build the replacement, add the adapter,
+move one consumer, flip the default, delete the old code — and treat the rest
+as separate work rather than scope creep.
 
-> **In the agentic loop:** those phases are sibling draft tasks, ordered and approved one at a time. See `task-backlog-management` → "Slicing a heavy idea". Attempting a whole deprecation in one task produces a change no human can review in one sitting.
+> **In the agentic loop:** those phases are sibling draft tasks, approved and
+> shipped one at a time. See `task-backlog-management` → "Slicing a heavy
+> idea". A whole deprecation in one task produces a diff nobody can review in
+> one sitting.
 
-The full rollout — announcing, migrating consumers one at a time, proving zero usage, and removing the old system — is in `references/migration-rollout.md`. Reach for it when executing a phase, not when deciding one.
+Executing a phase — announcing, moving consumers, proving zero usage, deleting
+— is `references/migration-rollout.md`.
 
-## Zombie Code
+## Zombie code
 
-Zombie code is code nobody owns but everybody depends on. Signs:
+Code nobody owns and everybody depends on: no commits in six months but live
+consumers, no assigned maintainer, failing tests nobody fixes, known-vulnerable
+dependencies nobody updates.
 
-- No commits in 6+ months but active consumers exist
-- No assigned maintainer or team
-- Failing tests that nobody fixes
-- Dependencies with known vulnerabilities that nobody updates
-
-**Response:** assign an owner and maintain it properly, or deprecate it with a concrete migration plan. Zombie code cannot stay in limbo — it gets investment or removal.
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "Someone might need it later" | If it's needed later, it can be rebuilt from git history. Keeping unused code costs more than rebuilding. |
-| "Users will migrate on their own" | They won't. The Churn Rule: provide tooling and documentation, or do the migration yourself. |
-
-## Red Flags
-
-- A deprecation announced with no replacement available
-- New features added to a deprecated system
-- Zombie code with no owner and active consumers
+It gets an owner and real maintenance, or a deprecation with a concrete
+migration plan. Limbo is the one state it cannot stay in, because the cost
+accrues either way and nobody is watching it.
 
 ## Verification
 
-**When the deprecation has been decided** (before anything moves):
+**When the deprecation has been decided:**
 
-- [ ] All five decision questions are answered, with the consumer count quantified
-- [ ] A replacement exists or is the first phase of the work
-- [ ] Advisory or compulsory is chosen, and compulsory carries tooling and a deadline
+- [ ] All five questions are answered, with the consumer count quantified
+- [ ] A replacement exists, or building it is the first phase
+- [ ] Advisory or compulsory is chosen, and compulsory carries tooling and a
+      deadline
 - [ ] A migration pattern is named
-- [ ] The current phase is stated, and the remaining phases are captured as separate work
+- [ ] The current phase is stated and the remaining phases are captured as
+      separate work
+- [ ] Nothing new was added to the system being deprecated
 
 **When a phase has been executed:** see `references/migration-rollout.md`.
