@@ -9,7 +9,8 @@ import { stageOrderError } from "./stage-guard.js"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
-import { advance, composePrompt, composePromptWithStats, firstStep } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
+import { checkCommands, runChecks, withCheckFloor } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
 import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
@@ -25,6 +26,7 @@ import {
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
 import {
+  checksFor,
   enabledWorkflowKinds,
   fanoutOverriddenByLenses,
   modelFor,
@@ -34,6 +36,7 @@ import {
   stagePasses,
   unbindableAgentModels,
   unknownAgentModelKeys,
+  unknownStageCheckKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
   unknownStageModelKeys,
@@ -382,7 +385,17 @@ const observedEvidence = (stage: string): ObservedEvidence | null => {
     const raw = JSON.parse(fs.readFileSync(stageEvidencePath(), "utf8")) as Record<string, unknown>
     if (raw.stage !== stage) return null
     const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
-    return { commands: list(raw.commands), reads: list(raw.reads) }
+    // The driver-run check commands count as observed: THIS process ran them and
+    // holds their exit codes. Without them a stage that correctly trusts the
+    // results instead of re-running them cites work the ledger never saw, and
+    // `evidenceIssue` rejects a PASS on a green suite.
+    //
+    // Merged into an existing ledger only — never used to turn a null ledger
+    // into observations. Null means "this host did not observe", which degrades
+    // to the declared-evidence rule; manufacturing a set here would flip every
+    // repo without the hooks installed into strict matching.
+    const seeded = checkCommands(active?.checks?.[stage] ?? [])
+    return { commands: [...new Set([...list(raw.commands), ...seeded])], reads: list(raw.reads) }
   } catch {
     return null
   }
@@ -505,6 +518,15 @@ const stageModelWarnings = (): string[] =>
       warnings.push(
         `reviewLenses is on, so the ${kind} loop's ${def.name} stage no longer enforces axis coverage, and no lens covers ` +
           `${unreviewed.map((a) => `"${a}"`).join(", ")}. Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} or unset reviewLenses.`,
+      )
+    }
+    // Same trap for stageChecks, and a worse one to hit: a typo'd stage runs NO
+    // check commands, so the loop quietly goes back to a self-reported "green".
+    const unchecked = unknownStageCheckKeys(config, kind, stageNames)
+    if (unchecked.length) {
+      warnings.push(
+        `workflows.${kind}.stageChecks names ${unchecked.map((k) => `"${k}"`).join(", ")}, which ${unchecked.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
+          `${unchecked.length > 1 ? "those check commands are" : "that check command is"} never run. Valid stages: ${stageNames.join(", ")}.`,
       )
     }
     // Same trap once more for stageFanout: a typo'd stage never fans out.
@@ -869,6 +891,28 @@ const claimWarnings = async (): Promise<string[]> => {
  * metrics sample. `suffix` is host prose appended after composition (the
  * verdict-retry nag), counted because it is part of what the model receives.
  */
+/**
+ * Run a stage's declared check commands in the work tree and hang the results on
+ * `active`, so the prompt composed next carries their exit codes as fact and the
+ * finalizer can floor the verdict with them.
+ *
+ * Called from `workflow_stage` — after `ensureIsolation`, before the payload —
+ * because that is this host's fire boundary; the prompt `workflow_advance`
+ * composed one turn earlier could not have known them. Once per stage arming,
+ * not once per focused pass: every lens of a review sees the same results, and
+ * one review must not cost N test suites.
+ */
+const runStageChecks = async (state: WorkflowState, stage: string): Promise<WorkflowState> => {
+  const defs = checksFor(config, activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
+  if (!defs.length) return state
+  const results = await runChecks(sh, defs, state.git?.worktree ?? directory)
+  for (const r of results) {
+    if (r.outcome === "pass") continue
+    await log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)
+  }
+  return withCheckResults(state, stage, results)
+}
+
 const firePrompt = (loaded: LoadedManifest, state: WorkflowState, stage: string, suffix = ""): string => {
   const { prompt, elided } = composePromptWithStats(loaded, state, stage, config)
   const fired = `${prompt}${suffix}`
@@ -1293,6 +1337,18 @@ server.registerTool(
         return fail((err as Error).message)
       }
     }
+    // A fresh arming of this stage, as opposed to the next pass of a fan-out
+    // already under way — the same distinction the `pending` wipe below draws.
+    const freshStage = fanoutStage !== stage || !pass.focus
+    // Declared check commands run here: after isolation, before the stage is
+    // armed, and once per fresh arming so the fan-out's passes share one result.
+    if (freshStage) {
+      try {
+        active = await runStageChecks(active, stage)
+      } catch (err) {
+        return fail(`Could not run the check commands for "${stage}" — ${(err as Error).message}`)
+      }
+    }
     // Re-armed per pass, so every pass gets its own deadline and
     // verdictRecorded:false. The marker IS the guard's only input: if it could
     // not be written, the subagent about to be spawned would run either
@@ -1315,7 +1371,7 @@ server.registerTool(
     // the orchestrator calls workflow_stage before every pass, so wiping here
     // would leave only the last pass's axis and the coverage gate would ERROR on
     // every run. Merging the passes is the point.
-    if (fanoutStage !== stage || !pass.focus) {
+    if (freshStage) {
       pending = null // no stale verdict may leak into this stage
       verdictRejected = false // ...nor a stale rejection into this stage's re-fire wording
     }
@@ -1341,6 +1397,7 @@ server.registerTool(
     }
     const def = stageDefinition
     const model = stageModel(activeManifest().manifest.kind, def)
+    const checked = (active.checks?.[stage]?.length ?? 0) > 0
     return ok({
       stage,
       agent: agentRef(def.agent),
@@ -1356,7 +1413,12 @@ server.registerTool(
             passIndex: index + 1,
             prompt: firePrompt(activeManifest(), active, stage, `\n\n${passFocusBlock(pass, index, passes.length)}`),
           }
-        : {}),
+        : // A stage with checks gets a re-composed prompt for the same reason a
+          // focused pass does: the fire payload was composed a turn earlier, so
+          // it cannot carry results of commands that had not run yet.
+          checked
+          ? { prompt: firePrompt(activeManifest(), active, stage) }
+          : {}),
       ...(labels.length ? { passes: labels } : {}),
       // The last thing the orchestrator reads before the Task call, and for many
       // stages the only spawn instruction it ever gets: the fire payload's note may
@@ -1368,7 +1430,9 @@ server.registerTool(
               (index + 1 < passes.length
                 ? `, then call workflow_stage again with the next focus — do not call workflow_advance until all ${passes.length} have run`
                 : ", then call workflow_advance once")
-          : "spawn the subagent named in the `agent` field",
+          : checked
+            ? "spawn the subagent named in the `agent` field with THIS response's `prompt` — it carries the check commands the loop already ran"
+            : "spawn the subagent named in the `agent` field",
         def.kind === "check" ? CHECK_VERDICT_TAIL : "",
       ),
     })
@@ -1525,6 +1589,12 @@ server.registerTool(
       }
       if (gaps.length) pending = withCoverageGap(pending, gaps)
     }
+    // Floor the admitted record with the checks this host ran for the stage.
+    // HERE, at finalization, and never inside `admitVerdict`: a pre-seeded check
+    // axis would flow through `blockingFindingsIssue` and get a genuine agent
+    // PASS rejected rather than derived down. Identity when every check passed,
+    // so a green run records exactly what the agent recorded.
+    pending = withCheckFloor(pending, active.checks?.[stage] ?? [])
     // `advance` threads the structured feedback (reason, failed criteria, failing
     // axes) ahead of the prose for the next iteration and records the seam, so a
     // stage context budget can clamp the prose without touching the block. The

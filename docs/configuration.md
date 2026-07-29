@@ -77,13 +77,14 @@ combined view — the intended split being:
   `ado.project`, `ado.repository`, `tasksDir`, `workflows`, worktree settings.
 
 **Shell-bearing keys are the exception, and are honored from the USER layer
-only**: `worktreeSetup` and `workflows.<kind>.scannerCommand` are strings the
-loop hands to a shell verbatim. `.agentic-workflow.json` rides along with any
-cloned repo, so honoring them there would let merely watching a repository run
-arbitrary shell on the first claim — npm-postinstall-class risk, silently.
-Setting either in the repo layer drops it with a warning naming the key (and,
-for `scannerCommand`, the kind); the rest of that section still applies, and a
-user-layer value in the same section survives.
+only**: `worktreeSetup`, `workflows.<kind>.scannerCommand` and
+`workflows.<kind>.stageChecks` are strings the loop hands to a shell verbatim.
+`.agentic-workflow.json` rides along with any cloned repo, so honoring them
+there would let merely watching a repository run arbitrary shell on the first
+claim — npm-postinstall-class risk, silently. Setting one in the repo layer
+drops it with a warning naming the key (and, for the nested two, the kind); the
+rest of that section still applies, and a user-layer value in the same section
+survives.
 
 **The ADO destination and credentials follow the same rule**, for the same
 reason applied to a different asset: `ado.organization`, `ado.pat`,
@@ -335,6 +336,64 @@ it. The warnings are advisory: they annotate a save, never block it. See
   parses). Unlike `worktreeSetup`, this key **is** honored from a repo's
   `.agentic-workflow.json`: the value space is positive integers, so a watched
   repo can shrink its own prompts and nothing else.
+
+- **`workflows.<kind>.stageChecks`** — check stage name → the commands the
+  **driver** runs in that stage's work tree before firing it. Their exit codes
+  are established fact for the stage: rendered into its prompt, counted as
+  observed evidence, and folded into its verdict. Unset ⇒ no checks, which is
+  exactly today's behavior.
+
+  This is the test/typecheck/lint knob the config never had. Without it, VERIFY
+  discovers the commands itself on every run — so the same repo at the same
+  commit can be checked with `npm test` on one iteration and `npm test` plus
+  `npx tsc` on the next, and the verdict moves without the code moving.
+
+  ```jsonc
+  {
+    "workflows": {
+      "engineering": {
+        "stageChecks": {
+          "verify": [
+            { "name": "tests", "command": "npm test" },
+            { "name": "types", "command": "npx tsc --noEmit" },
+            { "name": "web-tests", "command": "npm test", "cwd": "packages/web" }
+          ]
+        }
+      }
+    }
+  }
+  ```
+
+  `name` labels the result (unique per stage), `command` is shell run verbatim,
+  and `cwd` is an optional subdirectory of the work tree. They run sequentially,
+  after isolation, once per stage firing — a five-axis REVIEW or a multi-lens
+  one costs one run of the suite, not five.
+
+  How an exit code binds the verdict:
+
+  | Exit | Meaning | Effect |
+  |------|---------|--------|
+  | `0` | pass | nothing added; the verdict is exactly what the agent recorded |
+  | `126`/`127` | the check could not run (not found / not executable) | stage **ERROR** → the loop stops for a human without burning an iteration |
+  | anything else | the check ran and said no | stage **FAIL** → re-build, one iteration spent |
+
+  A red check cannot be argued down: the stage can no longer PASS, whatever it
+  reports. If a check is itself broken, the escape hatch is removing it from
+  this list — not disputing it in the transcript. There are no per-check
+  timeouts yet; `stageTimeoutMinutes` bounds the stage, not an individual
+  command, exactly as with `worktreeSetup`.
+
+  Precedence per stage: this key → the manifest stage's `checks` field → none.
+  Like `stageModels`, it **replaces** the manifest's list rather than merging
+  into it. Keys must be check-stage names; one naming no stage is accepted,
+  ignored, and warned about when a loop starts — that stage then runs no checks
+  at all, so the warning is worth reading.
+
+  **Honored from the user layer only** (`SHELL_BEARING_WORKFLOW_KEYS`), like
+  `worktreeSetup` and `scannerCommand`: it is shell the driver executes, and a
+  cloned repo must not be able to supply it. Setting it in a repo's
+  `.agentic-workflow.json` drops it with a warning naming the kind; the rest of
+  that section, and a user-layer value for it, both survive.
 
 - **`agentModels`** — agent name → the model that agent runs with, for the
   spawns that are **not** stage runs and so have no `stageModels` entry to read:

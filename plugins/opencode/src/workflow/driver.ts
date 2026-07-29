@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { writeFileAtomic } from "@agentic-workflow/core/fsatomic"
 import { type Task } from "@agentic-workflow/core/task/schema"
-import { advance, composePrompt, firstStep } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import {
   clearOpencodeStageMarker,
   opencodeStageMarker,
@@ -98,8 +98,10 @@ import {
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
+import { checkCommands, runChecks, withCheckFloor } from "@agentic-workflow/core/workflow/checks"
 import {
   EXPERIMENTAL_KINDS,
+  checksFor,
   enabledWorkflowKinds,
   fanoutOverriddenByLenses,
   ignoredUserConfigPaths,
@@ -108,6 +110,7 @@ import {
   resolveUserConfigPath,
   stagePasses,
   triggerFor,
+  unknownStageCheckKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
   unknownStageModelKeys,
@@ -672,6 +675,36 @@ const teardownIsolation = (deps: Deps, state: WorkflowState): Promise<void> =>
 const workTree = (deps: Deps, state: WorkflowState): string => workflowWorkTree(deps.directory, state)
 
 /**
+ * Run a stage's declared check commands and hang their results on the state, so
+ * the fire that follows composes them into the prompt as established fact and
+ * the finalizer can floor the verdict with them.
+ *
+ * Must run AFTER isolation: the checks belong in the work tree, against the code
+ * the stage is about to judge, not against whatever the human's checkout holds.
+ * Once per fire, not once per pass — every lens of a multi-lens review sees the
+ * same results, and one review must not cost N test suites.
+ *
+ * Returns the state unchanged when nothing is declared, which keeps `checks`
+ * off the state entirely and the composed prompt byte-identical to before.
+ */
+const runStageChecks = async (
+  deps: Deps,
+  config: Config,
+  loaded: LoadedManifest,
+  state: WorkflowState,
+  stage: Stage,
+): Promise<WorkflowState> => {
+  const defs = checksFor(config, loaded.manifest.kind, stageDef(loaded.manifest, stage))
+  if (!defs.length) return state
+  const results = await runChecks(deps.$, defs, workTree(deps, state))
+  for (const r of results) {
+    if (r.outcome === "pass") continue
+    await deps.log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)
+  }
+  return withCheckResults(state, stage, results)
+}
+
+/**
  * Serialize commits per git tree. In worktree mode `serialize` is off, so N in-process
  * watch drives run concurrently — and a command handler can fire mid-drive in either
  * mode — all committing the MAIN tree. Concurrent `git commit`s contend on
@@ -956,6 +989,13 @@ export const runStagePasses = async (
       recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
       recordedBlocked.delete(sessionID) // nor a stale "blocked" from an earlier stage
       observedEvidence.delete(sessionID) // ...nor a previous pass's work corroborate this one's PASS
+      // Seed the driver-run checks as observed work. They ARE observed — this
+      // process ran them and holds their exit codes — and without the seed a
+      // stage that correctly trusts the results instead of re-running them can
+      // be observed doing nothing, have its PASS rejected by `evidenceIssue`,
+      // and record a FAIL on a green suite. Re-seeded per attempt because the
+      // clear above is per attempt.
+      for (const command of checkCommands(state.checks?.[stage] ?? [])) noteEvidence(sessionID, { command })
       driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
@@ -1055,7 +1095,13 @@ export const runStagePasses = async (
   // kept anyway: it costs nothing, and it is the same check the Claude host
   // depends on, where the orchestrator owns the pass loop and can skip a spawn.
   const gapped = combined && passes.some((p) => p.mode === "axis") ? uncoveredAxes(combined, def.requiredAxes) : []
-  const record = combined && gapped.length ? withCoverageGap(combined, gapped) : combined
+  const gapChecked = combined && gapped.length ? withCoverageGap(combined, gapped) : combined
+  // Floor the admitted record with the checks the driver ran. Applied HERE, at
+  // finalization, and never inside `admitVerdict`: a pre-seeded check axis would
+  // flow through `blockingFindingsIssue` and get a genuine agent PASS rejected
+  // rather than derived down. Identity when every check passed, so a green run
+  // records exactly what the agent recorded.
+  const record = withCheckFloor(gapChecked, state.checks?.[stage] ?? [])
   if (gapped.length) {
     await deps.log("warn", `${stage} fan-out finished with no result for ${gapped.join(", ")} — stopping with ERROR`)
   }
@@ -1252,6 +1298,20 @@ const driveChain = async (
         `ignored; that prompt stays unbounded. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
+  // Same trap for a stageChecks key, and a worse one to hit: a typo'd stage runs
+  // NO checks, so the loop silently goes back to taking the agent's word for it.
+  const unknownChecks = unknownStageCheckKeys(
+    config,
+    loaded.manifest.kind,
+    loaded.manifest.stages.map((s) => s.name),
+  )
+  if (unknownChecks.length) {
+    await deps.log(
+      "warn",
+      `workflows.${loaded.manifest.kind}.stageChecks names ${unknownChecks.map((k) => `"${k}"`).join(", ")}, which is not a stage of this loop — ` +
+        `ignored; that stage runs NO check commands. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
+    )
+  }
   // Same trap for a stageFanout key: a typo'd stage never fans out, which reads
   // as "the setting doesn't work".
   const unknownFanouts = unknownStageFanoutKeys(
@@ -1310,6 +1370,15 @@ const driveChain = async (
       step = firstStep(loaded, await ensureIsolation(deps, config, step.state), config)
     }
     if (step.action.kind !== "fire") break // unreachable — firstStep always fires — but keeps the narrowing
+    // Declared check commands run here — after isolation, before the fire — and
+    // the prompt is recomposed so their exit codes reach the stage as fact
+    // rather than as something it is asked to establish. No-op (and no
+    // recompose) when the stage declares none.
+    const checked = await runStageChecks(deps, config, loaded, step.state, step.action.stage)
+    if (checked !== step.state) {
+      step = firstStep(loaded, checked, config)
+      if (step.action.kind !== "fire") break // same narrowing as above
+    }
     const { stage, arguments: args } = step.action
     setWorkflow(sessionID, step.state)
     if (isolated) await snapshot(deps, config, step.state)

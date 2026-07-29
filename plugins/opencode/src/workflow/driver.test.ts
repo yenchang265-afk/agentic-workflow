@@ -3,6 +3,7 @@ import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-workflow/core/task/store"
 import { serializeTask } from "@agentic-workflow/core/task/schema"
 import { firstStep } from "@agentic-workflow/core/workflow/engine"
+import type { CheckResult } from "@agentic-workflow/core/workflow/checks"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import type { Config } from "../config.ts"
 import {
@@ -1654,6 +1655,104 @@ test("review: a complete five-axis verdict is accepted", async () => {
   const result = await runSinglePassReview(sessionID, () => {
     recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
   })
+  assert.equal(result.verdict, "PASS")
+})
+
+// --- driver-run checks: exit codes are established fact, not a self-report ---
+
+/** Run the review stage as one pass with `checks` already recorded for it. */
+const runReviewWithChecks = async (sessionID: string, checks: CheckResult[], onCall: (deps: Deps) => void) => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async () => {
+        onCall(deps)
+        return { data: { parts: [{ type: "text", text: "review pass" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
+  try {
+    return await runStagePasses(
+      deps,
+      sessionID,
+      testConfig,
+      manifestFor("engineering"),
+      {
+        kind: "engineering",
+        goal: "g",
+        stage: "review",
+        iteration: 0,
+        artifacts: {},
+        checks: { review: checks },
+        task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+      },
+      "review",
+      "goal args",
+      0,
+    )
+  } finally {
+    clearWorkflow(sessionID)
+  }
+}
+
+const checkResult = (over: Partial<CheckResult> = {}): CheckResult => ({
+  name: "tests",
+  command: "npm test",
+  exitCode: 0,
+  outcome: "pass",
+  output: "",
+  ...over,
+})
+
+test("checks: a red one floors an agent's clean PASS to FAIL", async () => {
+  // The point of the whole feature — the stage can no longer talk past an exit
+  // code, because the floor goes through the same derivation as a Critical axis.
+  const sessionID = "sess-checks-red"
+  const result = await runReviewWithChecks(sessionID, [checkResult({ outcome: "fail", exitCode: 1, output: "2 failing" })], () => {
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
+  })
+  assert.equal(result.verdict, "FAIL")
+  assert.equal(result.record?.verdict, "PASS", "the DECLARED verdict is preserved; only the derived one moves")
+  assert.match(JSON.stringify(result.record?.axes), /2 failing/)
+})
+
+test("checks: a 127 is ERROR, not FAIL — a missing runner must not burn an iteration", async () => {
+  const sessionID = "sess-checks-missing"
+  const result = await runReviewWithChecks(sessionID, [checkResult({ outcome: "error", exitCode: 127 })], () => {
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
+  })
+  assert.equal(result.verdict, "ERROR")
+})
+
+test("checks: all green leaves the recorded verdict exactly as the agent recorded it", async () => {
+  const sessionID = "sess-checks-green"
+  const result = await runReviewWithChecks(sessionID, [checkResult()], () => {
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
+  })
+  assert.equal(result.verdict, "PASS")
+  assert.equal(result.record?.axes?.length, cleanAxes.length, "no synthetic axis was added to a green run")
+})
+
+test("checks: the driver's commands count as observed evidence for the pass", async () => {
+  // Without the seed this is the regression the feature would otherwise ship: the
+  // prompt tells the stage the results are fact and not to re-run them, so the
+  // stage does nothing observable, `evidenceIssue` rejects its PASS as
+  // unsubstantiated, and a no-verdict stage is recorded as FAIL — on a suite
+  // that was green. Note this pass never calls `noteEvidence` itself.
+  const sessionID = "sess-checks-evidence"
+  const rejections: string[] = []
+  const result = await runReviewWithChecks(sessionID, [checkResult()], () => {
+    const r = recordVerdict(sessionID, "review", {
+      verdict: "PASS",
+      axes: cleanAxes,
+      evidence: [{ kind: "command", ref: "npm test", result: "42 passed" }],
+    })
+    if (!r.accepted) rejections.push(r.message)
+  })
+  assert.deepEqual(rejections, [], "the citation was corroborated by what the driver ran")
   assert.equal(result.verdict, "PASS")
 })
 

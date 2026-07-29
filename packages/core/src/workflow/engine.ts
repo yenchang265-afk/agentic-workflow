@@ -4,6 +4,7 @@ import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { clampWithStats } from "./budget.js"
+import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, stagePasses } from "../config.js"
 import {
   verdictContractBlock,
@@ -47,6 +48,17 @@ const withArtifact = (state: WorkflowState, stage: string, output: string, block
     ...(block ? { feedback: { ...state.feedback, [stage]: block } } : {}),
   }
 }
+
+/**
+ * Attach a stage's check results to the state. Pure — the HOST runs the
+ * commands, the engine only carries them, which is what keeps `engine.ts` pure
+ * while a stage prompt still gets to state exit codes as fact.
+ */
+export const withCheckResults = (
+  state: WorkflowState,
+  stage: string,
+  results: readonly CheckResult[],
+): WorkflowState => ({ ...state, checks: { ...state.checks, [stage]: results } })
 
 const withoutArtifacts = (state: WorkflowState, stages: readonly string[]): WorkflowState => {
   if (stages.length === 0) return state
@@ -122,6 +134,11 @@ export const promptContext = (
 ): TemplateContext => {
   const accept = state.task?.acceptance ?? []
   const wt = state.git?.worktree
+  // Undefined when the stage ran no checks, so `renderPrompt` drops the section
+  // and a check-less prompt stays byte-identical to what it was before checks
+  // existed. `failed` lets a template phrase itself differently on a red run.
+  const ran = state.checks?.[state.stage]
+  const checks = ran?.length ? { block: checksBlock(ran), failed: anyFailed(ran) } : undefined
   const diffCmd = state.git
     ? wt
       ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
@@ -138,6 +155,7 @@ export const promptContext = (
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: budgetedArtifacts(state, budgets).artifacts,
+    checks,
     // Pre-rendered: TemplateValue has no arrays. Undefined when empty so
     // `renderPrompt` drops the section and a first-iteration prompt is unchanged.
     attempts: state.attempts?.length
