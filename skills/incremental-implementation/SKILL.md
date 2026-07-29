@@ -20,13 +20,17 @@ For each slice:
 2. **Test** — run the suite; write a test if none covers the slice
    (`test-driven-development`).
 3. **Verify** — tests pass, the build succeeds, and the behavior works when run.
-4. **Commit** — atomic message (`git-workflow-and-versioning`).
+4. **Commit** — atomic message (`git-workflow-and-versioning`). **Your caller
+   overrides this step**: some forbid committing outright (the loop's BUILD
+   stage leaves the tree uncommitted so the human reviews one diff), and some
+   commit locally but never push (the sitter fix stages). When the caller says
+   nothing, commit.
 5. **Next slice** — carry forward, don't restart.
 
 A slice that passes ~100 lines with no test run has stopped being thin: stop and
 run step 2 before writing more.
 
-**Done when** every slice in the task has been through all five steps and the
+**Done when** every slice in the task has been through the cycle and the
 tree is green after the last one.
 
 ## Slicing
@@ -86,11 +90,12 @@ the main branch without exposing incomplete work.
 
 ## Verification
 
-- [ ] Each slice was individually tested and committed
+- [ ] Each slice was individually tested, and committed if your caller allows it
 - [ ] The tree is green after the final slice: full suite passes, build clean,
       typecheck and lint pass
 - [ ] The feature works end-to-end as specified, confirmed by running it
-- [ ] No uncommitted changes remain
+- [ ] No uncommitted changes remain — unless your caller forbids committing, in
+      which case the whole change stays uncommitted for its reviewer
 
 One clean run per code state — see `references/definition-of-done.md` →
 Verification Discipline. Per-slice verification is the local check; before

@@ -33,6 +33,10 @@
      **touches more than one subsystem/layer**. Otherwise keep it as one draft.
      There is no token metering — "fits the context window" is a scope
      judgement (one reviewable slice), not a measured limit.
+     If the interview settled **what** the user wants but not **how big** it
+     should be, invoke the `idea-refine` skill before splitting — it generates
+     scoped variants against the now-explicit intent, so you judge slices
+     against a shape the user picked instead of one you assumed.
   3. Show what you'll write and get an explicit "looks right" from the user:
      - **One draft** — title, priority, acceptance, body.
      - **A slice set** — the epic (parent) title, and the ordered children,
