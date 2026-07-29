@@ -138,7 +138,17 @@ export const ensureIsolation = async (
     // Shared mode — make sure the tree is on this loop's branch.
     const cur = await currentBranch($, directory)
     if (cur !== state.git.branch && !(await checkoutBranch($, directory, state.git.branch))) {
-      await log("warn", `loop: could not return to ${state.git.branch} — building on ${cur ?? "detached HEAD"}`)
+      // NOT `isolated` — same answer the first-time shared path gives to the same
+      // failure below. `isolated` is the sole gate on every main-tree write
+      // (`closeIsolation` returns early without it), so claiming it here made
+      // `commitAll` `git add -A` the BUILD diff AND the whole backlog onto
+      // whatever branch the human happened to be on — `cur` can be the default
+      // branch — and then `teardownIsolation` checked them out off it. The work
+      // also never reached `feature/<id>`, so the later ship pushed a branch that
+      // had none of it.
+      const why = `could not return to ${state.git.branch} — building on ${cur ?? "detached HEAD"} without branch isolation`
+      await log("warn", `loop: ${why}`)
+      return { ...state, isolated: false, isolationWarning: why }
     }
     return { ...state, isolated: true }
   }

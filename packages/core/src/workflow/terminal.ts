@@ -143,10 +143,16 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   if (!fresh || !hasPlan(fresh)) {
     const why = fresh ? "the PLAN stage wrote no ## Implementation Plan" : "the task left queued/ mid-plan"
     await log("warn", `loop(${id}): not parking — ${why}`)
-    if (fresh) {
-      await appendNote($, fresh, auditNote(`PLAN stage failed — ${why}; still queued`, new Date(), actor), log)
-      await releaseClaim($, fresh)
-    }
+    // The note only makes sense on a file that is still there — appending to a
+    // stale path would `>>`-recreate a moved task as a frontmatterless ghost.
+    if (fresh) await appendNote($, fresh, auditNote(`PLAN stage failed — ${why}; still queued`, new Date(), actor), log)
+    // The RELEASE, though, is unconditional: this ends the drive, and every way a
+    // drive ends must release the marker. When the task left queued/ mid-plan
+    // `fresh` is null, and nesting the release under it wedged the queued/ claim
+    // forever — engineering's queued pool is `manual: true`, so nothing
+    // auto-reclaims, and `plan <id>` could not re-acquire the marker until the
+    // stale sweep fired. Fall back to the claim-time ref exactly as `runStop` does.
+    await releaseClaim($, fresh ?? state.task)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `PLAN failed for "${id}" — ${why}. It stays in queued/.`, taskId: id }
   }
