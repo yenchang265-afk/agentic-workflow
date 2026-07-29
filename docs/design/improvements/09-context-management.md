@@ -81,9 +81,9 @@ it costs no evidence — the run log and `runs/<id>.metrics.json` remain complet
 
 This is also why the repo's own doctrine already condemns the current behavior:
 `skills/context-engineering/SKILL.md:258` sets a target of "<2,000 lines of
-focused context per task" and names pasting whole test output as the wasteful
-case. No engineering stage agent invokes that skill — it is referenced only from
-`spec-driven-development` and `using-agent-skills`.
+focused context per task", and `:111` names pasting whole test output as the
+wasteful case. No engineering stage agent invokes that skill — it is referenced
+only from `spec-driven-development` and `using-agent-skills`.
 
 ## Design
 
@@ -325,11 +325,37 @@ Deliberately **not** in this plan:
 
 ## Follow-ups this plan deliberately leaves open
 
-1. **The stage agents do not invoke `context-engineering`.** The skill states the
-   doctrine this plan mechanizes (`SKILL.md:258`), and the personas that would
-   most benefit — `workflow-build` on a re-build, `workflow-plan-author` deciding
-   how much of the codebase to read — never load it. Prompt-only change, but it
-   belongs with the persona-size work, not here.
+1. **The stage agents do not invoke `context-engineering`** — and, having looked
+   at it, they should not be made to. The skill states the doctrine this plan
+   mechanizes (`SKILL.md:258`, `:111`) and the personas that would most benefit
+   never load it, but *invoking the skill* is the wrong remedy on three counts.
+   It is a prompt-only control, which the premise above (`"cannot be trusted to
+   curate its own input"`) already rules insufficient — and its benefit is
+   inversely correlated with its need, since the personas most starved for room
+   are the ones on small models least able to act on a procedure. It costs
+   10,769 B to fight the ~74 KB in item 2, and the repo's own rule is to follow
+   an invoked skill exactly rather than partially, so it is not a cheap pointer.
+   And most of it is unactionable at stage time: the frontmatter triggers on
+   "starting a session … or configuring rules files", and Level 1 (author a
+   rules file), the Brain Dump, and the Hierarchical Summary all address someone
+   who owns the session and composes the prompt — a stage agent owns neither.
+
+   What was actionable — Level 3 (`:88`, relevant source files) and Level 4
+   (`:105`–`:111`, bounded error output) — is now inlined directly into
+   `prompts/agents/workflow-build/body.md` and
+   `prompts/agents/workflow-plan-author/body.md` as rules rather than a skill
+   invocation: read narrowly, and quote the failing span rather than pasting the
+   run. Rules survive on a small model where a procedure does not, and they cost
+   870 B across the two personas instead of 10,769 B loaded into each.
+
+   Two things this deliberately does not claim. It targets a *different* defect
+   than the rest of this plan: the driver-composed artifacts clamped in
+   `promptContext` are not what a wide `Read` sweep consumes — that is the
+   agent's own tool-side budget, which no clamp reaches. And unlike the budget
+   knob it ships with no observable (`promptChars` measures the composed prompt,
+   not the agent's reads), so by this plan's own standard at "Observability" it
+   is unmeasured. Both are reasons to keep it to inline rules and revisit under
+   item 2, not reasons to expand it.
 2. **Persona and mandatory-skill weight** (~74 KB before task content), above.
 3. **`reviewLenses` has no context accounting.** Turning lenses on multiplies both
    cost and artifact size with no signal in the run summary that it did; the

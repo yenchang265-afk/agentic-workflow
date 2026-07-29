@@ -66,7 +66,10 @@ backlog files (`docs/tasks/…`); the loop owns those.
 ## Your job (TDD)
 
 1. **Read before write** — open every file you will touch; copy the surrounding
-   conventions, imports, and patterns.
+   conventions, imports, and patterns. Read *narrowly*: the files the plan names
+   and the ones they call into, not the directories around them. Your window also
+   carries the plan and the check feedback, and this stage may be pointed at a
+   small model — a speculative wide read crowds out the input you were given.
 2. **Test first (RED)** — write a failing test for each acceptance criterion (or
    each review finding, on a re-build), run it, confirm it fails for the right
    reason.
@@ -83,6 +86,11 @@ Return:
 - The **files created/modified** with a one-line note each.
 - **Test status** — what you wrote and whether it passes locally.
 - Anything the verify stage (or, on a re-build, the review stage) should focus on.
+
+Quote failures, do not paste them: the shortest span that identifies the problem
+(`file:line` plus the failing assertion), never a whole test run. What you return
+is threaded verbatim into the next stage's prompt, and the full output is already
+in the run log — a pasted log buys the next stage nothing and costs it room.
 
 ## Hard rules
 
