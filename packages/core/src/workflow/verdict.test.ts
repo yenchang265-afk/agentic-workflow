@@ -92,14 +92,45 @@ test("verdictContractBlock names every required axis and the rejection rule", ()
 test("verdictContractBlock is byte-identical whether fanout is omitted or explicitly off", () => {
   // Every stage that does NOT fan out renders this; a drift here would rewrite
   // every existing loop's prompt.
-  assert.equal(verdictContractBlock("review", AXES, false), verdictContractBlock("review", AXES))
-  assert.equal(verdictContractBlock("verify", undefined, false), verdictContractBlock("verify"))
+  assert.equal(verdictContractBlock("review", AXES, "single"), verdictContractBlock("review", AXES))
+  assert.equal(verdictContractBlock("verify", undefined, "single"), verdictContractBlock("verify"))
   // With no axes there is nothing to fan out over, so the flag changes nothing.
-  assert.equal(verdictContractBlock("verify", undefined, true), verdictContractBlock("verify"))
+  assert.equal(verdictContractBlock("verify", undefined, "axis"), verdictContractBlock("verify"))
+})
+
+test("the lens contract asks for the axes the lens bears on — never all of them, never a false rejection", () => {
+  const block = verdictContractBlock("review", AXES, "lens")
+  // The bug: lens passes rendered the SINGLE-pass contract, so every lens was
+  // told "MUST carry an `axes` array covering all 5 axes … a call missing an
+  // axis is REJECTED" directly above "focus exclusively on <lens>". The threat
+  // was empty — `passAxes` returns undefined for a lens, so nothing rejected —
+  // and obeying it meant inventing four axis verdicts, which merge worst-wins
+  // into the STAGE's verdict for axes nobody reviewed.
+  assert.doesNotMatch(block, /covering all 5 axes/)
+  assert.doesNotMatch(block, /A call missing an axis is REJECTED/)
+  assert.doesNotMatch(block, /exactly ONE/, "a lens is not an axis pass either")
+  // What it says instead: your lens's axes, from the stage's vocabulary, and
+  // leave out what you did not review.
+  assert.match(block, /REVIEW LENS line/)
+  assert.match(block, /axes your lens actually bears on/)
+  assert.match(block, /must be left out rather than recorded as a clean PASS/)
+  for (const axis of AXES) assert.match(block, new RegExp(axis))
+})
+
+test("the three contract modes are mutually distinct for an axis-bearing stage", () => {
+  const single = verdictContractBlock("review", AXES, "single")
+  const axis = verdictContractBlock("review", AXES, "axis")
+  const lens = verdictContractBlock("review", AXES, "lens")
+  assert.notEqual(single, axis)
+  assert.notEqual(single, lens)
+  assert.notEqual(axis, lens)
+  // With no axes there is nothing to differ over, so every mode collapses to one
+  // string — that is what every axis-less check stage across every kind renders.
+  assert.equal(verdictContractBlock("verify", undefined, "lens"), verdictContractBlock("verify"))
 })
 
 test("the fan-out contract asks for ONE axis, not all of them", () => {
-  const block = verdictContractBlock("review", AXES, true)
+  const block = verdictContractBlock("review", AXES, "axis")
   for (const axis of AXES) assert.match(block, new RegExp(axis))
   assert.match(block, /exactly ONE/)
   assert.match(block, /REVIEW AXIS line/)
@@ -113,13 +144,17 @@ test("the fan-out contract asks for ONE axis, not all of them", () => {
 
 // --- passFocusBlock (what a single focused pass is told it covers) ---
 
-test("passFocusBlock: a lens pass is byte-identical to what the driver appended before", () => {
-  // Pinned as a literal: this string moved out of driver.ts, and a one-character
-  // drift silently changes every existing reviewLenses user's prompt.
+test("passFocusBlock: a lens pass names its lens on a REVIEW LENS line the contract can point at", () => {
+  // Pinned as a literal, because this string is every reviewLenses user's prompt.
+  // It led with "Review lens 2/3:" while the lens contract told the pass to look
+  // for "the REVIEW LENS line" — the axis branch has always named its own line
+  // that way, and a contract pointing at a line that does not exist is how a
+  // focused pass ends up guessing what it owns.
   assert.equal(
     passFocusBlock({ focus: "a hostile attacker", mode: "lens" }, 1, 3),
-    "Review lens 2/3: focus exclusively on a hostile attacker. The other lenses " +
-      "run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.",
+    "REVIEW LENS 2/3: a hostile attacker. Focus exclusively on a hostile attacker. The other lenses " +
+      "run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual, " +
+      "carrying per-axis results only for the axes your lens actually bears on.",
   )
 })
 
@@ -609,8 +644,8 @@ test("admitVerdict without an evidence context behaves exactly as before", () =>
 
 test("the contract paragraph carries the proof-of-work half only when the stage requires it", () => {
   assert.doesNotMatch(verdictContractBlock("verify"), /PROOF OF WORK/)
-  assert.match(verdictContractBlock("verify", undefined, false, true), /PROOF OF WORK/)
+  assert.match(verdictContractBlock("verify", undefined, "single", true), /PROOF OF WORK/)
   // Byte-identical to the axis-less, evidence-less form is what every other
   // check stage across every kind renders.
-  assert.equal(verdictContractBlock("verify"), verdictContractBlock("verify", undefined, false, false))
+  assert.equal(verdictContractBlock("verify"), verdictContractBlock("verify", undefined, "single", false))
 })

@@ -1529,7 +1529,12 @@ test("recordVerdict still records a verdict from the stage the loop is actually 
 const lensConfig: Config = { ...testConfig, reviewLenses: ["correctness", "security"] }
 
 /** Run the review stage with two lenses; `onCall(n, deps)` runs before the nth stage command returns. */
-const runLensReview = async (sessionID: string, onCall: (call: number, deps: Deps) => void, warns: string[] = []) => {
+const runLensReview = async (
+  sessionID: string,
+  onCall: (call: number, deps: Deps) => void,
+  warns: string[] = [],
+  cfg: Config = lensConfig,
+) => {
   const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
   let calls = 0
@@ -1555,7 +1560,7 @@ const runLensReview = async (sessionID: string, onCall: (call: number, deps: Dep
     const result = await runStagePasses(
       deps,
       sessionID,
-      lensConfig,
+      cfg,
       manifestFor("engineering"),
       { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
       "review",
@@ -1860,6 +1865,67 @@ test("lenses: one lens never records a verdict → ERROR naming the lens, never 
   assert.equal(calls(), 3, "1 correctness pass + security pass and its one retry")
 })
 
+/**
+ * Lenses that between them name every required axis put the stage-wide coverage
+ * check back on — `reviewLenses` used to switch it off unconditionally, which is
+ * what made `requiredAxes` stop being required at EVERY level at once. The
+ * condition is the lens list itself, so there is no new knob to opt in with, and
+ * a lens set that cannot span the axes (the two-lens config every other test
+ * here uses) keeps today's documented trade-off untouched.
+ */
+const spanningLensConfig: Config = { ...testConfig, reviewLenses: FIVE }
+
+test("lenses spanning the required axes: a gap in the ACCUMULATED record stops with ERROR", async () => {
+  const sessionID = "sess-lens-span-gap"
+  // Every lens reports only `correctness`, so four required axes never reported
+  // anywhere across the stage — a review that did not happen, not a FAIL to
+  // rebuild on.
+  const { result } = await runLensReview(
+    sessionID,
+    () => {
+      recordVerdict(
+        sessionID,
+        "review",
+        worked(sessionID, { verdict: "PASS", axes: [{ axis: "correctness", verdict: "PASS" as const }] }),
+      )
+    },
+    [],
+    spanningLensConfig,
+  )
+  assert.equal(result.verdict, "ERROR")
+  for (const axis of ["readability", "architecture", "security", "performance"]) {
+    assert.match(result.record?.reason ?? "", new RegExp(axis))
+  }
+})
+
+test("lenses spanning the required axes: full coverage across the passes still PASSes", async () => {
+  const sessionID = "sess-lens-span-ok"
+  // Each lens reports its own axis; the union is complete, so the gate is silent.
+  const { result, calls } = await runLensReview(
+    sessionID,
+    (call) => {
+      const axis = FIVE[call - 1]!
+      recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: [{ axis, verdict: "PASS" as const }] }))
+    },
+    [],
+    spanningLensConfig,
+  )
+  assert.equal(calls(), 5, "one pass per lens")
+  assert.equal(result.verdict, "PASS")
+  assert.equal(result.record?.axes?.length, 5, "the axes merged across the passes")
+})
+
+test("lenses that do NOT span the axes are not gated — the documented trade-off is untouched", async () => {
+  const sessionID = "sess-lens-nospan"
+  // `["correctness", "security"]` can never report readability/architecture/
+  // performance, so demanding them would ERROR every run. An axis-less lens
+  // verdict is still accepted, exactly as before.
+  const { result } = await runLensReview(sessionID, () => {
+    recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS" }))
+  })
+  assert.equal(result.verdict, "PASS")
+})
+
 test("lenses: a genuine lens FAIL combines worst-wins with the lens-prefixed reason", async () => {
   const sessionID = "sess-lens-fail"
   const { result } = await runLensReview(sessionID, (call) => {
@@ -2111,7 +2177,7 @@ test("fan-out: each pass is logged under its own axis in the `lens` slot the run
   }
 })
 
-test("fan-out: configured reviewLenses win, and the lens prompt is unchanged", async () => {
+test("fan-out: configured reviewLenses win, and each pass gets the lens contract", async () => {
   const sessionID = "sess-axis-vs-lenses"
   const both: Config = { ...axisConfig, reviewLenses: ["a hostile attacker", "the next maintainer"] }
   const { calls, fired } = await runAxisReview(
@@ -2123,9 +2189,10 @@ test("fan-out: configured reviewLenses win, and the lens prompt is unchanged", a
   assert.equal(calls(), 2, "the two lenses ran, not the five axes")
   assert.equal(
     fired[0],
-    "goal args\n\nReview lens 1/2: focus exclusively on a hostile attacker. The other lenses " +
-      "run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual.",
-    "an existing lens setup's prompt must not shift by a character",
+    "goal args\n\nREVIEW LENS 1/2: a hostile attacker. Focus exclusively on a hostile attacker. The other lenses " +
+      "run as separate passes — don't repeat them. Record this pass's verdict via workflow_verdict as usual, " +
+      "carrying per-axis results only for the axes your lens actually bears on.",
+    "each lens pass is told which lens it owns, on the line its contract points at",
   )
   assert.ok(!fired.some((f) => /REVIEW AXIS/.test(f)))
 })

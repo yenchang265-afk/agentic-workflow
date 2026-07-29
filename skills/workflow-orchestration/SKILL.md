@@ -271,17 +271,21 @@ work and its `worktreeSetup` output.
 
 **Multi-lens review** (`reviewLenses`) runs REVIEW once per lens and takes the
 **worst** verdict, so a single prompt-injected reviewer cannot wave a change
-through (threat model T1), at ~N× review time. A lens maps to no axis, so lens
-mode switches per-pass axis-coverage enforcement off and the loop warns which
-required axes no lens names.
+through (threat model T1), at ~N× review time. A lens is not an axis, so
+**per-pass** axis-coverage enforcement is off; each pass is asked for per-axis
+results only for the axes its lens actually bears on, and must leave out an axis
+it did not examine rather than record a clean PASS the merge would turn into the
+whole stage's verdict for it. The **accumulated** check still applies when the
+configured lenses between them name every required axis; when they don't, the
+loop warns which axes go unreviewed.
 
 **Per-axis fan-out** (`workflows.<kind>.stageFanout: {"review": "axis"}`) is
 the stronger form: one pass per entry in the stage's `requiredAxes`, each told
-to review exactly one axis, merged worst-wins — keeping the T1 mitigation
-**without** the coverage downgrade, since each pass is enforced against its own
-axis and the union must cover every one or the stage stops with ERROR. Same
-cost, off by default. `reviewLenses` wins over it on the `review` stage (and
-the loop says so), so an existing lens setup is never reinterpreted.
+to review exactly one axis, merged worst-wins — keeping the T1 mitigation and
+enforcing coverage **per pass**, which free-text lenses cannot, plus the same
+union check. Same cost, off by default. `reviewLenses` wins over it on the
+`review` stage (and the loop says so), so an existing lens setup is never
+reinterpreted.
 
 (`gateBeforeBuild` and `interviewBeforePlan` no longer exist. Old config files
 carrying them still parse; the keys are ignored.)

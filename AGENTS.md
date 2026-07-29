@@ -238,6 +238,30 @@ task. Cross-process liveness for `recover` is judged by
 `taskDrivenByStageMarker` (stage-marker deadline + writer pid), never by the
 in-memory per-process driving map alone.
 
+### A focused pass's contract must match the passes that will run
+
+A check stage's prompt is composed ONCE, then each pass gets `passFocusBlock`
+appended. So `verdictContractBlock`'s mode has to be the EFFECTIVE one
+(`stagePasses`), never the manifest's — and every pass regime needs its own
+branch. Lens passes rendered the single-pass contract for a while: each lens was
+told "MUST carry an `axes` array covering all 5 axes … a call missing an axis is
+REJECTED" directly above "focus exclusively on `<lens>`". The two cannot both be
+satisfied, and the threat was empty (`passAxes` returns `undefined` for a lens,
+so nothing rejected). Both ways out were bad: obey the contract and the pass
+invents axis verdicts it did no work for — and since passes merge worst-wins, a
+fabricated "correctness: PASS" becomes the STAGE's correctness verdict, which is
+worse than no coverage because it manufactures the guarantee; obey the suffix and
+coverage silently vanishes. When adding a pass mode, add its contract branch and
+point it at the line `passFocusBlock` actually emits.
+
+Coverage enforcement follows the same rule — enforce what the passes can
+actually satisfy. `enforcesAxisCoverage` is the single seam both hosts ask:
+per-axis fan-out always, lenses only when they between them name every required
+axis, single passes never (per-pass admission already covers it). Do not gate it
+on `pass.mode === "axis"` inline again; a lens set that spans the axes is
+enforceable and a lens set that cannot is not, and only that predicate knows the
+difference.
+
 ### Model selection is a mechanism, never prose
 
 Never express `stageModels` / `agentModels` as an instruction for a model to

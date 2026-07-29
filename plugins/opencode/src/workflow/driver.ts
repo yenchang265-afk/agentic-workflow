@@ -103,6 +103,7 @@ import {
   EXPERIMENTAL_KINDS,
   checksFor,
   enabledWorkflowKinds,
+  enforcesAxisCoverage,
   fanoutOverriddenByLenses,
   ignoredUserConfigPaths,
   modelFor,
@@ -1088,13 +1089,14 @@ export const runStagePasses = async (
           passes.map((p) => p.focus ?? ""),
         )
     : (records[0] ?? null)
-  // The completeness guarantee per-axis fan-out exists to restore. Per-pass
+  // The completeness guarantee focused passes exist to restore. Per-pass
   // enforcement proves each pass covered ITS axis, never that every axis ran —
-  // only the accumulated record can show that. Unreachable in practice on this
-  // host (a pass that recorded nothing already took the ERROR path above), and
-  // kept anyway: it costs nothing, and it is the same check the Claude host
-  // depends on, where the orchestrator owns the pass loop and can skip a spawn.
-  const gapped = combined && passes.some((p) => p.mode === "axis") ? uncoveredAxes(combined, def.requiredAxes) : []
+  // only the accumulated record can show that. Mostly unreachable on this host
+  // under fan-out (a pass that recorded nothing already took the ERROR path
+  // above), and load-bearing under `reviewLenses` whose lenses span the stage's
+  // axes: there per-pass coverage is not enforced at all, so this is the only
+  // thing keeping `requiredAxes` required. See `enforcesAxisCoverage`.
+  const gapped = combined && enforcesAxisCoverage(config, loaded.manifest.kind, def) ? uncoveredAxes(combined, def.requiredAxes) : []
   const gapChecked = combined && gapped.length ? withCoverageGap(combined, gapped) : combined
   // Floor the admitted record with the checks the driver ran. Applied HERE, at
   // finalization, and never inside `admitVerdict`: a pre-seeded check axis would
@@ -1326,15 +1328,17 @@ const driveChain = async (
         `ignored; that stage runs a single pass. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
-  // reviewLenses suppresses per-pass axis-coverage enforcement, so turning it on
-  // silently downgrades what a review guarantees — name the axes no lens covers.
+  // reviewLenses suppresses per-pass axis-coverage enforcement, and the
+  // stage-wide check only survives when the lenses between them span the stage's
+  // axes — so name the axes no lens covers, and say what that costs.
   for (const def of loaded.manifest.stages) {
     const unreviewed = unreviewedAxes(config, def)
     if (!unreviewed.length) continue
     await deps.log(
       "warn",
-      `reviewLenses is on, so the ${def.name} stage no longer enforces axis coverage, and no lens covers ` +
-        `${unreviewed.map((a) => `"${a}"`).join(", ")}. Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} or unset reviewLenses.`,
+      `reviewLenses is on and no lens covers ${unreviewed.map((a) => `"${a}"`).join(", ")}, so the ${def.name} stage ` +
+        `does not enforce axis coverage at all — ${unreviewed.length > 1 ? "those axes go" : "that axis goes"} unreviewed. ` +
+        `Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} to get the coverage check back, or unset reviewLenses.`,
     )
   }
   // Both multi-pass knobs set: the lenses run and the per-axis fan-out does not.

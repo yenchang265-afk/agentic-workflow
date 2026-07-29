@@ -28,6 +28,7 @@ import type { WorkSource } from "@agentic-workflow/core/source/types"
 import {
   checksFor,
   enabledWorkflowKinds,
+  enforcesAxisCoverage,
   fanoutOverriddenByLenses,
   modelFor,
   passAxes,
@@ -509,15 +510,16 @@ const stageModelWarnings = (): string[] =>
           `${unbudgeted.length > 1 ? "those budgets are" : "that budget is"} ignored and the prompt stays unbounded. Valid stages: ${stageNames.join(", ")}.`,
       )
     }
-    // reviewLenses suppresses per-pass axis-coverage enforcement, so turning it
-    // on silently downgrades what a review guarantees — name the axes no lens
-    // covers rather than let the downgrade pass unremarked.
+    // reviewLenses suppresses per-pass axis-coverage enforcement, and the
+    // stage-wide check only survives when the lenses between them span the
+    // stage's axes — so name the axes no lens covers, and say what that costs.
     for (const def of manifestFor(kind).manifest.stages) {
       const unreviewed = unreviewedAxes(config, def)
       if (!unreviewed.length) continue
       warnings.push(
-        `reviewLenses is on, so the ${kind} loop's ${def.name} stage no longer enforces axis coverage, and no lens covers ` +
-          `${unreviewed.map((a) => `"${a}"`).join(", ")}. Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} or unset reviewLenses.`,
+        `reviewLenses is on and no lens covers ${unreviewed.map((a) => `"${a}"`).join(", ")}, so the ${kind} loop's ` +
+          `${def.name} stage does not enforce axis coverage at all — ${unreviewed.length > 1 ? "those axes go" : "that axis goes"} unreviewed. ` +
+          `Add ${unreviewed.length > 1 ? "those lenses" : "that lens"} to get the coverage check back, or unset reviewLenses.`,
       )
     }
     // Same trap for stageChecks, and a worse one to hit: a typo'd stage runs NO
@@ -1552,9 +1554,16 @@ server.registerTool(
     // passes once (no iteration consumed), then stop with ERROR rather than
     // re-build on a review that never happened.
     const gateDef = stageDef(activeManifest().manifest, stage)
-    if (gateDef.kind === "check" && pending && passesFor(activeManifest().manifest.kind, gateDef).some((p) => p.mode === "axis")) {
+    const gatePasses = passesFor(activeManifest().manifest.kind, gateDef)
+    if (gateDef.kind === "check" && pending && enforcesAxisCoverage(config, activeManifest().manifest.kind, gateDef)) {
       const gaps = uncoveredAxes(pending, gateDef.requiredAxes)
-      if (gaps.length && !verdictRetried) {
+      // The retry below re-fires one pass per missing AXIS, which only exists as a
+      // pass under axis fan-out: `workflow_stage({focus})` resolves focus against
+      // the pass list, and an axis name matches no lens. Under `reviewLenses` a
+      // gap therefore goes straight to ERROR — there is no targeted pass to re-run,
+      // and re-firing every lens would re-review what already reported.
+      const retryableByAxis = gatePasses.some((p) => p.mode === "axis")
+      if (gaps.length && retryableByAxis && !verdictRetried) {
         verdictRetried = true
         if (active.task) {
           await appendNote(
