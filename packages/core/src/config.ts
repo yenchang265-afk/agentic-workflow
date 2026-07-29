@@ -187,6 +187,18 @@ const BaseConfigSchema = z.object({
          */
         stageChecks: z.record(z.string(), z.array(CheckDefSchema)).optional(),
         /**
+         * Changed diff lines past which a reviewer-role kind (review-sitter)
+         * declines a PR instead of reviewing it. Unset ⇒
+         * `DEFAULT_MAX_DIFF_LINES` (2000). Stated in the claimed item's goal, so
+         * the fetch stage compares its measurement against a NUMBER — the
+         * condition used to be the adjective "unreviewably large", which put a
+         * control-flow decision on whatever the model felt that run.
+         *
+         * Honored from the repo layer, like `stageContext`: the value space is
+         * positive integers — no shell, no path, no fs reach.
+         */
+        maxDiffLines: z.number().int().positive().optional(),
+        /**
          * Replaces the bundled `osv-scanner --format json -L <target>` call for
          * this kind's JVM (maven/gradle) scans with your own CLI. `{{target}}`
          * (the lockfile path) and `{{ecosystem}}` are substituted; a command

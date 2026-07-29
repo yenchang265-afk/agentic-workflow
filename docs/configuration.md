@@ -207,9 +207,9 @@ it. The warnings are advisory: they annotate a save, never block it. See
   **`workflows.dep-sitter`**, **`workflows.main-sitter`** — every sitter is off
   until you set `"enabled": true`. What each sitter
   does, its stage pipeline, and its full set of kind-specific keys
-  (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`, …) are
-  documented once, canonically, in **[`docs/sitters.md`](sitters.md)** —
-  don't duplicate that content here.
+  (`query`, `ecosystem`, `severityFloor`, `includeOutdated`, `branch`,
+  `maxDiffLines`, …) are documented once, canonically, in
+  **[`docs/sitters.md`](sitters.md)** — don't duplicate that content here.
 - **`workflows.dep-sitter.scannerCommand`** — replace the bundled
   `osv-scanner --format json -L <target>` call on the JVM ecosystems with your
   own CLI (`{{target}}` / `{{ecosystem}}` are substituted). npm is unaffected.

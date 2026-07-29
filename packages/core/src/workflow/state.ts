@@ -267,6 +267,8 @@ export interface WorkflowKindConfig {
   readonly stageFanout?: Readonly<Record<string, "axis" | "none">>
   /** Stage name → check commands the driver runs before that stage; replaces the manifest stage's `checks`. SHELL-BEARING (user-scope only). */
   readonly stageChecks?: Readonly<Record<string, readonly CheckDef[]>>
+  /** Changed-diff-line ceiling a reviewer-role kind declines above; unset ⇒ `DEFAULT_MAX_DIFF_LINES`. */
+  readonly maxDiffLines?: number
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

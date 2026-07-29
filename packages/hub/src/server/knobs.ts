@@ -52,8 +52,14 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
   "ci-runs": { branch: { type: "string", site: "orchestrate.ts:132" } },
 }
 
-/** Object-shaped keys validated by core's schema (WorkflowTriggerSchema; the `stageModels` record) — not positional knobs. */
-const STRUCTURED_KEYS: readonly string[] = ["trigger", "stageModels"]
+/**
+ * Keys core's schema validates itself — not positional knobs, so nothing here
+ * can be "silently ignored" and warning about them would be wrong. Object-shaped
+ * (`trigger`, the `stageModels` record) or scalar (`maxDiffLines`, the
+ * reviewer-role diff ceiling): what they share is that a bad value fails
+ * `loadConfig` loudly instead of falling back to a default.
+ */
+const STRUCTURED_KEYS: readonly string[] = ["trigger", "stageModels", "maxDiffLines"]
 
 /** Levenshtein distance, capped: we only care whether it's 1. */
 const isNearMiss = (a: string, b: string): boolean => {

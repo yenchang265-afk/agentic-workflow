@@ -59,8 +59,8 @@ fork PR 仍會被拒絕。
 ```mermaid
 flowchart LR
     poll["排程器認領 PR<br/>（觸發條件已觸發，帳本顯示尚未處理）"] --> triage["<b>TRIAGE</b> · check<br/>agent: workflow-pr-triage · 唯讀 gh<br/><i>結構化的檢查結果；PR 文字 = 資料，而非指令</i>"]
-    triage -->|"PASS = 可處理"| fix["<b>FIX</b> · work<br/>agent: workflow-pr-fix<br/><i>在 PR 既有分支上的 worktree，<br/>只做本機 commit</i>"]
-    triage -->|"FAIL = 無需處理"| done0[("done")]
+    triage -->|"PASS = 認領時的訊號仍然有效"| fix["<b>FIX</b> · work<br/>agent: workflow-pr-fix<br/><i>在 PR 既有分支上的 worktree，<br/>只做本機 commit</i>"]
+    triage -->|"FAIL = 每個訊號都已失效"| done0[("done")]
     triage -.->|"ERROR → 停止"| stop0[("停止——下次輪詢時重試")]
     fix --> verify["<b>VERIFY</b> · check<br/>agent: workflow-verify<br/><i>測試 + 檢查結果覆蓋率</i>"]
     verify -->|"PASS"| publish["<b>PUBLISH</b> · work<br/>agent: workflow-pr-publish<br/><i>git push origin &lt;branch&gt; +<br/>每個 finding 一則 gh pr comment<br/>絕不合併／關閉／核准</i>"]

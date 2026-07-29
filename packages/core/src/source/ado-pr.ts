@@ -97,6 +97,13 @@ interface AdoPrDeps {
   readonly target?: number
   /** Clock injection for ledger stamps; defaults to the real time. */
   readonly now?: () => string
+  /**
+   * Changed-diff-line ceiling a reviewer-role kind declines above (config
+   * `workflows.<kind>.maxDiffLines`); unset ⇒ `DEFAULT_MAX_DIFF_LINES`. Stated in
+   * the goal so the fetch stage compares against a NUMBER rather than deciding
+   * what "unreviewably large" means on its own.
+   */
+  readonly maxDiffLines?: number
 }
 
 export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
@@ -256,7 +263,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         skip: { message: `${kind}: could not fetch ${snapshot.headRefName} for PR #${target} — skipping`, actionable: true },
       }
     }
-    return { item: prWorkItem(loaded, "ado", snapshot, triggers), skip: null }
+    return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }), skip: null }
   }
 
   return {
@@ -367,7 +374,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           await markers.release(number)
           continue
         }
-        return { item: prWorkItem(loaded, "ado", snapshot, triggers), skip: null }
+        return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }), skip: null }
       }
       if (heldIds.length) {
         return {

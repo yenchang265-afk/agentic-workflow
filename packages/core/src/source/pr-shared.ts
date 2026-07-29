@@ -108,15 +108,32 @@ export const terminalLedgerUpdate = (
           updatedAt: now,
         }
 
+/**
+ * Changed diff lines past which a reviewer-role kind declines the review rather
+ * than pretending to have read it.
+ *
+ * A number, because the alternative was the adjective "unreviewably large" — the
+ * fetch stage measured `gh pr diff <n> | wc -l` and then compared it to nothing,
+ * so the FAIL condition was whatever the model felt. Config
+ * `workflows.<kind>.maxDiffLines` overrides it.
+ *
+ * 2000 counted lines is roughly where a single subagent pass stops being a review
+ * and starts being a skim, and it is a threshold to TUNE, not a law: repos whose
+ * PRs carry generated files or lockfiles will want it higher.
+ */
+export const DEFAULT_MAX_DIFF_LINES = 2_000
+
 /** Build the WorkItem a claimed PR enters the loop as, stamped with its code platform. */
 export const prWorkItem = (
   loaded: LoadedManifest,
   platform: CodePlatform,
   snapshot: PrSnapshot,
   triggers: readonly PrTrigger[],
+  limits: { readonly maxDiffLines?: number } = {},
 ): WorkItem => {
   const binding = loaded.manifest.workSource
   const role = binding.type === "pull-request" ? binding.role : "author"
+  const maxDiffLines = limits.maxDiffLines ?? DEFAULT_MAX_DIFF_LINES
   // The goal follows the kind's role on the PR: an author-role kind (pr-sitter)
   // fixes its own PR; a reviewer-role kind (review-sitter) reads someone
   // else's and only ever comments.
@@ -124,6 +141,7 @@ export const prWorkItem = (
     role === "reviewer"
       ? `PR #${snapshot.number} "${snapshot.title}" — review the changes and post one structured review comment ` +
         `(${triggerSummary(triggers, snapshot)}). Base: ${snapshot.baseRefName}, head: ${snapshot.headRefName}. ` +
+        `Review limit: ${maxDiffLines} changed diff lines — a diff over that is declined, not skimmed. ` +
         `Never approve, request changes, or merge; the human reviewer stays the reviewer of record.`
       : `PR #${snapshot.number} "${snapshot.title}" — address what needs attention and get it back to green ` +
         `(${triggerSummary(triggers, snapshot)}). Base: ${snapshot.baseRefName}, head: ${snapshot.headRefName}. ` +
