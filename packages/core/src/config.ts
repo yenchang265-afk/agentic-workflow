@@ -517,10 +517,13 @@ export const agentModel = (config: Config, agent: string): string | undefined =>
  *
  * Lens mode suppresses per-pass axis-coverage enforcement (a lens is told to
  * focus exclusively on its own lens, so demanding every axis from it would
- * reject every pass), which means turning lenses on silently downgrades the
- * review's guarantees. Like `unknownStageModelKeys`, this can't be checked at
- * parse time — the manifest isn't loaded yet — so hosts surface it as a warning
- * once the kind's stages are known, turning a silent downgrade into a message.
+ * reject every pass), which means turning lenses on downgrades the review's
+ * guarantees. This list is also the exact condition `enforcesAxisCoverage` uses:
+ * empty ⇒ the lenses between them span the stage's axes, so the stage-wide
+ * coverage check is satisfiable and stays on. Like `unknownStageModelKeys`, it
+ * can't be checked at parse time — the manifest isn't loaded yet — so hosts
+ * surface it as a warning once the kind's stages are known, turning a silent
+ * downgrade into a message.
  * Empty when lenses are off, when the stage requires no axes, or when the lens
  * list already names every required axis. Pure.
  */
@@ -580,6 +583,37 @@ export const stagePasses = (config: Config, kind: string, def: StageDef): readon
  */
 export const passAxes = (def: StageDef, pass: StagePass): readonly string[] | undefined =>
   pass.mode === "axis" && pass.focus ? [pass.focus] : pass.mode === "lens" ? undefined : def.requiredAxes
+
+/**
+ * Whether a stage's ACCUMULATED record must cover every `requiredAxes` entry
+ * when the stage advances — the stage-wide guarantee that per-pass admission
+ * cannot give once passes are focused, since each pass is only ever asked about
+ * its own part.
+ *
+ * Three regimes, and the third is the point:
+ *  - `single` — false. One pass is already admitted against every required axis,
+ *    so the accumulated check would be the same test run twice.
+ *  - `axis` — true. This is the guarantee fan-out exists to restore.
+ *  - `lens` — true ONLY when the configured lenses between them name every
+ *    required axis (`unreviewedAxes` empty).
+ *
+ * That condition is what makes the lens case honest rather than hostile. Lenses
+ * are free text: a `["security", "test-adequacy"]` setup is never going to
+ * report `readability`, and demanding it would ERROR every run — which is why
+ * the enforcement was switched off for lenses wholesale, and why `requiredAxes`
+ * then stopped being required at every level at once. Tying it to the lens list
+ * gives the axes back to anyone whose lenses do span them, costs nothing to
+ * anyone whose lenses don't (they keep today's documented trade-off, and the
+ * config warning already names the axes they are giving up), and needs no new
+ * config surface to opt into. Pure.
+ */
+export const enforcesAxisCoverage = (config: Config, kind: string, def: StageDef): boolean => {
+  if (!def.requiredAxes?.length) return false
+  const passes = stagePasses(config, kind, def)
+  if (passes.some((p) => p.mode === "axis")) return true
+  if (!passes.some((p) => p.mode === "lens")) return false
+  return unreviewedAxes(config, def).length === 0
+}
 
 /**
  * True when a configured `reviewLenses` is overriding a declared per-axis

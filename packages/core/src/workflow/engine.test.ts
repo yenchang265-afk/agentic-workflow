@@ -141,7 +141,7 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
   const base = oracleComposeArgs(state, stage)
   const def = stageDef(eng.manifest, stage)
   return def.kind === "check"
-    ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis", def.requireEvidence)}`
+    ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence)}`
     : `${base}\n\n${workScopeBlock(stage)}`
 }
 
@@ -275,7 +275,7 @@ test("composePrompt appends the verdict contract to check stages only", () => {
     const def = stageDef(eng.manifest, stage)
     const prompt = composePrompt(eng, { ...state, stage }, stage)
     assert.ok(
-      prompt.endsWith(verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis", def.requireEvidence)),
+      prompt.endsWith(verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence)),
       `${stage} carries the contract`,
     )
     assert.match(prompt, /workflow_verdict/)
@@ -332,7 +332,22 @@ test("composePrompt: configured reviewLenses beat a fan-out, and the contract fo
   }
   const review = composePrompt(eng, { ...state, stage: "review" }, "review", both)
   assert.doesNotMatch(review, /exactly ONE/)
-  assert.equal(review, composePrompt(eng, { ...state, stage: "review" }, "review", config))
+  // …and it must NOT fall back to the single-pass contract either, which is what
+  // it used to do: "MUST carry an `axes` array covering all 5 axes … a call
+  // missing an axis is REJECTED" landed directly above "focus exclusively on
+  // <lens>". Unsatisfiable together, and the rejection never came — so the pass
+  // either invented four axis verdicts (which merge worst-wins into the STAGE's
+  // verdict for axes nobody reviewed) or dropped coverage silently.
+  const single = composePrompt(eng, { ...state, stage: "review" }, "review", config)
+  assert.notEqual(review, single)
+  assert.doesNotMatch(review, /covering all 5 axes/)
+  assert.doesNotMatch(review, /A call missing an axis is REJECTED/)
+  assert.match(review, /REVIEW LENS line/)
+  assert.match(review, /axes your lens actually bears on/)
+  // The vocabulary is still the stage's, so lens findings merge onto the same axes.
+  for (const axis of ["correctness", "readability", "architecture", "security", "performance"]) {
+    assert.match(review, new RegExp(axis))
+  }
 })
 
 test("composeStagePrompt defaults its fan-out from the stage, so the hub preview needs no config", () => {

@@ -158,10 +158,11 @@ before you advance — and never pass or invent a `model`. Changing
      deadline for that pass and returns **that pass's** `prompt`, which you hand
      to the subagent instead of the fire payload's — then spawn the response's
      `agent` (**`workflow-review`**) with the response's `model` when present.
-     Each pass calls `workflow_verdict` itself, with its own axis; you never
-     call it on its behalf. Run them one at a time: the server arms one pass at
-     a time. When every entry has run, call `workflow_advance` **once** — the
-     server merges the passes worst-wins.
+     Each pass calls `workflow_verdict` itself — with its own axis under a
+     per-axis fan-out, or with the axes its lens bears on under `reviewLenses`;
+     you never call it on its behalf. Run them one at a time: the server arms one
+     pass at a time. When every entry has run, call `workflow_advance` **once** —
+     the server merges the passes worst-wins.
      `workflow_stage({stage:"review"})` with **no** `focus` is rejected on such
      a stage; that is what stops a fan-out from silently collapsing into one
      pass. If an axis never reported, the server re-fires just the missing ones

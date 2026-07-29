@@ -109,7 +109,7 @@ array misses any of them, so a multi-axis review cannot silently skip one. The
 recorded verdict is also worsened to match its axes — a declared PASS carrying a
 Critical or Important finding resolves as FAIL. `requiredAxes` on a `work` stage
 is a manifest error (there is no verdict to carry them), and `reviewLenses` mode
-suppresses the enforcement (see `docs/configuration.md`).
+suppresses the **per-pass** enforcement (see `docs/configuration.md`).
 
 Such a stage may also declare `fanout: "axis"`: it then runs **one focused pass
 per required axis**, sequentially, each pass told to review and report exactly
@@ -117,8 +117,16 @@ that axis, and the passes merge worst-wins. Per-pass admission narrows to the
 pass's own axis — otherwise every focused pass would be rejected for the axes it
 was told not to review — and the stage-wide requirement moves to the accumulated
 record, so a fan-out that never reported an axis stops the loop with ERROR rather
-than re-building on an incomplete review. That is the difference from
-`reviewLenses`, which buys its extra passes by giving the guarantee up.
+than re-building on an incomplete review.
+
+`reviewLenses` is the free-text sibling: its passes are lenses, not axes, so
+per-pass enforcement is off there too, and each pass is asked for per-axis results
+only for the axes its lens actually bears on — an axis it did not examine must be
+left out rather than guessed at, since the passes merge worst-wins and a guessed
+clean PASS would become the stage's verdict for an axis nobody reviewed. The
+accumulated check still applies whenever the configured lenses between them name
+every required axis; when they don't, those axes go unreviewed and both hosts warn
+which ones.
 
 A check stage may also declare `requireEvidence: true` (engineering's `verify`
 and `review` do). A **PASS** on such a stage must then carry an `evidence` array

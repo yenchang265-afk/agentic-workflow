@@ -214,7 +214,13 @@ test("workflow_advance gates a fan-out on the accumulated axis coverage, and a g
   const body = toolBody(code(source()), "workflow_advance")
   assert.match(body, /uncoveredAxes\(pending, gateDef\.requiredAxes\)/, "the gate must read the accumulated record")
   assert.match(body, /pending = withCoverageGap\(pending, gaps\)/, "a gap must degrade to ERROR, never to a FAIL that rebuilds")
-  assert.match(flat(body), /gaps\.length && !verdictRetried/, "the missing passes get one retry before the stage errors")
+  assert.match(flat(body), /gaps\.length && retryableByAxis && !verdictRetried/, "the missing passes get one retry before the stage errors")
+  // …but only under axis fan-out. `workflow_stage({focus})` resolves focus against
+  // the pass list, so an axis name matches no LENS — a lens-mode gap has no
+  // targeted pass to re-run and must go straight to ERROR rather than re-firing
+  // every lens over what already reported.
+  assert.match(flat(body), /retryableByAxis = gatePasses\.some\(\(p\) => p\.mode === "axis"\)/)
+  assert.match(flat(body), /enforcesAxisCoverage\(config, activeManifest\(\)\.manifest\.kind, gateDef\)/, "the gate is the shared predicate, not an inline mode test")
   assert.match(flat(body), /passes: gaps/, "the retry must name exactly the passes that recorded nothing")
   assert.match(flat(body), /armedPass = null/, "the retry arms its own pass; the finished one is already sampled")
 })

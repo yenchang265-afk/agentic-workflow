@@ -97,7 +97,7 @@ test("preview appends the verdict contract to check stages only", async () => {
   // verify declares `requireEvidence`, so the preview must render the proof-of-work
   // half too — the creator's preview is what a kind author reads to see what the
   // stage will actually be told.
-  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, false, true)), "check stages carry the contract")
+  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, "single", true)), "check stages carry the contract")
   assert.doesNotMatch(build.rendered, /MANDATORY VERDICT/)
 })
 

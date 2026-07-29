@@ -725,12 +725,30 @@ Impact on the commands:
 - **`reviewLenses`** — run REVIEW once per lens (e.g.
   `["correctness", "security", "test-adequacy"]`) and take the worst verdict,
   so a single prompt-injected reviewer can't wave a change through. Costs ~N×
-  review time; off by default. Turning it on **suppresses the review stage's
-  axis-coverage enforcement** (`requiredAxes`): each pass is told to focus on
-  its own lens, so demanding all five axes from it would reject every pass.
-  Lens mode enforces coverage its own way — a lens that records no verdict
-  becomes an ERROR, not a silently missing opinion. If you want multi-pass
-  review *without* that downgrade, use `stageFanout` below.
+  review time; off by default.
+
+  Each pass is told to focus on its own lens and to report per-axis results
+  **only for the axes that lens actually bears on** — an axis it did not examine
+  is left out, never recorded as a clean PASS, because the passes merge
+  worst-wins and a guess there would become the whole stage's verdict for an
+  axis nobody reviewed. So **per-pass** axis-coverage enforcement is off (a lens
+  cannot be rejected for the axes it was told not to review).
+
+  What happens to the stage's `requiredAxes` then depends on your lens list:
+
+  - **Lenses that between them name every required axis** (e.g. all five of
+    engineering's) keep the guarantee: the *accumulated* record across the
+    passes must still cover every axis, and a gap stops the loop with ERROR
+    rather than re-building on a review that never ran. This is how you get
+    lenses *and* coverage, with no extra config.
+  - **Lenses that don't** (e.g. `["security", "test-adequacy"]`) can't be held
+    to axes they will never report, so the coverage check is off for that stage
+    — the axes no lens covers go unreviewed. Both hosts warn at startup naming
+    exactly which ones.
+
+  Either way a lens that records **no** verdict at all is an ERROR, not a
+  silently missing opinion. If you want per-axis passes rather than free-text
+  lenses, use `stageFanout` below.
 - **`workflows.<kind>.stageFanout`** — stage name → `"axis"` or `"none"`: run a
   check stage once per entry in its `requiredAxes`, sequentially, each pass
   told to review and report exactly one axis. The passes merge worst-wins.
@@ -740,8 +758,8 @@ Impact on the commands:
   ```
 
   It is the same ~N× cost as `reviewLenses` and the same threat-model benefit
-  (no single reviewer can wave a change through), but it **keeps** the coverage
-  guarantee lenses give up: each pass is enforced against its own axis, and the
+  (no single reviewer can wave a change through), but it enforces coverage at
+  the level lenses cannot — **per pass**: each pass is enforced against its own axis, and the
   stage cannot advance with an axis uncovered — a gap stops the loop with ERROR
   rather than re-building on a review that never ran. Off by default; a stage
   with neither knob set is byte-identical to today.

@@ -25,6 +25,7 @@ import {
   contextFor,
   fanoutFor,
   fanoutOverriddenByLenses,
+  enforcesAxisCoverage,
   passAxes,
   stagePasses,
   unreviewedAxes,
@@ -341,6 +342,45 @@ test("unreviewedAxes is empty when the lens list already names every required ax
 test("unreviewedAxes is empty for a stage that requires no axes (verify, the sitters)", () => {
   const c = { ...DEFAULT_CONFIG, reviewLenses: ["correctness"] }
   assert.deepEqual(unreviewedAxes(c, reviewStage()), [])
+})
+
+/**
+ * `enforcesAxisCoverage` is the stage-wide floor: with focused passes, per-pass
+ * admission only ever proves a pass covered its own part, so the accumulated
+ * record is the only thing that can show every required axis reported.
+ */
+test("enforcesAxisCoverage: a single unfocused pass needs no accumulated check", () => {
+  // One pass is already admitted against every required axis — the accumulated
+  // check would be the same test run twice.
+  assert.equal(enforcesAxisCoverage(DEFAULT_CONFIG, "engineering", checkStage()), false)
+})
+
+test("enforcesAxisCoverage: axis fan-out is the guarantee fan-out exists to restore", () => {
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" } } } })
+  assert.equal(enforcesAxisCoverage(c, "engineering", checkStage()), true)
+})
+
+test("enforcesAxisCoverage: lenses that span every required axis keep the guarantee", () => {
+  // The axes are enforceable here because some lens is expected to report each
+  // one — this is how a lens setup opts back into the coverage check, with no
+  // new config surface.
+  const c = { ...DEFAULT_CONFIG, reviewLenses: AXES }
+  assert.deepEqual(unreviewedAxes(c, checkStage()), [])
+  assert.equal(enforcesAxisCoverage(c, "engineering", checkStage()), true)
+})
+
+test("enforcesAxisCoverage: lenses that do NOT span the axes keep today's documented trade-off", () => {
+  // `["security", "test-adequacy"]` is never going to report `readability`, so
+  // demanding it would ERROR every run. The downgrade stands — and the config
+  // warning already names the axes being given up.
+  const c = { ...DEFAULT_CONFIG, reviewLenses: ["security", "test-adequacy"] }
+  assert.ok(unreviewedAxes(c, checkStage()).length)
+  assert.equal(enforcesAxisCoverage(c, "engineering", checkStage()), false)
+})
+
+test("enforcesAxisCoverage: a stage requiring no axes is never gated", () => {
+  const c = { ...DEFAULT_CONFIG, reviewLenses: AXES }
+  assert.equal(enforcesAxisCoverage(c, "engineering", checkStage({ requiredAxes: undefined })), false)
 })
 
 test("unknownStageModelKeys names stageModels entries that match no stage of the kind", () => {

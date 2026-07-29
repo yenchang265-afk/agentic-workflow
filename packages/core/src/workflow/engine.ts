@@ -10,6 +10,7 @@ import {
   verdictContractBlock,
   verdictFeedbackBlock,
   workScopeBlock,
+  type StagePass,
   type Verdict,
   type VerdictRecord,
 } from "./verdict.js"
@@ -195,18 +196,27 @@ export const promptContext = (
  * (the hub's creator preview) — compose the exact same output without the
  * throw. `composePrompt` layers loading and hook resolution on top.
  */
+/**
+ * The one contract a stage's passes share. Passes are homogeneous — `stagePasses`
+ * returns lens passes, axis passes, or a single pass, never a mix — so the first
+ * pass's mode names the whole stage's. Pure.
+ */
+const passMode = (passes: readonly StagePass[]): "single" | "axis" | "lens" =>
+  passes.some((p) => p.mode === "axis") ? "axis" : passes.some((p) => p.mode === "lens") ? "lens" : "single"
+
 export const composeStagePrompt = (
   def: StageDef,
   tpl: string,
   ctx: TemplateContext,
   // Defaulted from the stage itself so a config-less caller (the hub's creator
   // preview) shows what the manifest declares. `composePromptWithStats` passes
-  // the EFFECTIVE mode instead, because config can turn fan-out on or off.
-  fanout = def.fanout === "axis",
+  // the EFFECTIVE mode instead, because config can turn fan-out on or off and
+  // `reviewLenses` can replace it with lens passes entirely.
+  mode: "single" | "axis" | "lens" = def.fanout === "axis" ? "axis" : "single",
 ): string => {
   const rendered = renderPrompt(tpl, ctx)
   return def.kind === "check"
-    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, fanout, def.requireEvidence)}`
+    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}`
 }
 
@@ -240,8 +250,8 @@ export const composePromptWithStats = (
   // declared per-axis fan-out, and the contract must describe the passes that
   // will actually run — otherwise a lens pass is told to report one axis it was
   // never given, or an axis pass is told to report all five.
-  const fanout = config ? stagePasses(config, loaded.manifest.kind, def).some((p) => p.mode === "axis") : undefined
-  return { prompt: composeStagePrompt(def, tpl, ctx, fanout), elided }
+  const mode = config ? passMode(stagePasses(config, loaded.manifest.kind, def)) : undefined
+  return { prompt: composeStagePrompt(def, tpl, ctx, mode), elided }
 }
 
 /** Render the prompt threaded into `target`'s stage command. */
