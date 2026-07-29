@@ -880,10 +880,31 @@ const warnRedaction = (hits: readonly { pattern: string; count: number }[], wher
   log("warn", `redacted secret-shaped strings from ${where}: ${summary}`)
 }
 
-/** Append a blockquote note to a task file in place. Secrets redacted. Best-effort. */
+/**
+ * Append a blockquote note to a task file **in place**. Secrets redacted.
+ * Best-effort, and a no-op (with a warning) when the file is no longer there.
+ *
+ * The existence check is the whole point: `>>` CREATES its target, so an append
+ * to a stale path — and callers legitimately hold one, since a task can move out
+ * from under a live run — resurrected the task as a frontmatterless ghost. That
+ * ghost is invisible where it would help and visible where it hurts:
+ * `parseTask` throws on it so `listByStatus` skips it with a warn and it counts
+ * for nothing, while `test -e` still sees it, so `moveTask`'s duplicate guard
+ * then refuses the REAL task's move back into that folder — permanently, since
+ * nothing sweeps a file no lister can see.
+ *
+ * Appending is never worth creating a file for: a note is a record OF a task
+ * file, so no file means nothing to record. Warn instead — a lost note is lost
+ * claim evidence (see `warnLostAppend`), and silence here reads as "noted".
+ */
 export const appendNote = async ($: Shell, task: FileRef, note: string, log?: Log): Promise<void> => {
   const { text, hits } = redact(note)
   warnRedaction(hits, `note on ${task.id}`, log)
+  const exists = await $`test -f ${task.path}`.quiet().nothrow()
+  if (exists.exitCode !== 0) {
+    await log?.("warn", `note on ${task.id} never landed: ${task.path} no longer exists — the task moved or was removed`)
+    return
+  }
   const out = await $`printf '\n> %s\n' ${text} >> ${task.path}`.quiet().nothrow()
   await warnLostAppend(out.exitCode, `note on ${task.id}`, log)
 }

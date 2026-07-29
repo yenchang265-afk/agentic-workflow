@@ -1472,7 +1472,14 @@ test("recordVerdict audits an out-of-stage verdict on the task file, once per st
   const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   const shellLog: string[] = []
   const task = { id: "drift-task", path: "/repo/docs/tasks/in-progress/drift-task.md", acceptance: [] }
-  const deps: Deps = { client: makeClient().client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  // The task file has to EXIST for a note to land on it — `appendNote` refuses to
+  // `>>` a path that is gone rather than recreating the task as a ghost.
+  const deps: Deps = {
+    client: makeClient().client,
+    $: makeShellFS({ "/repo/docs/tasks/in-progress/drift-task.md": "---\ntitle: Drift\n---\n\nbody" }, shellLog),
+    directory: "/repo",
+    log: () => {},
+  }
   setWorkflow("drv-drift", { goal: "g", stage: "build", iteration: 0, artifacts: {}, task })
   try {
     // A build stage that verified its own work: rejected, as before.

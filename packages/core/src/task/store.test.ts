@@ -711,6 +711,35 @@ test("appendNote/appendPlan/appendRunLog warn when the append never landed", asy
   assert.equal(warns.filter((m) => m.includes("append")).length, 3, `got: ${JSON.stringify(warns)}`)
 })
 
+test("appendNote refuses to recreate a task file that is no longer there", async () => {
+  // `>>` CREATES its target, and callers legitimately hold a stale path — a task
+  // can move out from under a live run. The resurrected file is a frontmatterless
+  // ghost: `parseTask` throws so `listByStatus` skips it and it counts for
+  // nothing, while `test -e` still sees it, so `moveTask`'s duplicate guard then
+  // refuses the REAL task's move back into that folder forever.
+  const cmds: string[] = []
+  const warns: string[] = []
+  const gone = makeShell((cmd) => {
+    cmds.push(cmd)
+    return cmd.startsWith("test ") ? { exitCode: 1 } : { exitCode: 0 }
+  })
+  const log = async (level: string, message: string) => void (level === "warn" && warns.push(message))
+  await appendNote(gone, task("a", 0), "CLAIMED — loop starting", log)
+  assert.ok(!cmds.some((c) => c.includes(">>")), `no append attempted: ${cmds.join(" | ")}`)
+  assert.equal(warns.length, 1, `the lost note must be loud: ${JSON.stringify(warns)}`)
+  assert.match(warns[0] ?? "", /no longer exists/)
+})
+
+test("appendNote still appends when the task file is there", async () => {
+  const cmds: string[] = []
+  const present = makeShell((cmd) => {
+    cmds.push(cmd)
+    return { exitCode: 0 }
+  })
+  await appendNote(present, task("a", 0), "CLAIMED — loop starting")
+  assert.ok(cmds.some((c) => c.includes(">>")), `the append still runs: ${cmds.join(" | ")}`)
+})
+
 test("a marker quoted mid-line in the body is not lifecycle state", () => {
   // A task ABOUT this system (or a pasted log) can quote the literal note
   // text; only whole audit-note lines appended by appendNote count.
