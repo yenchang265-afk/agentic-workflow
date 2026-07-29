@@ -1,52 +1,38 @@
 ---
 name: task-backlog-management
-description: Explains the filesystem task backlog under docs/tasks/ — the folder-as-status lifecycle and task file schema. Use when writing, filing, or moving a task file, or running the /agentic-workflow:engineering authoring verbs.
+description: Explains the filesystem task backlog under docs/tasks/ — folder-as-status, the task file schema, and who moves what. Use when writing, filing, or moving a task file, or running the /agentic-workflow:engineering authoring verbs.
 ---
 
 # The task backlog
 
-## Overview
-
 A task is one markdown file under `docs/tasks/`. **The folder it lives in is
-its status** — there is no `status:` field, so the two can never drift. The
-`/agentic-workflow:engineering` command carries the whole lifecycle: `new` drafts via
-interview, the unified folder-driven `approve` verb holds every human gate
-(task, plan, ship), and the loop side (see
-`workflow-orchestration`) plans a queued task on demand (`plan <id>` — right
-before execution, never auto-claimed) and builds plan-approved ones.
+its status** — there is no `status:` field, so the two can never drift. Every
+move is made by a verb of `/agentic-workflow:engineering`, which leaves an
+audited note and a commit behind it; a raw `mv` skips the validation, the note,
+and the record of who decided.
 
-This folder lifecycle is the **engineering workflow kind's work source** (bound
-via `packages/core/workflows/engineering/workflow.json`). Other workflow kinds don't use these folders
-— e.g. `pr-sitter` keeps its state on GitHub itself plus a per-PR dedup
-ledger under `<tasksDir>/runs/pr-sitter/`. Everything below (statuses, gates,
-who moves what) is the engineering backlog, unchanged.
-
-## When to Use
-
-- Use when you want a goal to persist across sessions as a durable, auditable
-  backlog record.
-- Use before running `/agentic-workflow:engineering approve <id>`,
-  `/agentic-workflow:engineering replan <id>`, or `/agentic-workflow:engineering plan <id>` —
-  all read from this backlog.
-- Use when reviewing what `/agentic-workflow:engineering new` filed, reshaping a draft with
-  `/agentic-workflow:engineering retask <id>`, or `/agentic-workflow:engineering abandon <id>`.
+This folder lifecycle is the **engineering kind's work source** (bound in
+`packages/core/workflows/engineering/workflow.json`). Other kinds keep their
+state elsewhere — `pr-sitter` on GitHub itself plus a per-PR dedup ledger under
+`<tasksDir>/runs/pr-sitter/`. Everything here is the engineering backlog. The
+stages, gates, and verdicts that drive it are `workflow-orchestration`.
 
 ## The folders
 
 ```
 docs/tasks/
-  draft/        # interviewed stubs, no plan (from /agentic-workflow:engineering new, or hand-written)
-  queued/       # task approved, planless — awaits the loop's PLAN stage      ← /agentic-workflow:engineering approve moves here
-  plan-review/  # plan written by the loop, parked for the human plan gate    ← the loop's PLAN stage moves here
-  in-progress/  # plan approved: build-ready queue + build → verify → review  ← /agentic-workflow:engineering approve moves here
-  in-review/    # review passed, human diff gate                              ← the driver moves here automatically
-  completed/    # shipped                                                     ← you move here (/agentic-workflow:engineering approve), once the PR merges
-  abandoned/    # won't do                                                    ← `abandon <id>`, from any non-terminal status
+  draft/        # interviewed stubs, no plan (/agentic-workflow:engineering new, or hand-written)
+  queued/       # task approved, planless — awaits the loop's PLAN stage      ← approve moves here
+  plan-review/  # plan written by the loop, parked for the human plan gate    ← the PLAN stage moves here
+  in-progress/  # plan approved: build-ready queue + build → verify → review  ← approve moves here
+  in-review/    # review passed, human diff gate                              ← the driver moves here
+  completed/    # shipped                                                     ← you (approve), once the PR merges
+  abandoned/    # won't do                                                    ← abandon, from any non-terminal status
 ```
 
 ## Task file schema
 
-One file per task. YAML frontmatter + a free-form markdown body:
+YAML frontmatter plus a free-form markdown body:
 
 ```md
 ---
@@ -54,7 +40,7 @@ title: Add rate limiting to the API     # required
 type: story                             # optional; issue/work-item type
 priority: 2                             # optional; lower runs first (default 0)
 estimate: 3                             # optional; story points / effort
-assignee: jdoe@example.com              # optional; assignee / assigned-to
+assignee: jdoe@example.com              # optional
 labels:                                 # optional; Jira labels / ADO tags
   - backend
 acceptance:                             # optional; testable criteria → verify
@@ -66,34 +52,30 @@ tracker:                                # optional; manually pair to a tracker i
   url: https://acme.atlassian.net/browse/PROJ-123   # optional deep link
   parent: PROJ-100                      # optional; Jira Epic Link / ADO parent
 ---
-Throttle authenticated callers to 100 req/min. The body is the description /
-context; it becomes the loop's goal, with `acceptance` threaded into the build
-and verify stages so the verdict checks each criterion.
+The body is the description; it becomes the loop's goal, with `acceptance`
+threaded into the build and verify stages so the verdict checks each criterion.
 
 ## Implementation Plan
 
-The plan — written by the loop's PLAN stage, right before execution. Its
-presence (this exact heading) is what makes the plan approvable and, once
-approved, buildable.
+Written by the loop's PLAN stage, right before execution.
 ```
 
-- **id** = the filename without `.md` (`add-foo.md` becomes `add-foo`). Stable, human-visible.
-- **title** is required; everything else has a sane default.
-- **YAML footgun — quote risky values.** Double-quote any `title:` value or
-  `acceptance:`/`labels:` bullet that contains `: ` or starts with a YAML
+- **id** = the filename without `.md` (`add-foo.md` → `add-foo`). Stable and
+  human-visible.
+- **`## Implementation Plan`** is the literal heading the plugin greps for.
+  Without it `approve` refuses and the loop can never build the task.
+- **acceptance** is what VERIFY checks, so "what tests are needed" folds in
+  here as concrete bullets rather than becoming a field of its own.
+- **YAML footgun — quote risky values.** Double-quote any `title:` or
+  `acceptance:`/`labels:` bullet containing `: ` or opening with a YAML
   reserved character (backtick, `@`, `*`, `[`, `{`, `|`, `>`, `%`, `&`, `!`).
-  A bullet like ``- `calc --help` prints usage`` is invalid YAML — wrap the
-  whole value: `- "'calc --help' prints usage"` or put the backticked term
-  mid-sentence. Unquoted, YAML either mis-parses the value or rejects the
-  whole file (the parser repairs the common cases, but don't rely on it).
-- **acceptance** is optional but strongly recommended — it is what VERIFY checks.
-  "What tests are needed" folds in here as concrete bullets rather than a
-  separate field.
+  ``- `calc --help` prints usage`` is invalid YAML; write
+  `- "'calc --help' prints usage"` instead. Unquoted, YAML either mis-parses
+  the value or rejects the whole file — the parser repairs the common cases,
+  which is not a reason to rely on it.
 - **type / estimate / assignee / labels / tracker** align with the fields Jira
-  issues and Azure DevOps work items share, so you can **manually pair** a task
-  to a tracker item. Fill `tracker.system` (`jira` | `azure-devops`) and
-  `tracker.key` (Jira issue key `PROJ-123` / ADO work item id `1234`) to link
-  them; `url` and `parent` (Epic Link / parent) are optional. Field mapping:
+  and Azure DevOps share, so a task can be **manually paired** to a tracker
+  item via `tracker.system` + `tracker.key`:
 
   | task file    | Jira             | Azure DevOps          |
   | ------------ | ---------------- | --------------------- |
@@ -105,173 +87,90 @@ approved, buildable.
   | `labels`     | Labels           | Tags                  |
   | `acceptance` | Acceptance Crit. | Acceptance Criteria   |
   | `tracker`    | Issue Key + link | Work Item ID + link   |
-- **`## Implementation Plan`** — the literal heading the plugin greps for.
-  Without it, `/agentic-workflow:engineering approve` refuses and the loop can never
-  build the task.
-
-## Process
-
-1. **Draft** — `/agentic-workflow:engineering new <idea>`: the calling agent **always
-   interviews you** (a single restate-and-confirm when the idea is already
-   sharp, a full interview when it's vague) to pin down the goal and
-   testable acceptance criteria, confirms the draft with you, and hands it
-   to the `workflow-task-author` subagent to write a **planless draft** to `draft/`.
-   - You can also write a stub into `draft/` by hand.
-2. **Approve the task** — `/agentic-workflow:engineering approve <id>`: deterministic
-   plugin code moves the reviewed draft to `queued/` with an audited
-   "Task approved" note and commits. No plan exists yet, by design — the
-   plan is written right before execution so it can't rot while the task
-   sits parked.
-3. **Plan (inside the loop)** — `/agentic-workflow:engineering plan <id>` or a watch tick
-   claims the queued task and runs the PLAN stage: `workflow-plan-author` reads
-   the relevant code and writes the `## Implementation Plan` onto the file
-   in place, then the driver parks it in `plan-review/` and the loop exits —
-   it never blocks waiting on a human.
-4. **Approve the plan** — `/agentic-workflow:engineering approve <id>`: deterministic
-   plugin code checks the `## Implementation Plan` heading exists, moves the
-   file to `in-progress/` (the build-ready queue), appends an audited
-   "Plan approved" note, and commits. This is the human sign-off before any
-   code is written. To reject instead, `/agentic-workflow:engineering replan <id> <why>`
-   sends it back to `queued/` with the reason on the audit trail.
-5. **Build** — `/agentic-workflow:engineering claim` (one pull, now) or `/agentic-workflow:engineering watch
-   [interval]` (standing worker; build-ready tasks beat queued ones). See
-   `workflow-orchestration`.
-
-## Slicing a heavy idea into sibling drafts
-
-Each task is planned, built, verified, and reviewed by **one agent in one
-worktree context** (often a cheaper/degraded model), so a heavy idea won't fit
-in a working context. The backlog *is* the decomposition primitive: at
-`/agentic-workflow:engineering new` the calling agent judges scope and, when the idea spans
-slices (more than one independent deliverable, more than ~5 acceptance
-criteria, or more than one subsystem/layer), splits it into **sibling drafts**
-— each a **vertical, independently shippable slice** with its own acceptance
-subset — plus one **epic tracking draft** (`type: epic`) whose body lists the
-children in order. There is no token metering; "fits the context window" is a
-scope judgement, not a measured limit.
-
-- Children are ordered by `priority` (0, 1, 2 …). `priority` orders claims but
-  does **not** block. A worktree branches from `origin/main`, so a child that
-  builds on a sibling's code can't see it until that sibling ships — the human
-  approves and ships stacked children one at a time, which *is* the dependency
-  gate. Genuinely independent slices can run in any order.
-- The **epic file is never approved** — an un-approved draft is inert, so the
-  loop never claims it. It is a human-facing index; close it with
-  `/agentic-workflow:engineering abandon <id>` once every child has shipped.
 
 ## Lifecycle — who moves what
 
 | Transition | Who | When |
 |------------|-----|------|
-| into `draft/` | `/agentic-workflow:engineering new` or you | an interviewed (or hand-written) planless stub |
-| ends in `draft/` (rewritten in place) | **`/agentic-workflow:engineering retask <id> [note]`** | reshape a planless task — re-interview, overwrite the same file, keep the id. A `draft/` task never moves; a `queued/` one is sent back to `draft/` first (approval withdrawn — approve it again). Refused from `plan-review/` on: use `replan` |
-| `draft → queued` | **`/agentic-workflow:engineering approve <id>`** | the human task gate — scope + acceptance approved, planless by design; audited note + commit |
-| `queued → plan-review` | driver | the loop's PLAN stage wrote the plan and parked it for review; audited note + commit |
-| `plan-review → in-progress` | **`/agentic-workflow:engineering approve <id>`** | the human plan gate; audited note + commit |
-| `plan-review (or in-progress) → queued` | **`/agentic-workflow:engineering replan <id> [reason]`** | plan rejected, or a cap-tripped task sent back — the next PLAN pass addresses the audited reason |
-| `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS — parks it as the human diff gate |
-| `in-review → completed` | **you** | you've reviewed the diff and shipped it — run `/agentic-workflow:engineering approve <id>` (an audited move + commit) or move the file by hand; the loop never does this move on its own |
-| stays `in-progress` + note | driver | loop fails (iteration cap) or is stopped while building |
-| `→ abandoned` | **you** | **`/agentic-workflow:engineering abandon <id> [reason]`** — you decide not to do it, from any non-terminal status; the file is kept, so the move is reversible |
-| task file deleted | **you** | **`/agentic-workflow:engineering remove <id> --force`** — the one destructive verb; a bare `remove` is a dry run. Usually permanent (`ignoreBacklog` defaults to true), so prefer `abandon` |
+| into `draft/` | `/agentic-workflow:engineering new` or you | an interviewed (or hand-written) planless stub — `new` always interviews, then hands the confirmed intent to the `workflow-task-author` subagent |
+| ends in `draft/` (rewritten in place) | **`retask <id> [note]`** | reshape a planless task — re-interview, overwrite the same file, keep the id. A `draft/` task never moves; a `queued/` one is sent back to `draft/` first (approval withdrawn — approve it again). Refused from `plan-review/`: use `replan` |
+| `draft → queued` | **`approve <id>`** | the human task gate — scope + acceptance approved, planless by design |
+| `queued → plan-review` | driver | the PLAN stage wrote the plan and parked it |
+| `plan-review → in-progress` | **`approve <id>`** | the human plan gate — the sign-off before any code is written |
+| `plan-review (or in-progress) → queued` | **`replan <id> [reason]`** | plan rejected, or a cap-tripped task sent back — the next PLAN pass addresses the audited reason |
+| `in-progress → in-review` | driver | automatic, the instant REVIEW returns PASS — the human diff gate |
+| `in-review → completed` | **you** | you reviewed the diff and shipped it — `approve <id>`; the loop never makes this move |
+| stays `in-progress` + note | driver | the loop failed (iteration cap) or was stopped mid-build |
+| `→ abandoned` | **you** | **`abandon <id> [reason]`** — from any non-terminal status; the file is kept, so it is reversible |
+| task file deleted | **you** | **`remove <id> --force`** — the one destructive verb; a bare `remove` is a dry run. Usually permanent (`ignoreBacklog` defaults to true), so prefer `abandon` |
 
-The gate verb is one and the same at every stop: **`/agentic-workflow:engineering approve [id]`**
-advances a task by the gate its folder implies (parked plan → build, finished
-review → completed), and id-less it resolves the single task waiting at a
-loop wait-gate — falling back to a lone draft only when no loop gate is
-waiting (tracking epics are never candidates).
-**`/agentic-workflow:engineering replan [id] [reason]`** is the matching rejection verb.
+One verb runs every forward gate: **`approve [id]`** advances by whatever gate
+the task's folder implies, and id-less it resolves the single task waiting at a
+loop wait-gate, falling back to a lone draft only when no loop gate is waiting
+(tracking epics are never candidates). **`replan [id] [reason]`** is the
+matching rejection verb, always back to `queued/`.
 
-A failed or stopped task is **left in `in-progress/`** with a note appended, so
-it is visibly stuck for a human rather than silently re-queued. `/agentic-workflow:engineering recover
-<id>` resumes it; if the plan itself was the problem, send it back with
-`/agentic-workflow:engineering replan <id> <why>` and gate the new plan again; or
-`/agentic-workflow:engineering abandon <id>` to give up on it.
+The plan is written **right before execution** rather than at approval time, so
+it cannot rot while a task sits parked. Its `## Implementation Plan` section is
+the durable on-disk record, surviving a `stop` or an opencode restart when
+in-memory loop state does not (snapshots under `runs/` cover exact-stage crash
+recovery).
 
-The `## Implementation Plan` section is the durable on-disk record — it
-survives a `/agentic-workflow:engineering stop` or an opencode restart, when the in-memory loop state
-does not (state snapshots under `runs/` cover exact-stage crash recovery).
+## Slicing a heavy idea into sibling drafts
 
-### Identifying an interrupted loop
+Each task is planned, built, verified, and reviewed by **one agent in one
+worktree context** (often a cheaper model), so a heavy idea will not fit. The
+backlog *is* the decomposition primitive: at `new`, the calling agent judges
+scope and — when the idea spans slices (more than one independent deliverable,
+more than ~5 acceptance criteria, or more than one subsystem) — splits it into
+**sibling drafts**, each a vertical, independently shippable slice with its own
+acceptance subset, plus one **epic tracking draft** (`type: epic`) whose body
+lists the children in order. There is no token metering; this is a scope
+judgement, not a measured limit.
 
-What's on the task file tells you what happened:
+- Children are ordered by `priority` (0, 1, 2 …), which orders claims but does
+  **not** block. A worktree branches from `origin/main`, so a child building on
+  a sibling's code cannot see it until that sibling ships — the human approving
+  and shipping stacked children one at a time *is* the dependency gate.
+  Genuinely independent slices run in any order.
+- The **epic file is never approved.** An un-approved draft is inert, so the
+  loop never claims it; it is a human-facing index, closed with `abandon <id>`
+  once every child has shipped.
 
-- **A blockquote note** (`> ...`) — either a manual `/agentic-workflow:engineering stop`/`/agentic-workflow:engineering abort`,
-  or an automatic iteration-cap stop (from a VERIFY or a REVIEW failure).
-- **An unmatched `> BUILD started` note** (no matching `> BUILD finished` after
-  it) — the only stage that edits files died mid-run, most likely a crash or a
-  `/agentic-workflow:engineering stop` issued while BUILD was active. Treat this as "check `git
-  status`/`git diff` before doing anything else" — there may be a
-  half-finished diff. `/agentic-workflow:engineering recover <id>` resumes it (snapshot-exact, or at
-  BUILD from the persisted plan).
-- **No markers at all, just `## Implementation Plan`** — safe: approved and
-  waiting, nothing has written code yet. This is exactly the `isClaimable`
-  predicate a `/agentic-workflow:engineering watch` session uses to pick its next task: has a plan,
-  and has never had *any* `> BUILD started` note — not just "the last one is
-  unmatched" (that's `wasInterrupted`, above). A task with any build marker
-  at all, matched or not, is either being driven by a live watch session
-  right now, or crashed and needs `/agentic-workflow:engineering recover` — a watcher must never
-  silently reclaim either case.
+## Identifying an interrupted loop
 
-## Notes & limits
+What is on the task file says what happened:
 
-- The backlog path defaults to `docs/tasks` and is configurable via `tasksDir`
-  in `.agentic-workflow.json`.
-- Execution is isolated on a `feature/<id>` branch (or per-task worktree, when
-  configured); after the loop finishes, review the diff, then open the PR
-  yourself.
-- `→ abandoned` is `/agentic-workflow:engineering abandon`'s move.
-  `plan-review → in-progress` is `/agentic-workflow:engineering approve`'s move;
-  `in-progress → in-review` is the driver recording a review PASS. Neither is
-  a second layer of file-moving bureaucracy — each records a decision that
-  already happened.
-- A task sitting in `in-review/` is **resting, not stalled** — it is the human
-  diff gate. Review the branch and run `/agentic-workflow:engineering approve <id>`
-  when it ships; leave it alone until then.
+- **A blockquote note** (`> …`) — a manual `stop`/`abort`, or an automatic
+  iteration-cap stop from a VERIFY or REVIEW failure.
+- **An unmatched `> BUILD started`** (no `> BUILD finished` after it) — the only
+  stage that edits files died mid-run. Read `git status`/`git diff` before
+  doing anything else; there may be a half-finished diff. `recover <id>`
+  resumes it, snapshot-exact or at BUILD from the persisted plan.
+- **No markers, just `## Implementation Plan`** — approved and waiting, nothing
+  has written code. This is exactly `isClaimable`: has a plan, and has **never**
+  had *any* `> BUILD started` note — not merely "the last one is unmatched",
+  which is `wasInterrupted`. A task with any build marker at all is either
+  being driven by a live watch session right now or crashed and needs
+  `recover`; a watcher must never silently reclaim either.
 
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "I'll add a status: field, it's clearer" | The whole point is that the folder *is* the status — a separate field can drift from the folder and lie about the task's real state. |
-| "This task failed once, just delete the note and retry silently" | The note is the audit trail for why a human needs to look before retrying (especially an unmatched BUILD-started marker, which can mean a half-finished diff). Deleting it hides that signal from the next person. |
-| "Just mv the file to in-progress/, approve is bureaucracy" | A raw `mv` skips the plan validation, the audit note, and the commit that records who approved what. The command is one line and is the gate. |
-| "Add another status for 'plan approved, waiting for a watcher'" | That moment is already visible: an in-progress task with a plan and no build markers is exactly `isClaimable`. It doesn't need its own folder. |
-| "Skip the plan gate — the loop wrote the plan, just build it" | Plan-review park is the point of planning in the loop: the plan is fresh, but a human still signs off before any code is written. `approve <id>` is one line and is the gate. |
-
-## Red Flags
-
-- A task file with a `status:` key in its frontmatter — schema violation; the
-  folder is the only source of truth.
-- A task sitting in `in-progress/` with an unmatched `> BUILD started` note
-  that nobody has checked `git status` against yet.
-- A task in `completed/` whose diff was never actually reviewed/PR'd by a
-  human — only a human moves a task into `completed/`, so this means someone
-  moved the file (or ran `/agentic-workflow:engineering approve`) without doing the review step first.
-- A task in `completed/` with no "Shipped" audit note — it was moved by a raw
-  `mv` instead of `/agentic-workflow:engineering approve <id>`, so the completion isn't in the audit
-  trail.
-- A task in `in-progress/` with no "Plan approved" audit note — it was moved
-  by a raw `mv` instead of `/agentic-workflow:engineering approve <id>`.
-- A task in `queued/` with no "Task approved" audit note — it was moved by a
-  raw `mv` instead of `/agentic-workflow:engineering approve <id>`.
-- A task in `plan-review/` without an `## Implementation Plan` — the PLAN
-  stage never parks a planless task, so someone raw-`mv`ed it there.
-- A task sitting in `queued/` for a long time with a watcher running — check
-  `/agentic-workflow:engineering status`: build work always outranks plan work, so a busy queue
-  is normal, but a stuck one may mean a held claim marker.
-- A local task file written without ever showing its draft to the user for
-  a "does this look right?" confirmation.
+A failed or stopped task is **left in `in-progress/`** with its note, visibly
+stuck for a human rather than silently re-queued. A task resting in
+`in-review/` is not stalled either — it is the diff gate, waiting on you.
 
 ## Verification
 
-- [ ] Every task file in `docs/tasks/**/*.md` parses against the schema
-      (`title` required, `priority` an integer, `acceptance` a list of strings).
-- [ ] No task file has a `status:` frontmatter key.
-- [ ] Every task in `in-progress/` carries an `## Implementation Plan`
-      heading and a "Plan approved" audit note.
+- [ ] Every task file parses against the schema (`title` required, `priority` an
+      integer, `acceptance` a list of strings), and none carries a `status:` key
+- [ ] Every task in `in-progress/` has an `## Implementation Plan` and a "Plan
+      approved" note; every task in `queued/`, `in-review/`, and `completed/`
+      carries the audit note its gate writes — a missing note means the file was
+      raw-`mv`ed past the gate that validates it
+- [ ] Nothing sits in `plan-review/` without an `## Implementation Plan`
 - [ ] `docs/tasks/{draft,queued,plan-review,in-progress,in-review,completed,abandoned}/`
-      all exist (even if empty, via `.gitkeep`) so the `/agentic-workflow:engineering` verbs
-      and the driver never fail on a missing folder.
-- [ ] Every locally-drafted task was shown to the user for confirmation
-      before being written to disk.
+      all exist (via `.gitkeep` when empty), so the verbs and the driver never
+      fail on a missing folder
+- [ ] Every locally-drafted task was shown to the user for confirmation before
+      being written to disk
+- [ ] No task in `in-progress/` carries an unmatched `> BUILD started` that
+      nobody has checked `git status` against
