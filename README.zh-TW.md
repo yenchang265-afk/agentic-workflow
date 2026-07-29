@@ -105,6 +105,20 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 ./install.sh            # 全部外掛都裝；或者：./install.sh opencode | claude | qwen
 ```
 
+在原生 Windows（沒有 WSL／git-bash）上，改用 PowerShell 版本——目標與參數相同：
+
+```powershell
+git clone <this-repo>
+cd agentic-workflow
+npm install
+.\install.ps1            # 全部外掛都裝；或者：.\install.ps1 opencode | claude | qwen
+```
+
+`install.ps1` 會盡可能建立真正的符號連結（需要系統管理員權限，或 Windows
+10/11 的開發人員模式——設定 > 更新與安全性 > 開發人員專用），否則會自動改用
+複製（傳入 `-Copy` 可主動選擇這個模式並略過警告；複製模式下 `git pull` 後需
+重新執行才能更新）。
+
 - 在儲存庫根目錄執行 `npm install` 會安裝所有 workspace（OpenCode 外掛、
   `packages/core`、`plugins/claude/mcp-server`），並透過 `prepare` 腳本建置核心
   套件——每個外掛都消費核心套件建置出的 `dist/`。
@@ -132,6 +146,11 @@ npm install             # npm workspaces —— 同時建置 @agentic-workflow/c
 ./scripts/clean.sh             # 只移除 <tasksDir>/runs/ 中的暫存狀態
 ./scripts/clean.sh --purge     # 同時刪除待辦任務檔案 + .agentic-workflow.json
 ```
+
+在 Windows 上：`.\uninstall.ps1`（目標／參數與 `install.ps1` 相同）會復原
+`install.ps1`；`scripts/clean.sh` 沒有 Windows 版本——請在 WSL 或 git-bash
+下執行，或手動刪除 `<tasksDir>/runs/`（`--purge` 的話還包括各狀態資料夾中的
+任務檔案與 `.agentic-workflow.json`）。
 
 - **`./uninstall.sh`** 會移除本儲存庫連結進你 OpenCode 設定中的
   agents/commands/skills/references 項目和本機外掛檔案（只移除指回本儲存庫的

@@ -116,17 +116,33 @@ npm install             # npm workspaces — also builds @agentic-workflow/core 
 ./install.sh            # every plugin; or: ./install.sh opencode | claude | qwen
 ```
 
+On native Windows (no WSL/git-bash), use the PowerShell port instead — same
+targets and flags:
+
+```powershell
+git clone <this-repo>
+cd agentic-workflow
+npm install
+.\install.ps1            # every plugin; or: .\install.ps1 opencode | claude | qwen
+```
+
+`install.ps1` creates real symlinks when it can (Administrator, or Developer
+Mode on Windows 10/11 — Settings > Update & Security > For developers) and
+automatically falls back to copies otherwise (pass `-Copy` to do that on
+purpose and skip the warning; re-run after `git pull` to refresh a copy
+install).
+
 - `npm install` at the repo root installs all workspaces (the OpenCode plugin,
   `packages/core`, `packages/ado-mcp`, `packages/hub`, `plugins/claude/mcp-server`)
   and builds the core package via the `prepare` script — every plugin consumes
   core's built `dist/`.
-- `./install.sh opencode` symlinks agents/commands/skills/references into
+- `./install.sh opencode` (`.\install.ps1 opencode`) symlinks agents/commands/skills/references into
   `~/.config/opencode/` (or `$OPENCODE_CONFIG_DIR`) and registers the plugin —
   details and flags (`--copy`, custom dir) in [docs/opencode.md](docs/opencode.md).
-- `./install.sh claude` builds the bundled MCP server and links the shared
+- `./install.sh claude` (`.\install.ps1 claude`) builds the bundled MCP server and links the shared
   skills/references, then prints the load options (`claude --plugin-dir` or
   marketplace) — details in [`plugins/claude/README.md`](plugins/claude/README.md).
-- `./install.sh qwen` builds the same MCP server, installs agents/commands/
+- `./install.sh qwen` (`.\install.ps1 qwen`) builds the same MCP server, installs agents/commands/
   skills/references into `~/.qwen/` (or `$QWEN_CONFIG_DIR`), and merges the
   hooks + MCP entry into `settings.json` — details in
   [docs/qwen.md](docs/qwen.md). **Experimental**: this host's interface and
@@ -147,7 +163,12 @@ local state a running loop leaves behind:
 ./scripts/clean.sh --purge     # also delete backlog task files + .agentic-workflow.json
 ```
 
-- **`./uninstall.sh`** removes the agents/commands/skills/references entries and
+On Windows: `.\uninstall.ps1` (same targets/flags as `install.ps1`) reverses
+`install.ps1`; `scripts/clean.sh` has no Windows port — run it under WSL or
+git-bash, or delete `<tasksDir>/runs/` (and, for `--purge`, the status-folder
+task files and `.agentic-workflow.json`) by hand.
+
+- **`./uninstall.sh`** (`.\uninstall.ps1`) removes the agents/commands/skills/references entries and
   the local plugin file this repo linked into your OpenCode config (only the
   symlinks that point back here; `--copy` also removes copies), and drops the
   built Claude `mcp-server/dist`. It leaves your `.agentic-workflow.json` and the

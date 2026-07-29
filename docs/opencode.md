@@ -180,12 +180,16 @@ seeds `.agentic-workflow.json` — it first asks whether to write repo scope (th
 project the loop drives) or user scope (shared across every repo); `--user` /
 `--repo` force the choice. See [configuration.md](configuration.md).
 
-On Windows, symlinks need WSL or symlink-capable Windows (Developer Mode);
-without that, use `--copy` (no live updates — re-run after `git pull`).
+On native Windows (no WSL/git-bash), use `.\install.ps1 opencode` instead — same
+flags (`-Copy`, a custom dir, `--user`/`--repo`, `-y`). It creates real symlinks
+when it can (Administrator, or Developer Mode on Windows 10/11) and falls back
+to copies automatically otherwise (no live updates in that mode — re-run after
+`git pull`).
 
 ## Uninstall & clean
 
-`./uninstall.sh opencode [dir]` reverses the install — it removes the
+`./uninstall.sh opencode [dir]` (`.\uninstall.ps1 opencode [dir]` on Windows)
+reverses the install — it removes the
 agents/commands/skills/references entries and the local plugin file that point
 back into this repo from `$OPENCODE_CONFIG_DIR` (add `--copy` to also remove
 copies a `--copy` install left). Foreign entries and your OpenCode config file
