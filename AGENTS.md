@@ -223,7 +223,9 @@ marker inside a comment.
 A held `.claims/<id>` marker asserts a LIVE loop, nothing weaker — every gate
 verb (`replan`/`abandon`/`remove`) refuses on it with that exact rationale. So
 **every way a drive ends must release the marker**: `runStop` (any stage, not
-just PLAN), the OpenCode driveChain's stop/interrupt guard, and `onIdle`'s
+just PLAN), `runPark`'s failure arms (including the one where the task is *gone*
+from `queued/` — release `fresh ?? state.task`, never nest the release inside
+`if (fresh)`), the OpenCode driveChain's stop/interrupt guard, and `onIdle`'s
 error path all do, and any new exit path must too. It was once "kept for
 recover" on stop instead, and the combination wedged cap-stopped tasks forever:
 the orphan sweep skips a CLAIMED/BUILD body, so no verb could ever free them.

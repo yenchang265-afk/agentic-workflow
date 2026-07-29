@@ -131,6 +131,26 @@ test("park with no plan on disk fails and leaves the task in queued", async () =
   assert.deepEqual(metrics, [{ outcome: "error", detail: "the PLAN stage wrote no ## Implementation Plan" }])
 })
 
+test("park with the task gone from queued/ still releases the claim-time marker, no append", async () => {
+  // The mirror of "stop mid-plan with the task gone …" below, for the park path.
+  // runPark nested its release under `if (fresh)`, so when the task left queued/
+  // mid-plan (a hub replan/abandon, a hand edit, a crash-recovered rescue) the
+  // drive ended with the marker still held — and engineering's queued pool is
+  // `manual: true`, so nothing reclaimed it and `plan <id>` could not re-acquire
+  // it until the stale sweep fired ~75min later. Every way a drive ends must
+  // release the marker.
+  const { ctx, log, metrics } = makeCtx({}, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.match(report.kind === "error" ? report.message : "", /left queued\/ mid-plan/)
+  assert.ok(!log.some((c) => c.includes(">>")), "no append to a missing task")
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes("queued/.claims/t")),
+    `claim marker released via the claim-time ref: ${log.join(" | ")}`,
+  )
+  assert.equal(metrics[0]?.outcome, "error")
+})
+
 test("park vetoed by a registered validateBeforeTransition hook errors, no move", async () => {
   registerValidateHook("test.veto", () => "the tree is dirty")
   const { ctx, log, metrics } = makeCtx({ "queued/t.md": body(true) }, planState(), { validate: "test.veto" })
