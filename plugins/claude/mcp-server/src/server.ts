@@ -27,6 +27,7 @@ import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
 import {
   checksFor,
+  concurrentStages,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
   fanoutOverriddenByLenses,
@@ -38,6 +39,7 @@ import {
   unbindableAgentModels,
   unknownAgentModelKeys,
   unknownStageCheckKeys,
+  unknownStageConcurrencyKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
   unknownStageModelKeys,
@@ -529,6 +531,26 @@ const stageModelWarnings = (): string[] =>
       warnings.push(
         `workflows.${kind}.stageChecks names ${unchecked.map((k) => `"${k}"`).join(", ")}, which ${unchecked.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
           `${unchecked.length > 1 ? "those check commands are" : "that check command is"} never run. Valid stages: ${stageNames.join(", ")}.`,
+      )
+    }
+    // stageConcurrency is an OpenCode-only knob, and silence would read as
+    // "parallel passes are on". They are not, and cannot be here: this host's
+    // orchestrator spawns the pass subagents while the server keeps ONE armed
+    // pass, one stage marker and one evidence ledger — all three read by the
+    // PreToolUse/SubagentStop hooks — so a pass has no identity to attribute a
+    // verdict, a marker or a tool call to.
+    const concurrent = concurrentStages(config, kind, stageNames)
+    if (concurrent.length) {
+      warnings.push(
+        `workflows.${kind}.stageConcurrency asks ${concurrent.map((s) => `"${s}"`).join(", ")} to run passes concurrently, ` +
+          `which this host does not do — the passes run one at a time. That knob is honored by the OpenCode plugin only.`,
+      )
+    }
+    const unknownConc = unknownStageConcurrencyKeys(config, kind, stageNames)
+    if (unknownConc.length) {
+      warnings.push(
+        `workflows.${kind}.stageConcurrency names ${unknownConc.map((k) => `"${k}"`).join(", ")}, which ${unknownConc.length > 1 ? "are" : "is"} not a stage of the ${kind} loop — ` +
+          `ignored. Valid stages: ${stageNames.join(", ")}.`,
       )
     }
     // Same trap once more for stageFanout: a typo'd stage never fans out.

@@ -121,6 +121,23 @@ export interface WorkflowState {
   /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /**
+   * Set ONLY on the throwaway state a driver registers for one focused PASS of a
+   * fanned-out check stage, naming the driving session the pass belongs to.
+   *
+   * A pass gets its own session so that every per-session table (the recorded
+   * verdict, the pass's axis requirement, its observed-evidence ledger) is
+   * pass-scoped instead of stage-scoped — that is what lets passes run
+   * concurrently at all. Registering it in this store is what makes the pass
+   * subagent's `workflow_verdict` resolve to the PASS rather than walking up to
+   * the driver.
+   *
+   * But a pass is not a loop, and queries that mean "which session is driving
+   * this work" must not see it — `findSessionDriving` would otherwise return a
+   * pass session for the task and a gate would refuse on a loop that does not
+   * exist. Never persisted (the snapshot schema drops it) and never a terminal.
+   */
+  readonly passOf?: string
+  /**
    * The git base/branch (and worktree) this loop's stages operate on. A PR-shaped
    * source pre-sets `{base, branch}` to name the PR's head to isolate ONTO; the
    * engineering loop leaves it unset until `ensureIsolation` creates `feature/<id>`.
@@ -265,6 +282,8 @@ export interface WorkflowKindConfig {
   readonly stageContext?: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** Stage name → fan-out strategy for that stage; wins over the manifest stage's `fanout`. `"none"` turns one off. */
   readonly stageFanout?: Readonly<Record<string, "axis" | "none">>
+  /** Stage name → how many of that stage's focused passes may run at once. Default 1 (sequential). OpenCode only. */
+  readonly stageConcurrency?: Readonly<Record<string, number>>
   /** Stage name → check commands the driver runs before that stage; replaces the manifest stage's `checks`. SHELL-BEARING (user-scope only). */
   readonly stageChecks?: Readonly<Record<string, readonly CheckDef[]>>
   /** Changed-diff-line ceiling a reviewer-role kind declines above; unset ⇒ `DEFAULT_MAX_DIFF_LINES`. */
@@ -325,9 +344,17 @@ export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string): Wo
 const store = new Map<string, WorkflowState>()
 
 export const getWorkflow = (sessionID: string): WorkflowState | undefined => store.get(sessionID)
-/** The session whose live loop is driving the given task id, if any (this plugin instance only). */
+/**
+ * The session whose live loop is driving the given task id, if any (this plugin
+ * instance only).
+ *
+ * Pass sessions (`passOf`) are skipped: they carry the driving loop's task ref
+ * so the pass subagent resolves against the right work, but they are one stage
+ * pass, not a loop. Returning one would answer "which session drives this task"
+ * with a session that vanishes when the pass ends.
+ */
 export const findSessionDriving = (taskId: string): string | undefined => {
-  for (const [sessionID, state] of store) if (state.task?.id === taskId) return sessionID
+  for (const [sessionID, state] of store) if (state.task?.id === taskId && !state.passOf) return sessionID
   return undefined
 }
 /** Task id of the loop currently in its PLAN stage, if any — the only task a

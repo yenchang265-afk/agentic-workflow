@@ -93,6 +93,7 @@ import {
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
+  type StagePass,
   type Verdict,
   type VerdictRecord,
   worstOf,
@@ -102,6 +103,7 @@ import { checkCommands, runChecks, withCheckFloor } from "@agentic-workflow/core
 import {
   EXPERIMENTAL_KINDS,
   checksFor,
+  concurrencyFor,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
   fanoutOverriddenByLenses,
@@ -112,6 +114,7 @@ import {
   stagePasses,
   triggerFor,
   unknownStageCheckKeys,
+  unknownStageConcurrencyKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
   unknownStageModelKeys,
@@ -261,6 +264,17 @@ const interrupted = new Set<string>()
  * is dropped so a later real ESC is never swallowed.
  */
 const driverAborts = new Map<string, number>()
+/**
+ * Driving session → the sessions its in-flight stage passes are running in.
+ *
+ * Only populated above concurrency 1 (at 1 a pass runs on the driving session
+ * itself). Two jobs: `onInterrupt` needs to abort every in-flight pass, because
+ * ESC reaches the session the user was looking at and the passes are elsewhere;
+ * and `runStagePasses`' `finally` needs a list to clean up, since a pass that
+ * threw between opening its session and closing it would otherwise leave a
+ * registered state that reads as a live loop forever.
+ */
+const passSessions = new Map<string, Set<string>>()
 /**
  * Should this session stop firing agent turns? Either a `stop` cleared the loop,
  * or the user pressed ESC. Both must be tested: `onInterrupt` deliberately keeps
@@ -715,11 +729,23 @@ const runStageChecks = async (
  * Keyed by tree path: a worktree's own index never contends with the main tree's.
  */
 const commitLocks = new Map<string, Promise<unknown>>()
-const withCommitLock = <T>(treePath: string, fn: () => Promise<T>): Promise<T> => {
-  const prev = commitLocks.get(treePath) ?? Promise.resolve()
-  const run = prev.then(fn, fn) // run regardless of the prior commit's outcome
-  commitLocks.set(
-    treePath,
+const withCommitLock = <T>(treePath: string, fn: () => Promise<T>): Promise<T> => withLock(commitLocks, treePath, fn)
+
+/**
+ * Run `fn` after every previously-queued call on the same key, on the given
+ * chain map. The mechanism `withCommitLock` always used, lifted out because
+ * concurrent stage passes need the same guarantee for two more shared writers
+ * (see `runLocks`).
+ *
+ * Runs regardless of the prior call's outcome — a rejected predecessor must not
+ * wedge the key forever — and the stored chain swallows results so a rejection
+ * never surfaces as an unhandled one.
+ */
+const withLock = <T>(chains: Map<string, Promise<unknown>>, key: string, fn: () => Promise<T>): Promise<T> => {
+  const prev = chains.get(key) ?? Promise.resolve()
+  const run = prev.then(fn, fn)
+  chains.set(
+    key,
     run.then(
       () => {},
       () => {},
@@ -727,6 +753,31 @@ const withCommitLock = <T>(treePath: string, fn: () => Promise<T>): Promise<T> =
   )
   return run
 }
+
+/**
+ * Serialize the per-run shared-file writers, keyed by workflow id.
+ *
+ * Sequential passes made these safe by accident; concurrent ones do not.
+ * `appendRunLog` shell-appends `## <header>` blocks that `runlog.ts` parses back
+ * out, and `flushMetrics` is a read-modify-write (`cat` → upsert → atomic
+ * write) whose interleaving silently drops a sample. Both belong to one run, so
+ * one chain per run keeps concurrent RUNS independent while making one run's
+ * passes take turns.
+ */
+const runLocks = new Map<string, Promise<unknown>>()
+
+/**
+ * Serialize passes that had to FALL BACK to the driving session, keyed by it.
+ *
+ * `session.create` failing must degrade to taking turns, never to two passes
+ * sharing one session concurrently — that is the exact cross-admission the
+ * per-pass session exists to prevent (one pass's verdict admitted against
+ * another's axis requirement, one pass's evidence corroborating another's PASS,
+ * `takeVerdictRecord` deleting a sibling's record on read). A separate map from
+ * `runLocks` because a pass body takes the run lock internally, and one
+ * non-reentrant chain would deadlock against itself.
+ */
+const sharedSessionPasses = new Map<string, Promise<unknown>>()
 
 /** Commit everything as a checkpoint on the loop branch/worktree. No-op until isolation ran. */
 const checkpoint = async (deps: Deps, config: Config, state: WorkflowState, message: string): Promise<void> => {
@@ -959,12 +1010,72 @@ export const runStagePasses = async (
   const isCheck = def.kind === "check"
   const model = modelFor(config, loaded.manifest.kind, def)
   const passes = stagePasses(config, loaded.manifest.kind, def)
-  const outputs: string[] = []
-  const records: (VerdictRecord | null)[] = []
+  const concurrency = concurrencyFor(config, loaded.manifest.kind, def, passes.length)
+  // Positional, NOT append-order: under concurrency passes finish out of order,
+  // and `combineRecords` + the missing-pass detection below both read
+  // `records[i]` against `passes[i]`.
+  const outputs: (string | null)[] = new Array(passes.length).fill(null)
+  const records: (VerdictRecord | null)[] = new Array(passes.length).fill(null)
   const { client } = deps
+  const runKey = workflowId(state)
 
-  for (let i = 0; i < passes.length; i++) {
+  /**
+   * The session ONE pass runs in.
+   *
+   * At concurrency 1 that is the driving session itself — the path every loop
+   * has always taken, kept byte-identical so the default carries no new risk.
+   * Above 1 each pass needs its own, because every table a pass writes
+   * (`recordedVerdicts`, `axisRequirement`, `observedEvidence`) is keyed by
+   * session alone: sharing one id is precisely what forces passes to be serial.
+   *
+   * Created with `parentID` and NO `directory` override — the directory is what
+   * plan 01 ruled out (it boots a second app instance, where this plugin and so
+   * `workflow_verdict` do not exist). A sibling session in the same instance
+   * keeps the verdict channel and gives `findDrivingWorkflow` a registered stop
+   * before it reaches the driver, so the pass subagent's verdict lands on the
+   * PASS. Falls back to the driving session if creation fails: a slower correct
+   * stage beats a stage that cannot run.
+   */
+  const openPassSession = async (pass: StagePass): Promise<string> => {
+    if (concurrency === 1) return sessionID
+    try {
+      const created = await client.session.create({
+        body: { parentID: sessionID, ...(pass.focus ? { title: `${stage}: ${pass.focus}` } : {}) },
+      })
+      const id = created?.data?.id
+      if (!id) throw new Error("session.create returned no id")
+      setWorkflow(id, { ...state, passOf: sessionID })
+      passSessions.get(sessionID)?.add(id)
+      return id
+    } catch (err) {
+      await deps.log("warn", `${stage}: could not open a session for pass "${pass.focus ?? "single"}" — running it on the driving session (${(err as Error).message})`)
+      return sessionID
+    }
+  }
+
+  /** Tear a pass session down. Never the driving session — that outlives the stage. */
+  const closePassSession = async (passSessionID: string): Promise<void> => {
+    if (passSessionID === sessionID) return
+    clearWorkflow(passSessionID)
+    passSessions.get(sessionID)?.delete(passSessionID)
+    await client.session.delete({ path: { id: passSessionID } }).catch(() => {})
+  }
+
+  const runOnePass = async (i: number): Promise<void> => {
     const pass = passes[i]!
+    const passSessionID = await openPassSession(pass)
+    // A pass that could not get its own session is back on the shared one, where
+    // overlapping is precisely what corrupts verdicts. Degrade to taking turns.
+    const shared = passSessionID === sessionID && concurrency > 1
+    try {
+      if (shared) await withLock(sharedSessionPasses, sessionID, () => runPassBody(i, pass, passSessionID))
+      else await runPassBody(i, pass, passSessionID)
+    } finally {
+      await closePassSession(passSessionID)
+    }
+  }
+
+  const runPassBody = async (i: number, pass: StagePass, passSessionID: string): Promise<void> => {
     // Publish THIS pass's axis requirement before firing; recordVerdict reads it
     // when workflow_verdict lands. An `axis` pass narrows it to its own axis, so
     // a focused pass is ACCEPTED instead of rejected for the axes it was told
@@ -972,8 +1083,8 @@ export const runStagePasses = async (
     // before. The stage-wide completeness guarantee moves to the coverage gate
     // below, which reads the accumulated record.
     const required = isCheck ? passAxes(def, pass) : undefined
-    if (required?.length) axisRequirement.set(sessionID, required)
-    else axisRequirement.delete(sessionID)
+    if (required?.length) axisRequirement.set(passSessionID, required)
+    else axisRequirement.delete(passSessionID)
     const focusBlock = passFocusBlock(pass, i, passes.length)
     const args = focusBlock ? `${baseArgs}\n\n${focusBlock}` : baseArgs
     // One pass, plus at most one retry when a check stage ends with no
@@ -987,21 +1098,25 @@ export const runStagePasses = async (
           ? args
           : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
             `If the tool is not in your tool list, state that explicitly in your final message and finish.`
-      recordedVerdicts.delete(sessionID) // no stale verdict may leak into this pass
-      recordedBlocked.delete(sessionID) // nor a stale "blocked" from an earlier stage
-      observedEvidence.delete(sessionID) // ...nor a previous pass's work corroborate this one's PASS
+      // Scoped to the PASS session, which at concurrency 1 IS the driving session
+      // (today's behavior exactly). Above 1 that scoping is what makes these
+      // clears correct rather than a race: one pass's clear must never wipe a
+      // sibling's verdict, nor its evidence corroborate a sibling's PASS.
+      recordedVerdicts.delete(passSessionID) // no stale verdict may leak into this pass
+      recordedBlocked.delete(passSessionID) // nor a stale "blocked" from an earlier stage
+      observedEvidence.delete(passSessionID) // ...nor a previous pass's work corroborate this one's PASS
       // Seed the driver-run checks as observed work. They ARE observed — this
       // process ran them and holds their exit codes — and without the seed a
       // stage that correctly trusts the results instead of re-running them can
       // be observed doing nothing, have its PASS rejected by `evidenceIssue`,
       // and record a FAIL on a green suite. Re-seeded per attempt because the
       // clear above is per attempt.
-      for (const command of checkCommands(state.checks?.[stage] ?? [])) noteEvidence(sessionID, { command })
-      driftNoted.delete(sessionID) // one drift note per stage attempt, not per run
+      for (const command of checkCommands(state.checks?.[stage] ?? [])) noteEvidence(passSessionID, { command })
+      driftNoted.delete(passSessionID) // one drift note per stage attempt, not per run
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
         client,
-        sessionID,
+        passSessionID,
         stageCommand(loaded, stage),
         passArgs,
         config.stageTimeoutMinutes,
@@ -1016,9 +1131,16 @@ export const runStagePasses = async (
       const header = pass.focus
         ? `${stage} (lens: ${pass.focus}) · iteration ${iteration + 1}${retryTag} · ${stamp}`
         : `${stage} · iteration ${iteration + 1}${retryTag} · ${stamp}`
-      await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), header, out, deps.log)
-      outputs.push(pass.focus ? `### Review ${pass.mode === "axis" ? "axis" : "lens"}: ${pass.focus}\n${out}` : out)
-      passRecord = isCheck ? takeVerdictRecord(sessionID, stage as CheckStage) : null
+      // Under the run lock: `appendRunLog` shell-appends a `## <header>` block
+      // that `runlog.ts` parses back out, so two passes appending at once would
+      // interleave one run's log into unparseable halves.
+      await withLock(runLocks, runKey, () =>
+        appendRunLog(deps.$, deps.directory, config.tasksDir, runKey, header, out, deps.log),
+      )
+      outputs[i] = pass.focus ? `### Review ${pass.mode === "axis" ? "axis" : "lens"}: ${pass.focus}\n${out}` : out
+      passRecord = isCheck ? takeVerdictRecord(passSessionID, stage as CheckStage) : null
+      // Samples stay on the DRIVING session: they are the run's telemetry, not
+      // the pass session's, and the pass session is about to be deleted.
       addSample(sessionID, {
         stage,
         iteration,
@@ -1038,8 +1160,12 @@ export const runStagePasses = async (
         ...(isCheck ? verdictStructure(passRecord) : {}),
       })
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
-      // terminal event finalizes the sidecar).
-      await flushMetrics(deps, sessionID, config, state)
+      // terminal event finalizes the sidecar). Under the run lock: the flush is a
+      // read-modify-write (`cat` → upsert → atomic write), so two interleaved
+      // flushes both read the same file and one pass's sample is lost.
+      await withLock(runLocks, runKey, () => flushMetrics(deps, sessionID, config, state))
+      // `halted` is always the DRIVING session's: a stop/ESC targets the loop,
+      // and a pass session is never what the user interrupted.
       if (!isCheck || passRecord || halted(sessionID)) break
       if (attempt === 0) {
         await deps.log(
@@ -1048,8 +1174,49 @@ export const runStagePasses = async (
         )
       }
     }
-    records.push(passRecord)
-    if (halted(sessionID)) break // stop or ESC mid-pass — don't fire the rest
+    records[i] = passRecord
+  }
+
+  passSessions.set(sessionID, new Set())
+  try {
+    if (concurrency === 1) {
+      // Byte-identical to the loop this replaced, including stopping early: a
+      // halt must not fire the remaining passes.
+      for (let i = 0; i < passes.length; i++) {
+        await runOnePass(i)
+        if (halted(sessionID)) break
+      }
+    } else {
+      // A bounded pool: `concurrency` workers pulling from one cursor, so N
+      // passes are in flight and no more. A worker checks the halt before
+      // TAKING work, which is the concurrent equivalent of the sequential
+      // early break — passes already in flight run to completion (their
+      // sessions are aborted by `onInterrupt`), and none are started after.
+      let cursor = 0
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          if (halted(sessionID)) return
+          const i = cursor++
+          if (i >= passes.length) return
+          await runOnePass(i)
+        }
+      }
+      // `allSettled`, not `all`: one pass throwing (a stage timeout) must not
+      // abandon its siblings mid-flight with their sessions still registered.
+      // A thrown pass leaves `records[i] === null`, which the missing-pass
+      // check below already reports as a broken channel.
+      const settled = await Promise.allSettled(Array.from({ length: concurrency }, worker))
+      const failure = settled.find((r): r is PromiseRejectedResult => r.status === "rejected")
+      if (failure && !halted(sessionID)) throw failure.reason
+    }
+  } finally {
+    // Any pass session still registered (a throw between open and close) would
+    // otherwise leak into the store and read as a live loop forever.
+    for (const id of passSessions.get(sessionID) ?? []) {
+      clearWorkflow(id)
+      await client.session.delete({ path: { id } }).catch(() => {})
+    }
+    passSessions.delete(sessionID)
   }
 
   if (!isCheck) {
@@ -1065,11 +1232,14 @@ export const runStagePasses = async (
     return { output: outputs[0] ?? "", verdict: null, record: null }
   }
 
+  /** The passes that produced output, in PASS order — a pass that never ran (halt) or threw contributes nothing. */
+  const joinedOutput = outputs.filter((o): o is string => o !== null).join("\n\n")
+
   // A deliberate stop or an ESC interrupt mid-pass: records may be short and/or
   // end in null. The caller discards the result once halted — return quietly,
   // never routing it through the ERROR path below, which would report an
   // unreachable verdict channel for a stage the user simply stopped.
-  if (halted(sessionID)) return { output: outputs.join("\n\n"), verdict: null, record: null }
+  if (halted(sessionID)) return { output: joinedOutput, verdict: null, record: null }
 
   // Focused passes that FIRED but recorded nothing even after their retry. A
   // missing pass verdict is a broken channel, not a FAIL: worst-wins combining
@@ -1115,7 +1285,7 @@ export const runStagePasses = async (
     // Still nothing after the retry: the verdict channel is unreachable —
     // surface it as a retryable ERROR (manifest onError → recoverable stop),
     // never as a FAIL that triggers a pointless rebuild.
-    const inText = parseVerdict(outputs.join("\n"), stage === "verify" ? WORKFLOW_VERIFY_TAG : WORKFLOW_REVIEW_TAG)
+    const inText = parseVerdict(joinedOutput, stage === "verify" ? WORKFLOW_VERIFY_TAG : WORKFLOW_REVIEW_TAG)
     const noun = passes.some((p) => p.mode === "axis") ? "axis" : "lens"
     const lensTag = missingPasses.length
       ? ` (${missingPasses.length > 1 ? (noun === "axis" ? "axes" : "lenses") : noun}: ${missingPasses.join(", ")})`
@@ -1131,9 +1301,9 @@ export const runStagePasses = async (
         "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
         (inText ? ` (prose claimed ${inText}, ignored — free text is untrusted)` : ""),
     }
-    return { output: outputs.join("\n\n"), verdict: "ERROR", record: errorRecord }
+    return { output: joinedOutput, verdict: "ERROR", record: errorRecord }
   }
-  return { output: outputs.join("\n\n"), verdict, record }
+  return { output: joinedOutput, verdict, record }
 }
 
 /**
@@ -1326,6 +1496,20 @@ const driveChain = async (
       "warn",
       `workflows.${loaded.manifest.kind}.stageFanout names ${unknownFanouts.map((k) => `"${k}"`).join(", ")}, which is not a stage of this loop — ` +
         `ignored; that stage runs a single pass. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
+    )
+  }
+  // Same trap for a stageConcurrency key: a typo'd stage stays sequential, so the
+  // knob reads as "parallelism doesn't work" rather than "no such stage".
+  const unknownConcurrency = unknownStageConcurrencyKeys(
+    config,
+    loaded.manifest.kind,
+    loaded.manifest.stages.map((s) => s.name),
+  )
+  if (unknownConcurrency.length) {
+    await deps.log(
+      "warn",
+      `workflows.${loaded.manifest.kind}.stageConcurrency names ${unknownConcurrency.map((k) => `"${k}"`).join(", ")}, which is not a stage of this loop — ` +
+        `ignored; that stage's passes stay sequential. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
   // reviewLenses suppresses per-pass axis-coverage enforcement, and the
@@ -1722,13 +1906,32 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
       state = drive.state
     }
   }
+  // The chain walk now stops at a PASS session when a fanned-out stage runs
+  // concurrently — that registration is what routes the pass's verdict to the
+  // pass. An interrupt must not stop there: `interrupted` is tested against the
+  // DRIVING session (`halted`), the toast names the loop's task, and watch mode
+  // is the driver's. Hop the one link `passOf` records, keeping the pass id for
+  // the driver-abort test below (a pass stage timeout aborts the PASS session,
+  // so that is the id the expiry was filed under).
+  const passSessionID = state?.passOf ? sessionID : null
+  if (state?.passOf) {
+    sessionID = state.passOf
+    state = getWorkflow(sessionID)
+  }
   // A driver-initiated abort (stage timeout) is not a user interrupt: leave
   // watch mode armed and the loop's normal timeout error path in charge. Judged
   // by expiry, not delete-on-sight — one abort dispatches several events.
-  const driverAbortExpiry = driverAborts.get(sessionID)
-  if (driverAbortExpiry !== undefined) {
+  for (const id of passSessionID ? [passSessionID, sessionID] : [sessionID]) {
+    const driverAbortExpiry = driverAborts.get(id)
+    if (driverAbortExpiry === undefined) continue
     if (Date.now() < driverAbortExpiry) return
-    driverAborts.delete(sessionID) // expired — a later real ESC must not be swallowed
+    driverAborts.delete(id) // expired — a later real ESC must not be swallowed
+  }
+  // A real interrupt: stop the passes the user cannot see. They run in their own
+  // sessions, so ESC on the driving session never reached them — without this
+  // the remaining lens/axis turns keep burning after the user asked to stop.
+  for (const id of passSessions.get(sessionID) ?? []) {
+    await deps.client.session.abort({ path: { id } }).catch(() => {})
   }
   const hadWorkflow = state !== undefined
   const priorPending = pending.get(sessionID)

@@ -735,6 +735,29 @@ issue 的 key/id 複製進任務裡。
   在名為 `review` 的階段上，**`reviewLenses` 勝過這個設定**，所以既有的視角
   設定行為完全不變；當設定好的視角清單覆蓋掉已宣告的 fan-out 時，兩個 host
   都會警告。命名到不存在階段的鍵會被接受、忽略並警告，與 `stageModels` 相同。
+- **`workflows.<kind>.stageConcurrency`**——階段名稱 → 該階段的分趟最多可以有
+  幾趟**同時**進行。預設 `1`（依序執行，也就是目前所有迴圈的行為）。對上面兩種
+  多趟模式都有效：`stageFanout` 的逐軸分趟，以及 `reviewLenses` 的視角分趟。
+
+  ```jsonc
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 5 } } } }
+  ```
+
+  分趟的 check 階段在設計上彼此獨立——每一趟都是對同一個工作樹的唯讀審查，只被
+  要求涵蓋自己的軸或視角、不涵蓋其他的，最後以最差者勝合併——所以同時跑它們是
+  延遲上的收穫，而不是語意上的改變：五個軸的審查大約只花一次審查的時間，而不是
+  五次。
+
+  之所以**預設關閉，是因為這是成本上的改變**：同時有 N 趟進行，代表對你的用量
+  上限同時開了 N 個模型 session。這個值會被夾到該階段的分趟數，所以不管你設多少，
+  單趟的階段都不受影響。
+
+  **僅限 OpenCode。** 在那裡每一趟都有自己的 session，這正是逐趟的裁定、軸要求
+  與證據帳本能夠分開的原因。Claude Code 與 Qwen Code 由編排者去產生分趟的
+  subagent，而 MCP server 只保有一個 armed pass、一份 stage marker 與一份證據
+  帳本——三者都被 guard hook 讀取——所以一趟沒有身分可以用來歸屬裁定或工具呼叫；
+  這兩個 host 會**警告**，而不是默默忽略這個旋鈕。命名到不存在階段的鍵會被接受、
+  忽略並警告，與 `stageModels` 相同。
 - 回顯進稽核記錄、計畫或執行紀錄中的密鑰會在寫入並提交之前被
   **依形狀遮蔽**（`AKIA…`、`sk-…`、token、PEM 區塊、
   `key/secret/token: …` 這類賦值）。

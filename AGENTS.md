@@ -262,6 +262,36 @@ on `pass.mode === "axis"` inline again; a lens set that spans the axes is
 enforceable and a lens set that cannot is not, and only that predicate knows the
 difference.
 
+### A stage pass's identity is its session (OpenCode)
+
+Every per-pass table in the OpenCode driver — `recordedVerdicts`,
+`axisRequirement`, `observedEvidence`, `recordedBlocked`, `driftNoted` — is keyed
+by **session id alone**, and check stages run as `subtask: true` commands whose
+verdict walks *up* the parent chain to whatever session is registered. That is
+why passes were serial: sharing one id, being "the pass that fired last" is the
+only identity a verdict has, so two in flight would cross-admit each other's
+verdicts, wipe each other's evidence, and `takeVerdictRecord` (which deletes on
+read) would let the first finisher steal a merged blob.
+
+So concurrency is bought by giving each pass its own session
+(`workflows.<kind>.stageConcurrency`, default 1), NOT by re-keying those maps.
+Two consequences any change here must preserve:
+
+- **Never pass a `directory` to `session.create`.** That is what plan 01 ruled
+  out: it boots a second app instance with no plugin, so `workflow_verdict` does
+  not exist there. A sibling session in the same directory is fine, and is the
+  whole mechanism.
+- **A pass session is not a loop.** It is registered in the workflow store so the
+  pass's verdict resolves to it, which means every "is a loop live / which
+  session drives this task" query must skip it — that is what `passOf` marks, and
+  why `findSessionDriving` and `onInterrupt` both consult it. `halted` is always
+  tested against the DRIVING session; a user's ESC never lands on a pass.
+
+Anything shared by the whole run rather than by one pass needs a lock now that
+passes overlap: `appendRunLog` (append) and `flushMetrics` (read-modify-write)
+both go through `withLock(runLocks, …)`. Adding another per-run writer means
+adding it there too.
+
 ### Model selection is a mechanism, never prose
 
 Never express `stageModels` / `agentModels` as an instruction for a model to

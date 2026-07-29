@@ -112,8 +112,10 @@ is a manifest error (there is no verdict to carry them), and `reviewLenses` mode
 suppresses the **per-pass** enforcement (see `docs/configuration.md`).
 
 Such a stage may also declare `fanout: "axis"`: it then runs **one focused pass
-per required axis**, sequentially, each pass told to review and report exactly
-that axis, and the passes merge worst-wins. Per-pass admission narrows to the
+per required axis**, each pass told to review and report exactly that axis, and
+the passes merge worst-wins. Sequentially by default; the OpenCode plugin's
+`workflows.<kind>.stageConcurrency` runs them concurrently (see
+`docs/configuration.md`). Per-pass admission narrows to the
 pass's own axis — otherwise every focused pass would be rejected for the axes it
 was told not to review — and the stage-wide requirement moves to the accumulated
 record, so a fan-out that never reported an axis stops the loop with ERROR rather
