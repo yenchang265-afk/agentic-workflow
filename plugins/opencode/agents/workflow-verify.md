@@ -117,6 +117,16 @@ unavailable.
 
 1. **Run the tests** — the project's test/typecheck/lint commands. Capture real
    output; never claim a pass you did not observe.
+
+   **Unless your input already carries a check-commands block.** When it does,
+   the loop ran those commands itself, in this work tree, and their exit codes
+   are already recorded: they are established fact. Do not re-run them to
+   confirm, and do not argue with them — a red one has already floored this
+   stage's verdict, and no amount of reasoning in your transcript can lift it
+   (the escape hatch is removing the check from config, not disputing it here).
+   Cite them in your evidence, and spend your run on the parts a command cannot
+   decide: the criteria, and the tests themselves. Run something yourself only
+   for what the block does not cover.
 2. **Check each acceptance criterion** — map each one to evidence (a passing test,
    observed behavior, a command's output). Mark it met or not met.
 3. **Check the tests themselves** — a green suite proves nothing if the suite was

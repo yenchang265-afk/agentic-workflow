@@ -4,7 +4,8 @@ import { test } from "node:test"
 import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
 import { effectiveAllowlist, stageDef } from "../manifest/schema.js"
-import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext } from "./engine.js"
+import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext, withCheckResults } from "./engine.js"
+import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 import { verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
@@ -852,6 +853,8 @@ const budgetState = (artifacts: Record<string, string>, stage = "build"): Workfl
   artifacts,
 })
 
+const PASSED_CHECK: CheckResult = { name: "tests", command: "npm test", exitCode: 0, outcome: "pass", output: "" }
+
 const budgeted = (stage: string, budgets: Record<string, number>): Config => ({
   ...config,
   workflows: { engineering: { stageContext: { [stage]: budgets } } },
@@ -880,6 +883,49 @@ test("composePrompt is byte-identical for a budget-less state — the unset-knob
       )
     }
   }
+})
+
+test("promptContext omits checks when the stage ran none — a check-less prompt is unchanged", () => {
+  const state = { ...mk("add foo"), stage: "verify" as string, artifacts: {} }
+  assert.equal(promptContext(state).checks, undefined)
+  // An empty list is the same as none: no section, so no "we ran nothing" noise.
+  assert.equal(promptContext({ ...state, checks: { verify: [] } }).checks, undefined)
+  // And the results belong to the stage that ran them, not to whoever fires next.
+  assert.equal(promptContext({ ...state, checks: { review: [PASSED_CHECK] } }).checks, undefined)
+})
+
+test("promptContext renders the running stage's check results, flagging a red run", () => {
+  const state = { ...mk("add foo"), stage: "verify" as string, artifacts: {} }
+  const green = promptContext({ ...state, checks: { verify: [PASSED_CHECK] } }).checks as Record<string, unknown>
+  assert.match(green.block as string, /- tests \(npm test\) → PASS \(exit 0\)/)
+  assert.equal(green.failed, false)
+  const red = promptContext({
+    ...state,
+    checks: { verify: [{ ...PASSED_CHECK, exitCode: 1, outcome: "fail" as const, output: "1 failing" }] },
+  }).checks as Record<string, unknown>
+  assert.equal(red.failed, true)
+  assert.match(red.block as string, /1 failing/)
+})
+
+test("composePrompt is byte-identical for a check-less state — the second unset-knob pin", () => {
+  for (const [label, state] of Object.entries(PROMPT_STATES)) {
+    for (const stage of ["plan", "build", "verify", "review"]) {
+      assert.equal(
+        composePrompt(eng, { ...state, checks: {} }, stage, config),
+        composePrompt(eng, state, stage, config),
+        `${label} → ${stage}: an empty checks map changed the prompt`,
+      )
+    }
+  }
+})
+
+test("withCheckResults attaches per stage without disturbing the others", () => {
+  const state = { ...mk("add foo"), stage: "verify" as string, artifacts: {} }
+  const one = withCheckResults(state, "verify", [PASSED_CHECK])
+  const two = withCheckResults(one, "review", [])
+  assert.deepEqual(two.checks?.verify, [PASSED_CHECK])
+  assert.deepEqual(two.checks?.review, [])
+  assert.equal(state.checks, undefined, "the input state was mutated")
 })
 
 test("the structured verdict block survives intact when the prose budget clamps to zero", () => {

@@ -330,6 +330,28 @@ REVIEW: `workflow_verdict` accepts any check stage of the running loop's kind
 against that kind's manifest, and a missing verdict on a check stage is
 still FAIL.
 
+### Declared check commands are established fact
+
+A check stage may have **check commands** attached to it — declared in
+`workflows.<kind>.stageChecks` (config) or the manifest stage's `checks`. The
+**driver** runs them, in the stage's work tree, before the stage fires. Their
+results reach the stage's prompt as a block, and the stage does not get to
+disagree with them:
+
+- **Exit 0** adds nothing — the verdict is exactly what the stage recorded.
+- **Exit 126/127** ("command not found" / "not executable") means the check
+  could not run: the stage resolves to **ERROR**, which stops for a human
+  without spending an iteration.
+- **Any other exit code** resolves the stage to **FAIL**, however it voted.
+
+The mechanism is the one already in place for findings: each red check becomes a
+`critical` finding on a synthetic `checks` axis, so `effectiveVerdict` derives
+the stage down. A stage cannot argue a red check into a PASS; if the check
+itself is broken, the fix is removing it from config, not disputing it in the
+transcript. The commands the driver ran also count as **observed evidence**, so
+a `requireEvidence` stage may cite them instead of re-running them — and should:
+re-running is the run-to-run variance the declaration exists to remove.
+
 The tool also accepts optional `reason` (a one-line summary) and `criteria`
 (per-acceptance-criterion `{criterion, pass}` results). These steer only the
 **next iteration's prompt** — the failed criteria are threaded ahead of the

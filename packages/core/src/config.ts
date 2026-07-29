@@ -2,7 +2,7 @@ import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
 import { CODE_PLATFORMS, type Config, type WorkflowTrigger } from "./workflow/state.js"
-import type { StageDef } from "./manifest/schema.js"
+import { CheckDefSchema, type CheckDef, type StageDef } from "./manifest/schema.js"
 import type { StagePass } from "./workflow/verdict.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
 import {
@@ -170,6 +170,22 @@ const BaseConfigSchema = z.object({
          * — config beats manifest. Value space is two literals: no shell, no path.
          */
         stageFanout: z.record(z.string(), z.enum(["axis", "none"])).optional(),
+        /**
+         * Stage name → the check commands the driver runs in that stage's work
+         * tree before firing it; replaces the manifest stage's `checks`
+         * wholesale, mirroring `stageModels` over `model`. This is the
+         * test/typecheck/lint knob the config never had.
+         *
+         * Replace, not merge: declaring checks for `verify` means "these are my
+         * project's checks", and merging would silently retain a shipped default
+         * the user meant to displace.
+         *
+         * SHELL-BEARING: honored from the USER-scope config ONLY. A repo's
+         * .agentic-workflow.json setting it is dropped with a warning
+         * (SHELL_BEARING_WORKFLOW_KEYS) — a cloned repo must not be able to make
+         * the driver execute an arbitrary command on first claim.
+         */
+        stageChecks: z.record(z.string(), z.array(CheckDefSchema)).optional(),
         /**
          * Replaces the bundled `osv-scanner --format json -L <target>` call for
          * this kind's JVM (maven/gradle) scans with your own CLI. `{{target}}`
@@ -438,6 +454,27 @@ export const contextFor = (config: Config, kind: string, def: StageDef): Readonl
   config.workflows[kind]?.stageContext?.[def.name] ?? def.context ?? {}
 
 /**
+ * The check commands a stage runs before it fires: config
+ * `workflows.<kind>.stageChecks.<stage>`, else the manifest stage's `checks`,
+ * else `[]` (no checks — byte-identical to before they existed).
+ *
+ * Replaces the manifest's list wholesale rather than merging into it, exactly as
+ * `contextFor` replaces `context` and `modelFor` replaces `model`. Pure.
+ */
+export const checksFor = (config: Config, kind: string, def: StageDef): readonly CheckDef[] =>
+  config.workflows[kind]?.stageChecks?.[def.name] ?? def.checks
+
+/**
+ * The `stageChecks` keys that name no stage of `kind` — the same silent-default
+ * trap `unknownStageModelKeys` closes, and a worse one to hit: a typo'd stage
+ * name runs NO checks, so the loop keeps taking the agent's word for it while
+ * the config says otherwise. Not checkable at parse time (the manifest isn't
+ * loaded yet), so hosts warn once the kind's stages are known. Pure.
+ */
+export const unknownStageCheckKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
+  Object.keys(config.workflows[kind]?.stageChecks ?? {}).filter((name) => !stageNames.includes(name))
+
+/**
  * The `stageContext` keys that name no stage of `kind`, as `stage` or
  * `stage.artifact` — the same silent-default trap `unknownStageModelKeys`
  * closes, in both dimensions: a typo'd stage never applies, and a typo'd
@@ -631,7 +668,7 @@ const dropShellBearingRepoKeys = async (repoRaw: unknown, client: Client): Promi
  * cannot see one level down, so this is a sibling rather than a generalization
  * into a path walker: two small obviously-correct functions beat one clever one.
  */
-const SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand"] as const
+const SHELL_BEARING_WORKFLOW_KEYS = ["scannerCommand", "stageChecks"] as const
 
 /**
  * Drop shell-bearing keys from each `workflows.<kind>` section of the repo

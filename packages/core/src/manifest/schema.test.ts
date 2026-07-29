@@ -145,6 +145,53 @@ test("no shipped manifest sets context — every stage is unbounded today", () =
   }
 })
 
+test("no shipped manifest declares checks — every kind still runs exactly as it did", () => {
+  const workflowsDir = path.join(import.meta.dirname, "..", "..", "workflows")
+  for (const kind of fs.readdirSync(workflowsDir).filter((d) => fs.existsSync(path.join(workflowsDir, d, "workflow.json")))) {
+    const m = parseManifest(JSON.parse(fs.readFileSync(path.join(workflowsDir, kind, "workflow.json"), "utf8")))
+    for (const s of m.stages) assert.deepEqual(s.checks, [], `${kind}/${s.name} declares check commands`)
+  }
+})
+
+test("a check stage's checks round-trip, with cwd optional", () => {
+  const m = parseManifest({
+    ...base,
+    stages: [
+      base.stages[0],
+      { ...base.stages[1], checks: [{ name: "tests", command: "npm test" }, { name: "web", command: "npm test", cwd: "packages/web" }] },
+    ],
+  })
+  assert.deepEqual(m.stages[1]?.checks, [
+    { name: "tests", command: "npm test" },
+    { name: "web", command: "npm test", cwd: "packages/web" },
+  ])
+})
+
+test("a work stage cannot declare checks — there is no verdict to floor", () => {
+  assert.throws(
+    () =>
+      parseManifest({
+        ...base,
+        stages: [{ ...base.stages[0], checks: [{ name: "tests", command: "npm test" }] }, base.stages[1]],
+      }),
+    /cannot set checks/,
+  )
+})
+
+test("duplicate check names in one stage are rejected — the name keys the axis finding", () => {
+  assert.throws(
+    () =>
+      parseManifest({
+        ...base,
+        stages: [
+          base.stages[0],
+          { ...base.stages[1], checks: [{ name: "tests", command: "npm test" }, { name: "tests", command: "npm run e2e" }] },
+        ],
+      }),
+    /duplicate check names/,
+  )
+})
+
 test("a check stage's requiredAxes round-trips and defaults to undefined", () => {
   const axes = ["correctness", "security"]
   const raw = {

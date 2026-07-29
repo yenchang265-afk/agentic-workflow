@@ -63,6 +63,21 @@ const SlugSchema = (label: string) =>
  */
 export const FANOUT_MAX = 8
 
+/**
+ * One check command the DRIVER runs for a stage. Shared by the manifest's
+ * per-stage `checks` and the config's `workflows.<kind>.stageChecks`, so the two
+ * layers cannot drift into different shapes.
+ */
+export const CheckDefSchema = z.object({
+  /** Names the synthetic axis finding, and must be unique within a stage. */
+  name: z.string().min(1),
+  /** Shell, run verbatim (`{ raw }`) in the stage's work tree. */
+  command: z.string().min(1),
+  /** Work-tree-relative subdirectory; defaults to the work tree root. */
+  cwd: z.string().min(1).optional(),
+})
+export type CheckDef = z.infer<typeof CheckDefSchema>
+
 export const StageDefSchema = z.object({
   name: z.string().min(1),
   /** `work` stages complete on their own; `check` stages must record a verdict (missing ⇒ FAIL). */
@@ -97,6 +112,23 @@ export const StageDefSchema = z.object({
    * `workflow_verdict` serves every check stage of every kind.
    */
   requiredAxes: z.array(z.string().min(1)).optional(),
+  /**
+   * Commands the DRIVER runs in the stage's work tree before firing it. Their
+   * exit codes are established fact for the stage: rendered into the prompt,
+   * seeded as observed evidence, and floored into the verdict via a synthetic
+   * axis. Run driver-side, so they bypass `bashAllowlist` entirely — the agent
+   * never issues them. Config `workflows.<kind>.stageChecks.<name>` replaces
+   * this list wholesale.
+   *
+   * Trusted authoring surface, at the same level as `bashAllowlist`:
+   * `defaultWorkflowsDir()` resolves manifests from the core package's install
+   * location, not from the watched repo, so a merely-cloned repo cannot inject
+   * one. "Trusted" here means AUTHORED, not unreachable — the hub writes into
+   * that directory and `AGENTIC_WORKFLOW_WORKFLOWS_DIR` can repoint it. The
+   * config half is shell a repo could ship, so it is dropped from the repo
+   * layer (`SHELL_BEARING_WORKFLOW_KEYS`).
+   */
+  checks: z.array(CheckDefSchema).default([]),
   /**
    * Whether a PASS on this `check` stage must cite the work behind it. When set,
    * `workflow_verdict` rejects a PASS with no `evidence` array, and — on a host
@@ -348,6 +380,17 @@ export const WorkflowManifestSchema = z
       if (stage.kind === "work" && stage.requiredAxes?.length) {
         // Only a verdict can carry axes, and only check stages record one.
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requiredAxes (no verdict to carry them)` })
+      }
+      if (stage.kind === "work" && stage.checks.length) {
+        // Checks exist to FLOOR a verdict, and only check stages record one —
+        // on a work stage they would run, cost a test suite, and bind nothing.
+        ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set checks (no verdict to floor)` })
+      }
+      const checkNames = new Set(stage.checks.map((c) => c.name))
+      if (checkNames.size !== stage.checks.length) {
+        // The name keys both the prompt line and the synthetic axis finding, so
+        // a duplicate silently collapses two results into one.
+        ctx.addIssue({ code: "custom", message: `stage "${stage.name}" has duplicate check names` })
       }
       if (stage.kind === "work" && stage.requireEvidence) {
         // Only a verdict carries evidence, and only check stages record one.

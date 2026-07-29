@@ -137,7 +137,12 @@ test("workflow_stage keeps the accumulated verdict while a fan-out is still runn
   const body = flat(toolBody(code(source()), "workflow_stage"))
   assert.match(
     body,
-    /if \(fanoutStage !== stage \|\| !pass\.focus\) \{ pending = null/,
+    /const freshStage = fanoutStage !== stage \|\| !pass\.focus/,
+    "the fresh-arming test must still be `this is not the next pass of the same fan-out`",
+  )
+  assert.match(
+    body,
+    /if \(freshStage\) \{ pending = null/,
     "the wipe must be conditional on this not being the next pass of the same fan-out",
   )
   assert.equal(
@@ -145,6 +150,50 @@ test("workflow_stage keeps the accumulated verdict while a fan-out is still runn
     1,
     "a second, unguarded wipe anywhere in the handler discards every pass but the last",
   )
+})
+
+// Where the checks run is the whole correctness argument: in the work tree the
+// stage is about to judge (so AFTER isolation), before the stage is armed (so
+// their results can reach its prompt), and once per fresh arming (so a five-axis
+// review costs one test suite, not five).
+test("workflow_stage runs the stage's checks after isolation and once per fresh arming", () => {
+  const body = flat(toolBody(code(source()), "workflow_stage"))
+  const isolate = body.indexOf("ensureIsolation(")
+  const checks = body.indexOf("runStageChecks(active, stage)")
+  const marker = body.indexOf("writeStageMarker(stage)")
+  assert.ok(isolate >= 0 && checks >= 0 && marker >= 0, "all three steps must be present")
+  assert.ok(isolate < checks, "checks must run in the isolated work tree, not the human's checkout")
+  assert.ok(checks < marker, "checks must run before the stage is armed and its prompt handed out")
+  assert.match(body, /if \(freshStage\) \{ try \{ active = await runStageChecks/, "a focused pass must reuse the fresh arming's results")
+})
+
+// A stage whose checks ran needs its prompt RE-composed: the fire payload was
+// composed a turn earlier by workflow_advance, so it cannot carry exit codes
+// from commands that had not run yet.
+test("workflow_stage hands back a re-composed prompt when the stage ran checks", () => {
+  const body = flat(toolBody(code(source()), "workflow_stage"))
+  assert.match(body, /const checked = \(active\.checks\?\.\[stage\]\?\.length \?\? 0\) > 0/)
+  assert.match(body, /checked \? \{ prompt: firePrompt\(activeManifest\(\), active, stage\) \}/)
+  assert.match(body, /checked \? "spawn the subagent named in the `agent` field with THIS response's `prompt`/)
+})
+
+// workflow_compose is an agent-callable, idempotent READ. Running a test suite
+// per call is unacceptable, and re-running would also make the prompt it returns
+// disagree with the one the stage was actually given.
+test("workflow_compose reuses recorded check results and never runs a check", () => {
+  const body = toolBody(code(source()), "workflow_compose")
+  assert.doesNotMatch(body, /runChecks|runStageChecks/, "compose must never run a command")
+  assert.match(body, /composePrompt\(activeManifest\(\), active, stage, config\)/, "it composes from state, which carries the results")
+})
+
+// Flooring at finalization rather than inside admitVerdict: a pre-seeded check
+// axis would flow through blockingFindingsIssue and get a genuine agent PASS
+// REJECTED rather than derived down.
+test("workflow_advance floors the admitted verdict with the checks, and admission is left alone", () => {
+  const advanceBody = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(advanceBody, /pending = withCheckFloor\(pending, active\.checks\?\.\[stage\] \?\? \[\]\)/)
+  const verdictBody = flat(toolBody(code(source()), "workflow_verdict"))
+  assert.doesNotMatch(verdictBody, /withCheckFloor/, "the admission contract must stay exactly as it was")
 })
 
 // A focused pass owes ONE axis. Admitting it against the stage's full

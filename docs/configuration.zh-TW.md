@@ -75,12 +75,13 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
   `ado.project`、`ado.repository`、`tasksDir`、`workflows`、worktree
   設定。
 
-**含 shell 的鍵是例外，只在「使用者層級」生效**：`worktreeSetup` 與
-`workflows.<kind>.scannerCommand` 都是迴圈原樣交給 shell 執行的字串。
+**含 shell 的鍵是例外，只在「使用者層級」生效**：`worktreeSetup`、
+`workflows.<kind>.scannerCommand` 與 `workflows.<kind>.stageChecks` 都是迴圈
+原樣交給 shell 執行的字串。
 `.agentic-workflow.json` 會跟著任何被複製的儲存庫一起散布，若在該層生效，
 光是「觀察」一個儲存庫就足以在首次認領時執行任意 shell——等同 npm
-postinstall 等級的風險，而且是無聲的。在儲存庫層設定這兩者會被捨棄並發出
-警告（指名該鍵，`scannerCommand` 還會指名 kind）；同一段落的其他鍵仍然生效，
+postinstall 等級的風險，而且是無聲的。在儲存庫層設定這些會被捨棄並發出
+警告（指名該鍵，巢狀的兩個還會指名 kind）；同一段落的其他鍵仍然生效，
 使用者層級的同名值也會保留。
 
 依慣例把 `codePlatform` 和 `workflows` 留在儲存庫檔案裡：使用者層級的值
@@ -314,6 +315,59 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   啟動時發出警告（設定解析時 manifest 還沒載入）。與 `worktreeSetup`
   不同，這個鍵**會**從 repo 的 `.agentic-workflow.json` 生效：它的
   值域是正整數，所以被監看的 repo 只能縮小自己的提示，別的都動不了。
+
+- **`workflows.<kind>.stageChecks`**——以檢查類階段名稱為鍵，值是**驅動程式**
+  在該階段 fire 之前、於其工作樹中執行的指令。它們的結束碼對該階段而言是既定
+  事實：會渲染進提示詞、計為已觀察到的證據，並折進該階段的裁決。未設定 ⇒
+  不執行任何檢查，也就是今天的行為。
+
+  這就是設定檔一直缺席的測試／型別檢查／lint 旋鈕。沒有它，VERIFY 每次執行都得
+  自己去找指令——於是同一個 repo、同一個 commit，這次疊代用 `npm test` 檢查，
+  下次變成 `npm test` 加 `npx tsc`，程式碼沒動，裁決卻動了。
+
+  ```jsonc
+  {
+    "workflows": {
+      "engineering": {
+        "stageChecks": {
+          "verify": [
+            { "name": "tests", "command": "npm test" },
+            { "name": "types", "command": "npx tsc --noEmit" },
+            { "name": "web-tests", "command": "npm test", "cwd": "packages/web" }
+          ]
+        }
+      }
+    }
+  }
+  ```
+
+  `name` 是結果的標籤（同一階段內不可重複），`command` 是原樣執行的 shell，
+  `cwd` 是工作樹底下的選填子目錄。它們會依序執行，時機在 isolation 之後、
+  每次階段 fire 執行一次——所以五軸 REVIEW 或多視角 REVIEW 只花一次測試套件的
+  成本，不是五次。
+
+  結束碼如何約束裁決：
+
+  | 結束碼 | 意義 | 效果 |
+  |------|---------|--------|
+  | `0` | 通過 | 什麼都不加；裁決就是代理人記錄的那一個 |
+  | `126`／`127` | 檢查跑不起來（找不到／不可執行） | 階段 **ERROR** → 迴圈停下來等人，且不消耗疊代 |
+  | 其他 | 檢查跑了，而且說不行 | 階段 **FAIL** → 重新 build，消耗一次疊代 |
+
+  紅燈的檢查無法被辯掉：不論該階段回報什麼，它都不可能 PASS。如果是檢查本身
+  壞了，逃生口是把它從這份清單移除——而不是在轉錄稿裡跟它爭辯。目前還沒有
+  逐一檢查的逾時；`stageTimeoutMinutes` 限制的是整個階段，不是單一指令，這點
+  與 `worktreeSetup` 相同。
+
+  每個階段的優先順序：這個鍵 → manifest 階段的 `checks` 欄位 → 沒有檢查。
+  和 `stageModels` 一樣，這個鍵會**整份取代** manifest 的清單，而不是合併
+  進去。鍵必須是檢查類階段的名稱；指向不存在階段的鍵會被接受、忽略，並在
+  迴圈啟動時發出警告——那個階段於是完全不執行檢查，所以這個警告值得一看。
+
+  **只在使用者層級生效**（`SHELL_BEARING_WORKFLOW_KEYS`），與 `worktreeSetup`、
+  `scannerCommand` 相同：它是驅動程式會執行的 shell，被複製的 repo 不能提供
+  它。在 repo 的 `.agentic-workflow.json` 設定它會被捨棄並發出指名該 kind 的
+  警告；同段落的其他鍵與使用者層級的同名值都會保留。
 
 - **`agentModels`**（頂層，不在 `workflows` 之內）——代理名稱 → 該代理
   執行時使用的模型，適用於**不是階段執行**、因此沒有 `stageModels`

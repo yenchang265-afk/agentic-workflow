@@ -25,6 +25,8 @@
  * sends the task back to the PLAN stage via `/agentic-workflow:engineering replan <id>`.
  */
 
+import type { CheckDef } from "../manifest/schema.js"
+import type { CheckResult } from "./checks.js"
 import type { TrackerSystem } from "../task/schema.js"
 import type { Verdict } from "./verdict.js"
 
@@ -104,6 +106,18 @@ export interface WorkflowState {
    * transcript the budgets take out.
    */
   readonly attempts?: readonly AttemptRecord[]
+  /**
+   * Per-stage results of the check commands the DRIVER ran before firing that
+   * stage (`workflow/checks.ts`). Absent ⇒ no checks are configured, which is
+   * byte-identical to the behavior before they existed: no prompt section, no
+   * evidence seed, no synthetic axis.
+   *
+   * Keyed by stage rather than held for the current one because the fire path
+   * composes from state: an idempotent re-compose (`workflow_compose`, the
+   * hub's prompt preview) must be able to REUSE the results, never re-run a
+   * test suite to render a prompt.
+   */
+  readonly checks?: Readonly<Record<string, readonly CheckResult[]>>
   /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /**
@@ -251,6 +265,8 @@ export interface WorkflowKindConfig {
   readonly stageContext?: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** Stage name → fan-out strategy for that stage; wins over the manifest stage's `fanout`. `"none"` turns one off. */
   readonly stageFanout?: Readonly<Record<string, "axis" | "none">>
+  /** Stage name → check commands the driver runs before that stage; replaces the manifest stage's `checks`. SHELL-BEARING (user-scope only). */
+  readonly stageChecks?: Readonly<Record<string, readonly CheckDef[]>>
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

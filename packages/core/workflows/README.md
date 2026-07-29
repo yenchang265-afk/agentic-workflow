@@ -69,6 +69,7 @@ fails loud at host startup). A minimal two-stage kind:
       "requiredAxes": ["correctness", "security"],  // optional; check stages only — workflow_verdict rejects a verdict missing any of them
       "fanout": "axis",                 // optional; check stages with requiredAxes — run one focused pass per axis, merged worst-wins
       "requireEvidence": true,          // optional; check stages only — a PASS must cite the commands/files it observed, cross-checked against what the host saw
+      "checks": [{ "name": "tests", "command": "npm test" }],  // optional; check stages only — the DRIVER runs these before firing the stage, and their exit codes bind its verdict
       "context": { "work": 8000 },      // optional per-artifact character ceilings for THIS stage's prompt; config workflows.<kind>.stageContext.<name> replaces it, unset = unbounded
       "bashAllowlist": ["git diff*", "npm test*"]  // default-deny bash for this stage
     }
@@ -138,6 +139,25 @@ falsifiable, not true. A host that does not record tool calls falls back to the
 declared-evidence rule alone — the gate weakens, it never silently vanishes.
 `requireEvidence` on a `work` stage is a manifest error (there is no verdict to
 carry it).
+
+A check stage may also declare `checks` — `{ name, command, cwd? }` entries the
+**driver** runs in the stage's work tree, sequentially, before the stage fires
+(none of the shipped kinds declares any today). Their results are rendered into
+the stage's prompt, seeded as observed evidence, and folded into its verdict as a
+synthetic `checks` axis: exit 0 adds nothing, 126/127 resolves the stage to
+**ERROR** (the check could not run — stop for a human, spend no iteration), and
+any other exit code resolves it to **FAIL**. The stage cannot argue a red check
+down; the escape hatch is removing the check, not disputing it.
+
+Because the driver runs them, they bypass `bashAllowlist` entirely — the agent
+never issues them. That makes this a **trusted authoring surface**, at the same
+level as `bashAllowlist` itself: manifests resolve from the core package's
+install location, not from a watched repo, so a clone cannot inject one.
+"Trusted" means *authored*, not unreachable — the hub writes into that directory
+and `AGENTIC_WORKFLOW_WORKFLOWS_DIR` can repoint it. The config half of the same
+feature, `workflows.<kind>.stageChecks`, replaces this list wholesale and IS shell
+a repo could ship, so it is honored from the user-scope config only. Duplicate
+`name`s in one stage, or `checks` on a `work` stage, are manifest errors.
 
 `fanout` is a manifest error on a `work` stage, on a stage with no
 `requiredAxes` (the axis list is the pass list), and over more than
