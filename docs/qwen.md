@@ -115,8 +115,9 @@ picking whichever manifest loaded last.
 
 ## Known gaps
 
-- **Azure DevOps needs its MCP server registered by hand** if you skip
-  `./bootstrap.sh`. Register it under exactly the name `azure-devops` — the
+- **Azure DevOps needs its MCP server registered by hand** — `bootstrap.sh`
+  does not yet register it for the Qwen host. Register it under exactly the
+  name `azure-devops` — the
   stage prompts name tools as `mcp__azure-devops__<tool>`, so any other name
   makes every ADO stage call a tool that does not exist. There is no longer a
   PAT-injection gap: the driver hands the credential to the server it launches,

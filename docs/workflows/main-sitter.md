@@ -41,8 +41,8 @@ The `branch` defaults to the remote default branch. See [`docs/sitters.md`](../s
 
 ## Architecture
 
-Sits on the watched branch's CI (`gh run list`, or the Azure Pipelines Build
-API on ADO): when the newest completed head goes red it **diagnoses**
+Sits on the watched branch's CI (`gh run list`, or the Azure Pipelines MCP
+tools — `pipelines_get_builds` etc. — on ADO): when the newest completed head goes red it **diagnoses**
 (worktree pinned to the red head, bisecting when needed) → **remedy**
 (worktree; the smallest forward fix, or a `git revert`) → **verify** →
 **publish** opens a **draft remedy PR** on a `main-sitter/*` branch and

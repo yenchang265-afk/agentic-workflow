@@ -49,7 +49,7 @@ the JVM ecosystems — missing it is an actionable skip, npm keeps working
 without it; Gradle additionally needs a committed `gradle.lockfile` or
 `gradle/verification-metadata.xml` since osv-scanner can't parse
 `build.gradle` itself). **scan** (check) → **upgrade** (worktree, on a
-`dep-sitter/*` branch: bump the manifest, refresh the lockfile, fix the
+`feature/<slug>` branch: bump the manifest, refresh the lockfile, fix the
 fallout) → **verify** (runs the suite) → **publish** opens a **draft PR**.
 **Major bumps are never auto-fixed** — logged and left for a human, and
 merging always stays a human call. Vulnerable JVM transitives (not declared

@@ -96,9 +96,10 @@ config keys: [docs/sitters.md](docs/sitters.md); security posture:
 
 ## Install
 
-The steps below assume the system prerequisites are already present (Node ≥ 20,
-git, `gh`, `curl`, and — for browser work — Chrome). Azure DevOps needs only
-`curl` plus a PAT in `AZURE_DEVOPS_EXT_PAT`. For a fresh machine, `./bootstrap.sh`
+The steps below assume the system prerequisites are already present (Node ≥
+22.13, git, `gh`, `curl`, and — for browser work — Chrome). Azure DevOps needs
+Node with `npx` (to launch the Azure DevOps MCP server) plus a PAT in
+`AZURE_DEVOPS_EXT_PAT`. For a fresh machine, `./bootstrap.sh`
 verifies/installs those, registers the `chrome-devtools` MCP server, and then
 runs `./install.sh` for you:
 
@@ -116,8 +117,9 @@ npm install             # npm workspaces — also builds @agentic-workflow/core 
 ```
 
 - `npm install` at the repo root installs all workspaces (the OpenCode plugin,
-  `packages/core`, `plugins/claude/mcp-server`) and builds the core package via
-  the `prepare` script — every plugin consumes core's built `dist/`.
+  `packages/core`, `packages/ado-mcp`, `packages/hub`, `plugins/claude/mcp-server`)
+  and builds the core package via the `prepare` script — every plugin consumes
+  core's built `dist/`.
 - `./install.sh opencode` symlinks agents/commands/skills/references into
   `~/.config/opencode/` (or `$OPENCODE_CONFIG_DIR`) and registers the plugin —
   details and flags (`--copy`, custom dir) in [docs/opencode.md](docs/opencode.md).
@@ -250,6 +252,10 @@ and link to it; don't copy.
 - `packages/core/workflows/` — the declarative workflow kinds, one dir per kind (`engineering/`,
   `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`): a
   `workflow.json` manifest + `stages/*.md` prompt templates per kind
+- `packages/ado-mcp/` — `@agentic-workflow/ado-mcp`: the client for the Azure
+  DevOps MCP server (`@azure-devops/mcp`) — the only place in the repo that
+  reaches Azure DevOps, behind the types-only `AdoGateway` port core codes
+  against
 - `packages/hub/` — the **admin hub (beta)**: a localhost web app with the loop
   monitor and visual loop creator
   ([packages/hub/README.md](packages/hub/README.md))
@@ -260,6 +266,9 @@ and link to it; don't copy.
 - `plugins/claude/` — the Claude Code plugin: commands, agents, hooks, and the
   bundled MCP server that drives the loop (its host shims live in
   `mcp-server/src/shim.ts`)
+- `plugins/qwen/` — the Qwen Code plugin (**experimental**): generated
+  agents/verbs/skills/hooks reusing the Claude plugin's MCP server, plus
+  hand-authored commands ([plugins/qwen/README.md](plugins/qwen/README.md))
 - `skills/`, `references/` — the workflow library the stage agents and ad-hoc
   requests pull from (shared by all three plugins)
 - `docs/tasks/` — the filesystem task backlog the `/agentic-workflow:engineering` verbs
@@ -273,9 +282,10 @@ npm install && npm run typecheck:all && npm run test:all
 ```
 
 `typecheck:all` / `test:all` cover every workspace: the core package
-(`packages/core` — engine, manifest, scheduler, sources, store), the admin hub
-(`packages/hub`), the OpenCode plugin (`plugins/opencode`), and the Claude
-Code MCP server (`plugins/claude/mcp-server`). To run just the OpenCode plugin's
+(`packages/core` — engine, manifest, scheduler, sources, store), the Azure
+DevOps MCP client (`packages/ado-mcp`), the admin hub (`packages/hub`), the
+OpenCode plugin (`plugins/opencode`), and the Claude Code MCP server
+(`plugins/claude/mcp-server`). To run just the OpenCode plugin's
 suite, scope to its workspace — `npm run typecheck -w agentic-workflow` /
 `npm test -w agentic-workflow` (or `npm run typecheck` from inside
 `plugins/opencode/`); the root package defines only the `:all` scripts.

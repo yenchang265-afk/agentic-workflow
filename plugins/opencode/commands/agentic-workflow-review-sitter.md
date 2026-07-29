@@ -5,7 +5,7 @@ argument-hint: claim [<pr>] | watch [poll [interval] | cron <schedule> | idle | 
 ---
 
 The review sitter agentic loop — sits on pull requests where **your review is
-requested** (GitHub via `gh`, or Azure DevOps via its REST API) and posts one
+requested** (GitHub via `gh`, or Azure DevOps via the Azure DevOps MCP server) and posts one
 structured review comment per requested head. The plugin intercepts this
 command; `$ARGUMENTS` selects the verb. Every verb is deterministic plugin
 work: **invoke nothing, write nothing** — report the toast's outcome and stop.

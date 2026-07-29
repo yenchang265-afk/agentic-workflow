@@ -104,6 +104,15 @@ REVIEW 是單一 agent、單一輪次。威脅模型 T1 的殘留風險：來自
   因為和計畫 01 相同的 SDK 發現而被排除——裁定工具就存在於這個
   instance 中）：
 
+  > **已被取代。** 該項排除過度套用了計畫 01 的發現，而計畫 01 談的其實是
+  > 指向不同 `directory` 的 session（那會啟動第二個 app instance，其中沒有
+  > 這個 plugin,自然也沒有 `workflow_verdict`）。**同一個 `directory` 下的
+  > 手足 session** 仍保有裁定管道，而讓每一輪各自擁有自己的 session,正是
+  > 讓每輪的裁定、軸線需求與證據清單得以區隔的關鍵,因為這三者都是以
+  > session 為鍵值。OpenCode driver 透過
+  > `workflows.<kind>.stageConcurrency`（預設為 1，因此未設定時的迴圈行為
+  > 仍如下述）實現了這一點。
+
   1. 第 k 輪會附加到組成的參數上：
      `Review lens ${k}/${N}: focus exclusively on ${lens}. Other lenses are covered by separate passes.`
   2. 每一輪之後執行 `takeVerdict(sessionID, "review")`；在各輪之間清除

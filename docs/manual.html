@@ -347,7 +347,7 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
             <tr><td><code>Node.js ≥ 22.13</code></td><td>Core &amp; all plugins</td><td>Hard requirement (needs <code>node:sqlite</code>).</td></tr>
             <tr><td><code>git</code>, <code>curl</code></td><td>Isolation, fetching</td><td>Always.</td></tr>
             <tr><td><code>gh</code></td><td>GitHub PR work</td><td>Authenticate with <code>gh auth login</code>.</td></tr>
-            <tr><td><code>az</code> + azure-devops ext</td><td>Azure DevOps PRs</td><td>Optional — skip with <code>--no-ado</code>.</td></tr>
+            <tr><td><code>npx</code> (bundled with Node)</td><td>Azure DevOps PRs</td><td>Launches the Azure DevOps MCP server — optional, skip with <code>--no-ado</code>.</td></tr>
             <tr><td>Chrome / Chromium</td><td>Browser UI testing</td><td>Optional — skip with <code>--no-browser</code>.</td></tr>
           </tbody>
         </table>
@@ -358,18 +358,18 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
         <button class="tab" role="tab" id="tab-b" aria-controls="pan-b" aria-selected="false">Path B · manual</button>
       </div>
       <div class="tabpanel" id="pan-a" role="tabpanel" aria-labelledby="tab-a">
-        <p><code>bootstrap.sh</code> verifies/installs the system CLIs, registers the Chrome DevTools MCP server, then hands off to <code>install.sh all</code>. It never automates auth — it prints reminders at the end. Azure DevOps needs only <code>curl</code> + a PAT (<code>AZURE_DEVOPS_EXT_PAT</code>).</p>
+        <p><code>bootstrap.sh</code> verifies/installs the system CLIs, registers the Chrome DevTools MCP server, then hands off to <code>install.sh all</code>. It never automates auth — it prints reminders at the end. Azure DevOps needs <code>npx</code> (to launch the Azure DevOps MCP server) + a PAT (<code>AZURE_DEVOPS_EXT_PAT</code>).</p>
         <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>./bootstrap.sh                 <span class="c"># everything</span>
 ./bootstrap.sh --no-ado        <span class="c"># skip the Azure DevOps prereq check</span>
 ./bootstrap.sh --no-browser    <span class="c"># skip Chrome + chrome-devtools MCP</span>
 ./bootstrap.sh --check-only    <span class="c"># report dependency status, change nothing</span></pre></div>
       </div>
       <div class="tabpanel" id="pan-b" role="tabpanel" aria-labelledby="tab-b" hidden>
-        <p>If the toolchain is already present, install the plugins directly. <code>npm install</code> uses npm workspaces and also builds <code>@agentic-workflow/core</code>; <code>install.sh</code> then symlinks both plugins and runs the config wizard.</p>
+        <p>If the toolchain is already present, install the plugins directly. <code>npm install</code> uses npm workspaces and also builds <code>@agentic-workflow/core</code>; <code>install.sh</code> then symlinks the plugin(s) and runs the config wizard.</p>
         <div class="code"><div class="cbar"><span>shell</span><button class="copy">Copy</button></div><pre>git clone &lt;this-repo&gt;
 cd agentic-workflow
 npm install                    <span class="c"># workspaces + builds core dist/</span>
-./install.sh                   <span class="c"># both plugins; or: opencode | claude</span></pre></div>
+./install.sh                   <span class="c"># every plugin; or: opencode | claude | qwen</span></pre></div>
       </div>
 
       <div class="note warn"><b>Authenticate yourself — installers never do.</b> After install, sign in to the platforms you use: <code>gh auth login</code> for GitHub, export <code>AZURE_DEVOPS_EXT_PAT</code> (a PAT with Code read + Pull Request contribute scopes) for Azure DevOps. The Chrome DevTools MCP launches its own isolated Chrome profile on first use.</p></div>
@@ -385,6 +385,10 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <h4 style="margin-top:0">OpenCode</h4>
           <p style="font-size:13.5px;color:var(--muted-txt);margin-top:0"><code>./install.sh opencode</code> symlinks the agents, commands, skills and a plugin file into <code>~/.config/opencode</code> (or <code>$OPENCODE_CONFIG_DIR</code>). Re-run after <code>git pull</code> to update — it's idempotent.</p>
         </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h4 style="margin-top:0">Qwen Code <span class="def">experimental</span></h4>
+        <p style="font-size:13.5px;color:var(--muted-txt);margin-top:0"><code>./install.sh qwen</code> builds the same bundled MCP server, installs agents/commands/skills/references into <code>~/.qwen</code> (or <code>$QWEN_CONFIG_DIR</code>), and merges the hooks + MCP entry into <code>settings.json</code>. This host's interface and behavior may still change between releases.</p>
       </div>
 
       <h3>Your first run</h3>
@@ -423,7 +427,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
       <details class="q"><summary><span class="step">Q1</span> Which code platform do your PRs live on?</summary>
         <div class="body">
           <div class="opt"><span>[1] GitHub <span style="color:var(--muted-txt)">(default)</span></span><span class="writes">codePlatform: "github"</span></div>
-          <div class="opt"><span>[2] Azure DevOps (REST API + PAT)</span><span class="writes">codePlatform: "ado"</span></div>
+          <div class="opt"><span>[2] Azure DevOps (MCP server + PAT)</span><span class="writes">codePlatform: "ado"</span></div>
           <p>Choosing Azure DevOps then prompts for the required <code>organization</code> URL and <code>project</code> (re-asked until given), a required <code>selfLogin</code> (a PAT can't resolve identity), and an optional <code>repository</code>. Set <code>AZURE_DEVOPS_EXT_PAT</code> to a PAT with Code (read) + Pull Request (contribute) scopes.</p>
           <div class="kv">writes → <b>codePlatform</b>, and <b>ado</b>: {organization, project, repository?, selfLogin?}</div>
         </div>
@@ -484,7 +488,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <span class="f">VERIFY <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f term">PUBLISH</span>
         </div>
-        <p style="margin:8px 0 0;font-size:14px">Opt in via <code>workflows.pr-sitter.enabled: true</code>. Read-only <code>gh</code>/<code>az</code> triage turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
+        <p style="margin:8px 0 0;font-size:14px">Opt in via <code>workflows.pr-sitter.enabled: true</code>. Read-only triage (<code>gh</code> on GitHub, the Azure DevOps MCP server on Azure DevOps) turns each open PR's review comments, failing checks and merge conflicts into findings; FIX addresses them on the PR's existing branch; VERIFY confirms coverage; PUBLISH pushes and replies per finding. <b>It never merges, closes, or approves.</b> PR text is treated as data, not instructions.</p>
       </div>
       <div class="note warn">Read <code>docs/design/threat-model.md</code> before enabling the PR sitter — it documents the security posture for acting on untrusted PR content.</div>
 
@@ -507,7 +511,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <span class="f">VERIFY <span style="color:var(--fail)">check</span></span><span class="arr">→</span>
           <span class="f term">PUBLISH</span>
         </div>
-        <p style="margin:8px 0 0;font-size:14px">SCAN confirms the advisory (npm, Maven &amp; Gradle); UPGRADE applies the patch/minor bump on a <code>dep-sitter/*</code> branch and fixes the fallout; VERIFY confirms the suite is green; PUBLISH pushes and opens a <b>draft PR</b>. <b>Major bumps are never auto-fixed</b> — they're logged for a human, and merging stays human.</p>
+        <p style="margin:8px 0 0;font-size:14px">SCAN confirms the advisory (npm, Maven &amp; Gradle); UPGRADE applies the patch/minor bump on a <code>feature/&lt;slug&gt;</code> branch and fixes the fallout; VERIFY confirms the suite is green; PUBLISH pushes and opens a <b>draft PR</b>. <b>Major bumps are never auto-fixed</b> — they're logged for a human, and merging stays human.</p>
       </div>
       <div class="card" style="margin-top:10px">
         <h4 style="margin-top:0">main-sitter <span class="def">experimental</span> <span style="text-transform:none;color:var(--ink-2)">— sits on the default branch's CI</span></h4>
@@ -596,7 +600,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
             <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>watch</code> (either kind's command). <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
             <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; all four sitters (<code>pr-sitter</code>, <code>review-sitter</code>, <code>dep-sitter</code>, <code>main-sitter</code>) are experimental and opt-in with <code>"enabled": true</code>.</td></tr>
-            <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (Azure DevOps REST API, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
+            <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (reached only through the Azure DevOps MCP server, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
             <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
             <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
             <tr><td><code>worktreesDir</code></td><td><span class="def">unset</span></td><td>Run each loop in its own <code>git worktree</code> instead of switching branches. Pair with <code>worktreeSetup</code>.</td></tr>

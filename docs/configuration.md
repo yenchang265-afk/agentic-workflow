@@ -634,7 +634,7 @@ that CI diff-checks.
   `ado.mcp` is **user-layer-only**, alongside `organization` and `pat`: it names
   a command that gets spawned, so a cloned repo must not be able to choose it.
 
-  Removed with the REST transport: `ado.customHeaders`,
+  Removed with the REST transport: `ado.access`, `ado.customHeaders`,
   `ado.insecureSkipTlsVerify`, and `AGENTIC_WORKFLOW_ADO_HEADERS`. A spawned MCP
   server has no per-request header or TLS seam. A stale key parses and is
   ignored, with a one-line warning naming it. Self-hosted Azure DevOps Server is
