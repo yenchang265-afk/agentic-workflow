@@ -30,9 +30,6 @@ export const selectNext = (tasks: readonly Task[]): Task | null => selectOrder(t
 /** Marks a task as planned, awaiting approval — appended to its body by `appendPlan`. */
 export const PLAN_HEADING = "## Implementation Plan"
 
-/** Whether a task already has a plan persisted (appended at a prior approval gate). Pure. */
-export const hasPlan = (task: Task): boolean => task.body.includes(PLAN_HEADING)
-
 /**
  * The audited note a host appends to the task file — on the human-visible
  * branch, BEFORE cutting the isolation branch — the moment a claim wins.
@@ -152,6 +149,27 @@ export const extractPlan = (task: Task): string | undefined => {
   const from = idx + PLAN_HEADING.length
   return task.body.slice(from, auditTailIndex(task.body, from)).trim()
 }
+
+/**
+ * Whether a task has a plan persisted (appended at a prior approval gate). Pure.
+ *
+ * Defined AS `extractPlan` rather than as its own substring test, because the
+ * two must not be able to disagree: `hasPlan` gates the PLAN park validator
+ * (`runPark`), the plan-approval gate, and `isClaimable`, while `extractPlan` is
+ * what actually fills `artifacts.plan` for BUILD. A body that satisfied only the
+ * former sailed through all three gates and then fired BUILD with the whole
+ * `{{#artifacts.plan}}` section dropped — the plan-less build the park validator
+ * exists to prevent, with nothing reporting it.
+ *
+ * Two ways they used to diverge, both closed by this definition:
+ *  - `includes` matched the heading MID-LINE, so a task merely *quoting*
+ *    `## Implementation Plan` (this repo's backlog is full of tasks about the
+ *    loop) read as planned; `extractPlan` is line-anchored via `lastMarkerIndex`.
+ *  - A heading with nothing under it read as planned, while `extractPlan`
+ *    returned `""` — falsy at the one call site that matters
+ *    (`entryState`'s `plan ? { plan } : {}`).
+ */
+export const hasPlan = (task: Task): boolean => !!extractPlan(task)
 
 /** A task body split into the prose a human may edit and the audit trail that must survive. */
 export interface TaskBodyParts {

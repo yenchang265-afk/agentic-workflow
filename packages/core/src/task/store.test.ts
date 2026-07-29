@@ -116,6 +116,35 @@ test("hasPlan is true once the plan heading is present", () => {
   assert.equal(hasPlan(task("a", 0, body)), true)
 })
 
+/**
+ * `hasPlan` gates the PLAN park validator, the plan-approval gate and
+ * `isClaimable`; `extractPlan` is what actually fills `artifacts.plan` for BUILD.
+ * When the two could disagree, a task sailed through all three gates and then
+ * fired BUILD with the whole `{{#artifacts.plan}}` section dropped — the
+ * plan-less build the park validator exists to prevent, reported by nothing.
+ */
+test("hasPlan ignores a heading quoted mid-line, exactly as extractPlan does", () => {
+  // A task ABOUT this system: the heading appears, but not as a heading.
+  const body = "Teach the loop to write a `## Implementation Plan` section."
+  assert.equal(extractPlan(task("a", 0, body)), undefined)
+  assert.equal(hasPlan(task("a", 0, body)), false)
+  assert.equal(isClaimable(task("a", 0, body)), false)
+})
+
+test("hasPlan is false for a heading with nothing under it", () => {
+  // extractPlan returns "" here, which is falsy at `entryState`'s
+  // `plan ? { plan } : {}` — so "planned" must be false too.
+  const body = `Some description.\n\n${PLAN_HEADING}\n`
+  assert.equal(extractPlan(task("a", 0, body)), "")
+  assert.equal(hasPlan(task("a", 0, body)), false)
+})
+
+test("hasPlan agrees with extractPlan on a plan followed only by audit notes", () => {
+  const body = `${PLAN_HEADING}\n\n1. Do the thing.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00Z by t]\n`
+  assert.equal(extractPlan(task("a", 0, body)), "1. Do the thing.")
+  assert.equal(hasPlan(task("a", 0, body)), true)
+})
+
 test("extractPlan returns undefined when there is no plan heading", () => {
   assert.equal(extractPlan(task("a", 0, "Some description.")), undefined)
 })
