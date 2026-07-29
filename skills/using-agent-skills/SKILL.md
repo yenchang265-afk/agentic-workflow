@@ -1,17 +1,15 @@
 ---
 name: using-agent-skills
-description: Routes any task to the right skill and carries the cross-skill operating behaviors. Use when starting a session or deciding which skill applies.
+description: Routes a task to the skill that owns it, and holds the operating behaviors every other skill points back to. Use when deciding which skill applies, or when another skill reaches here for a shared behavior.
 ---
 
 # Using Agent Skills
 
-## Overview
+Two jobs. **Routing** — which skill owns the task in front of you. **Shared
+behaviors** — the handful of rules that apply inside every skill, defined once
+here so no skill has to restate them.
 
-Agent Skills is a collection of engineering workflow skills organized by development phase. Each skill encodes a specific process that senior engineers follow. This meta-skill helps you discover and apply the right skill for your current task.
-
-## Skill Discovery
-
-When a task arrives, identify the development phase and apply the corresponding skill:
+## Routing
 
 ```
 Task arrives
@@ -40,83 +38,71 @@ Task arrives
     └── Writing/editing a skill? ──────→ writing-great-skills
 ```
 
-## Core Operating Behaviors
+Several apply to one piece of work more often than one does: a feature runs
+`spec-driven-development` → `planning-and-task-breakdown` →
+`incremental-implementation` → `test-driven-development` →
+`code-review-and-quality`. Follow each one's steps in order, verification
+included — a skill applied halfway is the one that leaves the defect its steps
+existed to catch. When the task is non-trivial and no spec exists, start with
+`spec-driven-development`.
 
-These behaviors apply at all times, across all skills. They are non-negotiable.
+## Surface Assumptions
 
-### 1. Surface Assumptions
-
-Before implementing anything non-trivial, explicitly state your assumptions:
+Before implementing anything non-trivial, state what you are assuming:
 
 ```
-ASSUMPTIONS I'M MAKING:
-1. [assumption about requirements]
-2. [assumption about architecture]
-3. [assumption about scope]
-→ Correct me now or I'll proceed with these.
+ASSUMPTIONS:
+1. [about requirements]
+2. [about architecture]
+3. [about scope]
+→ Correct me now or I proceed with these.
 ```
 
-Don't silently fill in ambiguous requirements. The most common failure mode is making wrong assumptions and running with them unchecked. Surface uncertainty early — it's cheaper than rework.
+Silently filling an ambiguous requirement is the single most common way work
+goes wrong, and it stays invisible until the rework.
 
-### 2. Manage Confusion Actively
+## Manage Confusion Actively
 
-When you encounter inconsistencies, conflicting requirements, or unclear specifications:
+When requirements conflict, or the spec and the code disagree: **stop**, name
+the specific confusion, present the trade-off or the question, and wait.
 
-1. **STOP.** Do not proceed with a guess.
-2. Name the specific confusion.
-3. Present the tradeoff or ask the clarifying question.
-4. Wait for resolution before continuing.
+> "The spec calls for REST, but the user profile query is GraphQL
+> (src/graphql/user.ts). Follow the spec, follow the codebase, or is this
+> deliberate?"
 
-**Bad:** Silently picking one interpretation and hoping it's right.
-**Good:** "I see X in the spec but Y in the existing code. Which takes precedence?"
+Picking one interpretation quietly is how a whole build gets made against the
+wrong reading.
 
-### 3. Push Back When Warranted
+## Push Back When Warranted
 
-You are not a yes-machine. When an approach has clear problems:
+When an approach has a real problem, say so: name the concrete downside,
+quantify it where you can ("adds ~200ms to every request", not "might be
+slower"), and propose the alternative. Then accept the human's decision once
+they have the information. Agreement you don't hold is worthless to them.
 
-- Point out the issue directly
-- Explain the concrete downside (quantify when possible — "this adds ~200ms latency" not "this might be slower")
-- Propose an alternative
-- Accept the human's decision if they override with full information
+## Enforce Simplicity
 
-Sycophancy is a failure mode. "Of course!" followed by implementing a bad idea helps no one. Honest technical disagreement is more valuable than false agreement.
+Before calling an implementation finished:
 
-### 4. Enforce Simplicity
+- Can this be done in fewer moving pieces?
+- Is each abstraction earning what it costs?
+- Would a staff engineer ask "why didn't you just…"?
 
-Your natural tendency is to overcomplicate. Actively resist it.
+Prefer the boring, obvious version. Cleverness is paid for by every later
+reader.
 
-Before finishing any implementation, ask:
-- Can this be done in fewer lines?
-- Are these abstractions earning their complexity?
-- Would a staff engineer look at this and say "why didn't you just..."?
+## Maintain Scope Discipline
 
-If you build 1000 lines and 100 would suffice, you have failed. Prefer the boring, obvious solution. Cleverness is expensive.
+Touch what the task requires and nothing else. Comments you don't understand
+stay, adjacent code stays unrefactored, apparently-unused code stays until
+someone approves deleting it, and a feature nobody asked for stays unwritten.
+Report what you noticed instead — surgical precision, not unsolicited
+renovation.
 
-### 5. Maintain Scope Discipline
+## Verify, Don't Assume
 
-Touch only what you're asked to touch.
-
-Do NOT:
-- Remove comments you don't understand
-- "Clean up" code orthogonal to the task
-- Refactor adjacent systems as a side effect
-- Delete code that seems unused without explicit approval
-- Add features not in the spec because they "seem useful"
-
-Your job is surgical precision, not unsolicited renovation.
-
-### 6. Verify, Don't Assume
-
-Every skill includes a verification step. A task is not complete until verification passes. "Seems right" is never sufficient — there must be evidence (passing tests, build output, runtime data).
-
-Per-skill verification is the local check. The project-wide bar that applies to *every* change, regardless of which skill is active, is the Definition of Done: tests pass, no regressions, behavior verified at runtime, docs updated. See `references/definition-of-done.md`. It complements each task's acceptance criteria rather than replacing them.
-
-## Skill Rules
-
-1. **Check for an applicable skill before starting work.** Skills encode processes that prevent common mistakes.
-
-2. **Skills are workflows, not suggestions.** Follow the steps in order. Don't skip verification steps.
-
-3. **Multiple skills can apply.** A feature implementation might involve `idea-refine` → `spec-driven-development` → `planning-and-task-breakdown` → `incremental-implementation` → `test-driven-development` → `code-review-and-quality` → `code-simplification` in sequence.
-
-4. **When in doubt, start with a spec.** If the task is non-trivial and there's no spec, begin with `spec-driven-development`.
+"Seems right" is never done: there is passing output, or there is no claim.
+Each skill's own verification is the local check; the standing bar under all of
+them — tests pass, no regressions, behavior confirmed at runtime, docs updated
+— is `references/definition-of-done.md`, which complements a task's acceptance
+criteria rather than replacing them.

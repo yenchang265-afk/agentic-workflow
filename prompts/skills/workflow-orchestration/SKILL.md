@@ -240,44 +240,31 @@ regardless of kind. Engineering is on by default; enable others via
 `.agentic-workflow.json`, e.g.
 `{"workflows": {"pr-sitter": {"enabled": true, "query": "is:open author:@me"}}}`.
 
-**pr-sitter** sits on open PRs matching the query and keeps them green until
-a human merges: **triage** (check; spawn `workflow-pr-triage`; read-only `gh`
-inspection of failing checks / changes requested / new comments / merge
-conflict; its `workflow_verdict` PASS = actionable, FAIL = nothing to do → done)
-→ **fix** (work; spawn `workflow-pr-fix`; commits on the PR's existing branch in
-a worktree, never pushes) → **verify** (check; reuses `workflow-verify`; FAIL
-re-fires fix, cap 3) → **publish** (work; spawn `workflow-pr-publish`;
-`git push origin <branch>` + `gh pr comment` replies per addressed finding —
-it **never merges, closes, or approves**). A per-PR dedup ledger at
-`<tasksDir>/runs/pr-sitter/pr-<n>.json` (head-SHA + comment-timestamp
-watermarks, own-login filter) keeps it from reacting to its own pushes, and
-a failed attempt parks the PR until a human pushes a new head.
+Every kind drives with the same sequence and the same rule that the `agent`
+field names the subagent — so what you need per kind is its stage order and the
+boundary it must not cross:
 
-The PR sitter reaches its platform per `codePlatform`: `github` (`gh`) or
-`ado` (Azure DevOps via its REST API, PAT in `AZURE_DEVOPS_EXT_PAT`). In both
-modes the stages behave identically; only the inspect/reply tools differ, and
-the stage prompt says which to use.
+- **pr-sitter** — `triage (check) → fix (work) → verify (check) → publish
+  (work)` over open PRs matching the query, kept green until a human merges.
+  Triage's PASS means actionable and FAIL means nothing to do → done; fix
+  commits on the PR's existing branch and never pushes; publish pushes and
+  replies per addressed finding, and **never merges, closes, or approves**.
+- **review-sitter** — `fetch (check) → assess (work) → publish (work)` over PRs
+  whose review is requested from you. **Comment-only**: ONE comment, never an
+  approval, a vote, a push, or a merge.
+- **dep-sitter** — `scan (check) → upgrade (work) → verify (check) → publish
+  (work)` over dependency advisories. Publishes a DRAFT PR on a `feature/*`
+  branch; majors and undeclared JVM transitives are never claimed.
+- **main-sitter** — `diagnose (check) → remedy (work) → verify (check) →
+  publish (work)` over red CI on the watched branch's newest head. Publishes a
+  DRAFT fix-or-revert PR on a `main-sitter/*` branch; **the watched branch is
+  never pushed.**
 
-Three further opt-in kinds drive the same way (`workflow_claim({kind})` →
-`workflow_stage` → spawn the stage agent → `workflow_advance`):
-
-- **review-sitter** — PRs whose review is requested from you: **fetch**
-  (check; `workflow-review-fetch`) → **assess** (work; `workflow-review-assess`) →
-  **publish** (work; `workflow-review-publish`, ONE comment, comment-only — never
-  approves, votes, pushes, or merges).
-- **dep-sitter** — dependency-advisory upgrades (npm via `npm audit`;
-  Maven/Gradle via OSV-Scanner over `pom.xml`/`gradle.lockfile`, `ecosystem`
-  binding default `auto`): **scan** (check; `workflow-dep-scan`) → **upgrade**
-  (work; `workflow-dep-upgrade`) → **verify** (check; reuses `workflow-verify`,
-  cap 2) → **publish** (work; `workflow-dep-publish`, DRAFT PR on a `feature/*`
-  branch — `gh pr create` or the ADO REST API depending on `codePlatform`;
-  majors and undeclared JVM transitives are never claimed).
-- **main-sitter** — red CI on the watched branch's newest head (`gh run
-  list` or the Azure Pipelines Build API): **diagnose** (check;
-  `workflow-main-diagnose`, bisects) → **remedy** (work;
-  `workflow-main-remedy`) → **verify** (check; reuses `workflow-verify`, cap 2) →
-  **publish** (work; `workflow-main-publish`, DRAFT fix/revert PR on a
-  `main-sitter/*` branch — the watched branch is never pushed).
+Scanners, queries, dedup ledgers, and per-platform detail are in
+`references/workflow-kinds.md`. Every kind reaches its platform per
+`codePlatform` — `github` (`gh`) or `ado` (Azure DevOps REST API, PAT in
+`AZURE_DEVOPS_EXT_PAT`) — with identical stage behavior either way; only the
+inspect and reply tools differ, and the stage prompt says which to use.
 
 ## What is different from the OpenCode version
 

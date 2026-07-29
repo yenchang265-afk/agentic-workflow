@@ -1,69 +1,31 @@
 ---
 name: workflow-orchestration
-description: Explains the automatic agentic loop behind /agentic-workflow:engineering — declarative workflow kinds under packages/core/workflows/<kind>/, the stages, human gates (approve/replan), and workflow_verdict contracts. Use when you need how the loop plans, builds, parks at gates, schedules other kinds (e.g. pr-sitter), or terminates.
+description: Explains the automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need how the loop plans, builds, parks at a gate, schedules another kind, or terminates.
 ---
 
 # The agentic loop
 
-## Overview
+One command carries the whole engineering lifecycle. Two halves sit inside it:
+the **authoring verbs** run interactively and hold the human gates, and the
+**loop** claims approved work and drives it unattended.
 
-One command carries the whole engineering lifecycle. The **authoring verbs**
-are the authoring-and-gates side: its agent interviews you into a planless
-draft (`new <idea>`), `retask <id>` re-interviews and reshapes a planless task
-in place (a `draft/` one, or a `queued/` one sent back to `draft/` first),
-`approve [id]` is the one folder-driven gate — a reviewed draft to
-`queued/` (task gate), a parked plan to `in-progress/` (plan gate), a
-finished review to `completed/` (ship) — and `replan [id]` is the sole
-rejection verb. **`/agentic-workflow:engineering`** is
-the loop side: it plans a queued task **right before execution** (so plans
-don't rot while tasks sit parked) and drives BUILD, VERIFY, REVIEW as one
-automatic pipeline over a plan-approved task. The PLAN stage never blocks on
-a human: it writes the `## Implementation Plan` onto the task file, **parks
-the task in `plan-review/`, and exits** — park-at-gate, not block-at-gate.
-The OpenCode plugin (`src/index.ts` → `src/workflow/`) advances stages on
-`session.idle`, threading each stage's output into the next as context.
+The dividing rule is **park, don't block**: no stage ever waits on a human
+inside a live session. A stage that reaches a gate writes its output, moves the
+task to the gate's folder, and exits. That is why a watcher can plan a whole
+queue overnight and you can review the results whenever it suits.
 
-The pipeline shape is **not hardcoded**. It is the **engineering loop
-kind**, declared in `packages/core/workflows/engineering/workflow.json` (stages, transitions,
-iteration cap, work source, per-stage bash allowlists) with prompt templates
-under `packages/core/workflows/engineering/stages/`, and interpreted by the pure engine in the
-shared `@agentic-workflow/core` package. Other kinds — like `pr-sitter` —
-declare different pipelines over different work sources; see
-"Workflow kinds and the scheduler" below. Everything else in this skill —
-PLAN/BUILD/VERIFY/REVIEW, the gates, park-at-gate, the verdict protocol —
-describes the engineering kind, whose behavior is identical to the original
-hardcoded loop.
+The pipeline shape is **not hardcoded**. It is the **engineering kind**,
+declared in `packages/core/workflows/engineering/workflow.json` — stages,
+transitions, iteration cap, work source, per-stage bash allowlists — with
+prompt templates under `.../engineering/stages/`, interpreted by the pure
+engine in `@agentic-workflow/core`. Everything below describes that kind. The
+other kinds are in `references/workflow-kinds.md`.
 
-## When to Use
-
-- Use when a backlog task should run the whole BUILD→REVIEW lifecycle
-  unattended, instead of invoking `/build`, `/verify`, `/review` one at a time.
-- Use when picking up an approved task (`/agentic-workflow:engineering claim`, `/agentic-workflow:engineering watch`,
-  or `/agentic-workflow:engineering plan <id>` to plan one) — see `task-backlog-management`.
-- Not for a single standalone stage — `/plan`, `/build`, `/verify`, `/review`
-  each work outside the loop too, for one-off use.
-- Not for changes you want to hand-hold through every step — the loop's value
-  is in running BUILD→VERIFY→REVIEW unattended; if you want to review each
-  stage individually, drive the stage commands by hand.
+Use the loop when a backlog task should run BUILD→REVIEW unattended. For a
+single change you want to hand-hold, drive `/plan`, `/build`, `/verify`,
+`/review` yourself — they each work standalone.
 
 ## The pipeline
-
-```
-authoring + gates (interactive /agentic-workflow:engineering verbs):
-  /agentic-workflow:engineering new <idea>      ──▶ interview ──▶ planless draft in draft/
-  /agentic-workflow:engineering retask <id> [note] ▶ re-interview ──▶ rewritten in place in draft/ (same id)
-                                        queued/ → draft/            ← approval withdrawn, re-approve after
-  /agentic-workflow:engineering approve [id]    ──▶ the one folder-driven gate:
-                                        draft/ → queued/            ← the task gate
-                                        plan-review/ → in-progress/ ← the plan gate
-                                        in-review/ → completed/     ← ship
-  /agentic-workflow:engineering replan [id] [why] ▶ back to queued/ (audited rejection)
-
-the loop (the /agentic-workflow:engineering command, unattended — never blocks on a human):
-  /agentic-workflow:engineering plan <id>  — run PLAN on one queued task now (parks, exits — the only PLAN entry)
-  /agentic-workflow:engineering claim      — one-shot pull of the next build-ready task (never auto-plans queued/)
-  /agentic-workflow:engineering watch [interval] — claim build work as it appears (idle events + polling timer)
-```
 
 ```mermaid
 flowchart LR
@@ -80,452 +42,268 @@ flowchart LR
 
 | Stage | Writes code? | Role |
 |-------|--------------|------|
-| plan | no (task file only) | reads the task + relevant code and writes the `## Implementation Plan` onto the task file in place, in the main tree; terminates with a park — the task moves to `plan-review/` for the human gate |
+| plan | no (task file only) | reads the task and the relevant code, writes `## Implementation Plan` onto the task file in place, in the main tree; then parks the task in `plan-review/` |
 | build | **yes** | implements the approved plan test-first on the loop's own `feature/<id>` branch, or applies a VERIFY/REVIEW stage's feedback on a re-build; each iteration is committed as a checkpoint |
-| verify | no | runs tests (bash allowlist), checks acceptance criteria, records `PASS`/`FAIL`/`ERROR` via the `workflow_verdict` tool |
-| review | no | five-axis code review of exactly `git diff base...branch` (read-only bash allowlist), records `PASS`/`FAIL`/`ERROR` via the `workflow_verdict` tool |
+| verify | no | runs tests (bash allowlist), checks acceptance criteria, records its verdict via `workflow_verdict` |
+| review | no | five-axis review of exactly `git diff base...branch` (read-only allowlist), records its verdict via `workflow_verdict` |
 
-## Process
+PLAN runs **right before execution** — on `plan <id>`, or a `watch` tick with
+no build work left — so plans cannot rot while tasks sit parked. `claim` and
+`watch` never auto-plan a queued task.
 
-1. `/agentic-workflow:engineering new <idea>` — the command's own agent **always
-   interviews you** (a restate-and-confirm at minimum, a full interview when
-   the idea is vague) to pin down the goal and testable acceptance criteria and
-   confirms the draft with you; subagents can't converse, so it then hands the
-   confirmed intent to the `workflow-task-author` subagent, which writes the
-   planless draft to `draft/`. A **heavy idea is split into sibling drafts** —
-   vertical, independently shippable slices ordered by `priority`, plus one
-   `type: epic` tracking draft that is never approved. See
-   `task-backlog-management` → "Slicing a heavy idea".
-2. `/agentic-workflow:engineering approve <id>` — after you review the draft — the plugin
-   moves it to `queued/` with an audited "Task approved" note and commits.
-   No plan yet, by design.
-3. The loop plans it: `/agentic-workflow:engineering plan <id>` now, or a `/agentic-workflow:engineering watch`
-   session when no build work remains. The PLAN stage (the
-   `workflow-plan-author` agent) reads the code, writes the
-   `## Implementation Plan` onto the task file in place, and the driver
-   parks the task in `plan-review/` — the loop exits rather than waiting.
-4. `/agentic-workflow:engineering approve <id>` — the plugin validates the plan
-   exists, moves the file to `in-progress/`, appends an audited note, and
-   commits. This is the human sign-off before any code is written.
-   `/agentic-workflow:engineering replan <id> <why>` rejects instead: back to `queued/`
-   with the reason audited, and the next PLAN pass must address it.
-5. Execute: `/agentic-workflow:engineering claim` pulls the next build-ready task now, in
-   this session; or
-   `/agentic-workflow:engineering watch [interval]` turns this session into a standing worker
-   that claims work as it appears — on every idle tick, plus a polling timer
-   (default cadence `watchIntervalMinutes`, override per-session:
-   `/agentic-workflow:engineering watch 30s`). Build-ready tasks beat queued ones. The loop
-   enters at BUILD with the approved plan threaded in.
-   - A VERIFY FAIL within `maxIterations` **re-builds** with the failure fed
-     back in, inline in this same session.
-   - A REVIEW FAIL within `maxIterations` re-builds with the review's
-     findings fed back in, same session.
-   - The cap tripping means the plan itself is suspect — the loop stops and
-     a human sends it back via `/agentic-workflow:engineering replan <id> <why>`.
-6. On a REVIEW PASS, the loop is done and the task moves to `in-review/` —
-   the human diff gate. Review `git diff <base>...feature/<id>` yourself, push
-   and open the PR, then run `/agentic-workflow:engineering approve <id>` to move the task to
-   `completed/` (an audited move) — the loop never does those steps for you.
-7. `/agentic-workflow:engineering stop` aborts and exits watch mode (timer included); `/agentic-workflow:engineering unwatch`
-   exits watch mode alone (a build already claimed still finishes); `/agentic-workflow:engineering
-   status` shows the current loop plus a whole-backlog roll-up (counts +
-   awaiting-approval/claimable/interrupted/in-review flags); `/agentic-workflow:engineering recover
-   <id>` resumes an in-progress task whose run died mid-build
-   (crash/restart) — from its **state snapshot** at the exact stage it
-   reached, or from the persisted plan when no valid snapshot exists. Plugin
-   startup logs any interrupted tasks and leftover snapshots it finds.
+## The gates
 
-## The gates are a command, planning and execution are the loop
+Three human decisions, one verb. **`approve [id]`** advances a task by
+whichever gate its folder implies — draft → `queued/` (scope and acceptance),
+parked plan → `in-progress/` (the sign-off before any code is written), and
+finished review → `completed/` (ship). Id-less, it resolves the single task
+waiting at a loop wait-gate, falling back to a lone draft only when no loop
+gate is waiting, so a pile of drafts never shadows a parked plan and
+never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole
+rejection verb, always back to `queued/`, with the reason audited for the next
+PLAN pass to address.
 
-- **Interview (always, inside `/agentic-workflow:engineering new`).** The command's own
-  agent runs the `interview-me` skill live with you on every `new` — a single
-  restate-and-confirm when the idea already carries a clear goal and testable
-  criteria, one question at a time until there's an explicit yes on a
-  restated intent when it doesn't. It also confirms the drafted task before
-  handing it to the `workflow-task-author` subagent to write (subagents can't
-  converse with you).
-- **Two approvals (always).** `/agentic-workflow:engineering approve <id>` on a draft gates
-  the task (scope + acceptance) into `queued/`; the same verb on a parked
-  plan gates the loop-written plan into `in-progress/` — the folder the task
-  sits in picks the move, so the one gate verb is never ambiguous. Nothing
-  gets built until a human has approved both — deterministic plugin code
-  validates the `## Implementation Plan` heading at the plan gate. There is
-  no way to build an ungated task: BUILD only ever claims from `in-progress/`.
-  Id-less `/agentic-workflow:engineering approve` resolves the single task waiting at a loop
-  wait-gate (parked plan, or finished review); only when neither has anything
-  waiting does it fall back to a lone `draft/` task. Loop gates always outrank
-  the authoring gate, so a pile of drafts never shadows a parked plan, and
-  never-approved epic tracking drafts are skipped entirely.
-  `/agentic-workflow:engineering replan [id]` is the matching rejection verb.
-- **Park, don't block.** The PLAN stage ends its loop by parking the task in
-  `plan-review/`. A watcher can plan an entire queue overnight and exit each
-  time; you batch-review the plans whenever suits and approve or replan each
-  — the pipeline never sits blocked inside a live session.
-- **Watch → claim (explicit opt-in, `/agentic-workflow:engineering watch`).** No session plans or
-  builds anything just because it went idle. A human must run
-  `/agentic-workflow:engineering watch` in a session for it to become a worker; that session then
-  claims and drives work unattended until `/agentic-workflow:engineering unwatch`/`/agentic-workflow:engineering stop`.
+Deterministic plugin code enforces the plan gate by grepping for the
+`## Implementation Plan` heading, and BUILD only ever claims from
+`in-progress/`. There is no path that builds an ungated task.
 
-## Execution: `/agentic-workflow:engineering watch`
+**`new <idea>` always interviews you** — a restate-and-confirm when the idea
+already carries a clear goal and testable criteria, a full `interview-me` run
+when it does not. The interview happens in the calling agent's own turn because
+subagents cannot converse; only after your confirmation does it hand the intent
+to the `workflow-task-author` subagent to write the draft. `retask <id>`
+re-interviews and reshapes a planless task in place.
 
-A watch session claims work from two triggers: its own `session.idle` events,
-and a per-session **polling timer** (`/agentic-workflow:engineering watch [interval]`; default
-`watchIntervalMinutes` from config, floor 10s). Each timer tick first asks
-the server whether the session is actually idle (`client.session.status()`)
-and does nothing otherwise — the timer exists for the case idle events miss:
-a task approved in *another* session while this one sat quiet.
+**Nothing claims work because a session went idle.** A human runs `watch` in a
+session to make it a worker, and that session drives work until `unwatch` or
+`stop`. An ordinary chat session going quiet must never start writing code.
 
-When it fires, the watcher first scans `docs/tasks/in-progress/` for tasks
-where `isClaimable(task)` is true — has a persisted plan (`## Implementation
-Plan`), and has **never** had any `> BUILD started` note (not just "the last
-one is unmatched" — that's `wasInterrupted`, a different check used for crash
-recovery). With no build work, it falls back to `docs/tasks/queued/` for a
-task to plan-and-park — build work always beats plan work, so tasks in
-flight finish before new ones spin up. The watch is scoped to the
-engineering kind: other enabled workflow kinds run under their own command's
-`watch`/`claim` (e.g. `/agentic-workflow:pr-sitter watch` polling its PR query) — see
-"Workflow kinds and the scheduler". Within the backlog it picks the
-lowest-priority claimable task (ties by id) and claims it **atomically**: a
-non-recursive `mkdir` of `<folder>/.claims/<id>` either succeeds (claim won)
-or fails because another watcher on the same filesystem got there first. The
-`> BUILD started` note remains the human-readable audit record; the marker
-directory is the lock. (A queued claim marker orphaned by a crashed PLAN is
-always safe to release once stale — PLAN writes no code.)
+The full folder lifecycle and file schema are `task-backlog-management`.
 
-In **shared-tree mode** (default), a per-directory execution lock additionally
-serializes drives within one opencode instance — all sessions share one
-working tree and one checked-out branch, so only one loop may run stages in it
-at a time. In **worktree mode** (`worktreesDir` set) each loop owns its own
-worktree, so that lock is dropped and multiple `/agentic-workflow:engineering watch` sessions can
-drive different tasks concurrently in one instance. **Not covered either way:**
-separate opencode *processes* racing the same backlog clone on `index.lock`
-during backlog commits (best-effort). Run additional watchers in their own
+## Execution
+
+`claim` pulls the next build-ready task once, now. `watch [interval]` turns the
+session into a standing worker firing on its own `session.idle` events plus a
+per-session **polling timer** (default `watchIntervalMinutes`, floor 10s).
+Each tick first asks the server whether the session is actually idle
+(`client.session.status()`) and does nothing otherwise — the timer exists for
+the case idle events miss, a task approved in *another* session while this one
+sat quiet.
+
+On a tick, the watcher scans `in-progress/` for tasks where `isClaimable` holds
+— has a plan, and has **never** had any `> BUILD started` note. Only with no
+build work does it fall back to `queued/` for something to plan-and-park:
+**build work always beats plan work**, so tasks in flight finish before new
+ones spin up. Within the backlog it takes the lowest-`priority` claimable task
+(ties by id).
+
+**A claim is atomic and means a live loop.** A non-recursive `mkdir` of
+`<folder>/.claims/<id>` either succeeds or fails because another watcher won;
+the `> BUILD started` note is the human-readable audit record, the marker
+directory is the lock. Every gate verb refuses on a held marker for that
+reason. A queued claim orphaned by a crashed PLAN is always safe to release
+once stale — PLAN writes no code.
+
+In **worktree mode** (the default, `worktreesDir`) each loop owns its own
+worktree, so several `watch` sessions drive different tasks concurrently in one
+instance. In **shared-tree mode** (`worktreesDir: false`) all sessions share one
+checkout and one branch, so a per-directory execution lock serializes drives.
+Neither covers separate opencode *processes* racing the same clone on
+`index.lock` during backlog commits — run additional watchers in their own
 clones for hard isolation.
 
-## Workflow kinds and the scheduler
+`recover <id>` resumes a run that died mid-build, from its **state snapshot** at
+the exact stage it reached or from the persisted plan when no valid snapshot
+exists; cross-process liveness is judged by the stage marker, not by any
+in-memory map. `stop` aborts and exits watch mode; `unwatch` leaves watch mode
+alone, letting a claimed build finish. `status` reports the current loop plus a
+backlog roll-up.
 
-A workflow kind is declared in `packages/core/workflows/<kind>/workflow.json`: its stages (each
-`work` — edits things — or `check` — records a verdict), a transition table
-(effects `fire` the next stage, `park` at a human gate, `done` the loop, or
-`stop` for a human), an iteration cap, a **work source** binding (where
-claimable work comes from), and per-stage bash allowlists for check stages.
-Stage prompts live in `packages/core/workflows/<kind>/stages/*.md`. The engine in
-`@agentic-workflow/core` interprets the manifest; adding a kind means writing a
-manifest and prompts, not driver code.
+## Kinds and the scheduler
 
-A common scheduler step (`pollOnce`) runs on every claim trigger — idle
-events and the watch timer — and walks work sources in claim-priority
-order; the first source that yields a claim wins the tick. Each kind
-command's `claim`/`watch` scopes the poll to its own kind's source
-(engineering: the backlog-folder source with its atomic `.claims/` markers,
-semantics unchanged; pr-sitter: its PR query). Kinds are enabled per
-`workflows.<kind>` sections in `.agentic-workflow.json` — `engineering` is on
-unless disabled, and every other kind (all four sitters, plus any local kind)
-is experimental and off until you add its section with `"enabled": true`. Each enabled kind gets its own `/agentic-workflow:<kind>`
-command.
+A workflow kind declares its stages (each `work` — edits things — or `check` —
+records a verdict), a transition table (effects `fire` the next stage, `park`
+at a human gate, `done` the loop, or `stop` for a human), an iteration cap, a
+**work source** binding, and per-stage bash allowlists. Adding a kind means
+writing a manifest and prompts, not driver code.
 
-### The pr-sitter kind
+A common scheduler step (`pollOnce`) runs on every claim trigger and walks work
+sources in claim-priority order; the first source yielding a claim wins the
+tick. Each kind's command scopes the poll to its own source, so
+`/agentic-workflow:engineering watch` never claims a PR and vice versa.
+`engineering` is on unless disabled; every other kind is experimental and off
+until listed with `"enabled": true` in `.agentic-workflow.json`. The four
+sitters — pr-sitter, review-sitter, dep-sitter, main-sitter — are in
+`references/workflow-kinds.md`.
 
-`packages/core/workflows/pr-sitter/` sits on open pull requests matching a configured `gh`
-query and keeps them green until a human merges:
+## The verdict contract
 
-```mermaid
-flowchart LR
-    T["triage (check)"] --> F["fix (work)"]
-    F --> V["verify (check)"]
-    V -->|PASS| P["publish (work)"]
-    V -->|"FAIL (re-fires fix, cap 3)"| F
-    P --> D["done"]
-```
-
-- **triage** — read-only `gh` inspection of a PR needing attention (failing
-  checks, changes requested, new comments, merge conflict); emits findings
-  and a `workflow_verdict`: PASS = actionable, FAIL = nothing to do → done,
-  ERROR = couldn't inspect → stop.
-- **fix** — commits on the PR's **existing branch** in a worktree; never
-  pushes.
-- **verify** — tests + findings coverage, reusing the existing `workflow-verify`
-  agent; FAIL re-fires fix within the cap (3).
-- **publish** — `git push origin <branch>` plus `gh pr comment` replies per
-  addressed finding. It **never merges, closes, or approves** — merging
-  stays a human call.
-
-Dedup is a per-PR ledger under `<tasksDir>/runs/pr-sitter/pr-<n>.json`
-(ledgers are namespaced per kind under `runs/<kind>/`): head-SHA and
-comment-timestamp watermarks plus an own-login filter, so the sitter never
-reacts to its own pushes or replies; a capped/failed attempt parks the PR
-until a human pushes a new head. It is experimental, so it runs only once
-enabled; narrow which PRs it watches with the same section:
-
-```jsonc
-{ "workflows": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
-```
-
-### The review-sitter, dep-sitter, and main-sitter kinds
-
-Three further opt-in kinds follow the same shape (see
-`docs/configuration.md` for their knobs and `docs/design/threat-model.md`
-T11–T13 for their authority):
-
-- **review-sitter** — `fetch (check) → assess (work) → publish (work)` over
-  PRs whose review is requested from you (`is:open review-requested:@me`;
-  ADO: pending reviewer vote). Reads the diff in the context of the
-  surrounding code and posts ONE structured review comment per requested
-  head, re-firing only on a human's new push. **Comment-only**: never
-  approves, votes, pushes, or merges.
-- **dep-sitter** — `scan (check) → upgrade (work) → verify (check) →
-  publish (work)` over dependency advisories: `npm audit`/`npm outdated` for
-  npm, OSV-Scanner (`osv-scanner --format json -L <pom.xml|gradle.lockfile>`)
-  for Maven/Gradle — or a site's own CLI via
-  `workflows.dep-sitter.scannerCommand` (user-scope config only), whose output
-  may be an osv-scanner report or a raw OSV record list. The `ecosystem`
-  binding defaults to `auto` (detect and
-  merge; Gradle needs a committed lockfile; undeclared JVM transitives are
-  never claimed). Auto-fixes patch/minor advisories into verified DRAFT PRs
-  on `feature/*` branches; majors are skipped and logged for a human.
-  Publish opens the PR via `gh` or the ADO REST API depending on
-  `codePlatform`.
-- **main-sitter** — `diagnose (check) → remedy (work) → verify (check) →
-  publish (work)` over the watched branch's CI (`gh run list` on GitHub, the
-  Azure Pipelines Build API on `ado`). When the newest head goes red it
-  reproduces, bisects to the culprit, and publishes a verified DRAFT
-  fix/revert PR on a `main-sitter/*` branch, commenting once on the culprit
-  PR. The watched branch is never pushed.
-
-## The verdict contracts
-
-VERIFY and REVIEW each record their verdict by calling the **`workflow_verdict`
-plugin tool** — the loop's only trusted verdict channel. The driver accepts
-a verdict only from the session whose loop is currently sitting in that
-exact check stage; a `WORKFLOW_VERIFY:`/`WORKFLOW_REVIEW:` line in the stage's text
-is a human-readable echo for the transcript and is deliberately **ignored**
-(free text is untrusted — a quoted contract or echoed repo content must
-never flip control flow):
+VERIFY and REVIEW record their verdict by calling the **`workflow_verdict`
+plugin tool**, the loop's only trusted verdict channel. The driver accepts a
+verdict only from the session whose loop is sitting in that exact check stage.
+A `WORKFLOW_VERIFY:`/`WORKFLOW_REVIEW:` line in the stage's text is a
+human-readable echo and is deliberately **ignored** — free text is untrusted,
+and a quoted contract or echoed repo content must never flip control flow.
 
 ```
-PASS     # verify: every criterion met, tests green → review; review: no Critical/Important findings → done
+PASS     # verify: every criterion met, tests green → review; review: no critical/important findings → done
 FAIL     # otherwise → re-build with the failure fed back, if iteration budget remains
 ERROR    # the check itself could not run (broken environment) → stop for a human, no iteration burned
 ```
 
-```mermaid
-stateDiagram-v2
-    state "check stage (VERIFY / REVIEW / any manifest check)" as Check
-    [*] --> Check
-    Check --> NextStage: PASS (verify → review, review → done)
-    Check --> Rebuild: FAIL, iteration budget remains
-    Check --> StopHuman: FAIL, cap reached
-    Check --> StopHuman: ERROR (no iteration burned)
-    Rebuild --> Check: re-build with feedback, iteration++
-    NextStage --> [*]
-    StopHuman --> [*]: human required (replan / recover)
-```
+**No tool call at all is FAIL**, not a stall — the loop still terminates via
+the iteration cap rather than hanging. The same contract covers every manifest
+check stage of the running kind, validated against that kind's manifest.
 
-No tool call at all is treated as FAIL, not as a stall — the loop still
-terminates via the iteration cap rather than hanging indefinitely.
-
-The same contract covers every manifest **check** stage, not just VERIFY and
-REVIEW: `workflow_verdict` accepts any check stage of the running loop's kind
-(engineering: `verify`/`review`; pr-sitter: `triage`/`verify`), validated
-against that kind's manifest, and a missing verdict on a check stage is
-still FAIL.
+The tool also accepts optional `reason` and `criteria` (per-criterion
+`{criterion, pass}`). These steer only the **next iteration's prompt** — failed
+criteria are threaded ahead of the stage's prose so the re-build leads with
+what actually failed — never control flow, which is `verdict` alone.
 
 ### Declared check commands are established fact
 
-A check stage may have **check commands** attached to it — declared in
-`workflows.<kind>.stageChecks` (config) or the manifest stage's `checks`. The
-**driver** runs them, in the stage's work tree, before the stage fires. Their
-results reach the stage's prompt as a block, and the stage does not get to
-disagree with them:
+A check stage may carry **check commands**, declared in
+`workflows.<kind>.stageChecks` or the manifest stage's `checks`. The **driver**
+runs them in the stage's work tree before the stage fires, and the stage does
+not get to disagree:
 
-- **Exit 0** adds nothing — the verdict is exactly what the stage recorded.
-- **Exit 126/127** ("command not found" / "not executable") means the check
-  could not run: the stage resolves to **ERROR**, which stops for a human
-  without spending an iteration.
+- **Exit 0** adds nothing — the verdict is what the stage recorded.
+- **Exit 126/127** (not found / not executable) means the check could not run:
+  **ERROR**, which stops for a human without spending an iteration.
 - **Any other exit code** resolves the stage to **FAIL**, however it voted.
 
-The mechanism is the one already in place for findings: each red check becomes a
-`critical` finding on a synthetic `checks` axis, so `effectiveVerdict` derives
-the stage down. A stage cannot argue a red check into a PASS; if the check
-itself is broken, the fix is removing it from config, not disputing it in the
-transcript. The commands the driver ran also count as **observed evidence**, so
-a `requireEvidence` stage may cite them instead of re-running them — and should:
-re-running is the run-to-run variance the declaration exists to remove.
+The mechanism is the findings one: each red check becomes a `critical` finding
+on a synthetic `checks` axis, so `effectiveVerdict` derives the stage down. A
+stage cannot argue a red check into a PASS; a broken check is fixed by removing
+it from config, not by disputing it in the transcript. Those commands also
+count as **observed evidence**, so a `requireEvidence` stage should cite them
+rather than re-run them — re-running is exactly the run-to-run variance the
+declaration exists to remove.
 
-The tool also accepts optional `reason` (a one-line summary) and `criteria`
-(per-acceptance-criterion `{criterion, pass}` results). These steer only the
-**next iteration's prompt** — the failed criteria are threaded ahead of the
-stage's prose so the re-build leads with what actually failed — never
-control flow, which remains `verdict` alone. They arrive through the same
-trusted tool call as the verdict, so they carry no extra trust.
+## What a stage receives
+
+Every stage's prompt carries its **contract** — goal, acceptance criteria,
+worktree instructions, diff boundary, and the verdict-or-scope block — plus
+earlier stages' captured output as *artifacts*. A check stage's artifact leads
+with the **structured verdict block**: the reason, the failed criteria, and the
+blocking axis findings with `file:line`.
+
+`workflows.<kind>.stageContext` (and a manifest stage's `context`) caps what a
+stage reads of each artifact; unset means unbounded. Under a budget: the
+**contract is never trimmed** (it is composed after the budget applies, so a
+budget can starve the history, never the contract); the **verdict block is
+never trimmed** (bounded by construction, highest signal in the prompt); the
+**prose may arrive as an excerpt**, head and tail kept with the elided middle
+marked — the findings carry `file:line`, the prose is commentary. The **run log
+is always complete**: each pass's full text is written to
+`<tasksDir>/runs/<id>.md` before it becomes an artifact, so a budget costs
+prompt weight, never evidence.
+
+A re-build also receives a bounded **attempts ledger** — one line per counted
+iteration (stage, verdict, one-line reason) — so it can avoid re-trying a fix
+that already failed. It is absent on the first iteration.
 
 ## Termination
 
-- **REVIEW PASS** → loop done; the task moves to `in-review/`. Review
-  `git diff <base>...feature/<id>`, push/open the PR, then run `/agentic-workflow:engineering approve <id>`
-  to move the task to `completed/`.
-- **FAIL** (verify or review) and `iteration + 1 < maxIterations` → re-build
-  with the failure feedback threaded in (a verify-FAIL re-build drops stale
-  review feedback and vice versa — old feedback judged an older build).
-- **FAIL** and the cap is reached → stop and report; if the plan itself is
-  wrong, send it back with `/agentic-workflow:engineering replan <id> <why>`. Default
-  `maxIterations` is 3, shared across both feedback loops (configurable).
-- **ERROR** (verify or review) → stop immediately for a human; fix the
-  environment, then `/agentic-workflow:engineering recover <id>`.
-- A stage exceeding `stageTimeoutMinutes` fails the loop (partial work is
-  checkpointed on the branch) instead of wedging the driver.
+- **REVIEW PASS** → done; the task moves to `in-review/`. Review
+  `git diff <base>...feature/<id>`, push and open the PR, then `approve <id>`.
+  The loop never does those steps for you.
+- **FAIL** with budget remaining → re-build with the failure threaded in. A
+  verify-FAIL re-build drops stale review feedback and vice versa: old feedback
+  judged an older build.
+- **FAIL** at the cap → stop and report. The cap tripping means the plan itself
+  is suspect, so the move is `replan <id> <why>`, and the next plan parks for
+  review again. Default `maxIterations` is 3, shared across both feedback
+  loops.
+- **ERROR** → stop immediately for a human; fix the environment, then
+  `recover <id>`.
+- A stage exceeding `stageTimeoutMinutes` fails the loop, with partial work
+  checkpointed on the branch, rather than wedging the driver.
+
+**Every way a drive ends releases the claim marker** — a held marker asserts a
+live loop, and a marker left behind by a stopped run wedges the task where no
+verb can free it.
 
 ## Audit trail
 
-Every lifecycle event — task approved, plan written/parked, plan approved or
-rejected (with the approver's git identity and the rejection reason),
-build start/finish, each verdict (with its reason and any failed criteria),
-stop, recovery, completion — is appended to the task file as a timestamped
-note, and each stage's full output is written to `<tasksDir>/runs/<id>.md`.
-On termination the run log also gets a `## Run summary` table: per-stage
-wall-clock, verdict history, and iterations used. Secrets echoed into any of
-these durable artifacts are shape-redacted (`AKIA…`, `sk-…`, tokens, PEM
-blocks, `key/secret/token: …`) before they are written. Approval commits are
-scoped to the tasks dir; execution-phase notes ride the branch checkpoints in
-shared-tree mode, or are committed to the main tree per terminal event in
-worktree mode. See `docs/design/threat-model.md`.
-
-## What a stage receives (the artifact contract)
-
-Every stage's prompt carries its **contract** — the goal, the acceptance
-criteria, the worktree instructions, the diff boundary, and the verdict-or-scope
-block — plus the earlier stages' captured output as *artifacts*. A check stage's
-artifact leads with the **structured verdict block**: the verdict reason, the
-failed acceptance criteria, and the blocking axis findings with `file:line`.
-
-`workflows.<kind>.stageContext` (and the manifest's per-stage `context`) puts a
-character ceiling on what a stage reads of each artifact. Unset — the default —
-means unbounded. When a budget is set:
-
-- the **contract is never trimmed**; it is composed after the budget applies. A
-  budget can starve the history, never the contract.
-- the **structured verdict block is never trimmed**; it is bounded by
-  construction and is the highest-signal content in the prompt.
-- the **prose may arrive as an excerpt**, keeping the head and the tail with the
-  elided middle explicitly marked. That is the intended trade: the findings carry
-  `file:line`, the prose is commentary.
-- the **run log is always complete.** Each pass's full text is written to
-  `<tasksDir>/runs/<id>.md` before it ever becomes an artifact, so a budget costs
-  no evidence — only prompt weight.
-
-A re-build also receives a bounded **attempts ledger**: one line per counted
-iteration (stage, verdict, one-line reason), so it can avoid re-trying a fix that
-already failed. It is absent on the first iteration.
+Every lifecycle event — task approved, plan written and parked, plan approved
+or rejected (with the approver's git identity and the reason), build
+start/finish, each verdict with its reason and failed criteria, stop, recovery,
+completion — is appended to the task file as a timestamped note, and each
+stage's full output goes to `<tasksDir>/runs/<id>.md`. On termination the run
+log gains a `## Run summary`: per-stage wall-clock, verdict history, iterations
+used. Secrets echoed into any durable artifact are shape-redacted (`AKIA…`,
+`sk-…`, tokens, PEM blocks, `key/secret/token: …`) before writing. See
+`docs/design/threat-model.md`.
 
 ## Config
 
 Optional `.agentic-workflow.json` at the repo root, layered over an optional
 user-scope `~/.agentic-workflow.json` (repo wins field by field; nested objects
-merge per key, arrays/scalars replace — see `docs/configuration.md`). Every
-field has a default:
+merge per key, arrays and scalars replace). Every field has a default — the
+full set is `docs/configuration.md`.
 
 ```jsonc
 {
   "maxIterations": 3,           // shared cap on verify-FAIL + review-FAIL re-builds
-  "tasksDir": "docs/tasks",     // root of the task backlog — see task-backlog-management
-  "stageTimeoutMinutes": 60,    // wall-clock cap per stage; exceeding it fails the loop
-  "watchIntervalMinutes": 5,    // default /agentic-workflow:engineering watch polling cadence (override: /agentic-workflow:engineering watch 30s)
-  "worktreesDir": ".workflow-worktrees", // DEFAULT: per-task git worktree isolation (set to `false` to opt into shared-tree branch switching)
-  "worktreeSetup": "npm ci",    // OPTIONAL: command run in a fresh worktree (deps aren't checked out otherwise)
-  "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review, worst verdict wins (suppresses axis-coverage enforcement)
-  "workflows": {                    // OPTIONAL: per-kind sections. engineering on unless disabled; every sitter (and any local kind) is experimental, off until listed with "enabled": true
-    "engineering": { "stageFanout": { "review": "axis" } }, // OPTIONAL: one review pass per required axis, coverage still enforced
+  "tasksDir": "docs/tasks",     // root of the task backlog
+  "stageTimeoutMinutes": 60,    // wall-clock cap per stage
+  "watchIntervalMinutes": 5,    // default watch cadence (override: watch 30s)
+  "worktreesDir": ".workflow-worktrees", // per-task worktree isolation; false = shared-tree
+  "worktreeSetup": "npm ci",    // OPTIONAL: run in a fresh worktree (deps aren't checked out)
+  "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review
+  "workflows": {                // OPTIONAL: per-kind sections; sitters off until "enabled": true
+    "engineering": { "stageFanout": { "review": "axis" } },
     "pr-sitter": { "enabled": true, "query": "is:open author:@me" }
   }
 }
 ```
 
-(`gateBeforeBuild` and `interviewBeforePlan` no longer exist — the gates are
-the folder-driven `/agentic-workflow:engineering approve` verb, and interviewing lives inside
-`/agentic-workflow:engineering new`. Old config files carrying them still parse; the keys
-are ignored.)
+**Worktree isolation** keeps the human's tree untouched and lets several watch
+sessions drive concurrently. Stage prompts carry a `Worktree:` line pinning all
+reads, edits, and tests there; VERIFY/REVIEW allowlists accept
+`cd <worktree> && <runner>` and `git -C <worktree> …`. The backlog stays
+canonical in the main tree, committed there per terminal event. A task's
+worktree is created on its first BUILD and removed only when the task
+**ships** — a run ending for any reason keeps it, so a retry, a `recover`, or a
+`replan` bounce out of `in-review/` resumes on top of the previous iteration's
+work and its `worktreeSetup` output.
 
-**Worktree isolation** (`worktreesDir`): each loop's BUILD/VERIFY/REVIEW runs
-in its own `git worktree` on the `feature/<id>` branch instead of switching the
-shared checkout's branch. The human's tree is never touched, and multiple
-`/agentic-workflow:engineering watch` sessions can drive tasks concurrently in one instance (the
-per-directory serialization lock is dropped in this mode). Stage prompts carry
-a `Worktree:` line pinning all reads/edits/tests there; VERIFY/REVIEW
-allowlists accept `cd <worktree> && <runner>` and `git -C <worktree> …`. The
-task backlog stays canonical in the main tree — audit notes and moves are
-committed there per terminal event. A task's worktree is created on its first
-BUILD and removed only when the task **ships** — a run ending (iteration cap,
-ESC, crash, or even `done`) keeps it, so a retry, a `recover`, or a `replan`
-bounce out of `in-review/` resumes in the same directory on top of the previous
-iteration's work and its `worktreeSetup` output. On by default
-(`worktreesDir: ".workflow-worktrees"`; set `false` for shared-tree mode). See
-`docs/design/improvements/01`.
+**Multi-lens review** (`reviewLenses`) runs REVIEW once per lens and takes the
+**worst** verdict, so a single prompt-injected reviewer cannot wave a change
+through (threat model T1), at ~N× review time. A lens maps to no axis, so lens
+mode switches per-pass axis-coverage enforcement off and the loop warns which
+required axes no lens names.
 
-**Multi-lens review** (`reviewLenses`): REVIEW runs once per lens, each pass
-focused on that lens, and the loop takes the **worst** verdict across passes —
-a single prompt-injected reviewer can't wave a change through (threat model
-T1). Costs ~N× review time. Off by default (single review). A lens maps to no
-axis, so lens mode **switches per-pass axis-coverage enforcement off**; the
-loop warns which required axes no lens names.
+**Per-axis fan-out** (`workflows.<kind>.stageFanout: {"review": "axis"}`) is
+the stronger form: one pass per entry in the stage's `requiredAxes`, each told
+to review exactly one axis, merged worst-wins — keeping the T1 mitigation
+**without** the coverage downgrade, since each pass is enforced against its own
+axis and the union must cover every one or the stage stops with ERROR. Same
+cost, off by default. `reviewLenses` wins over it on the `review` stage (and
+the loop says so), so an existing lens setup is never reinterpreted.
 
-**Per-axis fan-out** (`workflows.<kind>.stageFanout: {"review": "axis"}`): the
-stronger form of the same idea. REVIEW runs once per entry in the stage's
-`requiredAxes`, each pass told to review and report exactly one axis, merged
-worst-wins — so it keeps the T1 mitigation **without** the coverage downgrade:
-each pass is enforced against its own axis and the union has to cover every
-one, or the stage stops with ERROR rather than re-building. Same ~N× cost. Off
-by default. `reviewLenses`, if set, wins over it on the `review` stage (and the
-loop says so), so an existing lens setup is never reinterpreted.
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "The plan looks obviously right, skip the plan gate" | BUILD is the only stage that edits files — a bad plan compounds into a bad diff. `/agentic-workflow:engineering approve <id>` is one command; it also writes the audit note and commit that say who approved what. |
-| "Just run /build directly, the loop is overhead" | Fine for a single isolated change. Once VERIFY/REVIEW feedback loops matter (multi-step goals, backlog tasks), the loop's re-build wiring is exactly the part you'd otherwise hand-roll. |
-| "The verify keeps failing, the loop should re-plan itself" | Rejected on purpose — a plan only enters BUILD through the human gate. The iteration cap stops execution; `/agentic-workflow:engineering replan <id> <why>` re-queues it and the next PLAN pass runs with the failure context, but its output parks for your review again. |
-| "Any idle session should just pick up ready work" | Rejected on purpose — an ordinary chat session must never spontaneously start writing code because it went idle. `/agentic-workflow:engineering watch` is explicit opt-in, per session. |
-| "Poll every second so pickup is instant" | The interval floor is 10s and the default 5m for a reason — each tick costs a status query and a folder scan, and the idle-event path already gives instant pickup in the common case. |
-
-## Red Flags
-
-- A re-build (from a VERIFY FAIL) that ignores the "Verify failure to
-  address" context and repeats the previous implementation verbatim.
-- A check stage that wrote a `WORKFLOW_VERIFY`/`WORKFLOW_REVIEW` text line but never
-  called `workflow_verdict` — the loop logs the discrepancy and records FAIL;
-  the subagent didn't follow its contract.
-- An approved task sitting in `queued/` or `in-progress/` indefinitely —
-  nothing is watching it. `/agentic-workflow:engineering watch` in some session, or
-  `/agentic-workflow:engineering claim` it directly (`plan <id>` for a queued task you only
-  want planned).
-- A stale `.claims/<id>` marker for a task with no live loop — the claiming
-  run died; `/agentic-workflow:engineering recover <id>` re-claims and resumes it.
-- A task sitting in `in-review/` — that's not a stall, it's the human diff
-  gate; review the branch and run `/agentic-workflow:engineering approve <id>` when it ships.
-- A task in `plan-review/` that nobody approves or rejects — the pipeline
-  only moves when a human runs `/agentic-workflow:engineering approve <id>` (or
-  `replan <id>`).
+(`gateBeforeBuild` and `interviewBeforePlan` no longer exist. Old config files
+carrying them still parse; the keys are ignored.)
 
 ## Verification
 
-- [ ] `/agentic-workflow:engineering status` reflects the actual current stage while a loop runs, and
-      the watch cadence when watching.
-- [ ] Every VERIFY and REVIEW turn calls `workflow_verdict` exactly once, and its
-      text line matches the recorded verdict.
-- [ ] No file was edited by a task that never got its plan `/agentic-workflow:engineering
-      approve`d, and every build edit landed on the `feature/<id>` branch,
-      never the base branch (the PLAN stage edits only the task file).
-- [ ] A stopped/failed loop leaves its task (if any) in `in-progress/` with a
-      timestamped note — never silently disappears or is left in `completed/`.
+- [ ] `status` reflects the actual current stage while a loop runs, and the
+      watch cadence when watching
+- [ ] Every VERIFY and REVIEW turn calls `workflow_verdict` exactly once, and
+      its text echo matches the recorded verdict
+- [ ] No file was edited for a task whose plan was never approved, and every
+      build edit landed on `feature/<id>`, never the base branch
+- [ ] A stopped or failed loop leaves its task in `in-progress/` with a
+      timestamped note, and released its `.claims/<id>` marker
 - [ ] A REVIEW PASS parks the task in `in-review/`; only a human moves it to
-      `completed/`.
-- [ ] `/agentic-workflow:engineering approve <id>` refuses a task with no
-      `## Implementation Plan` heading, and the PLAN stage never parks a
-      planless task in `plan-review/`.
-- [ ] A `/agentic-workflow:engineering watch` session only ever claims a build task that
-      `isClaimable` returns `true` for (or a queued task for PLAN), and
-      holds its `.claims/<id>` marker while driving it.
-- [ ] No session builds anything without a human having run `/agentic-workflow:engineering watch`
-      (or `/agentic-workflow:engineering claim`) in it first.
-- [ ] `/agentic-workflow:engineering unwatch` and `/agentic-workflow:engineering stop` stop the polling timer — no further
-      tick fires after either.
+      `completed/`
+- [ ] `approve <id>` refuses a task with no `## Implementation Plan`, and PLAN
+      never parks a planless task
+- [ ] A watch session only ever claims a task `isClaimable` returns true for
+      (or a queued task for PLAN), and holds its marker while driving it
+- [ ] No session builds anything without a human having run `watch` or `claim`
+      in it first
+- [ ] `unwatch` and `stop` stop the polling timer — no tick fires after either
+- [ ] A re-build addresses the threaded failure rather than repeating the
+      previous implementation

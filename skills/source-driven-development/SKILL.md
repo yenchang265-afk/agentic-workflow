@@ -1,129 +1,83 @@
 ---
 name: source-driven-development
-description: Grounds framework-specific code in official documentation with citations. Use when implementing patterns for any framework or library where the current version's API matters.
+description: Grounds framework-specific code in the current version's official docs, with citations the user can check. Use when writing or reviewing code whose correctness depends on a library's actual API.
 ---
 
 # Source-Driven Development
 
-## Overview
+Training data goes stale silently. A deprecated pattern still reads as
+plausible, still compiles in some versions, and still gets copied into ten
+files before anyone finds out. So framework-specific code is not written from
+memory: it is written from the docs for the **version this project actually
+has**, and every non-obvious decision carries the URL that backs it.
 
-Every framework-specific code decision must be backed by official documentation. Don't implement from memory — verify, cite, and let the user see your sources. Training data goes stale, APIs get deprecated, best practices evolve. This skill ensures the user gets code they can trust because every pattern traces back to an authoritative source they can check.
-
-## When to Use
-
-- The user wants code that follows current best practices for a given framework
-- Building boilerplate, starter code, or patterns that will be copied across a project
-- The user explicitly asks for documented, verified, or "correct" implementation
-- Implementing features where the framework's recommended approach matters (forms, routing, data fetching, state management, auth)
-- Reviewing or improving code that uses framework-specific patterns
-- Any time you are about to write framework-specific code from memory
-
-**When NOT to use:**
-
-- Correctness does not depend on a specific version (renaming variables, fixing typos, moving files)
-- Pure logic that works the same across all versions (loops, conditionals, data structures)
-- The user explicitly wants speed over verification ("just do it quickly")
-
-## The Process
+Apply it whenever the framework's own recommended approach matters — forms,
+routing, data fetching, state, auth — or when reviewing code that already uses
+such a pattern. Skip it where the version cannot change the answer: renames,
+typo fixes, file moves, and pure logic that behaves identically everywhere.
 
 ```
 DETECT ──→ FETCH ──→ IMPLEMENT ──→ CITE
-  │          │           │            │
-  ▼          ▼           ▼            ▼
- What       Get the    Follow the   Show your
- stack?     relevant   documented   sources
-            docs       patterns
 ```
 
-### Step 1: Detect Stack and Versions
+## 1. Detect the versions
 
-Read the project's dependency file to identify exact versions:
-
-```
-package.json    → Node/React/Vue/Angular/Svelte
-composer.json   → PHP/Symfony/Laravel
-requirements.txt / pyproject.toml → Python/Django/Flask
-go.mod          → Go
-Cargo.toml      → Rust
-Gemfile         → Ruby/Rails
-```
-
-State what you found explicitly:
+Read the project's dependency file — `package.json`, `composer.json`,
+`requirements.txt` / `pyproject.toml`, `go.mod`, `Cargo.toml`, `Gemfile` — and
+state what you found:
 
 ```
-STACK DETECTED:
-- React 19.1.0 (from package.json)
-- Vite 6.2.0
-- Tailwind CSS 4.0.3
-→ Fetching official docs for the relevant patterns.
+STACK: React 19.1.0, Vite 6.2.0, Tailwind 4.0.3 (package.json)
+→ fetching the docs for those versions
 ```
 
-If versions are missing or ambiguous, **ask the user**. Don't guess — the version determines which patterns are correct.
+**Done when** every library the change touches has a version behind it. Where
+the version is missing or ambiguous, ask — it decides which pattern is correct,
+so guessing it invalidates everything downstream.
 
-### Step 2: Fetch Official Documentation
+## 2. Fetch the page, not the site
 
-Fetch the specific documentation page for the feature you're implementing. Not the homepage, not the full docs — the relevant page.
+Fetch the specific page for the feature being implemented:
+`react.dev/reference/react/useActionState`, not the React homepage;
+`docs.djangoproject.com/en/6.0/topics/auth/`, not a search for "django
+authentication best practices".
 
-**Source hierarchy (in order of authority):**
+Authority runs in this order: official documentation, then official blog and
+changelog, then web standards references (MDN, web.dev, the specs), then
+compatibility data (caniuse, node.green).
 
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1 | Official documentation | react.dev, docs.djangoproject.com, symfony.com/doc |
-| 2 | Official blog / changelog | react.dev/blog, nextjs.org/blog |
-| 3 | Web standards references | MDN, web.dev, html.spec.whatwg.org |
-| 4 | Browser/runtime compatibility | caniuse.com, node.green |
+**Nothing else is a primary source** — not Stack Overflow, not tutorials however
+popular, not AI-generated summaries, and above all not your own recollection,
+which is the thing this skill exists to check.
 
-**Not authoritative — never cite as primary sources:**
+Extract the patterns and note every deprecation warning on the page. When two
+official sources disagree — a migration guide against an API reference —
+surface the discrepancy and establish which one holds for the detected version.
 
-- Stack Overflow answers
-- Blog posts or tutorials (even popular ones)
-- AI-generated documentation or summaries
-- Your own training data (that is the whole point — verify it)
+**Done when** the pattern you are about to write appears in a page you fetched.
 
-**Be precise with what you fetch:**
+## 3. Implement what the docs show
 
-```
-BAD:  Fetch the React homepage
-GOOD: Fetch react.dev/reference/react/useActionState
+Use the signatures on the page, the current pattern where the docs have moved
+on, and never a form the docs mark deprecated. Where the docs do not cover what
+you need, flag it as unverified rather than filling the gap from memory.
 
-BAD:  Search "django authentication best practices"
-GOOD: Fetch docs.djangoproject.com/en/6.0/topics/auth/
-```
-
-After fetching, extract the key patterns and note any deprecation warnings or migration guidance.
-
-When official sources conflict with each other (e.g. a migration guide contradicts the API reference), surface the discrepancy to the user and verify which pattern actually works against the detected version.
-
-### Step 3: Implement Following Documented Patterns
-
-Write code that matches what the documentation shows:
-
-- Use the API signatures from the docs, not from memory
-- If the docs show a new way to do something, use the new way
-- If the docs deprecate a pattern, don't use the deprecated version
-- If the docs don't cover something, flag it as unverified
-
-**When docs conflict with existing project code:**
+When the docs and the existing codebase disagree, that is the user's decision,
+not yours:
 
 ```
-CONFLICT DETECTED:
-The existing codebase uses useState for form loading state,
-but React 19 docs recommend useActionState for this pattern.
-(Source: react.dev/reference/react/useActionState)
-
-Options:
-A) Use the modern pattern (useActionState) — consistent with current docs
-B) Match existing code (useState) — consistent with codebase
-→ Which approach do you prefer?
+CONFLICT: the codebase uses useState for form loading state; React 19 docs
+recommend useActionState (react.dev/reference/react/useActionState).
+A) modern pattern — consistent with current docs
+B) match existing code — consistent with the codebase
+→ which?
 ```
 
-Surface the conflict. Don't silently pick one.
+**Done when** every framework-specific line traces to something you read.
 
-### Step 4: Cite Your Sources
+## 4. Cite
 
-Every framework-specific pattern gets a citation. The user must be able to verify every decision.
-
-**In code comments:**
+The user must be able to check any decision without taking your word for it.
 
 ```typescript
 // React 19 form handling with useActionState
@@ -131,56 +85,33 @@ Every framework-specific pattern gets a citation. The user must be able to verif
 const [state, formAction, isPending] = useActionState(submitOrder, initialState);
 ```
 
-**In conversation:**
+Full URLs, never shortened. Prefer deep links with anchors (`#usage`) — they
+survive restructuring better than a top-level page. Quote the passage when it
+carries a non-obvious decision, and include support data when recommending a
+platform feature.
+
+Where you could not find documentation, say so in those words:
 
 ```
-I'm using useActionState instead of manual useState for the
-form submission state. React 19 replaced the manual
-isPending/setIsPending pattern with this hook.
-
-Source: https://react.dev/blog/2024/12/05/react-19#actions
-"useTransition now supports async functions [...] to handle
-pending states automatically"
+UNVERIFIED: no official documentation found for this pattern. Based on
+training data; may be outdated. Verify before production use.
 ```
 
-**Citation rules:**
+An honest gap is worth more than a confident citation-free assertion — the
+whole value of the skill is that the user can tell which is which.
 
-- Full URLs, not shortened
-- Prefer deep links with anchors where possible (e.g. `/useActionState#usage` over `/useActionState`) — anchors survive doc restructuring better than top-level pages
-- Quote the relevant passage when it supports a non-obvious decision
-- Include browser/runtime support data when recommending platform features
-- If you cannot find documentation for a pattern, say so explicitly:
-
-```
-UNVERIFIED: I could not find official documentation for this
-pattern. This is based on training data and may be outdated.
-Verify before using in production.
-```
-
-Honesty about what you couldn't verify is more valuable than false confidence.
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "I'm confident about this API" | Confidence is not evidence. Training data contains outdated patterns that look correct but break against current versions. Verify. |
-| "This is a simple task, no need to check" | Simple tasks with wrong patterns become templates. The user copies your deprecated form handler into ten components before discovering the modern approach exists. |
-
-## Red Flags
-
-- Using "I believe" or "I think" about an API instead of citing the source
-- Citing Stack Overflow or blog posts instead of official documentation
-- Fetching an entire docs site when only one page is relevant
+**Done when** every non-obvious framework decision carries a URL or an
+explicit UNVERIFIED flag.
 
 ## Verification
 
-After implementing with source-driven development:
-
-- [ ] Framework and library versions were identified from the dependency file
-- [ ] Official documentation was fetched for framework-specific patterns
-- [ ] All sources are official documentation, not blog posts or training data
-- [ ] Code follows the patterns shown in the current version's documentation
-- [ ] Non-trivial decisions include source citations with full URLs
-- [ ] No deprecated APIs are used (checked against migration guides)
-- [ ] Conflicts between docs and existing code were surfaced to the user
-- [ ] Anything that could not be verified is explicitly flagged as unverified
+- [ ] Versions came from the dependency file, and every library in the change
+      has one
+- [ ] A specific documentation page was fetched for each framework pattern used
+- [ ] Every source is official documentation, standards, or compatibility data
+- [ ] No deprecated API is used, checked against the migration guide
+- [ ] Every non-obvious decision carries a full URL, with an anchor where one
+      exists
+- [ ] Conflicts — docs against docs, or docs against the codebase — were
+      surfaced to the user rather than resolved silently
+- [ ] Anything unverifiable is labelled UNVERIFIED in the output

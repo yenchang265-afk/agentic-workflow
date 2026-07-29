@@ -5,8 +5,6 @@ description: Extracts what the user actually wants via a one-question-at-a-time 
 
 # Interview Me
 
-## Overview
-
 What people ask for and what they actually want are different things. They ask for "a dashboard" because that's what one asks for, not because a dashboard solves their problem. They say "make it faster" without a number to hit.
 
 The cheapest moment to find that gap is before any plan, spec, or code exists. Once building starts, switching costs are real, the user rationalizes the wrong thing into a "good enough" thing, and the misfit gets locked in.
@@ -174,23 +172,20 @@ The ask was never a dashboard. It was a list — different artifact, different s
 - **`spec-driven-development`** — downstream. Concrete confirmed intent hands off here to be written down.
 - **`doubt-driven-development`** — the far end of the same timeline. This skill is pre-decision intent extraction; doubt-driven is post-decision artifact review. Picking the wrong one wastes a round: nothing drafted yet → interview; a draft exists → doubt.
 
-## Common Rationalizations
+## Two moves that look wrong and aren't
 
-| Rationalization | Counter-move |
-|---|---|
-| "The ask is clear enough" / "questions waste their time" | Run Step 1 first. If you can't write their desired outcome in one sentence with a defensible number, it isn't clear — and they bear the cost of the wrong build, not you. |
-| "I'll figure it out as I build" | Switching costs after code exists are 10x what they are now. Discovery during implementation is rework. |
-| "If I attach my guess, I'm leading them" | Leading is the point: reacting beats generating from scratch. The real risk is sycophancy, so guess in directions you expect pushback on. |
-| "I should offer them several options" | Options work when the user knows what they want and is choosing trade-offs. They don't yet. Listing options widens the search; a guess-first question narrows it. (Two options are for breaking a **hollow yes**, not for opening.) |
+**Attaching your guess is not leading the witness.** Reacting beats generating
+from scratch, and a guess you can be visibly wrong about is what exposes your
+assumptions. The real risk is the opposite one — sycophancy — so guess in
+directions you expect pushback on.
 
-## Red Flags
+**Listing options is not the opening move.** Options work when the user knows
+what they want and is choosing between trade-offs; here they don't yet, so a
+menu widens the search where a guess-first question narrows it. Two concrete
+options are for breaking a **hollow yes**, not for opening.
 
-- Three or more questions in one message — batching, not interviewing
-- A question with no `GUESS:` line — surveying, not committing
-- A confidence number below ~70% with no reason attached — the user can't close a gap they can't see
-- A restate missing `Out of scope`, or (inside `new`/`retask`) missing 2–5 testable `Acceptance` lines
-- Three rounds with confidence flat — you're asking the wrong questions; reframe rather than continue
-- A spec, plan, or task file written before the user's explicit yes on the restate
+**Three rounds with the confidence number flat** means you are asking the wrong
+questions. Reframe rather than continue — the count is not the problem.
 
 ## Verification
 
@@ -200,3 +195,4 @@ The ask was never a dashboard. It was a list — different artifact, different s
 - [ ] The restate carried every line, including `Out of scope` and — for `new`/`retask` — 2–5 testable `Acceptance` checks
 - [ ] The confirming yes was explicit, not a **hollow yes**
 - [ ] **Predict-three** passed at the stop point, or the 8-question escalation fired
+- [ ] No spec, plan, or task file was written before that yes

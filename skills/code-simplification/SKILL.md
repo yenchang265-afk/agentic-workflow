@@ -1,6 +1,6 @@
 ---
 name: code-simplification
-description: Simplifies working code without changing behavior. Use when refactoring for clarity, or when code has accumulated unnecessary complexity.
+description: Reduces complexity in working code while preserving behavior exactly — comprehension speed, not line count. Use when refactoring recently changed code for clarity.
 ---
 
 # Code Simplification

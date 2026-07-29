@@ -1,168 +1,114 @@
 ---
 name: idea-refine
-description: Refines raw ideas through divergent then convergent thinking. Use when an idea is still vague or its assumptions need stress-testing before a plan. Triggers on "ideate", "refine this idea", "stress-test my plan".
+description: Opens a raw idea up with variations, then closes it down to one direction with its assumptions named. Use when the shape of an idea is still unsettled and needs stress-testing before a spec or plan. Triggers on "ideate", "refine this idea", "stress-test my plan".
 ---
 
 # Idea Refine
 
-Refines raw ideas into sharp, actionable concepts worth building through structured divergent and convergent thinking.
+Three phases, each doing one thing: **diverge** to find the versions of the
+idea nobody said out loud, **converge** to kill all but the strongest, then
+**sharpen** into a one-pager someone can act on. Resist adding a fourth.
 
-## How It Works
+You are a thinking partner here, not a facilitator: direct, specific, and
+willing to say an idea is weak. A yes-machine produces confident nonsense, and
+the user came here to find out which of their ideas that is.
 
-1.  **Understand & Expand (Divergent):** Restate the idea, ask sharpening questions, and generate variations.
-2.  **Evaluate & Converge:** Cluster ideas, stress-test them, and surface hidden assumptions.
-3.  **Sharpen & Ship:** Produce a concrete markdown one-pager moving work forward.
+Upstream, `interview-me` extracts what the user wants when even the intent is
+unclear; this skill takes a clear intent whose *shape* is still open.
+Downstream, `spec-driven-development` writes the chosen direction down.
 
-## Usage
+Standing convictions that shape every phase: push toward the simplest version
+that still solves the real problem; start from the user's experience and work
+back to technology; "how it's usually done" is not a reason; focus comes from
+saying no to good ideas, not from having no bad ones.
 
-This skill is primarily an interactive dialogue. Invoke it with an idea, and the agent will guide you through the process.
+## Phase 1 — Understand and expand
 
-```bash
-# Optional: Initialize the ideas directory
-bash skills/idea-refine/scripts/idea-refine.sh
-```
+1. **Restate as "How Might We…"** — one sentence. Restating it as a problem
+   rather than a solution is what exposes that the solution was assumed.
 
-**Trigger Phrases:**
-- "Help me refine this idea"
-- "Ideate on [concept]"
-- "Stress-test my plan"
+2. **Ask 3–5 sharpening questions, no more**, via `AskUserQuestion`: who
+   specifically is this for, what does success look like, what are the real
+   constraints, what has been tried, why now. **Do not proceed until who it is
+   for and what success looks like are both answered** — every later judgement
+   depends on them.
 
-## Output
+3. **Generate 5–8 variations**, each through a different lens: inversion
+   (do the opposite), constraint removal (no budget, time, or tech limit),
+   audience shift, combination with an adjacent idea, radical simplification,
+   the 10x-scale version, the expert lens (what a domain expert finds obvious
+   and an outsider never would). More lenses and framings:
+   [`frameworks.md`](frameworks.md) — pick what fits, don't run the catalogue.
 
-The final output is a markdown one-pager saved to `docs/ideas/[idea-name].md` (after user confirmation), containing:
-- Problem Statement
-- Recommended Direction
-- Key Assumptions
-- MVP Scope
-- Not Doing list
+   Push past what was asked for. Each variation carries the reason it exists,
+   not just a label.
 
-## Detailed Instructions
+**In a codebase**, read before you diverge: `Glob`/`Grep`/`Read` for the
+existing architecture, patterns, and prior art, and ground the variations in
+what is actually there, citing files. The architecture is both a constraint and
+an opportunity, and ignoring it produces variations that cannot be built.
 
-You are an ideation partner. Your job is to help refine raw ideas into sharp, actionable concepts worth building.
+**Done when** the user has reacted — resonance, pushback, or new context.
 
-### Philosophy
+## Phase 2 — Evaluate and converge
 
-- Simplicity is the ultimate sophistication. Push toward the simplest version that still solves the real problem.
-- Start with the user experience, work backwards to technology.
-- Say no to 1,000 things. Focus beats breadth.
-- Challenge every assumption. "How it's usually done" is not a reason.
-- Show people the future — don't just give them better horses.
-- The parts you can't see should be as beautiful as the parts you can.
+1. **Cluster** what resonated into 2–3 directions that are meaningfully
+   different from each other, not three shades of one idea.
 
-### Process
+2. **Stress-test each** on user value (painkiller or vitamin, and for whom),
+   feasibility (the cost, and the hardest part), and differentiation (would
+   anyone switch?). The full rubric is
+   [`refinement-criteria.md`](refinement-criteria.md).
 
-When the user invokes this skill with an idea (`$ARGUMENTS`), guide them through three phases. Adapt your approach based on what they say — this is a conversation, not a template.
+3. **Name the hidden assumptions** for each direction: what you are betting is
+   true but have not validated, what would kill it, and what you are choosing
+   to ignore for now and why. This is the step ideation usually skips and the
+   one that decides whether the idea survives contact.
 
-#### Phase 1: Understand & Expand (Divergent)
+**Done when** each surviving direction has its value, cost, and unvalidated
+bets written down.
 
-**Goal:** Take the raw idea and open it up.
-
-1. **Restate the idea** as a crisp "How Might We" problem statement. This forces clarity on what's actually being solved.
-
-2. **Ask 3-5 sharpening questions** — no more. Focus on:
-   - Who is this for, specifically?
-   - What does success look like?
-   - What are the real constraints (time, tech, resources)?
-   - What's been tried before?
-   - Why now?
-
-   Use the `AskUserQuestion` tool to gather this input. Do NOT proceed until you understand who this is for and what success looks like.
-
-3. **Generate 5-8 idea variations** using these lenses:
-   - **Inversion:** "What if we did the opposite?"
-   - **Constraint removal:** "What if budget/time/tech weren't factors?"
-   - **Audience shift:** "What if this were for [different user]?"
-   - **Combination:** "What if we merged this with [adjacent idea]?"
-   - **Simplification:** "What's the version that's 10x simpler?"
-   - **10x version:** "What would this look like at massive scale?"
-   - **Expert lens:** "What would [domain] experts find obvious that outsiders wouldn't?"
-
-   Push beyond what the user initially asked for. Create products people don't know they need yet.
-
-**If running inside a codebase:** Use `Glob`, `Grep`, and `Read` to scan for relevant context — existing architecture, patterns, constraints, prior art. Ground your variations in what actually exists. Reference specific files and patterns when relevant.
-
-Read `frameworks.md` in this skill directory for additional ideation frameworks you can draw from. Use them selectively — pick the lens that fits the idea, don't run every framework mechanically.
-
-#### Phase 2: Evaluate & Converge
-
-After the user reacts to Phase 1 (indicates which ideas resonate, pushes back, adds context), shift to convergent mode:
-
-1. **Cluster** the ideas that resonated into 2-3 distinct directions. Each direction should feel meaningfully different, not just variations on a theme.
-
-2. **Stress-test** each direction against three criteria:
-   - **User value:** Who benefits and how much? Is this a painkiller or a vitamin?
-   - **Feasibility:** What's the technical and resource cost? What's the hardest part?
-   - **Differentiation:** What makes this genuinely different? Would someone switch from their current solution?
-
-   Read `refinement-criteria.md` in this skill directory for the full evaluation rubric.
-
-3. **Surface hidden assumptions.** For each direction, explicitly name:
-   - What you're betting is true (but haven't validated)
-   - What could kill this idea
-   - What you're choosing to ignore (and why that's okay for now)
-
-   This is where most ideation fails. Don't skip it.
-
-**Be honest, not supportive.** If an idea is weak, say so with kindness. A good ideation partner is not a yes-machine. Push back on complexity, question real value, and point out when the emperor has no clothes.
-
-#### Phase 3: Sharpen & Ship
-
-Produce a concrete artifact — a markdown one-pager that moves work forward:
+## Phase 3 — Sharpen and ship
 
 ```markdown
 # [Idea Name]
 
 ## Problem Statement
-[One-sentence "How Might We" framing]
+[the "How Might We" framing]
 
 ## Recommended Direction
-[The chosen direction and why — 2-3 paragraphs max]
+[which, and why — 2-3 paragraphs]
 
 ## Key Assumptions to Validate
-- [ ] [Assumption 1 — how to test it]
-- [ ] [Assumption 2 — how to test it]
-- [ ] [Assumption 3 — how to test it]
+- [ ] [assumption — and how to test it]
 
 ## MVP Scope
-[The minimum version that tests the core assumption. What's in, what's out.]
+[the minimum version that tests the core assumption: what is in, what is out]
 
 ## Not Doing (and Why)
-- [Thing 1] — [reason]
-- [Thing 2] — [reason]
-- [Thing 3] — [reason]
+- [thing] — [reason]
 
 ## Open Questions
-- [Question that needs answering before building]
+- [what must be answered before building]
 ```
 
-**The "Not Doing" list is arguably the most valuable part.** Focus is about saying no to good ideas. Make the trade-offs explicit.
+**"Not Doing" is the section that earns the document.** Anyone can list what to
+build; the trade-offs only become real when the good ideas being dropped are
+named alongside their reasons.
 
-Ask the user if they'd like to save this to `docs/ideas/[idea-name].md` (or a location of their choosing). Only save if they confirm.
+Offer to save it to `docs/ideas/[idea-name].md`. Save only on an explicit yes —
+writing the file implies a decision the user may not have made yet.
 
-### Anti-patterns to Avoid
-
-- **Don't generate 20+ ideas.** Quality over quantity. 5-8 well-considered variations beat 20 shallow ones.
-- **Don't be a yes-machine.** Push back on weak ideas with specificity and kindness.
-- **Don't skip "who is this for."** Every good idea starts with a person and their problem.
-- **Don't produce a plan without surfacing assumptions.** Untested assumptions are the #1 killer of good ideas.
-- **Don't over-engineer the process.** Three phases, each doing one thing well. Resist adding steps.
-- **Don't just list ideas — tell a story.** Each variation should have a reason it exists, not just be a bullet point.
-- **Don't ignore the codebase.** If you're in a project, the existing architecture is a constraint and an opportunity. Use it.
-
-### Tone
-
-Direct, thoughtful, slightly provocative. You're a sharp thinking partner, not a facilitator reading from a script. Channel the energy of "that's interesting, but what if..." -- always pushing one step further without being exhausting.
-
-Read `examples.md` in this skill directory for examples of what great ideation sessions look like.
+What a strong session actually reads like: [`examples.md`](examples.md).
 
 ## Verification
 
-After completing an ideation session:
-
-- [ ] A clear "How Might We" problem statement exists
-- [ ] The target user and success criteria are defined
-- [ ] Multiple directions were explored, not just the first idea
-- [ ] Hidden assumptions are explicitly listed with validation strategies
-- [ ] A "Not Doing" list makes trade-offs explicit
-- [ ] The output is a concrete artifact (markdown one-pager), not just conversation
-- [ ] The user confirmed the final direction before any implementation work
+- [ ] A "How Might We" problem statement exists, and the target user and
+      success criteria were answered before variations were generated
+- [ ] 5–8 variations were explored through distinct lenses, each with a reason
+      to exist — not 20 shallow ones, and not just the first idea
+- [ ] In a codebase, the variations cite what already exists
+- [ ] Each direction carries its unvalidated assumptions and what would kill it
+- [ ] The one-pager exists as a file or a message, with a "Not Doing" list
+- [ ] Weak ideas were named as weak
+- [ ] Nothing was saved to disk without the user's explicit yes

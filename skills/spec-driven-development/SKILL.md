@@ -1,188 +1,105 @@
 ---
 name: spec-driven-development
-description: Writes a spec before any code. Use when starting a feature or project with no specification, or when requirements are ambiguous.
+description: Writes the spec that a build is judged against, before any code exists. Use when starting a feature or project with no written requirements, or when what "done" means is still ambiguous.
 ---
 
 # Spec-Driven Development
 
-## Overview
+A spec is the shared source of truth between you and the human: what is being
+built, why, and how anyone will know it is done. Code written without one is a
+guess whose wrongness surfaces at review instead of at the cheapest moment.
 
-Write a structured specification before writing any code. The spec is the shared source of truth between you and the human engineer — it defines what we're building, why, and how we'll know it's done. Code without a spec is guessing.
+Write one when starting a project or feature, when requirements are ambiguous,
+when the change spans several modules, or before an architectural decision.
+Skip it for single-line fixes and changes whose requirements are unambiguous
+and self-contained — those need acceptance criteria, not a document.
 
-## When to Use
-
-- Starting a new project or feature
-- Requirements are ambiguous or incomplete
-- The change touches multiple files or modules
-- You're about to make an architectural decision
-- The task would take more than 30 minutes to implement
-
-**When NOT to use:** Single-line fixes, typo corrections, or changes where requirements are unambiguous and self-contained.
-
-## The Gated Workflow
-
-Spec-driven development has four phases. Do not advance to the next phase until the current one is validated.
+## The gate
 
 ```
 SPECIFY ──→ PLAN ──→ TASKS ──→ IMPLEMENT
-   │          │        │          │
-   ▼          ▼        ▼          ▼
- Human      Human    Human      Human
- reviews    reviews  reviews    reviews
 ```
 
-### Phase 1: Specify
+Each arrow is a human review, and none of them is advisory: a plan built on an
+unvalidated spec inherits every misunderstanding in it. This skill owns
+SPECIFY. The three that follow have their own owners —
+`planning-and-task-breakdown` for PLAN and TASKS,
+`incremental-implementation` with `test-driven-development` for IMPLEMENT — and
+`context-engineering` for loading the right spec section at each step rather
+than the whole document.
 
-Start with a high-level vision. Ask the human clarifying questions until requirements are concrete.
+## Specify
 
-**Surface assumptions immediately.** Before writing any spec content, list what you're assuming and ask for correction (`using-agent-skills` → Surface Assumptions). The spec's entire purpose is to surface misunderstandings *before* code gets written — assumptions are the most dangerous form of misunderstanding.
+**Surface your assumptions before writing a line of it**
+(`using-agent-skills` → Surface Assumptions). The spec exists to catch
+misunderstandings before code does, and an unstated assumption is the form
+those take. Then ask clarifying questions until the requirements are concrete —
+when the ask is underspecified enough that you'd be guessing, `interview-me`
+is the tool for extracting it.
 
-**Write a spec document covering these six core areas:**
+Six areas, each of which leaks into every downstream task when missing:
 
-1. **Objective** — What are we building and why? Who is the user? What does success look like?
-
-2. **Commands** — Full executable commands with flags, not just tool names.
-   ```
-   Build: npm run build
-   Test: npm test -- --coverage
-   Lint: npm run lint --fix
-   Dev: npm run dev
-   ```
-
-3. **Project Structure** — Where source code lives, where tests go, where docs belong.
-   ```
-   src/           → Application source code
-   src/components → React components
-   src/lib        → Shared utilities
-   tests/         → Unit and integration tests
-   e2e/           → End-to-end tests
-   docs/          → Documentation
-   ```
-
-4. **Code Style** — One real code snippet showing your style beats three paragraphs describing it. Include naming conventions, formatting rules, and examples of good output.
-
-5. **Testing Strategy** — What framework, where tests live, coverage expectations, which test levels for which concerns.
-
-6. **Boundaries** — Three-tier system:
-   - **Always do:** Run tests before commits, follow naming conventions, validate inputs
-   - **Ask first:** Database schema changes, adding dependencies, changing CI config
-   - **Never do:** Commit secrets, edit vendor directories, remove failing tests without approval
-
-**Spec template:**
+1. **Objective** — what is being built, for whom, and what success looks like.
+2. **Commands** — full executable commands with flags (`npm test -- --coverage`),
+   not tool names.
+3. **Project structure** — where source, tests, and docs live.
+4. **Code style** — one real snippet in the project's style, plus the naming
+   and formatting rules it demonstrates. The snippet does the work; the prose
+   describes it.
+5. **Testing strategy** — framework, test locations, which level covers which
+   concern, coverage expectations.
+6. **Boundaries** — three tiers: **always do** (run tests before commits,
+   validate inputs), **ask first** (schema changes, new dependencies, CI
+   config), **never do** (commit secrets, edit vendored code, delete failing
+   tests).
 
 ```markdown
-# Spec: [Project/Feature Name]
+# Spec: [Name]
 
 ## Objective
-[What we're building and why. User stories or acceptance criteria.]
-
 ## Tech Stack
-[Framework, language, key dependencies with versions]
-
 ## Commands
-[Build, test, lint, dev — full commands]
-
 ## Project Structure
-[Directory layout with descriptions]
-
 ## Code Style
-[Example snippet + key conventions]
-
 ## Testing Strategy
-[Framework, test locations, coverage requirements, test levels]
-
 ## Boundaries
-- Always: [...]
-- Ask first: [...]
-- Never: [...]
-
+- Always / Ask first / Never
 ## Success Criteria
-[How we'll know this is done — specific, testable conditions]
-
 ## Open Questions
-[Anything unresolved that needs human input]
 ```
 
-**Reframe instructions as success criteria.** When receiving vague requirements, translate them into concrete conditions:
+## Turn vague requirements into success criteria
+
+A requirement you cannot test is a requirement you cannot finish. Translate it,
+then confirm the translation before building against it:
 
 ```
 REQUIREMENT: "Make the dashboard faster"
 
-REFRAMED SUCCESS CRITERIA:
-- Dashboard LCP < 2.5s on 4G connection
-- Initial data load completes in < 500ms
+SUCCESS CRITERIA:
+- Dashboard LCP < 2.5s on 4G
+- Initial data load < 500ms
 - No layout shift during load (CLS < 0.1)
 → Are these the right targets?
 ```
 
-This lets you loop, retry, and problem-solve toward a clear goal rather than guessing what "faster" means.
+The numbers may be wrong, and that is the point: a wrong number gets corrected
+in one message, where "faster" gets built wrong and corrected in a rebuild.
+Anything still unresolved goes in **Open Questions** rather than being decided
+silently — inventing a requirement is the human's call, not yours.
 
-### Phase 2: Plan
+## Keep it alive
 
-With the validated spec, generate a technical implementation plan:
-
-1. Identify the major components and their dependencies
-2. Determine the implementation order (what must be built first)
-3. Note risks and mitigation strategies
-4. Identify what can be built in parallel vs. what must be sequential
-5. Define verification checkpoints between phases
-
-> Follow `planning-and-task-breakdown` for the dependency-graph mapping and vertical-slicing mechanics behind these steps; it is the canonical source. The bullets above are a lightweight summary; if they ever diverge, `planning-and-task-breakdown` takes precedence.
-
-The plan should be reviewable: the human should be able to read it and say "yes, that's the right approach" or "no, change X."
-
-### Phase 3: Tasks
-
-Break the plan into discrete, implementable tasks:
-
-- Each task should be completable in a single focused session
-- Each task has explicit acceptance criteria
-- Each task includes a verification step (test, build, manual check)
-- Tasks are ordered by dependency, not by perceived importance
-- No task should require changing more than ~5 files
-
-> Follow `planning-and-task-breakdown` for the full task-sizing and dependency-ordering mechanics; it is the canonical source. The template below is a lightweight inline form; if they ever diverge, `planning-and-task-breakdown` takes precedence.
-
-**Task template:**
-```markdown
-- [ ] Task: [Description]
-  - Acceptance: [What must be true when done]
-  - Verify: [How to confirm — test command, build, manual check]
-  - Files: [Which files will be touched]
-```
-
-### Phase 4: Implement
-
-Execute tasks one at a time following `skills/incremental-implementation/SKILL.md` (`incremental-implementation`) and `skills/test-driven-development/SKILL.md` (`test-driven-development`). Use `skills/context-engineering/SKILL.md` (`context-engineering`) to load the right spec sections and source files at each step rather than flooding the agent with the entire spec.
-
-## Keeping the Spec Alive
-
-The spec is a living document, not a one-time artifact:
-
-- **Update when decisions change** — If you discover the data model needs to change, update the spec first, then implement.
-- **Update when scope changes** — Features added or cut should be reflected in the spec.
-- **Commit the spec** — The spec belongs in version control alongside the code.
-- **Reference the spec in PRs** — Link back to the spec section that each PR implements.
-
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "This is simple, I don't need a spec" | Simple tasks don't need *long* specs, but they still need acceptance criteria. A two-line spec is fine. |
-| "I'll write the spec after I code it" | That's documentation, not specification. The spec's value is in forcing clarity *before* code. |
-| "Requirements will change anyway" | That's why the spec is a living document. An outdated spec is still better than no spec. |
-
-## Red Flags
-
-- Starting to write code without any written requirements
-- Implementing features not mentioned in any spec or task list
+The spec is version-controlled alongside the code, updated **before** the
+implementation when a decision or a scope changes, and linked from the PR that
+implements each section. A spec updated after the fact is documentation; its
+value was in constraining the code that already got written.
 
 ## Verification
 
-Before proceeding to implementation, confirm:
-
-- [ ] The spec covers all six core areas
-- [ ] The human has reviewed and approved the spec
-- [ ] Success criteria are specific and testable
-- [ ] Boundaries (Always/Ask First/Never) are defined
-- [ ] The spec is saved to a file in the repository
+- [ ] All six areas are covered, and Code Style carries a real snippet
+- [ ] Every success criterion is specific and testable
+- [ ] Boundaries name always / ask-first / never
+- [ ] Assumptions were stated and corrected before the spec was written
+- [ ] Anything undecided sits in Open Questions rather than being invented
+- [ ] The human has reviewed the spec, and it is committed to the repository
