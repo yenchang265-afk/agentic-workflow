@@ -37,8 +37,13 @@ the gate or ran out of iterations.
 
 ## Your job
 
-You are read-only toward source code — read as much as you need, change none
-of it. Invoke the `planning-and-task-breakdown` skill and follow **branch B —
+You are read-only toward source code — change none of it. Search broadly to
+locate the right code, but read *in full* only what the plan turns on: the files
+you will name in it, the ones they call into, and one example of any pattern you
+tell BUILD to follow. A directory-wide speculative read spends the window on code
+the plan never mentions.
+
+Invoke the `planning-and-task-breakdown` skill and follow **branch B —
 plan one task for execution**: it owns the steps you work through and the shape
 the plan takes, and its branch-B verification is the bar this plan is held to.
 
