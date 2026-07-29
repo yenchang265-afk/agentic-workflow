@@ -8,7 +8,10 @@ import {
   applyAdoPatEnv,
   bareModel,
   checksFor,
+  concurrencyFor,
+  concurrentStages,
   unknownStageCheckKeys,
+  unknownStageConcurrencyKeys,
   DEFAULT_CONFIG,
   DEFAULT_ENABLED_KINDS,
   defaultTrackerSystem,
@@ -381,6 +384,39 @@ test("enforcesAxisCoverage: lenses that do NOT span the axes keep today's docume
 test("enforcesAxisCoverage: a stage requiring no axes is never gated", () => {
   const c = { ...DEFAULT_CONFIG, reviewLenses: AXES }
   assert.equal(enforcesAxisCoverage(c, "engineering", checkStage({ requiredAxes: undefined })), false)
+})
+
+test("concurrencyFor defaults to 1 — every existing loop runs its passes sequentially", () => {
+  assert.equal(concurrencyFor(DEFAULT_CONFIG, "engineering", checkStage(), 5), 1)
+  assert.equal(concurrencyFor(parseConfig({ workflows: { engineering: {} } }), "engineering", checkStage(), 5), 1)
+})
+
+test("concurrencyFor reads the configured value, clamped to the pass count and floored at 1", () => {
+  const c = parseConfig({ workflows: { engineering: { stageConcurrency: { review: 3 } } } })
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 5), 3)
+  // Concurrency beyond the number of passes buys nothing and would make the
+  // pool's own bookkeeping lie, so it is clamped — a single-pass stage is always 1.
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 2), 2)
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 1), 1)
+})
+
+test("parseConfig rejects a non-positive stageConcurrency", () => {
+  assert.throws(() => parseConfig({ workflows: { engineering: { stageConcurrency: { review: 0 } } } }), /Invalid/)
+  assert.throws(() => parseConfig({ workflows: { engineering: { stageConcurrency: { review: 1.5 } } } }), /Invalid/)
+})
+
+test("unknownStageConcurrencyKeys names entries that match no stage of the kind", () => {
+  const c = parseConfig({ workflows: { engineering: { stageConcurrency: { review: 5, REVIEW: 5, triage: 2 } } } })
+  assert.deepEqual(unknownStageConcurrencyKeys(c, "engineering", ["plan", "build", "verify", "review"]), ["REVIEW", "triage"])
+  assert.deepEqual(unknownStageConcurrencyKeys(DEFAULT_CONFIG, "engineering", ["review"]), [])
+})
+
+test("concurrentStages names the stages a host that cannot parallelize must warn about", () => {
+  // The Claude/Qwen hosts cannot honor the knob, and silence would read as
+  // "parallel passes are on". A value of 1 is not a request to parallelize.
+  const c = parseConfig({ workflows: { engineering: { stageConcurrency: { review: 5, verify: 1, nope: 4 } } } })
+  assert.deepEqual(concurrentStages(c, "engineering", ["verify", "review"]), ["review"])
+  assert.deepEqual(concurrentStages(DEFAULT_CONFIG, "engineering", ["review"]), [])
 })
 
 test("unknownStageModelKeys names stageModels entries that match no stage of the kind", () => {

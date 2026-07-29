@@ -110,6 +110,16 @@ recommends perspective-diverse verification).
   the same session (parallel sessions are ruled out by the same SDK finding
   as plan 01 — the verdict tool lives in this instance):
 
+  > **Superseded.** That ruling-out over-applied plan 01, whose finding is about
+  > a session pointed at a different `directory` (it boots a second app
+  > instance, where this plugin — and so `workflow_verdict` — does not exist).
+  > A **sibling session in the same directory** keeps the verdict channel, and
+  > giving each pass its own session is exactly what makes the per-pass verdict,
+  > axis requirement and evidence ledger separable, since all three are keyed by
+  > session. The OpenCode driver does that under
+  > `workflows.<kind>.stageConcurrency` (default 1, so the behavior described
+  > below is still what an unconfigured loop does).
+
   1. Pass k appends to the composed args:
      `Review lens ${k}/${N}: focus exclusively on ${lens}. Other lenses are covered by separate passes.`
   2. After each pass, `takeVerdict(sessionID, "review")`; clear

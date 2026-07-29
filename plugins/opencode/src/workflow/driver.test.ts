@@ -4,6 +4,7 @@ import { PLAN_HEADING } from "@agentic-workflow/core/task/store"
 import { serializeTask } from "@agentic-workflow/core/task/schema"
 import { firstStep } from "@agentic-workflow/core/workflow/engine"
 import type { CheckResult } from "@agentic-workflow/core/workflow/checks"
+import type { VerdictRecord } from "@agentic-workflow/core/workflow/verdict"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import type { Config } from "../config.ts"
 import {
@@ -1976,6 +1977,108 @@ const axisConfig: Config = {
 }
 
 /** Run the review stage fanned out over its five axes; `onCall(n, deps)` runs before the nth command returns. */
+/**
+ * The same five-axis fan-out, run concurrently.
+ *
+ * `onCall` receives the pass's OWN session id — the thing concurrency turns on:
+ * every per-pass table (`recordedVerdicts`, `axisRequirement`,
+ * `observedEvidence`) is keyed by session, so a pass recording a verdict has to
+ * record it against its own session or it lands on a sibling.
+ *
+ * Each command blocks until `release()` is called, so a test can hold every pass
+ * open at once and prove they really overlap rather than inferring it from a
+ * call count a sequential loop would also produce.
+ */
+const runConcurrentAxisReview = async (
+  sessionID: string,
+  concurrency: number,
+  onCall: (passSessionID: string, focus: string, deps: Deps) => void,
+  opts: { warns?: string[]; hold?: boolean } = {},
+) => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const config: Config = {
+    ...testConfig,
+    workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: concurrency } } },
+  }
+  let created = 0
+  const createdIds: string[] = []
+  const deleted: string[] = []
+  const targeted: string[] = []
+  let inFlight = 0
+  let maxInFlight = 0
+  const gates: (() => void)[] = []
+  // Latching, not one-shot: a pass whose verdict was rejected fires a SECOND
+  // command (the verdict retry), and a release that only drained the gates
+  // queued at the time would leave that retry blocked forever.
+  let released = false
+  const release = () => {
+    released = true
+    for (const g of gates.splice(0)) g()
+  }
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      create: async (req: { body?: { parentID?: string; title?: string } }) => {
+        const id = `${sessionID}-pass-${++created}`
+        createdIds.push(id)
+        assert.equal(req?.body?.parentID, sessionID, "a pass session must be a child of the driving session")
+        return { data: { id, parentID: req?.body?.parentID } }
+      },
+      delete: async (req: { path: { id: string } }) => {
+        deleted.push(req.path.id)
+        return { data: true }
+      },
+      abort: async () => ({ data: true }),
+      command: async (req: { path: { id: string }; body?: { arguments?: string } }) => {
+        const passSessionID = req.path.id
+        targeted.push(passSessionID)
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        // The focus this pass was told to cover, read back out of the prompt the
+        // driver appended (`passFocusBlock`) — the same string the pass agent sees.
+        const focus = /REVIEW AXIS \d+\/\d+: ([a-z]+)\./.exec(req?.body?.arguments ?? "")?.[1] ?? ""
+        if (opts.hold && !released) await new Promise<void>((r) => gates.push(r))
+        onCall(passSessionID, focus, deps)
+        inFlight--
+        return { data: { parts: [{ type: "text", text: `review ${focus}` }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = {
+    client,
+    $: makeShellFS({}, []),
+    directory: "/repo",
+    log: (level, msg) => {
+      if (level === "warn") opts.warns?.push(msg)
+    },
+  }
+  const run = runStagePasses(
+    deps,
+    sessionID,
+    config,
+    manifestFor("engineering"),
+    { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
+    "review",
+    "goal args",
+    0,
+  )
+  return {
+    run: async () => {
+      try {
+        return await run
+      } finally {
+        clearWorkflow(sessionID)
+      }
+    },
+    release,
+    createdIds: () => createdIds,
+    deleted: () => deleted,
+    targeted: () => targeted,
+    maxInFlight: () => maxInFlight,
+  }
+}
+
 const runAxisReview = async (
   sessionID: string,
   onCall: (call: number, deps: Deps) => void,
@@ -2039,6 +2142,142 @@ const recordAxis = (sessionID: string, call: number, over: Partial<{ verdict: "P
       ],
     }),
   )
+
+// --- concurrent fan-out: stageConcurrency ---
+
+test("fan-out stays sequential by default — no pass sessions are opened", async () => {
+  // The default path must be the one every loop already takes: one session, no
+  // session.create. The fake client below has NO create method, so a driver that
+  // tried would fall back with a warn — assert there is none.
+  const warns: string[] = []
+  const { calls } = await runAxisReview("sess-conc-default", (call) => {
+    // Each pass records its OWN axis — passes fire in manifest order.
+    recordVerdict("sess-conc-default", "review", worked("sess-conc-default", { verdict: "PASS", axes: [{ axis: FIVE[call - 1]!, verdict: "PASS" }] }))
+  }, warns)
+  assert.equal(calls(), 5, "still one pass per axis, no verdict retries")
+  assert.ok(!warns.some((w) => /could not open a session/.test(w)), `no pass sessions: ${warns.join(" | ")}`)
+})
+
+test("stageConcurrency runs the axis passes at the same time, each in its own session", async () => {
+  const h = await runConcurrentAxisReview("sess-conc-par", 5, (passSessionID, focus) => {
+    recordVerdict(passSessionID, "review", worked(passSessionID, { verdict: "PASS", axes: [{ axis: focus, verdict: "PASS" }] }))
+  }, { hold: true })
+  // Every pass is held open before any is released — if the driver were still
+  // sequential this would deadlock rather than reach 5 in flight.
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(h.maxInFlight(), 5, "all five passes in flight at once")
+  h.release()
+  const { verdict, record } = await h.run()
+  assert.equal(verdict, "PASS")
+  assert.equal(h.createdIds().length, 5, "one session per pass")
+  assert.deepEqual([...h.targeted()].sort(), [...h.createdIds()].sort(), "each pass fired on its OWN session")
+  assert.deepEqual([...h.deleted()].sort(), [...h.createdIds()].sort(), "and every pass session is torn down")
+  assert.deepEqual(record?.axes?.map((a) => a.axis).sort(), [...FIVE].sort(), "all five axes merged")
+})
+
+test("a concurrent pass's verdict is admitted against ITS OWN axis requirement", async () => {
+  // The reason passes needed their own sessions. `axisRequirement` is keyed by
+  // session; sharing one slot meant whichever pass armed last decided which axis
+  // every verdict was judged against, so four of five would be rejected for not
+  // covering an axis they were told not to review.
+  const h = await runConcurrentAxisReview("sess-conc-axis", 5, (passSessionID, focus) => {
+    const r = recordVerdict(passSessionID, "review", worked(passSessionID, { verdict: "PASS", axes: [{ axis: focus, verdict: "PASS" }] }))
+    assert.ok(r.accepted, `pass "${focus}" must be accepted against its own axis: ${r.message}`)
+  }, { hold: true })
+  await new Promise((r) => setTimeout(r, 20))
+  h.release()
+  const { verdict, record } = await h.run()
+  assert.equal(verdict, "PASS")
+  assert.equal(record?.axes?.length, 5)
+})
+
+test("one concurrent pass's evidence cannot corroborate another's PASS", async () => {
+  // `observedEvidence` is keyed by session too. On a shared slot, a pass that ran
+  // nothing would be corroborated by a sibling's commands — the exact fabrication
+  // requireEvidence exists to catch.
+  const h = await runConcurrentAxisReview("sess-conc-ev", 5, (passSessionID, focus) => {
+    // Only the FIRST axis does observable work; the others cite it without doing it.
+    const rec: VerdictRecord =
+      focus === FIVE[0]
+        ? worked(passSessionID, { verdict: "PASS", axes: [{ axis: focus, verdict: "PASS" as const }] })
+        : { verdict: "PASS", axes: [{ axis: focus, verdict: "PASS" }], evidence: [{ kind: "command", ref: "npm test", result: "42 passed" }] }
+    const r = recordVerdict(passSessionID, "review", rec)
+    if (focus !== FIVE[0]) assert.ok(!r.accepted, `pass "${focus}" observed nothing and must not ride on a sibling's work`)
+  }, { hold: true })
+  await new Promise((r) => setTimeout(r, 20))
+  h.release()
+  await h.run()
+})
+
+test("concurrent passes keep records index-aligned with passes, whatever order they finish in", async () => {
+  // `combineRecords` and the missing-pass detection both read records[i] against
+  // passes[i]; append-order collection would scramble them under concurrency.
+  const order: string[] = []
+  const h = await runConcurrentAxisReview("sess-conc-order", 5, (passSessionID, focus) => {
+    order.push(focus)
+    recordVerdict(passSessionID, "review", worked(passSessionID, { verdict: "PASS", axes: [{ axis: focus, verdict: "PASS" }] }))
+  }, { hold: true })
+  await new Promise((r) => setTimeout(r, 20))
+  h.release()
+  const { output, record } = await h.run()
+  assert.equal(record?.axes?.length, 5)
+  // The stage output is assembled in PASS order (manifest axis order), not in
+  // completion order.
+  const seen = FIVE.map((axis) => output.indexOf(`### Review axis: ${axis}`))
+  assert.ok(seen.every((i) => i >= 0), `every axis section present: ${output}`)
+  assert.deepEqual([...seen].sort((a, b) => a - b), seen, `sections in pass order, not completion order (${order.join(",")})`)
+})
+
+test("a pass that cannot open its own session takes turns on the shared one, never overlaps", async () => {
+  // `session.create` failing must degrade to sequential, not to two passes
+  // sharing one session concurrently — on a shared session `axisRequirement`,
+  // `observedEvidence` and `recordedVerdicts` are one slot each, so overlapping
+  // is the exact cross-admission the per-pass session exists to prevent.
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  const sessionID = "sess-conc-fallback"
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const warns: string[] = []
+  let inFlight = 0
+  let maxInFlight = 0
+  let call = 0
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      create: async () => {
+        throw new Error("no sessions today")
+      },
+      delete: async () => ({ data: true }),
+      abort: async () => ({ data: true }),
+      command: async (req: { path: { id: string } }) => {
+        assert.equal(req.path.id, sessionID, "the fallback runs on the driving session")
+        inFlight++
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((r) => setTimeout(r, 5))
+        recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: [{ axis: FIVE[call++]!, verdict: "PASS" }] }))
+        inFlight--
+        return { data: { parts: [{ type: "text", text: "review" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: (level, msg) => void (level === "warn" && warns.push(msg)) }
+  try {
+    const { verdict } = await runStagePasses(
+      deps,
+      sessionID,
+      { ...testConfig, workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: 5 } } } },
+      manifestFor("engineering"),
+      { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
+      "review",
+      "goal args",
+      0,
+    )
+    assert.equal(maxInFlight, 1, "shared-session passes must never overlap")
+    assert.equal(verdict, "PASS")
+    assert.ok(warns.some((w) => /could not open a session/.test(w)), `the degrade is announced: ${warns.join(" | ")}`)
+  } finally {
+    clearWorkflow(sessionID)
+  }
+})
 
 test("fan-out: one pass fires per required axis, in manifest order, each told to review only its own", async () => {
   const sessionID = "sess-axis-order"

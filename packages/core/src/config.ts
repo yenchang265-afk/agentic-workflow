@@ -171,6 +171,22 @@ const BaseConfigSchema = z.object({
          */
         stageFanout: z.record(z.string(), z.enum(["axis", "none"])).optional(),
         /**
+         * Stage name → how many of that stage's focused passes may run at once.
+         * Default 1 (sequential), which is what every existing loop does.
+         *
+         * A fanned-out check stage's passes are independent by construction —
+         * each is a read-only review of the same work tree, told to cover its own
+         * axis or lens and not the others, merged worst-wins — so running them
+         * concurrently is a latency win, not a semantic change. It is opt-in
+         * because it is a COST change: N passes in flight means N concurrent
+         * model sessions against the user's rate limit.
+         *
+         * Value space is positive integers — no shell, no path — so, like
+         * `stageContext`, this is safe to honor from the repo layer. Capped at
+         * the stage's pass count; a value on a single-pass stage is inert.
+         */
+        stageConcurrency: z.record(z.string(), z.number().int().positive()).optional(),
+        /**
          * Stage name → the check commands the driver runs in that stage's work
          * tree before firing it; replaces the manifest stage's `checks`
          * wholesale, mirroring `stageModels` over `model`. This is the
@@ -631,6 +647,45 @@ export const fanoutOverriddenByLenses = (config: Config, kind: string, def: Stag
  */
 export const unknownStageFanoutKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
   Object.keys(config.workflows[kind]?.stageFanout ?? {}).filter((name) => !stageNames.includes(name))
+
+/**
+ * How many of a stage's focused passes may be in flight at once: config
+ * `workflows.<kind>.stageConcurrency.<stage>`, else 1 (sequential — today's
+ * behavior for every loop).
+ *
+ * Clamped to `passCount` because concurrency beyond the number of passes buys
+ * nothing and would make the pool's own bookkeeping lie, and floored at 1 so a
+ * stage always makes progress. A single-pass stage is therefore always 1,
+ * whatever the config says. Pure.
+ */
+export const concurrencyFor = (config: Config, kind: string, def: StageDef, passCount: number): number => {
+  const configured = config.workflows[kind]?.stageConcurrency?.[def.name] ?? 1
+  return Math.max(1, Math.min(configured, passCount))
+}
+
+/**
+ * The `stageConcurrency` keys that name no stage of `kind` — the same
+ * silent-default trap `unknownStageFanoutKeys` closes, and a worse one to hit
+ * here: a typo'd stage stays sequential, so the setting reads as "parallelism
+ * doesn't work" rather than "that stage does not exist". Pure.
+ */
+export const unknownStageConcurrencyKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
+  Object.keys(config.workflows[kind]?.stageConcurrency ?? {}).filter((name) => !stageNames.includes(name))
+
+/**
+ * Stages this config asks to run concurrently — used by hosts that cannot honor
+ * it, so the knob never silently does nothing.
+ *
+ * Only the OpenCode driver owns its pass loop and can run passes concurrently.
+ * On the Claude/Qwen hosts the ORCHESTRATOR spawns the pass subagents while the
+ * MCP server keeps one armed pass, one stage marker and one evidence ledger —
+ * all three read by the PreToolUse/SubagentStop hooks — so a pass has no
+ * identity to attribute a verdict, a marker or a tool call to. Pure.
+ */
+export const concurrentStages = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
+  Object.entries(config.workflows[kind]?.stageConcurrency ?? {})
+    .filter(([name, n]) => stageNames.includes(name) && (n ?? 1) > 1)
+    .map(([name]) => name)
 
 /**
  * Build a tracker deep link from a task's `tracker.key` and the configured

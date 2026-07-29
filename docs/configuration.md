@@ -773,6 +773,33 @@ Impact on the commands:
   lens setup keeps behaving exactly as it did; both hosts warn when a configured
   lens list is overriding a declared fan-out. A key naming no stage is accepted,
   ignored, and warned about, exactly like `stageModels`.
+- **`workflows.<kind>.stageConcurrency`** — stage name → how many of that
+  stage's focused passes may run **at once**. Default `1` (sequential — what
+  every loop does today). Applies to both multi-pass regimes above:
+  `stageFanout`'s per-axis passes and `reviewLenses`' lens passes.
+
+  ```jsonc
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 5 } } } }
+  ```
+
+  A fanned-out check stage's passes are independent by construction — each is a
+  read-only review of the same work tree, told to cover its own axis or lens and
+  not the others, merged worst-wins — so running them together is a latency win,
+  not a semantic change: a five-axis review costs about one review instead of
+  five.
+
+  It is **opt-in because it is a cost change**: N passes in flight means N
+  concurrent model sessions against your rate limit. The value is clamped to the
+  stage's pass count, so a single-pass stage is unaffected whatever you set.
+
+  **OpenCode only.** Each pass gets its own session there, which is what makes
+  the per-pass verdict, axis requirement and evidence ledger separable. The
+  Claude Code and Qwen Code hosts spawn pass subagents from the orchestrator
+  while the MCP server keeps one armed pass, one stage marker and one evidence
+  ledger — all three read by the guard hooks — so a pass has no identity to
+  attribute a verdict or a tool call to; those hosts **warn** rather than
+  silently ignoring the knob. A key naming no stage is accepted, ignored, and
+  warned about, exactly like `stageModels`.
 - Secrets echoed into audit notes, plans, or run logs are **shape-redacted**
   (`AKIA…`, `sk-…`, tokens, PEM blocks, `key/secret/token: …` assignments)
   before they are written and committed.
