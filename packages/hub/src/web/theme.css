@@ -1770,14 +1770,24 @@ body {
   color: var(--text);
   padding: var(--sp-5);
   font-family: var(--font-sans);
-  /* A flex column whose BODY scrolls, not the dialog. Scrolling the dialog
-     itself carried the header (and its Close button) off-screen on a long
-     plan, and would do the same to the gate buttons in the footer — which are
-     the reason the drawer exists. */
-  display: flex;
-  flex-direction: column;
   gap: var(--sp-3);
   overflow: hidden;
+}
+
+/* The `display` MUST stay scoped to [open]. The UA sheet hides a closed dialog
+   with `dialog:not([open]) { display: none }`, and any author `display` on the
+   element beats it — an unscoped `display: flex` here left the activity drawer
+   (mounted in the header, so present on every screen) painted as a blank
+   736px-wide panel across the top right, in front of the tabs it covered and
+   eating their clicks.
+
+   A flex column whose BODY scrolls, not the dialog. Scrolling the dialog itself
+   carried the header (and its Close button) off-screen on a long plan, and
+   would do the same to the gate buttons in the footer — which are the reason
+   the drawer exists. */
+.drawer[open] {
+  display: flex;
+  flex-direction: column;
 }
 .drawer::backdrop {
   background: rgb(0 0 0 / 0.55);
