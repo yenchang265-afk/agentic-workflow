@@ -18,6 +18,7 @@ const board = (kind: string, sourceType: KindBoardInfo["sourceType"]): KindBoard
 const BOARDS: readonly KindBoardInfo[] = [
   board("engineering", "backlog"),
   board("pr-sitter", "pull-request"),
+  board("review-sitter", "pull-request"),
   board("dep-sitter", "dependency-scan"),
   board("main-sitter", "ci-runs"),
 ]
@@ -68,7 +69,10 @@ test("a section for a kind that isn't installed is reported as inert", () => {
 test("valid knobs, universal keys, and the structured trigger/stageModels produce no warnings", () => {
   const w = lint({
     engineering: { enabled: true, stageModels: { build: "anthropic/claude-sonnet-4-5" } },
+    // `maxDiffLines` rides along here on purpose: core's schema types it, so a
+    // bad value fails the load loudly and "silently ignored" would be a lie.
     "pr-sitter": { enabled: true, codePlatform: "ado", query: "is:open", trigger: { type: "cron", schedule: "0 * * * *" } },
+    "review-sitter": { enabled: true, maxDiffLines: 500 },
     "dep-sitter": { severityFloor: "high", includeOutdated: true, ecosystem: "npm" },
     "main-sitter": { branch: "main" },
   })

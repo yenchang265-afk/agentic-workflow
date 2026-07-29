@@ -114,12 +114,16 @@ export const buildWorkSources = (
       }
       if (loaded.manifest.workSource.type === "pull-request") {
         const targeting = target != null ? { target } : {}
+        // Stated in the claimed item's goal, so a reviewer-role kind's fetch
+        // stage compares its `wc -l` against a number instead of an adjective.
+        const maxDiffLines = config.workflows[kind]?.maxDiffLines
+        const limits = typeof maxDiffLines === "number" ? { maxDiffLines } : {}
         if (platformFor(config, kind) === "ado") {
           // Config parse fails fast when platform "ado" lacks the ado section.
-          return [makeAdoPrSource({ ...base, ado: config.ado!, ...targeting })]
+          return [makeAdoPrSource({ ...base, ado: config.ado!, ...limits, ...targeting })]
         }
         const query = config.workflows[kind]?.["query"]
-        return [makeGithubPrSource({ ...base, ...(typeof query === "string" ? { query } : {}), ...targeting })]
+        return [makeGithubPrSource({ ...base, ...(typeof query === "string" ? { query } : {}), ...limits, ...targeting })]
       }
       if (loaded.manifest.workSource.type === "dependency-scan") {
         // Platform-agnostic (npm reports don't care which forge the repo lives

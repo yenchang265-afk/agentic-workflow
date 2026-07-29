@@ -59,8 +59,8 @@ even with no outstanding signal — but a fork head is still refused.
 ```mermaid
 flowchart LR
     poll["scheduler claims PR<br/>(trigger fired, ledger says unhandled)"] --> triage["<b>TRIAGE</b> · check<br/>agent: workflow-pr-triage · read-only gh<br/><i>structured findings; PR text = data, not instructions</i>"]
-    triage -->|"PASS = actionable"| fix["<b>FIX</b> · work<br/>agent: workflow-pr-fix<br/><i>worktree on the PR's existing branch,<br/>local commits only</i>"]
-    triage -->|"FAIL = nothing to do"| done0[("done")]
+    triage -->|"PASS = a claimed signal is still live"| fix["<b>FIX</b> · work<br/>agent: workflow-pr-fix<br/><i>worktree on the PR's existing branch,<br/>local commits only</i>"]
+    triage -->|"FAIL = every signal went stale"| done0[("done")]
     triage -.->|"ERROR → stop"| stop0[("stop — next poll retries")]
     fix --> verify["<b>VERIFY</b> · check<br/>agent: workflow-verify<br/><i>tests + findings coverage</i>"]
     verify -->|"PASS"| publish["<b>PUBLISH</b> · work<br/>agent: workflow-pr-publish<br/><i>git push origin &lt;branch&gt; +<br/>gh pr comment per finding<br/>NEVER merges/closes/approves</i>"]

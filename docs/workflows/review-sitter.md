@@ -60,6 +60,14 @@ head is still refused.
 - **`workflows.review-sitter.enabled`** — default off.
 - **`workflows.review-sitter.query`** — GitHub only; default
   `is:open review-requested:@me`.
+- **`workflows.review-sitter.maxDiffLines`** — default **2000**. The fetch stage
+  measures the diff (`gh pr diff <n> | wc -l`, or a local `git diff` on ADO) and
+  FAILs the PR — declining the review rather than skimming it — when the count
+  is above this. The limit is stated in the claimed item's goal, so the stage
+  compares against a number; it used to be told to FAIL on an "unreviewably
+  large" diff and given nothing to compare against, which put the decision on
+  whatever the model felt that run. Raise it for repos whose PRs routinely carry
+  lockfiles or generated code.
 
 ## Example: One-shot review of a PR
 

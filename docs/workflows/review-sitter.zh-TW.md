@@ -61,6 +61,13 @@ FETCH → ASSESS → PUBLISH（沒有重試迴圈）
 - **`workflows.review-sitter.enabled`** —— 預設關閉。
 - **`workflows.review-sitter.query`** —— 僅限 GitHub；預設為
   `is:open review-requested:@me`。
+- **`workflows.review-sitter.maxDiffLines`** —— 預設 **2000**。fetch 階段會量測
+  diff 大小（`gh pr diff <n> | wc -l`；在 ADO 上改用本機 `git diff`），當行數
+  超過這個值時就把該 PR 判成 FAIL——寧可婉拒審查，也不要草草掃過。這個上限會
+  寫進被認領項目的 goal，所以該階段比對的是一個數字；在此之前它只被告知遇到
+  「大到無法審查」的 diff 就 FAIL，卻沒有任何可比對的對象，等於把這個決定交給
+  模型當下的感覺。若你的 repo 的 PR 常帶著 lock 檔或產生出來的程式碼，就把它
+  調高。
 
 ## 範例：一次性審查一個 PR
 

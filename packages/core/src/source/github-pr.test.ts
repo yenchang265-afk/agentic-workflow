@@ -98,6 +98,32 @@ const source = (
     ...(opts.target != null ? { target: opts.target } : {}),
   })
 
+// The wiring that makes `workflows.review-sitter.maxDiffLines` mean anything:
+// config → source deps → the claimed item's goal → the fetch stage's comparison.
+// Break any link and the key still parses, the source still claims, and the
+// stage silently goes back to deciding "unreviewably large" for itself.
+test("a reviewer-role source states its configured diff limit in the claimed goal", async () => {
+  const reviewer = loadManifest(WORKFLOWS_DIR, "review-sitter")
+  const claim = async (maxDiffLines?: number) => {
+    const { item } = await makeGithubPrSource({
+      $: scriptedShell([
+        { cmd: "gh api user", result: { stdout: "sitter-bot\n" } },
+        { cmd: "gh pr list", result: { stdout: JSON.stringify([pr()]) } },
+      ]),
+      client: ledgerClient({}),
+      directory: "/r",
+      tasksDir: "docs/tasks",
+      log: async () => {},
+      loaded: reviewer,
+      now: () => "2026-07-05T00:00:00Z",
+      ...(maxDiffLines != null ? { maxDiffLines } : {}),
+    }).claimNext()
+    return item?.state.goal ?? ""
+  }
+  assert.match(await claim(750), /Review limit: 750 changed diff lines/)
+  assert.match(await claim(), /Review limit: 2000 changed diff lines/, "unset falls back to the shipped default")
+})
+
 test("claims a PR with failing checks: goal names the failure, state enters triage on the PR branch", async () => {
   const prs = [pr({ statusCheckRollup: [{ name: "ci/test", conclusion: "FAILURE" }] })]
   const log: string[] = []

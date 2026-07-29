@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { defaultWorkflowsDir } from "../manifest/dir.js"
 import { loadManifest } from "../manifest/load.js"
 import { emptyLedger, type PrSnapshot } from "./ledger.js"
-import { makeClaimMarkers, prWorkItem, terminalLedgerUpdate, triggerSummary } from "./pr-shared.js"
+import { DEFAULT_MAX_DIFF_LINES, makeClaimMarkers, prWorkItem, terminalLedgerUpdate, triggerSummary } from "./pr-shared.js"
 
 /**
  * The platform-neutral PR-source pieces: the terminal ledger decision (THE
@@ -68,6 +68,38 @@ test("prWorkItem gives a reviewer-role kind a comment-only goal", () => {
   const item = prWorkItem(loaded, "github", snapshot(), ["review-requested"])
   assert.match(item.state.goal, /Never approve, request changes, or merge/)
   assert.equal(item.workflowKind, "review-sitter")
+})
+
+// The FAIL condition on review-sitter's fetch stage used to be the adjective
+// "unreviewably large" — it measured `gh pr diff | wc -l` and compared it to
+// nothing, so whether a PR got reviewed at all depended on how the model felt
+// that run. The number now travels in the goal, which is the only place a
+// per-kind config value reaches a stage prompt.
+test("a reviewer-role goal states the diff limit as a number, defaulting when unconfigured", () => {
+  const loaded = loadManifest(WORKFLOWS_DIR, "review-sitter")
+  assert.match(prWorkItem(loaded, "github", snapshot(), ["review-requested"]).state.goal, /Review limit: 2000 changed diff lines/)
+  const tuned = prWorkItem(loaded, "github", snapshot(), ["review-requested"], { maxDiffLines: 500 })
+  assert.match(tuned.state.goal, /Review limit: 500 changed diff lines/)
+  assert.equal(DEFAULT_MAX_DIFF_LINES, 2_000)
+})
+
+test("an author-role goal carries no review limit — nothing there declines work by size", () => {
+  const loaded = loadManifest(WORKFLOWS_DIR, "pr-sitter")
+  assert.doesNotMatch(prWorkItem(loaded, "github", snapshot(), ["failing-checks"], { maxDiffLines: 500 }).state.goal, /Review limit/)
+})
+
+// The knob is only worth anything if the stage that measures the diff is told
+// to compare against it. Silent when broken: a prompt rewrite that drops the
+// reference leaves the config key parsing fine and doing nothing.
+test("the fetch stage prompt defers to the goal's limit, and no shipped check stage still gates on a bare adjective", () => {
+  const fetch = loadManifest(WORKFLOWS_DIR, "review-sitter").prompts["fetch"] ?? ""
+  assert.match(fetch, /review limit the goal states/)
+  assert.doesNotMatch(fetch, /unreviewably large/)
+  // Its sibling defect: a verdict that asks whether there is work at all, which
+  // the work source already decided by claiming the PR.
+  const triage = loadManifest(WORKFLOWS_DIR, "pr-sitter").prompts["triage"] ?? ""
+  assert.doesNotMatch(triage, /PASS when there is actionable work/)
+  assert.match(triage, /gone STALE/)
 })
 
 test("triggerSummary names every trigger in a human line", () => {
