@@ -191,6 +191,31 @@ test("pre-set git already isolated (shared reconcile) does not rebuild a worktre
   assert.ok(!log.some((c) => c.includes("worktree add")))
 })
 
+/**
+ * The reconcile path's answer to a failed checkout must match the first-time
+ * shared path's ("shared-tree checkout failure records an isolationWarning"
+ * above): NOT isolated. `isolated` is the only gate on a main-tree write —
+ * `closeIsolation` returns early without it — so claiming it after failing to
+ * get off the human's branch made `commitAll` sweep the BUILD diff and the whole
+ * backlog onto that branch, and the teardown then checked the human off it.
+ * `isolated` must be explicitly false here, not merely absent: this path is
+ * reached with `isolated: true` already on the incoming state.
+ */
+test("shared reconcile that cannot return to its branch does NOT claim isolation", async () => {
+  const log: string[] = []
+  const $ = makeShell((cmd: string): FakeResult => {
+    if (cmd.includes("abbrev-ref HEAD")) return { exitCode: 0, stdout: "main" } // human is on main
+    if (cmd.includes("rev-parse --verify")) return { exitCode: 0 } // the loop's branch exists
+    if (cmd.includes("checkout")) return { exitCode: 1 } // …but we cannot get onto it
+    return { exitCode: 0 }
+  }, log)
+  const sharedConfig = { ...config, worktreesDir: false as const }
+  const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, { ...prState, isolated: true })
+  assert.equal(next.isolated, false)
+  assert.match(next.isolationWarning ?? "", /could not return to pr-head/)
+  assert.ok(!log.some((c) => c.includes("worktree add")))
+})
+
 test("a failed worktree add throws with git's own reason attached", async () => {
   const failing = (cmd: string): FakeResult => {
     if (cmd.includes("worktree add")) return { exitCode: 128, stderr: `fatal: '${WT}' already exists` }
