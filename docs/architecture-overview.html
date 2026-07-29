@@ -1,0 +1,426 @@
+<title>agentic-workflow — architecture at a glance</title>
+<style>
+  :root {
+    --paper:      #F5F6F4;
+    --paper-2:    #EAECE8;
+    --ink:        #131C27;
+    --ink-soft:   #3D4A57;
+    --slate:      #6B7885;
+    --rule:       #C6CBC7;
+    --brass:      #9A6B18;
+    --brass-fill: #F0E6D0;
+    --teal:       #22636F;
+    --teal-fill:  #DDE8E9;
+    --card:       #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:      #10161C;
+      --paper-2:    #0A0F14;
+      --ink:        #E4E8E6;
+      --ink-soft:   #B0BAC0;
+      --slate:      #7C8A94;
+      --rule:       #2A343C;
+      --brass:      #D9A94E;
+      --brass-fill: #2A2115;
+      --teal:       #6BB6C2;
+      --teal-fill:  #12252A;
+      --card:       #161E25;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #10161C;
+    --paper-2:    #0A0F14;
+    --ink:        #E4E8E6;
+    --ink-soft:   #B0BAC0;
+    --slate:      #7C8A94;
+    --rule:       #2A343C;
+    --brass:      #D9A94E;
+    --brass-fill: #2A2115;
+    --teal:       #6BB6C2;
+    --teal-fill:  #12252A;
+    --card:       #161E25;
+  }
+  :root[data-theme="light"] {
+    --paper:      #F5F6F4;
+    --paper-2:    #EAECE8;
+    --ink:        #131C27;
+    --ink-soft:   #3D4A57;
+    --slate:      #6B7885;
+    --rule:       #C6CBC7;
+    --brass:      #9A6B18;
+    --brass-fill: #F0E6D0;
+    --teal:       #22636F;
+    --teal-fill:  #DDE8E9;
+    --card:       #FFFFFF;
+  }
+
+  .page {
+    background: var(--paper-2);
+    color: var(--ink);
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    min-height: 100%;
+    padding: 2.5vmin;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.6vmin;
+  }
+
+  /* ---- the 16:9 board ------------------------------------------------ */
+  .board {
+    width: 100%;
+    max-width: min(100%, 168vh);
+    aspect-ratio: 16 / 9;
+    container-type: size;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    box-shadow: 0 1cqw 3cqw -1.4cqw rgba(0,0,0,.22);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .inner {
+    flex: 1;
+    display: grid;
+    grid-template-rows: auto 1fr auto;
+    padding: 2.4cqw 2.6cqw 2cqw;
+    gap: 1.5cqh;
+    font-size: 1.02cqw;
+    line-height: 1.35;
+  }
+
+  /* ---- header -------------------------------------------------------- */
+  .head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 2cqw;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 1.1cqh;
+  }
+  .title {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-weight: 750;
+    font-size: 2.15cqw;
+    letter-spacing: -0.025em;
+    text-wrap: balance;
+    margin: 0;
+  }
+  .title span { color: var(--slate); font-weight: 550; }
+  .sub {
+    color: var(--ink-soft);
+    font-size: 0.98cqw;
+    letter-spacing: 0.01em;
+    max-width: 42cqw;
+    text-align: right;
+  }
+  .sub b { color: var(--brass); font-weight: 700; }
+
+  /* ---- main split ---------------------------------------------------- */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 25.5cqw;
+    gap: 2.2cqw;
+    min-height: 0;
+  }
+  .stack {
+    display: grid;
+    grid-template-rows: repeat(4, auto);
+    align-content: space-between;
+    gap: 0.9cqh;
+    min-height: 0;
+  }
+
+  /* ---- a band -------------------------------------------------------- */
+  .band { display: grid; grid-template-columns: 7.2cqw 1fr; gap: 1.1cqw; align-items: stretch; }
+  .tag {
+    font-size: 0.78cqw;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--slate);
+    border-right: 1px solid var(--rule);
+    padding: 0.35cqh 0.7cqw 0 0;
+    text-align: right;
+    line-height: 1.5;
+  }
+  .tag em { display: block; font-style: normal; letter-spacing: 0.02em; text-transform: none; opacity: .72; font-size: 0.72cqw; }
+  .row { display: flex; gap: 0.75cqw; align-items: stretch; }
+
+  .node {
+    flex: 1;
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-top: 2px solid var(--slate);
+    padding: 0.85cqh 0.85cqw;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35cqh;
+    min-width: 0;
+  }
+  .node h3 {
+    margin: 0;
+    font-size: 1.02cqw;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+  }
+  .node p { margin: 0; font-size: 0.83cqw; color: var(--ink-soft); }
+  .node .path { font-size: 0.75cqw; color: var(--slate); letter-spacing: -0.01em; }
+
+  .node.human { border-top-color: var(--brass); }
+  .node.human h3 { color: var(--brass); }
+  .node.auto  { border-top-color: var(--teal); }
+
+  /* core band gets a drawn enclosure */
+  .core {
+    border: 1px solid var(--teal);
+    background: var(--teal-fill);
+    padding: 0.7cqh 0.7cqw;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.7cqw;
+    position: relative;
+  }
+  .core .node { border-top-color: var(--teal); }
+
+  /* kinds + substrate chips */
+  .chips { display: flex; gap: 0.6cqw; flex: 1; }
+  .chip {
+    flex: 1;
+    border: 1px solid var(--rule);
+    background: var(--card);
+    padding: 0.7cqh 0.7cqw;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2cqh;
+    min-width: 0;
+  }
+  .chip b { font-size: 0.92cqw; letter-spacing: -0.01em; }
+  .chip span { font-size: 0.74cqw; color: var(--slate); }
+  .chip.on { border-left: 0.28cqw solid var(--teal); }
+  .chip.opt { border-left: 0.28cqw solid var(--rule); border-style: dashed solid solid dashed; }
+  .chip.opt b { color: var(--ink-soft); }
+
+  /* connector between bands */
+  .seam {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    gap: 0.6cqw;
+    color: var(--slate);
+    font-size: 0.74cqw;
+    letter-spacing: 0.06em;
+  }
+  .seam::before, .seam::after {
+    content: "";
+    height: 1px;
+    background: var(--rule);
+    flex: 1;
+  }
+
+  /* ---- lifecycle rail ------------------------------------------------ */
+  .rail {
+    border-left: 1px solid var(--rule);
+    padding-left: 1.6cqw;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7cqh;
+    min-height: 0;
+  }
+  .rail-head {
+    font-size: 0.78cqw;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--slate);
+  }
+  .rail-head em { display:block; font-style: normal; text-transform: none; letter-spacing: 0; color: var(--ink-soft); font-size: 0.8cqw; margin-top: 0.3cqh; }
+  .track { display: flex; flex-direction: column; gap: 0.28cqh; flex: 1; justify-content: center; }
+  .step {
+    display: grid;
+    grid-template-columns: 0.9cqw 1fr;
+    gap: 0.7cqw;
+    align-items: center;
+  }
+  .dot {
+    width: 0.55cqw; height: 0.55cqw;
+    border-radius: 50%;
+    background: var(--slate);
+    justify-self: center;
+  }
+  .step b { font-size: 0.88cqw; font-weight: 700; }
+  .step i { font-style: normal; font-size: 0.76cqw; color: var(--slate); margin-left: 0.5cqw; }
+
+  .gate {
+    background: var(--brass-fill);
+    border-left: 0.28cqw solid var(--brass);
+    padding: 0.42cqh 0.7cqw;
+    margin-left: 1.6cqw;
+    font-size: 0.8cqw;
+    color: var(--brass);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .gate span { font-weight: 400; color: var(--ink-soft); letter-spacing: 0; }
+  .loop {
+    margin-left: 1.6cqw;
+    font-size: 0.76cqw;
+    color: var(--teal);
+    border-left: 1px dashed var(--teal);
+    padding: 0.3cqh 0.7cqw;
+  }
+
+  /* ---- footer -------------------------------------------------------- */
+  .foot {
+    border-top: 1px solid var(--rule);
+    padding-top: 0.9cqh;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 2cqw;
+    font-size: 0.8cqw;
+    color: var(--slate);
+  }
+  .legend { display: flex; gap: 1.4cqw; align-items: center; }
+  .key { display: flex; gap: 0.45cqw; align-items: center; }
+  .key i { width: 0.9cqw; height: 0.28cqh; min-height: 2px; display: block; }
+  .key i.a { background: var(--teal); }
+  .key i.h { background: var(--brass); }
+  .key i.o { background: var(--rule); }
+  .foot strong { color: var(--ink-soft); font-weight: 700; }
+
+  .caption {
+    max-width: min(100%, 168vh);
+    width: 100%;
+    color: var(--ink-soft);
+    font-size: clamp(11px, 1.5vmin, 14px);
+    line-height: 1.5;
+    display: flex;
+    justify-content: space-between;
+    gap: 2vmin;
+    flex-wrap: wrap;
+  }
+  .caption em { font-style: normal; color: var(--slate); }
+</style>
+
+<div class="page">
+  <div class="board">
+    <div class="inner">
+
+      <header class="head">
+        <h1 class="title">agentic-workflow <span>/ architecture at a glance</span></h1>
+        <p class="sub">One engine drives many workflow kinds. Agents do the work; a <b>human owns every gate</b> — nothing merges, ships, or approves itself.</p>
+      </header>
+
+      <div class="split">
+
+        <div class="stack">
+
+          <!-- SURFACES -->
+          <section class="band">
+            <div class="tag">Surfaces<em>where people work</em></div>
+            <div class="row">
+              <article class="node human">
+                <h3>Editor commands</h3>
+                <p>OpenCode · Claude Code · Qwen Code — <code>/agentic-workflow:&lt;kind&gt;</code> new, plan, approve, watch</p>
+                <div class="path">plugins/*/commands/</div>
+              </article>
+              <article class="node human">
+                <h3>Admin hub <em style="font-style:normal;font-size:.72cqw;opacity:.7">(beta)</em></h3>
+                <p>Localhost board: backlog, run history, token spend — and the gate moves themselves. Never drives a stage.</p>
+                <div class="path">packages/hub/</div>
+              </article>
+            </div>
+          </section>
+
+          <div class="seam">hosts are thin adapters — they trigger, they don't decide</div>
+
+          <!-- HOSTS + CORE -->
+          <section class="band">
+            <div class="tag">Engine<em>shared by all hosts</em></div>
+            <div class="core">
+              <article class="node">
+                <h3>Scheduler</h3>
+                <p>Polls each enabled kind's work source in priority order; first claim wins.</p>
+              </article>
+              <article class="node">
+                <h3>Work sources</h3>
+                <p>Backlog folders, open PRs, advisories, CI heads — each claims atomically.</p>
+              </article>
+              <article class="node">
+                <h3>State machine</h3>
+                <p>Pure <code>advance()</code>: fire the next stage, park at a gate, or stop.</p>
+              </article>
+              <article class="node">
+                <h3>Manifests</h3>
+                <p>Schema-validated <code>workflow.json</code> + stage prompt templates.</p>
+              </article>
+            </div>
+          </section>
+
+          <div class="seam">the engine knows nothing about tasks or pull requests — kinds supply that</div>
+
+          <!-- KINDS -->
+          <section class="band">
+            <div class="tag">Kinds<em>declarative, pluggable</em></div>
+            <div class="chips">
+              <div class="chip on"><b>engineering</b><span>backlog task → plan, build, verify, review</span></div>
+              <div class="chip opt"><b>pr-sitter</b><span>fixes your open PRs · never merges</span></div>
+              <div class="chip opt"><b>review-sitter</b><span>reviews others' PRs · never approves</span></div>
+              <div class="chip opt"><b>dep-sitter</b><span>patch/minor bumps · draft PR only</span></div>
+              <div class="chip opt"><b>main-sitter</b><span>red CI on main · draft remedy PR</span></div>
+            </div>
+          </section>
+
+          <div class="seam">every stage runs isolated; every result lands somewhere auditable</div>
+
+          <!-- SUBSTRATE -->
+          <section class="band">
+            <div class="tag">Substrate<em>what it reads &amp; writes</em></div>
+            <div class="chips">
+              <div class="chip"><b>docs/tasks/</b><span>status folders, plans, run logs, claim markers</span></div>
+              <div class="chip"><b>git worktrees</b><span>each build stage isolated from your checkout</span></div>
+              <div class="chip"><b>GitHub / Azure DevOps</b><span>PRs, reviews, CI, advisories</span></div>
+            </div>
+          </section>
+
+        </div>
+
+        <!-- LIFECYCLE RAIL -->
+        <aside class="rail">
+          <div class="rail-head">One task, end to end<em>The engineering kind — three human gates, everything between them unattended.</em></div>
+
+          <div class="track">
+            <div class="step"><span class="dot"></span><b>draft</b><i>interview → task file</i></div>
+            <div class="gate">GATE 1 · approve <span>— is this the right work?</span></div>
+            <div class="step"><span class="dot"></span><b>queued</b><i>waiting to be planned</i></div>
+            <div class="step"><span class="dot" style="background:var(--teal)"></span><b>plan-review</b><i>agent wrote the plan</i></div>
+            <div class="gate">GATE 2 · approve <span>— is this the right approach?</span></div>
+            <div class="step"><span class="dot" style="background:var(--teal)"></span><b>in-progress</b><i>build → verify → review</i></div>
+            <div class="loop">FAIL sends it back to build, iteration++ — capped, then it asks for a replan</div>
+            <div class="step"><span class="dot" style="background:var(--teal)"></span><b>in-review</b><i>diff ready, loop parked</i></div>
+            <div class="gate">GATE 3 · approve <span>— ship it</span></div>
+            <div class="step"><span class="dot" style="background:var(--brass)"></span><b>completed</b></div>
+          </div>
+        </aside>
+
+      </div>
+
+      <footer class="foot">
+        <div class="legend">
+          <span class="key"><i class="a"></i> automated stage</span>
+          <span class="key"><i class="h"></i> human decision</span>
+          <span class="key"><i class="o"></i> opt-in / experimental</span>
+        </div>
+        <div><strong>Guarantee:</strong> a stage agent can report a verdict, never record an approval — folder moves, merges, and ships stay human.</div>
+      </footer>
+
+    </div>
+  </div>
+
+  <div class="caption">
+    <span><em>Read it top-down:</em> people act on a surface → the engine claims and drives one unit of work → the active kind decides what the stages mean → results land in the backlog, a worktree, or a hosted PR.</span>
+    <span><em>Detail:</em> docs/architecture.md · docs/workflows/engineering.md · docs/sitters.md</span>
+  </div>
+</div>
