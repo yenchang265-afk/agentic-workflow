@@ -88,7 +88,7 @@ survives.
 
 **The ADO destination and credentials follow the same rule**, for the same
 reason applied to a different asset: `ado.organization`, `ado.pat`,
-`ado.customHeaders` and `ado.insecureSkipTlsVerify` are honored from the **user
+`ado.mcp` is honored from the **user
 layer only**. `organization` is the host your PAT is sent to, and
 `pr-sitter`/`review-sitter` poll it on the first watch tick — so a cloned repo
 setting it would aim your token at a host of its choosing without you running
@@ -131,8 +131,8 @@ hand-edited afterward.
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-workflow:engineering watch`; overridable per session via `/agentic-workflow:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `workflows` | `{}` | Per-workflow-kind sections — see below. |
-| `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via its REST API + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
-| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `customHeaders`, `insecureSkipTlsVerify`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
+| `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the Azure DevOps MCP server + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
+| `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `mcp`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
@@ -529,8 +529,8 @@ All four sitter kinds support Azure DevOps. The `dependency-scan`
 the repo lives on); its publish stage opens the draft PR via the ADO REST
 API instead of `gh pr create` when the platform resolves to `ado`. The
 `ci-runs` (main-sitter) source has a genuine ADO sibling
-(`ado-ci-runs.ts`) that polls the Azure Pipelines Build REST API
-(`_apis/build/builds`) instead of `gh run list`, normalizing build results
+(`ado-ci-runs.ts`) that polls Azure Pipelines through the MCP server's
+`pipelines_get_builds` tool instead of `gh run list`, normalizing build results
 into the same judged shape the GitHub source produces — the "only the newest
 head, never mid-run" logic is identical either way. Neither `dependency-scan`
 nor `ci-runs` needs `ado.selfLogin` (unlike the PR-shaped sources, they
@@ -562,11 +562,19 @@ best-effort as defense-in-depth.
 }
 ```
 
-Azure DevOps is reached **only through its REST API** — `curl` (with the PAT
-as HTTP Basic auth) in the stage prompts, `fetch` in the driver's own poll
-sources and ship gate. There is no `az` CLI and no MCP transport; the
-`ado.customHeaders` and `ado.insecureSkipTlsVerify` knobs below always apply
-to the driver's calls.
+Azure DevOps is reached **only through the Azure DevOps MCP server**
+([`@azure-devops/mcp`](https://github.com/microsoft/azure-devops-mcp), launched
+with `npx`) — the stage agents call its tools by name, and the driver's own poll
+sources and ship gate go through the same server. There is no `curl`, no `az`
+CLI, and no REST fallback: one transport, so a stage prompt cannot drift out of
+sync with the allowlist governing it.
+
+**The server must be registered under exactly the name `azure-devops`.** Stage
+prompts and generated agent frontmatter name tools as
+`mcp__azure-devops__<tool>`; any other registration name makes every ADO stage
+call a tool that does not exist. `./bootstrap.sh` registers it for you. This is
+a constant rather than a setting because those names live in generated files
+that CI diff-checks.
 
 - **`ado.organization` / `ado.project`** — required ADO coordinates.
 - **`ado.repository`** — optional for the `pr-sitter`/`review-sitter`/
@@ -585,76 +593,65 @@ to the driver's calls.
   `~/.config/agentic-workflow/agentic-workflow.json` is the natural home (never committed, shared across
   repos) — in the repo file, keep `.agentic-workflow.json` gitignored (it is by
   default) so the secret is never committed. It reaches
-  every consumer: the work source reads it directly, and the triage/publish
-  stage agents (which authenticate via `$AZURE_DEVOPS_EXT_PAT`) get it exported
-  for them — on OpenCode at plugin init (`applyAdoPatEnv`), on Claude Code via a
-  `SessionStart` hook (`inject-ado-pat.mjs`) that writes it to `$CLAUDE_ENV_FILE`.
-  Neither ever overrides a PAT you exported yourself.
-- **`ado.customHeaders`** — optional; extra HTTP headers attached to every ADO
-  REST call the driver makes (the `pr-sitter` work source and the engineering
-  ship gate). Its home is a corporate proxy in front of Azure DevOps — e.g. a
-  `Proxy-Authorization` token or a routing header. It's a plain string→string
-  object; keys and values must be non-empty. The headers are merged **over** the
-  built-in `Authorization`/`Accept`/`Content-Type`, so a key here can override
-  one of those (rarely wanted, but yours to decide). The
-  `AGENTIC_WORKFLOW_ADO_HEADERS` env var — a JSON object of the same shape —
-  **overrides `customHeaders` key by key** (env wins, mirroring how
-  `AZURE_DEVOPS_EXT_PAT` overrides `ado.pat`), so a secret proxy token can come
-  from your secret manager while non-secret routing headers stay in config. A
-  malformed env value is ignored (→ no override), never fatal. Like `ado.pat`,
-  a header that carries a secret belongs in the user-scope `~/.config/agentic-workflow/agentic-workflow.json`
-  (or the env var), not a committed repo file. Note this reaches only the
-  driver's own `fetch` calls; the stage agents' raw `curl` (which authenticate
-  via `$AZURE_DEVOPS_EXT_PAT`) do not inherit it — front those with the proxy's
-  own environment (`HTTPS_PROXY` etc.) if they need it.
+  The driver base64-encodes it into the MCP server's own
+  `PERSONAL_ACCESS_TOKEN` when it launches the server — you never encode
+  anything by hand. The stage agents use the server *you* registered, so their
+  copy of the credential lives in that registration (which `./bootstrap.sh`
+  writes).
+- **`ado.mcp`** — optional; how the MCP server is launched. Every field has a
+  working default, so most installs need none of it.
+  - `command` (default `"npx"`) and `args` (default `["-y", "@azure-devops/mcp@<pinned>"]`)
+    — point these at a locally installed binary for an air-gapped install. The
+    version is **pinned** on purpose: the server's tool names are baked into
+    stage prompts and generated agent frontmatter, so a floating version can
+    rename the surface out from under them.
+  - `authentication` (default `"pat"`) — `pat`, `azcli`, `envvar`, or
+    `interactive`. Note the server's *own* default is `interactive`, which opens
+    a browser; a polling loop has no one to click it, so the engine **refuses**
+    that mode rather than hanging on a prompt nobody sees (set
+    `ADO_MCP_ALLOW_INTERACTIVE=1` if you really are at a terminal).
+    `envvar` reads a bearer token from `ADO_MCP_AUTH_TOKEN`.
+  - `domains` (default `["repositories", "pipelines"]`) — which tool domains to
+    load. Fewer tools is a smaller menu for the model.
+  - `tenant` — Azure tenant id, for `interactive`/`azcli` against a
+    multi-tenant organization.
+  - `env` — extra environment for the spawned server, e.g.
+    `NODE_EXTRA_CA_CERTS` for an internal CA or `HTTPS_PROXY`. **Not a place for
+    secrets** — the PAT belongs in `ado.pat` (or the env var), which the hub
+    knows to redact.
 
-  ```json
+  ```jsonc
   {
     "ado": {
       "organization": "https://dev.azure.com/acme",
       "project": "widgets",
-      "repository": "widgets-api",
       "selfLogin": "sitter@acme.com",
-      "customHeaders": { "X-Route": "internal-network" }
+      "mcp": { "env": { "NODE_EXTRA_CA_CERTS": "/etc/ssl/corp-ca.pem" } }
     }
   }
   ```
 
-  ```bash
-  # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
-  export AGENTIC_WORKFLOW_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
-  ```
-- **`ado.insecureSkipTlsVerify`** — optional, `false` by default; skip TLS
-  certificate verification on every ADO REST call the driver makes (the
-  PR/CI-runs work sources and the ship gate). It's for a self-hosted Azure
-  DevOps Server sitting behind a self-signed or internal-CA certificate the
-  runtime doesn't trust — never enable it against the hosted `dev.azure.com`
-  service, since it drops protection against a MITM'd token. The calls go
-  through a dedicated `undici` dispatcher, so this only weakens TLS for these
-  ADO calls, not for unrelated requests (GitHub, npm, …) in the same process.
-  Like `customHeaders`, it reaches only the driver's own `fetch` calls; the
-  stage agents' raw `curl` does not inherit it — pass `-k`/`--insecure` (or
-  point `curl` at your internal CA bundle) yourself if they need it too.
+  `ado.mcp` is **user-layer-only**, alongside `organization` and `pat`: it names
+  a command that gets spawned, so a cloned repo must not be able to choose it.
 
-  ```json
-  {
-    "ado": {
-      "organization": "https://ado.internal.acme.com/tfs/DefaultCollection",
-      "project": "widgets",
-      "selfLogin": "sitter@acme.com",
-      "insecureSkipTlsVerify": true
-    }
-  }
-  ```
+  Removed with the REST transport: `ado.customHeaders`,
+  `ado.insecureSkipTlsVerify`, and `AGENTIC_WORKFLOW_ADO_HEADERS`. A spawned MCP
+  server has no per-request header or TLS seam. A stale key parses and is
+  ignored, with a one-line warning naming it. Self-hosted Azure DevOps Server is
+  **not supported** — the server takes an organization name and targets
+  `dev.azure.com`.
+
 - **Prerequisites for `"ado"`**: a Personal Access Token — in
   `AZURE_DEVOPS_EXT_PAT` (preferred) or `ado.pat` — scoped to Code (read) +
-  Pull Request contribute (comment), and `curl`. The token is sent as HTTP Basic
-  auth (`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`); no `az` CLI is needed.
-- **Semantics on ADO**: failing checks come from blocking branch policy
-  evaluations (`_apis/policy/evaluations`) — a repo with no build policy never
-  fires `failing-checks`; comments come from PR threads; a negative reviewer
-  vote maps to changes-requested; `mergeStatus: conflicts` maps to
-  merge-conflict.
+  Pull Request contribute (comment), plus Node 20+ with `npx` so the MCP server
+  can start. No `az` CLI and no `curl` are needed.
+- **Semantics on ADO**: failing checks come from the PR's validation
+  **pipeline runs** — a repo whose PRs run no pipeline never fires
+  `failing-checks`, and branch policies that are not pipelines (minimum
+  reviewers, comment resolution, required work-item links) are **not visible**
+  at all, because the MCP server exposes no policy tool. Comments come from PR
+  threads; a negative reviewer vote maps to changes-requested;
+  `mergeStatus: conflicts` maps to merge-conflict.
 - Stage bash allowlists are platform-scoped: the manifest's
   `platformAllowlist.github` / `.ado` globs are merged into the stage's
   `bashAllowlist` for the resolved platform. The OpenCode agent frontmatter

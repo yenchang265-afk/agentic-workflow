@@ -49,9 +49,16 @@
           "gh run view*",
           "gh run list*"
         ],
+        "ado": []
+      },
+      "platformTools": {
         "ado": [
-          "curl *https://dev.azure.com/*",
-          "curl *https://*.visualstudio.com/*"
+          "repo_get_pull_request_by_id",
+          "repo_list_pull_request_threads",
+          "repo_list_pull_request_thread_comments",
+          "pipelines_get_builds",
+          "pipelines_get_build_log",
+          "pipelines_get_build_log_by_id"
         ]
       }
     },
@@ -193,9 +200,12 @@
           "gh pr checks*",
           "gh api repos/*/pulls/*/comments*"
         ],
+        "ado": []
+      },
+      "platformTools": {
         "ado": [
-          "curl *https://dev.azure.com/*/threads*",
-          "curl *https://*.visualstudio.com/*/threads*"
+          "repo_list_pull_request_threads",
+          "repo_reply_to_comment"
         ]
       }
     }
@@ -208,11 +218,11 @@
       },
       "onFail": {
         "kind": "done",
-        "message": "✓ PR sitter done — nothing actionable on this PR right now."
+        "message": "\u2713 PR sitter done \u2014 nothing actionable on this PR right now."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ PR sitter stopped — triage could not inspect the PR (gh/network error). Fix the environment and let the next poll retry."
+        "message": "\u2717 PR sitter stopped \u2014 triage could not inspect the PR (gh/network error). Fix the environment and let the next poll retry."
       }
     },
     "fix": {
@@ -231,17 +241,17 @@
         "stage": "fix",
         "countIteration": true,
         "dropArtifacts": [],
-        "capMessage": "✗ PR sitter stopped — verify failed after {maxIterations} iterations. The attempt is recorded; the PR parks until a human pushes a new head."
+        "capMessage": "\u2717 PR sitter stopped \u2014 verify failed after {maxIterations} iterations. The attempt is recorded; the PR parks until a human pushes a new head."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ PR sitter stopped — verify could not run (environment/infrastructure error)."
+        "message": "\u2717 PR sitter stopped \u2014 verify could not run (environment/infrastructure error)."
       }
     },
     "publish": {
       "onDone": {
         "kind": "done",
-        "message": "✓ PR sitter done — pushed the fixes and replied on the PR. Merging stays a human call."
+        "message": "\u2713 PR sitter done \u2014 pushed the fixes and replied on the PR. Merging stays a human call."
       }
     }
   },

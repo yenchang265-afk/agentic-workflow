@@ -157,7 +157,9 @@ zod 結構描述在 `packages/core/src/manifest/schema.ts`），因此任何一�
 - **工作來源**：新增 `github-issue`——鏡射 `pull-request`：一個 `query`
   （例如 `is:open is:issue no:label`）、觸發器（`new-issue`、
   `new-comments`）、一份存於 `<tasksDir>/runs/issue-triager/` 下、按 issue
-  分別去重的帳本。ADO 版本透過既有的 REST/PAT 管線輪詢工作項目。
+  分別去重的帳本。ADO 版本透過既有的 `AdoGateway` 接口（Azure DevOps MCP
+  伺服器）輪詢工作項目——這會需要把 `wit_*` 工具加進 `ado-tools.ts`，並啟用
+  `work-items` 這個領域。
 - **階段圖**：
   1. `triage`（**check**，隔離方式 `none`，唯讀 + 平台讀取白名單）——嘗試
      從回報內容重現問題，搜尋重複項，草擬嚴重程度/範疇分類。
@@ -242,8 +244,8 @@ zod 結構描述在 `packages/core/src/manifest/schema.ts`），因此任何一�
 > 讓該項目退場），且從不認領仍在執行中的 head；補救分支是
 > `main-sitter/<sha>`，push 白名單被限定在這個分支上，因此被監看的分支在
 > 結構上就無法被推送。同時支援 GitHub（`gh run list`）和 Azure DevOps
-> （Pipelines Build REST API，`ado-ci-runs.ts`，與 GitHub 來源共用帳本/
-> WorkItem 機制）。見威脅模型 T13。
+> （Azure DevOps MCP 伺服器的 `pipelines_get_builds` 工具，`ado-ci-runs.ts`，
+> 與 GitHub 來源共用帳本/WorkItem 機制）。見威脅模型 T13。
 
 原始草案：監看預設分支的 CI，新增 `ci-runs` 工作來源，
 `diagnose → remedy → verify → publish`（push + comment 權限），對根因

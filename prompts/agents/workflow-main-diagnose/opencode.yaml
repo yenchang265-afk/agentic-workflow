@@ -12,8 +12,6 @@ permission:
     # Both platforms are allowed here (static frontmatter can't switch); config
     # codePlatform decides which the stage prompt actually uses. ADO is the REST
     # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
-    "curl *https://dev.azure.com/*": allow
-    "curl *https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -70,3 +68,7 @@ permission:
     "cd * && make test*": allow
     "cd * && make check*": allow
     "cd * && git bisect*": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  {{adoTools}}

@@ -165,6 +165,13 @@ export interface WorkflowState {
   readonly isolationWarning?: string
   /** The code platform the claiming work source talks to; absent ⇒ `github`. */
   readonly platform?: CodePlatform
+  /**
+   * Azure DevOps project/repository for this item, stamped at claim time so a
+   * stage prompt can render them literally instead of instructing the agent to
+   * derive them from `git remote get-url origin`. Only ever set when
+   * `platform` is `"ado"`.
+   */
+  readonly ado?: AdoCoordinates
 }
 
 /** What the driver should do next. All state changes are returned, not applied. */
@@ -197,6 +204,18 @@ export type Action =
 export const CODE_PLATFORMS = ["github", "ado"] as const
 export type CodePlatform = (typeof CODE_PLATFORMS)[number]
 
+/**
+ * The Azure DevOps coordinates a claimed item carries, so `{{ado.project}}` /
+ * `{{ado.repository}}` render literally into a stage prompt. Stamped at claim
+ * time next to `platform` — a prompt that spells the project out needs no
+ * `git remote get-url origin` parsing step, which is one less thing for the
+ * agent to reason about (and get wrong) before its first tool call.
+ */
+export interface AdoCoordinates {
+  readonly project: string
+  readonly repository: string
+}
+
 /** Azure DevOps coordinates, required when any effective platform is `ado`. */
 export interface AdoConfig {
   /** Organization URL, e.g. "https://dev.azure.com/acme". */
@@ -217,26 +236,36 @@ export interface AdoConfig {
    * never committed.
    */
   readonly pat?: string
+  /** How the Azure DevOps MCP server is launched. Defaults cover the hosted service. */
+  readonly mcp?: AdoMcpConfig
+}
+
+/**
+ * Launch settings for the Azure DevOps MCP server — the only way this repo
+ * reaches Azure DevOps. Every field has a working default; the section exists
+ * for air-gapped installs (a local binary instead of `npx`), corporate TLS
+ * (`env.NODE_EXTRA_CA_CERTS`), and multi-tenant orgs (`tenant`).
+ */
+export interface AdoMcpConfig {
+  /** Launcher; defaults to "npx". */
+  readonly command?: string
+  /** Args before the org name; defaults to `["-y", "@azure-devops/mcp@<pinned>"]`. */
+  readonly args?: readonly string[]
   /**
-   * Extra HTTP headers attached to every ADO REST call the driver makes (the PR
-   * work source and the ship gate) — e.g. `Proxy-Authorization` or a routing
-   * header for a corporate proxy in front of Azure DevOps. Merged over the
-   * built-in `Authorization`/`Accept`/`Content-Type` headers, so a key here can
-   * override one of those (rarely wanted, but yours to decide). The
-   * `AGENTIC_WORKFLOW_ADO_HEADERS` env var (a JSON object) overrides this key by
-   * key, mirroring how `AZURE_DEVOPS_EXT_PAT` overrides `pat`.
+   * Credential mode. Defaults to `"pat"` — the server's own default is
+   * `"interactive"`, which opens a browser and cannot work in a poller.
    */
-  readonly customHeaders?: Readonly<Record<string, string>>
+  readonly authentication?: "pat" | "envvar" | "azcli" | "interactive"
+  /** Tool domains to load; defaults to `["repositories", "pipelines"]`. */
+  readonly domains?: readonly string[]
+  /** Azure tenant id, for `interactive`/`azcli` against a multi-tenant org. */
+  readonly tenant?: string
   /**
-   * Skip TLS certificate verification on every ADO REST call the driver makes
-   * (the PR/CI-runs work sources and the ship gate). Off by default — only for
-   * a self-hosted Azure DevOps Server behind a self-signed or internal-CA
-   * certificate the runtime doesn't trust; never enable this against the
-   * hosted `dev.azure.com` service. Scoped to these calls only (a dedicated
-   * `undici` dispatcher), so it never weakens TLS for unrelated requests
-   * (GitHub, npm, …) in the same process.
+   * Extra environment for the spawned server — e.g. `NODE_EXTRA_CA_CERTS` or
+   * `HTTPS_PROXY`. Not a place for secrets: put the PAT in `pat` (or the
+   * `AZURE_DEVOPS_EXT_PAT` env var), which the hub knows to redact.
    */
-  readonly insecureSkipTlsVerify?: boolean
+  readonly env?: Readonly<Record<string, string>>
 }
 
 /** Project-management setup: the team's tracker and how tasks pair to it. */

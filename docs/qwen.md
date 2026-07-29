@@ -115,12 +115,12 @@ picking whichever manifest loaded last.
 
 ## Known gaps
 
-- **No Azure DevOps PAT injection.** Claude Code exposes a session env-file
-  channel (`$CLAUDE_ENV_FILE`) that the SessionStart hook writes
-  `AZURE_DEVOPS_EXT_PAT` into. Qwen has no equivalent. If you configure
-  `ado.pat`, the hook emits a notice instead and you must export
-  `AZURE_DEVOPS_EXT_PAT` in your shell before starting the session, or the ADO
-  sitters will fail to authenticate. The notice never carries the secret itself.
+- **Azure DevOps needs its MCP server registered by hand** if you skip
+  `./bootstrap.sh`. Register it under exactly the name `azure-devops` — the
+  stage prompts name tools as `mcp__azure-devops__<tool>`, so any other name
+  makes every ADO stage call a tool that does not exist. There is no longer a
+  PAT-injection gap: the driver hands the credential to the server it launches,
+  and the stage agents use the server you registered.
 - **No `watch` mode**, as above — that is a property of the host, not a
   limitation of the plugin.
 

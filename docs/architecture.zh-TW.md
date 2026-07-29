@@ -28,7 +28,7 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO REST + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO MCP + dedup ledger<br/>(pr-sitter, review-sitter)"]
             depscan["dependency-scan.ts<br/>advisory reports"]
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
@@ -93,7 +93,14 @@ flowchart TB
   完整建構好的入口 `WorkflowState`，因此驅動程式不需要知道工作來源的細節。
   PR 與 CI 工作來源各有 Azure DevOps 對應版本（`ado-pr.ts`、
   `ado-ci-runs.ts`），當 `codePlatform` 為 `"ado"` 時在接線階段換入；
-  它們透過 ADO 的 REST API 搭配 PAT 與其溝通。
+  它們只透過 Azure DevOps MCP 伺服器觸達 ADO，走 `AdoGateway` 這個接口
+  （`packages/core/src/source/ado-gateway.ts`）——它只有型別，因為 `host.ts`
+  禁止 core 匯入任何宿主 SDK。實作該接口的用戶端住在
+  **`packages/ado-mcp`**，那是全儲存庫唯一以*用戶端*身分匯入
+  `@modelcontextprotocol/sdk` 的地方；它在每個行程中維持單一個長壽命的
+  伺服器，而它呼叫的工具名稱被釘在
+  `packages/core/src/source/ado-tools.ts`，對應
+  `docs/design/ado-mcp-toolsurface.md` 這份匯出記錄。
   `pollOnce(sources)` 依認領優先順序走訪指定的工作來源（除非停用，
   否則 engineering 優先，接著是設定中依序排列的已啟用類型——核心設定
   中的 `enabledWorkflowKinds`）；第一次成功的認領勝出，且每種類型的指令

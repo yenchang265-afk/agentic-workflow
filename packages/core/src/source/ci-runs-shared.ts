@@ -3,7 +3,7 @@ import { z } from "zod"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { CodePlatform, WorkflowState } from "../workflow/state.js"
+import type { AdoCoordinates, CodePlatform, WorkflowState } from "../workflow/state.js"
 import { slugify } from "../task/schema.js"
 import type { WorkItem } from "./types.js"
 
@@ -83,6 +83,7 @@ export const redHeadWorkItem = (
   branch: string,
   sha: string,
   failing: readonly string[],
+  ado?: AdoCoordinates,
 ): WorkItem => {
   const kind = loaded.manifest.kind
   const remedyBranch = `${kind}/${shortSha(sha)}`
@@ -94,6 +95,7 @@ export const redHeadWorkItem = (
     artifacts: {},
     git: { base: branch, branch: remedyBranch },
     platform,
+    ...(ado ? { ado } : {}),
   }
   return {
     // Display id: short sha + readable branch (`a1b2c3-main`), so the handle reads.

@@ -6,3 +6,4 @@ tools:
   - glob
   - run_shell_command
   - mcp__agentic-workflow__workflow_verdict
+  - {{adoTools}}

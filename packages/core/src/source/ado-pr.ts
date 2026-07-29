@@ -5,67 +5,42 @@ import type { AdoConfig } from "../workflow/state.js"
 import { attentionTriggers, emptyLedger, loadLedger, saveLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js"
 import {
-  ADO_HEADERS_ENV,
-  adoFetch,
-  AdoPolicySchema,
+  AdoBuildListSchema,
   AdoPrListSchema,
-  AdoThreadsSchema,
-  buildAdoHeaders,
-  failingPolicyNames,
+  AdoThreadListSchema,
+  adoList,
+  failingPipelineNames,
   flattenThreadComments,
-  makeAdoAuthHeader,
   newerThan,
-  resolveAdoHeaders,
   sameLogin,
   stripRef,
 } from "./ado-shared.js"
+import type { AdoGateway, AdoResult } from "./ado-gateway.js"
 import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
 
 /**
  * The Azure DevOps PR work source: the `gh`-backed `github-pr.ts` mirrored onto
- * the Azure DevOps REST API. Selected at wiring time when config `codePlatform`
- * resolves to `"ado"` for a `pull-request`-bound workflow kind.
+ * the Azure DevOps MCP server. Selected at wiring time when config
+ * `codePlatform` resolves to `"ado"` for a `pull-request`-bound workflow kind.
  *
  * Raw ADO output is normalized into the same `PrSnapshot` shape the ledger
  * judges (`conflicts` → `CONFLICTING`, a negative reviewer vote →
  * `CHANGES_REQUESTED`), so the dedup decision (`attentionTriggers`) and the
  * claim/fetch/terminal mechanics (`pr-shared.ts`) are shared verbatim.
  *
- * Auth is a Personal Access Token sent as HTTP Basic (`Authorization: Basic
- * base64(":" + PAT)`), read from `AZURE_DEVOPS_EXT_PAT`, falling back to config
- * `ado.pat` when that env var is unset (the env var wins). A PAT carries no
- * reliable email identity, so the sitter's own login is config-supplied
- * (`ado.selfLogin`, required for this platform — enforced in `config.ts`).
- * Unlike GitHub's `statusCheckRollup`, check state comes from a per-PR
- * `policy/evaluations` call, and comments from the `pullRequestThreads` resource.
+ * Transport is the `AdoGateway` port — every call goes through the Azure DevOps
+ * MCP server, never raw REST. A PAT carries no reliable email identity, so the
+ * sitter's own login stays config-supplied (`ado.selfLogin`, required for this
+ * platform — enforced in `config.ts`).
+ *
+ * Unlike GitHub's `statusCheckRollup`, check state comes from the PR's
+ * validation PIPELINE runs. That is narrower than the branch policies this
+ * source used to read: see `failingPipelineNames` for exactly what is no longer
+ * visible.
  */
 
-/** Minimal HTTP response the source reads — structurally satisfied by the global `fetch` `Response`. */
-export interface AdoHttpResponse {
-  readonly ok: boolean
-  readonly status: number
-  readonly statusText: string
-  text(): Promise<string>
-}
-
-/** GET-only HTTP transport, injected so tests can script responses without touching the network. */
-export type AdoHttp = (
-  url: string,
-  init: { readonly headers: Readonly<Record<string, string>> },
-) => Promise<AdoHttpResponse>
-
-/** The env var holding the Azure DevOps PAT — the same name the `az` extension used, for continuity. */
-const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
-
-/** The post-run PR re-read — validated so a type-confused body degrades to the
- *  snapshot fallback like a parse failure, never flows on as a trusted head. */
-const AdoFreshPrSchema = z.object({
-  lastMergeSourceCommit: z.object({ commitId: z.string().optional() }).optional(),
-  repository: z.object({ id: z.string().optional(), name: z.string().optional() }).optional(),
-})
-
 /**
- * Active-PR list paging. ADO caps `$top` at 100 and offers no server-side
+ * Active-PR list paging. ADO caps a page at 100 and offers no server-side
  * search, so the identity/role filter runs client-side over the whole set —
  * every page must be fetched or work goes silently unseen. `PR_MAX_PAGES` is a
  * runaway guard, not a policy: hitting it is warned about, never passed off as
@@ -73,7 +48,9 @@ const AdoFreshPrSchema = z.object({
  */
 const PR_PAGE_SIZE = 100
 const PR_MAX_PAGES = 10
-const API_VERSION = "api-version=7.1"
+
+/** How many recent validation builds to consider when judging a PR's checks. */
+const PR_BUILD_LOOKBACK = 30
 
 interface AdoPrDeps {
   readonly $: Shell
@@ -84,10 +61,8 @@ interface AdoPrDeps {
   readonly loaded: LoadedManifest
   /** Azure DevOps coordinates (config `ado`); `selfLogin` is required for this platform. */
   readonly ado: AdoConfig
-  /** HTTP transport for ADO REST calls; defaults to `adoFetch(ado.insecureSkipTlsVerify)`. */
-  readonly http?: AdoHttp
-  /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
-  readonly pat?: string
+  /** The Azure DevOps MCP gateway every call goes through. */
+  readonly gateway: AdoGateway
   /**
    * A specific PR id to claim, from `claim <pr>`. When set, `claimNext` fetches
    * that one PR directly (bypassing the role/identity filter and the dedup
@@ -106,8 +81,10 @@ interface AdoPrDeps {
   readonly maxDiffLines?: number
 }
 
+type AdoPr = z.infer<typeof AdoPrListSchema>[number]
+
 export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
-  const { $, client, directory, tasksDir, log, loaded, ado } = deps
+  const { $, client, directory, tasksDir, log, loaded, ado, gateway } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "pull-request") {
     throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a pull-request work source`)
@@ -115,77 +92,98 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   const kind = loaded.manifest.kind
   const role = binding.role
   const now = deps.now ?? (() => new Date().toISOString())
-  const http = deps.http ?? adoFetch(ado.insecureSkipTlsVerify)
-  // Precedence: explicit dep (tests) → env var → config `ado.pat`.
-  const pat = deps.pat ?? process.env[PAT_ENV] ?? ado.pat ?? ""
-  const org = ado.organization.replace(/\/+$/, "")
-  const project = encodeURIComponent(ado.project)
+  const project = ado.project
   const login = ado.selfLogin ?? ""
-  // Config headers as a base, env `AGENTIC_WORKFLOW_ADO_HEADERS` overriding (env wins, like the PAT).
-  const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
+  /** Rendered literally into the ADO stage prompts, so no agent parses a git remote. */
+  const coords = { project, repository: ado.repository ?? "" }
 
   const markers = makeClaimMarkers($, directory, tasksDir, kind)
 
-  const authHeader = makeAdoAuthHeader({ pat })
+  /** The repository identifier per-PR calls address, preferring the PR's own over the configured one. */
+  const repoIdOf = (pr: AdoPr): string => pr.repository?.id || pr.repository?.name || ado.repository || ""
 
-  /** One authenticated GET. Never throws — a network error (or missing credential) reads as a non-ok response, like the CLI's `nothrow()`. */
-  const get = async (url: string): Promise<{ ok: boolean; status: number; statusText: string; body: string }> => {
+  /** One page of the active-PR list. */
+  const listPrsPage = (skip: number): Promise<AdoResult> =>
+    gateway.listPullRequests({
+      project,
+      ...(ado.repository ? { repositoryId: ado.repository } : {}),
+      status: "active",
+      top: PR_PAGE_SIZE,
+      skip,
+    })
+
+  /**
+   * Fetch one PR by id. The MCP tool requires a repository, unlike the
+   * project-wide REST route this replaced, so without `ado.repository` the id is
+   * resolved against the active list instead — same result, one extra call, and
+   * it keeps `claim <pr>` working for a project-scoped sitter.
+   */
+  const fetchPr = async (number: number): Promise<{ pr: AdoPr } | { error: string }> => {
+    if (ado.repository) {
+      const out = await gateway.getPullRequest({ project, repositoryId: ado.repository, pullRequestId: number })
+      if (!out.ok) return { error: out.error }
+      try {
+        return { pr: AdoPrListSchema.element.parse(out.data) }
+      } catch (err) {
+        return { error: `could not parse the ADO response for PR #${number} — ${(err as Error).message}` }
+      }
+    }
+    const out = await gateway.listPullRequests({ project, status: "active", top: PR_PAGE_SIZE })
+    if (!out.ok) return { error: out.error }
     try {
-      const res = await http(url, {
-        headers: buildAdoHeaders({ Authorization: await authHeader(), Accept: "application/json" }, customHeaders),
-      })
-      const body = await res.text().catch(() => "")
-      return { ok: res.ok, status: res.status, statusText: res.statusText, body }
+      const found = AdoPrListSchema.parse(adoList(out.data)).find((p) => p.pullRequestId === number)
+      return found ? { pr: found } : { error: `PR #${number} is not in the project's active pull requests` }
     } catch (err) {
-      return { ok: false, status: 0, statusText: (err as Error).message, body: "" }
+      return { error: `could not parse the ADO response for PR #${number} — ${(err as Error).message}` }
     }
   }
 
-  /** One page of the active-PR list over the ADO REST API. */
-  const listPrsPage = (skip: number): Promise<{ ok: boolean; status: number; statusText: string; body: string }> =>
-    get(
-      ado.repository
-        ? `${org}/${project}/_apis/git/repositories/${encodeURIComponent(ado.repository)}/pullrequests?searchCriteria.status=active&$top=${PR_PAGE_SIZE}&$skip=${skip}&${API_VERSION}`
-        : `${org}/${project}/_apis/git/pullrequests?searchCriteria.status=active&$top=${PR_PAGE_SIZE}&$skip=${skip}&${API_VERSION}`,
-    )
-
-  /** Names of blocking policies currently failing on the PR (ADO's nearest equivalent of failing checks). */
-  const failingPolicies = async (projectId: string, pr: number): Promise<string[]> => {
-    if (!projectId) return []
-    const artifactId = `vstfs:///CodeReview/CodeReviewId/${projectId}/${pr}`
-    const out = await get(
-      `${org}/${project}/_apis/policy/evaluations?artifactId=${encodeURIComponent(artifactId)}&${API_VERSION}`,
-    )
-    if (!out.ok) return []
-    try {
-      const json = JSON.parse(out.body || "{}") as { value?: unknown }
-      return failingPolicyNames(AdoPolicySchema.parse(json.value ?? []))
-    } catch {
-      return []
+  /**
+   * Names of the PR's failing validation pipelines. ADO queues PR validation
+   * against the merge ref; some org setups validate the source branch instead,
+   * so that is the fallback — narrowed to the PR's own head so another branch's
+   * runs can't be misread as this PR's.
+   */
+  const failingPipelines = async (pr: AdoPr): Promise<string[]> => {
+    const number = pr.pullRequestId
+    const head = pr.lastMergeSourceCommit?.commitId ?? ""
+    const parse = (out: AdoResult): z.infer<typeof AdoBuildListSchema> => {
+      if (!out.ok) return []
+      try {
+        return AdoBuildListSchema.parse(adoList(out.data))
+      } catch {
+        return []
+      }
     }
+
+    const merged = parse(
+      await gateway.listBuilds({ project, branchName: `refs/pull/${number}/merge`, top: PR_BUILD_LOOKBACK }),
+    )
+    if (merged.length > 0) return failingPipelineNames(merged)
+
+    const source = parse(
+      await gateway.listBuilds({ project, branchName: pr.sourceRefName, top: PR_BUILD_LOOKBACK }),
+    )
+    return failingPipelineNames(head ? source.filter((b) => b.sourceVersion === head) : source)
   }
 
-  /** Non-system PR thread comments, flattened to `{ author, at }`, from the `pullRequestThreads` resource. */
+  /** Non-system PR thread comments, flattened to `{ author, at }`. */
   const threadComments = async (repositoryId: string, pr: number): Promise<{ author: string; at: string }[]> => {
     if (!repositoryId) return []
-    const out = await get(
-      `${org}/${project}/_apis/git/repositories/${encodeURIComponent(repositoryId)}/pullRequests/${pr}/threads?${API_VERSION}`,
-    )
+    const out = await gateway.listPullRequestThreads({ project, repositoryId, pullRequestId: pr })
     if (!out.ok) return []
     try {
-      const threads = AdoThreadsSchema.parse(JSON.parse(out.body || "{}"))
-      return flattenThreadComments(threads.value ?? [])
+      return flattenThreadComments(AdoThreadListSchema.parse(adoList(out.data)))
     } catch {
       return []
     }
   }
 
-  /** Normalize one ADO PR into the ledger's `PrSnapshot` (checks + comments are per-PR REST calls). */
-  const buildSnapshot = async (pr: z.infer<typeof AdoPrListSchema>[number], watermark: string): Promise<PrSnapshot> => {
+  /** Normalize one ADO PR into the ledger's `PrSnapshot` (checks + comments are per-PR calls). */
+  const buildSnapshot = async (pr: AdoPr, watermark: string): Promise<PrSnapshot> => {
     const number = pr.pullRequestId
     const enabled = binding.triggers
-    const repositoryId = pr.repository?.id || pr.repository?.name || ""
-    const comments = enabled.includes("new-comments") ? await threadComments(repositoryId, number) : []
+    const comments = enabled.includes("new-comments") ? await threadComments(repoIdOf(pr), number) : []
     return {
       number,
       title: pr.title,
@@ -193,8 +191,8 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
       baseRefName: stripRef(pr.targetRefName),
       headRefOid: pr.lastMergeSourceCommit?.commitId ?? "",
       mergeable: (pr.mergeStatus ?? "").toLowerCase() === "conflicts" ? "CONFLICTING" : "MERGEABLE",
-      reviewDecision: (pr.reviewers ?? []).some((r) => r.vote < 0) ? "CHANGES_REQUESTED" : "",
-      failingChecks: enabled.includes("failing-checks") ? await failingPolicies(pr.repository?.project?.id ?? "", number) : [],
+      reviewDecision: pr.reviewers.some((r) => r.vote < 0) ? "CHANGES_REQUESTED" : "",
+      failingChecks: enabled.includes("failing-checks") ? await failingPipelines(pr) : [],
       newComments: comments.filter((c) => !sameLogin(c.author, login) && newerThan(c.at, watermark)),
     }
   }
@@ -206,36 +204,14 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
    * skip is a security invariant (T10), so it still refuses.
    */
   const claimSpecific = async (target: number): ReturnType<WorkSource["claimNext"]> => {
-    if (!pat) {
+    const found = await fetchPr(target)
+    if ("error" in found) {
       return {
         item: null,
-        skip: {
-          message:
-            `${kind}: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Code (read) scope so the ` +
-            `sitter can call the ADO REST API.`,
-          actionable: true,
-        } satisfies ClaimSkipReason,
+        skip: { message: `${kind}: PR #${target} not found or not accessible — ${found.error}`, actionable: true },
       }
     }
-    const out = await get(`${org}/${project}/_apis/git/pullrequests/${target}?${API_VERSION}`)
-    if (!out.ok) {
-      return {
-        item: null,
-        skip: {
-          message: `${kind}: PR #${target} not found or not accessible — HTTP ${out.status} ${out.statusText}.`,
-          actionable: true,
-        } satisfies ClaimSkipReason,
-      }
-    }
-    let pr: z.infer<typeof AdoPrListSchema>[number]
-    try {
-      pr = AdoPrListSchema.element.parse(JSON.parse(out.body || "{}"))
-    } catch (err) {
-      return {
-        item: null,
-        skip: { message: `${kind}: could not parse the ADO response for PR #${target} — ${(err as Error).message}`, actionable: true },
-      }
-    }
+    const pr = found.pr
     // Fork PRs are refused for every role even when named (threat model T10).
     if (pr.forkSource != null) {
       return {
@@ -263,7 +239,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         skip: { message: `${kind}: could not fetch ${snapshot.headRefName} for PR #${target} — skipping`, actionable: true },
       }
     }
-    return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }), skip: null }
+    return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords), skip: null }
   }
 
   return {
@@ -271,17 +247,6 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
 
     async claimNext() {
       if (deps.target != null) return claimSpecific(deps.target)
-      if (!pat) {
-        return {
-          item: null,
-          skip: {
-            message:
-              `${kind}: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Code (read) scope so the ` +
-              `sitter can call the ADO REST API.`,
-            actionable: true,
-          } satisfies ClaimSkipReason,
-        }
-      }
       if (!login) {
         // A PAT can't resolve the sitter's own identity; config.ts enforces this,
         // and this is the defensive guard for direct construction.
@@ -295,11 +260,11 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           } satisfies ClaimSkipReason,
         }
       }
-      // Page with `$skip` until a short page arrives. ADO has no server-side
+      // Page with `skip` until a short page arrives. ADO has no server-side
       // search, so the `role` identity filter runs client-side over the WHOLE
       // set — stopping at the first 100 made a PR at position 140 that needed
       // attention permanently invisible, with no error and no warning.
-      const prs: z.infer<typeof AdoPrListSchema> = []
+      const prs: AdoPr[] = []
       let truncated = false
       for (let page = 0; page < PR_MAX_PAGES; page++) {
         const out = await listPrsPage(page * PR_PAGE_SIZE)
@@ -308,16 +273,16 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
             item: null,
             skip: {
               message:
-                `${kind}: Azure DevOps pull-request list failed — HTTP ${out.status} ${out.statusText}. ` +
-                `Is ${PAT_ENV} a valid token with Code (read) scope, and are ado.organization/project correct?`,
+                `${kind}: Azure DevOps pull-request list failed — ${out.error}. ` +
+                `Is the Azure DevOps MCP server reachable with a token that has Code (read) scope, ` +
+                `and are ado.organization/project correct?`,
               actionable: true,
             } satisfies ClaimSkipReason,
           }
         }
-        let batch: z.infer<typeof AdoPrListSchema>
+        let batch: AdoPr[]
         try {
-          const json = JSON.parse(out.body || "{}") as { value?: unknown }
-          batch = AdoPrListSchema.parse(json.value ?? [])
+          batch = AdoPrListSchema.parse(adoList(out.data))
         } catch (err) {
           return {
             item: null,
@@ -351,10 +316,10 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         // pending — vote 0 is ADO's "review not cast yet", the nearest mirror of
         // GitHub's review-requested:@me dropping a PR once the review is submitted.
         if (role === "reviewer") {
-          if (sameLogin(pr.createdBy?.uniqueName ?? "", login)) continue
-          const mine = (pr.reviewers ?? []).find((r) => sameLogin(r.uniqueName, login))
+          if (sameLogin(pr.createdBy.uniqueName, login)) continue
+          const mine = pr.reviewers.find((r) => sameLogin(r.uniqueName, login))
           if (!mine || mine.vote !== 0) continue
-        } else if (!sameLogin(pr.createdBy?.uniqueName ?? "", login)) {
+        } else if (!sameLogin(pr.createdBy.uniqueName, login)) {
           continue
         }
         const number = pr.pullRequestId
@@ -374,7 +339,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           await markers.release(number)
           continue
         }
-        return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }), skip: null }
+        return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords), skip: null }
       }
       if (heldIds.length) {
         return {
@@ -398,17 +363,12 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
       const ledger = await loadLedger(client, directory, tasksDir, kind, snapshot.number, now())
       // Re-read the PR head: after a publish it is the sitter's own push, and
       // recording it as handled is exactly what prevents self-triggering.
-      const fresh = await get(`${org}/${project}/_apis/git/pullrequests/${snapshot.number}?${API_VERSION}`)
+      const fresh = await fetchPr(snapshot.number)
       let head = snapshot.headRefOid
       let repositoryId = ""
-      if (fresh.ok) {
-        try {
-          const data = AdoFreshPrSchema.parse(JSON.parse(fresh.body))
-          head = data.lastMergeSourceCommit?.commitId ?? head
-          repositoryId = data.repository?.id ?? data.repository?.name ?? ""
-        } catch {
-          /* keep snapshot values */
-        }
+      if (!("error" in fresh)) {
+        head = fresh.pr.lastMergeSourceCommit?.commitId || head
+        repositoryId = repoIdOf(fresh.pr)
       }
       let lastCommentAt = ledger.lastCommentAtHandled ?? ""
       if (repositoryId) {

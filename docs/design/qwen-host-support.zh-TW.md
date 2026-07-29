@@ -60,10 +60,12 @@ Qwen Code（Gemini CLI 的 fork）其實比 OpenCode 更接近 Claude Code：
 2. **Extension 無法攜帶 hooks。** `qwen-extension.json` 沒有 `hooks` 欄位，
    而那些防護 hook **就是**安全基座。因此安裝腳本必須把一段 hooks 併進
    `settings.json`；只用 extension 安裝不是受支援的路徑。
-3. **ADO PAT 注入沒有對應物。** `inject-ado-pat.mjs` 寫入 `$CLAUDE_ENV_FILE`；
-   Qwen 沒有等價物。在 Qwen 上，SessionStart hook 退化成一則
-   `additionalContext` 提示，README 則說明直接匯出 `AZURE_DEVOPS_EXT_PAT`。
-   標示出來，不要假裝有。
+3. ~~**ADO PAT 注入沒有對應物。**~~ **已被取代——這個缺口不再存在。**
+   當初寫下時它是真的：`inject-ado-pat.mjs` 寫入 `$CLAUDE_ENV_FILE`，Qwen
+   沒有等價物，該 hook 退化成一則 `additionalContext` 提示。現在 Azure
+   DevOps 只透過 Azure DevOps MCP 伺服器觸達，因此沒有任何宿主需要把 PAT
+   放進階段 agent 的環境裡——driver 會把憑證交給它自己啟動的伺服器，而階段
+   agent 使用的是使用者註冊的那一個。兩個 `inject-ado-pat.mjs` hook 都已刪除。
 4. ~~**MCP 工具命名尚未確認。**~~ **已確認——沒有差異。**
    Qwen 以 `mcp__${serverName}__${serverToolName}` 註冊 MCP 工具，經過
    `normalizeToolNameForProvider`；當名稱長度 ≤63 且符合
@@ -177,8 +179,7 @@ hook 的**契約**已經相容；不同的只有工具身分。不要 fork 政�
   `gate-command`/`gate-parse`/`gate-result`/`verb-slice`——邏輯不變。
   `gate-command.mjs` 在既有的 `CLAUDE_PLUGIN_ROOT` 查找之前，多加一個
   `AGENTIC_WORKFLOW_PLUGIN_ROOT` 後備；安裝腳本透過 hook 項目的 `env` 欄位提供它。
-- `inject-ado-pat.mjs`——在 Qwen 上改成送出一則 `additionalContext` 提示，
-  而不是寫入 env 檔（缺口 3）。
+- ~~`inject-ado-pat.mjs`~~——兩個宿主上都已刪除；見缺口 3。
 - `scripts/build-hooks.mjs`——再輸出**第二套、完全產生**的 bundle 到
   `plugins/qwen/hooks/`。連目前手寫的進入點（`gate-command.mjs` 與它的純函式輔助）
   也一起打包，讓 `plugins/qwen/hooks/` 100% 由產生器產出，CI 既有的

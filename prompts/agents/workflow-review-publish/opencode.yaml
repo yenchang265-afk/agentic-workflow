@@ -9,8 +9,6 @@ permission:
     # is scoped to `/threads*` so votes/completions can't get through.
     "gh pr comment *": allow
     "gh pr view*": allow
-    "curl *https://dev.azure.com/*/threads*": allow
-    "curl *https://*.visualstudio.com/*/threads*": allow
     # to the pullRequestThreads resource, mirroring /threads*.
     "git status*": allow
     "git diff*": allow
@@ -26,3 +24,7 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  {{adoTools}}

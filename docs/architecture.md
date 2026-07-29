@@ -30,7 +30,7 @@ flowchart TB
         sched["scheduler/scheduler.ts<br/><b>pollOnce(sources)</b> — walk enabled kinds'<br/>sources in claim-priority order"]
         subgraph sources["work sources (source/)"]
             backlog["backlog.ts<br/>status folders, .claims/ mkdir markers"]
-            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO REST + dedup ledger<br/>(pr-sitter, review-sitter)"]
+            ghpr["github-pr.ts / ado-pr.ts<br/>gh pr list or ADO MCP + dedup ledger<br/>(pr-sitter, review-sitter)"]
             depscan["dependency-scan.ts<br/>advisory reports"]
             ciruns["ci-runs.ts / ado-ci-runs.ts<br/>watched-branch CI heads<br/>(GitHub Actions or ADO Pipelines)"]
         end
@@ -97,7 +97,14 @@ flowchart TB
   fully-constructed entry `WorkflowState`, so drivers stay source-agnostic.
   The PR and CI sources have Azure DevOps twins (`ado-pr.ts`,
   `ado-ci-runs.ts`) swapped in at wiring time when `codePlatform` is
-  `"ado"`; they reach ADO through its REST API with a PAT.
+  `"ado"`. They reach ADO only through the Azure DevOps MCP server, via the
+  `AdoGateway` port (`packages/core/src/source/ado-gateway.ts`) — types only,
+  because `host.ts` forbids core importing a host SDK. The client that
+  satisfies it lives in **`packages/ado-mcp`**, the one place in the repo that
+  imports `@modelcontextprotocol/sdk` as a *client*; it keeps a single
+  long-lived server per process, and the tool names it calls are pinned in
+  `packages/core/src/source/ado-tools.ts` against the dump in
+  `docs/design/ado-mcp-toolsurface.md`.
   `pollOnce(sources)` walks the given sources in claim-priority order
   (`engineering` unless disabled, then the opted-in kinds — every sitter — in
   config order; `enabledWorkflowKinds` in core config); the first successful claim wins, and

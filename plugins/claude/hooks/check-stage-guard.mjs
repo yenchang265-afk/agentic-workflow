@@ -15,6 +15,40 @@ var STATUSES = [
   "abandoned"
 ];
 
+// packages/core/dist/source/ado-tools.js
+var ADO_TOOLS = {
+  getPr: "repo_get_pull_request_by_id",
+  listPrs: "repo_list_pull_requests_by_repo_or_project",
+  listPrsByCommits: "repo_list_pull_requests_by_commits",
+  listThreads: "repo_list_pull_request_threads",
+  listThreadComments: "repo_list_pull_request_thread_comments",
+  getRepo: "repo_get_repo_by_name_or_id",
+  createPr: "repo_create_pull_request",
+  createThread: "repo_create_pull_request_thread",
+  replyToComment: "repo_reply_to_comment",
+  getBuilds: "pipelines_get_builds",
+  getBuildStatus: "pipelines_get_build_status",
+  getBuildLog: "pipelines_get_build_log",
+  getBuildLogById: "pipelines_get_build_log_by_id"
+};
+var ADO_WRITE_TOOLS = [
+  ADO_TOOLS.createPr,
+  ADO_TOOLS.createThread,
+  ADO_TOOLS.replyToComment
+];
+var ADO_READ_TOOLS = [
+  ADO_TOOLS.getPr,
+  ADO_TOOLS.listPrs,
+  ADO_TOOLS.listPrsByCommits,
+  ADO_TOOLS.listThreads,
+  ADO_TOOLS.listThreadComments,
+  ADO_TOOLS.getRepo,
+  ADO_TOOLS.getBuilds,
+  ADO_TOOLS.getBuildStatus,
+  ADO_TOOLS.getBuildLog,
+  ADO_TOOLS.getBuildLogById
+];
+
 // packages/core/dist/task/write-backstop.js
 var splitSegments = (cmd) => {
   const segments = [];
@@ -501,45 +535,41 @@ var isGithubPrMutation = (cmd) => {
   }
   return false;
 };
-var isAdoCurl = (cmd) => /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd);
-var curlMethod = (cmd) => {
-  const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd);
-  if (explicit) return explicit[1].toUpperCase();
-  return /(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b/.test(cmd) ? "POST" : "GET";
+var ADO_MCP_SERVER_NAME2 = "azure-devops";
+var ADO_READ_TOOLS2 = [
+  "repo_get_pull_request_by_id",
+  "repo_list_pull_requests_by_repo_or_project",
+  "repo_list_pull_requests_by_commits",
+  "repo_list_pull_request_threads",
+  "repo_list_pull_request_thread_comments",
+  "repo_get_repo_by_name_or_id",
+  "pipelines_get_builds",
+  "pipelines_get_build_status",
+  "pipelines_get_build_log",
+  "pipelines_get_build_log_by_id"
+];
+var ADO_WRITE_TOOLS2 = ["repo_create_pull_request", "repo_create_pull_request_thread", "repo_reply_to_comment"];
+var parseAdoMcpTool = (toolName) => {
+  const m = /^mcp__(.+?)__(.+)$/.exec(String(toolName ?? ""));
+  if (!m) return null;
+  const server = m[1];
+  if (server !== ADO_MCP_SERVER_NAME2 && !/(?:azure|ado|devops)/i.test(server)) return null;
+  return { server, tool: m[2] };
 };
-var isAdoWriteBackstopViolation = (cmd) => {
-  if (!isAdoCurl(cmd)) return false;
-  const method = curlMethod(cmd);
-  const targetsThread = /\/threads(?:\/|\?|\b)/i.test(cmd);
-  const createsNewPr = /\/pullrequests(?![a-zA-Z0-9/])/i.test(cmd);
-  return !(method === "GET" || method === "POST" && (targetsThread || createsNewPr));
-};
-var isAdoAz = (cmd) => /^az\s+(?:repos|pipelines|boards|devops)\b/.test(cmd.trim());
-var isAdoAzWriteViolation = (cmd) => {
-  const c = cmd.trim();
-  if (!isAdoAz(c)) return false;
-  if (/^az\s+repos\s+pr\s+create\b/.test(c)) return !/(?:^|\s)--draft\b/.test(c);
-  if (/^az\s+repos\s+pr\s+(?:update|set-vote)\b/.test(c)) return true;
-  if (/^az\s+repos\s+pr\s+(?:reviewer|work-item)\s+(?:add|remove)\b/.test(c)) return true;
-  if (/^az\s+repos\s+(?:policy|ref|import)\b/.test(c)) return true;
-  if (/^az\s+repos\s+pr\s+policy\s+queue\b/.test(c)) return true;
-  if (/^az\s+pipelines\s+(?:run\b|build\s+queue\b)/.test(c)) return true;
-  if (/^az\s+devops\s+invoke\b/.test(c)) {
-    const m = /--http-method[ =]+([A-Za-z]+)/i.exec(c);
-    const method = m ? m[1].toUpperCase() : "GET";
-    if (method === "GET") return false;
-    if (method !== "POST") return true;
-    const resource = (/--resource[ =]+([\w-]+)/.exec(c)?.[1] ?? "").toLowerCase();
-    return !["pullrequestthreads", "pullrequestthreadcomments", "pullrequests"].includes(resource);
-  }
+var isAdoMcpTool = (toolName) => parseAdoMcpTool(toolName) !== null;
+var isAdoMcpWriteViolation = (toolName, args = {}) => {
+  const parsed = parseAdoMcpTool(toolName);
+  if (!parsed) return false;
+  const { tool } = parsed;
+  if (ADO_READ_TOOLS2.includes(tool)) return false;
+  if (!ADO_WRITE_TOOLS2.includes(tool)) return true;
+  if (tool === "repo_create_pull_request") return args?.isDraft !== true;
   return false;
 };
-var isAdoMcpMutationTool = (toolName) => {
-  const m = /^mcp__(.+?)__(.+)$/.exec(toolName);
-  if (!m) return false;
-  const [, server, tool] = m;
-  if (!/(?:azure|ado|devops)/i.test(server)) return false;
-  return /(?:update|complete|abandon|merge|vote|approve|reject|delete|reviewer|publish)/i.test(tool);
+var isAdoMcpToolOutOfStageScope = (toolName, allowed) => {
+  const parsed = parseAdoMcpTool(toolName);
+  if (!parsed) return false;
+  return !(allowed ?? []).includes(parsed.tool);
 };
 var isGitPushViolation = (cmd) => {
   const c = cmd.trim();
@@ -569,8 +599,6 @@ var isGitPushViolation = (cmd) => {
   return false;
 };
 var chainedGithubPrMutation = (cmd) => splitSegments2(cmd).some(isGithubPrMutation);
-var chainedAdoWriteBackstopViolation = (cmd) => splitSegments2(cmd).some(isAdoWriteBackstopViolation);
-var chainedAdoAzWriteViolation = (cmd) => splitSegments2(cmd).some(isAdoAzWriteViolation);
 var chainedGitPushViolation = (cmd) => splitSegments2(cmd).some(isGitPushViolation);
 
 // plugins/claude/hooks/src/pretooluse.mjs
@@ -709,16 +737,6 @@ var main = async () => {
   const ti = input.tool_input || {};
   const isBash = isBashTool(d, tool);
   const isWrite = isWriteTool(d, tool);
-  if (isBash && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
-    return block2(
-      `agentic-workflow: the loop must never mutate an existing pull request \u2014 this Azure DevOps REST call is blocked. Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR (POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and pipeline runs stay a human call.`
-    );
-  }
-  if (isBash && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
-    return block2(
-      `agentic-workflow: the loop must never mutate an existing pull request \u2014 this az CLI call is blocked. Only reads, thread-comment replies (az devops invoke POST to a pullRequestThreads/pullRequestThreadComments resource), and creating a new DRAFT PR (az repos pr create --draft) are permitted; completing, abandoning, voting, reviewer changes, and pipeline runs stay a human call.`
-    );
-  }
   const planTaskId = marker && marker.stage === "plan" && typeof marker.taskId === "string" ? marker.taskId : null;
   const filePath = writePathOf(ti);
   const backlogVerdict = classifyMutation(
@@ -731,10 +749,18 @@ var main = async () => {
   );
   if (!backlogVerdict.allow) return block2(backlogVerdict.reason);
   if (!marker) return allow();
-  if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpMutationTool(tool)) {
-    return block2(
-      `agentic-workflow: the loop must never mutate an existing pull request \u2014 this Azure DevOps MCP tool looks state-mutating and is blocked. Only reads, thread-comment replies, and creating a new DRAFT PR are permitted; completing, abandoning, approving, voting, and reviewer changes stay a human call.`
-    );
+  if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpTool(tool)) {
+    const args = ti && typeof ti === "object" ? ti : {};
+    if (isAdoMcpWriteViolation(tool, args)) {
+      return block2(
+        `agentic-workflow: the loop must never mutate an existing pull request \u2014 this Azure DevOps MCP tool is blocked. Only reads, thread comments/replies, and creating a DRAFT pull request (isDraft: true) are permitted; completing, abandoning, approving, voting, reviewer changes, branch creation, and pipeline runs stay a human call.`
+      );
+    }
+    if (isAdoMcpToolOutOfStageScope(tool, marker.adoTools)) {
+      return block2(
+        `agentic-workflow: the ${marker.stage ?? "current"} stage may not call this Azure DevOps MCP tool \u2014 its manifest grants ${(marker.adoTools ?? []).length ? (marker.adoTools ?? []).join(", ") : "no ADO tools"}. Add it to platformTools in workflows/<kind>/workflow.json if the stage genuinely needs it.`
+      );
+    }
   }
   if (isBash && chainedGithubPrMutation(String(ti.command ?? ""))) {
     return block2(

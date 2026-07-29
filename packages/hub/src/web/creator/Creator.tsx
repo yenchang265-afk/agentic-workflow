@@ -279,6 +279,7 @@ export const Creator = () => {
       requireEvidence: false,
       bashAllowlist: [],
       platformAllowlist: {},
+      platformTools: {},
     }
     setNodes((ns) => [...ns, { id: `node-${Date.now()}`, type: "stage", position: { x: 40, y: 40 }, data: { stage } }])
   }

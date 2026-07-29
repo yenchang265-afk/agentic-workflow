@@ -1,7 +1,7 @@
 {
   "kind": "main-sitter",
   "version": 1,
-  "description": "Sits on the default branch's CI: when it goes red, diagnoses the failure on that exact head (bisecting when needed), writes a verified forward fix or revert, and opens a draft remedy PR — commenting once on the culprit PR. Never pushes the watched branch; merging stays a human call.",
+  "description": "Sits on the default branch's CI: when it goes red, diagnoses the failure on that exact head (bisecting when needed), writes a verified forward fix or revert, and opens a draft remedy PR \u2014 commenting once on the culprit PR. Never pushes the watched branch; merging stays a human call.",
   "workSource": {
     "type": "ci-runs",
     "workflows": []
@@ -80,9 +80,15 @@
           "gh pr list*",
           "gh pr view*"
         ],
+        "ado": []
+      },
+      "platformTools": {
         "ado": [
-          "curl *https://dev.azure.com/*",
-          "curl *https://*.visualstudio.com/*"
+          "pipelines_get_builds",
+          "pipelines_get_build_status",
+          "pipelines_get_build_log",
+          "pipelines_get_build_log_by_id",
+          "repo_list_pull_requests_by_commits"
         ]
       }
     },
@@ -224,9 +230,13 @@
           "gh pr list*",
           "gh pr comment *"
         ],
+        "ado": []
+      },
+      "platformTools": {
         "ado": [
-          "curl *https://dev.azure.com/*",
-          "curl *https://*.visualstudio.com/*"
+          "repo_list_pull_requests_by_repo_or_project",
+          "repo_create_pull_request",
+          "repo_create_pull_request_thread"
         ]
       }
     }
@@ -239,11 +249,11 @@
       },
       "onFail": {
         "kind": "done",
-        "message": "✓ Main sitter done — the failure is a flake or the branch already recovered; no remedy needed."
+        "message": "\u2713 Main sitter done \u2014 the failure is a flake or the branch already recovered; no remedy needed."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ Main sitter stopped — diagnose could not reproduce or inspect the failure (environment error). Fix the environment and let the next poll retry."
+        "message": "\u2717 Main sitter stopped \u2014 diagnose could not reproduce or inspect the failure (environment error). Fix the environment and let the next poll retry."
       }
     },
     "remedy": {
@@ -262,17 +272,17 @@
         "stage": "remedy",
         "countIteration": true,
         "dropArtifacts": [],
-        "capMessage": "✗ Main sitter stopped — verify failed after {maxIterations} iterations; prefer the revert path. The attempt is recorded; this head parks until a new push replaces it."
+        "capMessage": "\u2717 Main sitter stopped \u2014 verify failed after {maxIterations} iterations; prefer the revert path. The attempt is recorded; this head parks until a new push replaces it."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ Main sitter stopped — verify could not run (environment/infrastructure error)."
+        "message": "\u2717 Main sitter stopped \u2014 verify could not run (environment/infrastructure error)."
       }
     },
     "publish": {
       "onDone": {
         "kind": "done",
-        "message": "✓ Main sitter done — pushed the remedy and opened a draft PR. The watched branch was never touched; merging stays a human call."
+        "message": "\u2713 Main sitter done \u2014 pushed the remedy and opened a draft PR. The watched branch was never touched; merging stays a human call."
       }
     }
   },

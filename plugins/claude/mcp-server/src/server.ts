@@ -6,14 +6,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
+import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, runChecks, withCheckFloor } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
+import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { effectiveAllowlist, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
+import { effectiveAllowlist, effectivePlatformTools, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
@@ -710,9 +712,15 @@ const writeStageMarker = (stage: string | null): string | null => {
         JSON.stringify({
           kind: m.manifest.kind,
           stage,
-          // The guard's ADO write-backstops key off this (curl to dev.azure.com,
-          // plus a best-effort ADO-MCP mutation blocklist).
+          // The guard's ADO checks key off this.
           platform,
+          // The Azure DevOps MCP tools THIS stage may call, resolved from the
+          // manifest here because a bundled hook cannot read manifests
+          // (`manifest/dir.ts` resolves from import.meta.url, which lands in the
+          // hook's own directory once esbuild inlines core). Stage-keyed, and
+          // rewritten on every stage fire — a stale list would grant the next
+          // stage this one's budget.
+          adoTools: effectivePlatformTools(def, platform),
           // The subagent this stage binds, straight from the manifest — the driver
           // (workflow-orchestration SKILL) spawns whatever is named here, so a new kind
           // needs no prose edit.
@@ -780,7 +788,17 @@ const fail = (message: string) => ({ isError: true, content: [{ type: "text" as 
  * in-memory `active` loop; the replan/reject paths override it with the id a
  * live loop is driving (the MCP tool's `active`, or the CLI's on-disk marker).
  */
-const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id })
+/**
+ * The Azure DevOps MCP gateway as a spreadable fragment — `{}` when ADO isn't
+ * configured, so a GitHub-only install never carries the key or spawns a
+ * server. One server per process; see `sharedAdoGateway`.
+ */
+const adoGatewayDep = (): { adoGateway?: AdoGateway } => {
+  const gateway = sharedAdoGateway(config, log)
+  return gateway ? { adoGateway: gateway } : {}
+}
+
+const gateCtx = (): GateCtx => ({ $: sh, client: fsClient, log, directory, config, isDriving: (id) => active?.task?.id === id, ...adoGatewayDep() })
 
 /**
  * The shared terminal context for this host — the ports core's `runTerminal`
@@ -818,7 +836,7 @@ const findAnyStatus = (id: string): Promise<Task | null> => coreFindAnyStatus(ga
 const sourcesFor = (only?: string, target?: number): WorkSource[] =>
   buildWorkSources(
     // Single active loop per server; a claim only happens when no loop is live.
-    { $: sh, client: fsClient, directory, log, isDriving: (id) => active?.task?.id === id, hostName: HOST },
+    { $: sh, client: fsClient, directory, log, isDriving: (id) => active?.task?.id === id, hostName: HOST, ...adoGatewayDep() },
     config,
     manifestFor,
     only,

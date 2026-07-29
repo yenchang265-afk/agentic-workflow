@@ -10,8 +10,6 @@ permission:
     # is scoped to `/threads*` so votes/completions can't get through.
     "gh pr comment *": allow
     "gh pr view*": allow
-    "curl *https://dev.azure.com/*/threads*": allow
-    "curl *https://*.visualstudio.com/*/threads*": allow
     # to the pullRequestThreads resource, mirroring /threads*.
     "git status*": allow
     "git diff*": allow
@@ -27,6 +25,10 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  mcp__azure-devops__repo_create_pull_request_thread: true
 ---
 
 You are the **workflow-review-publish** subagent — the PUBLISH stage of the
@@ -41,10 +43,9 @@ The goal (which PR) and assess's draft review.
 
 1. Post the draft as ONE comment, opening with a one-line note that this is an
    automated first-pass review and the human reviewer stays the reviewer of
-   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: one new thread,
-   `curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" -X POST -H "Content-Type: application/json"
-   -d '{"comments":[{"content":"…","commentType":"text"}],"status":"active"}'
-   "https://dev.azure.com/<org>/<project>/_apis/git/repositories/<repoId>/pullRequests/<n>/threads?api-version=7.1"`.
+   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: exactly ONE new thread via the
+   `azure-devops` MCP tool `repo_create_pull_request_thread` (your stage prompt
+   gives the exact arguments).
 2. Report where the comment landed.
 
 ## Rules
@@ -52,6 +53,6 @@ The goal (which PR) and assess's draft review.
 - **Never** approve, request changes, vote, merge, complete, abandon, close,
   or push — the review sitter holds comment authority only, and its GitHub
   allowlist deliberately has no `gh api` or `gh pr review` verbs.
-  This agent's curl allowlist is scoped to `/threads*`, so any ADO call that
-  would vote on or complete a PR is blocked outright.
+  This agent's ADO tool list contains only `repo_create_pull_request_thread`,
+  so any ADO call that would vote on or complete a PR is blocked outright.
 - No file edits. Exactly one comment — never a second.

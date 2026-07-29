@@ -194,21 +194,27 @@ sitter 是以周遭環境中 `gh` 憑證所能做到的一切權限來執行—�
   token 本身。若要做到嚴格圍堵，請讓 watcher 使用一組細粒度的 PAT，只在
   其所監看的儲存庫上授予 contents:write + pull-requests:write，並在 forge
   上為發布分支加上保護。這在 Azure DevOps（`codePlatform: "ado"`）上同樣
-  成立：sitter 只使用推送 + 討論串回覆（對
-  `_apis/git/repositories/<repo>/pullRequests/<n>/threads/<id>/comments`
-  發出 `curl` POST），完成／放棄一個 PR 在任何地方都被排除，而一組範圍
-  受限的 `AZURE_DEVOPS_EXT_PAT`（Code read + Pull Request contribute）就是
-  與嚴格圍堵對等的做法。ADO 白名單是綁定主機的 `curl`
-  （`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`），外加一個 PreToolUse
-  保底 hook（`check-stage-guard.mjs`），只允許 GET 讀取、對 `/threads`
-  資源的 POST，以及建立**全新** pull request 的 POST（純粹的
-  `.../pullrequests` 集合，其後沒有 id 段落——這是 dep-sitter 與
-  main-sitter 的 publish 階段所需；見 T12/T13）——無論是哪種工作流程類型或
-  哪個階段，一律封鎖完成／放棄、核准／拒絕審查者投票、審查者編輯，以及
-  執行流水線（run-pipeline）。「建立」與「異動既有 PR」之間的區別，是靠
-  一個正規表示式前瞻（regex lookahead，`isAdoWriteBackstopViolation`，
-  位於 `plugins/claude/hooks/src/allowlist.mjs`）檢查 URL 中
-  `pullrequests` 之後是否還接了任何東西（一個 `/`、一個 id）來判定的。
+  成立：sitter 只使用推送 + 討論串回覆（`repo_reply_to_comment` /
+  `repo_create_pull_request_thread`），完成／放棄一個 PR 在任何地方都被
+  排除，而一組範圍受限的 `AZURE_DEVOPS_EXT_PAT`（Code read + Pull Request
+  contribute）就是與嚴格圍堵對等的做法。
+
+  ADO **只**透過 Azure DevOps MCP 伺服器觸達，因此 ado 的 bash 白名單是空
+  的，強制執行改在工具層級：一個 PreToolUse 保底 hook
+  （`check-stage-guard.mjs`）**只**允許列舉出來的讀取工具、討論串留言／
+  回覆，以及**帶有 `isDraft: true` 的** `repo_create_pull_request`。其餘
+  一律拒絕——完成／放棄、審查者投票、審查者編輯、建立分支，以及執行流水線
+  ——無論是哪種工作流程類型或哪個階段。有兩項性質是關鍵，且在它所取代的
+  curl 時代檢查中並不成立：它是**預設拒絕（fail closed）**的（一個既不在
+  讀取集合、也不在寫入集合裡的工具就是違規，因此未被辨識、或上游新增的
+  異動型工具會被拒絕，而不是因為某個名稱樣式碰巧沒有比中而被放行），而且
+  它看得到工具的**參數**，這正是「只能是草稿」這條規則得以真正被強制執行
+  的原因（`isAdoMcpWriteViolation`，位於
+  `plugins/claude/hooks/src/allowlist.mjs`）。第二道檢查
+  （`isAdoMcpToolOutOfStageScope`）會把每一次呼叫限縮在該階段的 manifest
+  透過 `platformTools` 所授予的工具內，因此一個階段無法伸手取用一個一般
+  而言合法、但不屬於它職責範圍的工具。OpenCode 在 `tool.execute.before`
+  中同樣強制這兩者——在此之前它完全沒有任何 ADO 保底。
   有一點關於白名單廣度的說明：清單的階段白名單是依平台劃分的
   （`platformAllowlist.github`/`.ado` 會在階段標記時合併，因此只有解析出
   的那個平台的 CLI 會被允許），但 OpenCode 的 agent frontmatter 是靜態
@@ -290,10 +296,10 @@ T7 相同的紀律）並**安裝套件**——upgrade 階段的 `npm install <pk
   （`ignore-scripts`、一個代理型 registry）以及人工合併把關點。
 - **ADO 對等性：** `dependency-scan` 這個工作來源與平台無關（npm 才不管
   儲存庫住在哪個 forge 上）；只有 publish 階段建立 PR 的呼叫方式不同。在
-  `ado` 上，它是透過 `POST _apis/git/repositories/<repo>/pullrequests`
-  開啟草稿 PR——這正是 T8 保底 hook 更新時明確開的那一個寫入形狀的
-  例外——除此之外，上述控制措施的其餘部分（限定分支的推送、VERIFY 把關、
-  不合併）完全相同。
+  `ado` 上，它是透過帶有 `isDraft: true` 的 `repo_create_pull_request`
+  開啟草稿 PR——這正是 T8 保底 hook 明確開的那一個寫入形狀的例外，而且它會
+  *驗證*該草稿旗標，而不是信任它——除此之外，上述控制措施的其餘部分
+  （限定分支的推送、VERIFY 把關、不合併）完全相同。
 - **JVM 生態系（OSV-Scanner）：** 對 maven/gradle 而言，公告資料來自主機上
   已安裝的 `osv-scanner` 執行檔查詢 OSV.dev 資料庫——這是一種新的**對外
   讀取**連線（該執行檔如同 `gh` 一樣被信任：由主機操作者負責安裝與更新；
@@ -337,8 +343,9 @@ bisect，也就是在迴圈的 worktree 內簽出（checkout）並執行受監�
 - **殘餘風險：** 一次錯誤的診斷可能會提出錯誤的還原（revert）方案；草稿
   PR + 人工合併就是把關點，而 verify 階段要求失敗任務的指令必須先在
   本機通過，才會發布任何東西。
-- **ADO 對等性：** `ado-ci-runs.ts` 輪詢的是 Azure Pipelines Build REST
-  API（`_apis/build/builds`）而非 `gh run list`，並將結果正規化成與那個
+- **ADO 對等性：** `ado-ci-runs.ts` 是透過 MCP 伺服器的
+  `pipelines_get_builds` 工具輪詢 Azure Pipelines 而非 `gh run list`，
+  並將結果正規化成與那個
   純函式、已經過測試的 `newestHeadVerdict` 所判斷的相同形狀——「只看最新
   的 head、絕不在執行中途介入、絕不重新認領已處理過的 head」這套邏輯在
   兩個平台上完全一致，並透過 `ci-runs-shared.ts` 與 GitHub 工作來源共用

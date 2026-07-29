@@ -12,6 +12,8 @@
  * share their vectors so the twins can't drift silently.
  */
 
+import { ADO_MCP_SERVER_NAME, ADO_READ_TOOLS, ADO_TOOLS, ADO_WRITE_TOOLS } from "../source/ado-tools.js"
+
 /**
  * Split a bash command into chain/pipe segments at shell operators that sit
  * OUTSIDE single/double quotes. Operators inside a quoted argument (a
@@ -138,87 +140,60 @@ export const isGithubPrMutation = (cmd: string): boolean => {
   return false
 }
 
-/** A Bash command that calls the Azure DevOps REST API (curl against an ADO host). */
-export const isAdoCurl = (cmd: string): boolean =>
-  /\bcurl\b/.test(cmd) && /https?:\/\/(?:dev\.azure\.com|[a-z0-9.-]+\.visualstudio\.com)\//i.test(cmd)
-
-/** The effective HTTP method of a curl: an explicit -X/--request wins, else a body
- *  flag (-d, --data-*, -F, --form) implies POST, else GET. */
-export const curlMethod = (cmd: string): string => {
-  const explicit = /(?:-X|--request)[ =]+([A-Za-z]+)/.exec(cmd)
-  if (explicit) return explicit[1]!.toUpperCase()
-  return /(?:^|\s)(?:-d|--data(?:-raw|-binary|-urlencode)?|-F|--form)\b/.test(cmd) ? "POST" : "GET"
+/**
+ * Split an MCP tool name into `{ server, tool }`, or null when it isn't one.
+ * Deliberately wide on the server half: a user may register their own Azure
+ * DevOps MCP server under any name, and the backstop should still recognize it.
+ */
+const parseAdoMcpTool = (toolName: string): { server: string; tool: string } | null => {
+  const m = /^mcp__(.+?)__(.+)$/.exec(toolName)
+  if (!m?.[1] || !m[2]) return null
+  const server = m[1]
+  if (server !== ADO_MCP_SERVER_NAME && !/(?:azure|ado|devops)/i.test(server)) return null
+  return { server, tool: m[2] }
 }
 
-/**
- * A curl against Azure DevOps that mutates state beyond what the sitter family is
- * allowed: only GET reads, a thread-comment reply (POST to a `/threads` resource),
- * and creating a brand-new pull request (POST to a bare `…/pullrequests`
- * collection) pass. Everything else — PATCH/PUT/DELETE, or a POST to any other
- * pull-request sub-resource — is a mutation the loop must never make. The
- * `(?![a-zA-Z0-9/])` lookahead tells "create" apart from "act on an existing PR"
- * (a sub-path starts with `/`, an id segment with an alphanumeric).
- */
-export const isAdoWriteBackstopViolation = (cmd: string): boolean => {
-  if (!isAdoCurl(cmd)) return false
-  const method = curlMethod(cmd)
-  const targetsThread = /\/threads(?:\/|\?|\b)/i.test(cmd)
-  const createsNewPr = /\/pullrequests(?![a-zA-Z0-9/])/i.test(cmd)
-  return !(method === "GET" || (method === "POST" && (targetsThread || createsNewPr)))
-}
-
-/** An `az` CLI call against Azure DevOps (the azure-devops extension's command
- *  groups, plus the generic `az devops invoke` REST escape hatch). */
-export const isAdoAz = (cmd: string): boolean => /^az\s+(?:repos|pipelines|boards|devops)\b/.test(cmd.trim())
+/** Whether this tool call reaches Azure DevOps at all. */
+export const isAdoMcpTool = (toolName: string): boolean => parseAdoMcpTool(toolName) !== null
 
 /**
- * An `az` CLI call that mutates Azure DevOps state beyond what the sitter family
- * is allowed — the az mirror of `isAdoWriteBackstopViolation`. The loop reaches
- * ADO only over REST, so this is defense-in-depth against an az CLI slipping
- * onto PATH, never a path the loop takes. Allowed writes: `az repos pr create`
- * ONLY with `--draft`,
- * and `az devops invoke` POSTs to a thread resource (thread-comment reply / new
- * thread) or the bare pull-request collection (PR creation — ADO drafts via
- * `isDraft` in the body, not a separate verb). Everything else that writes —
- * `az repos pr update|set-vote`, reviewer/work-item changes, queueing a policy
- * or a pipeline run, or an `invoke` with any other method/resource — is a
- * mutation the loop must never make.
+ * An Azure DevOps MCP tool call the loop must never make.
+ *
+ * Driven by the explicit `ADO_READ_TOOLS` / `ADO_WRITE_TOOLS` sets rather than a
+ * name pattern, and FAIL-CLOSED: a tool in neither set is a violation. That
+ * inversion matters. The previous check allow-listed by name SHAPE, which meant
+ * every mutator whose name didn't happen to match its regex sailed through —
+ * and the shipped surface has several (`repo_create_branch`,
+ * `pipelines_run_pipeline`, `pipelines_update_build_stage`). Enumerating what is
+ * PERMITTED is the only version of this that stays correct as the server grows.
+ *
+ * One argument-level rule survives: `repo_create_pull_request` is allowed only
+ * with `isDraft: true`. A loop-opened PR must never look review-ready before a
+ * human has seen it — the rule the old comment here said it could not enforce
+ * because draftness "lives in tool ARGUMENTS this name-level check can't see".
  */
-export const isAdoAzWriteViolation = (cmd: string): boolean => {
-  const c = cmd.trim()
-  if (!isAdoAz(c)) return false
-  if (/^az\s+repos\s+pr\s+create\b/.test(c)) return !/(?:^|\s)--draft\b/.test(c)
-  if (/^az\s+repos\s+pr\s+(?:update|set-vote)\b/.test(c)) return true
-  if (/^az\s+repos\s+pr\s+(?:reviewer|work-item)\s+(?:add|remove)\b/.test(c)) return true
-  if (/^az\s+repos\s+(?:policy|ref|import)\b/.test(c)) return true
-  if (/^az\s+repos\s+pr\s+policy\s+queue\b/.test(c)) return true
-  if (/^az\s+pipelines\s+(?:run\b|build\s+queue\b)/.test(c)) return true
-  if (/^az\s+devops\s+invoke\b/.test(c)) {
-    const m = /--http-method[ =]+([A-Za-z]+)/i.exec(c)
-    const method = m ? m[1]!.toUpperCase() : "GET"
-    if (method === "GET") return false
-    if (method !== "POST") return true
-    const resource = (/--resource[ =]+([\w-]+)/.exec(c)?.[1] ?? "").toLowerCase()
-    return !["pullrequestthreads", "pullrequestthreadcomments", "pullrequests"].includes(resource)
-  }
+export const isAdoMcpWriteViolation = (toolName: string, args: Readonly<Record<string, unknown>> = {}): boolean => {
+  const parsed = parseAdoMcpTool(toolName)
+  if (!parsed) return false
+  const { tool } = parsed
+  if (ADO_READ_TOOLS.includes(tool)) return false
+  if (!ADO_WRITE_TOOLS.includes(tool)) return true
+  if (tool === ADO_TOOLS.createPr) return args["isDraft"] !== true
   return false
 }
 
 /**
- * An MCP tool name that looks like an Azure DevOps server's state-mutating tool
- * (merge/complete/vote/approve/reviewer changes…). Best-effort by design: MCP
- * server tool names are third-party and vary, so this pattern-matches the
- * conventional shapes rather than an exact list — the stage prompt's NEVER
- * clause stays the primary control. Creation tools (`create_pull_request`) stay
- * allowed: the publish stages legitimately open draft PRs, and draftness lives
- * in tool ARGUMENTS this name-level check can't see.
+ * An ADO tool call outside the budget the running stage's manifest grants
+ * (`effectivePlatformTools`). This is the per-stage precision the old
+ * name-matching check deferred as "future work" — with the tool list generated
+ * from the manifest, an off-menu tool is off-menu by definition. An EMPTY
+ * allowed list means the stage declares no ADO tools, so every ADO call is out
+ * of scope.
  */
-export const isAdoMcpMutationTool = (toolName: string): boolean => {
-  const m = /^mcp__(.+?)__(.+)$/.exec(toolName)
-  if (!m) return false
-  const [, server, tool] = m
-  if (!/(?:azure|ado|devops)/i.test(server!)) return false
-  return /(?:update|complete|abandon|merge|vote|approve|reject|delete|reviewer|publish)/i.test(tool!)
+export const isAdoMcpToolOutOfStageScope = (toolName: string, allowed: readonly string[]): boolean => {
+  const parsed = parseAdoMcpTool(toolName)
+  if (!parsed) return false
+  return !allowed.includes(parsed.tool)
 }
 
 /**
@@ -272,6 +247,4 @@ export const isGitPushViolation = (cmd: string): boolean => {
  * mutation (`gh pr view && gh api -X PUT …/merge`). Splitting first closes the bypass.
  */
 export const chainedGithubPrMutation = (cmd: string): boolean => splitSegments(cmd).some(isGithubPrMutation)
-export const chainedAdoWriteBackstopViolation = (cmd: string): boolean => splitSegments(cmd).some(isAdoWriteBackstopViolation)
-export const chainedAdoAzWriteViolation = (cmd: string): boolean => splitSegments(cmd).some(isAdoAzWriteViolation)
 export const chainedGitPushViolation = (cmd: string): boolean => splitSegments(cmd).some(isGitPushViolation)

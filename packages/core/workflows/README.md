@@ -233,18 +233,22 @@ the loop reaches Azure DevOps).
   server-side search query, it picks the client-side identity filter
   (`createdBy` vs pending-reviewer membership). The concrete platform is
   resolved from config `codePlatform` at wiring time: `github` polls
-  `gh pr list --search <query>`; `ado` polls the REST API
-  (`_apis/git/pullrequests?searchCriteria.status=active`) with failing checks
-  read from blocking branch policy evaluations — a repo without a build
-  policy never fires `failing-checks`. Stage `platformAllowlist` entries
-  merge into `bashAllowlist` for the resolved platform. An `ado` glob is
-  anchored on the **host** (`curl *https://dev.azure.com/*`), never on flag
-  order: the globs compile to `^…$` regexes, so an `-u :*` prefix rejected the
-  same call written with a quoted URL, with `-X POST` ahead of `-u`, or with
-  `-s` instead of `-sS` — every ADO run died on its first REST call. What a
-  call may *do* is enforced by the write backstop
-  (`isAdoWriteBackstopViolation`: GET, or POST to a thread or a new PR), not by
-  the glob.
+  `gh pr list --search <query>`; `ado` polls the Azure DevOps MCP server
+  (`repo_list_pull_requests_by_repo_or_project`) with failing checks read from
+  the PR's validation **pipeline runs** (`pipelines_get_builds`) — a repo whose
+  PRs run no pipeline never fires `failing-checks`, and branch policies that
+  are not pipelines are not visible at all, because the server exposes no
+  policy tool.
+
+  Stage `platformAllowlist` entries merge into `bashAllowlist` for the resolved
+  platform, but the `ado` list is **empty**: Azure DevOps is reached only
+  through MCP tools, so no bash glob would be anything but a second, unguarded
+  door to the same API. The ADO surface is `platformTools.ado` instead — the
+  tool names that stage may call, which also generate its agent `tools:`
+  frontmatter on every host. What a call may *do* is enforced by the write
+  backstop (`isAdoMcpWriteViolation`: reads, thread posts, and creating a PR
+  with `isDraft: true`; everything else, including any unrecognized tool, is
+  refused) plus the per-stage budget (`isAdoMcpToolOutOfStageScope`).
 - **`dependency-scan`** — direct dependencies with a fixable advisory at or
   above `severityFloor`, optionally plus plainly outdated ones
   (`includeOutdated`, npm only). Three ecosystems behind one policy, chosen
@@ -262,8 +266,8 @@ the loop reaches Azure DevOps).
   (`platformFor(config, kind)`) and only the publish stage's PR-creation call
   differs.
 - **`ci-runs`** — the watched branch's newest head when its completed CI runs
-  conclude red (`gh run list` on GitHub, the Azure Pipelines Build REST API
-  — `_apis/build/builds` — on `ado`; `branch` defaults to the remote default
+  conclude red (`gh run list` on GitHub, the Azure DevOps MCP server's
+  `pipelines_get_builds` tool on `ado`; `branch` defaults to the remote default
   branch, `workflows` narrows the judgement). Heads with runs still in
   flight are left alone; a green re-run or a newer push retires the item
   naturally. Deduped per head under `<tasksDir>/runs/<kind>/head-<sha>.json`;

@@ -99,11 +99,11 @@ manifest。
 
 ## 已知缺口
 
-- **沒有 Azure DevOps PAT 注入。** Claude Code 提供一個 session 環境變數檔通道
-  （`$CLAUDE_ENV_FILE`），SessionStart hook 會把 `AZURE_DEVOPS_EXT_PAT` 寫進去。
-  Qwen 沒有等價物。如果你設定了 `ado.pat`，該 hook 會改為送出一則提示，你必須在
-  啟動 session 之前於 shell 中匯出 `AZURE_DEVOPS_EXT_PAT`，否則 ADO sitter 會驗證失敗。
-  該提示本身絕不會帶出祕密內容。
+- **Azure DevOps 需要手動註冊其 MCP 伺服器**（若你略過 `./bootstrap.sh`）。
+  註冊名稱必須剛好是 `azure-devops`——各階段提示詞以
+  `mcp__azure-devops__<tool>` 的形式指名工具，換成別的名稱會讓每一次 ADO
+  階段呼叫都指向一個不存在的工具。PAT 注入的缺口已不復存在：driver 會把
+  憑證交給它自己啟動的伺服器，而階段 agent 使用的是你註冊的那一個。
 - **沒有 `watch` 模式**，如上所述——這是宿主的特性，不是外掛的限制。
 
 ## 設定

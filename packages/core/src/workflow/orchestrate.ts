@@ -4,6 +4,7 @@ import { enabledWorkflowKinds, platformFor } from "../config.js"
 import { loadManifest } from "../manifest/load.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { makeAdoCiRunsSource } from "../source/ado-ci-runs.js"
+import type { AdoGateway } from "../source/ado-gateway.js"
 import { makeAdoPrSource } from "../source/ado-pr.js"
 import { makeBacklogSource } from "../source/backlog.js"
 import { makeCiRunsSource } from "../source/ci-runs.js"
@@ -60,6 +61,19 @@ export const makeManifestCache = (workflowsDir: string, eager: readonly string[]
   }
 }
 
+/**
+ * An ado-platform kind with no gateway contributes no source. Warn rather than
+ * throw: one misconfigured sitter must not stop the other kinds this host polls.
+ */
+const warnNoAdoGateway = (log: Log, kind: string): WorkSource[] => {
+  void log(
+    "warn",
+    `${kind}: codePlatform is "ado" but no Azure DevOps MCP gateway is available — ` +
+      `this kind will not be polled. Check the ado section and that the MCP server can start.`,
+  )
+  return []
+}
+
 /** Everything `buildWorkSources` needs from the host. */
 export interface WorkSourceDeps {
   readonly $: Shell
@@ -70,6 +84,13 @@ export interface WorkSourceDeps {
   readonly isDriving: (id: string) => boolean
   /** The host name stamped on scheduler events (opencode/claude/qwen). */
   readonly hostName?: string
+  /**
+   * The Azure DevOps MCP gateway, built once per host process. Required for any
+   * kind whose platform resolves to `ado`; absent, those kinds contribute no
+   * source and say so, rather than the host failing to start for a user who
+   * only runs GitHub kinds.
+   */
+  readonly adoGateway?: AdoGateway
 }
 
 /**
@@ -119,8 +140,9 @@ export const buildWorkSources = (
         const maxDiffLines = config.workflows[kind]?.maxDiffLines
         const limits = typeof maxDiffLines === "number" ? { maxDiffLines } : {}
         if (platformFor(config, kind) === "ado") {
+          if (!deps.adoGateway) return warnNoAdoGateway(deps.log, kind)
           // Config parse fails fast when platform "ado" lacks the ado section.
-          return [makeAdoPrSource({ ...base, ado: config.ado!, ...limits, ...targeting })]
+          return [makeAdoPrSource({ ...base, ado: config.ado!, gateway: deps.adoGateway, ...limits, ...targeting })]
         }
         const query = config.workflows[kind]?.["query"]
         return [makeGithubPrSource({ ...base, ...(typeof query === "string" ? { query } : {}), ...limits, ...targeting })]
@@ -147,8 +169,9 @@ export const buildWorkSources = (
         const knobs: Record<string, unknown> = config.workflows[kind] ?? {}
         const branchOverride = typeof knobs["branch"] === "string" ? { branch: knobs["branch"] } : {}
         if (platformFor(config, kind) === "ado") {
+          if (!deps.adoGateway) return warnNoAdoGateway(deps.log, kind)
           // Config parse fails fast when platform "ado" lacks the ado section.
-          return [makeAdoCiRunsSource({ ...base, ado: config.ado!, ...branchOverride })]
+          return [makeAdoCiRunsSource({ ...base, ado: config.ado!, gateway: deps.adoGateway, ...branchOverride })]
         }
         return [makeCiRunsSource({ ...base, ...branchOverride })]
       }

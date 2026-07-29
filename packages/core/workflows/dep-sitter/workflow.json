@@ -186,9 +186,13 @@
           "gh pr list*",
           "gh pr comment *"
         ],
+        "ado": []
+      },
+      "platformTools": {
         "ado": [
-          "curl *https://dev.azure.com/*",
-          "curl *https://*.visualstudio.com/*"
+          "repo_list_pull_requests_by_repo_or_project",
+          "repo_create_pull_request",
+          "repo_create_pull_request_thread"
         ]
       }
     }
@@ -201,11 +205,11 @@
       },
       "onFail": {
         "kind": "done",
-        "message": "✓ Dep sitter done — the upgrade is already resolved or no longer applies."
+        "message": "\u2713 Dep sitter done \u2014 the upgrade is already resolved or no longer applies."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ Dep sitter stopped — scan could not read the dependency reports (registry/scanner/environment error). Fix the environment and let the next poll retry."
+        "message": "\u2717 Dep sitter stopped \u2014 scan could not read the dependency reports (registry/scanner/environment error). Fix the environment and let the next poll retry."
       }
     },
     "upgrade": {
@@ -224,17 +228,17 @@
         "stage": "upgrade",
         "countIteration": true,
         "dropArtifacts": [],
-        "capMessage": "✗ Dep sitter stopped — verify failed after {maxIterations} iterations. The attempt is recorded; this upgrade parks until its target version moves or a human takes it over."
+        "capMessage": "\u2717 Dep sitter stopped \u2014 verify failed after {maxIterations} iterations. The attempt is recorded; this upgrade parks until its target version moves or a human takes it over."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ Dep sitter stopped — verify could not run (environment/infrastructure error)."
+        "message": "\u2717 Dep sitter stopped \u2014 verify could not run (environment/infrastructure error)."
       }
     },
     "publish": {
       "onDone": {
         "kind": "done",
-        "message": "✓ Dep sitter done — pushed the upgrade and opened a draft PR. Merging stays a human call."
+        "message": "\u2713 Dep sitter done \u2014 pushed the upgrade and opened a draft PR. Merging stays a human call."
       }
     }
   },

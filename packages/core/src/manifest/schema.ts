@@ -175,18 +175,36 @@ export const StageDefSchema = z.object({
   bashAllowlist: z.array(z.string().min(1)).default([]),
   /** Extra bash globs merged into `bashAllowlist` for the resolved code platform (config `codePlatform`). */
   platformAllowlist: z.record(z.string(), z.array(z.string().min(1))).default({}),
+  /**
+   * MCP tool names (unprefixed) this stage may call on the resolved code
+   * platform — the tool-level counterpart of `platformAllowlist`.
+   *
+   * On `ado` this is the whole surface: Azure DevOps is reached only through
+   * the Azure DevOps MCP server, so the ado `platformAllowlist` is empty and
+   * this list is what the stage may do. It is also the single source the agent
+   * `tools:` frontmatter is GENERATED from — hand-authoring that per host is
+   * exactly how a prompt drifts from the allowlist governing it.
+   */
+  platformTools: z.record(z.string(), z.array(z.string().min(1))).default({}),
 })
 export type StageDef = z.infer<typeof StageDefSchema>
 
 /**
  * The bash globs a stage may run on the given code platform: the stage's own
- * `bashAllowlist` plus that platform's extras (`"github"` or `"ado"`, the
- * latter the REST/curl list). An unknown platform key yields only
- * `bashAllowlist` — fail-closed. Pure.
+ * `bashAllowlist` plus that platform's extras. An unknown platform key yields
+ * only `bashAllowlist` — fail-closed. Pure.
  */
 export const effectiveAllowlist = (def: StageDef, platform: string): string[] => [
   ...def.bashAllowlist,
   ...(def.platformAllowlist[platform] ?? []),
+]
+
+/**
+ * The MCP tools a stage may call on the given code platform. An unknown
+ * platform yields none — fail-closed, same rule as `effectiveAllowlist`. Pure.
+ */
+export const effectivePlatformTools = (def: StageDef, platform: string): string[] => [
+  ...(def.platformTools[platform] ?? []),
 ]
 
 const TransitionSchema = z.object({

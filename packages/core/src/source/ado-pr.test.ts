@@ -1,19 +1,18 @@
 import { defaultWorkflowsDir } from "../manifest/dir.js"
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import path from "node:path"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
-import { makeAdoPrSource, type AdoHttp } from "./ado-pr.js"
-import type { AdoHttpResponse } from "./ado-pr.js"
+import { makeAdoPrSource } from "./ado-pr.js"
+import type { AdoGateway, AdoResult } from "./ado-gateway.js"
 
 /**
- * The ado-pr source over the real pr-sitter manifest, against a scripted ADO
- * REST transport (`http`) plus a scripted git/claim shell (`$`) — the mirror of
+ * The ado-pr source over the real pr-sitter manifest, against a scripted
+ * `AdoGateway` plus a scripted git/claim shell (`$`) — the mirror of
  * github-pr.test.ts. Covers the normalization (ref stripping, conflicts →
- * CONFLICTING, negative vote → CHANGES_REQUESTED, policy failures →
+ * CONFLICTING, negative vote → CHANGES_REQUESTED, failing pipelines →
  * failingChecks), the filtering (drafts, forks, other authors, own/system
- * comments), PAT/identity preconditions, claim/fetch mechanics, and terminal
+ * comments), identity preconditions, claim/fetch mechanics, and terminal
  * ledger writes.
  */
 
@@ -51,16 +50,70 @@ const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-type Route = { match: string; status?: number; body?: string }
+const ok = (data: unknown): AdoResult => ({ ok: true, data })
+const fail = (error: string): AdoResult => ({ ok: false, error })
 
-/** Scripted ADO REST transport: first route whose `match` is a substring of the URL wins. */
-const scriptedHttp = (routes: Route[], log: string[] = []): AdoHttp => async (url) => {
-  log.push(url)
-  const hit = routes.find((r) => url.includes(r.match))
-  const status = hit?.status ?? 200
-  const body = hit?.body ?? ""
-  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
+interface Script {
+  /** The active-PR list. Ignored when `paged` is set. */
+  prs?: unknown[]
+  /** Serves pages by `skip`/`top`, for the paging tests. */
+  paged?: (skip: number, top: number) => unknown[]
+  /** The single-PR fetch (targeted claim, terminal re-read). */
+  getPr?: unknown
+  threads?: unknown[]
+  /** Builds on `refs/pull/<n>/merge`. */
+  mergeBuilds?: unknown[]
+  /** Builds on the PR's source branch — the fallback path. */
+  sourceBuilds?: unknown[]
+  /** Make the PR list fail with this message. */
+  listError?: string
+  /** Make the single-PR fetch fail with this message. */
+  getPrError?: string
 }
+
+/**
+ * A scripted gateway. Every call is recorded so tests can assert which
+ * operations ran (e.g. that a targeted claim never lists).
+ */
+const scriptedGateway = (script: Script, calls: string[] = []): AdoGateway => ({
+  async listPullRequests(a) {
+    calls.push(`listPullRequests(skip=${a.skip ?? 0},top=${a.top ?? 0})`)
+    if (script.listError) return fail(script.listError)
+    if (script.paged) return ok(script.paged(a.skip ?? 0, a.top ?? 100))
+    return ok(script.prs ?? [])
+  },
+  async getPullRequest(a) {
+    calls.push(`getPullRequest(${a.pullRequestId})`)
+    if (script.getPrError) return fail(script.getPrError)
+    return script.getPr === undefined ? fail("not found") : ok(script.getPr)
+  },
+  async listPullRequestThreads(a) {
+    calls.push(`listPullRequestThreads(${a.pullRequestId})`)
+    return ok(script.threads ?? [])
+  },
+  async listPullRequestsByCommits() {
+    calls.push("listPullRequestsByCommits")
+    return ok([])
+  },
+  async getRepository() {
+    calls.push("getRepository")
+    return ok({})
+  },
+  async listBuilds(a) {
+    calls.push(`listBuilds(${a.branchName ?? ""})`)
+    const merge = (a.branchName ?? "").includes("/merge")
+    return ok(merge ? (script.mergeBuilds ?? []) : (script.sourceBuilds ?? []))
+  },
+  async getBuildStatus() {
+    calls.push("getBuildStatus")
+    return ok({})
+  },
+  async createPullRequest() {
+    calls.push("createPullRequest")
+    return fail("the PR source must never create a pull request")
+  },
+  async close() {},
+})
 
 /** Client whose reads serve ledger files from an in-memory map. */
 const ledgerClient = (ledgers: Record<string, string>): Client => ({
@@ -92,65 +145,104 @@ const pr = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-/** The ADO PR-list REST response wraps the array in `{ value: [...] }`. */
-const listBody = (prs: unknown[]) => JSON.stringify({ value: prs })
-const threads = (comments: unknown[]) => JSON.stringify({ value: [{ isDeleted: false, comments }] })
+const thread = (comments: unknown[]) => [{ isDeleted: false, comments }]
+
+const build = (name: string, result: string, queueTime = "2026-07-05T00:00:00Z") => ({
+  definition: { name },
+  status: "completed",
+  result,
+  sourceVersion: "sha-1",
+  queueTime,
+})
 
 type Opts = {
   ledgers?: Record<string, string>
-  routes?: Route[]
+  script?: Script
   shellScript?: Cmd[]
   shellLog?: string[]
-  httpLog?: string[]
-  pat?: string
+  calls?: string[]
   /** The kind under test; defaults to pr-sitter (author role). */
   loaded?: ReturnType<typeof loadManifest>
   /** A specific PR id to force-claim (`claim <pr>`). */
   target?: number
+  /** Omit to scope the sitter to one repository (the default here). */
+  repository?: string | null
+  selfLogin?: string | null
+  log?: (level: string, message: string) => void
 }
 
 const source = (prs: unknown[], opts: Opts = {}) =>
   makeAdoPrSource({
     $: scriptedShell(opts.shellScript ?? [], opts.shellLog),
-    http: scriptedHttp(
-      [{ match: "/pullrequests?searchCriteria", body: listBody(prs) }, ...(opts.routes ?? [])],
-      opts.httpLog,
-    ),
+    gateway: scriptedGateway({ prs, ...(opts.script ?? {}) }, opts.calls),
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",
     tasksDir: "docs/tasks",
-    log: () => {},
+    log: (l, m) => opts.log?.(l, String(m)),
     loaded: opts.loaded ?? sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    pat: opts.pat ?? "test-pat",
+    ado: {
+      organization: "https://dev.azure.com/acme",
+      project: "widgets",
+      ...(opts.repository === null ? {} : { repository: opts.repository ?? "widgets" }),
+      ...(opts.selfLogin === null ? {} : { selfLogin: opts.selfLogin ?? "sitter@acme.com" }),
+    },
     now: () => "2026-07-05T00:00:00Z",
     ...(opts.target != null ? { target: opts.target } : {}),
   })
 
-const failingPolicy: Route = {
-  match: "/policy/evaluations",
-  body: JSON.stringify({
-    value: [
-      { status: "rejected", configuration: { isBlocking: true, type: { displayName: "Build" } } },
-      { status: "approved", configuration: { isBlocking: true, type: { displayName: "Reviewers" } } },
-      { status: "rejected", configuration: { isBlocking: false, type: { displayName: "Optional Build" } } },
-    ],
-  }),
-}
+/** One failing and one passing pipeline, so "only the failing one is named" is testable. */
+const failingBuilds = [build("Build", "failed"), build("Lint", "succeeded")]
 
-test("claims a PR with a failing policy: refs stripped, goal names the failure, state stamped ado", async () => {
+test("claims a PR with a failing pipeline: refs stripped, goal names the failure, state stamped ado", async () => {
   const log: string[] = []
-  const { item, skip } = await source([pr()], { routes: [failingPolicy], shellLog: log }).claimNext()
+  const { item, skip } = await source([pr()], { script: { mergeBuilds: failingBuilds }, shellLog: log }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, "pr-7")
   assert.equal(item?.entryStage, "triage")
   assert.equal(item?.state.platform, "ado")
   assert.deepEqual(item?.state.git, { base: "main", branch: "feat/rate-limit" })
   assert.match(item?.state.goal ?? "", /failing checks: Build/)
-  assert.doesNotMatch(item?.state.goal ?? "", /Optional Build/) // non-blocking policies don't gate the merge
+  assert.doesNotMatch(item?.state.goal ?? "", /Lint/) // a green pipeline is not a failing check
   assert.match(item?.state.goal ?? "", /Never merge/)
   assert.ok(log.some((c) => c.startsWith("git -C /r fetch origin +refs/heads/feat/rate-limit")))
   assert.ok(log.some((c) => c.includes(".claims/pr-7")))
+})
+
+test("only the NEWEST run per pipeline counts — a definition re-run green stops being a failing check", async () => {
+  // Without newest-per-definition a pipeline that failed once would keep the PR
+  // permanently claimable, re-waking the sitter on work already fixed.
+  const builds = [
+    build("Build", "succeeded", "2026-07-05T02:00:00Z"),
+    build("Build", "failed", "2026-07-05T01:00:00Z"),
+  ]
+  const { item } = await source([pr()], { script: { mergeBuilds: builds } }).claimNext()
+  assert.equal(item, null)
+})
+
+test("a partially-succeeded run is judged failing, not silently green", async () => {
+  const { item } = await source([pr()], { script: { mergeBuilds: [build("Build", "partiallySucceeded")] } }).claimNext()
+  assert.match(item?.state.goal ?? "", /failing checks: Build/)
+})
+
+test("validation runs on the source branch are used when the merge ref has none", async () => {
+  // Some org configurations queue PR validation against the source branch.
+  const { item, calls } = await (async () => {
+    const calls: string[] = []
+    const r = await source([pr()], {
+      calls,
+      script: { mergeBuilds: [], sourceBuilds: [build("Build", "failed")] },
+    }).claimNext()
+    return { ...r, calls }
+  })()
+  assert.match(item?.state.goal ?? "", /failing checks: Build/)
+  assert.ok(calls.some((c) => c.includes("refs/pull/7/merge")), "merge ref tried first")
+  assert.ok(calls.some((c) => c.includes("refs/heads/feat/rate-limit")), "source branch fallback not tried")
+})
+
+test("a source-branch run for a different commit is not mistaken for this PR's", async () => {
+  const stale = { ...build("Build", "failed"), sourceVersion: "sha-other" }
+  const { item } = await source([pr()], { script: { mergeBuilds: [], sourceBuilds: [stale] } }).claimNext()
+  assert.equal(item, null)
 })
 
 test("a merge conflict and a negative reviewer vote trigger via the normalized snapshot", async () => {
@@ -167,7 +259,7 @@ test("skips drafts, fork PRs, other authors' PRs, and system/own comments", asyn
     pr({ pullRequestId: 3, createdBy: { uniqueName: "alice@acme.com" }, mergeStatus: "conflicts" }),
     pr({ pullRequestId: 4 }),
   ]
-  const ownAndSystem = threads([
+  const ownAndSystem = thread([
     { commentType: "text", publishedDate: "2026-07-04T00:00:00Z", author: { uniqueName: "SITTER@acme.com" } },
     { commentType: "system", publishedDate: "2026-07-04T00:00:00Z", author: { uniqueName: "bob@acme.com" } },
     {
@@ -177,9 +269,7 @@ test("skips drafts, fork PRs, other authors' PRs, and system/own comments", asyn
       author: { uniqueName: "carol@acme.com" },
     },
   ])
-  const { item, skip } = await source(prs, {
-    routes: [{ match: "/threads", body: ownAndSystem }],
-  }).claimNext()
+  const { item, skip } = await source(prs, { script: { threads: ownAndSystem } }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /no PRs need attention \(4 active/)
   assert.equal(skip?.actionable, false)
@@ -195,16 +285,10 @@ test("a human comment newer than the ledger watermark triggers a claim; an older
     }),
   }
   const comment = (at: string) =>
-    threads([{ commentType: "text", publishedDate: at, author: { uniqueName: "alice@acme.com" } }])
-  const old = await source([pr()], {
-    ledgers,
-    routes: [{ match: "/threads", body: comment("2026-07-03T00:00:00Z") }],
-  }).claimNext()
+    thread([{ commentType: "text", publishedDate: at, author: { uniqueName: "alice@acme.com" } }])
+  const old = await source([pr()], { ledgers, script: { threads: comment("2026-07-03T00:00:00Z") } }).claimNext()
   assert.equal(old.item, null)
-  const fresh = await source([pr()], {
-    ledgers,
-    routes: [{ match: "/threads", body: comment("2026-07-05T00:00:00Z") }],
-  }).claimNext()
+  const fresh = await source([pr()], { ledgers, script: { threads: comment("2026-07-05T00:00:00Z") } }).claimNext()
   assert.match(fresh.item?.state.goal ?? "", /1 unanswered comment/)
 })
 
@@ -217,77 +301,35 @@ test("a held claim marker reports actionably and claims nothing", async () => {
   assert.equal(skip?.actionable, true)
 })
 
-test("a REST list failure surfaces as an actionable skip naming the PAT and scope", async () => {
-  const src = makeAdoPrSource({
-    $: scriptedShell([]),
-    http: scriptedHttp([{ match: "/pullrequests?searchCriteria", status: 401 }]),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    pat: "test-pat",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { skip } = await src.claimNext()
-  assert.match(skip?.message ?? "", /pull-request list failed — HTTP 401/)
-  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
+test("a gateway list failure surfaces as an actionable skip naming the cause and the scope needed", async () => {
+  const { skip } = await source([], { script: { listError: "azure-devops MCP server unavailable — spawn ENOENT" } }).claimNext()
+  assert.match(skip?.message ?? "", /pull-request list failed/)
+  assert.match(skip?.message ?? "", /spawn ENOENT/)
   assert.match(skip?.message ?? "", /Code \(read\) scope/)
   assert.equal(skip?.actionable, true)
 })
 
-test("a missing PAT skips actionably, naming the env var to set", async () => {
-  const { item, skip } = await source([pr({ mergeStatus: "conflicts" })], { pat: "" }).claimNext()
+test("a PR list trimmed of createdBy/reviewers fails loudly instead of claiming the wrong PRs", async () => {
+  // The MCP list tool has no `fullResponse` flag, so a trimmed projection is a
+  // real possibility. Degrading would mean an author-role kind claims nothing
+  // and a reviewer-role kind claims everything — both silent. A parse error is
+  // the correct outcome.
+  const trimmed = { pullRequestId: 7, title: "t", sourceRefName: "refs/heads/a", targetRefName: "refs/heads/main" }
+  const { item, skip } = await source([trimmed]).claimNext()
   assert.equal(item, null)
-  assert.match(skip?.message ?? "", /Azure DevOps PAT not set/)
-  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
+  assert.match(skip?.message ?? "", /could not parse the ADO response/)
   assert.equal(skip?.actionable, true)
 })
 
-test("config ado.pat is a fallback when neither a dep nor the env var supplies a PAT", async () => {
-  const saved = process.env.AZURE_DEVOPS_EXT_PAT
-  delete process.env.AZURE_DEVOPS_EXT_PAT
-  try {
-    const src = makeAdoPrSource({
-      $: scriptedShell([]),
-      http: scriptedHttp([{ match: "/pullrequests?searchCriteria", body: listBody([pr({ mergeStatus: "conflicts" })]) }]),
-      client: ledgerClient({}),
-      directory: "/r",
-      tasksDir: "docs/tasks",
-      log: () => {},
-      loaded: sitter,
-      // No `pat` dep and no env var → resolution must fall through to ado.pat.
-      ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com", pat: "cfg-pat" },
-      now: () => "2026-07-05T00:00:00Z",
-    })
-    const { item, skip } = await src.claimNext()
-    assert.doesNotMatch(skip?.message ?? "", /PAT not set/) // the config pat satisfied the requirement
-    assert.equal(item?.id, "pr-7") // and it proceeded to a real claim
-  } finally {
-    if (saved === undefined) delete process.env.AZURE_DEVOPS_EXT_PAT
-    else process.env.AZURE_DEVOPS_EXT_PAT = saved
-  }
-})
-
-test("onTerminal(done) records the post-push head + comment watermark from the REST API", async () => {
+test("onTerminal(done) records the post-push head + comment watermark", async () => {
   const log: string[] = []
   const src = source([pr({ mergeStatus: "conflicts" })], {
-    routes: [
-      {
-        match: "/pullrequests/7?",
-        body: JSON.stringify({
-          lastMergeSourceCommit: { commitId: "sha-own-push" },
-          repository: { id: "repo-guid" },
-        }),
-      },
-      {
-        match: "/threads",
-        body: threads([
-          { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
-        ]),
-      },
-    ],
+    script: {
+      getPr: pr({ lastMergeSourceCommit: { commitId: "sha-own-push" } }),
+      threads: thread([
+        { commentType: "text", publishedDate: "2026-07-05T01:00:00Z", author: { uniqueName: "alice@acme.com" } },
+      ]),
+    },
     shellLog: log,
   })
   const { item } = await src.claimNext()
@@ -302,7 +344,7 @@ test("onTerminal(done) records the post-push head + comment watermark from the R
 
 test("onTerminal(stop) records a failed attempt pinned to the claimed head", async () => {
   const log: string[] = []
-  const src = source([pr({ mergeStatus: "conflicts" })], { shellLog: log })
+  const src = source([pr({ mergeStatus: "conflicts" })], { shellLog: log, script: { getPr: pr() } })
   const { item } = await src.claimNext()
   assert.ok(item)
   await src.onTerminal?.(item, { kind: "stop", message: "capped" })
@@ -313,62 +355,11 @@ test("onTerminal(stop) records a failed attempt pinned to the claimed head", asy
 })
 
 test("unresolvable identity (no selfLogin) skips actionably instead of sitting on everyone's PRs", async () => {
-  const src = makeAdoPrSource({
-    $: scriptedShell([]),
-    http: scriptedHttp([{ match: "/pullrequests?searchCriteria", body: listBody([pr({ mergeStatus: "conflicts" })]) }]),
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
-    log: () => {},
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
-    pat: "test-pat",
-    now: () => "2026-07-05T00:00:00Z",
-  })
-  const { item, skip } = await src.claimNext()
+  const { item, skip } = await source([pr({ mergeStatus: "conflicts" })], { selfLogin: null }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /could not resolve the sitter's own ADO identity/)
   assert.match(skip?.message ?? "", /ado\.selfLogin/)
   assert.equal(skip?.actionable, true)
-})
-
-test("ado.customHeaders ride every REST call, with AGENTIC_WORKFLOW_ADO_HEADERS overriding them", async () => {
-  const seen: Array<Readonly<Record<string, string>>> = []
-  const capturingHttp: AdoHttp = async (_url, init): Promise<AdoHttpResponse> => {
-    seen.push(init.headers)
-    return { ok: true, status: 200, statusText: "ok", text: async () => listBody([]) }
-  }
-  const prevEnv = process.env.AGENTIC_WORKFLOW_ADO_HEADERS
-  process.env.AGENTIC_WORKFLOW_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
-  try {
-    const src = makeAdoPrSource({
-      $: scriptedShell([]),
-      http: capturingHttp,
-      client: ledgerClient({}),
-      directory: "/r",
-      tasksDir: "docs/tasks",
-      log: () => {},
-      loaded: sitter,
-      ado: {
-        organization: "https://dev.azure.com/acme",
-        project: "widgets",
-        selfLogin: "sitter@acme.com",
-        customHeaders: { "Proxy-Authorization": "cfg-token", "X-Route": "internal" },
-      },
-      pat: "test-pat",
-      now: () => "2026-07-05T00:00:00Z",
-    })
-    await src.claimNext()
-    assert.ok(seen.length >= 1, "at least the PR-list call was made")
-    for (const headers of seen) {
-      assert.ok(headers.Authorization?.startsWith("Basic ")) // built-in auth preserved
-      assert.equal(headers["X-Route"], "internal") // config-only header present
-      assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
-    }
-  } finally {
-    if (prevEnv === undefined) delete process.env.AGENTIC_WORKFLOW_ADO_HEADERS
-    else process.env.AGENTIC_WORKFLOW_ADO_HEADERS = prevEnv
-  }
 })
 
 test("a PR without a head SHA (merge evaluation queued) is skipped, not claimed with a poisoned ledger key", async () => {
@@ -386,13 +377,10 @@ test("variable-precision ADO timestamps compare numerically against the watermar
     }),
   }
   // Lexicographically "...00.12Z" > "...00.123Z" ('Z' > '3'), but 0.12s < 0.123s.
-  const older = threads([
+  const older = thread([
     { commentType: "text", publishedDate: "2026-07-04T00:00:00.12Z", author: { uniqueName: "alice@acme.com" } },
   ])
-  const { item } = await source([pr()], {
-    ledgers,
-    routes: [{ match: "/threads", body: older }],
-  }).claimNext()
+  const { item } = await source([pr()], { ledgers, script: { threads: older } }).claimNext()
   assert.equal(item, null)
 })
 
@@ -433,51 +421,37 @@ test("review-sitter on ADO skips its own PRs, PRs it isn't a reviewer on, and PR
   assert.match(skip?.message ?? "", /^review-sitter: no PRs need attention \(3 active/)
 })
 
-// --- paging: $top=100 with no $skip silently dropped every PR past the first page ---
+// --- paging: one page with no skip silently dropped every PR past the first 100 ---
 
-/** Build a source whose PR-list transport pages by `$skip`, serving `total` draft PRs. */
-const pagedSource = (total: number, warnings: string[] = [], httpLog: string[] = []) =>
-  makeAdoPrSource({
-    $: scriptedShell([]),
-    http: async (url) => {
-      httpLog.push(url)
-      let body = ""
-      if (url.includes("/pullrequests?searchCriteria")) {
-        const skip = Number(/\$skip=(\d+)/.exec(url)?.[1] ?? "0")
-        const top = Number(/\$top=(\d+)/.exec(url)?.[1] ?? "100")
-        const page = Array.from({ length: Math.max(0, Math.min(top, total - skip)) }, (_, i) =>
-          pr({ pullRequestId: skip + i + 1, isDraft: true }),
-        )
-        body = JSON.stringify({ value: page })
-      }
-      return { ok: true, status: 200, statusText: "ok", text: async () => body }
-    },
-    client: ledgerClient({}),
-    directory: "/r",
-    tasksDir: "docs/tasks",
+/** A source whose PR list pages by `skip`, serving `total` draft PRs. */
+const pagedSource = (total: number, warnings: string[] = [], calls: string[] = []) =>
+  source([], {
+    calls,
     log: (_l, m) => void warnings.push(m),
-    loaded: sitter,
-    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
-    pat: "test-pat",
-    now: () => "2026-07-05T00:00:00Z",
+    script: {
+      paged: (skip, top) =>
+        Array.from({ length: Math.max(0, Math.min(top, total - skip)) }, (_, i) =>
+          pr({ pullRequestId: skip + i + 1, isDraft: true }),
+        ),
+    },
   })
 
 test("the ADO PR list pages past the first 100 instead of truncating", async () => {
   // ADO has no server-side search, so role filtering happens client-side over the
   // WHOLE set — a PR at position 140 that needs attention was simply invisible.
-  const httpLog: string[] = []
-  const { skip } = await pagedSource(150, [], httpLog).claimNext()
-  const listCalls = httpLog.filter((u) => u.includes("/pullrequests?searchCriteria"))
+  const calls: string[] = []
+  const { skip } = await pagedSource(150, [], calls).claimNext()
+  const listCalls = calls.filter((c) => c.startsWith("listPullRequests"))
   assert.ok(listCalls.length >= 2, `expected paging, got ${listCalls.length} list call(s)`)
-  assert.ok(listCalls.some((u) => /\$skip=100/.test(u)), "second page never requested")
+  assert.ok(listCalls.some((c) => c.includes("skip=100")), "second page never requested")
   // The skip line must report the true total, not the first page's size.
   assert.match(skip?.message ?? "", /150/)
 })
 
 test("a single short page issues no extra request", async () => {
-  const httpLog: string[] = []
-  const { skip } = await pagedSource(3, [], httpLog).claimNext()
-  assert.equal(httpLog.filter((u) => u.includes("/pullrequests?searchCriteria")).length, 1)
+  const calls: string[] = []
+  const { skip } = await pagedSource(3, [], calls).claimNext()
+  assert.equal(calls.filter((c) => c.startsWith("listPullRequests")).length, 1)
   assert.match(skip?.message ?? "", /3 active/)
 })
 
@@ -489,23 +463,32 @@ test("hitting the page ceiling warns instead of silently truncating", async () =
 
 // --- targeted claim (`claim <pr>`): fetch one PR directly and force it ---
 
-const reviewer = loadManifest(WORKFLOWS_DIR, "review-sitter")
-
-test("targeted claim fetches the named PR via the single-PR endpoint, never the list", async () => {
-  const httpLog: string[] = []
+test("targeted claim fetches the named PR directly, never the list", async () => {
+  const calls: string[] = []
   const shellLog: string[] = []
   const { item, skip } = await source([], {
     target: 7,
-    httpLog,
+    calls,
     shellLog,
-    routes: [{ match: "/pullrequests/7", body: JSON.stringify(pr()) }, failingPolicy],
+    script: { getPr: pr(), mergeBuilds: failingBuilds },
   }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, "pr-7")
   assert.equal(item?.state.platform, "ado")
-  assert.ok(httpLog.some((u) => u.includes("/pullrequests/7")), "did not fetch the single PR")
-  assert.ok(!httpLog.some((u) => u.includes("/pullrequests?searchCriteria")), "targeted claim must not list")
+  assert.ok(calls.includes("getPullRequest(7)"), "did not fetch the single PR")
+  assert.ok(!calls.some((c) => c.startsWith("listPullRequests")), "targeted claim must not list")
   assert.ok(shellLog.some((c) => c.includes(".claims/pr-7")), "claim marker not placed")
+})
+
+test("without ado.repository a targeted claim resolves the id against the active list", async () => {
+  // The MCP single-PR tool requires a repository, unlike the project-wide REST
+  // route it replaced — a project-scoped sitter must still be able to `claim <pr>`.
+  const calls: string[] = []
+  const { item, skip } = await source([pr()], { target: 7, calls, repository: null }).claimNext()
+  assert.equal(skip, null)
+  assert.equal(item?.id, "pr-7")
+  assert.ok(calls.some((c) => c.startsWith("listPullRequests")), "expected the list fallback")
+  assert.ok(!calls.includes("getPullRequest(7)"), "must not call the repo-scoped tool without a repository")
 })
 
 test("targeted claim forces an already-handled PR (bypasses the dedup ledger)", async () => {
@@ -517,11 +500,7 @@ test("targeted claim forces an already-handled PR (bypasses the dedup ledger)", 
       updatedAt: "2026-07-04T00:00:00Z",
     }),
   }
-  const { item, skip } = await source([], {
-    target: 7,
-    ledgers,
-    routes: [{ match: "/pullrequests/7", body: JSON.stringify(pr()) }],
-  }).claimNext()
+  const { item, skip } = await source([], { target: 7, ledgers, script: { getPr: pr() } }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, "pr-7")
   assert.match(item?.state.goal ?? "", /manually claimed/)
@@ -530,11 +509,7 @@ test("targeted claim forces an already-handled PR (bypasses the dedup ledger)", 
 test("targeted claim forces a reviewer-role claim regardless of the identity filter", async () => {
   // A PR authored by the sitter itself would be skipped by the reviewer-role
   // filter in a normal poll; a targeted claim drives it anyway.
-  const { item, skip } = await source([], {
-    target: 7,
-    loaded: reviewer,
-    routes: [{ match: "/pullrequests/7", body: JSON.stringify(pr()) }],
-  }).claimNext()
+  const { item, skip } = await source([], { target: 7, loaded: reviewSitter, script: { getPr: pr() } }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, "pr-7")
   assert.equal(item?.workflowKind, "review-sitter")
@@ -544,7 +519,7 @@ test("targeted claim forces a reviewer-role claim regardless of the identity fil
 test("targeted claim still refuses a fork PR (threat model T10)", async () => {
   const { item, skip } = await source([], {
     target: 7,
-    routes: [{ match: "/pullrequests/7", body: JSON.stringify(pr({ forkSource: { repository: { id: "x" } } })) }],
+    script: { getPr: pr({ forkSource: { repository: { id: "x" } } }) },
   }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /fork/)
@@ -552,11 +527,9 @@ test("targeted claim still refuses a fork PR (threat model T10)", async () => {
 })
 
 test("targeted claim reports an actionable skip when the PR is not found", async () => {
-  const { item, skip } = await source([], {
-    target: 999,
-    routes: [{ match: "/pullrequests/999", status: 404 }],
-  }).claimNext()
+  const { item, skip } = await source([], { target: 999, script: { getPrError: "TF401180: not found" } }).claimNext()
   assert.equal(item, null)
   assert.match(skip?.message ?? "", /PR #999 not found or not accessible/)
+  assert.match(skip?.message ?? "", /TF401180/)
   assert.equal(skip?.actionable, true)
 })

@@ -5,7 +5,6 @@ import path from "node:path"
 import { test } from "node:test"
 import {
   deprecatedAdoKeys,
-  applyAdoPatEnv,
   bareModel,
   checksFor,
   concurrencyFor,
@@ -181,6 +180,7 @@ const stageWith = (model?: string): StageDef => ({
   requireEvidence: false,
   bashAllowlist: [],
   platformAllowlist: {},
+  platformTools: {},
   ...(model ? { model } : {}),
 })
 
@@ -325,6 +325,7 @@ const reviewStage = (requiredAxes?: string[]) =>
     requireEvidence: false,
     bashAllowlist: [],
     platformAllowlist: {},
+  platformTools: {},
     ...(requiredAxes ? { requiredAxes } : {}),
   }) as Parameters<typeof unreviewedAxes>[1]
 
@@ -513,38 +514,33 @@ test("global codePlatform ado requires the ado section and a selfLogin", () => {
   assert.equal(platformFor(c, "pr-sitter"), "ado")
 })
 
-test("ado.customHeaders parses as a string map and rejects empty keys or values", () => {
-  const c = parseConfig({
-    codePlatform: "ado",
-    ado: {
-      organization: "https://dev.azure.com/acme",
-      project: "widgets",
-      selfLogin: "sitter@acme.com",
-      customHeaders: { "Proxy-Authorization": "Bearer proxy-token", "X-Route": "internal" },
-    },
-  })
-  assert.deepEqual(c.ado?.customHeaders, { "Proxy-Authorization": "Bearer proxy-token", "X-Route": "internal" })
-  const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
-  assert.throws(
-    () => parseConfig({ codePlatform: "ado", ado: { ...base, customHeaders: { "": "value" } } }),
-    /Invalid .*customHeaders/,
-  )
-  assert.throws(
-    () => parseConfig({ codePlatform: "ado", ado: { ...base, customHeaders: { "X-Route": "" } } }),
-    /Invalid .*customHeaders/,
-  )
-})
-
-test("ado.insecureSkipTlsVerify parses as an optional boolean, off by default", () => {
+test("ado.mcp parses as an optional launch section and rejects unknown keys", () => {
   const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
   const unset = parseConfig({ codePlatform: "ado", ado: base })
-  assert.equal(unset.ado?.insecureSkipTlsVerify, undefined)
-  const on = parseConfig({ codePlatform: "ado", ado: { ...base, insecureSkipTlsVerify: true } })
-  assert.equal(on.ado?.insecureSkipTlsVerify, true)
+  assert.equal(unset.ado?.mcp, undefined)
+  const set = parseConfig({
+    codePlatform: "ado",
+    ado: {
+      ...base,
+      mcp: {
+        command: "/opt/ado-mcp",
+        args: ["--stdio"],
+        authentication: "azcli",
+        domains: ["repositories"],
+        tenant: "tenant-guid",
+        env: { NODE_EXTRA_CA_CERTS: "/etc/ca.pem" },
+      },
+    },
+  })
+  assert.equal(set.ado?.mcp?.command, "/opt/ado-mcp")
+  assert.equal(set.ado?.mcp?.authentication, "azcli")
+  assert.deepEqual(set.ado?.mcp?.domains, ["repositories"])
+  assert.equal(set.ado?.mcp?.env?.["NODE_EXTRA_CA_CERTS"], "/etc/ca.pem")
   assert.throws(
-    () => parseConfig({ codePlatform: "ado", ado: { ...base, insecureSkipTlsVerify: "yes" } }),
-    /Invalid .*insecureSkipTlsVerify/,
+    () => parseConfig({ codePlatform: "ado", ado: { ...base, mcp: { authentication: "sso" } } }),
+    /Invalid .*authentication/,
   )
+  assert.throws(() => parseConfig({ codePlatform: "ado", ado: { ...base, mcp: { commnad: "typo" } } }), /Invalid .*mcp/)
 })
 
 test("per-loop codePlatform overrides the global default and also requires the ado section and selfLogin", () => {
@@ -582,14 +578,19 @@ test("ado section fields are validated", () => {
   )
 })
 
-test("a stale ado.access key parses, is ignored, and is named by deprecatedAdoKeys", () => {
+test("stale ADO transport keys parse, are ignored, and are named by deprecatedAdoKeys", () => {
   const base = { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" }
-  // No access key → nothing deprecated.
+  // Nothing stale → nothing deprecated.
   assert.deepEqual(deprecatedAdoKeys(parseConfig({ codePlatform: "ado", ado: base })), [])
-  // A stale access value survives parsing (looseObject) so it can be named, but
-  // ADO is reached only over REST regardless of what it says.
-  const stale = parseConfig({ codePlatform: "ado", ado: { ...base, access: "az" } })
-  assert.deepEqual(deprecatedAdoKeys(stale), ["ado.access"])
+  // Every key that configured the old raw-REST transport survives parsing
+  // (looseObject) so it can be NAMED — silently stripping them would leave a
+  // user who set insecureSkipTlsVerify wondering why their setting vanished.
+  // ADO is reached only through the MCP server regardless of what they say.
+  const stale = parseConfig({
+    codePlatform: "ado",
+    ado: { ...base, access: "az", customHeaders: { "X-Route": "internal" }, insecureSkipTlsVerify: true },
+  })
+  assert.deepEqual(deprecatedAdoKeys(stale), ["ado.access", "ado.customHeaders", "ado.insecureSkipTlsVerify"])
   // No ado section at all (github config) → nothing deprecated.
   assert.deepEqual(deprecatedAdoKeys(DEFAULT_CONFIG), [])
 })
@@ -600,26 +601,6 @@ test("ado.pat is an accepted optional config field", () => {
     ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com", pat: "tok" },
   })
   assert.equal(c.ado?.pat, "tok")
-})
-
-test("applyAdoPatEnv exports ado.pat to AZURE_DEVOPS_EXT_PAT only when the env var is unset", () => {
-  const saved = process.env.AZURE_DEVOPS_EXT_PAT
-  try {
-    delete process.env.AZURE_DEVOPS_EXT_PAT
-    applyAdoPatEnv({ ado: { pat: "cfg-pat" } })
-    assert.equal(process.env.AZURE_DEVOPS_EXT_PAT, "cfg-pat")
-    // env var wins: an existing value is never overridden
-    process.env.AZURE_DEVOPS_EXT_PAT = "env-pat"
-    applyAdoPatEnv({ ado: { pat: "cfg-pat" } })
-    assert.equal(process.env.AZURE_DEVOPS_EXT_PAT, "env-pat")
-    // no ado.pat → no-op
-    delete process.env.AZURE_DEVOPS_EXT_PAT
-    applyAdoPatEnv({ ado: {} })
-    assert.equal(process.env.AZURE_DEVOPS_EXT_PAT, undefined)
-  } finally {
-    if (saved === undefined) delete process.env.AZURE_DEVOPS_EXT_PAT
-    else process.env.AZURE_DEVOPS_EXT_PAT = saved
-  }
 })
 
 // --- projectManagement ---
@@ -841,8 +822,7 @@ test("loadConfig ignores repo-layer ado credential and transport keys — a clon
               project: "p",
               selfLogin: "a@b.c",
               pat: "repo-supplied",
-              insecureSkipTlsVerify: true,
-              customHeaders: { "X-Route-To": "attacker.example" },
+              mcp: { command: "/tmp/evil.sh" },
             },
           }),
         },
@@ -856,13 +836,12 @@ test("loadConfig ignores repo-layer ado credential and transport keys — a clon
   const c = await loadConfig(client, "/repo", { userConfigPath: userPath })
   assert.equal(c.ado?.organization, "https://dev.azure.com/acme", "the repo layer must not choose where the PAT goes")
   assert.equal(c.ado?.pat, "user-secret", "the user's credential must survive the repo layer")
-  assert.equal(c.ado?.["insecureSkipTlsVerify"], undefined, "a clone must not disable certificate verification")
-  assert.equal(c.ado?.["customHeaders"], undefined, "a clone must not attach headers to an authenticated call")
+  assert.equal(c.ado?.mcp, undefined, "a clone must not choose the command that gets spawned")
   // The keys that genuinely describe THIS repo stay — dropping them would make
   // the rule unusable rather than safe.
   assert.equal(c.ado?.project, "p")
   assert.equal(c.ado?.selfLogin, "a@b.c")
-  for (const key of ["organization", "pat", "insecureSkipTlsVerify", "customHeaders"]) {
+  for (const key of ["organization", "pat", "mcp"]) {
     assert.ok(
       warns.some((m) => m.includes(`ado.${key}`)),
       `dropping ado.${key} must be loud`,

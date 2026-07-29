@@ -153,6 +153,9 @@ export const promptContext = (
       github: state.platform !== "ado",
       ado: state.platform === "ado",
     },
+    // Azure DevOps coordinates, so an ADO prompt can spell out the tool
+    // arguments instead of telling the agent to derive them.
+    ado: state.ado ? { project: state.ado.project, repository: state.ado.repository } : undefined,
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: budgetedArtifacts(state, budgets).artifacts,

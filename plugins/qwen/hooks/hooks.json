@@ -69,12 +69,6 @@
         "hooks": [
           {
             "type": "command",
-            "name": "agentic-workflow-ado-pat",
-            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/inject-ado-pat.mjs\"",
-            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
-          },
-          {
-            "type": "command",
             "name": "agentic-workflow-reconcile",
             "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/reconcile.mjs\"",
             "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }

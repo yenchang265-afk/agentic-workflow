@@ -221,21 +221,28 @@ push to any branch, comment anywhere, sometimes merge.
   with a fine-grained PAT scoped to contents:write + pull-requests:write on
   the repos it sits on, and protect release branches on the forge. The same
   holds on Azure DevOps (`codePlatform: "ado"`): the sitter uses only push +
-  thread replies (`curl` POST to
-  `_apis/git/repositories/<repo>/pullRequests/<n>/threads/<id>/comments`),
-  completing/abandoning a PR is excluded everywhere, and a scoped
-  `AZURE_DEVOPS_EXT_PAT` (Code read + Pull Request contribute) is the
-  hard-containment equivalent. The ADO allowlist is host-pinned `curl`
-  (`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`) plus a PreToolUse backstop hook
-  (`check-stage-guard.mjs`) that permits **only** GET reads, POSTs to a
-  `/threads` resource, and POSTs creating a brand-new pull request (the bare
-  `.../pullrequests` collection, no id segment after it — dep-sitter's and
-  main-sitter's publish stage; see T12/T13) — blocking complete/abandon,
-  approve/reject reviewer votes, reviewer edits, and run-pipeline regardless
-  of workflow kind or stage. The distinction between "create" and "mutate an
-  existing PR" is a regex lookahead (`isAdoWriteBackstopViolation`,
-  `plugins/claude/hooks/src/allowlist.mjs`) checking whether anything
-  (a `/`, an id) follows `pullrequests` in the URL. One allowlist-breadth
+  thread replies (`repo_reply_to_comment` /
+  `repo_create_pull_request_thread`), completing/abandoning a PR is excluded
+  everywhere, and a scoped `AZURE_DEVOPS_EXT_PAT` (Code read + Pull Request
+  contribute) is the hard-containment equivalent.
+
+  ADO is reached **only** through the Azure DevOps MCP server, so the ado bash
+  allowlist is empty and enforcement is tool-level: a PreToolUse backstop hook
+  (`check-stage-guard.mjs`) permits **only** the enumerated read tools, thread
+  posts/replies, and `repo_create_pull_request` **with `isDraft: true`**.
+  Everything else is refused — completing/abandoning, reviewer votes, reviewer
+  edits, branch creation, and pipeline runs — regardless of workflow kind or
+  stage. Two properties are load-bearing and were not true of the curl-era
+  check it replaced: it **fails closed** (a tool in neither the read nor the
+  write set is a violation, so an unrecognized or newly-added upstream mutator
+  is refused rather than waved through by a name pattern that happens not to
+  match), and it can see tool ARGUMENTS, which is what makes the draft-only
+  rule enforceable at all (`isAdoMcpWriteViolation`,
+  `plugins/claude/hooks/src/allowlist.mjs`). A second check
+  (`isAdoMcpToolOutOfStageScope`) holds each call to the tools that stage's
+  manifest grants via `platformTools`, so a stage cannot reach a tool that is
+  legal in general but not its business. OpenCode enforces both in
+  `tool.execute.before` — it had no ADO backstop at all before. One allowlist-breadth
   note: the manifest's stage allowlists are platform-scoped
   (`platformAllowlist.github`/`.ado` merged at stage-marker time, so only the
   resolved platform's CLI is admitted), but the OpenCode agent frontmatter is
@@ -292,8 +299,9 @@ strength to the PR description and diff — but its authority is
 
 - **Control:** the publish stage's GitHub allowlist is exactly
   `gh pr comment` + `gh pr view` — deliberately **no `gh api`** (which could
-  approve or merge via REST) and no `gh pr review`; on ADO the curl allowlist
-  is `/threads*`-scoped and the T8 backstop hook blocks votes/completions.
+  approve or merge via REST) and no `gh pr review`; on ADO the stage's
+  `platformTools` grants only `repo_create_pull_request_thread` and the T8
+  backstop hook blocks votes/completions.
   The ASSESS stage may *execute* the PR's code only through the read +
   test-runner allowlist inside the loop's worktree (T2 containment), and the
   T10 fork skip is retained — review requests on fork PRs are not sat on,
@@ -326,9 +334,10 @@ scripts.
   merge gate.
 - **ADO parity:** the `dependency-scan` source is platform-agnostic (npm
   doesn't care which forge the repo lives on); only the publish stage's
-  PR-creation call differs. On `ado` it opens the draft PR via `POST
-  _apis/git/repositories/<repo>/pullrequests` — the one write shape T8's
-  backstop-hook update explicitly carves out — everything else about the
+  PR-creation call differs. On `ado` it opens the draft PR via
+  `repo_create_pull_request` with `isDraft: true` — the one write shape T8's
+  backstop hook explicitly carves out, and it verifies the draft flag rather
+  than trusting it — everything else about the
   control above (branch-scoped push, VERIFY gate, no merge) is identical.
 - **JVM ecosystems (OSV-Scanner):** for maven/gradle the advisory data comes
   from the host-installed `osv-scanner` binary querying the OSV.dev database
@@ -379,8 +388,8 @@ watched branch inside the loop's worktree.
 - **Residual:** a wrong diagnosis can propose a wrong revert; the draft PR +
   human merge is the gate, and the verify stage requires the failing job's
   command to pass locally before anything is published.
-- **ADO parity:** `ado-ci-runs.ts` polls the Azure Pipelines Build REST API
-  (`_apis/build/builds`) instead of `gh run list`, normalizing results into
+- **ADO parity:** `ado-ci-runs.ts` polls Azure Pipelines through the MCP
+  server's `pipelines_get_builds` tool instead of `gh run list`, normalizing results into
   the same shape the pure, already-tested `newestHeadVerdict` judges — the
   "only the newest head, never mid-run, never re-claim a handled head" logic
   is identical on both platforms, sharing its ledger/claim/WorkItem mechanics

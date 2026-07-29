@@ -1,81 +1,213 @@
 import assert from "node:assert/strict"
-import { execFileSync } from "node:child_process"
-import { createServer } from "node:https"
-import { mkdtempSync, readFileSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { test } from "node:test"
-import { adoFetch, buildAdoHeaders, makeAdoAuthHeader, parseAdoHeadersEnv, resolveAdoHeaders } from "./ado-shared.js"
+import {
+  AdoBuildSchema,
+  AdoPrFieldsSchema,
+  adoList,
+  adoMcpPatToken,
+  adoMcpSpawn,
+  adoOrgName,
+  failingPipelineNames,
+  flattenThreadComments,
+  newerThan,
+  normalizeAdoBuild,
+  sameLogin,
+  stripRef,
+} from "./ado-shared.js"
+import { ADO_MCP_PACKAGE } from "./ado-tools.js"
+import type { AdoConfig } from "../workflow/state.js"
 
 /**
- * The pure custom-header helpers shared by the ADO work source and ship gate:
- * env parsing (malformed → {}, never thrown), env-wins resolution over config,
- * and the base+custom merge attached to each REST call.
+ * The pure Azure DevOps helpers: the MCP spawn spec (arg vector, child env,
+ * refusals), the response schemas and their deliberate strictness, and the
+ * normalizers shared by the work sources.
  */
 
-test("parseAdoHeadersEnv reads a JSON object of string headers", () => {
-  assert.deepEqual(parseAdoHeadersEnv('{"Proxy-Authorization":"Bearer t","X-Route":"internal"}'), {
-    "Proxy-Authorization": "Bearer t",
-    "X-Route": "internal",
-  })
+const ado = (over: Partial<AdoConfig> = {}): AdoConfig => ({
+  organization: "https://dev.azure.com/acme",
+  project: "widgets",
+  ...over,
 })
 
-test("parseAdoHeadersEnv degrades to {} for absent, malformed, non-object, or non-string values", () => {
-  assert.deepEqual(parseAdoHeadersEnv(undefined), {})
-  assert.deepEqual(parseAdoHeadersEnv(""), {})
-  assert.deepEqual(parseAdoHeadersEnv("   "), {})
-  assert.deepEqual(parseAdoHeadersEnv("not json"), {})
-  assert.deepEqual(parseAdoHeadersEnv('["a","b"]'), {}) // array, not an object
-  assert.deepEqual(parseAdoHeadersEnv("null"), {})
-  // Non-string values are dropped, string ones kept.
-  assert.deepEqual(parseAdoHeadersEnv('{"X-Keep":"ok","X-Drop":5,"":"no-key"}'), { "X-Keep": "ok" })
+// --- the credential ---
+
+test("adoMcpPatToken encodes a colon-prefixed credential the server can split", () => {
+  // The server base64-decodes, splits on ":" and keeps everything after the
+  // FIRST colon. An empty username is therefore correct — and the colon is
+  // mandatory, since a value without one decodes to an empty token.
+  assert.equal(adoMcpPatToken("tok"), Buffer.from(":tok").toString("base64"))
+  assert.equal(Buffer.from(adoMcpPatToken("tok"), "base64").toString().split(":").slice(1).join(":"), "tok")
 })
 
-test("resolveAdoHeaders overlays the env over config, key by key", () => {
-  const merged = resolveAdoHeaders(
-    { "X-Route": "internal", "Proxy-Authorization": "config-token" },
-    '{"Proxy-Authorization":"env-token","X-Extra":"from-env"}',
+test("adoMcpPatToken survives a PAT containing a colon", () => {
+  const decoded = Buffer.from(adoMcpPatToken("a:b:c"), "base64").toString()
+  assert.equal(decoded.split(":").slice(1).join(":"), "a:b:c")
+})
+
+// --- the organization name ---
+
+test("adoOrgName reads the org from both hosted URL forms", () => {
+  assert.equal(adoOrgName("https://dev.azure.com/acme"), "acme")
+  assert.equal(adoOrgName("https://dev.azure.com/acme/"), "acme")
+  assert.equal(adoOrgName("https://acme.visualstudio.com"), "acme")
+})
+
+test("adoOrgName returns empty for something that isn't an org URL, rather than guessing", () => {
+  assert.equal(adoOrgName("not a url"), "")
+  assert.equal(adoOrgName("https://dev.azure.com"), "")
+})
+
+// --- the spawn spec ---
+
+test("adoMcpSpawn builds the pinned arg vector and puts the token only in the child env", () => {
+  const spawn = adoMcpSpawn(ado({ pat: "cfg-pat" }), {})
+  assert.equal(spawn.ok, true)
+  if (!spawn.ok) return
+  assert.equal(spawn.command, "npx")
+  assert.deepEqual(spawn.args, ["-y", ADO_MCP_PACKAGE, "acme", "-d", "repositories", "-d", "pipelines", "-a", "pat"])
+  assert.deepEqual(spawn.env, { PERSONAL_ACCESS_TOKEN: adoMcpPatToken("cfg-pat") })
+})
+
+test("the env var wins over config ado.pat, matching the old REST precedence", () => {
+  const spawn = adoMcpSpawn(ado({ pat: "cfg-pat" }), { AZURE_DEVOPS_EXT_PAT: "env-pat" })
+  assert.equal(spawn.ok, true)
+  if (!spawn.ok) return
+  assert.equal(spawn.env["PERSONAL_ACCESS_TOKEN"], adoMcpPatToken("env-pat"))
+})
+
+test("no credential at all is a refusal naming both places to set one", () => {
+  const spawn = adoMcpSpawn(ado(), {})
+  assert.equal(spawn.ok, false)
+  if (spawn.ok) return
+  assert.match(spawn.error, /AZURE_DEVOPS_EXT_PAT/)
+  assert.match(spawn.error, /ado\.pat/)
+})
+
+test("interactive auth is refused — it opens a browser no poller can answer", () => {
+  // It is the SERVER's default, so this is the most likely misconfiguration;
+  // failing here beats hanging on a prompt nobody sees.
+  const spawn = adoMcpSpawn(ado({ mcp: { authentication: "interactive" } }), {})
+  assert.equal(spawn.ok, false)
+  if (spawn.ok) return
+  assert.match(spawn.error, /cannot work in a polling loop/)
+})
+
+test("interactive auth is allowed when explicitly opted into at a real terminal", () => {
+  const spawn = adoMcpSpawn(ado({ mcp: { authentication: "interactive" } }), { ADO_MCP_ALLOW_INTERACTIVE: "1" })
+  assert.equal(spawn.ok, true)
+  if (!spawn.ok) return
+  assert.deepEqual(spawn.env, {})
+  assert.ok(spawn.args.includes("interactive"))
+})
+
+test("azcli auth needs no token in the child env", () => {
+  const spawn = adoMcpSpawn(ado({ mcp: { authentication: "azcli" } }), {})
+  assert.equal(spawn.ok, true)
+  if (!spawn.ok) return
+  assert.deepEqual(spawn.env, {})
+  assert.ok(spawn.args.includes("azcli"))
+})
+
+test("envvar auth requires its bearer token and passes it through", () => {
+  assert.equal(adoMcpSpawn(ado({ mcp: { authentication: "envvar" } }), {}).ok, false)
+  const spawn = adoMcpSpawn(ado({ mcp: { authentication: "envvar" } }), { ADO_MCP_AUTH_TOKEN: "bearer" })
+  assert.equal(spawn.ok, true)
+  if (!spawn.ok) return
+  assert.equal(spawn.env["ADO_MCP_AUTH_TOKEN"], "bearer")
+})
+
+test("command, args, domains, tenant and extra env are overridable for air-gapped or multi-tenant installs", () => {
+  const spawn = adoMcpSpawn(
+    ado({
+      pat: "p",
+      mcp: {
+        command: "/opt/ado-mcp",
+        args: [],
+        domains: ["repositories"],
+        tenant: "tenant-guid",
+        env: { NODE_EXTRA_CA_CERTS: "/etc/ca.pem" },
+      },
+    }),
+    {},
   )
-  assert.deepEqual(merged, {
-    "X-Route": "internal", // config-only survives
-    "Proxy-Authorization": "env-token", // env wins on a clash
-    "X-Extra": "from-env", // env-only added
-  })
+  assert.equal(spawn.ok, true)
+  if (!spawn.ok) return
+  assert.equal(spawn.command, "/opt/ado-mcp")
+  assert.deepEqual(spawn.args, ["acme", "-d", "repositories", "-a", "pat", "-t", "tenant-guid"])
+  assert.equal(spawn.env["NODE_EXTRA_CA_CERTS"], "/etc/ca.pem")
+  assert.equal(spawn.env["PERSONAL_ACCESS_TOKEN"], adoMcpPatToken("p"))
 })
 
-test("resolveAdoHeaders handles either side being absent", () => {
-  assert.deepEqual(resolveAdoHeaders(undefined, undefined), {})
-  assert.deepEqual(resolveAdoHeaders({ "X-Route": "internal" }, undefined), { "X-Route": "internal" })
-  assert.deepEqual(resolveAdoHeaders(undefined, '{"X-Env":"v"}'), { "X-Env": "v" })
+test("an organization URL with no org in it is a refusal, not a spawn with a bad name", () => {
+  const spawn = adoMcpSpawn(ado({ organization: "https://dev.azure.com", pat: "p" }), {})
+  assert.equal(spawn.ok, false)
+  if (spawn.ok) return
+  assert.match(spawn.error, /organization name/)
 })
 
-test("buildAdoHeaders merges custom headers over the built-in request headers", () => {
-  assert.deepEqual(
-    buildAdoHeaders({ Authorization: "Basic xyz", Accept: "application/json" }, { "Proxy-Authorization": "Bearer t" }),
-    { Authorization: "Basic xyz", Accept: "application/json", "Proxy-Authorization": "Bearer t" },
-  )
-  // A custom key may override a built-in one — documented as the user's call.
-  assert.equal(buildAdoHeaders({ Accept: "application/json" }, { Accept: "text/plain" }).Accept, "text/plain")
-  // Undefined custom headers leave the base untouched.
-  assert.deepEqual(buildAdoHeaders({ Accept: "application/json" }, undefined), { Accept: "application/json" })
+// --- payload shapes ---
+
+test("adoList accepts a bare array and a REST-style {value} envelope alike", () => {
+  // The MCP server returns what azure-devops-node-api hands back, which already
+  // unwraps `value`. Accepting both costs three lines; betting on one and losing
+  // means every poll parses to zero items and reports "nothing needs attention".
+  assert.deepEqual(adoList([1, 2]), [1, 2])
+  assert.deepEqual(adoList({ value: [1, 2] }), [1, 2])
+  assert.deepEqual(adoList({ count: 0 }), [])
+  assert.deepEqual(adoList(null), [])
 })
 
-test("AdoPrFieldsSchema reads reviewer identity and requirement additively", async () => {
-  const { AdoPrFieldsSchema } = await import("./ado-shared.js")
+test("AdoPrFieldsSchema reads reviewer identity and requirement additively", () => {
   const pr = AdoPrFieldsSchema.parse({
     pullRequestId: 7,
     title: "t",
     sourceRefName: "refs/heads/feat/x",
     targetRefName: "refs/heads/main",
+    createdBy: { uniqueName: "author@acme.com" },
     reviewers: [{ uniqueName: "Sitter@Acme.com", vote: 0, isRequired: true }, { vote: -5 }],
   })
-  assert.deepEqual(pr.reviewers?.[0], { uniqueName: "Sitter@Acme.com", vote: 0, isRequired: true })
+  assert.deepEqual(pr.reviewers[0], { uniqueName: "Sitter@Acme.com", vote: 0, isRequired: true })
   // Legacy entries without identity still parse (defaults, not rejections).
-  assert.deepEqual(pr.reviewers?.[1], { uniqueName: "", vote: -5, isRequired: false })
+  assert.deepEqual(pr.reviewers[1], { uniqueName: "", vote: -5, isRequired: false })
 })
 
-test("normalizeAdoBuild maps ADO's build shape into the shared CiRun fields", async () => {
-  const { normalizeAdoBuild, AdoBuildSchema } = await import("./ado-shared.js")
+test("AdoPrFieldsSchema REQUIRES createdBy and reviewers so a trimmed payload fails loudly", () => {
+  // These are what the role filter and the fork skip judge. If the MCP list tool
+  // returns a projection without them, an author-role kind would claim nothing
+  // and a reviewer-role kind would claim everything — both silently. That list
+  // tool has no `fullResponse` flag, so this is a live possibility.
+  const base = { pullRequestId: 7, title: "t", sourceRefName: "refs/heads/a", targetRefName: "refs/heads/main" }
+  assert.throws(() => AdoPrFieldsSchema.parse({ ...base, reviewers: [] }))
+  assert.throws(() => AdoPrFieldsSchema.parse({ ...base, createdBy: { uniqueName: "a@b.c" } }))
+})
+
+// --- normalizers ---
+
+test("stripRef, sameLogin and newerThan", () => {
+  assert.equal(stripRef("refs/heads/feat/x"), "feat/x")
+  assert.equal(sameLogin("Sitter@Acme.com", "sitter@acme.com"), true)
+  // Lexicographically "...00.12Z" > "...00.123Z" ('Z' > '3'), but 0.12s < 0.123s.
+  assert.equal(newerThan("2026-07-04T00:00:00.12Z", "2026-07-04T00:00:00.123Z"), false)
+  assert.equal(newerThan("2026-07-04T00:00:01Z", "2026-07-04T00:00:00Z"), true)
+  assert.equal(newerThan("anything", ""), true)
+})
+
+test("flattenThreadComments drops deleted threads, deleted comments and system notes", () => {
+  const out = flattenThreadComments([
+    {
+      isDeleted: false,
+      comments: [
+        { commentType: "text", publishedDate: "t1", isDeleted: false, author: { uniqueName: "a@b.c" } },
+        { commentType: "system", publishedDate: "t2", isDeleted: false, author: { uniqueName: "d@e.f" } },
+        { commentType: "text", publishedDate: "t3", isDeleted: true, author: { uniqueName: "g@h.i" } },
+      ],
+    },
+    { isDeleted: true, comments: [{ commentType: "text", publishedDate: "t4", isDeleted: false, author: null }] },
+  ])
+  assert.deepEqual(out, [{ author: "a@b.c", at: "t1" }])
+})
+
+test("normalizeAdoBuild maps ADO's build shape into the shared CiRun fields", () => {
   const succeeded = AdoBuildSchema.parse({
     sourceVersion: "abc123",
     status: "completed",
@@ -90,13 +222,10 @@ test("normalizeAdoBuild maps ADO's build shape into the shared CiRun fields", as
     workflowName: "CI",
     createdAt: "2026-07-05T00:00:00Z",
   })
-  const failed = AdoBuildSchema.parse({ sourceVersion: "x", status: "completed", result: "failed" })
-  assert.equal(normalizeAdoBuild(failed).conclusion, "failure")
-  // A partial success still means something broke — judged as failing.
-  const partial = AdoBuildSchema.parse({ sourceVersion: "x", status: "completed", result: "partiallySucceeded" })
+  const partial = AdoBuildSchema.parse({ sourceVersion: "a", status: "completed", result: "partiallySucceeded" })
   assert.equal(normalizeAdoBuild(partial).conclusion, "failure")
-  // A manual cancel isn't a code breakage — neither failing nor a green signal.
-  const canceled = AdoBuildSchema.parse({ sourceVersion: "x", status: "completed", result: "canceled" })
+  // A manual cancellation isn't a code breakage — neither failing nor green.
+  const canceled = AdoBuildSchema.parse({ sourceVersion: "a", status: "completed", result: "canceled" })
   assert.equal(normalizeAdoBuild(canceled).conclusion, null)
   // In-flight builds carry no result yet.
   const pending = AdoBuildSchema.parse({ sourceVersion: "x", status: "inProgress" })
@@ -104,70 +233,54 @@ test("normalizeAdoBuild maps ADO's build shape into the shared CiRun fields", as
   assert.equal(normalizeAdoBuild(pending).status, "inProgress")
 })
 
-test("normalizeAdoBuild falls back through queueTime → startTime → finishTime for createdAt", async () => {
-  const { normalizeAdoBuild, AdoBuildSchema } = await import("./ado-shared.js")
-  const noQueueTime = AdoBuildSchema.parse({ sourceVersion: "x", startTime: "2026-07-05T01:00:00Z", finishTime: "2026-07-05T02:00:00Z" })
+test("normalizeAdoBuild falls back through queueTime → startTime → finishTime for createdAt", () => {
+  const noQueueTime = AdoBuildSchema.parse({
+    sourceVersion: "x",
+    startTime: "2026-07-05T01:00:00Z",
+    finishTime: "2026-07-05T02:00:00Z",
+  })
   assert.equal(normalizeAdoBuild(noQueueTime).createdAt, "2026-07-05T01:00:00Z")
   const onlyFinish = AdoBuildSchema.parse({ sourceVersion: "x", finishTime: "2026-07-05T02:00:00Z" })
   assert.equal(normalizeAdoBuild(onlyFinish).createdAt, "2026-07-05T02:00:00Z")
 })
 
-/**
- * `adoFetch`'s TLS behavior against a real self-signed HTTPS server: proves
- * the default path still verifies (rejects the untrusted cert) and that
- * `insecureSkipTlsVerify: true` is what actually lets the call through — not
- * just a flag that's threaded around unused. Skips if `openssl` isn't on
- * PATH rather than failing the suite over an environment gap.
- */
-const withSelfSignedServer = async (run: (url: string) => Promise<void>): Promise<void> => {
-  const dir = mkdtempSync(join(tmpdir(), "ado-fetch-tls-"))
-  const keyPath = join(dir, "key.pem")
-  const certPath = join(dir, "cert.pem")
-  execFileSync("openssl", [
-    "req",
-    "-x509",
-    "-newkey",
-    "rsa:2048",
-    "-keyout",
-    keyPath,
-    "-out",
-    certPath,
-    "-days",
-    "1",
-    "-nodes",
-    "-subj",
-    "/CN=localhost",
-  ])
-  const server = createServer({ key: readFileSync(keyPath), cert: readFileSync(certPath) }, (_req, res) => res.end("ok"))
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
-  try {
-    const address = server.address()
-    if (address === null || typeof address === "string") throw new Error("expected a bound TCP address")
-    await run(`https://127.0.0.1:${address.port}/`)
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()))
-  }
-}
+// --- failing checks, which are now pipelines rather than branch policies ---
 
-test("adoFetch verifies certificates by default and only skips verification when told to", async (t) => {
-  try {
-    execFileSync("openssl", ["version"])
-  } catch {
-    t.skip("openssl not available")
-    return
-  }
-  await withSelfSignedServer(async (url) => {
-    await assert.rejects(adoFetch(undefined)(url, { headers: {} }))
-    await assert.rejects(adoFetch(false)(url, { headers: {} }))
-    const res = await adoFetch(true)(url, { headers: {} })
-    assert.equal(res.ok, true)
-    assert.equal(await res.text(), "ok")
-  })
+const build = (name: string, result: string, queueTime: string) =>
+  AdoBuildSchema.parse({ sourceVersion: "sha", status: "completed", result, definition: { name }, queueTime })
+
+test("failingPipelineNames names failing definitions and ignores green ones", () => {
+  const out = failingPipelineNames([
+    build("Build", "failed", "2026-07-05T00:00:00Z"),
+    build("Lint", "succeeded", "2026-07-05T00:00:00Z"),
+    build("Test", "partiallySucceeded", "2026-07-05T00:00:00Z"),
+  ])
+  assert.deepEqual(out.sort(), ["Build", "Test"])
 })
 
-test("makeAdoAuthHeader: a PAT becomes HTTP Basic; without one the REST transport fails loud", async () => {
-  const auth = makeAdoAuthHeader({ pat: "tok" })
-  assert.equal(await auth(), `Basic ${Buffer.from(":tok").toString("base64")}`)
-  const none = makeAdoAuthHeader({})
-  await assert.rejects(none(), /AZURE_DEVOPS_EXT_PAT.*ADO REST calls always need a PAT/s)
+test("only the newest run per definition counts", () => {
+  // Considering every run rather than only the newest would keep a definition
+  // that was re-run green reporting as failing forever, re-waking the sitter on
+  // work that is already fixed.
+  assert.deepEqual(
+    failingPipelineNames([
+      build("Build", "succeeded", "2026-07-05T02:00:00Z"),
+      build("Build", "failed", "2026-07-05T01:00:00Z"),
+    ]),
+    [],
+  )
+  assert.deepEqual(
+    failingPipelineNames([
+      build("Build", "failed", "2026-07-05T02:00:00Z"),
+      build("Build", "succeeded", "2026-07-05T01:00:00Z"),
+    ]),
+    ["Build"],
+  )
+})
+
+test("a still-running build is not yet a failing check, and an unnamed definition is ignored", () => {
+  const running = AdoBuildSchema.parse({ sourceVersion: "s", status: "inProgress", definition: { name: "Build" } })
+  assert.deepEqual(failingPipelineNames([running]), [])
+  const unnamed = AdoBuildSchema.parse({ sourceVersion: "s", status: "completed", result: "failed" })
+  assert.deepEqual(failingPipelineNames([unnamed]), [])
 })

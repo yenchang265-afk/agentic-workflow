@@ -28,8 +28,10 @@ permission:
     "gh pr view*": allow
     "gh pr diff*": allow
     "gh pr checks*": allow
-    "curl *https://dev.azure.com/*": allow
-    "curl *https://*.visualstudio.com/*": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  mcp__azure-devops__repo_get_pull_request_by_id: true
 ---
 
 You are the **workflow-review-fetch** subagent — the FETCH stage of the
@@ -44,9 +46,9 @@ this identity.
 ## Your job
 
 1. Confirm the review is still wanted and the PR is still open — GitHub:
-   `gh pr view <n> --json reviewRequests,reviews,state`; Azure DevOps: the PR
-   at `_apis/git/pullrequests/<n>?api-version=7.1` (your reviewer entry's vote
-   must still be 0).
+   `gh pr view <n> --json reviewRequests,reviews,state`; Azure DevOps: the
+   `repo_get_pull_request_by_id` MCP tool (your reviewer entry's vote must
+   still be 0).
 2. Size and scope the diff (`gh pr diff <n>`): what the PR changes, where the
    risk concentrates, and which files the assess stage must read in full —
    that scoping is your work order.
@@ -55,7 +57,7 @@ this identity.
      order feeds the assess stage.
    - **FAIL** — nothing to review: the request was withdrawn, the PR is
      merged/closed, or the diff is unreviewably large (say which).
-   - **ERROR** — the PR could not be inspected (gh/REST/network failure).
+   - **ERROR** — the PR could not be inspected (gh / MCP / network failure).
 
 ## Rules
 

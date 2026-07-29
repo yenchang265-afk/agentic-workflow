@@ -1,7 +1,7 @@
 import { acquireOrSweepMarker, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
-import type { CodePlatform, WorkflowState } from "../workflow/state.js"
+import type { AdoCoordinates, CodePlatform, WorkflowState } from "../workflow/state.js"
 import type { PrLedger, PrSnapshot, PrTrigger } from "./ledger.js"
 import type { TerminalOutcome, WorkItem } from "./types.js"
 
@@ -130,6 +130,7 @@ export const prWorkItem = (
   snapshot: PrSnapshot,
   triggers: readonly PrTrigger[],
   limits: { readonly maxDiffLines?: number } = {},
+  ado?: AdoCoordinates,
 ): WorkItem => {
   const binding = loaded.manifest.workSource
   const role = binding.type === "pull-request" ? binding.role : "author"
@@ -154,6 +155,7 @@ export const prWorkItem = (
     artifacts: {},
     git: { base: snapshot.baseRefName, branch: snapshot.headRefName },
     platform,
+    ...(ado ? { ado } : {}),
   }
   return {
     id: `pr-${snapshot.number}`,
