@@ -316,20 +316,31 @@ body {
   margin-left: 0.4rem;
 }
 
+/*
+ * `margin-inline: auto` on the tabs — the ONLY auto margin in the header — is
+ * what balances it. Every free pixel used to pool in one stretch between the
+ * tabs and the status cluster, because the cluster claimed it all with a single
+ * `margin-left: auto`; on a wide window that read as a hole in the top right.
+ * Two equal auto margins split the same slack in half, so the tabs sit centered
+ * between the wordmark and the right-hand controls, and the trailing items are
+ * still pushed flush right by the tabs' own right margin. Adding another auto
+ * margin further right (a repo picker, a new control) re-divides the slack
+ * three ways and puts the hole back — push new items into `.header-status`
+ * instead.
+ */
 .hub-tabs {
   display: flex;
   gap: var(--sp-1);
+  margin-inline: auto;
 }
 
 .header-status {
-  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
 }
 
 .repo-picker {
-  margin-left: auto;
   background: var(--panel-raised);
   color: var(--text);
   border: 1px solid var(--border);
@@ -343,10 +354,6 @@ body {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-weak);
-}
-
-.repo-picker + .header-status {
-  margin-left: 0;
 }
 
 .live-dot {
