@@ -341,22 +341,29 @@ update both, heading for heading.
   overridden.
 - `packages/core/workflows/README.md` — the manifest `checks` field.
 
-## Follow-ups this plan deliberately leaves open
+## Follow-ups this plan left open — both since shipped
 
-Two further determinism gaps found in the same audit, both still open verbatim,
-each independent of this plan (a third, the severity vocabulary mismatch, is now
-**resolved** — see below):
+Two further determinism gaps found in the same audit, each independent of this
+plan, and both fixed after it landed (a third, the severity vocabulary
+mismatch, was already resolved — see below):
 
-1. **Sitter check stages re-decide what the work source already computed.**
-   `attentionTriggers` (`source/ledger.ts:104`) and `upgradeCandidates`
-   (`source/dependency-scan.ts:133`) do not merely inform the claim — they
-   *gate* it, so by the time `pr-sitter/stages/triage.md:7` asks the model "PASS
-   when there is actionable work", the answer is already true by construction.
-   The cheap fix is prompt-only: narrow the verdict's question from *whether*
-   there is work to *whether a listed fact has gone stale*.
-2. **Undefined thresholds gate control flow.** `review-sitter/stages/fetch.md:3`
-   measures `gh pr diff <n> | wc -l` and `:7` then never compares it to anything —
-   the FAIL condition is the adjective "unreviewably large".
+1. **Sitter check stages re-decided what the work source already computed.**
+   `attentionTriggers` (`source/ledger.ts`) and `upgradeCandidates`
+   (`source/dependency-scan.ts`) do not merely inform the claim — they *gate*
+   it, so when `pr-sitter/stages/triage.md` asked the model "PASS when there is
+   actionable work", the answer was already true by construction. Fixed
+   prompt-only, as proposed: the verdict now asks whether a signal named in the
+   goal has gone STALE since the claim, and FAILs only when every one has.
+   (`dep-sitter`'s `scan` and `main-sitter`'s `diagnose` were already framed
+   that way and needed no change.)
+2. **Undefined thresholds gated control flow.** `review-sitter/stages/fetch.md`
+   measured `gh pr diff <n> | wc -l` and then never compared it to anything —
+   the FAIL condition was the adjective "unreviewably large". There is now a
+   number: `DEFAULT_MAX_DIFF_LINES` (2000) in `source/pr-shared.ts`, overridable
+   per kind via `workflows.<kind>.maxDiffLines`, carried in the claimed item's
+   goal — which is how a per-kind config value reaches a stage prompt at all.
+   The prompt states that the comparison is arithmetic, and ADO gets a local
+   `git diff | wc -l` recipe so the rule is not GitHub-only.
 
 ## Resolved: severity vocabulary mismatch
 

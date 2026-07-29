@@ -319,20 +319,26 @@ admission 之後才做，能讓 admission 契約維持原樣。
   「執行測試」；要加上：當檢查區塊存在時，那些結果已經被記錄，且無法被推翻。
 - `packages/core/workflows/README.md` —— manifest 的 `checks` 欄位。
 
-## 本計畫刻意留待後續的項目
+## 本計畫留待後續的項目——兩項都已完成
 
-同一次稽核還發現兩個決定性缺口，兩者都仍然原封不動地存在，且各自獨立於本計畫
-（第三個「嚴重度詞彙不一致」**已修正**，見下方）：
+同一次稽核還發現兩個決定性缺口，各自獨立於本計畫，且都在本計畫落地之後修好了
+（第三個「嚴重度詞彙不一致」在更早之前就已修正，見下方）：
 
 1. **Sitter 的檢查類階段重新判斷了 work source 已經算好的事。**
-   `attentionTriggers`（`source/ledger.ts:104`）與 `upgradeCandidates`
-   （`source/dependency-scan.ts:133`）不只是提供資訊給 claim —— 它們就是
-   claim 的*閘門*，所以當 `pr-sitter/stages/triage.md:7` 問模型「有可執行的工作
-   時回 PASS」時，答案在結構上早已為真。便宜的修法只需改提示詞：把裁定要回答的
-   問題，從*有沒有*工作，收窄成*列出的事實是否已經失效*。
-2. **未定義的門檻卻掌控著控制流程。** `review-sitter/stages/fetch.md:3` 量了
-   `gh pr diff <n> | wc -l`，而第 7 行從來沒有拿它跟任何東西比較 —— FAIL 的條件
-   是「大到無法審查」這個形容詞。
+   `attentionTriggers`（`source/ledger.ts`）與 `upgradeCandidates`
+   （`source/dependency-scan.ts`）不只是提供資訊給 claim —— 它們就是 claim 的
+   *閘門*，所以當 `pr-sitter/stages/triage.md` 問模型「有可執行的工作時回
+   PASS」時，答案在結構上早已為真。已依提案只改提示詞修好：裁定現在問的是
+   goal 裡列出的訊號是否在認領之後**失效**，只有全部失效才回 FAIL。
+   （`dep-sitter` 的 `scan` 與 `main-sitter` 的 `diagnose` 本來就是這個問法，
+   不需要更動。）
+2. **未定義的門檻卻掌控著控制流程。** `review-sitter/stages/fetch.md` 量了
+   `gh pr diff <n> | wc -l`，然後從來沒有拿它跟任何東西比較 —— FAIL 的條件是
+   「大到無法審查」這個形容詞。現在有數字了：`source/pr-shared.ts` 中的
+   `DEFAULT_MAX_DIFF_LINES`（2000），可用 `workflows.<kind>.maxDiffLines`
+   逐 kind 覆寫，並寫進被認領項目的 goal —— 那也是逐 kind 的設定值唯一能抵達
+   階段提示詞的路徑。提示詞明講這個比較是算術，不是判斷；ADO 則給了本機
+   `git diff | wc -l` 的作法，所以這條規則不限於 GitHub。
 
 ## 已修正：嚴重度詞彙不一致
 
