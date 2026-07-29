@@ -267,8 +267,9 @@ review sitter（`workflows/review-sitter/`）讀取的是**其他人**撰寫的 
 
 - **控制措施：** publish 階段的 GitHub 白名單恰好就是 `gh pr comment` +
   `gh pr view`——刻意**不含** `gh api`（它可能透過 REST 核准或合併）也
-  不含 `gh pr review`；在 ADO 上，curl 白名單限定於 `/threads*`，且 T8
-  的保底 hook 會封鎖投票／完成動作。ASSESS 階段只能透過迴圈 worktree 內
+  不含 `gh pr review`；在 ADO 上，該階段的 `platformTools` 只授予
+  `repo_create_pull_request_thread`，且 T8 的保底 hook 會封鎖投票／完成
+  動作。ASSESS 階段只能透過迴圈 worktree 內
   的讀取 + 測試執行器白名單來執行該 PR 的程式碼（T2 的圍堵措施），且
   T10 的 fork 跳過規則同樣保留——不會監看 fork PR 上的審查請求，因為
   評估它就意味著在無人看管的情況下執行攻擊者撰寫的程式碼。

@@ -21,7 +21,7 @@ should link.
 | [design/threat-model.md](design/threat-model.md) | Security posture — threats and controls for every workflow kind |
 | [design/proposed-workflows.md](design/proposed-workflows.md) | Not-yet-built workflow kind proposals (three entries have since shipped — see `sitters.md` for their current behavior) |
 | [design/qwen-host-support.md](design/qwen-host-support.md) | Design record for the third host, Qwen Code — now shipped; see `qwen.md` for how it behaves today |
-| [design/proposed-hub-features.md](design/proposed-hub-features.md) | Admin hub proposals — the gate/doctor/config write surface (the foundation, prompt preview and gate actions have since shipped; doctor and the config editor have not — see `../packages/hub/README.md` for what the hub does today) |
+| [design/proposed-hub-features.md](design/proposed-hub-features.md) | Admin hub proposals — the gate/doctor/config write surface (all four have since shipped: the foundation, prompt preview, gate actions, the backlog doctor, and the config editor — see `../packages/hub/README.md` for what the hub does today) |
 | [design/improvements/](design/improvements/README.md) | Implementation design records for shipped hardening work (worktrees, state persistence, verdict quality, …) |
 | [migration.md](migration.md) | Upgrading from earlier layouts (the old `/agent-loop` command, `in-planning/`, the blocking PLAN gate) |
 | [templates/AGENTS.md](templates/AGENTS.md) | Starter `AGENTS.md`/`CLAUDE.md` to copy into a project driven by agentic-workflow |

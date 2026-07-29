@@ -38,8 +38,8 @@ Usage:
 
 Covers: Node.js >=22.13, git, curl, gh (GitHub CLI), Google Chrome, the
 chrome-devtools MCP server, and the in-repo JS deps (via ./install.sh). Azure
-DevOps needs only curl + a PAT (AZURE_DEVOPS_EXT_PAT). Auth steps are printed,
-never run for you.
+DevOps needs npx (bundled with Node) to launch the Azure DevOps MCP server,
+plus a PAT (AZURE_DEVOPS_EXT_PAT). Auth steps are printed, never run for you.
 EOF
 }
 

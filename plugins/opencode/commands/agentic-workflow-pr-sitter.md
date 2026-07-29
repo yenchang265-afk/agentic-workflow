@@ -5,7 +5,7 @@ argument-hint: claim [<pr>] | watch [poll [interval] | cron <schedule> | idle | 
 ---
 
 The PR sitter agentic loop — sits on your open pull requests (GitHub via
-`gh`, or Azure DevOps via its REST API) and works actionable signals: failing
+`gh`, or Azure DevOps via the Azure DevOps MCP server) and works actionable signals: failing
 checks, unanswered review threads, merge conflicts. The plugin intercepts
 this command; `$ARGUMENTS` selects the verb. Every verb is deterministic
 plugin work: **invoke nothing, write nothing** — report the toast's outcome

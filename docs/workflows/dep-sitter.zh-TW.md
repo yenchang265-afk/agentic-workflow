@@ -86,7 +86,9 @@ SCAN → UPGRADE → VERIFY → PUBLISH（最多 2 次疊代）
   **輸出格式**：stdout 必須是 osv-scanner 報告（`{"results":[…]}`），或原始
   OSV 弱點記錄清單（`{"vulns":[…]}`、`vulnerabilities`、`findings`，或裸陣列）；
   兩者皆可接受，不需額外的格式設定。每筆記錄必要欄位只有五個：`id`、
-  `severity`（`low`/`moderate`/`medium`/`high`/`critical`，不分大小寫）、
+  `severity`（`low`/`moderate`/`medium`/`high`/`critical` 標籤，不分大小寫；或
+  依 OSV 規範以 `[{type, score}]` 陣列表示的 CVSS 向量——僅支援 v3.0/v3.1
+  base score，v2/v4 會被辨識但不評分）、
   `affected[].package.name`（JVM 上必須是完整的 `group:artifact`）、
   `affected[].package.version`（**已安裝**版本）、
   `affected[].ranges[].events[].fixed`（升級目標）。其餘欄位一律忽略。

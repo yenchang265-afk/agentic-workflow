@@ -5,7 +5,7 @@ argument-hint: claim [<pr>] | status | stop
 
 You are about to work the **PR sitter agentic loop** (typed as
 `/agentic-workflow:pr-sitter`) — it sits on your open pull requests (GitHub via
-`gh`, or Azure DevOps via its REST API) and works actionable signals: failing
+`gh`, or Azure DevOps via the Azure DevOps MCP server) and works actionable signals: failing
 checks, unanswered review threads, merge conflicts. Read the
 `workflow-orchestration` skill now (its "Workflow kinds" section covers the
 pr-sitter manifest); then act on the argument below.

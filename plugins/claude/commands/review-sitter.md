@@ -5,7 +5,7 @@ argument-hint: claim [<pr>] | status | stop
 
 You are about to work the **review sitter agentic loop** (typed as
 `/agentic-workflow:review-sitter`) — it sits on pull requests where **your review
-is requested** (GitHub via `gh`, or Azure DevOps via its REST API) and posts
+is requested** (GitHub via `gh`, or Azure DevOps via the Azure DevOps MCP server) and posts
 one structured review comment per requested head. Read the
 `workflow-orchestration` skill now; then act on the argument below.
 
