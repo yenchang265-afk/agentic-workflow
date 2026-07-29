@@ -46,12 +46,20 @@ const makeShell = (opts: { failAt?: number; failMv?: boolean } = {}) => {
         files[dest] = bytes.toString("utf8")
       }
     } else if (cmd.startsWith("mv ")) {
-      const [, src, dest] = cmd.split(/\s+/) as [string, string, string]
+      const parts = cmd.split(/\s+/)
+      // `mv -n` onto an existing destination is a SUCCESSFUL no-op that leaves the
+      // source alone — modelled exactly, because that asymmetry is the whole
+      // reason `noClobber` has to probe for the surviving temp file afterwards.
+      const noClobber = parts.includes("-n")
+      const [src, dest] = parts.slice(1).filter((p) => !p.startsWith("-")) as [string, string]
       if (opts.failMv) exitCode = 1
+      else if (noClobber && dest in files) exitCode = 0
       else if (src in files) {
         files[dest] = files[src]!
         delete files[src]
       } else exitCode = 1
+    } else if (cmd.startsWith("test -e ")) {
+      exitCode = cmd.slice("test -e ".length) in files ? 0 : 1
     } else if (cmd.startsWith("rm -f ")) {
       delete files[cmd.slice("rm -f ".length)]
     }
@@ -124,6 +132,31 @@ test("a failed rename removes the temp file rather than leaving it behind", asyn
   assert.equal(r.exitCode, 1, "the mv's own failure is what the caller sees")
   assert.deepEqual(Object.keys(files), [], "no stray .tmp- file survives a failed rename")
   assert.ok(cmds.some((c) => c.startsWith("rm -f ")))
+})
+
+test("noClobber refuses to land on an existing file, and cleans up after itself", async () => {
+  // For callers that are CREATING a file rather than replacing one, landing on
+  // top of an existing file destroys somebody else's content. `mv -n` prevents
+  // that but reports success, so the surviving temp is the only signal.
+  const { $, files, cmds } = makeShell()
+  files["/d/f"] = "somebody else's task"
+  const r = await writeFileAtomic($, "/d/f", "mine", { noClobber: true })
+  assert.equal(r.exitCode, 1, "the caller's existing error path covers the lost race")
+  assert.match(r.stderr.toString(), /already exists/)
+  assert.equal(files["/d/f"], "somebody else's task", "the other file is untouched")
+  assert.deepEqual(
+    Object.keys(files).filter((f) => f.includes(".tmp-")),
+    [],
+    "no stray temp file survives",
+  )
+  assert.ok(cmds.some((c) => c.startsWith("mv -n ")))
+})
+
+test("noClobber still writes normally when the destination is free", async () => {
+  const { $, files } = makeShell()
+  const r = await writeFileAtomic($, "/d/f", "mine", { noClobber: true })
+  assert.equal(r.exitCode, 0)
+  assert.equal(files["/d/f"], "mine")
 })
 
 test("a failed single-shot write also cleans up its temp file", async () => {

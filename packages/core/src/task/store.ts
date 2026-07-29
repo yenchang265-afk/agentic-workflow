@@ -748,7 +748,12 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
     throw new Error(`cannot move ${task.id} → ${toStatus}: ${toStatus}/${task.id}.md already exists — resolve the duplicate manually`)
   }
   await $`mkdir -p ${destDir}`.quiet().nothrow()
-  const out = await $`mv ${task.path} ${dest}`.quiet().nothrow()
+  // `-n`, because the check above is a TOCTOU pair with this line: two gate verbs
+  // racing (the hub and a host, or two hosts) can both find `dest` absent, and a
+  // plain `mv` would let the second silently destroy the first task's file AND its
+  // audit trail. `-n` makes the kernel arbitrate; the loser leaves the source in
+  // place, which is what the post-check below detects.
+  const out = await $`mv -n ${task.path} ${dest}`.quiet().nothrow()
   if (out.exitCode !== 0) {
     throw new Error(`could not move ${task.id} → ${toStatus}: ${out.stderr.toString().trim()}`)
   }
@@ -757,6 +762,14 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
   const check = await $`test -f ${dest}`.quiet().nothrow()
   if (check.exitCode !== 0) {
     throw new Error(`move of ${task.id} → ${toStatus} did not land at ${dest}`)
+  }
+  // `mv -n` onto an existing destination is a SUCCESSFUL no-op on GNU coreutils —
+  // exit 0, source untouched — so `test -f dest` above passes on the file that was
+  // already there. The source still existing is the only signal that we lost the
+  // race, and reporting the move would hand the caller a path it does not own.
+  const src = await $`test -e ${task.path}`.quiet().nothrow()
+  if (src.exitCode === 0) {
+    throw new Error(`cannot move ${task.id} → ${toStatus}: ${toStatus}/${task.id}.md was created concurrently — resolve the duplicate manually`)
   }
   await releaseClaim($, task) // a claim belongs to the status folder it was taken in
   return dest
@@ -866,9 +879,16 @@ export const rescueStray = async (
     throw new Error(`cannot rescue ${relPath}: draft/${id}.md already exists — resolve the collision manually`)
   }
   await $`mkdir -p ${path.join(directory, tasksDir, "draft")}`.quiet().nothrow()
-  const out = await $`mv ${src} ${dest}`.quiet().nothrow()
+  // `-n` + the source re-check, for the reason spelled out in `moveTask`: the
+  // existence check above is a TOCTOU pair with this move, and a plain `mv` lets
+  // the loser of the race destroy the winner's file and audit trail.
+  const out = await $`mv -n ${src} ${dest}`.quiet().nothrow()
   if (out.exitCode !== 0) {
     throw new Error(`could not rescue ${relPath} → draft/: ${out.stderr.toString().trim()}`)
+  }
+  const stillThere = await $`test -e ${src}`.quiet().nothrow()
+  if (stillThere.exitCode === 0) {
+    throw new Error(`cannot rescue ${relPath}: draft/${id}.md was created concurrently — resolve the collision manually`)
   }
   return { id, path: dest }
 }
@@ -1012,7 +1032,11 @@ export const writeTask = async (
   if (exists.exitCode === 0) {
     throw new Error(`cannot write task ${filename}: ${rel}/${filename} already exists — resolve the duplicate manually`)
   }
-  const out = await writeFileAtomic($, dest, content)
+  // `noClobber`, because the check above is a TOCTOU pair with the write: two
+  // processes minting concurrently see the same lagging `taken` snapshot, can mint
+  // the same id, and both find `dest` absent. The plain atomic write's rename
+  // would then destroy the first task outright. This makes the kernel arbitrate.
+  const out = await writeFileAtomic($, dest, content, { noClobber: true })
   if (out.exitCode !== 0) {
     throw new Error(`could not write task ${filename}: ${out.stderr.toString().trim()}`)
   }

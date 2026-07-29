@@ -503,6 +503,27 @@ test("moveTask refuses to clobber an existing duplicate id at the destination", 
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no mv was attempted")
 })
 
+test("moveTask refuses when the destination was created concurrently", async () => {
+  // The `test -e dest` guard above and the mv are a TOCTOU pair: two gate verbs
+  // racing (the hub and a host, or two hosts) both find the destination absent.
+  // `mv -n` makes the kernel arbitrate, but its no-op is a SUCCESS (exit 0) and
+  // the post-move `test -f dest` then passes on the OTHER task's file — so the
+  // surviving source is the only signal, and without it moveTask reports a move
+  // it did not make and `releaseClaim` drops a marker it still needs.
+  const log: string[] = []
+  const $ = makeShell((cmd) => {
+    if (cmd.startsWith("test -e /r/docs/tasks/queued/")) return { exitCode: 1 } // absent at the check…
+    if (cmd.startsWith("test -e /r/docs/tasks/draft/")) return { exitCode: 0 } // …source still here after the mv
+    return { exitCode: 0 }
+  }, log)
+  await assert.rejects(
+    () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued"),
+    /was created concurrently/,
+  )
+  assert.ok(log.some((cmd) => cmd.startsWith("mv -n ")), `the move is no-clobber: ${log.join(" | ")}`)
+  assert.ok(!log.some((cmd) => cmd.startsWith("rmdir ")), "and the claim marker is NOT released on a move that lost")
+})
+
 test("moveTask throws on a stage-skip attempt without touching the shell", async () => {
   const log: string[] = []
   const $ = makeShell(() => ({ exitCode: 0 }), log)

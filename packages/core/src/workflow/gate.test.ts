@@ -39,8 +39,13 @@ const makeCtx = (
     if (parts[0] === "cat") out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]! } : { exitCode: 1, stdout: "" }
     else if (parts[0] === "test") out = parts[2]! in fs ? { exitCode: 0, stdout: "" } : { exitCode: 1, stdout: "" }
     else if (parts[0] === "mv") {
-      const [, src, dest] = parts
+      // `-n` is modelled, not skipped: production relies on it to make the kernel
+      // arbitrate a concurrent create, so a fake that clobbered anyway would make
+      // that race untestable.
+      const noClobber = parts.includes("-n")
+      const [src, dest] = parts.slice(1).filter((p) => !p.startsWith("-"))
       if (opts.failMv) out = { exitCode: 1, stdout: "" }
+      else if (noClobber && dest! in fs) out = { exitCode: 0, stdout: "" } // successful no-op; source survives
       else if (src! in fs) {
         fs[dest!] = fs[src!]!
         delete fs[src!]
