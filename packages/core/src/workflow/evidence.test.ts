@@ -37,6 +37,24 @@ test("an empty citation matches nothing — it must not sneak through containmen
   assert.equal(itemObserved(cmd("npm test"), observed(["  "])), false)
 })
 
+test("a sub-token citation does NOT corroborate — containment has a token floor", () => {
+  // Raw substring containment had no floor in either direction, so a one-character
+  // citation satisfied a gate whose whole job is to make a PASS provable:
+  // `"npm test".includes("t")`. Containment is over contiguous TOKENS now.
+  assert.equal(itemObserved(cmd("t"), observed(["npm test"])), false)
+  assert.equal(itemObserved(cmd("es"), observed(["npm test"])), false)
+  assert.equal(itemObserved(cmd("npm tes"), observed(["npm test"])), false)
+  // A whole token that really is part of the command still counts.
+  assert.ok(itemObserved(cmd("test"), observed(["npm test"])))
+})
+
+test("token containment must be CONTIGUOUS and in order", () => {
+  // `npm lint` is not a run of `npm run lint`, even though both its tokens occur.
+  assert.equal(itemObserved(cmd("npm lint"), observed(["npm run lint"])), false)
+  assert.equal(itemObserved(cmd("test npm"), observed(["npm test"])), false)
+  assert.ok(itemObserved(cmd("npm run lint"), observed(["cd /repo/wt && npm run lint --silent"])))
+})
+
 // --- file matching ---
 
 test("a cited path matches the absolute path the host observed, at a segment boundary", () => {
@@ -60,6 +78,17 @@ test("a file read through the shell counts as a read", () => {
   assert.ok(itemObserved(file("src/limit.ts"), observed(["cat src/limit.ts"])))
   assert.ok(itemObserved(file("src/limit.ts"), observed(["git diff -- src/limit.ts"])))
   assert.equal(itemObserved(file("src/limit.ts"), observed(["git status"])), false)
+  // The worktree-absolute rewrite of the same read still matches, per token.
+  assert.ok(itemObserved(file("src/limit.ts"), observed(["cat /repo/.worktrees/wf-1/src/limit.ts"])))
+})
+
+test("a cited file must be NAMED by a command, not merely spelled inside it", () => {
+  // The old fallback asked whether the ref's basename occurred anywhere in the
+  // command string — the same no-floor substring test, so `ref: "e"` matched
+  // `npm test`. A token has to name the file now.
+  assert.equal(itemObserved(file("e"), observed(["npm test"])), false)
+  assert.equal(itemObserved(file("limit.ts"), observed(["echo no-limit.ts-here"])), false)
+  assert.ok(itemObserved(file("limit.ts"), observed(["cat src/limit.ts"])))
 })
 
 // --- the rule ---

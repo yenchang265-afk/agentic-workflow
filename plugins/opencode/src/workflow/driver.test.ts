@@ -322,9 +322,13 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
     } else if (parts[0] === "test" && (parts[1] === "-f" || parts[1] === "-e")) {
       out = { exitCode: parts[2]! in fs ? 0 : 1, stdout: "", stderr: "" }
     } else if (parts[0] === "mv") {
-      const src = parts[1]!
-      const dest = parts[2]!
-      if (src in fs) {
+      // `-n` is modelled, not skipped: production relies on it to make the kernel
+      // arbitrate a concurrent create.
+      const noClobber = parts.includes("-n")
+      const [src, dest] = parts.slice(1).filter((p) => !p.startsWith("-")) as [string, string]
+      if (noClobber && dest in fs) {
+        out = { exitCode: 0, stdout: "", stderr: "" } // successful no-op; source survives
+      } else if (src in fs) {
         fs[dest] = fs[src]!
         delete fs[src]
         out = { exitCode: 0, stdout: "", stderr: "" }
@@ -1472,7 +1476,14 @@ test("recordVerdict audits an out-of-stage verdict on the task file, once per st
   const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
   const shellLog: string[] = []
   const task = { id: "drift-task", path: "/repo/docs/tasks/in-progress/drift-task.md", acceptance: [] }
-  const deps: Deps = { client: makeClient().client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  // The task file has to EXIST for a note to land on it — `appendNote` refuses to
+  // `>>` a path that is gone rather than recreating the task as a ghost.
+  const deps: Deps = {
+    client: makeClient().client,
+    $: makeShellFS({ "/repo/docs/tasks/in-progress/drift-task.md": "---\ntitle: Drift\n---\n\nbody" }, shellLog),
+    directory: "/repo",
+    log: () => {},
+  }
   setWorkflow("drv-drift", { goal: "g", stage: "build", iteration: 0, artifacts: {}, task })
   try {
     // A build stage that verified its own work: rejected, as before.

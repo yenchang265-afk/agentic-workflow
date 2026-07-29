@@ -38,8 +38,11 @@ const makeCtx = (
     if (parts[0] === "cat") out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]! } : { exitCode: 1, stdout: "" }
     else if (parts[0] === "test") out = parts[2]! in fs ? { exitCode: 0, stdout: "" } : { exitCode: 1, stdout: "" }
     else if (parts[0] === "mv") {
-      const [, src, dest] = parts
-      if (src! in fs) {
+      // `-n` is modelled, not skipped — see the same note in gate.test.
+      const noClobber = parts.includes("-n")
+      const [src, dest] = parts.slice(1).filter((p) => !p.startsWith("-"))
+      if (noClobber && dest! in fs) out = { exitCode: 0, stdout: "" } // successful no-op; source survives
+      else if (src! in fs) {
         fs[dest!] = fs[src!]!
         delete fs[src!]
       } else out = { exitCode: 1, stdout: "" }

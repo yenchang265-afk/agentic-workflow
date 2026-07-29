@@ -39,7 +39,20 @@ test("rescueStray moves a stray file into draft/ and returns its id", async () =
   const { id, path } = await rescueStray($, "/r", "docs/tasks", "docs/tasks/run/lost.md")
   assert.equal(id, "lost")
   assert.equal(path, "/r/docs/tasks/draft/lost.md")
-  assert.ok(log.some((cmd) => cmd === "mv /r/docs/tasks/run/lost.md /r/docs/tasks/draft/lost.md"))
+  // `-n` so a concurrent create wins on the kernel rather than being clobbered.
+  assert.ok(log.some((cmd) => cmd === "mv -n /r/docs/tasks/run/lost.md /r/docs/tasks/draft/lost.md"))
+})
+
+test("rescueStray refuses when the draft was created concurrently", async () => {
+  // `mv -n` onto an existing destination is a SUCCESSFUL no-op, so exit 0 proves
+  // nothing. The source surviving the move is the only signal we lost the race —
+  // without it the caller gets back a draft/ path holding somebody else's task.
+  const $ = makeShell((cmd) => {
+    if (cmd.startsWith("test -e /r/docs/tasks/draft/")) return { exitCode: 1 } // absent at the check…
+    if (cmd.startsWith("test -e /r/docs/tasks/run/")) return { exitCode: 0 } // …source still here after the mv
+    return { exitCode: 0 }
+  })
+  await assert.rejects(() => rescueStray($, "/r", "docs/tasks", "docs/tasks/run/lost.md"), /created concurrently/)
 })
 
 test("rescueStray refuses to clobber an existing draft", async () => {

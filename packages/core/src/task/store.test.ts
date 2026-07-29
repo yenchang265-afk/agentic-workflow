@@ -503,6 +503,27 @@ test("moveTask refuses to clobber an existing duplicate id at the destination", 
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no mv was attempted")
 })
 
+test("moveTask refuses when the destination was created concurrently", async () => {
+  // The `test -e dest` guard above and the mv are a TOCTOU pair: two gate verbs
+  // racing (the hub and a host, or two hosts) both find the destination absent.
+  // `mv -n` makes the kernel arbitrate, but its no-op is a SUCCESS (exit 0) and
+  // the post-move `test -f dest` then passes on the OTHER task's file — so the
+  // surviving source is the only signal, and without it moveTask reports a move
+  // it did not make and `releaseClaim` drops a marker it still needs.
+  const log: string[] = []
+  const $ = makeShell((cmd) => {
+    if (cmd.startsWith("test -e /r/docs/tasks/queued/")) return { exitCode: 1 } // absent at the check…
+    if (cmd.startsWith("test -e /r/docs/tasks/draft/")) return { exitCode: 0 } // …source still here after the mv
+    return { exitCode: 0 }
+  }, log)
+  await assert.rejects(
+    () => moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued"),
+    /was created concurrently/,
+  )
+  assert.ok(log.some((cmd) => cmd.startsWith("mv -n ")), `the move is no-clobber: ${log.join(" | ")}`)
+  assert.ok(!log.some((cmd) => cmd.startsWith("rmdir ")), "and the claim marker is NOT released on a move that lost")
+})
+
 test("moveTask throws on a stage-skip attempt without touching the shell", async () => {
   const log: string[] = []
   const $ = makeShell(() => ({ exitCode: 0 }), log)
@@ -709,6 +730,35 @@ test("appendNote/appendPlan/appendRunLog warn when the append never landed", asy
   await appendPlan(failing, task("a", 0), "1. step", log)
   await appendRunLog(failing, "/r", "docs/tasks", "a", "hdr", "text", log)
   assert.equal(warns.filter((m) => m.includes("append")).length, 3, `got: ${JSON.stringify(warns)}`)
+})
+
+test("appendNote refuses to recreate a task file that is no longer there", async () => {
+  // `>>` CREATES its target, and callers legitimately hold a stale path — a task
+  // can move out from under a live run. The resurrected file is a frontmatterless
+  // ghost: `parseTask` throws so `listByStatus` skips it and it counts for
+  // nothing, while `test -e` still sees it, so `moveTask`'s duplicate guard then
+  // refuses the REAL task's move back into that folder forever.
+  const cmds: string[] = []
+  const warns: string[] = []
+  const gone = makeShell((cmd) => {
+    cmds.push(cmd)
+    return cmd.startsWith("test ") ? { exitCode: 1 } : { exitCode: 0 }
+  })
+  const log = async (level: string, message: string) => void (level === "warn" && warns.push(message))
+  await appendNote(gone, task("a", 0), "CLAIMED — loop starting", log)
+  assert.ok(!cmds.some((c) => c.includes(">>")), `no append attempted: ${cmds.join(" | ")}`)
+  assert.equal(warns.length, 1, `the lost note must be loud: ${JSON.stringify(warns)}`)
+  assert.match(warns[0] ?? "", /no longer exists/)
+})
+
+test("appendNote still appends when the task file is there", async () => {
+  const cmds: string[] = []
+  const present = makeShell((cmd) => {
+    cmds.push(cmd)
+    return { exitCode: 0 }
+  })
+  await appendNote(present, task("a", 0), "CLAIMED — loop starting")
+  assert.ok(cmds.some((c) => c.includes(">>")), `the append still runs: ${cmds.join(" | ")}`)
 })
 
 test("a marker quoted mid-line in the body is not lifecycle state", () => {

@@ -50,8 +50,21 @@ const chunkEnd = (content: string, from: number): number => {
  * argv word — see that constant. The chunking is invisible to readers because
  * only the completed temp file is ever renamed into place; a chunk failing
  * partway leaves the destination untouched.
+ *
+ * `noClobber` renames with `mv -n`, for the callers that are CREATING a file
+ * rather than replacing one — where landing on top of an existing file destroys
+ * somebody else's content instead of superseding your own. Because `mv -n` onto
+ * an existing target is a successful no-op, the temp surviving the rename is the
+ * only signal the destination was taken; that is reported as a non-zero
+ * `ShellOutput` so an existing caller's error path covers it unchanged. Default
+ * off — replacing IS the point everywhere else.
  */
-export const writeFileAtomic = async ($: Shell, dest: string, content: string): Promise<ShellOutput> => {
+export const writeFileAtomic = async (
+  $: Shell,
+  dest: string,
+  content: string,
+  opts: { readonly noClobber?: boolean } = {},
+): Promise<ShellOutput> => {
   const tmp = `${dest}.tmp-${process.pid}-${++seq}`
   if (content.length <= SINGLE_SHOT_MAX) {
     const wrote = await writeChunk($, tmp, content, true)
@@ -73,7 +86,17 @@ export const writeFileAtomic = async ($: Shell, dest: string, content: string): 
       i = end
     }
   }
-  const moved = await $`mv ${tmp} ${dest}`.quiet().nothrow()
-  if (moved.exitCode !== 0) await $`rm -f ${tmp}`.quiet().nothrow()
+  const moved = opts.noClobber ? await $`mv -n ${tmp} ${dest}`.quiet().nothrow() : await $`mv ${tmp} ${dest}`.quiet().nothrow()
+  if (moved.exitCode !== 0) {
+    await $`rm -f ${tmp}`.quiet().nothrow()
+    return moved
+  }
+  if (opts.noClobber) {
+    const lost = await $`test -e ${tmp}`.quiet().nothrow()
+    if (lost.exitCode === 0) {
+      await $`rm -f ${tmp}`.quiet().nothrow()
+      return { ...moved, exitCode: 1, stderr: { toString: () => `${dest} already exists` } } as ShellOutput
+    }
+  }
   return moved
 }
