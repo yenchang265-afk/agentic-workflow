@@ -69,21 +69,55 @@
   `.gitignore` 在兩種設定下都不會被碰到。見
   [configuration.md](configuration.md#optional-hardening)。
 
-## 回到 Azure DevOps 的 REST-only（移除 `ado.access`）
+## Azure DevOps 改走 Azure DevOps MCP 伺服器
 
-- **Azure DevOps 又只透過它的 REST API 觸達**——階段提示用 `curl` +
-  PAT，driver 的輪詢來源與 ship 把關點用 `fetch` + PAT。`ado.access`
-  這個旋鈕（曾短暫提供 `"az"` / `"rest"` / `"mcp"`）**已移除**，az CLI
-  傳輸也一併移除。沒有東西需要安裝：ADO 只需要 `curl` 與
-  `AZURE_DEVOPS_EXT_PAT`。
-- **若你的設定有 `ado.access`**：移除它。殘留的 `access` 鍵會被解析
-  並**忽略**——迴圈仍會照 REST 繼續執行——但 host 會印一行警告指名
-  `ado.access`，讓它不會被誤讀成一個有效的設定。若你原本用 `"az"` 或
-  `"mcp"`，請確認已匯出 `AZURE_DEVOPS_EXT_PAT`（Code 讀取 + Pull
-  Request contribute 範圍）——REST 一律需要它。
-- **`ado.customHeaders` / `ado.insecureSkipTlsVerify` 重新生效**：它們
-  作用於 driver 發出的每一個 ADO REST 呼叫，一如多重存取實驗之前。見
+Azure DevOps 已完全不再透過它的 REST API 觸達。兩個層面——階段 agent 的呼叫，
+以及 driver 自己的輪詢與開 PR 呼叫——都走微軟的
+[`@azure-devops/mcp`](https://github.com/microsoft/azure-devops-mcp) 伺服器。
+沒有 `curl`、沒有 `az`，也沒有存取模式旋鈕：只有一條傳輸路徑，因此階段提示詞
+不可能再和管轄它的白名單走偏。
+
+**你必須做的事**
+
+- **註冊伺服器時名稱必須剛好是 `azure-devops`。** 階段提示詞與產生出來的
+  agent frontmatter 以 `mcp__azure-devops__<tool>` 的形式指名工具，換成任何
+  其他註冊名稱，都會讓每一次 ADO 階段呼叫都指向一個不存在的工具。
+  `./bootstrap.sh` 會替 Claude Code、OpenCode 與 Qwen Code 完成註冊。這是一個
+  常數而非設定項：這些名稱存在於本儲存庫會產生、且 CI 會做 diff 檢查的檔案裡。
+- **保持匯出 `AZURE_DEVOPS_EXT_PAT`**（Code 讀取 + Pull Request contribute）。
+  其他不變——引擎會自行把它 base64 編碼成伺服器的 `PERSONAL_ACCESS_TOKEN`。
+  不要自己手動編碼任何東西。
+- **執行迴圈的行程必須能用 Node 20+ 與 `npx`。** 離線／封閉網路的安裝可以把
+  `ado.mcp.command` 指向本機已安裝的執行檔。
+
+**破壞性變更**
+
+- **失敗的檢查現在指的是失敗的**管線執行**，而不是失敗的分支原則。** MCP
+  伺服器沒有提供原則評估（policy evaluation）工具，因此 pr-sitter 改為從 PR
+  的驗證管線推導檢查狀態。**僅**因為非管線原則而被擋住的 PR——最少審查者
+  人數、留言解決狀態、必要的工作項目連結、第三方狀態檢查——不再觸發
+  `failing-checks`。它仍然會因為新留言、被要求修改與合併衝突而被喚醒。
+  作為交換，失敗的檢查現在是一條 triage 階段真的讀得到、引用得到日誌的管線。
+- **不再支援自架的 Azure DevOps Server。** `@azure-devops/mcp` 接受的是組織
+  *名稱*，且以 `dev.azure.com` 為目標，沒有地端 collection URL 模式。若你執行
+  ADO Server，請停留在較早的版本。
+- **`ado.customHeaders` 與 `ado.insecureSkipTlsVerify` 已移除**，
+  `AGENTIC_WORKFLOW_ADO_HEADERS` 亦然。被啟動的 MCP 伺服器沒有可注入
+  per-request 標頭或 TLS 的接縫。殘留的鍵會被解析並**忽略**，並印一行警告
+  指名它，因此進行中的迴圈仍會繼續執行。若需要內部 CA，改用
+  `ado.mcp.env.NODE_EXTRA_CA_CERTS`。
+- **`ado.access` 維持已移除**，並且同樣會出現在那一行警告中。
+
+**新增**
+
+- **`ado.mcp`** 設定伺服器如何被啟動——`command`、`args`、`authentication`
+  （預設 `pat`；另有 `azcli`、`envvar`、`interactive`）、`domains`、`tenant`
+  與 `env`。每個欄位都有可用的預設值，所以多數安裝完全不需要它。注意伺服器
+  *自己的*預設是 `interactive`，它會開啟瀏覽器，在輪詢迴圈中無法運作——引擎
+  會拒絕它，而不是卡在一個沒有人看得到的提示上。見
   [configuration.md](configuration.md#code-platform-codeplatform--ado)。
+- **`ado.mcp` 僅限使用者層級**，和 `organization`、`pat` 一樣：它指定的是一個
+  會被啟動的命令，因此不能讓被複製下來的儲存庫決定它。
 
 ## 遷移到分層設定（使用者層級 + 儲存庫層級）
 

@@ -76,6 +76,8 @@ import {
   pruneWorktrees,
   worktreeForBranch,
 } from "@agentic-workflow/core/workflow/git"
+import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
+import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
@@ -187,7 +189,12 @@ registerEngineeringHooks()
  *  a `target` PR number forces that exact PR on a PR-shaped `only` kind. */
 const sourcesFor = (deps: Deps, config: Config, only?: string, target?: number): WorkSource[] =>
   buildWorkSources(
-    { ...deps, isDriving: (id) => findSessionDriving(id) !== undefined, hostName: "opencode" },
+    {
+      ...deps,
+      isDriving: (id) => findSessionDriving(id) !== undefined,
+      hostName: "opencode",
+      ...adoGatewayDep(deps, config),
+    },
     config,
     manifestFor,
     only,
@@ -204,6 +211,16 @@ export interface Deps {
   readonly $: Shell
   readonly directory: string
   readonly log: Log
+}
+
+/**
+ * The Azure DevOps MCP gateway for this config as a spreadable fragment — `{}`
+ * when ADO isn't configured, so a GitHub-only install never carries the key (or
+ * spawns a server). One server per process; see `sharedAdoGateway`.
+ */
+const adoGatewayDep = (deps: Deps, config: Config): { adoGateway?: AdoGateway } => {
+  const gateway = sharedAdoGateway(config, deps.log)
+  return gateway ? { adoGateway: gateway } : {}
 }
 
 type Pending =
@@ -2180,6 +2197,7 @@ const gateCtx = (deps: Deps, config: Config): GateCtx => ({
   directory: deps.directory,
   config,
   isDriving: (id) => findSessionDriving(id) !== undefined,
+  ...adoGatewayDep(deps, config),
 })
 
 /**

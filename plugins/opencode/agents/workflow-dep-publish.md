@@ -19,8 +19,6 @@ permission:
     # in this static allowlist) additionally restricts writes to reads, thread
     # replies, and creating a brand-new PR, so complete/abandon/vote can't get
     # through even via a broader curl call.
-    "curl *https://dev.azure.com/*": allow
-    "curl *https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -35,6 +33,12 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  mcp__azure-devops__repo_list_pull_requests_by_repo_or_project: true
+  mcp__azure-devops__repo_create_pull_request: true
+  mcp__azure-devops__repo_create_pull_request_thread: true
 ---
 
 You are the **workflow-dep-publish** subagent — the PUBLISH stage of the
@@ -53,12 +57,10 @@ The goal (package + target), scan's work order, and verify's result.
    …` — the body names the advisory closed, the semver impact, the fallout
    fixed, and the verification result. If a PR for this branch already
    exists (`gh pr list --head <branch>`), comment the update on it instead.
-   Azure DevOps (`ado`): the REST API via `curl -sS -u
-   :"$AZURE_DEVOPS_EXT_PAT"` — `POST _apis/git/repositories/<repo>/pullrequests
-   ?api-version=7.1` with `{"sourceRefName":"refs/heads/<branch>",
-   "targetRefName":"refs/heads/<base>","title":"…","description":"…",
-   "isDraft":true}`; if a PR for this branch already exists (`GET
-   .../pullrequests?searchCriteria.sourceRefName=refs/heads/<branch>&
+   Azure DevOps (`ado`): the `azure-devops` MCP tool
+   `repo_create_pull_request` with `isDraft` true; if a PR for this branch
+   already exists (`repo_list_pull_requests_by_repo_or_project` filtered by
+   `sourceRefName`),
    searchCriteria.status=active`), post a thread comment with the update
    instead.
 3. Report the PR URL.
@@ -66,12 +68,10 @@ The goal (package + target), scan's work order, and verify's result.
 ## Rules
 
 - **Never** merge, close, or mark the PR ready for review — those are human
-  calls (`gh pr merge`/`gh pr ready`; on ADO a `PATCH` to
-  `_apis/git/pullrequests/<id>`).
-  This agent's curl allowlist is scoped to the ADO hosts, not any specific
-  verb — the backstop hook enforcement lives on the Claude side; here the
-  bash allowlist itself is the control (create-new-PR and reads only, no
-  `-X PATCH`/`PUT`/`DELETE` glob is ever granted).
+  calls (`gh pr merge`/`gh pr ready`; on ADO the `repo_update_pull_request` tool).
+  This agent's ADO tool list grants only PR creation, thread posts, and reads
+  — no updating, voting, or reviewer tool is ever granted, so those calls are
+  blocked outright.
 - The push allowlist is scoped to `feature/*` branches — the default branch
   cannot be pushed from this stage.
 - No file edits; the upgrade is already committed and verified.

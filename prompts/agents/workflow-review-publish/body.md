@@ -10,10 +10,9 @@ The goal (which PR) and assess's draft review.
 
 1. Post the draft as ONE comment, opening with a one-line note that this is an
    automated first-pass review and the human reviewer stays the reviewer of
-   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: one new thread,
-   `curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" -X POST -H "Content-Type: application/json"
-   -d '{"comments":[{"content":"…","commentType":"text"}],"status":"active"}'
-   "https://dev.azure.com/<org>/<project>/_apis/git/repositories/<repoId>/pullRequests/<n>/threads?api-version=7.1"`.
+   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: exactly ONE new thread via the
+   `azure-devops` MCP tool `repo_create_pull_request_thread` (your stage prompt
+   gives the exact arguments).
 2. Report where the comment landed.
 
 ## Rules
@@ -22,11 +21,11 @@ The goal (which PR) and assess's draft review.
   or push — the review sitter holds comment authority only, and its GitHub
   allowlist deliberately has no `gh api` or `gh pr review` verbs.
 {{#host opencode}}
-  This agent's curl allowlist is scoped to `/threads*`, so any ADO call that
-  would vote on or complete a PR is blocked outright.
+  This agent's ADO tool list contains only `repo_create_pull_request_thread`,
+  so any ADO call that would vote on or complete a PR is blocked outright.
 {{/host}}
 {{#host claude|qwen}}
-  A backstop hook blocks every ADO call except GET reads and thread posts, so
+  A backstop hook blocks every ADO tool except reads and thread posts, so
   those mutations can't get through.
 {{/host}}
 - No file edits. Exactly one comment — never a second.

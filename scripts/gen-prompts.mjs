@@ -65,6 +65,76 @@ const agentAllowlists = () => {
 const ALLOWLISTS = agentAllowlists()
 
 /**
+ * The MCP tool names each agent may call, from `platformTools` in the manifests.
+ * Same single-source rule as the bash allowlist above, and for the same reason:
+ * hand-authoring `tools:` per host is how a persona drifts from the manifest that
+ * governs it. Keyed by agent name; only agents that declare tools appear.
+ */
+const agentPlatformTools = () => {
+  const byAgent = new Map()
+  for (const kind of fs.readdirSync(WORKFLOWS).sort()) {
+    const manifestPath = path.join(WORKFLOWS, kind, "workflow.json")
+    if (!fs.existsSync(manifestPath)) continue
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
+    for (const stage of manifest.stages ?? []) {
+      const tools = Object.values(stage.platformTools ?? {}).flat()
+      if (tools.length === 0) continue
+      const existing = byAgent.get(stage.agent)
+      if (existing && JSON.stringify(existing) !== JSON.stringify(tools)) {
+        throw new Error(
+          `agent "${stage.agent}" has conflicting platformTools across manifests — reconcile them in workflows/*/workflow.json`,
+        )
+      }
+      byAgent.set(stage.agent, tools)
+    }
+  }
+  return byAgent
+}
+
+const PLATFORM_TOOLS = agentPlatformTools()
+
+/**
+ * The MCP server name the Azure DevOps tools are addressed under. A CONSTANT,
+ * not a config knob: these names are baked into generated files, and a
+ * user-specific server name would make those files user-specific too, breaking
+ * the `gen:prompts && git diff --exit-code` drift gate. Mirrors
+ * `ADO_MCP_SERVER_NAME` in packages/core/src/source/ado-tools.ts.
+ */
+const ADO_MCP_SERVER_NAME = "azure-devops"
+
+/**
+ * Expand an `{{adoTools}}` marker in an agent's frontmatter into that agent's
+ * Azure DevOps MCP tool names, in the host's own list syntax:
+ *
+ * - Claude/Qwen `tools:` — a comma list appended inline (Claude) or one `- item`
+ *   per line preserving the marker's indentation (Qwen).
+ * - OpenCode `tools:` — a `<name>: true` map entry per tool.
+ *
+ * A marker on an agent with no platformTools expands to nothing, so a persona
+ * that stops touching ADO cleans itself up.
+ */
+const expandAdoTools = (frontmatter, agent, host) => {
+  if (!frontmatter.includes("{{adoTools}}")) return frontmatter
+  const tools = (PLATFORM_TOOLS.get(agent) ?? []).map((t) => `mcp__${ADO_MCP_SERVER_NAME}__${t}`)
+  if (host === "claude") {
+    // Inline comma list; drop a dangling separator when the agent has no tools.
+    return frontmatter
+      .replace(/,\s*\{\{adoTools\}\}/, tools.length ? `, ${tools.join(", ")}` : "")
+      .replace(/\{\{adoTools\}\}/, tools.join(", "))
+  }
+  const marker = /^([ \t]*)-?[ \t]*\{\{adoTools\}\}[ \t]*$/m
+  const m = marker.exec(frontmatter)
+  if (!m) return frontmatter.replace(/\{\{adoTools\}\}/, tools.join(", "))
+  const indent = m[1]
+  const lines =
+    host === "opencode"
+      ? tools.map((t) => `${indent}${t}: true`).join("\n")
+      : tools.map((t) => `${indent}- ${t}`).join("\n")
+  // Function replacement so a `$` in a tool name is spliced literally.
+  return lines ? frontmatter.replace(marker, () => lines) : frontmatter.replace(new RegExp(`${marker.source}\n?`, "m"), "")
+}
+
+/**
  * The subagent each per-stage OpenCode command fires, sourced from the workflow
  * manifests (`workflows/<kind>/workflow.json` — the single source): `command` name →
  * `stage.agent`. This is what makes the agent-per-stage binding manifest-driven
@@ -215,7 +285,11 @@ for (const name of fs.readdirSync(SRC).sort()) {
     const raw = fs.readFileSync(path.join(dir, frontmatter), "utf8").replace(/\n+$/, "")
     // OpenCode enforces the bash allowlist via agent-frontmatter permissions;
     // expand the manifest-sourced globs into it (no-op when there's no marker).
-    const fm = host === "opencode" ? expandAllowlist(raw, name) : raw
+    // OpenCode enforces the bash allowlist via frontmatter permissions; every
+    // host declares its MCP tool list there. Both are manifest-sourced — no-ops
+    // when the yaml carries no marker.
+    const fm = expandAdoTools(host === "opencode" ? expandAllowlist(raw, name) : raw, name, host)
+    if (fm.includes("{{")) throw new Error(`${name}/${host}: unrendered frontmatter marker survived`)
     const rendered = substitute(render(body, host), host)
     if (rendered.includes("{{")) throw new Error(`${name}/${host}: unrendered marker survived`)
     fs.mkdirSync(outDir, { recursive: true })

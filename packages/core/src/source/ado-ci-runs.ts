@@ -4,20 +4,9 @@ import type { LoadedManifest } from "../manifest/schema.js"
 import type { AdoConfig } from "../workflow/state.js"
 import { newestHeadVerdict, shortSha, type CiRun } from "./ci-runs.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger } from "./ci-runs-shared.js"
-import {
-  ADO_HEADERS_ENV,
-  adoFetch,
-  AdoBuildListSchema,
-  buildAdoHeaders,
-  makeAdoAuthHeader,
-  normalizeAdoBuild,
-  resolveAdoHeaders,
-} from "./ado-shared.js"
-import type { AdoHttp } from "./ado-pr.js"
-// Part of this module's own surface: `makeAdoCiRunsSource` takes an `http` of
-// this type, so callers (and its tests) resolve it from here.
-export type { AdoHttp }
-import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
+import { AdoBuildListSchema, adoList, normalizeAdoBuild } from "./ado-shared.js"
+import type { AdoGateway } from "./ado-gateway.js"
+import type { TerminalOutcome, WorkSource } from "./types.js"
 
 /**
  * The Azure DevOps CI-runs work source: the `gh`-backed `ci-runs.ts` mirrored
@@ -30,14 +19,13 @@ import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
  * both platforms identically, and the ledger/claim/WorkItem mechanics are
  * shared verbatim via `ci-runs-shared.ts`.
  *
- * Transport is the ADO Build REST API (same rules as `ado-pr.ts`): a PAT (env
- * `AZURE_DEVOPS_EXT_PAT`, falling back to config `ado.pat`) sent as HTTP Basic.
- * Unlike the PR sources, no `ado.selfLogin` is needed — CI status isn't scoped
- * to an identity, only to the watched branch.
+ * Transport is the `AdoGateway` port — the Azure DevOps MCP server, same rules
+ * as `ado-pr.ts`. Unlike the PR sources, no `ado.selfLogin` is needed: CI status
+ * isn't scoped to an identity, only to the watched branch.
  */
 
-const PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
-const API_VERSION = "api-version=7.1"
+/** How many recent builds on the watched branch to judge. */
+const BUILD_LOOKBACK = 30
 
 interface AdoCiRunsDeps {
   readonly $: Shell
@@ -48,10 +36,8 @@ interface AdoCiRunsDeps {
   readonly loaded: LoadedManifest
   /** Azure DevOps coordinates (config `ado`). */
   readonly ado: AdoConfig
-  /** HTTP transport for ADO REST calls; defaults to `adoFetch(ado.insecureSkipTlsVerify)`. */
-  readonly http?: AdoHttp
-  /** The Personal Access Token; defaults to `process.env.AZURE_DEVOPS_EXT_PAT`. */
-  readonly pat?: string
+  /** The Azure DevOps MCP gateway every call goes through. */
+  readonly gateway: AdoGateway
   /** Config override of the manifest's watched branch (`workflows.<kind>.branch`). */
   readonly branch?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
@@ -59,36 +45,16 @@ interface AdoCiRunsDeps {
 }
 
 export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
-  const { $, client, directory, tasksDir, log, loaded, ado } = deps
+  const { $, client, directory, tasksDir, log, loaded, ado, gateway } = deps
   const binding = loaded.manifest.workSource
   if (binding.type !== "ci-runs") {
     throw new Error(`workflow kind "${loaded.manifest.kind}" does not use a ci-runs work source`)
   }
   const kind = loaded.manifest.kind
   const now = deps.now ?? (() => new Date().toISOString())
-  const http = deps.http ?? adoFetch(ado.insecureSkipTlsVerify)
-  // Precedence: explicit dep (tests) → env var → config `ado.pat`.
-  const pat = deps.pat ?? process.env[PAT_ENV] ?? ado.pat ?? ""
-  const org = ado.organization.replace(/\/+$/, "")
-  const project = encodeURIComponent(ado.project)
-  const customHeaders = resolveAdoHeaders(ado.customHeaders, process.env[ADO_HEADERS_ENV])
+  const project = ado.project
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   let resolvedBranch: string | null = null
-
-  const authHeader = makeAdoAuthHeader({ pat })
-
-  /** One authenticated GET. Never throws — a network error (or missing credential) reads as a non-ok response, like the CLI's `nothrow()`. */
-  const get = async (url: string): Promise<{ ok: boolean; status: number; statusText: string; body: string }> => {
-    try {
-      const res = await http(url, {
-        headers: buildAdoHeaders({ Authorization: await authHeader(), Accept: "application/json" }, customHeaders),
-      })
-      const body = await res.text().catch(() => "")
-      return { ok: res.ok, status: res.status, statusText: res.statusText, body }
-    } catch (err) {
-      return { ok: false, status: 0, statusText: (err as Error).message, body: "" }
-    }
-  }
 
   const branch = async (): Promise<string> => {
     if (resolvedBranch) return resolvedBranch
@@ -108,36 +74,23 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
     workflowKind: kind,
 
     async claimNext() {
-      if (!pat) {
-        return {
-          item: null,
-          skip: {
-            message:
-              `${kind}: Azure DevOps PAT not set — export ${PAT_ENV} with a token that has Build (read) scope so the ` +
-              `sitter can call the ADO REST API.`,
-            actionable: true,
-          } satisfies ClaimSkipReason,
-        }
-      }
       const b = await branch()
-      const out = await get(
-        `${org}/${project}/_apis/build/builds?branchName=${encodeURIComponent(`refs/heads/${b}`)}&$top=30&queryOrder=queueTimeDescending&${API_VERSION}`,
-      )
+      const out = await gateway.listBuilds({ project, branchName: `refs/heads/${b}`, top: BUILD_LOOKBACK })
       if (!out.ok) {
         return {
           item: null,
           skip: {
             message:
-              `${kind}: Azure DevOps build list failed — HTTP ${out.status} ${out.statusText}. ` +
-              `Is ${PAT_ENV} a valid token with Build (read) scope, and are ado.organization/project correct?`,
+              `${kind}: Azure DevOps build list failed — ${out.error}. ` +
+              `Is the Azure DevOps MCP server reachable with a token that has Build (read) scope, ` +
+              `and are ado.organization/project correct?`,
             actionable: true,
-          } satisfies ClaimSkipReason,
+          },
         }
       }
       let builds: z.infer<typeof AdoBuildListSchema>
       try {
-        const json = JSON.parse(out.body || "{}") as { value?: unknown }
-        builds = AdoBuildListSchema.parse(json.value ?? [])
+        builds = AdoBuildListSchema.parse(adoList(out.data))
       } catch (err) {
         return {
           item: null,
@@ -197,7 +150,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
           return { item: null, skip: { message: `${kind}: could not pin the red head locally`, actionable: true } }
         }
       }
-      return { item: redHeadWorkItem(loaded, "ado", b, judged.sha, judged.failing), skip: null }
+      return { item: redHeadWorkItem(loaded, "ado", b, judged.sha, judged.failing, { project, repository: ado.repository ?? "" }), skip: null }
     },
 
     async release(work) {

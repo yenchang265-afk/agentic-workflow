@@ -70,22 +70,60 @@ English | [繁體中文](migration.zh-TW.md)
   affected. The shared, tracked `.gitignore` is never touched by either
   setting. See [configuration.md](configuration.md#optional-hardening).
 
-## Back to REST-only for Azure DevOps (`ado.access` removed)
+## Azure DevOps now goes through the Azure DevOps MCP server
 
-- **Azure DevOps is reached only through its REST API again** — `curl` + a PAT
-  in the stage prompts, `fetch` + PAT in the driver's poll sources and ship
-  gate. The `ado.access` knob (which briefly offered `"az"` / `"rest"` /
-  `"mcp"`) is **gone**, and so is the az-CLI transport. There is nothing to
-  install: ADO needs only `curl` and `AZURE_DEVOPS_EXT_PAT`.
-- **If your config sets `ado.access`**: remove it. A stale `access` key parses
-  and is **ignored** — the loop keeps running over REST — but hosts print a
-  one-line warning naming `ado.access` so it doesn't read as a working setting.
-  If you were on `"az"` or `"mcp"`, make sure `AZURE_DEVOPS_EXT_PAT` (Code read +
-  Pull Request contribute scopes) is exported — REST always needs it.
-- **`ado.customHeaders` / `ado.insecureSkipTlsVerify` are back in force**: they
-  apply to every ADO REST call the driver makes, as they did before the
-  multi-access experiment. See
+Azure DevOps is no longer reached over its REST API at all. Both layers — the
+stage agents' calls and the driver's own polling and ship-PR calls — go through
+Microsoft's [`@azure-devops/mcp`](https://github.com/microsoft/azure-devops-mcp)
+server. There is no `curl`, no `az`, and no access knob: one transport, so a
+stage prompt can no longer drift out of sync with the allowlist governing it.
+
+**What you must do**
+
+- **Register the server under exactly the name `azure-devops`.** The stage
+  prompts and the generated agent frontmatter name tools as
+  `mcp__azure-devops__<tool>`, so any other registration name makes every ADO
+  stage call a tool that does not exist. `./bootstrap.sh` registers it for
+  Claude Code, OpenCode and Qwen Code. It is a constant, not a setting: these
+  names live in files the repo generates and diff-checks in CI.
+- **Keep `AZURE_DEVOPS_EXT_PAT` exported** (Code read + Pull Request
+  contribute). Nothing else changes — the engine base64-encodes it into the
+  server's own `PERSONAL_ACCESS_TOKEN` itself. Do not encode anything by hand.
+- **Node 20+ with `npx` must be available** to the process running the loop.
+  Air-gapped installs can point `ado.mcp.command` at a locally installed binary.
+
+**Breaking changes**
+
+- **Failing checks now mean failing PIPELINE runs, not failing branch
+  policies.** The MCP server exposes no policy-evaluation tool, so pr-sitter
+  derives PR check state from the PR's validation pipelines instead. A PR
+  blocked *only* by a non-pipeline policy — minimum reviewers, comment
+  resolution, required work-item links, or a third-party status check — no
+  longer raises the `failing-checks` trigger. It still wakes on new comments,
+  requested changes, and merge conflicts. In exchange, a failing check is now a
+  pipeline whose logs the triage stage can actually read and quote.
+- **Self-hosted Azure DevOps Server is no longer supported.**
+  `@azure-devops/mcp` takes an organization *name* and targets `dev.azure.com`;
+  it has no on-prem collection-URL mode. If you run ADO Server, stay on an
+  earlier release.
+- **`ado.customHeaders` and `ado.insecureSkipTlsVerify` are removed**, along
+  with `AGENTIC_WORKFLOW_ADO_HEADERS`. There is no per-request header or TLS
+  seam in a spawned MCP server. A stale key parses and is **ignored**, with a
+  one-line warning naming it, so an in-flight loop keeps running. For an
+  internal CA, use `ado.mcp.env.NODE_EXTRA_CA_CERTS` instead.
+- **`ado.access` remains removed** and is still named in that same warning.
+
+**New**
+
+- **`ado.mcp`** configures how the server is launched — `command`, `args`,
+  `authentication` (`pat` by default; `azcli`, `envvar`, or `interactive`),
+  `domains`, `tenant`, and `env`. Every field has a working default, so most
+  installs need none of it. Note the server's *own* default is `interactive`,
+  which opens a browser and cannot work in a polling loop — the engine refuses
+  it rather than hanging on a prompt nobody sees. See
   [configuration.md](configuration.md#code-platform-codeplatform--ado).
+- **`ado.mcp` is user-layer-only**, alongside `organization` and `pat`: it names
+  a command that gets spawned, so a cloned repo must not be able to choose it.
 
 ## To layered configuration (user scope + repo scope)
 

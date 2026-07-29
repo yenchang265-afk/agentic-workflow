@@ -6,6 +6,7 @@ import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds,
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
+import type { AdoGateway } from "../source/ado-gateway.js"
 import { shipPr, type ShipPrResult } from "./ship-pr.js"
 
 /**
@@ -33,6 +34,12 @@ export interface GateCtx {
    * marker. Absent ⇒ nothing is driving.
    */
   readonly isDriving?: (id: string) => boolean
+  /**
+   * The Azure DevOps MCP gateway, for the ship gate's PR creation when the
+   * engineering kind's platform is `ado`. Absent on a GitHub-only host — and
+   * absent means the ship still succeeds, reporting only that no PR opened.
+   */
+  readonly adoGateway?: AdoGateway
 }
 
 /**
@@ -581,7 +588,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
       let missedPr = false
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
       if (!prAlreadyRecorded) {
-        const pr = await shipPr($, log, directory, config, kind, id, done.title)
+        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway)
         if (pr.url) {
           data.pr = { url: pr.url }
           await appendNote($, { id, path: done.path }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
@@ -606,7 +613,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
-  const pr = await shipPr($, log, directory, config, kind, id, t.title)
+  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway)
   const data: Record<string, unknown> = { completed: newPath }
   if (pr.url) {
     data.pr = { url: pr.url }

@@ -55,7 +55,7 @@ import {
   writePathKeyOf,
   writePathOf,
 } from "./dialect.mjs"
-import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedAdoWriteBackstopViolation, chainedAdoAzWriteViolation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpMutationTool } from "./allowlist.mjs"
+import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
 import { backlogRoot, readMarker, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
@@ -98,33 +98,6 @@ const main = async () => {
   const isBash = isBashTool(d, tool)
   const isWrite = isWriteTool(d, tool)
 
-  // (3) ADO REST write backstop — always on. Every sitter kind reaches ADO via
-  // curl+PAT and may only GET, POST a thread-comment reply, or POST a brand-new
-  // pull request; every mutation of an EXISTING PR is off-limits (threat-model
-  // T8/T12/T13).
-  if (isBash && chainedAdoWriteBackstopViolation(String(ti.command ?? ""))) {
-    return block(
-      `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps REST call is blocked. ` +
-        `Only GET reads, thread-comment replies (POST to a /threads resource), and creating a new draft PR ` +
-        `(POST to .../pullrequests) are permitted; completing, abandoning, approving, reviewer changes, and ` +
-        `pipeline runs stay a human call.`,
-    )
-  }
-
-  // (3a) ADO az-CLI write backstop — always on, the az mirror of (3): the same
-  // read/thread-reply/draft-PR-create envelope enforced over `az repos`/
-  // `az pipelines`/`az devops invoke` commands. The loop reaches ADO only over
-  // REST, so this never fires on loop-issued commands — it's defense-in-depth
-  // in case an az CLI is on PATH and slips into a chained command.
-  if (isBash && chainedAdoAzWriteViolation(String(ti.command ?? ""))) {
-    return block(
-      `agentic-workflow: the loop must never mutate an existing pull request — this az CLI call is blocked. ` +
-        `Only reads, thread-comment replies (az devops invoke POST to a pullRequestThreads/pullRequestThreadComments ` +
-        `resource), and creating a new DRAFT PR (az repos pr create --draft) are permitted; completing, abandoning, ` +
-        `voting, reviewer changes, and pipeline runs stay a human call.`,
-    )
-  }
-
   // (0) backlog-mutation guard — always on, marker or not: raw mv/mkdir/rm or
   // Write/Edit under the backlog bypasses the MCP state machine. The classifier
   // is core's classifyMutation — the same code the OpenCode plugin runs.
@@ -142,20 +115,31 @@ const main = async () => {
 
   if (!marker) return allow() // no active loop stage — nothing else to enforce
 
-  // (3d) ADO MCP write blocklist — on whenever an ado-platform loop stage is
-  // live. The loop drives ADO through its REST API, not an MCP server, but a
-  // user may have an Azure DevOps MCP server connected for their own use; this
-  // keeps a stage agent from reaching through it to vote/complete/merge.
-  // BEST-EFFORT: third-party MCP tool names aren't ours to enumerate, so this
-  // pattern-matches conventional mutating names (update/complete/merge/vote/…);
-  // the stage prompt's NEVER clause stays the primary control. Creation tools
-  // pass — publish stages open draft PRs.
-  if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpMutationTool(tool)) {
-    return block(
-      `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps MCP tool looks ` +
-        `state-mutating and is blocked. Only reads, thread-comment replies, and creating a new DRAFT PR are ` +
-        `permitted; completing, abandoning, approving, voting, and reviewer changes stay a human call.`,
-    )
+  // (3) ADO MCP guard — on whenever an ado-platform loop stage is live. Azure
+  // DevOps is reached ONLY through the MCP server now, so this is the primary
+  // control rather than a best-effort backstop behind a curl allowlist.
+  //
+  // Two checks, both fail-closed. The write check enumerates the three writes
+  // the loop may make (and requires `isDraft` on PR creation); the scope check
+  // holds the call to the tools THIS stage's manifest granted, which is the
+  // per-stage precision that used to be deferred as future work.
+  if (marker.platform === "ado" && typeof tool === "string" && isAdoMcpTool(tool)) {
+    const args = ti && typeof ti === "object" ? ti : {}
+    if (isAdoMcpWriteViolation(tool, args)) {
+      return block(
+        `agentic-workflow: the loop must never mutate an existing pull request — this Azure DevOps MCP tool is ` +
+          `blocked. Only reads, thread comments/replies, and creating a DRAFT pull request (isDraft: true) are ` +
+          `permitted; completing, abandoning, approving, voting, reviewer changes, branch creation, and pipeline ` +
+          `runs stay a human call.`,
+      )
+    }
+    if (isAdoMcpToolOutOfStageScope(tool, marker.adoTools)) {
+      return block(
+        `agentic-workflow: the ${marker.stage ?? "current"} stage may not call this Azure DevOps MCP tool — its ` +
+          `manifest grants ${(marker.adoTools ?? []).length ? (marker.adoTools ?? []).join(", ") : "no ADO tools"}. ` +
+          `Add it to platformTools in workflows/<kind>/workflow.json if the stage genuinely needs it.`,
+      )
+    }
   }
 
   // (3b) GitHub PR-mutation backstop — on whenever a loop stage is live (the

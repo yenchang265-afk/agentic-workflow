@@ -118,8 +118,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `stageTimeoutMinutes` | `60` | 單一階段的牆鐘時間上限；超過此時限的階段會讓迴圈失敗，而不是卡住不動。 |
 | `watchIntervalMinutes` | `5` | `/agentic-workflow:engineering watch` 的預設輪詢週期；可透過 `/agentic-workflow:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
 | `workflows` | `{}` | 各工作流程類型的區段——見下方。 |
-| `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——透過它的 REST API + 一個 PAT）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
-| `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`customHeaders`、`insecureSkipTlsVerify`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
+| `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——透過 Azure DevOps MCP 伺服器 + 一個 PAT）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
+| `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`mcp`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
 | `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
@@ -491,10 +491,10 @@ PR sitter 和 review sitter 綁定到一個代管 PR 形狀的工作來源
 
 四種 sitter 類型都支援 Azure DevOps。`dependency-scan`（dep-sitter）
 來源是平台無關的（npm 報告不在乎儲存庫住在哪個 forge 上）；當平台
-解析為 `ado` 時，它的 publish 階段會透過 ADO REST API 而不是
+解析為 `ado` 時，它的 publish 階段會透過 Azure DevOps MCP 伺服器而不是
 `gh pr create` 來開啟草稿 PR。`ci-runs`（main-sitter）來源有一個
-真正的 ADO 版本（`ado-ci-runs.ts`），輪詢 Azure Pipelines 的 Build
-REST API（`_apis/build/builds`）而不是 `gh run list`，把建置結果
+真正的 ADO 版本（`ado-ci-runs.ts`），透過 MCP 伺服器的
+`pipelines_get_builds` 工具輪詢 Azure Pipelines 而不是 `gh run list`，把建置結果
 正規化成和 GitHub 來源相同的、經過裁定的形狀——「只看最新的 head，
 絕不看執行中途」這條邏輯兩邊完全一樣。`dependency-scan` 和
 `ci-runs` 都不需要 `ado.selfLogin`（不像 PR 形狀的來源，它們不受限
@@ -503,11 +503,10 @@ REST API（`_apis/build/builds`）而不是 `gh run list`，把建置結果
 每種 sitter 類型的 publish 階段——在 ADO 上——都是透過 Claude host
 的寫入防線 hook（`check-stage-guard`）開啟 PR 和發表討論串留言的，
 這個 hook 只允許恰好三種 ADO 寫入形狀：讀取、討論串留言的回覆，
-以及建立一個全新的草稿 pull request。在 REST 上這對應一次 GET、
-一次對 `/threads` 資源的 POST，以及一次對 `.../pullrequests` 不帶
-id 片段的 POST（這正是 ADO 如何草擬一個 PR 的方式，`isDraft: true`
-放在 body 裡，和其他任何呼叫的形式相同）。任何對*既有* PR 的變更
-——完成、放棄、投票、加入審查者，或任何 PATCH/PUT/DELETE——都會被
+以及建立一個全新的草稿 pull request。在 MCP 上這對應到讀取工具、
+`repo_create_pull_request_thread`/`repo_reply_to_comment`，以及帶有
+`isDraft: true` 的 `repo_create_pull_request`。任何對*既有* PR 的變更
+——完成、放棄、投票、加入審查者——以及任何未被列舉的 ADO 工具，都會被
 直接擋下，不論是哪種工作流程類型或哪個階段；若你連了 Azure DevOps
 MCP 伺服器，看起來會變更狀態的 ADO MCP 工具名稱也會被盡力
 （best-effort）擋下，作為縱深防禦。
@@ -525,10 +524,17 @@ MCP 伺服器，看起來會變更狀態的 ADO MCP 工具名稱也會被盡力
 }
 ```
 
-Azure DevOps **只透過它的 REST API 觸達**——階段提示用 `curl`（PAT
-以 HTTP Basic 認證），driver 自己的輪詢來源與 ship 把關點用 `fetch`。
-沒有 `az` CLI，也沒有 MCP 傳輸；底下的 `ado.customHeaders` 與
-`ado.insecureSkipTlsVerify` 一律作用於 driver 的呼叫。
+Azure DevOps **只透過 Azure DevOps MCP 伺服器觸達**
+（[`@azure-devops/mcp`](https://github.com/microsoft/azure-devops-mcp)，以
+`npx` 啟動）——階段 agent 依名稱呼叫它的工具，driver 自己的輪詢來源與 ship
+把關點也走同一個伺服器。沒有 `curl`、沒有 `az` CLI，也沒有 REST 退路：
+只有一條傳輸路徑，因此階段提示詞不可能和管轄它的白名單走偏。
+
+**伺服器的註冊名稱必須剛好是 `azure-devops`。** 階段提示詞與產生出來的
+agent frontmatter 以 `mcp__azure-devops__<tool>` 的形式指名工具；換成任何
+其他註冊名稱，都會讓每一次 ADO 階段呼叫都指向一個不存在的工具。
+`./bootstrap.sh` 會替你完成註冊。這是一個常數而非設定項，因為那些名稱存在
+於 CI 會做 diff 檢查的產生檔案裡。
 
 - **`ado.organization` / `ado.project`**——必填的 ADO 座標。
 - **`ado.repository`**——對 `pr-sitter`/`review-sitter`/
@@ -546,85 +552,67 @@ Azure DevOps **只透過它的 REST API 觸達**——階段提示用 `curl`（P
   環境變數；如果你要用 `ado.pat`，使用者層級的
   `~/.config/agentic-workflow/agentic-workflow.json` 是自然的歸屬（從不提交、跨儲存庫共用）——
   在儲存庫檔案中，保持 `.agentic-workflow.json` 加入 gitignore（預設
-  就是如此），這樣密鑰就永遠不會被提交。它會傳達到每一個消費者：
-  工作來源直接讀取它，而 triage/publish 階段 agent（透過
-  `$AZURE_DEVOPS_EXT_PAT` 驗證）也會拿到它——在 OpenCode 上是在
-  外掛初始化時（`applyAdoPatEnv`），在 Claude Code 上則是透過一個
-  `SessionStart` hook（`inject-ado-pat.mjs`）把它寫進
-  `$CLAUDE_ENV_FILE`。兩者都不會覆寫你自己 export 過的 PAT。
-- **`ado.customHeaders`**——選填；附加在驅動程式發出的每一次 ADO
-  REST 呼叫上的額外 HTTP 標頭（`pr-sitter` 工作來源和 engineering
-  的 ship 把關點）。它的典型用途是 Azure DevOps 前面的一個企業
-  代理伺服器——例如一個 `Proxy-Authorization` token 或一個路由用
-  標頭。它是一個純粹的 string→string 物件；鍵和值都必須非空。這些
-  標頭會被合併到內建的 `Authorization`/`Accept`/`Content-Type`
-  **之上**，因此這裡的一個鍵可以覆寫其中之一（很少會需要，但由你
-  決定）。`AGENTIC_WORKFLOW_ADO_HEADERS` 環境變數——一個同樣形狀的 JSON
-  物件——會**逐鍵覆寫 `customHeaders`**（環境變數優先，和
-  `AZURE_DEVOPS_EXT_PAT` 覆寫 `ado.pat` 的方式相同），因此一個攜帶
-  密鑰的代理 token 可以來自你的密鑰管理系統，而非密鑰的路由標頭則
-  留在設定裡。一個格式錯誤的環境變數值會被忽略（→ 不覆寫），而
-  不是造成致命錯誤。和 `ado.pat` 一樣，攜帶密鑰的標頭該放在使用者
-  層級的 `~/.config/agentic-workflow/agentic-workflow.json`（或環境變數）裡，而不是一份會被
-  提交的儲存庫檔案裡。注意這只會傳達到驅動程式自己的 `fetch`
-  呼叫；階段 agent 自己的原始 `curl`（透過 `$AZURE_DEVOPS_EXT_PAT`
-  驗證）不會繼承它——如果它們也需要，就用代理伺服器自己的環境變數
-  （`HTTPS_PROXY` 等）去對接它們。
+  就是如此），這樣密鑰就永遠不會被提交。driver 啟動 MCP 伺服器時，會自行
+  把它 base64 編碼成伺服器的 `PERSONAL_ACCESS_TOKEN`——你不需要手動編碼任何
+  東西。階段 agent 使用的是*你*註冊的那個伺服器，所以它們那份憑證存在該筆
+  註冊裡（`./bootstrap.sh` 會寫入）。
+- **`ado.mcp`**——選填；MCP 伺服器如何被啟動。每個欄位都有可用的預設值，
+  所以多數安裝完全不需要它。
+  - `command`（預設 `"npx"`）與 `args`（預設
+    `["-y", "@azure-devops/mcp@<pinned>"]`）——離線／封閉網路的安裝可以把
+    它們指向本機已安裝的執行檔。版本是**釘住**的：伺服器的工具名稱被寫死
+    在階段提示詞與產生出來的 agent frontmatter 裡，浮動的版本可能在它們腳下
+    重新命名整個工具面。
+  - `authentication`（預設 `"pat"`）——`pat`、`azcli`、`envvar` 或
+    `interactive`。注意伺服器*自己的*預設是 `interactive`，它會開啟瀏覽器；
+    輪詢迴圈沒有人去點它，所以引擎會**拒絕**該模式，而不是卡在一個沒有人
+    看得到的提示上（如果你真的坐在終端機前，可設定
+    `ADO_MCP_ALLOW_INTERACTIVE=1`）。`envvar` 會從 `ADO_MCP_AUTH_TOKEN`
+    讀取 bearer token。
+  - `domains`（預設 `["repositories", "pipelines"]`）——要載入哪些工具領域。
+    工具越少，模型面對的選單就越小。
+  - `tenant`——Azure 租戶 id，供 `interactive`/`azcli` 對多租戶組織使用。
+  - `env`——給被啟動的伺服器的額外環境變數，例如內部 CA 用的
+    `NODE_EXTRA_CA_CERTS` 或 `HTTPS_PROXY`。**這裡不是放密鑰的地方**——PAT
+    屬於 `ado.pat`（或環境變數），那是 hub 知道要遮蔽的欄位。
 
-  ```json
+  ```jsonc
   {
     "ado": {
       "organization": "https://dev.azure.com/acme",
       "project": "widgets",
-      "repository": "widgets-api",
       "selfLogin": "sitter@acme.com",
-      "customHeaders": { "X-Route": "internal-network" }
+      "mcp": { "env": { "NODE_EXTRA_CA_CERTS": "/etc/ssl/corp-ca.pem" } }
     }
   }
   ```
 
-  ```bash
-  # env var overrides / augments ado.customHeaders (JSON object, env wins on clashes)
-  export AGENTIC_WORKFLOW_ADO_HEADERS='{"Proxy-Authorization":"Bearer proxy-token"}'
-  ```
-- **`ado.insecureSkipTlsVerify`**——選填，預設 `false`；跳過驅動
-  程式發出的每一次 ADO REST 呼叫上的 TLS 憑證驗證（PR/CI-runs 工作
-  來源和 ship 把關點）。它是為了坐落在一張執行環境不信任的自簽或
-  內部 CA 憑證後面的自架 Azure DevOps Server 準備的——絕對不要對
-  代管的 `dev.azure.com` 服務啟用它，因為那會失去對 token 遭
-  MITM（中間人攻擊）的防護。這些呼叫走的是一個專用的 `undici`
-  dispatcher，所以這只會削弱這些 ADO 呼叫的 TLS，不會影響同一個
-  行程中無關的請求（GitHub、npm……）。和 `customHeaders` 一樣，它
-  只會傳達到驅動程式自己的 `fetch` 呼叫；階段 agent 的原始 `curl`
-  不會繼承它——如果它們也需要，就自己傳入 `-k`/`--insecure`（或
-  讓 `curl` 指向你的內部 CA bundle）。
+  `ado.mcp` **僅限使用者層級**，和 `organization`、`pat` 一樣：它指定的是一個
+  會被啟動的命令，因此不能讓被複製下來的儲存庫決定它。
 
-  ```json
-  {
-    "ado": {
-      "organization": "https://ado.internal.acme.com/tfs/DefaultCollection",
-      "project": "widgets",
-      "selfLogin": "sitter@acme.com",
-      "insecureSkipTlsVerify": true
-    }
-  }
-  ```
+  隨 REST 傳輸一併移除的還有：`ado.customHeaders`、
+  `ado.insecureSkipTlsVerify` 與 `AGENTIC_WORKFLOW_ADO_HEADERS`。被啟動的
+  MCP 伺服器沒有可注入 per-request 標頭或 TLS 的接縫。殘留的鍵會被解析並
+  忽略，並印一行警告指名它。**不再支援**自架的 Azure DevOps Server——該
+  伺服器接受的是組織名稱，且以 `dev.azure.com` 為目標。
+
 - **`"ado"` 的先決條件**：一個 Personal Access Token——放在
   `AZURE_DEVOPS_EXT_PAT`（優先）或 `ado.pat`——範圍需涵蓋 Code
-  (read) + Pull Request contribute (comment)，以及 `curl`。這個
-  token 是以 HTTP Basic auth 送出的
-  （`curl -sS -u :"$AZURE_DEVOPS_EXT_PAT" <url>`）；不需要 `az`
-  CLI。
-- **在 ADO 上的語意**：失敗的檢查來自阻擋性的分支政策評估
-  （`_apis/policy/evaluations`）——一個沒有建置政策的儲存庫永遠
-  不會觸發 `failing-checks`；留言來自 PR 討論串；一次負面的
+  (read) + Pull Request contribute (comment)，另外還需要 Node 20+ 與
+  `npx`，MCP 伺服器才能啟動。不需要 `az` CLI，也不需要 `curl`。
+- **在 ADO 上的語意**：失敗的檢查來自 PR 的驗證**管線執行**——一個 PR
+  不跑任何管線的儲存庫永遠不會觸發 `failing-checks`，而非管線的分支原則
+  （最少審查者人數、留言解決狀態、必要的工作項目連結）**完全看不見**，
+  因為 MCP 伺服器沒有提供原則工具。留言來自 PR 討論串；一次負面的
   審查者投票對應到 changes-requested；`mergeStatus: conflicts`
   對應到 merge-conflict。
 - 階段的 bash 白名單是依平台分開的：清單的
   `platformAllowlist.github` / `.ado` 萬用字元模式，會被合併進該
-  階段解析後平台所對應的 `bashAllowlist`。OpenCode 的 agent
-  frontmatter（靜態 YAML）同時攜帶兩個平台的 CLI 白名單，這是一個
-  刻意的廣度取捨——workflow.json/階段標記路徑則維持窄平台。
+  階段解析後平台所對應的 `bashAllowlist`。但 `.ado` 那份是**空的**：
+  Azure DevOps 只透過 MCP 工具觸達，任何殘留的 bash 萬用字元模式都只會是
+  通往同一組 API 的第二道、且不受保護的門。ADO 的可用面改由
+  `platformTools.ado` 表達——該階段可呼叫的工具名稱，同時也會產生它在每個
+  宿主上的 agent `tools:` frontmatter。
 
 新類型的編寫方式見 [`workflows/README.md`](../packages/core/workflows/README.md)，
 啟用 PR sitter 前的安全態勢見

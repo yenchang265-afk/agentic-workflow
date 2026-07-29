@@ -54,4 +54,3 @@ export const parseConfig = (raw: unknown): Config => parseConfigWith(ConfigSchem
 export const loadConfig = (client: Client, directory: string, opts?: LoadConfigOptions): Promise<Config> =>
   loadConfigWith(ConfigSchema, client, directory, opts)
 
-export { applyAdoPatEnv } from "@agentic-workflow/core/config"

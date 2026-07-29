@@ -5,3 +5,4 @@ tools:
   - grep_search
   - glob
   - run_shell_command
+  - {{adoTools}}

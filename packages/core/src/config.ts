@@ -260,10 +260,11 @@ const BaseConfigSchema = z.object({
   /**
    * Azure DevOps coordinates; required when any effective platform is `ado`.
    *
-   * Deliberately `looseObject`: the removed `access` key must survive parsing
-   * so `deprecatedAdoKeys` can name it in a warning. A strict object would
-   * strip it silently and a user who set `access: "az"` would get REST
-   * behavior with no explanation.
+   * Deliberately `looseObject`: the removed transport keys (`access`,
+   * `customHeaders`, `insecureSkipTlsVerify`) must survive parsing so
+   * `deprecatedAdoKeys` can name them in a warning. A strict object would strip
+   * them silently, and a user who set `insecureSkipTlsVerify: true` would get
+   * certificate verification with no explanation of why their setting vanished.
    */
   ado: z
     .looseObject({
@@ -300,17 +301,25 @@ const BaseConfigSchema = z.object({
        */
       pat: z.string().min(1).optional(),
       /**
-       * Extra HTTP headers sent on every ADO REST call (e.g. a proxy auth or
-       * routing header). Keys and values must be non-empty. The
-       * `AGENTIC_WORKFLOW_ADO_HEADERS` env var (JSON) overrides these key by key.
+       * How the Azure DevOps MCP server is launched. Every field has a working
+       * default; the section exists for air-gapped installs, corporate TLS, and
+       * multi-tenant orgs.
        */
-      customHeaders: z.record(z.string().min(1), z.string().min(1)).optional(),
-      /**
-       * Skip TLS certificate verification on every ADO REST call. Off by
-       * default; only for a self-hosted ADO Server behind a self-signed or
-       * internal-CA cert — never for the hosted `dev.azure.com` service.
-       */
-      insecureSkipTlsVerify: z.boolean().optional(),
+      mcp: z
+        .strictObject({
+          command: z.string().min(1).optional(),
+          args: z.array(z.string()).optional(),
+          /**
+           * Defaults to "pat". The server's own default is "interactive", which
+           * opens a browser — unusable from a polling loop, so it is not ours.
+           */
+          authentication: z.enum(["pat", "envvar", "azcli", "interactive"]).optional(),
+          domains: z.array(z.string().min(1)).optional(),
+          tenant: z.string().min(1).optional(),
+          /** Extra child env (NODE_EXTRA_CA_CERTS, HTTPS_PROXY). Not for secrets. */
+          env: z.record(z.string().min(1), z.string()).optional(),
+        })
+        .optional(),
     })
     .optional(),
   /**
@@ -403,17 +412,24 @@ export const platformFor = (config: Config, kind: string): CodePlatform =>
 /**
  * Azure DevOps config keys that no longer do anything, in config order.
  *
- * ADO used to be reachable three ways (`ado.access`: `az` | `rest` | `mcp`); it
- * is now only ever the REST API, so `access` is inert. Left in place it would
- * be config that lies about what it does, so hosts surface this as a one-line
- * warning — the same treatment `unknownStageModelKeys` gets, and for the same
- * reason: silently ignoring a key the user deliberately set reads as "the
- * setting doesn't work".
+ * ADO is now reached ONLY through the Azure DevOps MCP server, so every key
+ * that configured the old raw-REST transport is inert:
  *
- * Reported rather than rejected so an in-flight loop keeps running; the value
- * is ignored either way (REST is the sole transport). Pure.
+ * - `access` — ADO was once reachable three ways (`az` | `rest` | `mcp`).
+ * - `customHeaders` — the MCP server offers no per-request header seam. Use
+ *   `ado.mcp.env` for proxy settings instead.
+ * - `insecureSkipTlsVerify` — there is no per-request dispatcher to inject; the
+ *   server does its own HTTPS. `ado.mcp.env.NODE_EXTRA_CA_CERTS` covers an
+ *   internal CA, which is the closest remaining equivalent.
+ *
+ * Left in place these would be config that lies about what it does, so hosts
+ * surface them as a one-line warning — the same treatment
+ * `unknownStageModelKeys` gets, and for the same reason: silently ignoring a
+ * key the user deliberately set reads as "the setting doesn't work".
+ *
+ * Reported rather than rejected so an in-flight loop keeps running. Pure.
  */
-export const DEPRECATED_ADO_KEYS = ["access"] as const
+export const DEPRECATED_ADO_KEYS = ["access", "customHeaders", "insecureSkipTlsVerify"] as const
 
 export const deprecatedAdoKeys = (config: Config): string[] => {
   const ado = config.ado as Record<string, unknown> | undefined
@@ -698,19 +714,11 @@ export const trackerUrl = (pm: ProjectManagement | undefined, key: string): stri
 /** The default `tracker.system` for newly authored tasks, from the PM config. Pure. */
 export const defaultTrackerSystem = (config: Config): TrackerSystem | undefined => config.projectManagement?.system
 
-/**
- * Best-effort: export config `ado.pat` as `AZURE_DEVOPS_EXT_PAT` when that env
- * var is unset, so child processes this driver starts — the PR sitter's
- * stage-agent `curl` calls — can authenticate to Azure DevOps without a
- * separately-exported PAT. The env var always wins; this never overrides one.
- * Side-effecting by design; call once after loading config. On hosts where the
- * stage agents run in a different process than the driver (Claude Code), set
- * the env var in that environment — this can't cross the process boundary.
- */
-export const applyAdoPatEnv = (config: { readonly ado?: { readonly pat?: string } }): void => {
-  const pat = config.ado?.pat
-  if (pat && !process.env.AZURE_DEVOPS_EXT_PAT) process.env.AZURE_DEVOPS_EXT_PAT = pat
-}
+// `applyAdoPatEnv` used to live here: it exported `ado.pat` into
+// `process.env.AZURE_DEVOPS_EXT_PAT` so child `curl` processes could
+// authenticate. Nothing shells out to Azure DevOps any more — the PAT is handed
+// only to the MCP server's own child env by `adoMcpSpawn` — so broadcasting the
+// secret to every child process was pure exposure with no consumer. Deleted.
 
 export const DEFAULT_CONFIG: Config = ConfigSchema.parse({})
 
@@ -821,20 +829,23 @@ const dropShellBearingWorkflowKeys = async (repoRaw: unknown, client: Client): P
  * a different asset: not shell the repo can run, but the user's Personal Access
  * Token it can aim.
  *
- * `ado-pr.ts` resolves the PAT as `env AZURE_DEVOPS_EXT_PAT ?? ado.pat` and
- * sends it as `Authorization: Basic` to `${ado.organization}/…`. Because layers
- * merge per key, a cloned repo supplying only `organization` keeps the user's
- * PAT underneath it — and `pr-sitter`/`review-sitter` poll on the first watch
- * tick, so nobody has to run anything for the token to leave. `customHeaders`
- * rides the same request and `insecureSkipTlsVerify` disables certificate
- * verification for it.
+ * `adoMcpSpawn` resolves the PAT as `env AZURE_DEVOPS_EXT_PAT ?? ado.pat` and
+ * hands it to the Azure DevOps MCP server it launches against
+ * `ado.organization`. Because layers merge per key, a cloned repo supplying
+ * only `organization` keeps the user's PAT underneath it — and
+ * `pr-sitter`/`review-sitter` poll on the first watch tick, so nobody has to
+ * run anything for the token to leave. `mcp` is dropped for the same reason
+ * one step further along: it names the COMMAND that gets spawned, so a repo
+ * that could set it could run anything with the token in its environment.
  *
  * `project`, `repository` and `selfLogin` are NOT here: they describe this repo
  * and nothing else, and dropping them would make the rule unusable rather than
  * safe. An ADO user who kept `organization` in their repo file gets a loud
  * warning naming the move; the section is experimental and says so.
  */
-const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "customHeaders", "insecureSkipTlsVerify"] as const
+// `mcp` names the command that gets SPAWNED, so a cloned repo must not be able
+// to choose it — that would be arbitrary code execution from a config file.
+const ADO_USER_LAYER_ONLY_KEYS = ["organization", "pat", "mcp"] as const
 
 /** Drop destination/credential keys from the repo layer's `ado` section, warning per key. Never mutates its input. */
 const dropAdoRepoKeys = async (repoRaw: unknown, client: Client): Promise<unknown> => {

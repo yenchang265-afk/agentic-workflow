@@ -5,6 +5,11 @@
 監看開啟中的 pull request：回覆審查留言、修復失敗的檢查、解決衝突，並讓
 分支保持綠燈直到人類合併它。**絕不會合併。**
 
+> **在 Azure DevOps 上**，「失敗的檢查」指的是失敗的驗證**管線執行**
+> （pipeline run）。非管線的分支原則——最少審查者人數、留言解決狀態、
+> 必要的工作項目連結、第三方狀態檢查——透過 Azure DevOps MCP 伺服器
+> 是看不見的，因此僅因為這類原則而被擋住的 PR 不會喚醒 sitter。
+
 TRIAGE → FIX → VERIFY → PUBLISH（最多 3 次疊代）
 
 ## 啟用
@@ -49,7 +54,7 @@ fork PR 仍會被拒絕。
 監看你自己開啟中的 PR。在 GitHub 上（預設）它會輪詢
 `gh pr list --search <query>`（預設 `is:open author:@me`，可用
 `workflows.pr-sitter.query` 覆寫）；在 Azure DevOps 上（`codePlatform: "ado"`）
-則改為輪詢 REST API，監看由 `ado.selfLogin` 提出的活躍 PR——**`query`
+則改為透過 Azure DevOps MCP 伺服器輪詢，監看由 `ado.selfLogin` 提出的活躍 PR——**`query`
 僅限 GitHub**，在 ADO 上會被忽略。當已啟用的觸發條件之一成立時，PR 就會
 被認領：檢查失敗、被要求修改（changes requested）、未回覆的留言（會過濾掉
 自己的帳號）、或合併衝突。draft 和 fork 的 PR 會被跳過（fork 的 head
@@ -77,7 +82,8 @@ flowchart LR
 失敗會被回報，絕不會被強制推送。
 
 - **`workflows.pr-sitter.enabled`** —— 預設關閉；需要已驗證的平台存取權：
-  `gh`（GitHub）或存放在 `AZURE_DEVOPS_EXT_PAT` 中的 PAT（ADO）。
+  `gh`（GitHub），或是 `azure-devops` MCP 伺服器搭配存放在
+  `AZURE_DEVOPS_EXT_PAT` 中的 PAT（ADO）。
 - **`workflows.pr-sitter.query`** —— 僅限 GitHub；覆寫清單中的
   `gh pr list --search` 查詢字串。
 

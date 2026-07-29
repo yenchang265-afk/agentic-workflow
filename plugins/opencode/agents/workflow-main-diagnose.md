@@ -13,8 +13,6 @@ permission:
     # Both platforms are allowed here (static frontmatter can't switch); config
     # codePlatform decides which the stage prompt actually uses. ADO is the REST
     # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
-    "curl *https://dev.azure.com/*": allow
-    "curl *https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -71,6 +69,14 @@ permission:
     "cd * && make test*": allow
     "cd * && make check*": allow
     "cd * && git bisect*": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  mcp__azure-devops__pipelines_get_builds: true
+  mcp__azure-devops__pipelines_get_build_status: true
+  mcp__azure-devops__pipelines_get_build_log: true
+  mcp__azure-devops__pipelines_get_build_log_by_id: true
+  mcp__azure-devops__repo_list_pull_requests_by_commits: true
 ---
 
 You are the **workflow-main-diagnose** subagent — the DIAGNOSE stage of the
@@ -86,14 +92,14 @@ workflow(s). The red head is checked out on this loop's pinned branch.
 
 1. Reproduce first: run the failing workflow's command locally, and pull the
    ACTUAL error from CI — GitHub: `gh run view --log-failed`; Azure DevOps:
-   list the build's logs (`_apis/build/builds/<id>/logs`) then fetch the
-   failing one's content (`_apis/build/builds/<id>/logs/<logId>`) — "CI is
-   red" is not a finding.
+   list the build's logs (`pipelines_get_build_log`) then fetch the failing
+   one's content (`pipelines_get_build_log_by_id`, bounding the line range) —
+   "CI is red" is not a finding.
 2. When the culprit isn't obvious from the error plus `git log --oneline -20`,
    bisect: `git bisect start <bad> <good>` with the failing command. Identify
    the culprit commit and, when it came from a PR, the PR — GitHub:
    `gh pr list --search <sha>`; Azure DevOps:
-   `_apis/git/repositories/<repo>/commits/<sha>/pullrequests`. Leave bisect
+   `repo_list_pull_requests_by_commits`. Leave bisect
    clean (`git bisect reset`) before you finish.
 3. Classify and emit the remedy work order: fixable-forward (name the fix),
    revert-worthy (name the commit(s) to revert and why forward-fixing is

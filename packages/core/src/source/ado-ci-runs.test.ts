@@ -4,11 +4,12 @@ import { test } from "node:test"
 import type { Client, Shell } from "../host.js"
 import { loadManifest } from "../manifest/load.js"
 import { shortSha } from "./ci-runs.js"
-import { makeAdoCiRunsSource, type AdoHttp } from "./ado-ci-runs.js"
+import { makeAdoCiRunsSource } from "./ado-ci-runs.js"
+import type { AdoGateway } from "./ado-gateway.js"
 
 /**
  * The ado-ci-runs source over the real main-sitter manifest, against a
- * scripted ADO REST transport (`http`) plus a scripted git/claim shell (`$`)
+ * scripted `AdoGateway` plus a scripted git/claim shell (`$`)
  * — the mirror of ci-runs.test.ts and ado-pr.test.ts. The build→CiRun
  * normalization is covered in ado-shared.test.ts; these cover polling,
  * ledger dedup, claim/pin mechanics (shared with the GitHub source via
@@ -51,15 +52,25 @@ const scriptedShell = (script: Cmd[], log: string[] = []): Shell => {
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-type Route = { match: string; status?: number; body?: string }
-
-/** Scripted ADO REST transport: first route whose `match` is a substring of the URL wins. */
-const scriptedHttp = (routes: Route[], log: string[] = []): AdoHttp => async (url) => {
-  log.push(url)
-  const hit = routes.find((r) => url.includes(r.match))
-  const status = hit?.status ?? 200
-  const body = hit?.body ?? ""
-  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
+/** Scripted gateway: serves one build list, or fails when `error` is set. */
+const scriptedGateway = (builds: unknown[], log: string[] = [], error?: string): AdoGateway => {
+  const notUsed = async (): Promise<never> => {
+    throw new Error("the ci-runs source must not call this operation")
+  }
+  return {
+    async listBuilds(a) {
+      log.push(`listBuilds(${a.branchName ?? ""})`)
+      return error ? { ok: false, error } : { ok: true, data: builds }
+    },
+    getPullRequest: notUsed,
+    listPullRequests: notUsed,
+    listPullRequestsByCommits: notUsed,
+    listPullRequestThreads: notUsed,
+    getRepository: notUsed,
+    getBuildStatus: notUsed,
+    createPullRequest: notUsed,
+    async close() {},
+  }
 }
 
 /** Client whose reads serve ledger files from an in-memory map. */
@@ -85,15 +96,13 @@ const build = (over: Record<string, unknown> = {}) => ({
   ...over,
 })
 
-const listBody = (builds: unknown[]) => JSON.stringify({ value: builds })
 
 type Opts = {
   ledgers?: Record<string, string>
-  routes?: Route[]
+  gatewayError?: string
   shellScript?: Cmd[]
   shellLog?: string[]
-  httpLog?: string[]
-  pat?: string
+  callLog?: string[]
   branch?: string
 }
 
@@ -111,22 +120,21 @@ const source = (builds: unknown[], opts: Opts = {}) =>
       ],
       opts.shellLog,
     ),
-    http: scriptedHttp([...(opts.routes ?? []), { match: "/build/builds?", body: listBody(builds) }], opts.httpLog),
+    gateway: scriptedGateway(builds, opts.callLog, opts.gatewayError),
     client: ledgerClient(opts.ledgers ?? {}),
     directory: "/r",
     tasksDir: "docs/tasks",
     log: () => {},
     loaded: sitter,
     ado: { organization: "https://dev.azure.com/acme", project: "widgets" },
-    pat: opts.pat ?? "test-pat",
     ...(opts.branch ? { branch: opts.branch } : {}),
     now: () => "2026-07-05T00:00:00Z",
   })
 
 test("claims the red newest head: default branch resolved via git, head pinned to a main-sitter/ branch, platform stamped ado", async () => {
   const shellLog: string[] = []
-  const httpLog: string[] = []
-  const { item, skip } = await source([build()], { shellLog, httpLog }).claimNext()
+  const callLog: string[] = []
+  const { item, skip } = await source([build()], { shellLog, callLog }).claimNext()
   assert.equal(skip, null)
   assert.equal(item?.id, `${SHA.slice(0, 6)}-main`) // display id: short sha + readable branch
   assert.equal(item?.entryStage, "diagnose")
@@ -135,7 +143,7 @@ test("claims the red newest head: default branch resolved via git, head pinned t
   assert.deepEqual(item?.state.git, { base: "main", branch: `main-sitter/${shortSha(SHA)}` })
   assert.match(item?.state.goal ?? "", /^Red CI on main at abcdef123456/)
   assert.match(item?.state.goal ?? "", /Failing workflow\(s\): CI/)
-  assert.ok(httpLog.some((u) => u.includes("branchName=refs%2Fheads%2Fmain")))
+  assert.ok(callLog.some((c) => c === "listBuilds(refs/heads/main)"))
   assert.ok(shellLog.some((c) => c.includes("runs/main-sitter/.claims/head-abcdef123456")))
   assert.ok(shellLog.some((c) => c.startsWith(`git -C /r branch -f main-sitter/abcdef123456 ${SHA}`)))
 })
@@ -181,16 +189,14 @@ test("a handled or failed head is never re-claimed — a new push makes a new ju
   assert.match(skip?.message ?? "", /already handled — waiting for a new push/)
 })
 
-test("no PAT set is an actionable skip", async () => {
-  const { item, skip } = await source([build()], { pat: "" }).claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /Azure DevOps PAT not set/)
-  assert.equal(skip?.actionable, true)
-})
-
-test("a build-list HTTP failure is an actionable skip", async () => {
-  const { skip } = await source([], { routes: [{ match: "/build/builds?", status: 500 }] }).claimNext()
-  assert.match(skip?.message ?? "", /Azure DevOps build list failed — HTTP 500/)
+test("a build-list failure is an actionable skip naming the cause and the scope needed", async () => {
+  // Credential problems now surface here rather than as a separate PAT
+  // precondition: the gateway owns the credential, so a missing or rejected one
+  // arrives as a failed call.
+  const { skip } = await source([], { gatewayError: "no Azure DevOps credential: set AZURE_DEVOPS_EXT_PAT (or ado.pat)" }).claimNext()
+  assert.match(skip?.message ?? "", /Azure DevOps build list failed/)
+  assert.match(skip?.message ?? "", /AZURE_DEVOPS_EXT_PAT/)
+  assert.match(skip?.message ?? "", /Build \(read\) scope/)
   assert.equal(skip?.actionable, true)
 })
 
@@ -247,9 +253,9 @@ test("a non-retryable stop records a failed attempt", async () => {
 
 test("a configured branch override skips default-branch detection", async () => {
   const shellLog: string[] = []
-  const httpLog: string[] = []
-  const { skip } = await source([build({ result: "succeeded" })], { branch: "release/v2", shellLog, httpLog }).claimNext()
+  const callLog: string[] = []
+  const { skip } = await source([build({ result: "succeeded" })], { branch: "release/v2", shellLog, callLog }).claimNext()
   assert.match(skip?.message ?? "", /release\/v2 is green/)
   assert.ok(shellLog.every((c) => !c.startsWith("git -C /r symbolic-ref")))
-  assert.ok(httpLog.some((u) => u.includes("branchName=refs%2Fheads%2Frelease%2Fv2")))
+  assert.ok(callLog.some((c) => c === "listBuilds(refs/heads/release/v2)"))
 })

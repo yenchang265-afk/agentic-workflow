@@ -67,10 +67,14 @@ workflow kinds at launch, per-stage models baked into generated agent files.
    field, and the guard hooks *are* the safety substrate. The installer must
    therefore merge a hooks block into `settings.json`; an extension-only
    install is not a supported route.
-3. **ADO PAT injection has no twin.** `inject-ado-pat.mjs` writes to
-   `$CLAUDE_ENV_FILE`; Qwen has no equivalent. On Qwen the SessionStart hook
-   degrades to an `additionalContext` notice and the README documents exporting
-   `AZURE_DEVOPS_EXT_PAT` directly. Flag it; don't fake it.
+3. ~~**ADO PAT injection has no twin.**~~ **Superseded — the gap no longer
+   exists.** It was real as written: `inject-ado-pat.mjs` wrote to
+   `$CLAUDE_ENV_FILE`, Qwen had no equivalent, and the hook degraded to an
+   `additionalContext` notice. Azure DevOps is now reached only through the
+   Azure DevOps MCP server, so no host needs a PAT in a stage agent's
+   environment at all — the driver hands the credential to the server it
+   launches, and the stage agents use the server the user registered. Both
+   `inject-ado-pat.mjs` hooks are deleted.
 4. ~~**MCP tool naming is unconfirmed.**~~ **Resolved — no divergence.**
    Qwen registers MCP tools as `mcp__${serverName}__${serverToolName}` through
    `normalizeToolNameForProvider`, which passes a name through untouched when it
@@ -198,8 +202,7 @@ fork the policy — extract the dialect.
   `gate-command.mjs` gains `AGENTIC_WORKFLOW_PLUGIN_ROOT` as a fallback ahead of
   its existing `CLAUDE_PLUGIN_ROOT` lookup; the installer supplies it via the
   hook entry's `env` field.
-- `inject-ado-pat.mjs` — on Qwen, emit an `additionalContext` notice instead of
-  writing an env file (Gap 3).
+- ~~`inject-ado-pat.mjs`~~ — deleted on both hosts; see Gap 3.
 - `scripts/build-hooks.mjs` — emit a **second, fully generated** bundle set into
   `plugins/qwen/hooks/`. Bundle the currently hand-written entries
   (`gate-command.mjs` and its pure helpers) too, so `plugins/qwen/hooks/` is

@@ -167,8 +167,9 @@ from "someone filed a bug" to "the engineering loop can claim it."
 - **Work source**: new `github-issue` — mirrors `pull-request`: a `query`
   (e.g. `is:open is:issue no:label`), triggers (`new-issue`,
   `new-comments`), a per-issue dedup ledger under
-  `<tasksDir>/runs/issue-triager/`. ADO flavor polls work items via the
-  existing REST/PAT plumbing.
+  `<tasksDir>/runs/issue-triager/`. ADO flavor polls work items through the
+  existing `AdoGateway` port (the Azure DevOps MCP server) — it would need
+  `wit_*` tools added to `ado-tools.ts` and the `work-items` domain enabled.
 - **Stage graph**:
   1. `triage` (**check**, isolation `none`, read-only + platform read
      allowlist) — attempts reproduction from the report, searches for
@@ -261,9 +262,9 @@ has drifted past.
 > retires the item naturally) and never claims a head with runs still in
 > flight; the remedy branch is `main-sitter/<sha>` and the push allowlist is
 > scoped to it, so the watched branch is structurally unpushable. Supports
-> both GitHub (`gh run list`) and Azure DevOps (the Pipelines Build REST
-> API, `ado-ci-runs.ts`, sharing its ledger/WorkItem mechanics with the
-> GitHub source). See threat model T13.
+> both GitHub (`gh run list`) and Azure DevOps (the Azure DevOps MCP server's
+> `pipelines_get_builds` tool, `ado-ci-runs.ts`, sharing its ledger/WorkItem
+> mechanics with the GitHub source). See threat model T13.
 
 Original sketch: default-branch CI, new `ci-runs` work source,
 `diagnose → remedy → verify → publish` (push + comment authority, bisects

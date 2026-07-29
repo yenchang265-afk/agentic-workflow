@@ -18,8 +18,6 @@ permission:
     # in this static allowlist) additionally restricts writes to reads, thread
     # replies, and creating a brand-new PR, so complete/abandon/vote can't get
     # through even via a broader curl call.
-    "curl *https://dev.azure.com/*": allow
-    "curl *https://*.visualstudio.com/*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -34,3 +32,7 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  {{adoTools}}

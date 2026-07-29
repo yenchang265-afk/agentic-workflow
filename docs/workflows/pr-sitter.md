@@ -4,6 +4,12 @@ English | [繁體中文](pr-sitter.zh-TW.md)
 
 Sits on open pull requests: answers review comments, fixes failing checks, resolves conflicts, and keeps the branch green until a human merges. **Never merges.**
 
+> **On Azure DevOps**, "failing checks" means failing validation **pipeline
+> runs**. Branch policies that are not pipelines — minimum reviewers, comment
+> resolution, required work-item links, third-party status checks — are not
+> visible through the Azure DevOps MCP server, so a PR blocked only by one of
+> those will not wake the sitter.
+
 TRIAGE → FIX → VERIFY → PUBLISH (up to 3 iterations)
 
 ## Enable
@@ -77,7 +83,8 @@ allowlist is limited to `git push origin *` plus the resolved platform's
 comment/read-only calls; failed pushes are reported, never forced.
 
 - **`workflows.pr-sitter.enabled`** — default off; requires authenticated
-  platform access: `gh` (GitHub) or a PAT in `AZURE_DEVOPS_EXT_PAT` (ADO).
+  platform access: `gh` (GitHub), or the `azure-devops` MCP server with a PAT
+  in `AZURE_DEVOPS_EXT_PAT` (ADO).
 - **`workflows.pr-sitter.query`** — GitHub only; overrides the manifest's
   `gh pr list --search` query.
 

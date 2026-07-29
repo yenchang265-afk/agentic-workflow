@@ -1,122 +1,126 @@
-import { Agent, fetch as undiciFetch } from "undici"
 import { z } from "zod"
+import type { AdoConfig } from "../workflow/state.js"
+import { ADO_MCP_DOMAINS, ADO_MCP_PACKAGE } from "./ado-tools.js"
 
 /**
- * The pure Azure DevOps normalizers for the `ado-pr.ts` work source, which
- * reaches Azure DevOps over its REST API (PAT auth). The raw ADO REST
- * `GitPullRequest` shape, identifier semantics, and thread-comment flattening
- * live here so the source stays a thin transport over these pure functions.
+ * The pure Azure DevOps helpers shared by the `ado-pr.ts` / `ado-ci-runs.ts`
+ * work sources and the ship gate. Azure DevOps is reached ONLY through the
+ * Azure DevOps MCP server (`@agentic-workflow/ado-mcp` satisfies the
+ * `AdoGateway` port); this module owns the spawn spec, the response schemas,
+ * and the normalizers, so each source stays a thin shell over pure functions.
  */
 
-/** The env var holding a JSON object of extra headers to send on every ADO REST call. */
-export const ADO_HEADERS_ENV = "AGENTIC_WORKFLOW_ADO_HEADERS"
+/** The env var holding the Azure DevOps PAT — the name the `az` extension used, kept for continuity. */
+export const ADO_PAT_ENV = "AZURE_DEVOPS_EXT_PAT"
 
 /**
- * Parse the `AGENTIC_WORKFLOW_ADO_HEADERS` value: a JSON object of string→string
- * header pairs. Anything malformed — not JSON, not an object, or a non-string
- * value — is ignored (→ `{}`) rather than thrown, so a bad env var degrades to
- * "no override" instead of crashing the driver. Empty-string keys are dropped.
- * Pure.
+ * The value the MCP server's `-a pat` mode expects in `PERSONAL_ACCESS_TOKEN`.
+ *
+ * The server base64-decodes it, splits on ":" and keeps everything AFTER the
+ * first colon (`@azure-devops/mcp` `dist/index.js`), so the username half is
+ * discarded and an empty one is correct — this needs no identity, unlike the
+ * reviewer-role filter which still needs `ado.selfLogin`. The colon is NOT
+ * optional: a base64 value without one decodes to an empty token and the server
+ * fails with an opaque auth error. Pure.
  */
-export const parseAdoHeadersEnv = (raw: string | undefined): Record<string, string> => {
-  if (!raw?.trim()) return {}
-  let json: unknown
+export const adoMcpPatToken = (pat: string): string => Buffer.from(`:${pat}`).toString("base64")
+
+/**
+ * The organization NAME the MCP server takes as its positional argument, from
+ * the configured organization URL — `https://dev.azure.com/acme` → `acme`,
+ * `https://acme.visualstudio.com` → `acme`. Returns "" when neither form
+ * matches, which callers report rather than guessing. Pure.
+ */
+export const adoOrgName = (organizationUrl: string): string => {
+  let url: URL
   try {
-    json = JSON.parse(raw)
+    url = new URL(organizationUrl)
   } catch {
-    return {}
+    return ""
   }
-  if (typeof json !== "object" || json === null || Array.isArray(json)) return {}
-  const out: Record<string, string> = {}
-  for (const [key, value] of Object.entries(json)) {
-    if (key && typeof value === "string") out[key] = value
+  const segments = url.pathname.split("/").filter(Boolean)
+  const last = segments[segments.length - 1]
+  if (last) return last
+  // `<org>.visualstudio.com` carries the org in the host instead of the path.
+  const [label] = url.hostname.split(".")
+  return label && url.hostname.endsWith(".visualstudio.com") ? label : ""
+}
+
+/** How the Azure DevOps MCP server should be launched, or why it can't be. */
+export type AdoMcpSpawn =
+  | { readonly ok: true; readonly command: string; readonly args: string[]; readonly env: Record<string, string> }
+  | { readonly ok: false; readonly error: string }
+
+/**
+ * Build the spawn spec for the Azure DevOps MCP server. Pure over its inputs —
+ * callers pass `process.env` rather than this reading it — so the arg vector and
+ * the child environment are both testable without spawning anything.
+ *
+ * PAT precedence mirrors the old REST path: `AZURE_DEVOPS_EXT_PAT` wins over
+ * config `ado.pat`.
+ */
+export const adoMcpSpawn = (ado: AdoConfig, env: Readonly<Record<string, string | undefined>>): AdoMcpSpawn => {
+  const org = adoOrgName(ado.organization)
+  if (!org) {
+    return { ok: false, error: `could not read an organization name from ado.organization ("${ado.organization}")` }
   }
-  return out
+
+  const mcp = ado.mcp ?? {}
+  const authentication = mcp.authentication ?? "pat"
+  const domains = mcp.domains ?? [...ADO_MCP_DOMAINS]
+
+  // The server defaults to `interactive`, which opens a browser. A poller has
+  // no one to click it, so refuse loudly here instead of hanging on a prompt
+  // nobody sees. Allowed when a human is actually at a terminal.
+  if (authentication === "interactive" && !env["ADO_MCP_ALLOW_INTERACTIVE"]) {
+    return {
+      ok: false,
+      error:
+        "ado.mcp.authentication 'interactive' opens a browser and cannot work in a polling loop — " +
+        `use "pat" with ${ADO_PAT_ENV} (or ado.pat), or "azcli" after an 'az login'`,
+    }
+  }
+
+  const childEnv: Record<string, string> = { ...(mcp.env ?? {}) }
+  if (authentication === "pat") {
+    const pat = env[ADO_PAT_ENV] ?? ado.pat ?? ""
+    if (!pat) {
+      return { ok: false, error: `no Azure DevOps credential: set ${ADO_PAT_ENV} (or ado.pat) with a token that can read code` }
+    }
+    childEnv["PERSONAL_ACCESS_TOKEN"] = adoMcpPatToken(pat)
+  } else if (authentication === "envvar") {
+    const bearer = env["ADO_MCP_AUTH_TOKEN"] ?? ""
+    if (!bearer) {
+      return { ok: false, error: "ado.mcp.authentication 'envvar' requires ADO_MCP_AUTH_TOKEN to hold a bearer token" }
+    }
+    childEnv["ADO_MCP_AUTH_TOKEN"] = bearer
+  }
+
+  const args = [...(mcp.args ?? ["-y", ADO_MCP_PACKAGE]), org]
+  for (const domain of domains) args.push("-d", domain)
+  args.push("-a", authentication)
+  if (mcp.tenant) args.push("-t", mcp.tenant)
+
+  return { ok: true, command: mcp.command ?? "npx", args, env: childEnv }
 }
 
 /**
- * Resolve the effective custom headers with the same env-wins precedence as the
- * PAT: config `ado.customHeaders` is the base, and `AGENTIC_WORKFLOW_ADO_HEADERS`
- * (parsed via {@link parseAdoHeadersEnv}) overrides it key by key. Pure over its
- * inputs — callers pass `process.env[ADO_HEADERS_ENV]`.
+ * Read a list payload from an MCP tool result.
+ *
+ * Deliberately tolerant of both shapes. Azure DevOps REST wraps collections in
+ * `{ value: [...] }`, but the MCP server returns whatever `azure-devops-node-api`
+ * hands back, and that library already unwraps `value` into a bare array. Rather
+ * than bet on one, accept either — the cost is three lines and the failure it
+ * prevents (every poll parsing to zero items, reported as "nothing needs
+ * attention") is silent. Pure.
  */
-export const resolveAdoHeaders = (
-  configHeaders: Readonly<Record<string, string>> | undefined,
-  env: string | undefined,
-): Record<string, string> => ({ ...(configHeaders ?? {}), ...parseAdoHeadersEnv(env) })
-
-/**
- * Merge the built-in per-request headers (Authorization/Accept, plus
- * Content-Type on writes) with the user's custom headers. Custom headers win on
- * a key clash — documented as the user's responsibility. Pure.
- */
-export const buildAdoHeaders = (
-  base: Readonly<Record<string, string>>,
-  custom: Readonly<Record<string, string>> | undefined,
-): Record<string, string> => ({ ...base, ...(custom ?? {}) })
-
-/** Minimal HTTP response shape the ADO transports read — structurally satisfied by `fetch`'s `Response`. */
-export interface AdoTransportResponse {
-  readonly ok: boolean
-  readonly status: number
-  readonly statusText: string
-  text(): Promise<string>
-}
-
-/** Request shape both the GET-only PR/CI-runs sources and the POST-capable ship gate pass through. */
-export interface AdoTransportInit {
-  readonly method?: string
-  readonly headers: Readonly<Record<string, string>>
-  readonly body?: string
-}
-
-/**
- * A single `undici` `Agent` that skips certificate verification, built lazily
- * (and only once) the first time a config actually opts into
- * `ado.insecureSkipTlsVerify` — the default, verified path never touches this.
- * Shared across calls so insecure ADO requests still pool connections instead
- * of paying a fresh TLS handshake per call.
- */
-let insecureDispatcher: Agent | undefined
-const getInsecureDispatcher = (): Agent =>
-  (insecureDispatcher ??= new Agent({ connect: { rejectUnauthorized: false } }))
-
-/**
- * Build the default transport for ADO REST calls, honoring
- * `ado.insecureSkipTlsVerify`. When set, requests go through a dedicated
- * `undici` dispatcher with certificate verification disabled — scoped to
- * these calls only, unlike the process-wide `NODE_TLS_REJECT_UNAUTHORIZED=0`
- * escape hatch, so it never weakens TLS for unrelated requests (GitHub, npm,
- * …) made elsewhere in the same process. Only for a self-hosted Azure DevOps
- * Server behind a self-signed or internal-CA cert; never for the hosted
- * `dev.azure.com` service. Pure given the flag (the dispatcher itself is a
- * cached singleton, not per-call state).
- */
-export const adoFetch =
-  (insecureSkipTlsVerify: boolean | undefined) =>
-  (url: string, init: AdoTransportInit): Promise<AdoTransportResponse> =>
-    insecureSkipTlsVerify
-      ? undiciFetch(url, { ...init, dispatcher: getInsecureDispatcher() })
-      : fetch(url, init)
-
-export interface AdoAuthDeps {
-  /** The resolved PAT ("" / undefined when none). */
-  readonly pat?: string
-}
-
-/**
- * Build the async `Authorization` header producer the driver's ADO REST calls
- * (the PR/CI-runs poll sources and the ship gate) authenticate with. ADO is
- * reached only over REST, which always needs a PAT; without one it fails loud
- * naming both remedies.
- */
-export const makeAdoAuthHeader = (deps: AdoAuthDeps): (() => Promise<string>) => {
-  const { pat } = deps
-  if (pat) return () => Promise.resolve(`Basic ${Buffer.from(`:${pat}`).toString("base64")}`)
-  return () =>
-    Promise.reject(
-      new Error("no Azure DevOps credential: set AZURE_DEVOPS_EXT_PAT (or ado.pat) — ADO REST calls always need a PAT"),
-    )
+export const adoList = (data: unknown): unknown[] => {
+  if (Array.isArray(data)) return data
+  if (data && typeof data === "object") {
+    const value = (data as { value?: unknown }).value
+    if (Array.isArray(value)) return value
+  }
+  return []
 }
 
 /** `refs/heads/x` → `x`. */
@@ -137,10 +141,14 @@ export const newerThan = (a: string, b: string): boolean => {
   return Number.isNaN(ta) || Number.isNaN(tb) ? a > b : ta > tb
 }
 
-/** Blocking-policy statuses that count as a failing check. */
-export const POLICY_FAILING = new Set(["rejected", "broken", "failed"])
-
-/** The `GitPullRequest` fields both sources read off the PR list. */
+/**
+ * The `GitPullRequest` fields both sources read.
+ *
+ * `createdBy` and `reviewers` are REQUIRED, not `.nullish()`, on purpose: they
+ * are what the role filter and the fork skip judge, and a payload trimmed of
+ * them would silently claim nothing (author role) or claim everything
+ * (reviewer role) rather than fail. A loud parse error is the correct outcome.
+ */
 export const AdoPrFieldsSchema = z.object({
   pullRequestId: z.number().int().positive(),
   title: z.string(),
@@ -148,24 +156,21 @@ export const AdoPrFieldsSchema = z.object({
   targetRefName: z.string(),
   isDraft: z.boolean().default(false),
   mergeStatus: z.string().nullish(),
-  createdBy: z.object({ uniqueName: z.string().default("") }).nullish(),
+  createdBy: z.object({ uniqueName: z.string().default("") }),
   lastMergeSourceCommit: z.object({ commitId: z.string().default("") }).nullish(),
-  reviewers: z
-    .array(
-      z.object({
-        vote: z.number().default(0),
-        uniqueName: z.string().default(""),
-        isRequired: z.boolean().default(false),
-      }),
-    )
-    .nullish(),
+  reviewers: z.array(
+    z.object({
+      vote: z.number().default(0),
+      uniqueName: z.string().default(""),
+      isRequired: z.boolean().default(false),
+    }),
+  ),
   /** Present when the PR comes from a fork — same skip rule as GitHub's `isCrossRepository`. */
   forkSource: z.unknown().nullish(),
   repository: z
     .object({
       id: z.string().default(""),
       name: z.string().default(""),
-      /** Project GUID — needed to build the CodeReview artifact ID for policy evaluations. */
       project: z.object({ id: z.string().default("") }).nullish(),
     })
     .nullish(),
@@ -189,20 +194,7 @@ export const AdoThreadSchema = z.object({
 })
 export type AdoThread = z.infer<typeof AdoThreadSchema>
 
-/** The `pullRequestThreads` REST resource wraps threads in `{ value: [...] }`. */
-export const AdoThreadsSchema = z.object({ value: z.array(AdoThreadSchema).nullish() })
-
-export const AdoPolicySchema = z.array(
-  z.object({
-    status: z.string().nullish(),
-    configuration: z
-      .object({
-        isBlocking: z.boolean().default(true),
-        type: z.object({ displayName: z.string().default("") }).nullish(),
-      })
-      .nullish(),
-  }),
-)
+export const AdoThreadListSchema = z.array(AdoThreadSchema)
 
 /** Non-system, non-deleted thread comments flattened to `{ author, at }`. Pure. */
 export const flattenThreadComments = (threads: readonly AdoThread[]): { author: string; at: string }[] =>
@@ -212,15 +204,7 @@ export const flattenThreadComments = (threads: readonly AdoThread[]): { author: 
     .filter((c) => !c.isDeleted && (c.commentType ?? "text") !== "system" && c.publishedDate)
     .map((c) => ({ author: c.author?.uniqueName ?? "", at: c.publishedDate ?? "" }))
 
-/** Names of blocking policies currently failing (ADO's nearest equivalent of failing checks). Pure. */
-export const failingPolicyNames = (raw: z.infer<typeof AdoPolicySchema>): string[] =>
-  raw
-    .filter((p) => p.configuration?.isBlocking !== false) // optional policies don't gate the merge
-    .filter((p) => POLICY_FAILING.has((p.status ?? "").toLowerCase()))
-    .map((p) => p.configuration?.type?.displayName ?? "")
-    .filter(Boolean)
-
-/** One `Build` resource off the `_apis/build/builds` list. */
+/** One `Build` resource off the builds list. */
 export const AdoBuildSchema = z.object({
   sourceVersion: z.string().default(""),
   /** ADO build status: "completed" once finished, else "notStarted"/"inProgress"/etc. */
@@ -268,3 +252,31 @@ export const normalizeAdoBuild = (b: AdoBuild): NormalizedRun => ({
   workflowName: b.definition?.name ?? "",
   createdAt: b.queueTime || b.startTime || b.finishTime || "",
 })
+
+/**
+ * Names of pipeline definitions whose NEWEST run is failing — the PR-level
+ * equivalent of GitHub's failing checks.
+ *
+ * This replaced a `policy/evaluations` call, and the semantics genuinely
+ * narrowed: it covers build validation only. Blocking branch policies that are
+ * not pipelines — minimum reviewers, comment resolution, required work-item
+ * links, third-party status checks — are invisible to the Azure DevOps MCP
+ * server, which exposes no policy tool at all. A PR blocked solely by one of
+ * those no longer raises a `failing-checks` trigger.
+ *
+ * Newest-per-definition matters: a definition that failed and was then re-run
+ * green must not keep reporting, so every run is considered, not just the
+ * failures. Pure.
+ */
+export const failingPipelineNames = (builds: readonly AdoBuild[]): string[] => {
+  const newest = new Map<string, AdoBuild>()
+  for (const build of builds) {
+    const name = build.definition?.name ?? ""
+    if (!name) continue
+    const seen = newest.get(name)
+    if (!seen || newerThan(build.queueTime, seen.queueTime)) newest.set(name, build)
+  }
+  return [...newest.entries()]
+    .filter(([, b]) => b.status.toLowerCase() === "completed" && normalizeAdoBuild(b).conclusion === "failure")
+    .map(([name]) => name)
+}

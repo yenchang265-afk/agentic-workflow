@@ -1,13 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
-  chainedAdoAzWriteViolation,
-  chainedAdoWriteBackstopViolation,
   chainedGithubPrMutation,
   chainedGitPushViolation,
-  isAdoAzWriteViolation,
-  isAdoMcpMutationTool,
-  isAdoWriteBackstopViolation,
+  isAdoMcpToolOutOfStageScope,
+  isAdoMcpWriteViolation,
   isGithubPrMutation,
   isGitPushViolation,
   splitSegments,
@@ -19,7 +16,6 @@ import {
  * suites in sync so the classifiers can't drift between hosts.
  */
 
-const ADO_PRS = "https://dev.azure.com/org/proj/_apis/git/repositories/abc/pullRequests"
 
 test("splitSegments splits on unquoted operators only", () => {
   assert.deepEqual(splitSegments("git status && git diff"), ["git status", "git diff"])
@@ -53,17 +49,7 @@ test("isGithubPrMutation allows reads and comment replies", () => {
   assert.equal(isGithubPrMutation("gh api repos/o/r/pulls/12/comments/9/replies -f body=done"), false)
 })
 
-test("isAdoWriteBackstopViolation allows GET reads, thread replies, and creating a PR", () => {
-  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" "${ADO_PRS}/123?api-version=7.1"`), false)
-  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X POST -d '{}' "${ADO_PRS}/123/threads/9/comments?api-version=7.1"`), false)
-  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -d '{"isDraft":true}' "${ADO_PRS}?api-version=7.1"`), false)
-})
 
-test("isAdoWriteBackstopViolation blocks completes, votes, and non-thread POSTs", () => {
-  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X PATCH -d '{}' "${ADO_PRS}/123?api-version=7.1"`), true)
-  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X PUT -d '{}' "${ADO_PRS}/123/reviewers/me?api-version=7.1"`), true)
-  assert.equal(isAdoWriteBackstopViolation(`curl -sS -u :"$PAT" -X POST -d '{}' "${ADO_PRS}/123/reviewers?api-version=7.1"`), true)
-})
 
 test("isGitPushViolation flags force, delete, cross-branch, and default-branch pushes", () => {
   assert.equal(isGitPushViolation("git push --force origin feature/x"), true)
@@ -100,56 +86,51 @@ test("chained variants catch a mutation hidden behind an allowed read", () => {
   assert.equal(chainedGithubPrMutation("gh pr view 12 && gh api -X PUT repos/o/r/pulls/12/merge"), true)
   assert.equal(chainedGithubPrMutation("gh pr view 12 && gh pr comment 12 --body ok"), false)
   assert.equal(chainedGitPushViolation("git status && git push --force origin x"), true)
-  assert.equal(chainedAdoWriteBackstopViolation(`curl -sS "${ADO_PRS}/1" && curl -X PATCH -d '{}' "${ADO_PRS}/1"`), true)
 })
 
-// --- az CLI write backstop (vectors shared with check-stage-guard.test.mjs) ---
 
-test("isAdoAzWriteViolation allows reads, draft creation, and thread-resource invoke POSTs", () => {
-  assert.equal(isAdoAzWriteViolation("az repos pr show --id 123"), false)
-  assert.equal(isAdoAzWriteViolation("az repos pr list --source-branch feat/x --status active"), false)
-  assert.equal(isAdoAzWriteViolation("az repos pr policy list --id 123"), false)
-  assert.equal(isAdoAzWriteViolation("az pipelines runs list --branch main"), false)
-  assert.equal(isAdoAzWriteViolation("az repos pr create --draft --source-branch feat/x --target-branch main --title t"), false)
-  assert.equal(isAdoAzWriteViolation("az devops invoke --area git --resource pullRequestThreads --route-parameters project=p"), false)
-  assert.equal(
-    isAdoAzWriteViolation(
-      "az devops invoke --area git --resource pullRequestThreadComments --route-parameters project=p --http-method POST --in-file reply.json",
-    ),
-    false,
-  )
-  assert.equal(isAdoAzWriteViolation("az devops invoke --area git --resource pullrequests --http-method POST --in-file pr.json"), false)
-  assert.equal(isAdoAzWriteViolation("az account get-access-token"), false)
-  assert.equal(isAdoAzWriteViolation("git status"), false)
+
+test("isAdoMcpWriteViolation permits only the three writes the loop may make", () => {
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_create_pull_request_thread"), false)
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_reply_to_comment"), false)
+  // Creation is allowed ONLY as a draft — the rule the old name-level check
+  // could not see, because draftness lives in the arguments.
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_create_pull_request", { isDraft: true }), false)
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_create_pull_request", {}), true)
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_create_pull_request", { isDraft: false }), true)
 })
 
-test("isAdoAzWriteViolation blocks non-draft creation and every state mutation", () => {
-  assert.equal(isAdoAzWriteViolation("az repos pr create --source-branch feat/x --target-branch main"), true)
-  assert.equal(isAdoAzWriteViolation("az repos pr update --id 123 --status completed"), true)
-  assert.equal(isAdoAzWriteViolation("az repos pr set-vote --id 123 --vote approve"), true)
-  assert.equal(isAdoAzWriteViolation("az repos pr reviewer add --id 123 --reviewers a@b.c"), true)
-  assert.equal(isAdoAzWriteViolation("az repos pr work-item add --id 123 --work-items 7"), true)
-  assert.equal(isAdoAzWriteViolation("az pipelines run --name Nightly"), true)
-  assert.equal(isAdoAzWriteViolation("az pipelines build queue --definition-id 3"), true)
-  assert.equal(isAdoAzWriteViolation("az devops invoke --area git --resource pullrequests --http-method PATCH"), true)
-  assert.equal(
-    isAdoAzWriteViolation("az devops invoke --area git --resource pullRequestReviewers --http-method POST --in-file r.json"),
-    true,
-  )
-  assert.equal(isAdoAzWriteViolation("az devops invoke --area build --resource builds --http-method POST"), true)
+test("isAdoMcpWriteViolation blocks every mutator, including ones no name pattern would catch", () => {
+  // These are the reason the check enumerates what is PERMITTED: the previous
+  // regex allow-listed by name shape and let all of these through.
+  for (const tool of [
+    "repo_update_pull_request",
+    "repo_vote_pull_request",
+    "repo_update_pull_request_reviewers",
+    "repo_update_pull_request_thread",
+    "repo_create_branch",
+    "pipelines_run_pipeline",
+    "pipelines_update_build_stage",
+    "pipelines_create_pipeline",
+  ]) {
+    assert.equal(isAdoMcpWriteViolation(`mcp__azure-devops__${tool}`), true, tool)
+  }
 })
 
-test("chainedAdoAzWriteViolation catches a mutation hidden behind an allowed segment", () => {
-  assert.equal(chainedAdoAzWriteViolation("az repos pr show --id 1 && az repos pr set-vote --id 1 --vote approve"), true)
-  assert.equal(chainedAdoAzWriteViolation("az repos pr show --id 1 && az repos pr list"), false)
+test("isAdoMcpWriteViolation fails closed on an unknown ADO tool and ignores non-ADO servers", () => {
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_some_future_tool"), true)
+  assert.equal(isAdoMcpWriteViolation("mcp__ado__pr_set_vote"), true)
+  assert.equal(isAdoMcpWriteViolation("mcp__azure-devops__repo_get_pull_request_by_id"), false)
+  assert.equal(isAdoMcpWriteViolation("mcp__github__merge_pull_request"), false)
+  assert.equal(isAdoMcpWriteViolation("Bash"), false)
 })
 
-test("isAdoMcpMutationTool blocks mutating ADO tool names and passes reads/creation/non-ADO servers", () => {
-  assert.equal(isAdoMcpMutationTool("mcp__azure-devops__repo_update_pull_request"), true)
-  assert.equal(isAdoMcpMutationTool("mcp__azure_devops__repo_complete_pull_request"), true)
-  assert.equal(isAdoMcpMutationTool("mcp__ado__pr_set_vote"), true)
-  assert.equal(isAdoMcpMutationTool("mcp__azure-devops__repo_get_pull_request"), false)
-  assert.equal(isAdoMcpMutationTool("mcp__azure-devops__repo_create_pull_request"), false)
-  assert.equal(isAdoMcpMutationTool("mcp__github__merge_pull_request"), false)
-  assert.equal(isAdoMcpMutationTool("Bash"), false)
+test("isAdoMcpToolOutOfStageScope holds a call to the stage's own manifest budget", () => {
+  const granted = ["repo_get_pull_request_by_id", "repo_list_pull_request_threads"]
+  assert.equal(isAdoMcpToolOutOfStageScope("mcp__azure-devops__repo_get_pull_request_by_id", granted), false)
+  // A read that is legal in general but not granted to THIS stage.
+  assert.equal(isAdoMcpToolOutOfStageScope("mcp__azure-devops__pipelines_get_builds", granted), true)
+  // A stage that declares no ADO tools may make no ADO call at all.
+  assert.equal(isAdoMcpToolOutOfStageScope("mcp__azure-devops__repo_get_pull_request_by_id", []), true)
+  assert.equal(isAdoMcpToolOutOfStageScope("Bash", []), false)
 })

@@ -3,7 +3,8 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
-import { effectiveAllowlist, stageDef } from "../manifest/schema.js"
+import { ADO_TOOLS } from "../source/ado-tools.js"
+import { effectiveAllowlist, effectivePlatformTools, stageDef } from "../manifest/schema.js"
 import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext, withCheckResults } from "./engine.js"
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
@@ -561,7 +562,7 @@ test("pr-sitter: a missing triage verdict reads as FAIL (nothing to do), never a
 
 // --- code-platform prompt switching (additive; the oracle above is untouched) ---
 
-test("pr-sitter prompts render gh guidance by default and ADO REST guidance when the state is stamped ado", () => {
+test("pr-sitter prompts render gh guidance by default and ADO MCP guidance when the state is stamped ado", () => {
   const sitter = loadManifest(WORKFLOWS_DIR, "pr-sitter")
   const state: WorkflowState = {
     kind: "pr-sitter",
@@ -573,16 +574,20 @@ test("pr-sitter prompts render gh guidance by default and ADO REST guidance when
   }
   const gh = composePrompt(sitter, state, "triage")
   assert.match(gh, /gh pr view/)
-  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
-  // An ado state renders the REST/curl branch — the only way the loop reaches ADO.
-  const ado = composePrompt(sitter, { ...state, platform: "ado" }, "triage")
-  assert.match(ado, /_apis\/git\/pullrequests/)
-  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
+  assert.doesNotMatch(gh, /mcp__azure-devops__/)
+  // An ado state renders the MCP branch — the only way the loop reaches ADO.
+  const adoState = { ...state, platform: "ado" as const, ado: { project: "Payments", repository: "api" } }
+  const ado = composePrompt(sitter, adoState, "triage")
+  assert.match(ado, /mcp__azure-devops__repo_get_pull_request_by_id/)
+  assert.match(ado, /mcp__azure-devops__pipelines_get_builds/)
+  // The coordinates render literally, so no agent has to parse a git remote.
+  assert.match(ado, /"project":"Payments"/)
+  assert.match(ado, /"repositoryId":"api"/)
   assert.doesNotMatch(ado, /gh pr view/)
   assert.doesNotMatch(ado, /az repos/) // no az CLI transport
-  const publish = composePrompt(sitter, { ...state, platform: "ado", stage: "publish" }, "publish")
-  assert.match(publish, /threads\/<threadId>\/comments/)
-  assert.match(publish, /NEVER complete, abandon, or approve/)
+  const publish = composePrompt(sitter, { ...adoState, stage: "publish" }, "publish")
+  assert.match(publish, /mcp__azure-devops__repo_reply_to_comment/)
+  assert.match(publish, /NEVER call `repo_update_pull_request`/)
   assert.doesNotMatch(publish, /gh pr comment/)
   assert.doesNotMatch(publish, /az devops invoke/)
 })
@@ -638,16 +643,17 @@ test("review-sitter: a missing fetch verdict reads as FAIL (done), never as PASS
   assert.equal(action.kind, "done")
 })
 
-test("review-sitter prompts render gh guidance by default and ADO REST guidance when stamped ado", () => {
+test("review-sitter prompts render gh guidance by default and ADO MCP guidance when stamped ado", () => {
   const state = reviewState("fetch")
   const gh = composePrompt(reviewer, state, "fetch")
   assert.match(gh, /gh pr view/)
-  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
-  const ado = composePrompt(reviewer, { ...state, platform: "ado" }, "fetch")
-  assert.match(ado, /_apis\/git\/pullrequests/)
+  assert.doesNotMatch(gh, /mcp__azure-devops__/)
+  const adoState = { ...state, platform: "ado" as const, ado: { project: "Payments", repository: "api" } }
+  const ado = composePrompt(reviewer, adoState, "fetch")
+  assert.match(ado, /mcp__azure-devops__repo_get_pull_request_by_id/)
   assert.doesNotMatch(ado, /gh pr view/)
-  const publish = composePrompt(reviewer, { ...state, platform: "ado", stage: "publish" }, "publish")
-  assert.match(publish, /pullRequests\/<n>\/threads/)
+  const publish = composePrompt(reviewer, { ...adoState, stage: "publish" }, "publish")
+  assert.match(publish, /mcp__azure-devops__repo_create_pull_request_thread/)
   assert.match(publish, /NEVER vote, approve, complete, abandon, or push/)
   assert.doesNotMatch(publish, /gh pr comment/)
 })
@@ -753,10 +759,13 @@ test("dep-sitter publish pushes only feature/ branches and opens draft PRs — n
   const prompt = composePrompt(depSitter, depState("publish", { scan: "W", verify: "OK" }), "publish")
   assert.match(prompt, /gh pr create --draft/)
   assert.match(prompt, /NEVER merge or close/)
-  const adoAllow = effectiveAllowlist(publish, "ado")
-  assert.ok(adoAllow.some((g) => g.includes("dev.azure.com")))
-  assert.ok(adoAllow.every((g) => !/gh /.test(g)))
-  assert.ok(adoAllow.every((g) => !/^az /.test(g))) // no az CLI globs
+  // ADO is reached only through the MCP server, so no bash glob survives — the
+  // stage's ADO surface is its platformTools list instead.
+  assert.deepEqual(effectiveAllowlist(publish, "ado"), publish.bashAllowlist)
+  assert.deepEqual(publish.platformAllowlist["ado"], [])
+  const adoTools = effectivePlatformTools(publish, "ado")
+  assert.ok(adoTools.includes("repo_create_pull_request"))
+  assert.ok(adoTools.every((t) => Object.values(ADO_TOOLS).includes(t as never)))
 })
 
 test("dep-sitter allowlists cover all three ecosystems' read/test verbs; publish stays unchanged", () => {
@@ -779,11 +788,10 @@ test("dep-sitter publish renders gh guidance by default and ADO PR-creation guid
   const state = depState("publish", { scan: "W", verify: "OK" })
   const gh = composePrompt(depSitter, state, "publish")
   assert.match(gh, /gh pr create --draft/)
-  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
-  const ado = composePrompt(depSitter, { ...state, platform: "ado" }, "publish")
-  assert.match(ado, /_apis\/git\/repositories\/<repo>\/pullrequests\?api-version=7\.1/)
+  assert.doesNotMatch(gh, /mcp__azure-devops__/)
+  const ado = composePrompt(depSitter, { ...state, platform: "ado" as const, ado: { project: "Payments", repository: "api" } }, "publish")
+  assert.match(ado, /mcp__azure-devops__repo_create_pull_request/)
   assert.match(ado, /"isDraft":true/)
-  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
   assert.doesNotMatch(ado, /gh pr create/)
 })
 
@@ -833,28 +841,32 @@ test("main-sitter can never push the watched branch: the push glob is scoped to 
   const prompt = composePrompt(mainSitter, mainState("publish", { diagnose: "D", verify: "OK" }), "publish")
   assert.match(prompt, /gh pr create --draft --base main/)
   assert.match(prompt, /NEVER push main/)
-  const adoAllow = effectiveAllowlist(publish, "ado")
-  assert.ok(adoAllow.some((g) => g.includes("dev.azure.com")))
-  assert.ok(adoAllow.every((g) => !/gh /.test(g)))
-  assert.ok(adoAllow.every((g) => !/^az /.test(g))) // no az CLI globs
+  // ADO is reached only through the MCP server, so no bash glob survives — the
+  // stage's ADO surface is its platformTools list instead.
+  assert.deepEqual(effectiveAllowlist(publish, "ado"), publish.bashAllowlist)
+  assert.deepEqual(publish.platformAllowlist["ado"], [])
+  const adoTools = effectivePlatformTools(publish, "ado")
+  assert.ok(adoTools.includes("repo_create_pull_request"))
+  assert.ok(adoTools.every((t) => Object.values(ADO_TOOLS).includes(t as never)))
 })
 
-test("main-sitter renders gh guidance by default and ADO REST guidance when stamped ado", () => {
+test("main-sitter renders gh guidance by default and ADO MCP guidance when stamped ado", () => {
   const diagState = mainState("diagnose")
   const gh = composePrompt(mainSitter, diagState, "diagnose")
   assert.match(gh, /gh run view --log/)
-  assert.doesNotMatch(gh, /AZURE_DEVOPS_EXT_PAT/)
-  const ado = composePrompt(mainSitter, { ...diagState, platform: "ado" }, "diagnose")
-  assert.match(ado, /_apis\/build\/builds\/<buildId>\/logs/)
-  assert.match(ado, /_apis\/git\/repositories\/<repo>\/commits\/<sha>\/pullrequests/)
-  assert.match(ado, /curl -sS -u :"\$AZURE_DEVOPS_EXT_PAT"/)
+  assert.doesNotMatch(gh, /mcp__azure-devops__/)
+  const ado = composePrompt(mainSitter, { ...diagState, platform: "ado" as const, ado: { project: "Payments", repository: "api" } }, "diagnose")
+  assert.match(ado, /mcp__azure-devops__pipelines_get_build_log_by_id/)
+  assert.match(ado, /mcp__azure-devops__repo_list_pull_requests_by_commits/)
+  // That one tool spells it `repository`, not `repositoryId` — the prompt says so.
+  assert.match(ado, /"repository":"api"/)
   assert.doesNotMatch(ado, /gh run view/)
 
   const pubState = mainState("publish", { diagnose: "D", verify: "OK" })
   const ghPublish = composePrompt(mainSitter, pubState, "publish")
   assert.match(ghPublish, /gh pr create --draft --base main/)
-  const adoPublish = composePrompt(mainSitter, { ...pubState, platform: "ado" }, "publish")
-  assert.match(adoPublish, /_apis\/git\/repositories\/<repo>\/pullrequests\?api-version=7\.1/)
+  const adoPublish = composePrompt(mainSitter, { ...pubState, platform: "ado" as const, ado: { project: "Payments", repository: "api" } }, "publish")
+  assert.match(adoPublish, /mcp__azure-devops__repo_create_pull_request/)
   assert.match(adoPublish, /"isDraft":true/)
   assert.match(adoPublish, /NEVER push main/)
   assert.doesNotMatch(adoPublish, /gh pr create/)
@@ -1068,4 +1080,48 @@ test("the attempts section renders into the BUILD prompt with one line per attem
   assert.match(prompt, /do not repeat a fix that already failed/i)
   assert.match(prompt, /iteration 1.*verify.*FAIL.*two tests are red/)
   assert.match(prompt, /iteration 2.*review.*FAIL.*missing input validation/)
+})
+
+test("every ADO stage prompt names exactly the tools its manifest grants — and no others", () => {
+  // This is the drift gate. Commit 18bd30b removed the last ADO-over-MCP mode
+  // because parallel command sets had to be kept in agreement BY HAND and a
+  // prompt could silently diverge from the allowlist governing it. Here the
+  // agreement is checked mechanically instead: a tool granted but never named
+  // is dead permission, and a tool named but not granted is a call the guard
+  // will refuse at runtime.
+  const known = Object.values(ADO_TOOLS)
+  let checked = 0
+  for (const kind of ["pr-sitter", "review-sitter", "main-sitter", "dep-sitter"]) {
+    const manifest = loadManifest(WORKFLOWS_DIR, kind)
+    for (const stage of manifest.manifest.stages) {
+      const granted = effectivePlatformTools(stage, "ado")
+      if (granted.length === 0) continue
+      checked += 1
+      const state: WorkflowState = {
+        kind,
+        goal: "g",
+        stage: stage.name,
+        iteration: 0,
+        artifacts: {},
+        git: { base: "main", branch: "feat/x" },
+        platform: "ado",
+        ado: { project: "Payments", repository: "api" },
+      }
+      const prompt = composePrompt(manifest, state, stage.name)
+      // Whole-name match: `repo_create_pull_request` is a PREFIX of
+      // `repo_create_pull_request_thread`, so a bare substring test reports a
+      // tool as present whenever its longer sibling is.
+      const names = (tool: string) => new RegExp(`mcp__azure-devops__${tool}(?![a-z_])`).test(prompt)
+      for (const tool of granted) {
+        assert.ok(names(tool), `${kind}/${stage.name} grants ${tool} but its prompt never names it`)
+      }
+      for (const tool of known) {
+        if (granted.includes(tool)) continue
+        assert.ok(!names(tool), `${kind}/${stage.name} names ${tool} but its manifest does not grant it`)
+      }
+      // The transport this replaced must not survive anywhere in an ADO prompt.
+      assert.doesNotMatch(prompt, /curl |AZURE_DEVOPS_EXT_PAT|api-version=/, `${kind}/${stage.name} still names raw REST`)
+    }
+  }
+  assert.equal(checked, 7, "expected all seven ADO stages to be covered")
 })

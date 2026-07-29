@@ -208,21 +208,60 @@ ensure_gh() {
   command -v gh >/dev/null 2>&1 && ok "gh installed"
 }
 
+# The Azure DevOps MCP server, pinned — its tool NAMES are baked into stage
+# prompts and generated agent frontmatter, so a floating version can rename the
+# surface out from under them. Mirrors ADO_MCP_PACKAGE in
+# packages/core/src/source/ado-tools.ts.
+ADO_MCP_PACKAGE="@azure-devops/mcp@2.8.1"
+
 # ---------------------------------------------------------------------------
 # Azure DevOps prerequisites (ADO mode only)
 # ---------------------------------------------------------------------------
-# codePlatform "ado" reaches Azure DevOps only through its REST API: raw
-# curl/fetch authenticated with AZURE_DEVOPS_EXT_PAT (nothing to install beyond
-# curl), for both the stage agents and the engine's own polling/ship calls.
+# codePlatform "ado" reaches Azure DevOps ONLY through the Azure DevOps MCP
+# server (@azure-devops/mcp, launched with npx), for both the stage agents and
+# the engine's own polling/ship calls. Nothing to install: npx fetches the
+# pinned version on first use. Auth is a PAT in AZURE_DEVOPS_EXT_PAT, which the
+# engine base64-encodes into the server's PERSONAL_ACCESS_TOKEN itself.
+# The value @azure-devops/mcp expects in PERSONAL_ACCESS_TOKEN: base64 of
+# ":<pat>". The server decodes it, splits on ":" and keeps everything after the
+# FIRST colon, so the username half is discarded and an empty one is correct.
+# A value with no colon decodes to an empty token and fails opaquely.
+ado_mcp_token() {
+  printf ':%s' "${AZURE_DEVOPS_EXT_PAT:-}" | base64 | tr -d '\n'
+}
+
+# The organization NAME the server takes as its positional argument, read from
+# the configured organization URL (https://dev.azure.com/<org>). Read from the
+# user layer first, then the repo's config; empty when neither has one, in which
+# case registration is skipped and a manual note is printed instead of guessing.
+ado_org_from_config() {
+  [ -n "${ADO_ORG:-}" ] && { printf '%s' "$ADO_ORG"; return 0; }
+  command -v jq >/dev/null 2>&1 || return 0
+  local url="" f
+  for f in "$HOME/.config/agentic-workflow/agentic-workflow.json" "$REPO_DIR/.agentic-workflow.json"; do
+    [ -f "$f" ] || continue
+    url="$(jq -r '.ado.organization // empty' "$f" 2>/dev/null || true)"
+    [ -n "$url" ] && break
+  done
+  [ -n "$url" ] || return 0
+  printf '%s' "${url%/}" | sed -E 's#.*/([^/]+)$#\1#'
+}
+ADO_ORG="$(ado_org_from_config)"
+
 ensure_ado() {
   if [ "$WANT_ADO" -eq 0 ]; then
     skip "Azure DevOps (--no-ado)"
     return 0
   fi
-  if command -v curl >/dev/null 2>&1; then
-    ok "Azure DevOps: REST API over curl (auth via AZURE_DEVOPS_EXT_PAT)"
+  if command -v npx >/dev/null 2>&1; then
+    ok "Azure DevOps: MCP server via npx ($ADO_MCP_PACKAGE)"
   else
-    todo "Azure DevOps needs curl (see the curl step above)"
+    todo "Azure DevOps needs npx (install Node.js 20+)"
+  fi
+  if [ -n "${AZURE_DEVOPS_EXT_PAT:-}" ]; then
+    ok "Azure DevOps: AZURE_DEVOPS_EXT_PAT is set"
+  else
+    todo "Azure DevOps: export AZURE_DEVOPS_EXT_PAT=<pat> (Code read + PR contribute), or set ado.pat"
   fi
 }
 
@@ -299,6 +338,21 @@ register_mcp_claude() {
         && ok "mcp(claude): chrome-devtools registered"
     fi
   fi
+
+  # The stage agents call Azure DevOps through this server, and the tool names
+  # in their prompts hard-code the server NAME `azure-devops` — registering it
+  # under any other name makes every ADO stage call a tool that does not exist.
+  if [ "$WANT_ADO" -eq 1 ] && [ -n "$ADO_ORG" ]; then
+    if printf '%s' "$existing" | grep -q '^azure-devops'; then
+      ok "mcp(claude): azure-devops"
+    elif [ "$CHECK_ONLY" -eq 1 ]; then
+      todo "mcp(claude): azure-devops (would register)"
+    else
+      claude mcp add azure-devops --env "PERSONAL_ACCESS_TOKEN=$(ado_mcp_token)" \
+        -- npx -y "$ADO_MCP_PACKAGE" "$ADO_ORG" -d repositories -d pipelines -a pat \
+        && ok "mcp(claude): azure-devops registered"
+    fi
+  fi
 }
 
 register_mcp_opencode() {
@@ -324,6 +378,10 @@ register_mcp_opencode() {
   local filter='.mcp = (.mcp // {})'
   if [ "$WANT_BROWSER" -eq 1 ]; then
     filter="$filter"' | .mcp["chrome-devtools"] = {"type":"local","command":["npx","-y","chrome-devtools-mcp@latest","--isolated"],"enabled":true}'
+  fi
+  # Same fixed name as the Claude side — the stage prompts hard-code it.
+  if [ "$WANT_ADO" -eq 1 ] && [ -n "$ADO_ORG" ]; then
+    filter="$filter"' | .mcp["azure-devops"] = {"type":"local","command":["npx","-y","'"$ADO_MCP_PACKAGE"'","'"$ADO_ORG"'","-d","repositories","-d","pipelines","-a","pat"],"environment":{"PERSONAL_ACCESS_TOKEN":"'"$(ado_mcp_token)"'"},"enabled":true}'
   fi
   if jq "$filter" "$cfg" > "$tmp" 2>/dev/null; then
     mv "$tmp" "$cfg"

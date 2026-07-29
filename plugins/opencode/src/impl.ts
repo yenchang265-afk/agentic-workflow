@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
-import { DEFAULT_CONFIG, applyAdoPatEnv, loadConfig } from "./config.ts"
+import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
 import {
   agentModel,
   enabledWorkflowKinds,
@@ -20,7 +20,8 @@ import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWo
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
-import { chainedAdoAzWriteViolation, chainedAdoWriteBackstopViolation, chainedGithubPrMutation, chainedGitPushViolation } from "@agentic-workflow/core/task/write-backstop"
+import { effectivePlatformTools, stageDef } from "@agentic-workflow/core/manifest/schema"
+import { chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "@agentic-workflow/core/task/write-backstop"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-workflow/core/task/store"
 
@@ -204,9 +205,6 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       await client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
       config = lastGood ?? DEFAULT_CONFIG
     }
-    // Export ado.pat → AZURE_DEVOPS_EXT_PAT (when unset) so the sitter's
-    // stage-agent curl calls inherit it; the env var always wins.
-    applyAdoPatEnv(config)
     await warnIgnoredUserConfigOnce()
     await reportAgentModelsOnce(config)
     return config
@@ -374,6 +372,21 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       } catch (err) {
         await log("warn", `worktree reconciliation failed: ${(err as Error).message}`)
       }
+    }
+  }
+
+  /**
+   * The Azure DevOps MCP tools the loop's CURRENT stage may call, from its
+   * manifest. Resolved per call rather than cached: a loop advances stages
+   * in place, and a cached list would hand the next stage this one's budget.
+   */
+  const adoStageTools = (state: { kind?: string; stage: string }): string[] => {
+    try {
+      const loaded = driver.manifestFor(state.kind ?? "engineering")
+      return effectivePlatformTools(stageDef(loaded.manifest, state.stage), "ado")
+    } catch {
+      // An unreadable manifest must not open the gate: no manifest, no tools.
+      return []
     }
   }
 
@@ -547,7 +560,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // Read tools are resolved too (they were not before): a REVIEW stage's work
       // is almost entirely reading, so leaving them out would make its evidence
       // ledger look empty and reject every honest PASS.
-      if (!loop && anyWorkflowActive() && (input.tool === "bash" || EDIT_TOOLS.has(input.tool) || READ_TOOLS.has(input.tool))) {
+      if (
+        !loop &&
+        anyWorkflowActive() &&
+        (input.tool === "bash" || EDIT_TOOLS.has(input.tool) || READ_TOOLS.has(input.tool) || isAdoMcpTool(input.tool))
+      ) {
         try {
           const found = await driver.findDrivingWorkflow(client, input.sessionID)
           loop = found?.state
@@ -561,6 +578,29 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // scan only backstops sessions that could not be attributed to any loop.
       const planTaskId = loop ? (loop.stage === "plan" ? (loop.task?.id ?? null) : null) : planStageTaskId()
       const guardCtx = { tasksDir: config.tasksDir, planTaskId }
+      // Azure DevOps MCP guard. With ADO reached only through the MCP server,
+      // OpenCode's bash allowlist says nothing about it — `tool.execute.before`
+      // is the ONLY enforcement point this host has, so both checks live here.
+      // Two of them, both fail-closed: what the loop may ever write, and what
+      // THIS stage's manifest granted.
+      if (loop?.platform === "ado" && isAdoMcpTool(input.tool)) {
+        const args = (output.args ?? {}) as Record<string, unknown>
+        if (isAdoMcpWriteViolation(input.tool, args)) {
+          throw new Error(
+            "agentic-workflow: blocked an Azure DevOps write — loops may only read, post a comment thread or reply, " +
+              "or create a DRAFT pull request (isDraft: true); completing, abandoning, approving, voting, reviewer " +
+              "changes, branch creation, and pipeline runs stay a human call.",
+          )
+        }
+        const granted = adoStageTools(loop)
+        if (isAdoMcpToolOutOfStageScope(input.tool, granted)) {
+          throw new Error(
+            `agentic-workflow: the ${loop.stage} stage may not call ${input.tool} — its manifest grants ` +
+              `${granted.length ? granted.join(", ") : "no ADO tools"}. Add it to platformTools in ` +
+              `workflows/<kind>/workflow.json if the stage genuinely needs it.`,
+          )
+        }
+      }
       if (input.tool === "bash") {
         const cmd: unknown = output.args?.command
         if (typeof cmd === "string") {
@@ -573,14 +613,6 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // never make a write beyond thread replies / PR creation); the gh/push
           // rules apply only while a loop drives this session, so a human's
           // manual `gh pr merge` in a non-loop session is untouched.
-          if (chainedAdoWriteBackstopViolation(cmd) || chainedAdoAzWriteViolation(cmd)) {
-            throw new Error(
-              "agentic-workflow: blocked an Azure DevOps write — loops may only read, reply to a comment thread, " +
-                "or create a DRAFT PR (curl: GET / POST …/threads… / POST …/pullrequests; az: reads, " +
-                "invoke POST to a thread resource, az repos pr create --draft); " +
-                "completing/abandoning/approving stays a human call.",
-            )
-          }
           if (loop && (chainedGithubPrMutation(cmd) || chainedGitPushViolation(cmd))) {
             throw new Error(
               "agentic-workflow: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +

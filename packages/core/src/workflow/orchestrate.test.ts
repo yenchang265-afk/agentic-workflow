@@ -17,11 +17,23 @@ import {
   taskGoal,
   taskRef,
 } from "./orchestrate.js"
+import type { AdoGateway } from "../source/ado-gateway.js"
 
 const noopShell = ((..._args: unknown[]) => {
   throw new Error("shell must not run during source construction")
 }) as unknown as Shell
 const noopClient = {} as unknown as Client
+
+/**
+ * A gateway that is never called â€” source CONSTRUCTION must not touch Azure
+ * DevOps. Its presence is what lets an ado-platform kind wire at all, so these
+ * tests pass it wherever they exercise the ado path.
+ */
+const noopGateway = new Proxy({} as AdoGateway, {
+  get: () => () => {
+    throw new Error("the gateway must not be called during source construction")
+  },
+})
 
 const task = (body: string) => {
   const raw = serializeTask({ title: "Do the thing", body })
@@ -60,7 +72,7 @@ test("makeManifestCache loads eagerly, caches, and serves lazy kinds", () => {
 test("an unscoped poll on a default config is engineering only; the sitters are opt-in", () => {
   // Every sitter is experimental, so a bare poll on a default config reaches
   // none of them until one is explicitly enabled.
-  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false, adoGateway: noopGateway }
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
 
   assert.deepEqual(
@@ -116,7 +128,7 @@ test("an unloadable kind is skipped with a warning, not fatal", () => {
 test("a kind filter restricts the sources to that kind", () => {
   const config = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: true } } })
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
-  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false, adoGateway: noopGateway }
   assert.equal(buildWorkSources(deps, config, manifestFor, "pr-sitter").length, 1)
   assert.equal(buildWorkSources(deps, DEFAULT_CONFIG, manifestFor, "engineering").length, 1)
 })
@@ -126,7 +138,7 @@ test("buildWorkSources wires review-sitter as a second pull-request source along
     workflows: { "pr-sitter": { enabled: true }, "review-sitter": { enabled: true } },
   })
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
-  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false, adoGateway: noopGateway }
   const sources = buildWorkSources(deps, config, manifestFor)
   assert.equal(sources.length, 3)
   assert.deepEqual(
@@ -148,7 +160,7 @@ test('a manifest using the legacy "github-pr" type still wires on both platforms
   fs.writeFileSync(manifestPath, JSON.stringify(legacy))
 
   const manifestFor = makeManifestCache(workflows)
-  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false, adoGateway: noopGateway }
   const github = parseConfigWith(ConfigSchema, { workflows: { "pr-sitter": { enabled: true } } })
   assert.equal(buildWorkSources(deps, github, manifestFor, "pr-sitter").length, 1)
 
@@ -165,7 +177,7 @@ test("buildWorkSources wires dep-sitter and main-sitter on both github and ado â
     workflows: { "dep-sitter": { enabled: true }, "main-sitter": { enabled: true } },
   })
   const manifestFor = makeManifestCache(defaultWorkflowsDir())
-  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false }
+  const deps = { $: noopShell, client: noopClient, directory: "/repo", log: () => {}, isDriving: () => false, adoGateway: noopGateway }
   assert.deepEqual(
     buildWorkSources(deps, config, manifestFor).map((s) => s.workflowKind),
     ["engineering", "dep-sitter", "main-sitter"],
@@ -241,4 +253,31 @@ test("the workflows.dep-sitter.ecosystem override reaches the source through bui
   await sources[0]?.claimNext()
   assert.ok(ran.some((c) => c.startsWith("osv-scanner")))
   assert.ok(ran.every((c) => !c.startsWith("npm ")))
+})
+
+test("an ado kind with no gateway contributes no source and warns, leaving other kinds polling", () => {
+  // One unusable ADO section must not stop the whole host: the engineering
+  // backlog is platform-agnostic and has to keep running.
+  const warnings: string[] = []
+  const config = parseConfigWith(ConfigSchema, {
+    codePlatform: "ado",
+    ado: { organization: "https://dev.azure.com/acme", project: "widgets", selfLogin: "sitter@acme.com" },
+    workflows: { "pr-sitter": { enabled: true } },
+  })
+  const sources = buildWorkSources(
+    {
+      $: noopShell,
+      client: noopClient,
+      directory: "/repo",
+      log: (_l: string, m: string) => void warnings.push(m),
+      isDriving: () => false,
+    },
+    config,
+    makeManifestCache(defaultWorkflowsDir()),
+  )
+  assert.deepEqual(
+    sources.map((s) => s.workflowKind),
+    ["engineering"],
+  )
+  assert.match(warnings.join("\n"), /no Azure DevOps MCP gateway is available/)
 })

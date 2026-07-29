@@ -13,3 +13,7 @@ permission:
     # never complete/abandon/approve/reviewer a PR (those hit `/pullrequests/<id>`
     # or `/reviewers`, which don't match the glob).
     # {{allowlist}} — globs generated from the stage's allowlists in workflows/*/workflow.json; edit the manifest, not here
+# Azure DevOps MCP tools this stage may call — generated from platformTools
+# in workflows/*/workflow.json; edit the manifest, not here.
+tools:
+  {{adoTools}}

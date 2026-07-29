@@ -2,13 +2,14 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { Shell } from "../host.js"
 import type { Config } from "./state.js"
-import { shipPr, type ShipHttp } from "./ship-pr.js"
+import { shipPr } from "./ship-pr.js"
+import type { AdoGateway, AdoResult } from "../source/ado-gateway.js"
 
 /**
- * `shipPr` over a scripted git shell (`$`) and a scripted ADO HTTP transport
- * (`http`) — mirrors the fake-shell convention of `git.test.ts` and
+ * `shipPr` over a scripted git shell (`$`) and a scripted `AdoGateway` —
+ * mirrors the fake-shell convention of `git.test.ts` and
  * `source/ado-pr.test.ts`. `gh` calls go through the same `$`, so GitHub
- * coverage needs no separate transport.
+ * coverage needs no gateway.
  */
 
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
@@ -61,13 +62,55 @@ const baseConfig: Config = {
   workflows: {},
 }
 
-type Route = { match: string; status?: number; body?: string }
+interface GatewayScript {
+  /** Active PRs matching the source branch — a non-empty list means "reuse". */
+  existing?: unknown[]
+  /** The repository payload the default branch is read from. */
+  repo?: unknown
+  /** The created PR payload, or an error message to fail creation with. */
+  created?: unknown
+  createError?: string
+  /** Make every call throw, to prove shipPr still never throws. */
+  throws?: boolean
+}
 
-const scriptedHttp = (routes: Route[]): ShipHttp => async (url) => {
-  const hit = routes.find((r) => url.includes(r.match))
-  const status = hit?.status ?? 200
-  const body = hit?.body ?? ""
-  return { ok: status >= 200 && status < 300, status, statusText: `status ${status}`, text: async () => body }
+const ok = (data: unknown): AdoResult => ({ ok: true, data })
+
+const scriptedGateway = (script: GatewayScript = {}, calls: unknown[] = []): AdoGateway => {
+  const guard = <T>(fn: () => T): T => {
+    if (script.throws) throw new Error("ECONNRESET")
+    return fn()
+  }
+  return {
+    async listPullRequests(a) {
+      calls.push(a)
+      return guard(() => ok(script.existing ?? []))
+    },
+    async getRepository(a) {
+      calls.push(a)
+      return guard(() => ok(script.repo ?? {}))
+    },
+    async createPullRequest(a) {
+      calls.push(a)
+      return guard(() => (script.createError ? { ok: false, error: script.createError } : ok(script.created ?? { pullRequestId: 99 })))
+    },
+    async getPullRequest() {
+      throw new Error("shipPr must not fetch a PR by id")
+    },
+    async listPullRequestsByCommits() {
+      throw new Error("shipPr must not query commits")
+    },
+    async listPullRequestThreads() {
+      throw new Error("shipPr must not read threads")
+    },
+    async listBuilds() {
+      throw new Error("shipPr must not list builds")
+    },
+    async getBuildStatus() {
+      throw new Error("shipPr must not read build status")
+    },
+    async close() {},
+  }
 }
 
 test("shipPr is a no-op when there's no feature/<id> branch", async () => {
@@ -161,31 +204,27 @@ const adoConfig: Config = {
 test("shipPr (ado) fails clearly when ado.repository is not configured", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
   const cfg: Config = { ...adoConfig, ado: { ...adoConfig.ado!, repository: undefined } }
-  const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", scriptedHttp([]))
+  const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", scriptedGateway())
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.match(result.reason ?? "", /ado.repository/)
 })
 
-test("shipPr (ado) fails clearly when no PAT is available", async () => {
+test("shipPr (ado) fails clearly when no gateway is available", async () => {
+  // A credential problem now stops the gateway being built at all, so the ship
+  // gate sees "no gateway" rather than a PAT error. The ship still succeeds —
+  // only the PR does not open.
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const prevPat = process.env.AZURE_DEVOPS_EXT_PAT
-  delete process.env.AZURE_DEVOPS_EXT_PAT
-  try {
-    const cfg: Config = { ...adoConfig, ado: { ...adoConfig.ado!, pat: undefined } }
-    const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", scriptedHttp([]))
-    assert.equal(result.attempted, true)
-    assert.equal(result.created, false)
-    assert.match(result.reason ?? "", /AZURE_DEVOPS_EXT_PAT/)
-  } finally {
-    if (prevPat !== undefined) process.env.AZURE_DEVOPS_EXT_PAT = prevPat
-  }
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting")
+  assert.equal(result.attempted, true)
+  assert.equal(result.created, false)
+  assert.match(result.reason ?? "", /no Azure DevOps MCP gateway/)
 })
 
 test("shipPr (ado) reuses an existing active PR for the branch", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const http = scriptedHttp([{ match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [{ pullRequestId: 42 }] }) }])
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  const gateway = scriptedGateway({ existing: [{ pullRequestId: 42 }] })
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", gateway)
   assert.deepEqual(result, {
     attempted: true,
     created: false,
@@ -195,89 +234,46 @@ test("shipPr (ado) reuses an existing active PR for the branch", async () => {
 
 test("shipPr (ado) opens a new draft PR when none exists, using the repo's default branch", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const http = scriptedHttp([
-    { match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [] }) },
-    { match: "_apis/git/repositories/widgets?api-version", body: JSON.stringify({ defaultBranch: "refs/heads/main" }) },
-    { match: "pullrequests?api-version", body: JSON.stringify({ pullRequestId: 99 }) },
-  ])
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  const calls: unknown[] = []
+  const gateway = scriptedGateway({ repo: { defaultBranch: "refs/heads/main" }, created: { pullRequestId: 99 } }, calls)
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", gateway)
   assert.deepEqual(result, {
     attempted: true,
     created: true,
     url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99",
   })
+  // A loop-opened PR is always a draft — never review-ready before a human looks.
+  const create = calls.at(-1) as { isDraft?: boolean; targetRefName?: string }
+  assert.equal(create.isDraft, true)
+  assert.equal(create.targetRefName, "refs/heads/main")
 })
 
 test("shipPr (ado) ignores type-confused API bodies instead of acting on them", async () => {
   // A string pullRequestId must never become a reuse URL, and a non-string
   // defaultBranch must fall back — malformed bodies degrade, never propagate.
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const http = scriptedHttp([
-    { match: "pullrequests?searchCriteria", body: JSON.stringify({ value: [{ pullRequestId: "42/../evil" }] }) },
-    { match: "_apis/git/repositories/widgets?api-version", body: JSON.stringify({ defaultBranch: 7 }) },
-    { match: "pullrequests?api-version", body: JSON.stringify({ pullRequestId: 99 }) },
-  ])
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  const gateway = scriptedGateway({
+    existing: [{ pullRequestId: "42/../evil" }],
+    repo: { defaultBranch: 7 },
+    created: { pullRequestId: 99 },
+  })
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", gateway)
   assert.equal(result.created, true)
   assert.equal(result.url, "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99")
 })
 
 test("shipPr (ado) reports a reason when PR creation fails", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const http = scriptedHttp([
-    { match: "pullrequests?searchCriteria", status: 200, body: JSON.stringify({ value: [] }) },
-    { match: "_apis/git/repositories/widgets?api-version", status: 200, body: JSON.stringify({}) },
-    { match: "pullrequests?api-version", status: 403, body: "" },
-  ])
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", http)
+  const gateway = scriptedGateway({ createError: "TF401027: you need Contribute permission (403)" })
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", gateway)
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.match(result.reason ?? "", /403/)
 })
 
-test("shipPr (ado) sends ado.customHeaders on every REST call, with the env var overriding them", async () => {
-  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const seen: Array<Readonly<Record<string, string>>> = []
-  const capturingHttp: ShipHttp = async (url, init) => {
-    seen.push(init.headers)
-    const body = url.includes("searchCriteria")
-      ? JSON.stringify({ value: [] })
-      : url.includes("_apis/git/repositories/widgets?api-version")
-        ? JSON.stringify({ defaultBranch: "refs/heads/main" })
-        : JSON.stringify({ pullRequestId: 99 })
-    return { ok: true, status: 200, statusText: "ok", text: async () => body }
-  }
-  const cfg: Config = {
-    ...adoConfig,
-    ado: { ...adoConfig.ado!, customHeaders: { "Proxy-Authorization": "cfg-token", "X-Route": "internal" } },
-  }
-  const prevEnv = process.env.AGENTIC_WORKFLOW_ADO_HEADERS
-  process.env.AGENTIC_WORKFLOW_ADO_HEADERS = JSON.stringify({ "Proxy-Authorization": "env-token" })
-  try {
-    const result = await shipPr($, noop, "/repo", cfg, "engineering", "task-1", "Add rate limiting", capturingHttp)
-    assert.equal(result.created, true)
-    assert.ok(seen.length >= 1)
-    for (const headers of seen) {
-      assert.ok(headers.Authorization?.startsWith("Basic ")) // built-in auth preserved
-      assert.equal(headers["X-Route"], "internal") // config-only header present
-      assert.equal(headers["Proxy-Authorization"], "env-token") // env wins over config
-    }
-    // The POST create call also carries Content-Type alongside the custom headers.
-    const post = seen.at(-1)
-    assert.ok(post, "a POST create call was made")
-    assert.equal(post["Content-Type"], "application/json")
-  } finally {
-    if (prevEnv === undefined) delete process.env.AGENTIC_WORKFLOW_ADO_HEADERS
-    else process.env.AGENTIC_WORKFLOW_ADO_HEADERS = prevEnv
-  }
-})
-
 test("shipPr never throws on an unexpected error", async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK])
-  const throwingHttp: ShipHttp = async () => {
-    throw new Error("ECONNRESET")
-  }
-  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", throwingHttp)
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", scriptedGateway({ throws: true }))
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.ok(result.reason)
