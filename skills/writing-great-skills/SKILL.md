@@ -13,7 +13,7 @@ A skill exists to wrangle determinism out of a stochastic system. **Predictabili
 
 ## Invocation
 
-In this repository every skill keeps a **description**, so the agent can fire it autonomously and other skills can reach it. Each description contributes to **context load** — it sits in the window every turn, in both hosts. That makes the description the single most expensive real estate in the library: 24 skills × a bloated description is a permanent tax on every session.
+In this repository every skill keeps a **description**, so the agent can fire it autonomously and other skills can reach it. Each description contributes to **context load** — it sits in the window every turn, in both hosts. That makes the description the single most expensive real estate in the library: one bloated description, times every skill in `skills/`, is a permanent tax on every session.
 
 (The upstream skill also defines **user-invoked** skills — description stripped, reachable only by a human typing the name, zero context load. Neither host consumes that mode here today; if one ever does, the trade-off is documented in the glossary under **User-Invoked** and **Cognitive Load**.)
 

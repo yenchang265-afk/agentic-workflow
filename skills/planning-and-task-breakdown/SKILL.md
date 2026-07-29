@@ -204,13 +204,6 @@ stated, say so plainly in the plan rather than inventing a scope that fits.
 
 ---
 
-## Common Rationalizations
-
-| Rationalization | Reality |
-|---|---|
-| "I'll figure it out as I go" | The builder cannot — it follows the plan literally. Ambiguity becomes a wasted iteration, not an improvisation. |
-| "I can hold it all in my head" | Context windows are finite. Written plans survive session boundaries and compaction. |
-
 ## See Also
 
 Acceptance criteria are per-task and answer "did we build the right thing?". They sit on top of the project-wide Definition of Done, the standing bar every task clears before it counts as done. See `references/definition-of-done.md`.
