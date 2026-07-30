@@ -51,13 +51,16 @@ import {
   admitVerdict,
   axisVerdict,
   effectiveVerdict,
+  noAdmissibleVerdictReason,
   parseVerdict,
   passFocusBlock,
+  rejectedFallback,
   stageDriftNote,
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
   type CriterionResult,
+  type RejectedVerdict,
   type StagePass,
   type Verdict,
   type VerdictRecord,
@@ -166,7 +169,14 @@ let active: WorkflowState | null = null
 let activeClaim: PolledClaim | null = null // the scheduler claim behind `active`, when workflow_claim made it
 let pending: VerdictRecord | null = null // verdict(s) recorded for the current check stage
 let verdictRetried = false // whether the current check stage already got its one no-verdict re-fire
-let verdictRejected = false // whether the current check stage had a verdict REJECTED (incomplete axis coverage) — changes the re-fire wording
+/**
+ * The last verdict `admitVerdict` REFUSED for the current check stage, or null.
+ *
+ * The refused RECORD, not a boolean: it changes the re-fire wording, and once the
+ * retry is spent `rejectedFallback` routes the stage on what it declared instead
+ * of ERROR-stopping a review that plainly failed (see verdict.ts).
+ */
+let verdictRejected: RejectedVerdict | null = null
 let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
 /**
  * A "cannot do this work at all" signal from `workflow_blocked` for the current
@@ -850,7 +860,7 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
   samples = []
   pending = null
   verdictRetried = false
-  verdictRejected = false
+  verdictRejected = null
   blocked = null // no blocked signal may outlive the run that recorded it
   buildNoteFor = null
   // Only workflow_claim sets activeClaim; a stale one left by a claim flow that
@@ -888,7 +898,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   samples = []
   pending = null
   verdictRetried = false
-  verdictRejected = false
+  verdictRejected = null
   blocked = null // no blocked signal may outlive the run that recorded it
   buildNoteFor = null
   activeClaim = null // see startTask — a workflow_start loop has no scheduler claim behind it
@@ -1108,7 +1118,7 @@ server.registerTool(
     samples = []
     pending = null
     verdictRetried = false
-    verdictRejected = false
+    verdictRejected = null
     blocked = null // no blocked signal may outlive the run that recorded it
     buildNoteFor = null
     const loaded = manifestFor(claim.item.workflowKind)
@@ -1251,7 +1261,12 @@ server.registerTool(
     // accumulated record in workflow_advance instead.
     const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending, evidenceCtx)
     if (!admission.ok) {
-      verdictRejected = true
+      // Keep the refused record, not just the fact of a refusal: if the retry
+      // below produces nothing admissible either, `rejectedFallback` routes the
+      // stage on what it DECLARED rather than ERROR-stopping a check that
+      // reported. Last rejection wins — a stage correcting itself toward a
+      // still-invalid shape is best described by its latest attempt.
+      verdictRejected = { record: rec, message: admission.message }
       return fail(admission.message)
     }
     pending = admission.record
@@ -1415,7 +1430,7 @@ server.registerTool(
     // every run. Merging the passes is the point.
     if (freshStage) {
       pending = null // no stale verdict may leak into this stage
-      verdictRejected = false // ...nor a stale rejection into this stage's re-fire wording
+      verdictRejected = null // ...nor a stale rejection into this stage's re-fire wording
     }
     armedPass = pass.focus ? { stage, pass, index, total: passes.length } : null
     fanoutStage = pass.focus ? stage : null
@@ -1545,7 +1560,9 @@ server.registerTool(
             sh,
             active.task,
             auditNote(
-              `${stage.toUpperCase()} ended with no workflow_verdict call — re-running the check once (prose claimed ${prose ?? "nothing"}; free text is untrusted)`,
+              verdictRejected
+                ? `${stage.toUpperCase()} offered a verdict that was rejected and never recorded — re-running the check once (${verdictRejected.message})`
+                : `${stage.toUpperCase()} ended with no workflow_verdict call — re-running the check once (prose claimed ${prose ?? "nothing"}; free text is untrusted)`,
               new Date(),
               noteActor,
             ),
@@ -1567,24 +1584,43 @@ server.registerTool(
             (verdictRejected
               ? "\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — it did not cover every required axis, " +
                 "it declared FAIL without naming a critical/important finding, or it declared PASS without citing " +
-                "evidence this session actually ran. Call workflow_verdict ONCE with the COMPLETE axes array (partial " +
+                "evidence this session actually ran. The rejection said: " +
+                verdictRejected.message +
+                "\nCall workflow_verdict ONCE with the COMPLETE axes array (partial " +
                 "submissions are not accumulated) and, for a PASS, an `evidence` array naming the commands you ran and " +
                 "the files you read THIS pass — re-run them if you have not."
               : "\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. " +
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
           ),
           note: spawnNote(
-            "check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again",
+            verdictRejected
+              ? "check retry (no iteration consumed): the previous pass's verdict was rejected and never recorded — call workflow_stage, then spawn the stage subagent again"
+              : "check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again",
             CHECK_VERDICT_TAIL,
           ),
         })
       }
-      pending = {
+      // The retry is spent. A stage that DID report — twice, refused twice — is
+      // routed on what it declared: a rejected FAIL becomes the stage's FAIL, so
+      // `onFail` re-fires BUILD with the findings instead of `onError` ending the
+      // run. Only a never-recorded (or unearned-PASS) stage still ERRORs, and it
+      // no longer blames plugin wiring that demonstrably worked.
+      const salvaged = rejectedFallback(verdictRejected)
+      if (salvaged && active.task) {
+        await appendNote(
+          sh,
+          active.task,
+          auditNote(
+            `${stage.toUpperCase()} verdict rejected twice — recorded as declared (${effectiveVerdict(salvaged)}) so the loop acts on it`,
+            new Date(),
+            await gitActor(sh, directory),
+          ),
+          log,
+        )
+      }
+      pending = salvaged ?? {
         verdict: "ERROR",
-        reason:
-          "no workflow_verdict recorded even after a retry — the verdict channel is unreachable from the stage subagent " +
-          "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
-          (prose ? ` (prose claimed ${prose}, ignored — free text is untrusted)` : ""),
+        reason: noAdmissibleVerdictReason({ rejected: verdictRejected, prose }),
       }
     }
     // The completeness gate. Per-pass admission proves each pass covered ITS
@@ -1683,7 +1719,7 @@ server.registerTool(
     pending = null
     blocked = null // consumed — no blocked signal may survive its own transition
     verdictRetried = false // the transition happened — the next check stage gets its own retry budget
-    verdictRejected = false
+    verdictRejected = null
     armedPass = null // no pass of the finished stage may admit a verdict for the next one
     fanoutStage = null
 
@@ -2191,7 +2227,7 @@ server.registerTool(
     samples = []
     pending = null
     verdictRetried = false
-    verdictRejected = false
+    verdictRejected = null
     blocked = null // no blocked signal may outlive the run that recorded it
     buildNoteFor = null
     const actor = await gitActor(sh, directory)

@@ -151,9 +151,22 @@ FAIL     # otherwise → re-build with the failure fed back, if iteration budget
 ERROR    # the check itself could not run (broken environment) → stop for a human, no iteration burned
 ```
 
-**No tool call at all is FAIL**, not a stall — the loop still terminates via
-the iteration cap rather than hanging. The same contract covers every manifest
-check stage of the running kind, validated against that kind's manifest.
+**A missing verdict is never a stall**, and never a silent FAIL either: the
+driver re-runs that pass once (no iteration burned — a broken channel must not
+buy a rebuild of already-done work), and if the second attempt records nothing
+the stage is an ERROR that stops the loop for a human. The same contract covers
+every manifest check stage of the running kind, validated against that kind's
+manifest.
+
+**A REJECTED verdict is not a missing one.** A call the admission rules refuse —
+an axis missing, a FAIL naming no critical/important finding, a PASS citing no
+evidence — records nothing, so the pass is re-run exactly as above, this time
+told what the refusal said. If the second call is refused too, the stage is
+recorded **as it declared**: a rejected FAIL becomes the stage's FAIL and
+re-fires BUILD with the findings. Only an unearned PASS still ERRORs (laundering
+one would ship unreviewed work), and that ERROR names the refusal instead of
+blaming the plugin wiring. A review that plainly failed therefore always reaches
+a rebuild, even when it never managed to phrase its verdict.
 
 The tool also accepts optional `reason` and `criteria` (per-criterion
 `{criterion, pass}`). These steer only the **next iteration's prompt** — failed
