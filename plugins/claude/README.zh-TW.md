@@ -25,6 +25,14 @@ VERIFY → REVIEW**，並具備 git 隔離、可信裁定通道、檔案系統�
 # equivalent: cd plugins/claude && ./install.sh
 ```
 
+在原生 Windows（沒有 WSL/git-bash）上，改用 PowerShell 版本：
+
+```powershell
+# from the repo root
+.\install.ps1 claude     # builds the MCP server + links the shared skills/references
+# equivalent: plugins\claude\install.ps1
+```
+
 然後載入外掛：
 
 ```bash
@@ -48,13 +56,14 @@ claude --plugin-dir /abs/path/to/plugins/claude
 `cd plugins/claude && ./install.sh` 這個捷徑只會執行 Claude 那一半，
 不包含精靈。
 
-要解除安裝，從儲存庫根目錄執行 `./uninstall.sh claude`——它會移除
+要解除安裝，從儲存庫根目錄執行 `./uninstall.sh claude`（Windows 上是
+`.\uninstall.ps1 claude`）——它會移除
 已建置的 `mcp-server/dist`；要卸載外掛本身則用
 `/plugin uninstall agentic-workflow`（或拿掉 `--plugin-dir`）。儲存庫內的
 skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要清除某個
 專案的本機迴圈狀態，使用 `./scripts/clean.sh`（預設只清暫存的 `runs/`
 狀態；`--backlog` / `--config` / `--purge` 會做得更徹底——見它的
-`--help`）。
+`--help`；沒有 Windows 版本——請在 WSL 或 git-bash 下執行）。
 
 ## Commands
 
@@ -193,5 +202,7 @@ OpenCode 外掛相同，**只是少了** `watchIntervalMinutes`（這裡沒有 w
 - **訪談在主 agent 中進行** —— Task 子 agent 無法和你對話，因此
   `/agentic-workflow:engineering new` 的強制訪談是在撰寫子 agent 寫入檔案
   之前，於主對話中進行的。
-- Skill／參考檢查清單的符號連結只在 Unix/WSL 上能正確解析；在不支援
-  符號連結的 Windows 上，請改用複製的方式。
+- Skill／參考檢查清單的符號連結在 Unix/WSL 上能正確解析，在原生 Windows 上
+  當 `install.ps1`／`plugins/claude/install.ps1` 能建立符號連結時（系統
+  管理員權限，或 Windows 10/11 的開發人員模式）也能解析；兩者皆無時，
+  安裝程式會自動改用複製（`git pull` 之後要重新執行以更新）。

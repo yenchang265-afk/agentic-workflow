@@ -27,6 +27,14 @@ the exact protocol.
 # equivalent: cd plugins/claude && ./install.sh
 ```
 
+On native Windows (no WSL/git-bash), use the PowerShell ports instead:
+
+```powershell
+# from the repo root
+.\install.ps1 claude     # builds the MCP server + links the shared skills/references
+# equivalent: plugins\claude\install.ps1
+```
+
 Then load the plugin:
 
 ```bash
@@ -50,12 +58,14 @@ Run from the repo root, `./install.sh claude` finishes with the interactive
 `cd plugins/claude && ./install.sh` shortcut runs only the Claude half and
 does not include the wizard.
 
-To uninstall, run `./uninstall.sh claude` from the repo root — it removes the
+To uninstall, run `./uninstall.sh claude` (`.\uninstall.ps1 claude` on Windows)
+from the repo root — it removes the
 built `mcp-server/dist`; detach the plugin itself with
 `/plugin uninstall agentic-workflow` (or drop `--plugin-dir`). The in-repo
 skill/reference symlinks are git-tracked and stay. To clear a project's local
 loop state, use `./scripts/clean.sh` (ephemeral `runs/` state by default;
-`--backlog` / `--config` / `--purge` go further — see its `--help`).
+`--backlog` / `--config` / `--purge` go further — see its `--help`; no Windows
+port — run it under WSL or git-bash).
 
 ## Commands
 
@@ -225,5 +235,8 @@ by failing the whole spawn rather than falling back.
 - **The interview runs in the main agent** — Task subagents cannot converse
   with you, so `/agentic-workflow:engineering new`'s mandatory interview happens in the main
   conversation before the author subagent writes the file.
-- Skill/reference symlinks resolve on Unix/WSL; on Windows without symlink
-  support, copy them instead.
+- Skill/reference symlinks resolve on Unix/WSL, and on native Windows when
+  `install.ps1`/`plugins/claude/install.ps1` can create symlinks
+  (Administrator, or Developer Mode on Windows 10/11); without either, the
+  installer falls back to copies automatically (re-run after `git pull` to
+  refresh them).

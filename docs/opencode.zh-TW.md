@@ -164,13 +164,15 @@ pull` 之後重新執行即可更新。用 `--copy` 取代符號連結，或傳�
 專案）還是使用者層級（跨所有儲存庫共用）；`--user` / `--repo` 可以
 強制指定。見 [configuration.md](configuration.md)。
 
-在 Windows 上，符號連結需要 WSL 或支援符號連結的 Windows（開發者
-模式）；如果沒有這個條件，就用 `--copy`（不會即時更新——`git pull`
-之後要重新執行）。
+在原生 Windows（沒有 WSL/git-bash）上，改用 `.\install.ps1 opencode`——參數
+相同（`-Copy`、自訂目錄、`--user`/`--repo`、`-y`）。它會盡可能建立真正的
+符號連結（需要系統管理員權限，或 Windows 10/11 的開發人員模式），否則會
+自動改用複製（該模式下不會即時更新——`git pull` 之後要重新執行）。
 
 ## 解除安裝與清理
 
-`./uninstall.sh opencode [dir]` 會反轉安裝過程——它會移除從
+`./uninstall.sh opencode [dir]`（Windows 上是 `.\uninstall.ps1 opencode [dir]`）
+會反轉安裝過程——它會移除從
 `$OPENCODE_CONFIG_DIR` 指回本儲存庫的 agents/commands/skills/
 references 項目和本機外掛檔案（加上 `--copy` 也會移除 `--copy`
 安裝方式留下的複本）。外部項目和你的 OpenCode 設定檔則不受影響。

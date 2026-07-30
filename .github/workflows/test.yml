@@ -71,6 +71,50 @@ jobs:
             echo "uninstall left entries behind:"; echo "$leftovers"; exit 1
           fi
 
+      # ubuntu-latest ships pwsh; this only checks the PowerShell ports parse —
+      # symlink creation is unprivileged on Linux, so a full round trip here
+      # would not exercise the Windows fallback-to-copy path anyway.
+      - name: PowerShell script syntax check
+        shell: pwsh
+        run: |
+          $files = @('install.ps1', 'uninstall.ps1', 'plugins/claude/install.ps1')
+          $hadErrors = $false
+          foreach ($f in $files) {
+            $errors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -gt 0) {
+              $hadErrors = $true
+              Write-Host "=== $f ==="
+              foreach ($e in $errors) { Write-Host $e }
+            } else {
+              Write-Host "OK: $f"
+            }
+          }
+          if ($hadErrors) { exit 1 }
+
+      - name: PowerShell install-script round trip (install twice, then uninstall)
+        shell: pwsh
+        # $ErrorActionPreference = 'Stop' inside both scripts turns any internal
+        # failure into a terminating error, which fails this step on its own —
+        # neither script shells out for the opencode-only path, so $LASTEXITCODE
+        # would stay stale (even $null, which compares unequal to 0) rather than
+        # reflect success.
+        run: |
+          $d = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
+          ./install.ps1 opencode $d.FullName --no-config
+          ./install.ps1 opencode $d.FullName --no-config
+          ./uninstall.ps1 opencode $d.FullName
+          $leftovers = Get-ChildItem -Path $d.FullName -Recurse -Force -ErrorAction SilentlyContinue | Where-Object {
+            $item = Get-Item -LiteralPath $_.FullName -Force
+            ($item.LinkType -eq 'SymbolicLink') -and ($item.Target -join '').StartsWith($env:GITHUB_WORKSPACE)
+          }
+          if ($leftovers) {
+            Write-Host "uninstall left entries behind:"
+            $leftovers | ForEach-Object { Write-Host $_.FullName }
+            exit 1
+          }
+
       # --no-config: the wizard would write a user-scope ~/.config config, which
       # layers under every repo config and would silently change what later steps
       # (and a developer's own test run) resolve.
