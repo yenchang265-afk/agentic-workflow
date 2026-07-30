@@ -63,6 +63,30 @@ test("scanSnapshot lists claim markers under a status's .claims dir", () => {
   }
 })
 
+test("scanSnapshot lists plan-request markers under a status's .requests dir", () => {
+  // Without this the "plan requested" badge would only appear or clear on
+  // unrelated backlog churn — the 4s poll re-runs the same blind scan.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hub-watch-requests-"))
+  try {
+    fs.mkdirSync(path.join(dir, "docs/tasks/queued/.requests"), { recursive: true })
+    fs.writeFileSync(path.join(dir, "docs/tasks/queued/.requests/T-1"), "{}")
+    fs.writeFileSync(path.join(dir, "docs/tasks/queued/task.md"), "x")
+    const s = scanSnapshot(dir, "docs/tasks", ["queued"])
+    assert.deepEqual(Object.keys(s.tasks["queued"] ?? {}).sort(), [".requests/T-1", "task.md"])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("diffSnapshots emits backlog (never gate) when a plan request appears or vanishes", () => {
+  // Same rule the claim markers follow: a `.requests/` key is a marker, not a
+  // task, so it must never mint the "loop wants you" gate notification.
+  const prev = snap({ tasks: { queued: { "a.md": 1 }, "plan-review": {} } })
+  const requestedInGate = snap({ tasks: { queued: { "a.md": 1 }, "plan-review": { ".requests/a": 1 } } })
+  assert.deepEqual(diffSnapshots(prev, requestedInGate, GATES), [{ type: "backlog" }])
+  assert.deepEqual(diffSnapshots(requestedInGate, prev, GATES), [{ type: "backlog" }])
+})
+
 test("diffSnapshots emits sched (never run) for the event log — a run event would collapse the open panel", () => {
   const prev = snap({ runs: {} })
   const grown = snap({ runs: { "events.jsonl": "100:1" } })

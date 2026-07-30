@@ -93,6 +93,21 @@ test("getBacklog rolls up tasks per status with cards and summary", async () => 
   fs.rmSync(dir, { recursive: true, force: true })
 })
 
+test("getBacklog reports which queued tasks carry a plan request, and none by default", async () => {
+  const dir = makeFixture()
+  const empty = (await getBacklog(depsFor(dir), { params: {}, query: new URLSearchParams() })).body as BacklogResponse
+  assert.deepEqual(empty.planRequestedIds, [], "an absent .requests/ dir is the normal case, not an error")
+
+  fs.mkdirSync(path.join(dir, "docs", "tasks", "queued", ".requests"), { recursive: true })
+  fs.writeFileSync(path.join(dir, "docs", "tasks", "queued", ".requests", "add-foo"), "{}")
+  const asked = (await getBacklog(depsFor(dir), { params: {}, query: new URLSearchParams() })).body as BacklogResponse
+  assert.deepEqual(asked.planRequestedIds, ["add-foo"])
+  // It rides beside claimedIds, not on the card — a request says nothing about
+  // a running loop, and the card mapper is shared with the drawer.
+  assert.deepEqual(asked.claimedIds, [])
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
 test("getBacklog surfaces backlog anomalies", async () => {
   const dir = makeFixture()
   fs.writeFileSync(path.join(dir, "docs", "tasks", "stray.md"), "---\ntitle: stray\n---\n")

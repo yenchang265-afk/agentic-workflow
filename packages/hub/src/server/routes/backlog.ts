@@ -6,6 +6,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
+import { listPlanRequestIds } from "@agentic-workflow/core/task/plan-request"
 import { readText } from "../io.js"
 import { isPaired, shortIdOf, type Task } from "@agentic-workflow/core/task/schema"
 import { auditBacklog, hasAnomalies } from "@agentic-workflow/core/task/audit"
@@ -74,6 +75,11 @@ export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
       }
     }
   }
+  // Plan requests ride beside claimedIds rather than through `toCard`: that
+  // mapper is shared with the task drawer so the two views can never disagree
+  // about a card, and it is pure by design. Same path, same guarantee.
+  const planRequestedIds = await listPlanRequestIds(deps.sh, deps.directory, deps.tasksDir)
+
   const cards: Record<string, readonly TaskCard[]> = {}
   for (const status of board.statuses) cards[status] = (tasks[status] ?? []).map(toCard)
 
@@ -92,6 +98,7 @@ export const getBacklog = async (deps: HubDeps, req: ParsedRequest): Promise<Jso
     tasks: cards,
     summary,
     claimedIds,
+    planRequestedIds,
     ...(Object.keys(claimStamps).length ? { claimStamps } : {}),
     staleClaimMinutes: STALE_CLAIM_MINUTES,
     anomalies: hasAnomalies(anomalies) ? anomalies : null,

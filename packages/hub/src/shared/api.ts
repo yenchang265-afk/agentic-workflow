@@ -103,6 +103,13 @@ export interface BacklogResponse {
   readonly summary: BacklogSummary | null
   readonly claimedIds: readonly string[]
   /**
+   * Queued tasks carrying a plan request — "plan this one next", asked for from
+   * this board. Travels beside `claimedIds` rather than on the card, so the
+   * board and the task drawer read one source; unlike a claim it asserts nothing
+   * about a running loop.
+   */
+  readonly planRequestedIds: readonly string[]
+  /**
    * Claim age: task id → the marker stamp's `claimedAt` ISO. Only ids whose
    * stamp was readable appear — a claim without a stamp shows no age rather
    * than a wrong one.
