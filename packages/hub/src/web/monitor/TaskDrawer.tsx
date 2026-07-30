@@ -31,10 +31,12 @@ interface TaskDrawerProps {
   /** Which workflow kind owns this task — the gate move names it explicitly. */
   kind: string
   claimed: boolean
+  /** Threaded from the board, which holds the request set, so card and drawer read one source. */
+  planRequested: boolean
   onClose: () => void
 }
 
-export const TaskDrawer = ({ id, status, kind, claimed, onClose }: TaskDrawerProps) => {
+export const TaskDrawer = ({ id, status, kind, claimed, planRequested, onClose }: TaskDrawerProps) => {
   const { repoId } = useRepo()
   const ref = useRef<HTMLDialogElement>(null)
   const [saved, setSaved] = useState<SaveTaskResponse | null>(null)
@@ -135,7 +137,7 @@ export const TaskDrawer = ({ id, status, kind, claimed, onClose }: TaskDrawerPro
           gets no gate buttons here either, exactly as on the board. */}
       {data && data.card.type !== "epic" && (
         <div className="drawer__foot">
-          <GateActions task={data.card} status={status} kind={kind} claimed={claimed} />
+          <GateActions task={data.card} status={status} kind={kind} claimed={claimed} planRequested={planRequested} />
         </div>
       )}
     </dialog>
