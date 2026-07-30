@@ -149,9 +149,10 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     // The RELEASE, though, is unconditional: this ends the drive, and every way a
     // drive ends must release the marker. When the task left queued/ mid-plan
     // `fresh` is null, and nesting the release under it wedged the queued/ claim
-    // forever — engineering's queued pool is `manual: true`, so nothing
-    // auto-reclaims, and `plan <id>` could not re-acquire the marker until the
-    // stale sweep fired. Fall back to the claim-time ref exactly as `runStop` does.
+    // forever — a held marker means "a loop is driving this NOW", so every gate
+    // verb (replan/abandon/remove) refuses on it and neither `plan <id>` nor the
+    // claim walk could re-acquire it until the ~75m stale sweep fired. Fall back
+    // to the claim-time ref exactly as `runStop` does.
     await releaseClaim($, fresh ?? state.task)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `PLAN failed for "${id}" — ${why}. It stays in queued/.`, taskId: id }
@@ -160,7 +161,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   // moveTask THROWS on a duplicate destination or a failed `mv`. Unguarded, that
   // exception escapes runTerminal after the park note is already on disk claiming
   // a park that never happened, and the queued/ claim marker is never released —
-  // and engineering's queued pool is `manual: true`, so nothing auto-reclaims it.
+  // and a held marker blocks every gate verb until the stale sweep frees it.
   // Same guard runDone uses below, for the same reason.
   let newPath: string
   try {
@@ -258,9 +259,13 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
       // case left a cap-stopped task permanently wedged: the cap message says
       // `replan <id>`, replan refused the held claim, and the orphan sweep
       // skips a body carrying CLAIMED/BUILD notes — no verb could ever free it.
-      // The watcher cannot silently re-claim after release: the CLAIMED note in
-      // the lifecycle window keeps `isClaimable` false; only an explicit
-      // `recover <id>` (which re-claims) or a gate verb touches it next.
+      // For in-progress/ the watcher cannot silently re-claim after release: the
+      // CLAIMED note in the lifecycle window keeps `isClaimable` false; only an
+      // explicit `recover <id>` (which re-claims) or a gate verb touches it next.
+      // A stopped PLAN is different by design — its queued/ task carries no such
+      // note and that pool has no claim predicate, so the next claim/watch tick
+      // may re-plan it. That is the intended behaviour, not a leak: PLAN writes
+      // only the task file, so re-planning costs a pass and loses nothing.
       await releaseClaim($, cur)
       await commitBacklog(ctx, `loop(${state.task.id}): stopped — ${action.message}`)
     } else {

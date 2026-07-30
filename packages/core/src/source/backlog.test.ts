@@ -140,24 +140,31 @@ test("claims build-ready in-progress work before queued plan work", async () => 
   assert.match(item?.claimMessage ?? "", /building…/)
 })
 
-test("never claims from the queued pool even when in-progress has nothing claimable", async () => {
+test("falls back to the queued pool when in-progress has nothing claimable", async () => {
   const src = source({
     "in-progress": [file("already-started", { plan: true, started: true })],
     queued: [file("plan-me")],
   })
-  const { item, skip } = await src.claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /already started: already-started .*recover/)
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "plan-me")
+  assert.equal(item?.entryStage, "plan")
+  assert.deepEqual(item?.state.artifacts, {})
+  assert.match(item?.claimMessage ?? "", /planning…/)
 })
 
-test("queued-only backlog claims nothing and points at plan <id>", async () => {
-  const held = new Set<string>()
-  const src = source({ "in-progress": [], queued: [file("plan-me")] }, held)
+test("a queued-only backlog is claimed and enters at PLAN", async () => {
+  // The pool is walked like any other: an approved task waits for no verb.
+  const shellLog: string[] = []
+  const src = source({ "in-progress": [], queued: [file("plan-me")] }, new Set<string>(), { shellLog })
   const { item, skip } = await src.claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /awaiting a plan in queued\/ .*plan <id>/)
-  assert.equal(skip?.actionable, true)
-  assert.equal(held.size, 0)
+  assert.equal(skip, null)
+  assert.equal(item?.id, "plan-me")
+  assert.equal(item?.entryStage, "plan")
+  assert.match(item?.claimMessage ?? "", /planning…/)
+  assert.ok(
+    shellLog.some((c) => c.startsWith("mkdir ") && c.includes("queued/.claims/plan-me")),
+    `the claim marker is taken, exactly as a build claim takes one: ${shellLog.join(" | ")}`,
+  )
 })
 
 test("an empty backlog yields the both-empty skip reason", async () => {
@@ -281,10 +288,17 @@ test("taskGoal joins title and body", () => {
   assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], labels: [], body: "B", path: "/p" }), "T\n\nB")
 })
 
-test("claimSkipReason precedence: held beats empty beats started beats queued", () => {
+test("claimSkipReason precedence: held beats empty beats started", () => {
   assert.match(claimSkipReason(0, 0, 0, [], ["h"]).message, /held/)
   assert.match(claimSkipReason(0, 0, 0, [], []).message, /both empty/)
   assert.match(claimSkipReason(2, 0, 0, ["a"], []).message, /already started/)
-  assert.match(claimSkipReason(0, 0, 3, [], []).message, /3 task\(s\) awaiting a plan .*plan <id>/)
   assert.match(claimSkipReason(2, 0, 0, [], []).message, /no persisted plan/)
+})
+
+test("a queued task the index hasn't caught up on falls through to the in-progress fallback", () => {
+  // Cosmetic, transient, and deliberately not special-cased: in-progress empty
+  // plus a queued task the listing missed lands on the no-persisted-plan branch,
+  // which blames in-progress. The next tick's listByStatus is fresh. Pinned here
+  // so nobody reads the fallback's wording as a promise about queued/.
+  assert.match(claimSkipReason(0, 0, 3, [], []).message, /no persisted plan/)
 })

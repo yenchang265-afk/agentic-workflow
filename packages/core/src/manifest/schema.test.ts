@@ -29,20 +29,6 @@ test("a well-formed manifest parses with defaults applied", () => {
   assert.deepEqual(m.stages[0]?.bashAllowlist, [])
   assert.deepEqual(m.hooks.compose, {})
   assert.ok(m.workSource.type === "backlog")
-  assert.equal(m.workSource.pools[0]?.manual, false)
-})
-
-test("a pool can opt out of auto-claiming with manual: true", () => {
-  const raw = {
-    ...base,
-    workSource: {
-      type: "backlog",
-      statuses: ["queued", "done"],
-      pools: [{ status: "queued", entryStage: "work", manual: true }],
-    },
-  }
-  const m = parseManifest(raw)
-  assert.equal(m.workSource.type === "backlog" && m.workSource.pools[0]?.manual, true)
 })
 
 test("rejects a stage prompt outside stages/ — manifests are user-authored and hub-writable", () => {

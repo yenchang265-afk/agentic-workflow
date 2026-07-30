@@ -20,11 +20,9 @@ import { appendSchedulerEvents } from "../scheduler/events-log.js"
 /**
  * The backlog-folder work source: claimable units of work are markdown task
  * files in the manifest's status folders (`workSource.pools`, walked in
- * priority order). Pools flagged `manual` are never auto-claimed — for
- * engineering only build-ready `in-progress/` is claimable; planless `queued/`
- * tasks are claimed solely by explicit verbs (`plan <id>`). Claims stay atomic
- * via the store's `.claims/` mkdir markers; orphaned markers (a claimer that
- * died) are released and retried inline.
+ * priority order — for engineering: build-ready `in-progress/` beats planless
+ * `queued/`). Claims stay atomic via the store's `.claims/` mkdir markers;
+ * orphaned markers (a claimer that died) are released and retried inline.
  */
 
 /** A task's goal text: title headline plus its body, if any. Pure. */
@@ -34,7 +32,6 @@ interface Pool {
   readonly status: string
   readonly entryStage: string
   readonly claimPredicate?: string
-  readonly manual?: boolean
 }
 
 interface BacklogDeps {
@@ -60,8 +57,7 @@ interface BacklogDeps {
 /**
  * Compute why a poll claimed nothing, from what the claim walk saw across the
  * pools. Held markers win (they block otherwise-ready work); then empty
- * backlog; then started-but-unclaimed (recover); then queued-awaiting-plan
- * (manual `plan <id>`); then the no-plan fallback.
+ * backlog; then started-but-unclaimed (recover); then the no-plan fallback.
  * Pure. The strings are engineering-flavored (this is the engineering
  * backlog's skip reporter); a future backlog-backed kind with different
  * folders should supply its own.
@@ -89,14 +85,6 @@ export const claimSkipReason = (
       message:
         `watch: 0 claimable — ${startedIds.length} in-progress task(s) already started: ` +
         `${startedIds.join(", ")} (run /agentic-workflow:engineering recover <id>)`,
-      actionable: true,
-    }
-  }
-  if (queuedCount > 0) {
-    return {
-      message:
-        `watch: 0 claimable — ${queuedCount} task(s) awaiting a plan in queued/ ` +
-        `(run /agentic-workflow:engineering plan <id>)`,
       actionable: true,
     }
   }
@@ -160,7 +148,6 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
           primaryClaimable = candidates.length
         }
         lastPoolCount = tasks.length
-        if (pool.manual) continue // counted for the skip reason; claimed only by explicit verbs (plan <id>)
         const walk = await claimFirst($, candidates, {
           isDriving,
           log,

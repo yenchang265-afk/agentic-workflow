@@ -350,23 +350,18 @@ export const MetaForm = ({ meta, onChange }: { meta: GraphMeta; onChange: (next:
               onChange={(e) => onChange({ ...meta, workSource: { ...ws, humanGates: fromCsv(e.target.value) } })}
             />
           </Field>
-          <Field label="pools (status:entryStage[:claimPredicate][:manual], one per line, priority order)">
+          <Field label="pools (status:entryStage[:claimPredicate], one per line, priority order)">
             <textarea
               rows={3}
-              value={ws.pools
-                .map((p) => [p.status, p.entryStage, p.claimPredicate, p.manual ? "manual" : undefined].filter(Boolean).join(":"))
-                .join("\n")}
+              value={ws.pools.map((p) => [p.status, p.entryStage, p.claimPredicate].filter(Boolean).join(":")).join("\n")}
               onChange={(e) => {
                 const pools = e.target.value
                   .split("\n")
                   .map((line) => line.trim())
                   .filter(Boolean)
                   .map((line) => {
-                    const parts = line.split(":").map((s) => s.trim())
-                    const manual = parts[parts.length - 1] === "manual"
-                    if (manual) parts.pop()
-                    const [status = "", entryStage = "", claimPredicate] = parts
-                    return { status, entryStage, manual, ...(claimPredicate ? { claimPredicate } : {}) }
+                    const [status = "", entryStage = "", claimPredicate] = line.split(":").map((s) => s.trim())
+                    return { status, entryStage, ...(claimPredicate ? { claimPredicate } : {}) }
                   })
                 onChange({ ...meta, workSource: { ...ws, pools } })
               }}
