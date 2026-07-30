@@ -618,6 +618,21 @@ export interface GateRequest {
 }
 
 /**
+ * Body of `POST /api/plan-request` and `/api/plan-request/cancel`.
+ *
+ * Deliberately not a `GateAction`: a plan request moves no file and writes no
+ * commit, so folding it into the gate table would make that table's 1:1 mapping
+ * onto `workflow/gate.ts` a lie. It answers with a `GateResult` all the same, so
+ * the same button machinery renders its refusals.
+ */
+export interface PlanRequestRequest {
+  /** The full task id (not a short-hash prefix). */
+  readonly id: string
+  /** Only a queued task can be requested — the same stale-board guard the gate applies. */
+  readonly expectStatus: TaskStatus
+}
+
+/**
  * Which optional pieces of loop state the previewed prompt renders against.
  * These are the switches that make conditional blocks (`{{#task.id}}`,
  * `{{#worktree}}`, `{{#platform.ado}}`) fire or vanish — the point of the
