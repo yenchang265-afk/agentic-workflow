@@ -132,6 +132,17 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
 
+  A `queued/` card additionally carries **Plan** — "plan this one next". It is
+  the one button that is not a gate move: it writes a plan-request marker under
+  `tasksDir/queued/.requests/`, moves no file and commits nothing, and the hub
+  starts nothing itself. The next `claim` or `watch` tick reads the marker,
+  plans that task ahead of the rest of the queued pool, and spends it; a request
+  never preempts build-ready `in-progress/` work, and until one is honoured the
+  button becomes **Cancel plan request**. So the "never drives a stage"
+  line holds exactly as before — the hub writes an ordering hint and a driver,
+  in its own process, decides what to do with it. A request whose task has since
+  left `queued/` is inert, and the backlog doctor drops it.
+
   Clicking a card's title opens the **task drawer**: frontmatter, body, plan,
   and the audit timeline — with the gate moves in a sticky footer, so the plan
   can be read and approved in one place rather than read here and acted on back
@@ -318,12 +329,14 @@ The hub's writes, none of which drive a loop:
 | A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a draft pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
 | Edit a planless task (drawer) | the task file under `tasksDir` (rewritten in place — same id, filename, folder), plus a git commit; from **`queued/`** also the retask move back to `draft/` | `X-Hub-Client`; planless-only (a plan that appeared 409s); `expectStatus` **and** a content hash (a stale board or drifted prose 409s); frontmatter the schema can't preserve 409s rather than being stripped; the audit tail is rejoined server-side and re-verified; refused while a loop is driving the task or a claim is held; a body that scans as a secret is refused; a confirm naming the effect |
 | Save config | one layer of `.agentic-workflow.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
-| Backlog doctor fix | task files under `tasksDir` (rescue strays, remove empty stray folders, release **stale, undriven** claim markers), plus a git commit | `X-Hub-Client`; releases a claim only when stale and not driven; skips claim release entirely while a watch lease is live; never resolves duplicate ids |
+| Request a plan (queued card) | one marker file under `tasksDir/queued/.requests/` — **no file move and no git commit** | `X-Hub-Client`; queued-only; `expectStatus` (a stale board 409s); refused on a task a loop is driving, and on one that already carries a plan; a confirm naming the effect. Withdrawn by the same button |
+| Backlog doctor fix | task files under `tasksDir` (rescue strays, remove empty stray folders, release **stale, undriven** claim markers, drop plan requests whose task has left `queued/`), plus a git commit | `X-Hub-Client`; releases a claim only when stale and not driven; skips claim release entirely while a watch lease is live; drops a stray request unconditionally (its task is gone, so nothing can be driving it); never resolves duplicate ids |
 
 Creator write authority thus extends beyond `workflows/<kind>/` to the three asset
 roots above — always as never-overwriting stubs the user finishes in an editor.
 
-It never claims work, never runs a stage, and never merges anything. Full
+It never claims work, never runs a stage, and never merges anything — it writes
+one ordering hint (the plan request) and still never claims. Full
 analysis in [docs/design/threat-model.md](../../docs/design/threat-model.md)
 (T14–T16), including the honest residual: **there is no authentication** — any
 local process running as you can drive it, so don't run it on a shared host.

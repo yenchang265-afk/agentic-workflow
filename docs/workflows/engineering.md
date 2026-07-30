@@ -118,7 +118,17 @@ fall back to an approved `queued/` task once no build-ready work is left, and
 `plan <id>` plans one without waiting for a tick — and never blocks: its only
 exit is the park into `plan-review/` for your gate. A PLAN run that crashes
 leaves a stale claim marker in `queued/.claims/`; the next claim walk releases
-it once it reads stale, and `doctor fix` releases it on demand. The engineering loop never
+it once it reads stale, and `doctor fix` releases it on demand.
+
+Which queued task gets planned first is normally its priority number, but a
+**plan request** overrides that for one task: the admin hub's Plan button writes
+a marker in `queued/.requests/<id>` meaning "plan this one next". It is an
+ordering hint and nothing more — it moves no file, writes no commit, starts
+nothing, and never preempts build-ready `in-progress/` work, since the pools are
+still walked in manifest priority order. The claim that honours it spends it; a
+request whose task has since left `queued/` is dropped by the next claim walk or
+by `doctor fix`. `plan <id>` consumes one too, so asking from the hub and then
+planning by hand leaves nothing behind. The engineering loop never
 pushes or opens a PR on its own — REVIEW PASS just parks the task in
 `in-review/` for you. Ship (`in-review/` → `completed/`) is still a
 human-invoked gate, but it now pushes the task's `feature/<id>` branch and

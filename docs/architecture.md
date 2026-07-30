@@ -217,6 +217,13 @@ committed transition. The line it does not cross is **driving**: the hub never
 claims work and never runs a stage. It is a fourth caller of the gate, not a
 fourth driver.
 
+Its one non-gate write stays on the right side of that line. A **plan request**
+— the Plan button on a `queued/` card — writes a marker under
+`tasksDir/queued/.requests/` saying "plan this one next", moves no file and
+commits nothing. The next `claim`/`watch` tick honours it by reordering that
+pool and spends it. The hub writes an ordering hint; a driver, in its own
+process, decides what to do with it.
+
 Two consequences worth stating, because they are what keep that line honest:
 
 - A gate move on a task some loop is **already driving** is refused. The hub

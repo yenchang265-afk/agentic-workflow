@@ -411,6 +411,15 @@ The three things a browser click can now cause: a task file moves and a **git
 commit** lands; `ship` additionally opens a **pull request**; and
 `.agentic-workflow.json` is **rewritten**.
 
+One further write does none of those: a **plan request** drops a marker under
+`tasksDir/queued/.requests/`, moving nothing and committing nothing. It is not a
+fourth thing to defend so much as a bounded one — the marker's only effect is
+that the next claim walk, in some *other* process, reorders one pool and deletes
+it. It cannot start a stage, cannot claim, and cannot reach a task outside
+`queued/`; the worst a forged one achieves is planning an already-approved task
+earlier than its priority number would have. The id is slug-screened before it
+becomes a path segment, as everywhere else.
+
 ### T14. The HTTP surface is reachable by something other than you
 
 A local web server with no auth is reachable by any process on the machine, and
