@@ -113,7 +113,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 
@@ -1955,9 +1955,19 @@ server.registerTool(
       const ids = await listClaimIds(sh, directory, config.tasksDir, status)
       if (ids.length) heldClaims[status] = ids
     }
+    // A plan request whose task has left queued/ reorders nothing and blocks
+    // nothing, but it lingers — name it rather than leave an unexplained marker.
+    const queuedNow = await listByStatus(fsClient, directory, config.tasksDir, "queued", log)
+    const strayRequests = await strayPlanRequestIds(
+      sh,
+      directory,
+      config.tasksDir,
+      queuedNow.map((t) => t.id),
+    )
     const report = {
       findings: formatAnomalies(anomalies, config.tasksDir),
       heldClaims,
+      ...(strayRequests.length ? { strayPlanRequests: strayRequests } : {}),
       ...(anomalies.duplicates.length ? { note: "duplicates are never auto-fixed — keep one copy, workflow_move the rest to abandoned" } : {}),
     }
     if (!fix) return ok({ ...report, next: hasAnomalies(anomalies) || Object.keys(heldClaims).length ? "workflow_doctor with fix:true applies the unambiguous repairs" : "backlog is clean" })
@@ -1995,10 +2005,23 @@ server.registerTool(
       })
       if (released.length) releasedClaims[status] = released
     }
+    // Unlike a claim, a stray request is never ambiguous: its task has left the
+    // folder, so nothing can be driving it. No liveness check, and no commit —
+    // the markers were never tracked.
+    const revokedRequests = await sweepStalePlanRequests(
+      sh,
+      directory,
+      config.tasksDir,
+      queuedNow.map((t) => t.id),
+    )
     if (rescued.length) {
       await commitPaths(sh, directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
     }
-    return ok({ ...report, repaired: { rescued, removedDirs, releasedClaims }, ...(failed.length ? { failed } : {}) })
+    return ok({
+      ...report,
+      repaired: { rescued, removedDirs, releasedClaims, ...(revokedRequests.length ? { revokedRequests } : {}) },
+      ...(failed.length ? { failed } : {}),
+    })
   },
 )
 

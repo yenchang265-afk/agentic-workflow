@@ -144,12 +144,15 @@ export const listPlanRequests = async (
 }
 
 /**
- * Drop requests whose task no longer sits in the pool, and return the ids
- * dropped. `presentIds` is the caller's current listing of that folder — pass
- * one it has CONFIRMED, because a listing that lags the real filesystem would
- * otherwise sweep a live request.
+ * Requests whose task no longer sits in the pool — inert, but they would sit
+ * there reordering nothing. Reported by `doctor`, removed by `doctor fix`, and
+ * the single predicate all three hosts' doctors ask so they cannot disagree.
+ *
+ * `presentIds` is the caller's listing of that folder. Pass one it has
+ * CONFIRMED: a listing that lags the real filesystem would name a live request
+ * as a stray.
  */
-export const sweepStalePlanRequests = async (
+export const strayPlanRequestIds = async (
   $: Shell,
   directory: string,
   tasksDir: string,
@@ -157,9 +160,19 @@ export const sweepStalePlanRequests = async (
   status: string = REQUESTS_STATUS,
 ): Promise<string[]> => {
   const present = new Set(presentIds)
+  return (await listPlanRequestIds($, directory, tasksDir, status)).filter((id) => !present.has(id))
+}
+
+/** Drop every stray request (see `strayPlanRequestIds`) and return the ids dropped. */
+export const sweepStalePlanRequests = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  presentIds: readonly string[],
+  status: string = REQUESTS_STATUS,
+): Promise<string[]> => {
   const swept: string[] = []
-  for (const id of await listPlanRequestIds($, directory, tasksDir, status)) {
-    if (present.has(id)) continue
+  for (const id of await strayPlanRequestIds($, directory, tasksDir, presentIds, status)) {
     if (await revokePlanRequest($, directory, tasksDir, id, status)) swept.push(id)
   }
   return swept

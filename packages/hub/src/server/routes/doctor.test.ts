@@ -183,6 +183,40 @@ test("a live watcher lease with no stage marker skips claim release wholesale, b
   cleanup(dir)
 })
 
+test("a plan request whose task has left queued/ is reported and dropped; a live one is untouched", async () => {
+  // Never conditional the way claim release is: the task is gone, so nothing can
+  // be driving it and nothing is racing for it.
+  const dir = makeRepo()
+  place(dir, "queued", "still1")
+  const requests = path.join(dir, "docs", "tasks", "queued", ".requests")
+  fs.mkdirSync(requests, { recursive: true })
+  fs.writeFileSync(path.join(requests, "still1"), "{}")
+  fs.writeFileSync(path.join(requests, "gone1"), "{}")
+
+  const r = await report(dir)
+  assert.deepEqual(r.strayRequests, ["gone1"])
+  assert.ok(fs.existsSync(path.join(requests, "gone1")), "the report must change nothing")
+
+  const res = await fix(dir)
+  assert.deepEqual((res.body as DoctorFixResponse).revokedRequests, ["gone1"])
+  assert.deepEqual(fs.readdirSync(requests), ["still1"])
+  cleanup(dir)
+})
+
+test("a stray plan request is dropped even while a watcher is live — unlike a claim, it is never ambiguous", async () => {
+  const dir = makeRepo()
+  lease(dir)
+  const requests = path.join(dir, "docs", "tasks", "queued", ".requests")
+  fs.mkdirSync(requests, { recursive: true })
+  fs.writeFileSync(path.join(requests, "gone1"), "{}")
+
+  const res = await fix(dir)
+  const body = res.body as DoctorFixResponse
+  assert.equal(body.claimsSkipped, true, "claim release still stands down for the live watcher")
+  assert.deepEqual(body.revokedRequests, ["gone1"])
+  cleanup(dir)
+})
+
 test("duplicates are reported but never auto-resolved", async () => {
   const dir = makeRepo()
   place(dir, "draft", "dup")
@@ -220,8 +254,16 @@ test("a clean backlog reports nothing and fix is a no-op", async () => {
   const r = await report(dir)
   assert.deepEqual(r.findings, [])
   assert.deepEqual(r.heldClaims, [])
+  assert.deepEqual(r.strayRequests, [])
 
   const body = (await fix(dir)).body as DoctorFixResponse
-  assert.deepEqual(body, { rescued: [], removedDirs: [], releasedClaims: [], claimsSkipped: false, duplicates: [] })
+  assert.deepEqual(body, {
+    rescued: [],
+    removedDirs: [],
+    releasedClaims: [],
+    revokedRequests: [],
+    claimsSkipped: false,
+    duplicates: [],
+  })
   cleanup(dir)
 })

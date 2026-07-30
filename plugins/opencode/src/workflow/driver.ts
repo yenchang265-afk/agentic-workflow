@@ -60,7 +60,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/core/scheduler/lease"
@@ -2747,10 +2747,19 @@ export const handleCommand = async (
       const anomalies = await auditBacklog(client, deps.directory, config.tasksDir)
       const heldQueued = await listClaimIds(deps.$, deps.directory, config.tasksDir, "queued")
       const heldInProgress = await listClaimIds(deps.$, deps.directory, config.tasksDir, "in-progress")
+      // A plan request whose task has left queued/ reorders nothing and blocks
+      // nothing, but it lingers — name it rather than leave an unexplained marker.
+      const queuedNow = await listByStatus(client, deps.directory, config.tasksDir, "queued", deps.log)
+      const queuedIds = queuedNow.map((t) => t.id)
+      const strayRequests = await strayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds)
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
-      const findings = formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length
+      if (strayRequests.length) {
+        await deps.log("info", `doctor: plan request(s) whose task left queued/: ${strayRequests.join(", ")}`)
+      }
+      const findings =
+        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length
       if (!fix) {
         return report(
           client,
@@ -2795,6 +2804,10 @@ export const handleCommand = async (
           })),
         )
       }
+      // Unlike a claim, a stray request is never ambiguous: its task has left
+      // the folder, so nothing can be driving it. No liveness check, and no
+      // commit — the markers were never tracked.
+      const revokedRequests = await sweepStalePlanRequests(deps.$, deps.directory, config.tasksDir, queuedIds)
       if (rescued.length) {
         await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }
@@ -2802,6 +2815,7 @@ export const handleCommand = async (
         rescued.length ? `rescued ${rescued.length} stray file(s) to draft/` : "",
         removedDirs.length ? `removed ${removedDirs.length} stray folder(s)` : "",
         released.length ? `released ${released.length} stale claim marker(s)` : "",
+        revokedRequests.length ? `dropped ${revokedRequests.length} stray plan request(s)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
       ].filter(Boolean)
       return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")

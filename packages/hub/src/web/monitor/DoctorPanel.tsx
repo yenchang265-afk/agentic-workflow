@@ -17,7 +17,7 @@ import { useResource } from "../resource.js"
  */
 
 const nonEmpty = (r: DoctorReport): boolean =>
-  r.findings.length > 0 || r.heldClaims.length > 0
+  r.findings.length > 0 || r.heldClaims.length > 0 || r.strayRequests.length > 0
 
 export const DoctorPanel = () => {
   const { repoId } = useRepo()
@@ -33,8 +33,10 @@ export const DoctorPanel = () => {
   if (!data) return null
   if (!nonEmpty(data) && !result) return <p className="doctor-clean">Backlog is clean — nothing to repair.</p>
 
-  // Only strays and empty dirs and claims are auto-fixable; duplicates never are.
-  const fixable = data.strayFiles.length + data.unknownDirs.length + data.heldClaims.length
+  // Only strays and empty dirs and claims and stray requests are auto-fixable;
+  // duplicates never are.
+  const fixable =
+    data.strayFiles.length + data.unknownDirs.length + data.heldClaims.length + data.strayRequests.length
 
   const runFix = async (): Promise<void> => {
     try {
@@ -71,6 +73,13 @@ export const DoctorPanel = () => {
         </p>
       )}
 
+      {data.strayRequests.length > 0 && (
+        <p className="doctor-note">
+          Plan requests whose task has left <code>queued/</code>: {data.strayRequests.join(", ")} — inert, and dropped
+          by fix. Unlike a claim these are never kept: nothing can be driving a task that isn’t there.
+        </p>
+      )}
+
       {data.duplicates.length > 0 && (
         <p className="doctor-note doctor-note--warn">
           Duplicate ids never auto-resolved (the hub can’t know which copy is canonical):{" "}
@@ -98,6 +107,7 @@ export const DoctorPanel = () => {
               result.rescued.length ? `rescued ${result.rescued.length}` : "",
               result.removedDirs.length ? `removed ${result.removedDirs.length} folder(s)` : "",
               result.releasedClaims.length ? `released ${result.releasedClaims.length} claim(s)` : "",
+              result.revokedRequests.length ? `dropped ${result.revokedRequests.length} stray request(s)` : "",
               result.claimsSkipped ? "claims skipped (watcher live)" : "",
               result.failed?.length ? `${result.failed.length} left for you` : "",
             ]

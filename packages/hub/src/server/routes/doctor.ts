@@ -12,6 +12,7 @@ import {
   releaseOrphanedClaims,
   rescueStray,
 } from "@agentic-workflow/core/task/store"
+import { strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
 import type { DoctorReport, DoctorFixResponse, HeldClaim } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { auditStatuses } from "../kindboard.js"
@@ -44,8 +45,20 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
     }
   }
 
+  // A plan request whose task has left queued/ reorders nothing and blocks
+  // nothing, but it lingers — so the doctor names it rather than leaving a
+  // marker on disk with no explanation.
+  const queued = await listByStatus(deps.client, deps.directory, deps.tasksDir, "queued", deps.log)
+  const strayRequests = await strayPlanRequestIds(
+    deps.sh,
+    deps.directory,
+    deps.tasksDir,
+    queued.map((t) => t.id),
+  )
+
   const report: DoctorReport = {
     findings,
+    strayRequests,
     unknownDirs: anomalies.unknownDirs,
     strayFiles: anomalies.strayFiles,
     duplicates: anomalies.duplicates.map((d) => ({ id: d.id, statuses: [...d.statuses] })),
@@ -128,6 +141,17 @@ export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
     }
   }
 
+  // Unlike a claim, a stray request is never ambiguous: its task has left the
+  // folder, so nothing can be driving it and nothing is racing for it. No
+  // watcher check, and no commit — the markers were never tracked.
+  const queued = await listByStatus(deps.client, deps.directory, deps.tasksDir, "queued", deps.log)
+  const revokedRequests = await sweepStalePlanRequests(
+    deps.sh,
+    deps.directory,
+    deps.tasksDir,
+    queued.map((t) => t.id),
+  )
+
   if (rescued.length > 0) {
     await commitPaths(deps.sh, deps.directory, [deps.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
   }
@@ -136,6 +160,7 @@ export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
     rescued,
     removedDirs,
     releasedClaims: released,
+    revokedRequests,
     claimsSkipped,
     // Duplicates are reported, never fixed — echoed back so the UI keeps showing them.
     duplicates: anomalies.duplicates.map((d) => ({ id: d.id, statuses: [...d.statuses] })),

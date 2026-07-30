@@ -509,6 +509,12 @@ export interface DoctorReport {
   readonly strayFiles: readonly string[]
   readonly duplicates: readonly DuplicateTask[]
   readonly heldClaims: readonly HeldClaim[]
+  /**
+   * Plan requests whose task has left `queued/`. Inert — they reorder nothing
+   * and block nothing — but they linger, so the doctor names them rather than
+   * leaving an unexplained marker on disk.
+   */
+  readonly strayRequests: readonly string[]
   /** An OpenCode watcher lease is live with no stage marker — idle-polling or mid-claim, so /fix can't tell which task it drives. */
   readonly watcherLive: boolean
   readonly watcherPid?: number
@@ -519,6 +525,11 @@ export interface DoctorFixResponse {
   readonly rescued: readonly string[]
   readonly removedDirs: readonly string[]
   readonly releasedClaims: readonly string[]
+  /**
+   * Stray plan requests removed. Never skipped the way claim release can be: the
+   * task has left the folder, so nothing can be driving it or racing for it.
+   */
+  readonly revokedRequests: readonly string[]
   /** True when claim release was skipped wholesale: a watcher is live with no marker. */
   readonly claimsSkipped: boolean
   /** Reported, unchanged — the hub won't guess which duplicate is canonical. */
