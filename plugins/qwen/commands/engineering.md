@@ -32,7 +32,7 @@ on and who does the work; it is deliberately not a procedure.
 - **`replan [id] [reason]`** — the sole rejection verb, back to `queued/`. **The hook's, before your turn.**
 - **`remove <id>`** — hard-delete a task from the backlog. **The hook's, before your turn.** Destructive.
 - **`plan <id>`** — run PLAN on one approved task and park the plan for the gate. **Yours.**
-- **`claim`** — drive the next build-ready task through BUILD → VERIFY → REVIEW. **Yours.**
+- **`claim`** — drive the next task: build-ready work through BUILD → VERIFY → REVIEW, else one to plan. **Yours.**
 - **`recover <id>`** — resume a run that stopped early. **Yours.**
 - **`stop`** (alias: `abort`) — abort the active loop. **Yours.**
 - **`status`** (or bare) — the active loop plus the backlog roll-up. **Yours.**

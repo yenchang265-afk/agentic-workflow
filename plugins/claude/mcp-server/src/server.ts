@@ -127,9 +127,9 @@ import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflo
  * Task authoring happens before the loop, via `/agentic-workflow:engineering new`: it interviews
  * the user into a draft (main-agent turn) and `workflow_approve` (unified gate)
  * parks it planless in `queued/`. Planning happens inside the loop, right before
- * execution, and only on demand: `workflow_start` on a queued task enters at PLAN
- * (no git isolation — it writes only the task file; `workflow_claim` never
- * auto-plans from `queued/`), and `workflow_advance` after PLAN
+ * execution: `workflow_start` on a queued task enters at PLAN (no git isolation
+ * — it writes only the task file), `workflow_claim` reaches the same pool once
+ * no build-ready work is left, and `workflow_advance` after PLAN
  * parks the task in `plan-review/` and ends the loop (`park`). The human plan
  * gate is `workflow_plan_approve` (plan-review → in-progress); `workflow_replan`
  * sends a rejected or cap-tripped task back to `queued/`. From `in-progress/`
@@ -891,8 +891,8 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
 
 /** Claim a queued (planless) task and construct its PLAN-entry state. No git
  *  isolation and no snapshot: PLAN writes only the task file, in the main
- *  tree. A died PLAN leaves a stale marker in queued/.claims/ — release it
- *  with workflow_doctor fix, then re-run workflow_start on the task. */
+ *  tree. A died PLAN leaves a stale marker in queued/.claims/ — the next claim
+ *  walk releases it once it reads stale, or workflow_doctor fix does so now. */
 const startPlan = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
   samples = []
@@ -1076,7 +1076,7 @@ server.registerTool(
   "workflow_claim",
   {
     description:
-      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order (engineering, then any opted-in kind — every sitter is opt-in via workflows.<kind>.enabled); pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering it claims build-ready in-progress/ work only (lowest priority number first) — planless queued/ tasks are never auto-planned; plan them with workflow_start({id}). Pass `target` (a PR number) with a PR-sitter `kind` to force that exact PR — it is claimed and driven even with no outstanding attention signal, overriding the poller's heuristic (the fork-PR refusal still holds). Returns null when nothing is claimable.",
+      "Claim the next item and start it — the pull equivalent of the OpenCode plugin's /agentic-workflow:engineering watch. Polls all enabled workflow kinds in claim-priority order (engineering, then any opted-in kind — every sitter is opt-in via workflows.<kind>.enabled); pass `kind` to restrict the pull to one kind (e.g. /agentic-workflow:engineering claim pr-sitter). For engineering, build-ready in-progress/ work wins over planless queued/ work (finish what is in flight before planning more); within each pool, lowest priority number first. A queued claim enters at PLAN and parks the plan for your gate; workflow_start({id}) plans one now without waiting for a claim. Pass `target` (a PR number) with a PR-sitter `kind` to force that exact PR — it is claimed and driven even with no outstanding attention signal, overriding the poller's heuristic (the fork-PR refusal still holds). Returns null when nothing is claimable.",
     inputSchema: {
       kind: z.string().optional().describe("Restrict the pull to one enabled workflow kind (e.g. pr-sitter)."),
       target: z

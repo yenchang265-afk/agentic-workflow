@@ -36,13 +36,13 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 把關點上的任務；只有在兩個迴圈把關點都沒有任務等待時，才會退而推進唯一的
 一份草稿。**`replan [id] [reason]`** 是唯一的拒絕
 動詞：一份暫存的計畫（或以 id 指定、觸發了上限的任務）會被送回
-`queued/` 重新規劃。規劃發生在**執行前的按需時刻**——`plan <id>` 為一個
-已排入佇列的任務執行 PLAN 並將其暫存，這樣計畫就不會在任務暫停等待期間過期——而
-`claim`/`watch` 只建置已核准計畫的任務（它們絕不會自動為已排入佇列的任務產生計畫）：
+`queued/` 重新規劃。規劃發生在**執行之前**——`claim`/`watch` 先取可建置的工作，
+沒有時才退而認領一個已核准的 `queued/` 任務來規劃，而 `plan <id>` 讓你不必等
+巡查就為某一個任務執行 PLAN，這樣計畫就不會在任務暫停等待期間過期：
 
 | 階段 | 作用 | 是否暫停？ |
 |-------|------|---------|
-| PLAN | 將 `## Implementation Plan` 寫入被 `plan <id>` 認領的已排入佇列任務，然後**將其暫存到 `plan-review/` 並結束** | 暫停 —— `approve` / `replan` 才是把關點，迴圈本身從不阻塞 |
+| PLAN | 將 `## Implementation Plan` 寫入被認領的已排入佇列任務，然後**將其暫存到 `plan-review/` 並結束** | 暫停 —— `approve` / `replan` 才是把關點，迴圈本身從不阻塞 |
 | BUILD | 在自己的 `feature/<id>` 分支上以測試先行的方式實作已核准的計畫 | 否 |
 | VERIFY | 執行測試；失敗則帶著失敗資訊重新建置。在 `workflows.<kind>.stageChecks` 宣告的指令改由迴圈自己執行，其結束碼會約束裁決，而不是由代理人自行回報 | 否 |
 | REVIEW | 檢查分支 diff；失敗則帶著回饋重新建置 | 否 |
@@ -186,9 +186,9 @@ npm install
   否則請優先使用 `abandon`
 - `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]`（OpenCode）·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ——
-  `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存（唯一的 PLAN 入口）；
-  `claim` 拉取下一個可建置的 `in-progress/` 任務；`watch` 是一個僅作用於
-  engineering 類型的常駐 worker
+  `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存，不必等巡查；
+  `claim` 拉取下一個項目——先取可建置的 `in-progress/` 工作，沒有時再取一個
+  已核准的 `queued/` 任務來規劃；`watch` 是一個僅作用於 engineering 類型的常駐 worker
 - `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [interval]`（OpenCode）· `unwatch` ·
   `stop` · `status` —— 相同的 claim/watch 語意，作用範圍限定在 PR sitter
   （`claim` 可傳入選填的 PR 編號／網址以強制處理特定的 PR）

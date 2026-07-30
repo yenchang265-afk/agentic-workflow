@@ -39,14 +39,14 @@ folder, so the move is never ambiguous, and id-less `approve` advances the
 one task waiting at a loop gate (falling back to a lone draft when none is).
 **`replan [id] [reason]`**
 is the sole rejection verb: a parked plan (or a cap-tripped task, by id) goes
-back to `queued/` for re-planning. Planning happens **right before execution,
-on demand** — `plan <id>` plans one queued task now and parks it, so plans
-don't rot while tasks sit parked — and `claim`/`watch` build plan-approved
-ones (they never auto-plan a queued task):
+back to `queued/` for re-planning. Planning happens **right before execution** —
+`claim`/`watch` take build-ready work first and fall back to an approved
+`queued/` task to plan, and `plan <id>` plans one now without waiting for a
+tick, so plans don't rot while tasks sit parked:
 
 | Stage | Does | Pauses? |
 |-------|------|---------|
-| PLAN | Writes the `## Implementation Plan` onto the queued task claimed by `plan <id>`, then **parks it in `plan-review/` and exits** | parks — `approve` / `replan` is the gate, the loop never blocks |
+| PLAN | Writes the `## Implementation Plan` onto the claimed queued task, then **parks it in `plan-review/` and exits** | parks — `approve` / `replan` is the gate, the loop never blocks |
 | BUILD | Implements the approved plan test-first, on its own `feature/<id>` branch | no |
 | VERIFY | Runs tests; FAIL re-builds with the failure. Commands declared in `workflows.<kind>.stageChecks` are run by the loop itself, and their exit codes bind the verdict rather than being self-reported | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
@@ -207,9 +207,10 @@ task files and `.agentic-workflow.json`) by hand.
   git entirely, so prefer `abandon` unless you want the file gone
 - `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
-  `plan` runs PLAN on one queued task and parks it (the only PLAN entry);
-  `claim` pulls the next build-ready `in-progress/` task; `watch` is a
-  standing worker scoped to the engineering kind
+  `plan` runs PLAN on one queued task and parks it, without waiting for a tick;
+  `claim` pulls the next item — build-ready `in-progress/` work first, then an
+  approved `queued/` task to plan; `watch` is a standing worker scoped to the
+  engineering kind
 - `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [interval]` (OpenCode) · `unwatch` ·
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
   (`claim` takes an optional PR number/URL to force a specific one)

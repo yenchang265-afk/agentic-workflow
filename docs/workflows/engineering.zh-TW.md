@@ -68,7 +68,7 @@ flowchart TB
 
     subgraph execution["迴圈本身（THE LOOP）— /agentic-workflow:engineering · 無人值守，由 session.idle 驅動"]
         direction TB
-        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — 立即規劃一個任務（唯一的 PLAN 入口）<br/><b>/agentic-workflow:engineering claim</b> — 一次性拉取（僅限可建置的任務）<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session，<br/>透過原子性的 mkdir lock 認領<br/>（claim/watch 絕不會自動為 queued/ 中的任務規劃）"]
+        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — 立即規劃一個任務，不必等巡查<br/><b>/agentic-workflow:engineering claim</b> — 一次性拉取<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session，<br/>透過原子性的 mkdir lock 認領<br/>（先取 in-progress/ 的可建置工作，再取 queued/ 來規劃）"]
         planstage["<b>PLAN</b><br/>agent：workflow-plan-author · 僅限任務檔案，於主樹（main tree）<br/>skill：planning-and-task-breakdown<br/>（相關時 + api-and-interface-design、deprecation-and-migration、<br/>documentation-and-adrs）<br/><i>就地寫入 ## Implementation Plan，<br/>然後暫存 —— 迴圈結束</i>"]
         build["<b>BUILD</b><br/>agent：workflow-build · edit ✅ bash ✅<br/>skills：incremental-implementation、<br/>test-driven-development<br/>（相關時 + frontend-ui-engineering、observability-and-instrumentation、<br/>code-simplification）<br/><i>在 feature/&lt;id&gt; 分支或 worktree 上進行 TDD，<br/>每次疊代一個 commit checkpoint</i>"]
         verify["<b>VERIFY</b><br/>agent：workflow-verify · edit ❌ bash：測試白名單<br/>FAIL 時的 skill：debugging-and-error-recovery<br/><i>執行測試 + 驗收標準，<br/>裁定只透過 workflow_verdict 工具產生</i>"]
@@ -113,11 +113,11 @@ flowchart TB
 就能看到先前幾次嘗試已經試過什麼，而不是重新摸索一遍——而且被上限擋下的執行
 會說出那些疊代做了什麼，不只是說有三次。
 
-PLAN 只在按需時執行（`plan <id>` —— `claim`/`watch`
-絕不會自動為 `queued/` 中的任務規劃）且從不阻塞：它唯一的出口就是暫存進
-`plan-review/` 等待你的把關。一次當機的 `plan <id>` 執行會在
-`queued/.claims/` 留下一個過期的認領標記；`doctor fix` 會釋放它（watch
-的巡查不再自動釋放 queued 中的標記）。engineering 迴圈從不會自行推送或
+PLAN 在執行前才進行——當沒有可建置的工作時，`claim`/`watch` 會退而認領一個
+已核准的 `queued/` 任務，而 `plan <id>` 則讓你不必等巡查就規劃某一個——且
+從不阻塞：它唯一的出口就是暫存進 `plan-review/` 等待你的把關。一次當機的
+PLAN 執行會在 `queued/.claims/` 留下一個過期的認領標記；下一次認領巡查在它
+讀起來已過期時就會釋放它，`doctor fix` 也能立即釋放。engineering 迴圈從不會自行推送或
 開啟 PR——REVIEW PASS 只會把任務暫存進 `in-review/` 等你處理。Ship
 （`in-review/` → `completed/`）仍是一個由人類觸發的把關點，但現在它會
 推送任務的 `feature/<id>` 分支，並依 `codePlatform` 開啟（或重複使用）

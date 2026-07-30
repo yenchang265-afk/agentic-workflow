@@ -171,15 +171,15 @@ a rebuild from an unmoved file on an execution verb.
   reachable from here — `claim`/`watch` drive builds.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
-- **`claim`** — one-shot pull: claim the next build-ready `in-progress/` task
-  (lowest priority number first) and drive it once this turn settles. Planless
-  `queued/` tasks are never auto-planned — plan them with `plan <id>`.
+- **`claim`** — one-shot pull: claim the next task (lowest priority number
+  first) and drive it once this turn settles — build-ready `in-progress/` work,
+  then an approved `queued/` task to plan when no build work is left.
 <!-- /aw:verb claim -->
 <!-- aw:verb watch -->
 - **`watch [trigger]`** — put **this** session into engineering worker mode.
   Each tick polls the backlog for one build-ready `in-progress/` task to drive
-  BUILD → VERIFY → REVIEW; planless `queued/` tasks are left for `plan <id>`
-  (a tick that finds only those says so). Bare `watch` uses the kind's configured trigger
+  BUILD → VERIFY → REVIEW, falling back to an approved `queued/` task to plan
+  and park. Bare `watch` uses the kind's configured trigger
   (`workflows.engineering.trigger`, default poll); an argument overrides it for
   this session only: `poll [interval]` / a bare interval (`30s`, `5m`, `2h`,
   or a bare number of minutes; default `watchIntervalMinutes`, 5m; floor:

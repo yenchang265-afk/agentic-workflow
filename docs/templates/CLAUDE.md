@@ -48,7 +48,8 @@ unattended (a feature, a refactor with tests, anything worth a task file):
 2. Review the draft, then `/agentic-workflow:engineering approve <id>` — queues it
 3. `/agentic-workflow:engineering plan <id>` claims the queued task,
    writes the `## Implementation Plan` right before execution, and parks it
-   at the plan gate (`claim`/`watch` never auto-plan a queued task)
+   at the plan gate (a `claim`/`watch` tick with no build work left does the
+   same, so `plan <id>` is only for planning one now)
 4. `/agentic-workflow:engineering approve <id>` (or `replan <id> [why]`) — after
    approval a `claim`/`watch` worker runs BUILD→VERIFY→REVIEW unattended on a
    `feature/<id>` branch; you review the result and

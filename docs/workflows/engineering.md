@@ -67,7 +67,7 @@ flowchart TB
 
     subgraph execution["THE LOOP — /agentic-workflow:engineering · unattended, driven on session.idle"]
         direction TB
-        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now (the only PLAN entry)<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull (build-ready only)<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(claim/watch never auto-plan queued/)"]
+        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now, no tick needed<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build-ready in-progress/ first, then queued/ to plan)"]
         planstage["<b>PLAN</b><br/>agent: workflow-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: workflow-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
         verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via workflow_verdict tool only</i>"]
@@ -80,7 +80,7 @@ flowchart TB
     new -->|"writes draft"| draft
     draft -->|"you review the draft"| approve
     approve -->|"queues (audited, committed)"| queued
-    queued -->|"plan &lt;id&gt;"| claim
+    queued -->|"claimed"| claim
     claim --> planstage
     planstage -->|"parks (audited, committed)"| planreview
     planreview --> approveplan
@@ -113,12 +113,12 @@ Each counted iteration also appends one line to a bounded **attempts ledger**
 (stage, verdict, one-line reason) that the next BUILD prompt carries, so a
 re-build can see what the previous attempts already tried instead of
 rediscovering — and a capped run says what those iterations did, not just that
-there were three of them. PLAN runs only on
-demand (`plan <id>` — `claim`/`watch` never auto-plan a `queued/` task) and
-never blocks: its only exit is the park into `plan-review/` for your gate. A
-`plan <id>` run that crashes leaves a stale claim marker in `queued/.claims/`;
-`doctor fix` releases it (the watch walk no longer auto-releases queued
-markers). The engineering loop never
+there were three of them. PLAN runs right before execution — `claim`/`watch`
+fall back to an approved `queued/` task once no build-ready work is left, and
+`plan <id>` plans one without waiting for a tick — and never blocks: its only
+exit is the park into `plan-review/` for your gate. A PLAN run that crashes
+leaves a stale claim marker in `queued/.claims/`; the next claim walk releases
+it once it reads stale, and `doctor fix` releases it on demand. The engineering loop never
 pushes or opens a PR on its own — REVIEW PASS just parks the task in
 `in-review/` for you. Ship (`in-review/` → `completed/`) is still a
 human-invoked gate, but it now pushes the task's `feature/<id>` branch and
