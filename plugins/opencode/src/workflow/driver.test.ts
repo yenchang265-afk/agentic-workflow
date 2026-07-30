@@ -1797,6 +1797,111 @@ test("review: a FAIL naming no blocking finding is rejected", async () => {
   assert.match(rejections[0]!, /critical.*important/s)
 })
 
+// --- a twice-rejected verdict: the stage is routed on what it declared ---
+//
+// The regression: a review that FAILED had its call refused for its SHAPE, the
+// pass was re-run, the second refusal left the stage with no record — and a
+// record-less check stage ERRORs, so `review.onError` stopped the run and the
+// findings never reached the BUILD they were for. What the user saw was "another
+// REVIEW runs, and then we never go back to BUILD".
+
+/** Run a single-pass review capturing the arguments of every fired pass. */
+const runReviewCapturingArgs = async (sessionID: string, onCall: (call: number) => void, warns: string[] = []) => {
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const fired: string[] = []
+  let calls = 0
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async (req: { body: { arguments: string } }) => {
+        calls++
+        fired.push(req.body.arguments)
+        onCall(calls)
+        return { data: { parts: [{ type: "text", text: `review pass ${calls}` }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = {
+    client,
+    $: makeShellFS({}, []),
+    directory: "/repo",
+    log: (level, msg) => {
+      if (level === "warn") warns.push(msg)
+    },
+  }
+  try {
+    const result = await runStagePasses(
+      deps,
+      sessionID,
+      testConfig,
+      manifestFor("engineering"),
+      { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
+      "review",
+      "goal args",
+      0,
+    )
+    return { result, fired }
+  } finally {
+    clearWorkflow(sessionID)
+  }
+}
+
+test("review: a FAIL rejected twice lands as the stage's FAIL, so the loop re-builds", async () => {
+  const sessionID = "sess-rejected-fail-twice"
+  const warns: string[] = []
+  const { result, fired } = await runReviewCapturingArgs(
+    sessionID,
+    () => {
+      // Every attempt insists on the same unadmittable shape: a FAIL naming
+      // nothing blocking. The review DID report — twice — so the stage fails.
+      recordVerdict(sessionID, "review", { verdict: "FAIL", reason: "the retry logic is wrong", axes: cleanAxes })
+    },
+    warns,
+  )
+  assert.equal(fired.length, 2, "the pass still gets its one retry before the fallback")
+  assert.equal(result.verdict, "FAIL", "FAIL — not ERROR — is what re-fires BUILD via review.onFail")
+  assert.match(result.record?.reason ?? "", /the retry logic is wrong/, "the review's own reason reaches the next BUILD")
+  assert.match(result.record?.reason ?? "", /rejected twice/)
+  assert.ok(
+    warns.some((w) => /rejected twice/.test(w)),
+    `the salvage is logged: ${warns.join(" | ")}`,
+  )
+})
+
+test("review: the retry after a REJECTED verdict quotes the rejection, not 'you recorded nothing'", async () => {
+  const sessionID = "sess-rejected-retry-prompt"
+  const { fired } = await runReviewCapturingArgs(sessionID, () => {
+    recordVerdict(sessionID, "review", { verdict: "FAIL", reason: "vibes", axes: cleanAxes })
+  })
+  assert.doesNotMatch(fired[0]!, /PREVIOUS ATTEMPT/, "the first pass gets a clean prompt")
+  assert.match(fired[1]!, /VERDICT WAS REJECTED/)
+  assert.match(fired[1]!, /critical.*important/s, "the actual refusal is what makes the next call land")
+  assert.doesNotMatch(fired[1]!, /RECORDED NO VERDICT/, "it did record one — the shape was refused")
+})
+
+test("review: an unearned PASS rejected twice still ERRORs, and stops blaming the plugin wiring", async () => {
+  const sessionID = "sess-rejected-pass-twice"
+  const { result } = await runReviewCapturingArgs(sessionID, () => {
+    // A PASS with no evidence: `requireEvidence` refuses it, and no fallback may
+    // launder it into a shipped review.
+    recordVerdict(sessionID, "review", { verdict: "PASS", axes: cleanAxes })
+  })
+  assert.equal(result.verdict, "ERROR")
+  assert.match(result.record?.reason ?? "", /every verdict offered was rejected/)
+  assert.doesNotMatch(result.record?.reason ?? "", /plugin wiring/)
+})
+
+test("review: a stage that recorded nothing at all keeps the unreachable-channel ERROR", async () => {
+  const sessionID = "sess-silent-channel"
+  const { result } = await runReviewCapturingArgs(sessionID, () => {
+    /* the subagent never calls workflow_verdict */
+  })
+  assert.equal(result.verdict, "ERROR")
+  assert.match(result.record?.reason ?? "", /channel is unreachable/)
+  assert.match(result.record?.reason ?? "", /plugin wiring/)
+})
+
 test("lens mode suppresses axis enforcement — a lens pass records its own focus only", async () => {
   // Each lens is told to focus exclusively on its own lens; demanding all five
   // axes from it would reject every pass and wedge the loop.

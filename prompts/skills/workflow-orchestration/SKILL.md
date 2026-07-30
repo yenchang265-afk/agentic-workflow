@@ -206,6 +206,16 @@ problem; report it and suggest `workflow_recover` after the fix. A SubagentStop
 hook also nags the check subagent once, in-session, when it tries to finish
 without a verdict.
 
+**A REJECTED verdict is not a missing one.** A call refused by the admission
+rules (an axis missing, a FAIL naming no critical/important finding, a PASS
+citing no evidence) records nothing, so the same "check retry" fires — but the
+retry prompt quotes the refusal, and if the second call is refused too the stage
+is recorded **as it declared**: a rejected FAIL becomes the stage's FAIL and
+`onFail` re-fires BUILD with the findings. Only an unearned PASS still stops the
+loop with ERROR, and that ERROR names the refusal rather than the wiring. So a
+review that plainly failed always reaches a rebuild, even when it never managed
+to phrase its verdict.
+
 ## Between-stage bookkeeping (all via MCP tools — never by hand)
 
 - `workflow_stage({stage})` before spawning **every** stage subagent, build

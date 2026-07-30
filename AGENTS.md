@@ -262,6 +262,32 @@ on `pass.mode === "axis"` inline again; a lens set that spans the axes is
 enforceable and a lens set that cannot is not, and only that predicate knows the
 difference.
 
+### A rejected verdict is not a missing one
+
+`admitVerdict` refusing a call means the channel WORKED and the shape was wrong.
+Treating the two as one thing cost a whole class of run: a REVIEW that failed but
+phrased its FAIL unadmittably (no critical/important finding, an axis short) left
+`pending`/`recordedVerdicts` empty, so the host re-fired the same review — and the
+second refusal became ERROR, which `review.onError` turns into a stop. The visible
+symptom is "another REVIEW ran and we never went back to BUILD": a review with
+real findings ends the run instead of feeding the rebuild its `onFail` arm exists
+for.
+
+So both hosts keep the refused RECORD (`RejectedVerdict`), not a boolean, and once
+the one retry is spent `rejectedFallback` records the stage **as it declared** —
+FAIL stays FAIL, so `onFail` fires BUILD with the findings and the rejection
+message rides in `reason` so the next BUILD knows both. Two halves of that are
+load-bearing and must not be "simplified":
+
+- **An effective PASS is never salvaged.** Every rejection a PASS can draw exists
+  because the PASS was not earned; laundering it ships unreviewed work, which is
+  worse than the ERROR stop. `rejectedFallback` returns null there, and the caller
+  keeps its ERROR.
+- **The two ERROR reasons stay distinct** (`noAdmissibleVerdictReason`). "The
+  verdict channel is unreachable — fix the plugin wiring" was reported for
+  refusals too, sending operators after an MCP channel that had just answered
+  twice.
+
 ### A stage pass's identity is its session (OpenCode)
 
 Every per-pass table in the OpenCode driver — `recordedVerdicts`,

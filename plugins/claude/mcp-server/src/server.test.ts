@@ -196,6 +196,30 @@ test("workflow_advance floors the admitted verdict with the checks, and admissio
   assert.doesNotMatch(verdictBody, /withCheckFloor/, "the admission contract must stay exactly as it was")
 })
 
+// A rejected verdict is not "nothing happened": the channel worked and the SHAPE
+// was refused. Before this, a review that FAILED with an unadmittable shape left
+// `pending` empty, the host re-fired the same review, and the second refusal
+// became ERROR — so `review.onError` stopped the run and the findings never
+// reached the BUILD they were for ("another REVIEW, and we never go back to
+// BUILD"). The refused record has to be KEPT for the fallback to have anything
+// to route on.
+test("workflow_verdict keeps the refused record, not just the fact of a refusal", () => {
+  const body = flat(toolBody(code(source()), "workflow_verdict"))
+  assert.match(body, /verdictRejected = \{ record: rec, message: admission\.message \}/)
+  assert.doesNotMatch(body, /verdictRejected = true/, "a boolean cannot be routed on")
+})
+
+test("workflow_advance routes a twice-rejected verdict on what the stage declared", () => {
+  const body = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(body, /const salvaged = rejectedFallback\(verdictRejected\)/)
+  assert.match(body, /pending = salvaged \?\?/, "the ERROR is the fallback of the fallback, not the first answer")
+  // `rejectedFallback` returns null for an effective PASS, so the ERROR arm still
+  // catches the unearned PASS — and it must no longer blame plugin wiring for a
+  // channel that answered twice.
+  assert.match(body, /reason: noAdmissibleVerdictReason\(\{ rejected: verdictRejected, prose \}\)/)
+  assert.doesNotMatch(body, /the verdict channel is unreachable from the stage subagent/, "that wording lives in core now, behind the rejected/silent split")
+})
+
 // A focused pass owes ONE axis. Admitting it against the stage's full
 // requirement rejects every fan-out pass for the axes it was told not to review
 // — and rejects every reviewLenses pass on this host too, which is a bug that

@@ -3,6 +3,8 @@ import { test } from "node:test"
 import {
   admitVerdict,
   axisCoverageIssue,
+  noAdmissibleVerdictReason,
+  rejectedFallback,
   evidenceIssue,
   axisVerdict,
   blockingFindingsIssue,
@@ -648,4 +650,76 @@ test("the contract paragraph carries the proof-of-work half only when the stage 
   // Byte-identical to the axis-less, evidence-less form is what every other
   // check stage across every kind renders.
   assert.equal(verdictContractBlock("verify"), verdictContractBlock("verify", undefined, "single", false))
+})
+
+// --- a twice-rejected verdict: the loop acts on what the stage declared ---
+//
+// The regression these close: a review that FAILED had its call refused (bad
+// shape), the host re-fired the same review, the second refusal became ERROR,
+// and `review.onError` stopped the run — so a failing review never reached the
+// BUILD its findings were for.
+
+test("rejectedFallback records a twice-rejected FAIL as the stage's FAIL, with the rejection in the reason", () => {
+  const rejected = {
+    record: { verdict: "FAIL" as const, reason: "auth bypass", axes: fiveAxes() },
+    message: "Verdict NOT recorded — a FAIL must name what has to change.",
+  }
+  const salvaged = rejectedFallback(rejected)
+  assert.equal(effectiveVerdict(salvaged!), "FAIL", "the stage fails, so onFail re-fires BUILD")
+  assert.match(salvaged!.reason!, /auth bypass/, "the stage's own reason survives")
+  assert.match(salvaged!.reason!, /rejected twice/, "...and says the verdict arrived malformed")
+  assert.match(salvaged!.reason!, /must name what has to change/, "...quoting the refusal itself")
+  // The feedback block is what the next BUILD reads — it must not be empty, which
+  // is the whole reason a bare FAIL is refused in the first place.
+  assert.match(verdictFeedbackBlock(salvaged), /auth bypass/)
+})
+
+test("rejectedFallback never launders an unearned PASS", () => {
+  const salvaged = rejectedFallback({
+    record: { verdict: "PASS", axes: fiveAxes() },
+    message: "Verdict NOT recorded — a PASS must cite evidence.",
+  })
+  assert.equal(salvaged, null, "an effective PASS keeps the caller's ERROR stop")
+})
+
+test("rejectedFallback salvages on the DERIVED verdict, not the declared one", () => {
+  // Declared PASS, but an axis carries a Critical finding: the stage said
+  // something blocking, so it is salvaged as the FAIL it effectively is.
+  const salvaged = rejectedFallback({
+    record: {
+      verdict: "PASS",
+      axes: fiveAxes().map((a) => (a.axis === "security" ? { ...a, findings: [{ severity: "critical" as const, detail: "secret logged" }] } : a)),
+    },
+    message: "Verdict NOT recorded — incomplete coverage.",
+  })
+  assert.equal(effectiveVerdict(salvaged!), "FAIL")
+})
+
+test("rejectedFallback keeps a declared ERROR an ERROR", () => {
+  const salvaged = rejectedFallback({ record: { verdict: "ERROR", reason: "no test runner" }, message: "Verdict NOT recorded — bad shape." })
+  assert.equal(effectiveVerdict(salvaged!), "ERROR", "an unrunnable check still stops the loop")
+})
+
+test("rejectedFallback of nothing is nothing", () => {
+  assert.equal(rejectedFallback(null), null)
+  assert.equal(rejectedFallback(undefined), null)
+})
+
+test("noAdmissibleVerdictReason tells a dead channel apart from a refused verdict", () => {
+  const silent = noAdmissibleVerdictReason({})
+  assert.match(silent, /channel is unreachable/)
+  assert.match(silent, /fix the plugin wiring/)
+  const refused = noAdmissibleVerdictReason({
+    rejected: { record: { verdict: "PASS" }, message: "Verdict NOT recorded — a PASS must cite evidence." },
+  })
+  assert.match(refused, /every verdict offered was rejected/)
+  assert.match(refused, /the channel works/)
+  assert.match(refused, /must cite evidence/)
+  assert.doesNotMatch(refused, /plugin wiring/, "a channel that answered twice must not send anyone after the wiring")
+})
+
+test("noAdmissibleVerdictReason carries the host's pass tag and the untrusted prose", () => {
+  const reason = noAdmissibleVerdictReason({ detail: " (axes: security)", prose: "PASS" })
+  assert.match(reason, /retry \(axes: security\) —/)
+  assert.match(reason, /prose claimed PASS, ignored/)
 })

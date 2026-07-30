@@ -87,14 +87,17 @@ import {
   admitVerdict,
   effectiveVerdict,
   mergeAxes,
+  noAdmissibleVerdictReason,
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
   parseVerdict,
   passFocusBlock,
+  rejectedFallback,
   stageDriftNote,
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
+  type RejectedVerdict,
   type StagePass,
   type Verdict,
   type VerdictRecord,
@@ -433,6 +436,19 @@ type CheckStage = string
 const recordedVerdicts = new Map<string, { readonly stage: CheckStage; readonly record: VerdictRecord }>()
 
 /**
+ * Verdicts `admitVerdict` REFUSED, per session — the pass's retry reads the
+ * rejection message, and once the retry is spent `rejectedFallback` routes the
+ * stage on what it declared (verdict.ts).
+ *
+ * Keyed by session exactly like `recordedVerdicts`, so a pass under
+ * `stageConcurrency > 1` can never read a sibling's rejection. Kept for the whole
+ * PASS (not cleared per attempt like the verdict tables): the fallback runs after
+ * the retry, and an attempt that records nothing at all must not erase the
+ * rejection the attempt before it produced.
+ */
+const rejectedVerdicts = new Map<string, { readonly stage: CheckStage; readonly rejected: RejectedVerdict }>()
+
+/**
  * "I cannot do this work at all" signals from the `workflow_blocked` tool, per
  * session, consumed by the drive loop right after the WORK stage that recorded
  * one completes.
@@ -582,7 +598,13 @@ export const recordVerdict = (
     observed: observedEvidence.get(sessionID) ?? NO_OBSERVATIONS,
   }
   const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null, evidence)
-  if (!admission.ok) return reject(admission.message)
+  if (!admission.ok) {
+    // Keep the refused record, not just the fact of a refusal: a stage that
+    // reported twice and was refused twice is routed on what it DECLARED rather
+    // than ERROR-stopping (see `rejectedFallback`). Last rejection wins.
+    rejectedVerdicts.set(sessionID, { stage, rejected: { record, message: admission.message } })
+    return reject(admission.message)
+  }
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
   return { accepted: true, message: `Recorded ${stage} verdict: ${effectiveVerdict(admission.record)}.` }
 }
@@ -631,6 +653,16 @@ const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord 
   const rec = recordedVerdicts.get(sessionID)
   recordedVerdicts.delete(sessionID)
   return rec && rec.stage === stage ? rec.record : null
+}
+
+/**
+ * The rejection a session's check stage last drew, if any. A PEEK, not a take:
+ * the retry prompt reads it before the last attempt runs, and the fallback after
+ * — `runStagePasses` clears it once per pass instead.
+ */
+const rejectedVerdictFor = (sessionID: string, stage: CheckStage): RejectedVerdict | null => {
+  const entry = rejectedVerdicts.get(sessionID)
+  return entry && entry.stage === stage ? entry.rejected : null
 }
 
 /**
@@ -1033,6 +1065,12 @@ export const runStagePasses = async (
   // `records[i]` against `passes[i]`.
   const outputs: (string | null)[] = new Array(passes.length).fill(null)
   const records: (VerdictRecord | null)[] = new Array(passes.length).fill(null)
+  // Rejections that outlived their pass's retry WITHOUT becoming a record (an
+  // unearned PASS is never salvaged) — lifted out of the per-session map because
+  // the stage's ERROR reason is composed after the pass sessions are gone, and
+  // "the channel is unreachable, fix the plugin wiring" is the wrong diagnosis
+  // for a channel that answered twice.
+  const rejections: (RejectedVerdict | null)[] = new Array(passes.length).fill(null)
   const { client } = deps
   const runKey = workflowId(state)
 
@@ -1108,13 +1146,21 @@ export const runStagePasses = async (
     // workflow_verdict call — a broken verdict channel is not a genuine FAIL, and
     // burning a build iteration on it re-built already-done work (the
     // theater-booking-0 failure mode; parity with the Claude host's retry).
+    rejectedVerdicts.delete(passSessionID) // per PASS, not per attempt: the retry and the fallback both read it
     let passRecord: VerdictRecord | null = null
     for (let attempt = 0; attempt < 2; attempt++) {
+      // A retry after a REJECTED verdict is a different instruction from a retry
+      // after silence: the tool was called, the shape was refused, and the
+      // rejection message is the only thing that makes the next call land.
+      const rejected = isCheck ? rejectedVerdictFor(passSessionID, stage as CheckStage) : null
       const passArgs =
         attempt === 0
           ? args
-          : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
-            `If the tool is not in your tool list, state that explicitly in your final message and finish.`
+          : rejected
+            ? `${args}\n\nPREVIOUS ATTEMPT'S VERDICT WAS REJECTED and never recorded — ${rejected.message}\n` +
+              `Call workflow_verdict ONCE more with that corrected (partial submissions are not accumulated).`
+            : `${args}\n\nPREVIOUS ATTEMPT RECORDED NO VERDICT — the workflow_verdict tool call is MANDATORY. ` +
+              `If the tool is not in your tool list, state that explicitly in your final message and finish.`
       // Scoped to the PASS session, which at concurrency 1 IS the driving session
       // (today's behavior exactly). Above 1 that scoping is what makes these
       // clears correct rather than a race: one pass's clear must never wipe a
@@ -1156,6 +1202,21 @@ export const runStagePasses = async (
       )
       outputs[i] = pass.focus ? `### Review ${pass.mode === "axis" ? "axis" : "lens"}: ${pass.focus}\n${out}` : out
       passRecord = isCheck ? takeVerdictRecord(passSessionID, stage as CheckStage) : null
+      // The retry is spent and nothing was admitted: a pass that DID report — and
+      // was refused — is routed on what it declared, so a rejected FAIL reaches
+      // `advance` as this stage's FAIL and re-fires BUILD with the findings
+      // instead of ERROR-stopping the run. Applied before the sample below so the
+      // telemetry records the verdict the loop actually acted on, and only on the
+      // LAST attempt so a first-attempt rejection still gets its retry.
+      if (isCheck && !passRecord && attempt === 1) {
+        passRecord = rejectedFallback(rejectedVerdictFor(passSessionID, stage as CheckStage))
+        if (passRecord) {
+          await deps.log(
+            "warn",
+            `${stage}${pass.focus ? ` (${pass.focus})` : ""} had its verdict rejected twice — recording it as declared (${effectiveVerdict(passRecord)})`,
+          )
+        }
+      }
       // Samples stay on the DRIVING session: they are the run's telemetry, not
       // the pass session's, and the pass session is about to be deleted.
       addSample(sessionID, {
@@ -1192,6 +1253,10 @@ export const runStagePasses = async (
       }
     }
     records[i] = passRecord
+    // Only meaningful when the pass produced no record; a salvaged one already
+    // carries the rejection in its `reason`.
+    if (!passRecord) rejections[i] = isCheck ? rejectedVerdictFor(passSessionID, stage as CheckStage) : null
+    rejectedVerdicts.delete(passSessionID)
   }
 
   passSessions.set(sessionID, new Set())
@@ -1299,24 +1364,26 @@ export const runStagePasses = async (
   const verdict = record ? effectiveVerdict(record) : null
   axisRequirement.delete(sessionID) // the stage is over; nothing may inherit its requirement
   if (verdict === null) {
-    // Still nothing after the retry: the verdict channel is unreachable —
-    // surface it as a retryable ERROR (manifest onError → recoverable stop),
-    // never as a FAIL that triggers a pointless rebuild.
+    // Still nothing after the retry: nothing admissible ever landed — surface it
+    // as a retryable ERROR (manifest onError → recoverable stop), never as a FAIL
+    // that triggers a pointless rebuild. A stage whose calls were REJECTED rather
+    // than absent is named as such: only an unearned PASS reaches here that way
+    // (a rejected FAIL/ERROR was salvaged into a record above), and telling its
+    // operator to fix plugin wiring would send them after a working channel.
     const inText = parseVerdict(joinedOutput, stage === "verify" ? WORKFLOW_VERIFY_TAG : WORKFLOW_REVIEW_TAG)
     const noun = passes.some((p) => p.mode === "axis") ? "axis" : "lens"
     const lensTag = missingPasses.length
       ? ` (${missingPasses.length > 1 ? (noun === "axis" ? "axes" : "lenses") : noun}: ${missingPasses.join(", ")})`
       : ""
+    const rejected = rejections.find((r): r is RejectedVerdict => r !== null) ?? null
     await deps.log(
       "warn",
-      `${stage} recorded no verdict via workflow_verdict even after a retry${lensTag}${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
+      `${stage} ${rejected ? "had every verdict rejected" : "recorded no verdict via workflow_verdict"} even after a retry${lensTag}` +
+        `${inText ? ` (text claimed ${inText}, ignored — free text is untrusted)` : ""} — stopping with ERROR`,
     )
     const errorRecord: VerdictRecord = {
       verdict: "ERROR",
-      reason:
-        `no workflow_verdict recorded even after a retry${lensTag} — the verdict channel is unreachable from the stage subagent ` +
-        "or the agent contract was not applied; fix the plugin wiring, then recover the task" +
-        (inText ? ` (prose claimed ${inText}, ignored — free text is untrusted)` : ""),
+      reason: noAdmissibleVerdictReason({ rejected, detail: lensTag, prose: inText }),
     }
     return { output: joinedOutput, verdict: "ERROR", record: errorRecord }
   }
