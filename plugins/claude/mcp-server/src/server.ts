@@ -113,6 +113,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
+import { consumePlanRequest } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 
@@ -895,6 +896,10 @@ const startTask = async (t: Task): Promise<{ error: string } | { state: Workflow
  *  walk releases it once it reads stale, or workflow_doctor fix does so now. */
 const startPlan = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
+  // Planning it by hand honours any hub plan request for it just as a claim
+  // would, so the marker must not outlive this — otherwise the board keeps
+  // showing "plan requested" for a task that is being planned right now.
+  await consumePlanRequest(sh, directory, config.tasksDir, t.id, "queued")
   samples = []
   pending = null
   verdictRetried = false

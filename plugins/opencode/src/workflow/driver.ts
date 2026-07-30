@@ -60,6 +60,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
+import { consumePlanRequest } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/core/scheduler/lease"
@@ -2425,6 +2426,10 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   if (!(await claimTask(deps.$, queued))) {
     return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
   }
+  // Planning it by hand honours any hub plan request for it just as a claim
+  // would, so the marker must not outlive this — otherwise the board keeps
+  // showing "plan requested" for a task that is being planned right now.
+  await consumePlanRequest(deps.$, deps.directory, config.tasksDir, id, "queued")
   clearWorkflow(sessionID)
   await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
   return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")

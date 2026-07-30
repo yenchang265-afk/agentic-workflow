@@ -72,9 +72,15 @@ export const requestPlan = async (
  * Withdraw `id`'s request. True when a marker was there to remove, false when
  * there was nothing (or the id is unsafe) — idempotent, never throws.
  */
-export const revokePlanRequest = async ($: Shell, directory: string, tasksDir: string, id: string): Promise<boolean> => {
+export const revokePlanRequest = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  id: string,
+  status: string = REQUESTS_STATUS,
+): Promise<boolean> => {
   if (!isSafeTaskId(id)) return false
-  const file = planRequestPath(directory, tasksDir, id)
+  const file = planRequestPath(directory, tasksDir, id, status)
   const present = await $`test -f ${file}`.quiet().nothrow()
   if (present.exitCode !== 0) return false
   await $`rm -f ${file}`.quiet().nothrow()
@@ -148,12 +154,13 @@ export const sweepStalePlanRequests = async (
   directory: string,
   tasksDir: string,
   presentIds: readonly string[],
+  status: string = REQUESTS_STATUS,
 ): Promise<string[]> => {
   const present = new Set(presentIds)
   const swept: string[] = []
-  for (const id of await listPlanRequestIds($, directory, tasksDir)) {
+  for (const id of await listPlanRequestIds($, directory, tasksDir, status)) {
     if (present.has(id)) continue
-    if (await revokePlanRequest($, directory, tasksDir, id)) swept.push(id)
+    if (await revokePlanRequest($, directory, tasksDir, id, status)) swept.push(id)
   }
   return swept
 }

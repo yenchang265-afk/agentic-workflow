@@ -14,6 +14,7 @@ import {
   selectOrder,
   STALE_CLAIM_MINUTES,
 } from "../task/store.js"
+import { consumePlanRequest, listPlanRequestIds, requestedFirst, sweepStalePlanRequests } from "../task/plan-request.js"
 import type { ClaimSkipReason, WorkItem, WorkSource } from "./types.js"
 import { appendSchedulerEvents } from "../scheduler/events-log.js"
 
@@ -23,6 +24,12 @@ import { appendSchedulerEvents } from "../scheduler/events-log.js"
  * priority order — for engineering: build-ready `in-progress/` beats planless
  * `queued/`). Claims stay atomic via the store's `.claims/` mkdir markers;
  * orphaned markers (a claimer that died) are released and retried inline.
+ *
+ * A pool may also carry `.requests/` plan-request markers (`task/plan-request.ts`)
+ * — "plan THIS one next", written by a human through the hub. They reorder
+ * candidates WITHIN their own pool and nothing more: the pool loop stays in
+ * manifest priority order, so a request never preempts a higher-priority pool's
+ * work, and it is spent the moment a claim honours it.
  */
 
 /** A task's goal text: title headline plus its body, if any. Pure. */
@@ -130,6 +137,29 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
     ref: { pool, task },
   })
 
+  /**
+   * Drop requests whose task has left this pool — inert otherwise, but they
+   * would sit there reordering nothing forever.
+   *
+   * The pool listing comes from the client index, which can lag the real
+   * filesystem (the same reason `reverify` exists below), so every apparent
+   * stray is confirmed absent on the real FS before it is deleted: sweeping a
+   * live request would silently discard a human's ask. Best-effort throughout —
+   * a failure here must never fail the claim walk.
+   */
+  const sweepStrayRequests = async (status: string, requested: ReadonlySet<string>, listed: readonly Task[]): Promise<void> => {
+    try {
+      const present = new Set(listed.map((t) => t.id))
+      for (const id of requested) {
+        if (present.has(id)) continue
+        if (await findByIdIn($, directory, tasksDir, status, id, log)) present.add(id)
+      }
+      await sweepStalePlanRequests($, directory, tasksDir, [...present], status)
+    } catch (err) {
+      await log("warn", `backlog: plan-request sweep failed: ${(err as Error).message}`)
+    }
+  }
+
   return {
     workflowKind: loaded.manifest.kind,
 
@@ -142,7 +172,16 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       for (const [i, pool] of pools.entries()) {
         const tasks = await listByStatus(client, directory, tasksDir, pool.status, log)
         const predicate = pool.claimPredicate ? resolveClaimPredicate(pool.claimPredicate) : null
-        const candidates = selectOrder(predicate ? tasks.filter(predicate) : tasks)
+        const ordered = selectOrder(predicate ? tasks.filter(predicate) : tasks)
+        // Read per pool, not once for the walk: each status folder owns its own
+        // `.requests/`, so a request for a queued task can never hoist that id
+        // once it has moved on to a higher-priority pool. Usually one `ls -1` of
+        // an absent directory. A request reorders candidates WITHIN its pool
+        // only — the pool loop stays in manifest priority order, so asking for a
+        // plan never preempts build-ready work.
+        const requested = new Set(await listPlanRequestIds($, directory, tasksDir, pool.status))
+        const candidates = requestedFirst(ordered, requested)
+        if (requested.size > 0) await sweepStrayRequests(pool.status, requested, tasks)
         if (i === 0) {
           primaryTasks = tasks
           primaryClaimable = candidates.length
@@ -177,7 +216,18 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
           },
         })
         heldIds.push(...walk.heldIds)
-        if (walk.claimed) return { item: item(pool, walk.claimed), skip: null }
+        if (walk.claimed) {
+          // The hint has been HONOURED, so spend it — on the winning claim only.
+          // A lost or held claim keeps its request so the next tick still
+          // prioritises the task, and `release()` keeps it too: a released claim
+          // did no work, so the human's ask still stands. Spending it here is
+          // also why a died run leaves no sticky request that re-plans forever —
+          // the ordinary walk picks the task up again anyway.
+          if (requested.has(walk.claimed.id)) {
+            await consumePlanRequest($, directory, tasksDir, walk.claimed.id, pool.status)
+          }
+          return { item: item(pool, walk.claimed), skip: null }
+        }
       }
       const started = primaryTasks.filter(isRecoverable).map((t) => t.id)
       return {
