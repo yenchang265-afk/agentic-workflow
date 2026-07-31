@@ -35,7 +35,7 @@ Task arrives
     ├── Deprecating/migrating? ────────→ deprecation-and-migration
     ├── Writing docs/ADRs? ───────────→ documentation-and-adrs
     ├── Adding logs/metrics/alerts? ───→ observability-and-instrumentation
-    └── Writing/editing a skill? ──────→ writing-great-skills
+    └── Writing a doc for agents? ─────→ writing-for-agents
 ```
 
 Several apply to one piece of work more often than one does: a feature runs

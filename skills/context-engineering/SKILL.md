@@ -48,7 +48,7 @@ content is the same.
 
 Anything true about the project that is *not* written down does not exist. When
 the agent repeatedly gets a convention wrong, that is a missing rule, not a
-missing reminder — see `writing-great-skills` for keeping the file from
+missing reminder — see `writing-for-agents` for keeping the file from
 silting up.
 
 ## Tiers 2–3 — load the section, not the document
