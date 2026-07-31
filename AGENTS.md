@@ -116,7 +116,7 @@ stateDiagram-v2
 - Refactoring / simplification → `code-simplification`
 - API or interface design → `api-and-interface-design`
 - UI work → `frontend-ui-engineering`
-- Writing or editing a skill under `skills/` → `writing-great-skills`
+- Writing a document an agent consumes — a skill under `skills/`, a stage prompt, this file → `writing-for-agents`
 - Run the whole lifecycle on a goal, largely unattended → `/agentic-workflow:engineering new <idea>` then `/agentic-workflow:engineering approve <id>` then `/agentic-workflow:engineering plan <id>` (or `claim`/`watch`) plans + parks, then `/agentic-workflow:engineering approve` (or `replan <why>`), then `claim`/`watch` builds it, then `approve` ships it — the same folder-driven `approve` at every gate; id-less it resolves the single task waiting at a loop gate, falling back to a lone draft only when no loop gate is waiting. See `workflow-orchestration`, not a manual skill chain
 
 ### Lifecycle Mapping
