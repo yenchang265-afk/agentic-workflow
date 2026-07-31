@@ -1,7 +1,7 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, moveTask, releaseClaim } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, moveTask, planHeadingCount, releaseClaim } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
@@ -156,6 +156,17 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     await releaseClaim($, fresh ?? state.task)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `PLAN failed for "${id}" — ${why}. It stays in queued/.`, taskId: id }
+  }
+  // The stage prompt tells PLAN to REPLACE an existing `## Implementation Plan`
+  // rather than stack a second one — the shape a replanned task invites, since
+  // `replanTask` re-queues the file with its old plan intact. Prose alone is not
+  // a mechanism, so say so when it was not honoured. Warn, never veto: the park
+  // is otherwise valid (`extractPlan` reads the last heading, so the run has the
+  // right plan), and vetoing would strand the task in queued/ with its claim
+  // released and no verb that helps — strictly worse than a polluted body.
+  const headings = planHeadingCount(fresh.body)
+  if (headings > 1) {
+    await log("warn", `loop(${id}): parking with ${headings} ## Implementation Plan headings — PLAN stacked instead of replacing; the superseded plan stays in the task's prose`)
   }
   await appendNote($, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), log)
   // moveTask THROWS on a duplicate destination or a failed `mv`. Unguarded, that

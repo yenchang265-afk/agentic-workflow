@@ -261,8 +261,9 @@ export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Pro
       variant: "warning",
     }
   }
-  // A queued task is claimed only by an explicit `plan <id>`, but a crashed run
-  // can leave the marker behind — moving the task would orphan it.
+  // A queued task is claimed by `plan <id>` or by the claim walk's fallback to
+  // the queued pool, and a crashed run can leave the marker behind either way —
+  // moving the task would orphan it.
   const held = await listClaimIds($, directory, config.tasksDir, "queued")
   if (held.includes(id)) {
     return { ok: false, message: `Task "${id}" holds a claim marker — release it first (/agentic-workflow:engineering doctor fix).`, variant: "warning" }

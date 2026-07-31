@@ -232,7 +232,7 @@ slug 篩檢；工作流程類型的寫入被限制在 `packages/core/workflows/<
 | 一次人工把關動作（approve／replan／ship） | `tasksDir` 下的任務檔案，加上一次 git commit——而 **ship** 還會額外開一個 draft pull request | `X-Hub-Client`；`expectStatus`（過期的看板會回傳 409，而不是把錯的任務放行）；當有迴圈正在驅動該任務時會被拒絕；有一個會明確說出其效果的確認步驟 |
 | 編輯一個尚無計畫的任務（抽屜） | `tasksDir` 下的任務檔案（就地改寫——id、檔名、資料夾都不變），加上一次 git commit；從 **`queued/`** 儲存時還會執行送回 `draft/` 的 retask 移動 | `X-Hub-Client`；僅限尚無計畫的任務（中途出現計畫會回傳 409）；`expectStatus` **加上**內容雜湊（看板過期或內文已漂移會回傳 409）；schema 無法保留的 frontmatter 會回傳 409 而不是被悄悄剝除；稽核軌跡由伺服器端接回並再次驗證；當有迴圈正在驅動該任務或持有認領標記時會被拒絕；掃描疑似含有密鑰的內文會被拒絕；有一個會明確說出其效果的確認步驟 |
 | 儲存設定 | `.agentic-workflow.json` 的其中一層 | `X-Hub-Client`；層級明確（絕不是合併後的檢視）；以原始 JSON 寫入，因此未知的鍵會被保留；`ado.pat` 會被遮蔽，且拒絕寫入未被 gitignore 的儲存庫檔案；除非合併後的設定通過驗證，否則會被拒絕 |
-| 請求規劃（queued 卡片） | `tasksDir/queued/.requests/` 下的一個標記檔案——**不移動檔案，也不產生 git commit** | `X-Hub-Client`；僅限 `queued/`；`expectStatus`（看板過期會回傳 409）；當有迴圈正在驅動該任務、或該任務已帶有計畫時會被拒絕；有一個會明確說出其效果的確認步驟。用同一顆按鈕撤回 |
+| 請求規劃（queued 卡片） | `tasksDir/queued/.requests/` 下的一個標記檔案——**不移動檔案，也不產生 git commit** | `X-Hub-Client`；僅限 `queued/`；`expectStatus`（看板過期會回傳 409）；當有迴圈正在驅動該任務時會被拒絕；有一個會明確說出其效果的確認步驟。用同一顆按鈕撤回 |
 | 待辦醫生修復 | `tasksDir` 下的任務檔案（救援迷途檔案、移除空的迷途資料夾、釋放**過期、無迴圈在驅動**的認領標記、清掉任務已離開 `queued/` 的規劃請求），加上一次 git commit | `X-Hub-Client`；只有在認領標記過期且沒有迴圈驅動時才會釋放；當 watch 租約仍存活時完全跳過認領釋放；迷途的規劃請求則無條件清除（它的任務已經不在，不可能有東西在驅動它）；絕不解決重複的 id |
 
 它從不認領工作、從不執行任何階段，也從不合併任何東西——它只寫下一個排序

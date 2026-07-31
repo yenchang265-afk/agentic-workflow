@@ -1,5 +1,5 @@
 import { requestPlan, revokePlanRequest } from "@agentic-workflow/core/task/plan-request"
-import { findByIdIn, hasPlan } from "@agentic-workflow/core/task/store"
+import { findByIdIn } from "@agentic-workflow/core/task/store"
 import { gitActor } from "@agentic-workflow/core/workflow/git"
 import type { GateResult } from "@agentic-workflow/core/workflow/gate"
 import type { PlanRequestRequest } from "../../shared/api.js"
@@ -28,6 +28,13 @@ import { staleBoard, withGateLock } from "./gate.js"
  * `<StatusMessage>` render a refusal here exactly as they do for a gate move:
  * 200 for every well-formed request, 400 for a malformed one, 409 for a stale
  * board.
+ *
+ * A queued task that already carries a plan is requestable, not refused: that is
+ * the ordinary post-`replan` state (`replanTask` moves the file without clearing
+ * the plan), the claim walk re-plans such a task anyway, and the PLAN stage
+ * REPLACES the existing `## Implementation Plan` rather than stacking a second
+ * one. Refusing it here made the hub and the driver disagree, and named two
+ * verbs — approve and replan — that both no-op from `queued/`.
  */
 
 /** The only column a plan request can be made from — the planless pool. */
@@ -59,18 +66,6 @@ export const postPlanRequest = async (deps: HubDeps, req: ParsedRequest): Promis
   return withGateLock(deps.directory, async () => {
     const here = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, FROM, id, deps.log)
     if (!here) return staleBoard(deps, id, FROM)
-
-    // A queued task that already carries a plan is one `replan` sent back
-    // without clearing it. Planning it again would append a SECOND
-    // `## Implementation Plan`, and extractPlan reads the last — so the older
-    // one silently stops existing. Point at the gate that actually applies.
-    if (hasPlan(here)) {
-      return ok({
-        ok: false,
-        variant: "warning",
-        message: `"${id}" already carries a plan — approve it, or send it back with Replan to have it rewritten.`,
-      } satisfies GateResult)
-    }
 
     // Requesting a plan for a task a loop is already planning is a no-op the
     // user would read as "it worked". Say so instead.

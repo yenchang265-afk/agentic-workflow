@@ -152,16 +152,19 @@ test("a stale board is refused with 409 naming where the task actually is", asyn
   cleanup(dir)
 })
 
-test("a queued task that already carries a plan is refused, pointing at Replan", async () => {
-  // Planning it again would append a SECOND ## Implementation Plan, and
-  // extractPlan reads the last — the older one would silently stop existing.
+test("a queued task that already carries a plan is requestable — the post-replan state", async () => {
+  // `replanTask` moves the file back to queued/ WITHOUT clearing its plan, so
+  // this is the ordinary state, not a corrupt one. The claim walk re-plans such
+  // a task regardless (queued/ has no claimPredicate), so refusing it here made
+  // the hub and the driver disagree — and named approve and replan, which both
+  // no-op from queued/. The PLAN stage replaces the section rather than stacking
+  // a second heading, which is what makes re-planning safe.
   const dir = makeRepo()
   place(dir, "queued", "t1", true)
   const res = await ask(depsFor(dir), { id: "t1", expectStatus: "queued" })
-  assert.equal(res.status, 200, "a domain refusal is data, not a transport error")
-  assert.equal((res.body as GateResult).ok, false)
-  assert.match((res.body as GateResult).message, /already carries a plan/)
-  assert.equal(requested(dir, "t1"), false)
+  assert.equal(res.status, 200)
+  assert.equal((res.body as GateResult).ok, true)
+  assert.equal(requested(dir, "t1"), true)
   cleanup(dir)
 })
 
