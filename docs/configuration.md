@@ -747,8 +747,12 @@ Impact on the commands:
   silently missing opinion. If you want per-axis passes rather than free-text
   lenses, use `stageFanout` below.
 - **`workflows.<kind>.stageFanout`** — stage name → `"axis"` or `"none"`: run a
-  check stage once per entry in its `requiredAxes`, sequentially, each pass
-  told to review and report exactly one axis. The passes merge worst-wins.
+  check stage once per entry in its `requiredAxes`, each pass told to review and
+  report exactly one axis. The passes merge worst-wins, and **on OpenCode they
+  run in parallel** — turning the fan-out on is the request for N focused passes,
+  so it does not also need `stageConcurrency` to stop being slow. Set
+  `stageConcurrency` to clamp that (see below); the Claude Code and Qwen Code
+  hosts run the passes one at a time whatever you set.
 
   ```jsonc
   { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
@@ -771,23 +775,32 @@ Impact on the commands:
   lens list is overriding a declared fan-out. A key naming no stage is accepted,
   ignored, and warned about, exactly like `stageModels`.
 - **`workflows.<kind>.stageConcurrency`** — stage name → how many of that
-  stage's focused passes may run **at once**. Default `1` (sequential — what
-  every loop does today). Applies to both multi-pass regimes above:
-  `stageFanout`'s per-axis passes and `reviewLenses`' lens passes.
+  stage's focused passes may run **at once**. Unset, a per-axis `stageFanout`
+  runs **all** its passes at once and everything else runs one at a time.
+  Applies to both multi-pass regimes above: `stageFanout`'s per-axis passes and
+  `reviewLenses`' lens passes.
 
   ```jsonc
-  { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 5 } } } }
+  // clamp a five-axis fan-out to two passes in flight
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 2 } } } }
+  // ...or opt a lens setup in, which is not parallel by default
+  { "reviewLenses": ["a hostile attacker", "the next maintainer"], "workflows": { "engineering": { "stageConcurrency": { "review": 2 } } } }
   ```
 
   A fanned-out check stage's passes are independent by construction — each is a
   read-only review of the same work tree, told to cover its own axis or lens and
   not the others, merged worst-wins — so running them together is a latency win,
   not a semantic change: a five-axis review costs about one review instead of
-  five.
+  five. That is why the fan-out no longer waits for a second opt-in.
 
-  It is **opt-in because it is a cost change**: N passes in flight means N
-  concurrent model sessions against your rate limit. The value is clamped to the
-  stage's pass count, so a single-pass stage is unaffected whatever you set.
+  It is still a **cost knob**: N passes in flight means N concurrent model
+  sessions against your rate limit, so `1` is how a rate-limited setup takes a
+  fanned-out stage back to sequential. The value is clamped to the stage's pass
+  count, so a single-pass stage is unaffected whatever you set.
+
+  `reviewLenses` keeps the old sequential default. It predates the fan-out, so
+  an existing lens setup — including one that overrides a declared fan-out —
+  behaves exactly as it did until you set this knob.
 
   **OpenCode only.** Each pass gets its own session there, which is what makes
   the per-pass verdict, axis requirement and evidence ledger separable. The

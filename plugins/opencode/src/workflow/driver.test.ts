@@ -2096,7 +2096,9 @@ const axisConfig: Config = {
  */
 const runConcurrentAxisReview = async (
   sessionID: string,
-  concurrency: number,
+  // `null` sets no stageConcurrency at all — the fan-out's own default, which is
+  // the path a user who only turned `stageFanout` on actually takes.
+  concurrency: number | null,
   onCall: (passSessionID: string, focus: string, deps: Deps) => void,
   opts: { warns?: string[]; hold?: boolean } = {},
 ) => {
@@ -2104,7 +2106,12 @@ const runConcurrentAxisReview = async (
   setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
   const config: Config = {
     ...testConfig,
-    workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: concurrency } } },
+    workflows: {
+      engineering: {
+        stageFanout: { review: "axis" },
+        ...(concurrency === null ? {} : { stageConcurrency: { review: concurrency } }),
+      },
+    },
   }
   let created = 0
   const createdIds: string[] = []
@@ -2250,15 +2257,36 @@ const recordAxis = (sessionID: string, call: number, over: Partial<{ verdict: "P
 
 // --- concurrent fan-out: stageConcurrency ---
 
-test("fan-out stays sequential by default — no pass sessions are opened", async () => {
-  // The default path must be the one every loop already takes: one session, no
-  // session.create. The fake client below has NO create method, so a driver that
-  // tried would fall back with a warn — assert there is none.
+test("fan-out runs its passes in parallel with no stageConcurrency set — turning it on IS the request", async () => {
+  // Fan-out shipped serial-by-default and needed a second knob to stop being
+  // slow, which made a five-axis review cost five reviews of latency for no
+  // semantic gain. Configuring ONLY stageFanout must now overlap the passes.
+  const h = await runConcurrentAxisReview("sess-conc-implicit", null, (passSessionID, focus) => {
+    recordVerdict(passSessionID, "review", worked(passSessionID, { verdict: "PASS", axes: [{ axis: focus, verdict: "PASS" }] }))
+  }, { hold: true })
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(h.maxInFlight(), 5, "all five axis passes in flight at once, with no stageConcurrency configured")
+  h.release()
+  const { verdict, record } = await h.run()
+  assert.equal(verdict, "PASS")
+  assert.equal(h.createdIds().length, 5, "one session per pass — the identity concurrency requires")
+  assert.deepEqual(record?.axes?.map((a) => a.axis).sort(), [...FIVE].sort(), "all five axes merged")
+})
+
+test("stageConcurrency 1 clamps a fan-out back to sequential — no pass sessions are opened", async () => {
+  // The knob is a clamp as well as an opt-in: `1` is how a rate-limited setup
+  // takes a fanned-out stage back to one pass at a time, so it must not read as
+  // "unset" and silently re-parallelize. The fake client below has NO create
+  // method, so a driver that opened a pass session would warn — assert it doesn't.
   const warns: string[] = []
+  const serial: Config = {
+    ...testConfig,
+    workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: 1 } } },
+  }
   const { calls } = await runAxisReview("sess-conc-default", (call) => {
     // Each pass records its OWN axis — passes fire in manifest order.
     recordVerdict("sess-conc-default", "review", worked("sess-conc-default", { verdict: "PASS", axes: [{ axis: FIVE[call - 1]!, verdict: "PASS" }] }))
-  }, warns)
+  }, warns, serial)
   assert.equal(calls(), 5, "still one pass per axis, no verdict retries")
   assert.ok(!warns.some((w) => /could not open a session/.test(w)), `no pass sessions: ${warns.join(" | ")}`)
 })
@@ -2495,12 +2523,21 @@ test("fan-out: an ESC interrupt mid-fan-out fires no further axis and no retry",
   const sessionID = "sess-axis-esc"
   const warns: string[] = []
   const { clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  // Pinned to one pass at a time, which is where "no FURTHER axis" is even a
+  // question: the pool checks the halt before TAKING work, so a fan-out running
+  // at its parallel default has already taken every pass by the time ESC lands
+  // (those in flight are aborted by `onInterrupt`, not by this check).
+  const serial: Config = {
+    ...testConfig,
+    workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: 1 } } },
+  }
   const { result, calls } = await runAxisReview(
     sessionID,
     () => {
       clearWorkflow(sessionID)
     },
     warns,
+    serial,
   )
   assert.equal(result.verdict, null)
   assert.equal(result.record, null)

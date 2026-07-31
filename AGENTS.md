@@ -301,7 +301,9 @@ verdicts, wipe each other's evidence, and `takeVerdictRecord` (which deletes on
 read) would let the first finisher steal a merged blob.
 
 So concurrency is bought by giving each pass its own session
-(`workflows.<kind>.stageConcurrency`, default 1), NOT by re-keying those maps.
+(`workflows.<kind>.stageConcurrency` — unset, a per-axis fan-out runs all its
+passes at once and everything else runs one at a time), NOT by re-keying those
+maps.
 Two consequences any change here must preserve:
 
 - **Never pass a `directory` to `session.create`.** That is what plan 01 ruled
