@@ -636,8 +636,8 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>replan [id] [reason]</code></td><td>The sole rejection verb: a parked plan (or a cap-tripped task, by id) → back to queued.</td></tr>
             <tr><td><code>abandon &lt;id&gt; [reason]</code></td><td>Cancel a task by moving it to abandoned — the reversible cancellation (file kept). Refused while a loop drives the task or a claim is held.</td></tr>
             <tr><td><code>remove &lt;id&gt; --force</code></td><td>Hard-delete a task from the backlog entirely, from any folder — file deleted, not moved, and the removal committed. Bare <code>remove</code> is a dry run that deletes nothing.</td></tr>
-            <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review — the only PLAN entry. Building stays with <code>claim</code>/<code>watch</code>.</td></tr>
-            <tr><td><code>claim</code></td><td>Pull &amp; drive the next build-ready in-progress/ task; queued tasks are never auto-planned (use <code>plan &lt;id&gt;</code>).</td></tr>
+            <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review, without waiting for a claim tick.</td></tr>
+            <tr><td><code>claim</code></td><td>Pull &amp; drive the next item: build-ready in-progress/ work first, then an approved queued/ task to plan.</td></tr>
             <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only).</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
             <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>

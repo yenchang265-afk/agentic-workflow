@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { GateAction, GateResult, TaskCard, TaskStatus } from "../../shared/api.js"
+import type { GateResult, TaskCard, TaskStatus } from "../../shared/api.js"
 import { postAction } from "../api.js"
 import { useFeedback } from "../feedback.js"
 import { repoPath, useRepo } from "../repo.js"
@@ -7,107 +7,20 @@ import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
 import { StatusMessage } from "../ui/StatusMessage.js"
 import { gateTone } from "../ui/tone.js"
+import { cancellationMoves, forwardMoves, type Move } from "./gatemoves.js"
 
 /**
- * The gate buttons on a task card. Each performs a human gate move through
- * core's `workflow/gate.ts` — the same entry point both hosts call.
+ * The action buttons on a task card. Most perform a human gate move through
+ * core's `workflow/gate.ts` — the same entry point both hosts call — and commit
+ * to git; `ship` also opens a pull request. The queued column's Plan button is
+ * the exception: it writes an ordering marker and nothing else.
  *
- * Every one of these commits to git, and `ship` opens a pull request, so all of
- * them go through <Confirm> with copy that names the effect. The button knows
- * its own column, so it names its gate explicitly rather than letting the server
- * infer one from wherever the task sits.
- */
-
-interface Move {
-  readonly action: GateAction
-  readonly label: string
-  readonly title: string
-  /** Prose naming what actually happens, in the world, on confirm. */
-  readonly detail: string
-  readonly danger?: boolean
-  readonly withReason?: boolean
-}
-
-/** Which moves a task's column offers. A status with no entry gets no buttons. */
-const MOVES: Partial<Record<TaskStatus, readonly Move[]>> = {
-  draft: [
-    {
-      action: "approve-task",
-      label: "Approve",
-      title: "Approve this task?",
-      detail: "Moves it to queued/ so the loop can plan it, and commits the move to git.",
-    },
-  ],
-  "plan-review": [
-    {
-      action: "approve-plan",
-      label: "Approve plan",
-      title: "Approve this plan?",
-      detail: "Moves the task to in-progress/ so the loop can build it, and commits the move to git.",
-    },
-    {
-      action: "replan",
-      label: "Replan",
-      title: "Send this plan back?",
-      detail: "Moves the task back to queued/ for a fresh PLAN pass, and commits the move to git.",
-      withReason: true,
-    },
-  ],
-  "in-progress": [
-    {
-      action: "replan",
-      label: "Replan",
-      title: "Send this task back to planning?",
-      detail: "Moves the task back to queued/ for a fresh PLAN pass, and commits the move to git.",
-      withReason: true,
-    },
-  ],
-  "in-review": [
-    {
-      action: "ship",
-      label: "Ship",
-      title: "Ship this task?",
-      detail:
-        "Moves it to completed/, commits to git, AND opens a pull request. This is visible outside your machine. (The PR is best-effort — if it can't be opened the task still ships, and the reason is reported.)",
-      danger: true,
-    },
-  ],
-}
-
-/**
- * The two cancellations are offered on every column, so they live outside MOVES.
- * They are deliberately a pair: `abandon` is the reversible one (the task file
- * moves to `abandoned/` and can be moved back), `remove` deletes.
+ * All of them go through <Confirm> with copy that names the real effect. The
+ * button knows its own column, so it names its move explicitly rather than
+ * letting the server infer one from wherever the task sits.
  *
- * `abandoned` was a first-class status with no way to reach it until this button
- * existed — the docs told people to move files by hand — so it is listed FIRST,
- * as the cancellation to reach for.
+ * Which button appears where lives in `gatemoves.ts`, where a test can reach it.
  */
-const ABANDON_MOVE: Move = {
-  action: "abandon",
-  label: "Abandon",
-  title: "Abandon this task?",
-  detail: "Moves the task to abandoned/ and commits the move. The file is kept, so this can be undone by moving it back.",
-  withReason: true,
-}
-
-/**
- * Remove hard-deletes the task file rather than moving it, and commits the
- * delete. Danger copy names the irreversibility; core still refuses a
- * live-driven or claim-held task.
- *
- * The copy leads with the DEFAULT: `ignoreBacklog` defaults to true, which keeps
- * the backlog out of git entirely, so for most installs there is no history to
- * recover from and "git keeps it" would be a false reassurance.
- */
-const REMOVE_MOVE: Move = {
-  action: "remove",
-  label: "Remove",
-  title: "Remove this task?",
-  detail:
-    "Deletes the task file from the backlog and commits the removal. Unless you set ignoreBacklog: false, the backlog is not tracked by git — so this is permanent. Abandon keeps the file.",
-  danger: true,
-}
 
 const GateButton = ({
   move,
@@ -132,7 +45,9 @@ const GateButton = ({
 
   const run = async (): Promise<void> => {
     try {
-      const res = await postAction<GateResult>(repoPath(`/api/gate/${move.action}`, repoId), {
+      // The route comes off the move, not off its action name: the plan request
+      // is not a gate move and does not live under /api/gate/.
+      const res = await postAction<GateResult>(repoPath(move.endpoint, repoId), {
         id: task.id,
         expectStatus: status,
         kind,
@@ -255,18 +170,19 @@ export const GateActions = ({
   status,
   kind,
   claimed,
+  planRequested,
 }: {
   task: TaskCard
   status: string
   kind: string
   claimed: boolean
+  /** queued only: whether this task already carries a plan request, which swaps Plan for its withdrawal. */
+  planRequested?: boolean
 }) => {
   // The cancellations are available on every column; the forward moves are
-  // column-specific. Abandon is offered only where it can work — core refuses a
-  // completed or already-abandoned task, so no button should promise otherwise.
-  const cancellable = status !== "completed" && status !== "abandoned"
-  const forward = MOVES[status as TaskStatus] ?? []
-  const cancellations = [...(cancellable ? [ABANDON_MOVE] : []), REMOVE_MOVE]
+  // column-specific, and on `queued` also state-specific.
+  const forward = forwardMoves(status, { ...(planRequested === undefined ? {} : { planRequested }) })
+  const cancellations = cancellationMoves(status)
 
   // The forward move gets the weight; the cancellations go behind a disclosure.
   // Flat, they were three buttons of near-equal emphasis — and because

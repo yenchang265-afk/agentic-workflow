@@ -60,6 +60,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
+import { consumePlanRequest, strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/core/scheduler/lease"
@@ -155,11 +156,11 @@ import { anyWorkflowActive, clearWorkflow, findSessionDriving, getWorkflow, setW
  * task to `in-progress/` — the build-ready queue — and the next claim enters at
  * `build` via `resumeAtBuild` with the approved plan threaded in as an artifact.
  *
- * PLAN runs only on demand (`plan <id>`); BUILD → VERIFY → REVIEW runs on
- * demand (a claim) or via **watch mode** (the `watching` set + `tryClaim`): a
+ * PLAN, or BUILD → VERIFY → REVIEW, runs either on demand (`plan <id>` / a claim
+ * claims one task) or via **watch mode** (the `watching` set + `tryClaim`): a
  * watching session scans `in-progress/` for one claimable task (`isClaimable`:
- * has a persisted plan, never started). `queued/` is a manual pool — claim and
- * watch never auto-plan from it. Watch is triggered two ways — every
+ * has a persisted plan, never started) — build work first — and falls back to
+ * `queued/` for a task to plan. Watch is triggered two ways — every
  * `session.idle` event, plus a per-session interval timer (`watch
  * [interval]`) whose ticks call `onIdle` only when the session is actually
  * idle (queried via `client.session.status()`), so a task approved while the
@@ -1842,11 +1843,12 @@ export { claimSkipReason } from "@agentic-workflow/core/source/backlog"
 export type { ClaimSkipReason } from "@agentic-workflow/core/source/types"
 
 /**
- * A `watch` session's own idle check: a claimable task in `in-progress/`
- * (plan approved, never started) is driven straight through
- * BUILD → VERIFY → REVIEW. `queued/` is a manual pool — never auto-claimed;
- * a planless task waits there until a human runs `plan <id>` (the skip
- * reason points at it).
+ * A `watch` session's own idle check, over two pools in order:
+ * first a claimable task in `in-progress/` (plan approved, never started) is
+ * driven straight through BUILD → VERIFY → REVIEW — build work beats plan
+ * work, so in-flight tasks finish before new ones spin up. Otherwise a
+ * `queued/` task (approved, planless) is claimed for the PLAN stage, which
+ * writes its plan and parks it in `plan-review/` for the human gate.
  * FAIL-driven re-builds happen inline in this same session, exactly like a
  * normal loop's iteration cap. Never silent: when nothing is claimed, the
  * reason is always logged, and toasted when actionable (deduped until the
@@ -2424,6 +2426,10 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   if (!(await claimTask(deps.$, queued))) {
     return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
   }
+  // Planning it by hand honours any hub plan request for it just as a claim
+  // would, so the marker must not outlive this — otherwise the board keeps
+  // showing "plan requested" for a task that is being planned right now.
+  await consumePlanRequest(deps.$, deps.directory, config.tasksDir, id, "queued")
   clearWorkflow(sessionID)
   await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
   return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
@@ -2741,10 +2747,19 @@ export const handleCommand = async (
       const anomalies = await auditBacklog(client, deps.directory, config.tasksDir)
       const heldQueued = await listClaimIds(deps.$, deps.directory, config.tasksDir, "queued")
       const heldInProgress = await listClaimIds(deps.$, deps.directory, config.tasksDir, "in-progress")
+      // A plan request whose task has left queued/ reorders nothing and blocks
+      // nothing, but it lingers — name it rather than leave an unexplained marker.
+      const queuedNow = await listByStatus(client, deps.directory, config.tasksDir, "queued", deps.log)
+      const queuedIds = queuedNow.map((t) => t.id)
+      const strayRequests = await strayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds)
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
-      const findings = formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length
+      if (strayRequests.length) {
+        await deps.log("info", `doctor: plan request(s) whose task left queued/: ${strayRequests.join(", ")}`)
+      }
+      const findings =
+        formatAnomalies(anomalies, config.tasksDir).length + heldQueued.length + heldInProgress.length + strayRequests.length
       if (!fix) {
         return report(
           client,
@@ -2789,6 +2804,10 @@ export const handleCommand = async (
           })),
         )
       }
+      // Unlike a claim, a stray request is never ambiguous: its task has left
+      // the folder, so nothing can be driving it. No liveness check, and no
+      // commit — the markers were never tracked.
+      const revokedRequests = await sweepStalePlanRequests(deps.$, deps.directory, config.tasksDir, queuedIds)
       if (rescued.length) {
         await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }
@@ -2796,6 +2815,7 @@ export const handleCommand = async (
         rescued.length ? `rescued ${rescued.length} stray file(s) to draft/` : "",
         removedDirs.length ? `removed ${removedDirs.length} stray folder(s)` : "",
         released.length ? `released ${released.length} stale claim marker(s)` : "",
+        revokedRequests.length ? `dropped ${revokedRequests.length} stray plan request(s)` : "",
         anomalies.duplicates.length ? `${anomalies.duplicates.length} duplicate id(s) left for you` : "",
       ].filter(Boolean)
       return report(client, summary.length ? `Backlog doctor: ${summary.join(" · ")}.` : "Backlog doctor: nothing to repair.", "success")

@@ -74,6 +74,17 @@ export const scanSnapshot = (directory: string, tasksDir: string, statuses: read
     } catch {
       // no claims dir
     }
+    // Plan-request markers, for the same reason and under the same rule: they
+    // come and go without touching any `.md`, so without this the "plan
+    // requested" badge would only appear or clear on unrelated backlog churn.
+    // Existence is the whole signal, so a restamp deliberately emits nothing.
+    try {
+      for (const name of fs.readdirSync(path.join(dir, ".requests"))) {
+        entries[`.requests/${name}`] = 1
+      }
+    } catch {
+      // no requests dir — the normal case
+    }
     tasks[status] = entries
   }
   const runs: Record<string, string> = {}
@@ -126,7 +137,8 @@ export const diffSnapshots = (
     for (const name of names) {
       if (before[name] !== after[name]) backlogChanged = true
       // a task newly appearing in a gate folder is the "loop wants you" moment
-      // (`.md` files only — the `.claims/` keys scanned above are not tasks)
+      // (`.md` files only — the `.claims/` and `.requests/` keys scanned above
+      // are markers, not tasks, and must never raise a gate notification)
       if (
         name.endsWith(".md") &&
         gateStatuses.includes(status) &&

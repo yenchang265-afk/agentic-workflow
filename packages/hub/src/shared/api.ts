@@ -103,6 +103,13 @@ export interface BacklogResponse {
   readonly summary: BacklogSummary | null
   readonly claimedIds: readonly string[]
   /**
+   * Queued tasks carrying a plan request — "plan this one next", asked for from
+   * this board. Travels beside `claimedIds` rather than on the card, so the
+   * board and the task drawer read one source; unlike a claim it asserts nothing
+   * about a running loop.
+   */
+  readonly planRequestedIds: readonly string[]
+  /**
    * Claim age: task id → the marker stamp's `claimedAt` ISO. Only ids whose
    * stamp was readable appear — a claim without a stamp shows no age rather
    * than a wrong one.
@@ -502,6 +509,12 @@ export interface DoctorReport {
   readonly strayFiles: readonly string[]
   readonly duplicates: readonly DuplicateTask[]
   readonly heldClaims: readonly HeldClaim[]
+  /**
+   * Plan requests whose task has left `queued/`. Inert — they reorder nothing
+   * and block nothing — but they linger, so the doctor names them rather than
+   * leaving an unexplained marker on disk.
+   */
+  readonly strayRequests: readonly string[]
   /** An OpenCode watcher lease is live with no stage marker — idle-polling or mid-claim, so /fix can't tell which task it drives. */
   readonly watcherLive: boolean
   readonly watcherPid?: number
@@ -512,6 +525,11 @@ export interface DoctorFixResponse {
   readonly rescued: readonly string[]
   readonly removedDirs: readonly string[]
   readonly releasedClaims: readonly string[]
+  /**
+   * Stray plan requests removed. Never skipped the way claim release can be: the
+   * task has left the folder, so nothing can be driving it or racing for it.
+   */
+  readonly revokedRequests: readonly string[]
   /** True when claim release was skipped wholesale: a watcher is live with no marker. */
   readonly claimsSkipped: boolean
   /** Reported, unchanged — the hub won't guess which duplicate is canonical. */
@@ -615,6 +633,21 @@ export interface GateRequest {
   readonly reason?: string
   /** ship only: the workflow kind, for the PR it opens. Defaults to engineering. */
   readonly kind?: string
+}
+
+/**
+ * Body of `POST /api/plan-request` and `/api/plan-request/cancel`.
+ *
+ * Deliberately not a `GateAction`: a plan request moves no file and writes no
+ * commit, so folding it into the gate table would make that table's 1:1 mapping
+ * onto `workflow/gate.ts` a lie. It answers with a `GateResult` all the same, so
+ * the same button machinery renders its refusals.
+ */
+export interface PlanRequestRequest {
+  /** The full task id (not a short-hash prefix). */
+  readonly id: string
+  /** Only a queued task can be requested — the same stale-board guard the gate applies. */
+  readonly expectStatus: TaskStatus
 }
 
 /**

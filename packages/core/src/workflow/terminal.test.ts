@@ -112,8 +112,8 @@ test("park releases the claim and reports an error when the move throws", async 
   // the claim on failure; runPark ran the identical sequence unguarded. A
   // duplicate destination (moveTask's `test -e` refusal) therefore escaped
   // runTerminal AFTER the "Plan written — parked" note was already on disk
-  // asserting a park that never happened — and engineering's queued pool is
-  // `manual: true`, so the held marker meant nothing ever reclaimed the task.
+  // asserting a park that never happened — and the held marker then blocked every
+  // gate verb (replan/abandon/remove all refuse a claim) until the stale sweep.
   const { ctx, log, metrics } = makeCtx({ "queued/t.md": body(true), "plan-review/t.md": body(true) }, planState())
   const report = await runTerminal(ctx, park)
   assert.equal(report.kind, "error", "the throw must not escape runTerminal")
@@ -138,10 +138,10 @@ test("park with the task gone from queued/ still releases the claim-time marker,
   // The mirror of "stop mid-plan with the task gone …" below, for the park path.
   // runPark nested its release under `if (fresh)`, so when the task left queued/
   // mid-plan (a hub replan/abandon, a hand edit, a crash-recovered rescue) the
-  // drive ended with the marker still held — and engineering's queued pool is
-  // `manual: true`, so nothing reclaimed it and `plan <id>` could not re-acquire
-  // it until the stale sweep fired ~75min later. Every way a drive ends must
-  // release the marker.
+  // drive ended with the marker still held — and a held marker asserts a LIVE
+  // loop, so every gate verb refused it and neither `plan <id>` nor the claim
+  // walk could re-acquire it until the stale sweep fired ~75min later. Every way
+  // a drive ends must release the marker.
   const { ctx, log, metrics } = makeCtx({}, planState())
   const report = await runTerminal(ctx, park)
   assert.equal(report.kind, "error")

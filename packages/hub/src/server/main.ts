@@ -17,6 +17,7 @@ import { getTaskDetail, postTaskSave } from "./routes/tasks.js"
 import { getConfig, saveConfig } from "./routes/config.js"
 import { getDoctor, postDoctorFix } from "./routes/doctor.js"
 import { postGate } from "./routes/gate.js"
+import { postPlanRequest, postPlanRequestCancel } from "./routes/plan-request.js"
 import { getAssets, postGenPrompts, scaffoldAgent, scaffoldCommand, scaffoldSkill } from "./routes/assets.js"
 import { checklistKind, getKind, getKinds, previewKind, saveKind, validateKind } from "./routes/kinds.js"
 import { getMetrics } from "./routes/metrics.js"
@@ -183,6 +184,10 @@ const routes: Route[] = [
   { method: "POST", pattern: "/api/assets/skill", handler: scoped(scaffoldSkill), mutating: true },
   { method: "POST", pattern: "/api/gen-prompts", handler: scoped((deps) => postGenPrompts(deps)), mutating: true },
   { method: "POST", pattern: "/api/gate/:action", handler: scoped(postGate), mutating: true },
+  // Not a gate action: this writes an ordering marker, moves nothing, and
+  // commits nothing — see routes/plan-request.ts.
+  { method: "POST", pattern: "/api/plan-request", handler: scoped(postPlanRequest), mutating: true },
+  { method: "POST", pattern: "/api/plan-request/cancel", handler: scoped(postPlanRequestCancel), mutating: true },
   { method: "GET", pattern: "/api/config", handler: scoped(getConfig) },
   { method: "POST", pattern: "/api/config", handler: scoped(saveConfig), mutating: true },
   { method: "GET", pattern: "/api/doctor", handler: scoped((deps) => getDoctor(deps)) },

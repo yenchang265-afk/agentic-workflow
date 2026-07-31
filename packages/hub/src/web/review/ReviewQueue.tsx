@@ -172,6 +172,9 @@ export const ReviewQueue = () => {
           status={openTask.status}
           kind={data.items.find((i) => i.card.id === openTask.id)?.kind ?? data.kinds[0] ?? "engineering"}
           claimed={data.items.find((i) => i.card.id === openTask.id)?.claimed ?? false}
+          // The review queue only ever lists gate statuses, never queued/, so no
+          // task reachable from here can carry a plan request.
+          planRequested={false}
           onClose={() => navigate(withQuery(route, { task: undefined }))}
         />
       )}

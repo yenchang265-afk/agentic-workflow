@@ -77,12 +77,12 @@ OpenCode 版本如何執行、它完整的指令面，以及安裝細節。共�
   `queued/` 任務執行 PLAN 階段：把計畫寫進任務檔案，將其暫存到
   `plan-review/`，然後結束。從 `plan` 無法抵達建置階段——建置由
   `claim`/`watch` 驅動
-- `/agentic-workflow:engineering claim`——一次性拉取下一個建置就緒的
-  `in-progress/` 任務，優先數字最小者優先；planless 的 `queued/`
-  任務永遠不會被自動規劃——用 `plan <id>` 來規劃它們
+- `/agentic-workflow:engineering claim`——一次性拉取下一個項目，優先數字最小者
+  優先：先取建置就緒的 `in-progress/` 工作，沒有可建置的工作時，再取一個
+  已核准的 `queued/` 任務來規劃
 - `/agentic-workflow:engineering watch [trigger]`——把這個 session 變成
-  一個常駐 worker，**範圍限定於 engineering 類型**；只認領建置就緒
-  的工作，就像 `claim` 一樣。裸 `watch` 使用
+  一個常駐 worker，**範圍限定於 engineering 類型**；認領順序與 `claim`
+  相同。裸 `watch` 使用
   `workflows.engineering.trigger`（預設為 poll）；引數是每個 session 的
   覆寫值：`poll [interval]` / 一個裸的間隔值（`30s`、`5m`、`2h`，
   裸數字代表分鐘；預設為 `watchIntervalMinutes`）會在 idle 事件加上

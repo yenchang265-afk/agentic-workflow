@@ -48,7 +48,8 @@
 2. 審查草稿，然後執行 `/agentic-workflow:engineering approve <id>` —— 將其排入佇列
 3. `/agentic-workflow:engineering plan <id>` 認領已排入佇列的任務，
    在執行前寫入 `## Implementation Plan`，並將其暫存在計畫把關點
-   （`claim`/`watch` 絕不會自動為已排入佇列的任務產生計畫）
+   （當沒有可建置的工作時，`claim`/`watch` 的巡查也會做同樣的事，
+   所以 `plan <id>` 只是為了立刻規劃某一個任務）
 4. `/agentic-workflow:engineering approve <id>`（或 `replan <id> [why]`）——
    核准後，一個 `claim`/`watch` worker 會在 `feature/<id>` 分支上無人看管地
    執行 BUILD→VERIFY→REVIEW；你審查結果，並用

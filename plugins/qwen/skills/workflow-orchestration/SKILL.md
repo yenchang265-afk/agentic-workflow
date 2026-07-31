@@ -32,7 +32,7 @@ authoring + gates (interactive /agentic-workflow:engineering verbs, BEFORE the l
   /agentic-workflow:engineering replan [id] [why] ─▶ workflow_replan: back to queued/ (audited rejection)
 
 the loop (/agentic-workflow:engineering plan <id> or /agentic-workflow:engineering claim — this skill):
-  queued task (planless — `plan <id>`/workflow_start only; claim never auto-plans):
+  queued task (planless — `plan <id>`/workflow_start now, or a claim with no build work left):
     workflow_start ─▶ workflow_stage(plan) ─▶ spawn workflow-plan-author
         ─▶ workflow_advance ─▶ park (task → plan-review/, loop over — never blocks on a human)
   in-progress task (plan approved):
@@ -78,9 +78,9 @@ before you advance — and never pass or invent a `model`. Changing
 1. **Start.** `mcp__agentic-workflow__workflow_start({id})` for one task, or
    `mcp__agentic-workflow__workflow_claim()` for the next item — scoped to the
    calling command's kind: `/agentic-workflow:engineering claim` pulls build-ready
-   `in-progress/` tasks only (lowest priority number first; planless `queued/`
-   tasks are never auto-planned — PLAN entry is exclusively
-   `workflow_start({id})`), and
+   `in-progress/` tasks first, then a planless `queued/` task to plan (lowest
+   priority number first within each pool; `workflow_start({id})` plans one
+   without waiting for a claim), and
    `/agentic-workflow:pr-sitter claim` passes `{kind: "pr-sitter"}` to poll its
    PRs instead. An in-progress task is claimed, isolated (the `feature/<id>`
    branch, or a git worktree when `worktreesDir` is configured), and entered

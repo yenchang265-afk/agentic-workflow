@@ -92,11 +92,11 @@ The loop (`/agentic-workflow:engineering`):
   task now: it writes the plan onto the task file, parks it in
   `plan-review/`, and exits. Building is not reachable from `plan` —
   `claim`/`watch` drive builds
-- `/agentic-workflow:engineering claim` — one-shot pull of the next build-ready
-  `in-progress/` task, lowest priority number first; planless `queued/` tasks
-  are never auto-planned — plan them with `plan <id>`
+- `/agentic-workflow:engineering claim` — one-shot pull of the next item, lowest
+  priority number first: build-ready `in-progress/` work, then an approved
+  `queued/` task to plan when no build work is left
 - `/agentic-workflow:engineering watch [trigger]` — turn this session into a standing worker
-  **scoped to the engineering kind**; claims build-ready work only, like `claim`. Bare
+  **scoped to the engineering kind**; claims in the same order as `claim`. Bare
   `watch` uses `workflows.engineering.trigger` (default poll); the argument is a
   per-session override: `poll [interval]` / a bare interval (`30s`, `5m`,
   `2h`, bare number = minutes; default `watchIntervalMinutes`) claims on idle

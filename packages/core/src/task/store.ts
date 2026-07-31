@@ -151,6 +151,27 @@ export const extractPlan = (task: Task): string | undefined => {
 }
 
 /**
+ * How many line-anchored `PLAN_HEADING`s the body carries. Pure.
+ *
+ * More than one means a PLAN pass stacked a new plan below an older one instead
+ * of replacing it — the shape a task sent back by `replan` invites, since
+ * `replanTask` moves the file without clearing its plan. Nothing breaks:
+ * `extractPlan` reads the LAST heading, so the run uses the right plan. What is
+ * lost is quieter — the superseded text stays in `splitTaskBody`'s `prose`, so
+ * it rides along in `taskGoal` and in the hub's task editor from then on.
+ *
+ * Exists so `runPark` can WARN on it rather than trust the stage prompt's
+ * replace instruction, which nothing else verifies. Counting shares
+ * `lastMarkerIndex`'s anchoring on purpose: a second heading-matcher here could
+ * drift from the one `extractPlan` and `hasPlan` agree on.
+ */
+export const planHeadingCount = (body: string): number => {
+  let count = 0
+  for (let idx = lastMarkerIndex(body, PLAN_HEADING); idx !== -1; idx = lastMarkerIndex(body.slice(0, idx), PLAN_HEADING)) count++
+  return count
+}
+
+/**
  * Whether a task has a plan persisted (appended at a prior approval gate). Pure.
  *
  * Defined AS `extractPlan` rather than as its own substring test, because the

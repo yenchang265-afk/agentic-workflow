@@ -15,6 +15,12 @@ docs/tasks/runs/.stage-qwen.json
 docs/tasks/runs/.watch-lease/
 # Scheduler diagnostics feed (machine state, rotated at ~256KB — not review material)
 docs/tasks/runs/events*.jsonl
+# Coordination markers, not lifecycle facts: a claim asserts a live loop, a plan
+# request asks for a task to be planned next. Both are spent within a run and
+# neither belongs in history — and with `ignoreBacklog: false` a gate move's
+# `git add -- docs/tasks` would otherwise sweep them into somebody's commit.
+docs/tasks/*/.claims/
+docs/tasks/*/.requests/
 
 # Build output (built by npm workspace `build` scripts / plugins/claude/install.sh)
 packages/core/dist/

@@ -22,6 +22,7 @@ import {
   markClaimed,
   moveTask,
   pairingCoverage,
+  planHeadingCount,
   PLAN_HEADING,
   releaseOrphanedClaims,
   removeTaskFile,
@@ -172,6 +173,26 @@ test("extractPlan returns the NEWEST plan when a task was replanned", () => {
     `\n> Plan rejected — wrong layer [2026-01-01T00:00:00.000Z by dev]\n` +
     `\n${PLAN_HEADING}\n\nCorrect approach.\n`
   assert.equal(extractPlan(task("a", 0, body)), "Correct approach.")
+})
+
+test("planHeadingCount counts line-anchored headings only — what runPark warns on", () => {
+  // The PLAN stage is told to REPLACE an existing plan, not stack one. Nothing
+  // enforces that but this count, so it has to agree with `extractPlan` about
+  // what a heading is: line-anchored, never mid-line.
+  assert.equal(planHeadingCount("Some description.\n"), 0)
+  assert.equal(planHeadingCount(`Some description.\n\n${PLAN_HEADING}\n\n1. Do the thing.\n`), 1)
+  assert.equal(
+    planHeadingCount(
+      `Some description.\n\n${PLAN_HEADING}\n\nStale approach.\n` +
+        `\n> Plan rejected — wrong layer [2026-01-01T00:00:00.000Z by dev]\n` +
+        `\n${PLAN_HEADING}\n\nCorrect approach.\n`,
+    ),
+    2,
+    "the stacked shape a replanned task invites",
+  )
+  // A task ABOUT the loop quoting the heading mid-line is not a second plan —
+  // this repo's own backlog is full of those.
+  assert.equal(planHeadingCount(`${PLAN_HEADING}\n\n1. Write the ${PLAN_HEADING} onto the file.\n`), 1)
 })
 
 test("extractPlan keeps a legitimate blockquote inside a plan", () => {

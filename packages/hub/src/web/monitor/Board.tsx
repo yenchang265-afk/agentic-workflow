@@ -55,6 +55,7 @@ const TaskCardView = ({
   claimed,
   claimedAt,
   staleMinutes,
+  planRequested,
   status,
   kind,
   stage,
@@ -65,6 +66,8 @@ const TaskCardView = ({
   claimed: boolean
   claimedAt?: string
   staleMinutes?: number
+  /** A human asked for this queued task to be planned next. Not a claim — nothing is running. */
+  planRequested: boolean
   status: string
   kind: string
   /** The live stage marker, already confirmed to belong to this task. */
@@ -81,6 +84,14 @@ const TaskCardView = ({
       <Badge title={task.id}>{task.shortId}</Badge>
       {task.type && <Badge>{task.type}</Badge>}
       {task.hasPlan && <Badge tone="ok">plan</Badge>}
+      {/* Neutral tone on purpose: `gate` already means "waiting on you" and
+          `live` means a stage is running. A request is neither — it is an ask
+          nothing has acted on yet. */}
+      {planRequested && (
+        <Badge title="plan requested — the next claim or watch tick plans this before other queued tasks; nothing is running yet">
+          plan requested
+        </Badge>
+      )}
       {claimed && <ClaimedBadge claimedAt={claimedAt} staleMinutes={staleMinutes} />}
       {gated && <Badge tone="gate">awaiting you</Badge>}
       {stage && (
@@ -95,7 +106,9 @@ const TaskCardView = ({
     </div>
     {/* An epic only orders its child slices — approving it would have the loop
         plan the tracking file itself, which core refuses. Don't offer it. */}
-    {task.type !== "epic" && <GateActions task={task} status={status} kind={kind} claimed={claimed} />}
+    {task.type !== "epic" && (
+      <GateActions task={task} status={status} kind={kind} claimed={claimed} planRequested={planRequested} />
+    )}
   </Card>
 )
 
@@ -134,6 +147,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
     0,
   )
   const claimed = new Set(data.claimedIds)
+  const planRequested = new Set(data.planRequestedIds)
 
   return (
     <div>
@@ -183,6 +197,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                   claimed={claimed.has(t.id)}
                   claimedAt={data.claimStamps?.[t.id]}
                   staleMinutes={data.staleClaimMinutes}
+                  planRequested={planRequested.has(t.id)}
                   status={status}
                   kind={info.kind}
                   stage={liveStage?.taskId === t.id ? liveStage : null}
@@ -200,6 +215,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
           status={openTask.status}
           kind={info.kind}
           claimed={claimed.has(openTask.id)}
+          planRequested={planRequested.has(openTask.id)}
           onClose={closeTask}
         />
       )}

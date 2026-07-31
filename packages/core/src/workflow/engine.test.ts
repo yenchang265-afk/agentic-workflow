@@ -42,7 +42,9 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
   const parts: string[] = [`Goal: ${state.goal}`]
   if (target === "plan") {
     if (state.task) {
-      parts.push(`Task file: ${state.task.path} — write the ## Implementation Plan onto this file in place.`)
+      parts.push(
+        `Task file: ${state.task.path} — write the ## Implementation Plan onto this file in place. If the file already carries a ## Implementation Plan section, REPLACE that section rather than appending a second heading: a queued task sent back by replan keeps its old plan, and stacking a new heading below it leaves the superseded text in the task's prose forever. Leave every \`> …\` audit-note line exactly where it is — those are the trail the replan reason lives in.`,
+      )
     }
     if (a.plan) {
       parts.push(

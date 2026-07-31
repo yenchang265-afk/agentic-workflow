@@ -51,8 +51,17 @@ const fakeClient = (folders: Record<string, FakeFile[]>): Client => ({
  * Marker-aware shell: mkdir fails on held ids; rmdir releases. `cat` answers
  * from `realFs` — the REAL filesystem the claim reverification reads, as
  * opposed to the (possibly lagging) client index `fakeClient` serves.
+ *
+ * `requests` is the `.requests/` plan-request set, modelled well enough for the
+ * claim walk to read, honour and spend one: `ls -1` lists it, `test -f`/`rm -f`
+ * answer for a single marker, and a `mv` landing inside `.requests/` is a write.
  */
-const fakeShell = (held: Set<string>, realFs: Record<string, FakeFile[]> = {}, log?: string[]): Shell => {
+const fakeShell = (
+  held: Set<string>,
+  realFs: Record<string, FakeFile[]> = {},
+  log?: string[],
+  requests: Set<string> = new Set(),
+): Shell => {
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -63,6 +72,25 @@ const fakeShell = (held: Set<string>, realFs: Record<string, FakeFile[]> = {}, l
     log?.push(cmd)
     const id = cmd.split("/").pop() ?? ""
     const run = (): { exitCode: number; stdout: string } => {
+      // Each status folder owns its own `.requests/`, and only queued/ has one
+      // here — a fake that answered for every status let the in-progress pool's
+      // sweep delete the queued pool's requests.
+      const parts = (cmd.split(" ").pop() ?? "").split("/")
+      if (cmd.startsWith("ls -1 ") && cmd.endsWith("/.requests")) {
+        const absent = parts[parts.length - 2] !== "queued" || requests.size === 0
+        return absent ? { exitCode: 1, stdout: "" } : { exitCode: 0, stdout: `${[...requests].join("\n")}\n` }
+      }
+      if (cmd.includes("/queued/.requests/")) {
+        if (cmd.startsWith("test -f ")) return { exitCode: requests.has(id) ? 0 : 1, stdout: "" }
+        if (cmd.startsWith("rm -f ")) {
+          requests.delete(id)
+          return { exitCode: 0, stdout: "" }
+        }
+        if (cmd.startsWith("mv ")) {
+          requests.add(id)
+          return { exitCode: 0, stdout: "" }
+        }
+      }
       if (cmd.startsWith("mkdir -p")) return { exitCode: 0, stdout: "" }
       if (cmd.startsWith("mkdir ")) return { exitCode: held.has(id) ? 1 : 0, stdout: "" }
       if (cmd.startsWith("rmdir ")) {
@@ -98,25 +126,28 @@ const fakeShell = (held: Set<string>, realFs: Record<string, FakeFile[]> = {}, l
   return ((strings: TemplateStringsArray, ...exprs: unknown[]) => build(strings, exprs)) as any
 }
 
-const file = (id: string, opts: { plan?: boolean; started?: boolean; claimed?: boolean } = {}): FakeFile => {
+const file = (
+  id: string,
+  opts: { plan?: boolean; started?: boolean; claimed?: boolean; priority?: number } = {},
+): FakeFile => {
   const plan = opts.plan ? `\n${PLAN_HEADING}\n\n1. Do the thing.\n` : ""
   const claimed = opts.claimed ? `\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]\n` : ""
   const started = opts.started ? `\n> BUILD started (iteration 1) — 2026-01-01T00:00:00.000Z\n` : ""
   return {
     name: `${id}.md`,
-    content: `---\ntitle: ${id}\npriority: 2\n---\n\nBody of ${id}.\n${plan}${claimed}${started}`,
+    content: `---\ntitle: ${id}\npriority: ${opts.priority ?? 2}\n---\n\nBody of ${id}.\n${plan}${claimed}${started}`,
   }
 }
 
 const source = (
   folders: Record<string, FakeFile[]>,
   held = new Set<string>(),
-  opts: { realFs?: Record<string, FakeFile[]>; shellLog?: string[] } = {},
+  opts: { realFs?: Record<string, FakeFile[]>; shellLog?: string[]; requests?: Set<string> } = {},
 ) =>
   makeBacklogSource({
     // The client index and the real FS agree by default; pass `realFs` to
     // model an index that lags the real filesystem.
-    $: fakeShell(held, opts.realFs ?? folders, opts.shellLog),
+    $: fakeShell(held, opts.realFs ?? folders, opts.shellLog, opts.requests),
     client: fakeClient(folders),
     directory: "/r",
     tasksDir: "docs/tasks",
@@ -140,24 +171,87 @@ test("claims build-ready in-progress work before queued plan work", async () => 
   assert.match(item?.claimMessage ?? "", /building…/)
 })
 
-test("never claims from the queued pool even when in-progress has nothing claimable", async () => {
+test("falls back to the queued pool when in-progress has nothing claimable", async () => {
   const src = source({
     "in-progress": [file("already-started", { plan: true, started: true })],
     queued: [file("plan-me")],
   })
-  const { item, skip } = await src.claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /already started: already-started .*recover/)
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "plan-me")
+  assert.equal(item?.entryStage, "plan")
+  assert.deepEqual(item?.state.artifacts, {})
+  assert.match(item?.claimMessage ?? "", /planning…/)
 })
 
-test("queued-only backlog claims nothing and points at plan <id>", async () => {
-  const held = new Set<string>()
-  const src = source({ "in-progress": [], queued: [file("plan-me")] }, held)
+test("a queued-only backlog is claimed and enters at PLAN", async () => {
+  // The pool is walked like any other: an approved task waits for no verb.
+  const shellLog: string[] = []
+  const src = source({ "in-progress": [], queued: [file("plan-me")] }, new Set<string>(), { shellLog })
   const { item, skip } = await src.claimNext()
-  assert.equal(item, null)
-  assert.match(skip?.message ?? "", /awaiting a plan in queued\/ .*plan <id>/)
-  assert.equal(skip?.actionable, true)
-  assert.equal(held.size, 0)
+  assert.equal(skip, null)
+  assert.equal(item?.id, "plan-me")
+  assert.equal(item?.entryStage, "plan")
+  assert.match(item?.claimMessage ?? "", /planning…/)
+  assert.ok(
+    shellLog.some((c) => c.startsWith("mkdir ") && c.includes("queued/.claims/plan-me")),
+    `the claim marker is taken, exactly as a build claim takes one: ${shellLog.join(" | ")}`,
+  )
+})
+
+test("a plan request wins the queued pool over a lower priority number", async () => {
+  // The whole point of the hub's Plan button: "plan THIS one next" has to beat
+  // the ordinary priority walk, or the click does nothing you can see.
+  const requests = new Set(["asked-for"])
+  const src = source(
+    { "in-progress": [], queued: [file("would-win", { priority: 1 }), file("asked-for", { priority: 9 })] },
+    new Set<string>(),
+    { requests },
+  )
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "asked-for")
+  assert.equal(item?.entryStage, "plan")
+  assert.deepEqual([...requests], [], "the hint is spent by the claim that honoured it")
+})
+
+test("two plan requests resolve among themselves by selectOrder", async () => {
+  const src = source(
+    {
+      "in-progress": [],
+      queued: [file("low", { priority: 1 }), file("asked-b", { priority: 5 }), file("asked-a", { priority: 3 })],
+    },
+    new Set<string>(),
+    { requests: new Set(["asked-a", "asked-b"]) },
+  )
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "asked-a", "requested-first is a stable partition, so priority still decides within the group")
+})
+
+test("a plan request does not preempt build-ready work — pool priority outranks it", async () => {
+  // A request reorders its OWN pool. Letting it jump the manifest's pool order
+  // would let a per-task marker invert declared priority and starve work that is
+  // already approved and further along.
+  const requests = new Set(["asked-for"])
+  const src = source({ "in-progress": [file("build-me", { plan: true })], queued: [file("asked-for")] }, new Set<string>(), {
+    requests,
+  })
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "build-me")
+  assert.deepEqual([...requests], ["asked-for"], "and the unspent request survives for a later tick")
+})
+
+test("a request whose claim is lost survives, so the next tick still prioritises it", async () => {
+  const requests = new Set(["asked-for"])
+  const src = source({ "in-progress": [], queued: [file("asked-for")] }, new Set(["asked-for"]), { requests })
+  const { item } = await src.claimNext()
+  assert.equal(item, null, "the marker is held by someone else")
+  assert.deepEqual([...requests], ["asked-for"], "an unhonoured hint is not spent")
+})
+
+test("a request for a task that has left queued/ is swept rather than left reordering nothing", async () => {
+  const requests = new Set(["gone", "still-here"])
+  const src = source({ "in-progress": [], queued: [file("still-here")] }, new Set(["still-here"]), { requests })
+  await src.claimNext()
+  assert.deepEqual([...requests], ["still-here"], "only the stray goes; the live request is untouched")
 })
 
 test("an empty backlog yields the both-empty skip reason", async () => {
@@ -281,10 +375,17 @@ test("taskGoal joins title and body", () => {
   assert.equal(taskGoal({ id: "x", title: "T", priority: 1, acceptance: [], labels: [], body: "B", path: "/p" }), "T\n\nB")
 })
 
-test("claimSkipReason precedence: held beats empty beats started beats queued", () => {
+test("claimSkipReason precedence: held beats empty beats started", () => {
   assert.match(claimSkipReason(0, 0, 0, [], ["h"]).message, /held/)
   assert.match(claimSkipReason(0, 0, 0, [], []).message, /both empty/)
   assert.match(claimSkipReason(2, 0, 0, ["a"], []).message, /already started/)
-  assert.match(claimSkipReason(0, 0, 3, [], []).message, /3 task\(s\) awaiting a plan .*plan <id>/)
   assert.match(claimSkipReason(2, 0, 0, [], []).message, /no persisted plan/)
+})
+
+test("a queued task the index hasn't caught up on falls through to the in-progress fallback", () => {
+  // Cosmetic, transient, and deliberately not special-cased: in-progress empty
+  // plus a queued task the listing missed lands on the no-persisted-plan branch,
+  // which blames in-progress. The next tick's listByStatus is fresh. Pinned here
+  // so nobody reads the fallback's wording as a promise about queued/.
+  assert.match(claimSkipReason(0, 0, 3, [], []).message, /no persisted plan/)
 })

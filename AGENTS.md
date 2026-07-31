@@ -28,12 +28,13 @@ sections below cover each.
    deleted and the removal committed, not moved; a bare `remove` is a dry run
    that deletes nothing, and both are refused while a loop drives the task or a
    claim is held);
-   the loop claims build-ready work (`claim`, or a `watch [trigger]` worker
+   the loop claims work (`claim`, or a `watch [trigger]` worker
    session polling on idle events plus a timer — both scoped to the
    engineering kind; `unwatch` takes this session back out) and drives
-   BUILD→VERIFY→REVIEW unattended on plan-approved tasks; a queued task is
-   planned only on demand via `plan <id>` (PLAN parks the plan in
-   `plan-review/` for your gate and exits — `claim`/`watch` never auto-plan). `recover <id>` resumes a run that stopped early (crash or ESC
+   BUILD→VERIFY→REVIEW unattended on plan-approved tasks, falling back to an
+   approved `queued/` task to plan when no build-ready work is left; `plan <id>`
+   plans one now without waiting for a tick (either way PLAN parks the plan in
+   `plan-review/` for your gate and exits). `recover <id>` resumes a run that stopped early (crash or ESC
    interrupt); `stop`/`abort` ends a run outright; `status` reports the
    current loop plus a backlog roll-up; `kinds` lists which workflow kinds this
    repo has enabled; `doctor [fix]` audits (and optionally repairs) backlog

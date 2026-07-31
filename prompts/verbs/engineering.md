@@ -71,8 +71,8 @@
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
          goes live (offer Approve / Replan / Park, per the
          `workflow-orchestration` skill).
-       - **No** → stop; `/agentic-workflow:engineering plan <id>` plans it later
-         (`claim` never auto-plans a queued task).
+       - **No** → stop; `/agentic-workflow:engineering plan <id>` plans it later,
+         as does the next `claim` with no build-ready work left.
      - **Not yet** → leave it in `draft/`; `/agentic-workflow:engineering approve
        <id>` (or `retask <id>`) resumes it later.
   - **Project-management pairing** — when `.agentic-workflow.json` has a
@@ -178,9 +178,9 @@
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — call `mcp__agentic-workflow__workflow_claim` to pick up the next
-  engineering item and drive it: build-ready `in-progress/` tasks only,
-  lowest priority number first — planless `queued/` tasks are never
-  auto-planned (use `plan <id>`). An `in-progress/`
+  engineering item and drive it: build-ready `in-progress/` tasks first, then a
+  planless `queued/` task to plan, lowest priority number first within each. A
+  `queued/` claim enters at PLAN and parks the plan for the gate. An `in-progress/`
   task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
   `workflow-verify` / `workflow-review` via the

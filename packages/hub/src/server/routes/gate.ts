@@ -81,6 +81,21 @@ const statusOf = async (deps: HubDeps, id: string): Promise<TaskStatus | null> =
 }
 
 /**
+ * The 409 a click on a stale board earns, naming where the task actually is.
+ * Shared with the plan-request route so the two can never word the same
+ * condition differently — the message IS the fix instruction here.
+ */
+export const staleBoard = async (deps: HubDeps, id: string, expectStatus: TaskStatus): Promise<JsonResponse> => {
+  const actual = await statusOf(deps, id)
+  return json(409, {
+    error: actual
+      ? `"${id}" is in ${actual}, not ${expectStatus} — the board was stale. It has been refreshed.`
+      : `"${id}" is no longer in ${expectStatus} — the board was stale. It has been refreshed.`,
+    ...(actual ? { actual } : {}),
+  })
+}
+
+/**
  * POST /api/gate/:action — body `{ id, expectStatus, reason?, kind? }`.
  *
  * Returns **200 for every well-formed request**, carrying core's `GateResult`
@@ -117,15 +132,7 @@ export const postGate = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
    */
   return withGateLock(deps.directory, async () => {
     const here = await findByIdIn(deps.sh, deps.directory, deps.tasksDir, expectStatus, id, deps.log)
-    if (!here) {
-      const actual = await statusOf(deps, id)
-      return json(409, {
-        error: actual
-          ? `"${id}" is in ${actual}, not ${expectStatus} — the board was stale. It has been refreshed.`
-          : `"${id}" is no longer in ${expectStatus} — the board was stale. It has been refreshed.`,
-        ...(actual ? { actual } : {}),
-      })
-    }
+    if (!here) return staleBoard(deps, id, expectStatus)
 
     const ctx = await gateCtx(deps)
     const result = await spec.run(ctx, id, body as GateRequest)

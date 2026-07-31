@@ -47,9 +47,8 @@ flowchart LR
 | verify | no | runs tests (bash allowlist), checks acceptance criteria, records its verdict via `workflow_verdict` |
 | review | no | five-axis review of exactly `git diff base...branch` (read-only allowlist), records its verdict via `workflow_verdict` |
 
-PLAN runs **right before execution** — on `plan <id>`, or a `watch` tick with
-no build work left — so plans cannot rot while tasks sit parked. `claim` and
-`watch` never auto-plan a queued task.
+PLAN runs **right before execution** — on `plan <id>`, or a `claim`/`watch` tick
+with no build work left — so plans cannot rot while tasks sit parked.
 
 ## The gates
 
@@ -82,7 +81,8 @@ The full folder lifecycle and file schema are `task-backlog-management`.
 
 ## Execution
 
-`claim` pulls the next build-ready task once, now. `watch [interval]` turns the
+`claim` pulls the next task once, now — build-ready work first, else one to
+plan. `watch [interval]` turns the
 session into a standing worker firing on its own `session.idle` events plus a
 per-session **polling timer** (default `watchIntervalMinutes`, floor 10s).
 Each tick first asks the server whether the session is actually idle
