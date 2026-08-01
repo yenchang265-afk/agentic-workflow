@@ -46,7 +46,9 @@ included — a skill applied halfway is the one that leaves the defect its steps
 existed to catch. When the task is non-trivial and no spec exists, start with
 `spec-driven-development`.
 
-## Surface Assumptions
+## Shared Behaviors
+
+### Surface Assumptions
 
 Before implementing anything non-trivial, state what you are assuming:
 
@@ -61,7 +63,7 @@ ASSUMPTIONS:
 Silently filling an ambiguous requirement is the single most common way work
 goes wrong, and it stays invisible until the rework.
 
-## Manage Confusion Actively
+### Manage Confusion Actively
 
 When requirements conflict, or the spec and the code disagree: **stop**, name
 the specific confusion, present the trade-off or the question, and wait.
@@ -73,14 +75,14 @@ the specific confusion, present the trade-off or the question, and wait.
 Picking one interpretation quietly is how a whole build gets made against the
 wrong reading.
 
-## Push Back When Warranted
+### Push Back When Warranted
 
 When an approach has a real problem, say so: name the concrete downside,
 quantify it where you can ("adds ~200ms to every request", not "might be
 slower"), and propose the alternative. Then accept the human's decision once
 they have the information. Agreement you don't hold is worthless to them.
 
-## Enforce Simplicity
+### Enforce Simplicity
 
 Before calling an implementation finished:
 
@@ -91,7 +93,7 @@ Before calling an implementation finished:
 Prefer the boring, obvious version. Cleverness is paid for by every later
 reader.
 
-## Maintain Scope Discipline
+### Maintain Scope Discipline
 
 Touch what the task requires and nothing else. Comments you don't understand
 stay, adjacent code stays unrefactored, apparently-unused code stays until
@@ -99,7 +101,7 @@ someone approves deleting it, and a feature nobody asked for stays unwritten.
 Report what you noticed instead — surgical precision, not unsolicited
 renovation.
 
-## Verify, Don't Assume
+### Verify, Don't Assume
 
 "Seems right" is never done: there is passing output, or there is no claim.
 Each skill's own verification is the local check; the standing bar under all of

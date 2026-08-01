@@ -26,10 +26,11 @@ reverted.
 is a commit; `Add task feature, fix sidebar, update deps, refactor utils` is
 four.
 
-**Never mix a formatting change with a behavior change, or a refactor with a
-feature.** The behavior change disappears inside the noise, and the refactor
-can no longer be reverted on its own. Renaming one variable inside a feature
-commit is fine; anything a reviewer would have to mentally subtract is not.
+**Keep a formatting change in its own commit, separate from a behavior change,
+and keep a refactor separate from a feature.** Mixed together, the behavior
+change disappears inside the noise, and the refactor can no longer be reverted
+on its own. Renaming one variable inside a feature commit is fine; anything a
+reviewer would have to mentally subtract is not.
 
 ## Message shape
 

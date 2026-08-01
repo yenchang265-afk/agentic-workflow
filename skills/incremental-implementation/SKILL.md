@@ -6,9 +6,9 @@ description: Delivers changes in thin vertical slices, each tested before expand
 # Incremental Implementation
 
 Ship one **slice** at a time: implement the smallest complete piece, test it,
-verify it, commit it, then expand. Each slice leaves the tree **green** —
-building, with every existing test passing — so a failure always points at the
-slice you just wrote.
+verify it, commit it, then expand. Each slice leaves the tree **green** — build
+clean, full suite passing, typecheck and lint clean — so a failure always
+points at the slice you just wrote.
 
 A single-file, single-function change is already minimal; slice nothing.
 
@@ -76,8 +76,8 @@ NOTICED BUT NOT TOUCHING:
 a refactor of an existing one, and a build-config update are three slices and
 three commits.
 
-**Green between slices.** The project builds and every existing test passes at
-each slice boundary.
+**Green between slices.** The tree stays green at every slice boundary, not
+just at the end.
 
 **Revertable.** Each slice stands alone under `git revert`: prefer additive
 changes, keep edits to existing code minimal and focused, pair every migration
@@ -91,8 +91,7 @@ the main branch without exposing incomplete work.
 ## Verification
 
 - [ ] Each slice was individually tested, and committed if your caller allows it
-- [ ] The tree is green after the final slice: full suite passes, build clean,
-      typecheck and lint pass
+- [ ] The tree is green after the final slice
 - [ ] The feature works end-to-end as specified, confirmed by running it
 - [ ] No uncommitted changes remain — unless your caller forbids committing, in
       which case the whole change stays uncommitted for its reviewer

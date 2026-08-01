@@ -60,7 +60,7 @@ surface the discrepancy and establish which one holds for the detected version.
 
 Use the signatures on the page, the current pattern where the docs have moved
 on, and never a form the docs mark deprecated. Where the docs do not cover what
-you need, flag it as unverified rather than filling the gap from memory.
+you need, flag it as UNVERIFIED rather than filling the gap from memory.
 
 When the docs and the existing codebase disagree, that is the user's decision,
 not yours:

@@ -112,7 +112,7 @@ holds:
 - `src/path/to/file.ts`
 - `tests/path/to/test.ts`
 
-**Estimated scope:** [Small: 1-2 files | Medium: 3-5 files | Large: 5+ files]
+**Estimated scope:** [XS/S/M/L — see the Size table above]
 ```
 
 ## Order and checkpoint
@@ -161,7 +161,9 @@ few. Every decision belongs in the plan, not in the build.
    thing it reuses or says why nothing existing fits.
 4. **Right-size.** Keep it reviewable by a human in one sitting. If the goal is
    larger than that, order it into slices and plan only the first — the rest go
-   back to branch A.
+   back to branch A. _Done when:_ the plan covers one slice reviewable in one
+   sitting, and anything beyond it has been sent back to branch A rather than
+   left inline.
 5. **Be concrete.** Name the exact files to create or modify and the change in
    each. _Done when:_ no step says "update the relevant code".
 6. **On a replan**, read why the prior plan failed or was rejected, and address
