@@ -172,8 +172,10 @@ a rebuild from an unmoved file on an execution verb.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next task (lowest priority number
-  first) and drive it once this turn settles — build-ready `in-progress/` work,
-  then an approved `queued/` task to plan when no build work is left.
+  first, unless a `queued/` task holds a plan request — the hub's Plan
+  button — which claims that one first) and drive it once this turn
+  settles — build-ready `in-progress/` work, then an approved `queued/` task
+  to plan when no build work is left.
 <!-- /aw:verb claim -->
 <!-- aw:verb watch -->
 - **`watch [trigger]`** — put **this** session into engineering worker mode.
@@ -235,9 +237,10 @@ a rebuild from an unmoved file on an execution verb.
 <!-- aw:verb doctor -->
 - **`doctor [fix]`** — audit the backlog for structural damage (stray folders
   like `run/`, task files outside every status folder, duplicate ids, held
-  claim markers). With `fix`, applies the unambiguous repairs: rescues strays
-  to `draft/`, removes emptied stray folders, and releases stale claim
-  markers. Duplicates are always left for you. Never repair the backlog by
+  claim markers, stray plan-request markers). With `fix`, applies the
+  unambiguous repairs: rescues strays to `draft/`, removes emptied stray
+  folders, releases stale claim markers, and drops stray plan requests.
+  Duplicates are always left for you. Never repair the backlog by
   hand — the folder a task lives in IS its state, and the plugin blocks raw
   `mv`/`mkdir`/`rm`/writes against `docs/tasks/`.
 <!-- /aw:verb doctor -->

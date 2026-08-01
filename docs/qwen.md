@@ -40,7 +40,7 @@ Identical to the Claude Code variant — Qwen's subdirectory namespacing renders
 
 | Command | What it does |
 |---|---|
-| `/agentic-workflow:engineering` | The engineering loop: `new`, `retask`, `approve`, `replan`, `remove`, `plan`, `claim`, `recover`, `kinds`, `doctor`, `stop`, `status` |
+| `/agentic-workflow:engineering` | The engineering loop: `new`, `retask`, `approve`, `replan`, `abandon`, `remove`, `plan`, `claim`, `recover`, `kinds`, `doctor`, `stop`, `status` |
 | `/agentic-workflow:pr-sitter` | The PR sitter: `claim [<pr>]`, `status`, `stop` |
 | `/agentic-workflow:review-sitter` | The review sitter |
 | `/agentic-workflow:dep-sitter` | The dependency sitter (experimental) |

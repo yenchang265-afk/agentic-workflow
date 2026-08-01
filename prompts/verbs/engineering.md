@@ -179,7 +179,9 @@
 <!-- aw:verb claim -->
 - **`claim`** — call `mcp__agentic-workflow__workflow_claim` to pick up the next
   engineering item and drive it: build-ready `in-progress/` tasks first, then a
-  planless `queued/` task to plan, lowest priority number first within each. A
+  planless `queued/` task to plan, lowest priority number first within each,
+  unless a `queued/` task holds a plan request (the hub's Plan button), which
+  claims first. A
   `queued/` claim enters at PLAN and parks the plan for the gate. An `in-progress/`
   task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
@@ -214,8 +216,9 @@
 <!-- aw:verb doctor -->
 - **`doctor [fix]`** — call `mcp__agentic-workflow__workflow_doctor({fix})` to audit
   the backlog for structural damage (stray folders, task files outside every
-  status folder, duplicate ids, held claim markers); with `fix` it applies
-  the unambiguous repairs. Never repair the backlog by hand.
+  status folder, duplicate ids, held claim markers, stray plan-request
+  markers); with `fix` it applies the unambiguous repairs. Never repair the
+  backlog by hand.
 <!-- /aw:verb doctor -->
 <!-- aw:verb unknown -->
 - **anything else** (including a free-text goal) — do not run it. Show this
