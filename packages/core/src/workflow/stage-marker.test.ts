@@ -12,6 +12,7 @@ import {
   STAGE_MARKER_HOSTS,
   stageMarkerFile,
   taskDrivenByStageMarker,
+  taskNamedByStageMarker,
   writeOpencodeStageMarker,
 } from "./stage-marker.js"
 import type { WorkflowState } from "./state.js"
@@ -133,6 +134,23 @@ test("taskDrivenByStageMarker: live marker names the host; expired deadline or d
   fs.mkdirSync(path.join(dir, "docs/tasks/runs"), { recursive: true })
   fs.writeFileSync(opencodeMarkerPath(dir, "docs/tasks"), "not json")
   assert.equal(await taskDrivenByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit", now), null)
+  fs.rmSync(dir, { recursive: true, force: true })
+})
+
+test("taskNamedByStageMarker: names the task live or dead, but never a different task", async () => {
+  // Recover's crash-evidence probe: given taskDrivenByStageMarker already said
+  // "not driven", a marker still NAMING the task means a run reached a stage
+  // and died — safe to take its claim over now. No marker at all may instead
+  // be a live run inside its pre-marker setup window, where a takeover steals
+  // the claim.
+  const dir = await mkdtemp(path.join(tmpdir(), "stage-marker-named-"))
+  const now = 1_000_000
+  const $ = fakeShell()
+  await writeOpencodeStageMarker($, dir, "docs/tasks", opencodeStageMarker(state, now - 1)) // expired: dead
+  assert.equal(await taskNamedByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit"), true, "an expired marker still names its task")
+  assert.equal(await taskNamedByStageMarker($, dir, "docs/tasks", "other-task"), false)
+  await clearOpencodeStageMarker($, dir, "docs/tasks")
+  assert.equal(await taskNamedByStageMarker($, dir, "docs/tasks", "f7k3-add-rate-limit"), false, "no marker names nothing")
   fs.rmSync(dir, { recursive: true, force: true })
 })
 

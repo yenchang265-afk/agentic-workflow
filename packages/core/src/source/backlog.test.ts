@@ -254,6 +254,31 @@ test("a request for a task that has left queued/ is swept rather than left reord
   assert.deepEqual([...requests], ["still-here"], "only the stray goes; the live request is untouched")
 })
 
+test("a request whose task the lagging listing missed is never swept", async () => {
+  // The client index lags the real FS (a just-approved task's mv not yet
+  // reflected): the listing says queued/ is empty, but the task IS there. The
+  // sweep must confirm every apparent stray against the real filesystem —
+  // judging by the listing alone deleted a human's fresh ask.
+  const requests = new Set(["fresh"])
+  const src = source({ "in-progress": [], queued: [] }, new Set(), {
+    realFs: { queued: [file("fresh")] },
+    requests,
+  })
+  await src.claimNext()
+  assert.deepEqual([...requests], ["fresh"], "the live request survives the sweep")
+})
+
+test("release restores a plan request the claim consumed", async () => {
+  const requests = new Set(["asked-for"])
+  const folders = { "in-progress": [], queued: [file("asked-for")] }
+  const src = source(folders, new Set(), { requests })
+  const { item } = await src.claimNext()
+  assert.equal(item?.id, "asked-for")
+  assert.equal(requests.has("asked-for"), false, "the hint was spent on the claim")
+  await src.release(item!)
+  assert.equal(requests.has("asked-for"), true, "a released claim did no work — the human's ask is restored")
+})
+
 test("an empty backlog yields the both-empty skip reason", async () => {
   const { item, skip } = await source({ "in-progress": [], queued: [] }).claimNext()
   assert.equal(item, null)
@@ -323,6 +348,25 @@ test("release keeps a claim whose body reached BUILD started, even with a CLAIME
   assert.ok(
     !shellLog.some((c) => c.startsWith("rmdir")),
     "durable work must keep the marker for recover <id>",
+  )
+})
+
+test("release with the task gone from the pool still releases the claim-time marker", async () => {
+  // The tryClaim catch releases when a drive died before real work started; if
+  // the file has meanwhile left the pool (or no longer parses), skipping the
+  // release leaves the pool's .claims/<id> marker held with no live owner —
+  // and a held marker blocks every gate verb until the stale sweep.
+  const folders = { "in-progress": [file("t", { plan: true })], queued: [] }
+  const shellLog: string[] = []
+  const src = source(folders, new Set<string>(), { shellLog })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  folders["in-progress"] = []
+  shellLog.length = 0
+  await src.release(item)
+  assert.ok(
+    shellLog.some((c) => c.startsWith("rmdir") && c.includes(".claims/t")),
+    `marker released via the claim-time ref: ${shellLog.join(" | ")}`,
   )
 })
 

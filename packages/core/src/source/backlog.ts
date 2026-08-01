@@ -5,6 +5,7 @@ import type { WorkflowState } from "../workflow/state.js"
 import type { Task } from "../task/schema.js"
 import {
   claimFirst,
+  confirmedStrayPlanRequestIds,
   extractPlan,
   findByIdIn,
   isRecoverable,
@@ -14,7 +15,7 @@ import {
   selectOrder,
   STALE_CLAIM_MINUTES,
 } from "../task/store.js"
-import { consumePlanRequest, listPlanRequestIds, requestedFirst, sweepStalePlanRequests } from "../task/plan-request.js"
+import { consumePlanRequest, listPlanRequestIds, requestPlan, requestedFirst, revokeStrayPlanRequests } from "../task/plan-request.js"
 import type { ClaimSkipReason, WorkItem, WorkSource } from "./types.js"
 import { appendSchedulerEvents } from "../scheduler/events-log.js"
 
@@ -147,14 +148,16 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
    * live request would silently discard a human's ask. Best-effort throughout —
    * a failure here must never fail the claim walk.
    */
-  const sweepStrayRequests = async (status: string, requested: ReadonlySet<string>, listed: readonly Task[]): Promise<void> => {
+  const sweepStrayRequests = async (status: string, listed: readonly Task[]): Promise<void> => {
     try {
-      const present = new Set(listed.map((t) => t.id))
-      for (const id of requested) {
-        if (present.has(id)) continue
-        if (await findByIdIn($, directory, tasksDir, status, id, log)) present.add(id)
-      }
-      await sweepStalePlanRequests($, directory, tasksDir, [...present], status)
+      // Every apparent stray is confirmed absent on the REAL filesystem before
+      // it is revoked, and only the confirmed set is handed to the revoke — a
+      // request that lands after this pass is never judged (the revoke
+      // deliberately re-lists nothing), so a human's fresh ask survives the
+      // sweep no matter how stale `listed` is.
+      const strays = await confirmedStrayPlanRequestIds($, directory, tasksDir, listed.map((t) => t.id), status, log)
+      const swept = await revokeStrayPlanRequests($, directory, tasksDir, strays, status)
+      if (swept.length) await log("info", `backlog: swept ${swept.length} stray plan request(s): ${swept.join(", ")}`)
     } catch (err) {
       await log("warn", `backlog: plan-request sweep failed: ${(err as Error).message}`)
     }
@@ -181,7 +184,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
         // plan never preempts build-ready work.
         const requested = new Set(await listPlanRequestIds($, directory, tasksDir, pool.status))
         const candidates = requestedFirst(ordered, requested)
-        if (requested.size > 0) await sweepStrayRequests(pool.status, requested, tasks)
+        if (requested.size > 0) await sweepStrayRequests(pool.status, tasks)
         if (i === 0) {
           primaryTasks = tasks
           primaryClaimable = candidates.length
@@ -219,14 +222,15 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
         if (walk.claimed) {
           // The hint has been HONOURED, so spend it — on the winning claim only.
           // A lost or held claim keeps its request so the next tick still
-          // prioritises the task, and `release()` keeps it too: a released claim
-          // did no work, so the human's ask still stands. Spending it here is
-          // also why a died run leaves no sticky request that re-plans forever —
-          // the ordinary walk picks the task up again anyway.
-          if (requested.has(walk.claimed.id)) {
-            await consumePlanRequest($, directory, tasksDir, walk.claimed.id, pool.status)
-          }
-          return { item: item(pool, walk.claimed), skip: null }
+          // prioritises the task, and `release()` restores a spent one: a
+          // released claim did no work, so the human's ask still stands.
+          // Spending it here is also why a died run leaves no sticky request
+          // that re-plans forever — the ordinary walk picks the task up again
+          // anyway.
+          const consumedRequest =
+            requested.has(walk.claimed.id) && (await consumePlanRequest($, directory, tasksDir, walk.claimed.id, pool.status))
+          const claimed = item(pool, walk.claimed)
+          return { item: consumedRequest ? { ...claimed, ref: { ...(claimed.ref as object), consumedRequest } } : claimed, skip: null }
         }
       }
       const started = primaryTasks.filter(isRecoverable).map((t) => t.id)
@@ -237,9 +241,20 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
     },
 
     async release(work) {
-      const { pool, task } = work.ref as { pool: Pool; task: Task }
+      const { pool, task, consumedRequest } = work.ref as { pool: Pool; task: Task; consumedRequest?: boolean }
+      // A released claim did no work, so a plan request the claim spent is
+      // restored — without this the human's ask silently vanished whenever
+      // setup (isolation, checks) threw after the claim consumed it.
+      if (consumedRequest) await requestPlan($, directory, tasksDir, task.id)
       const fresh = await findByIdIn($, directory, tasksDir, pool.status, task.id)
-      if (!fresh) return
+      if (!fresh) {
+        // The file left the pool (a racing move) or no longer parses — but the
+        // pool's .claims/<id> marker is still held, and this is a drive-end
+        // path: every way a drive ends must release the marker. Fall back to
+        // the claim-time ref; releasing an already-released marker is a no-op.
+        await releaseClaim($, task)
+        return
+      }
       // A predicate pool's claim is ours to hand back only while the run did no
       // durable work — a drive that reached a "BUILD started" audit note must
       // keep its marker for `recover <id>`.

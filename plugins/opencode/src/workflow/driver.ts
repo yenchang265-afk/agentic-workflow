@@ -9,6 +9,7 @@ import {
   clearOpencodeStageMarker,
   opencodeStageMarker,
   taskDrivenByStageMarker,
+  taskNamedByStageMarker,
   writeOpencodeStageMarker,
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
@@ -37,6 +38,7 @@ import {
   claimFirst,
   claimTask,
   claimTaskSweepingStale,
+  confirmedStrayPlanRequestIds,
   findByIdIn,
   hasPlan,
   isClaimable,
@@ -60,7 +62,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest, strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/core/scheduler/lease"
@@ -649,11 +651,17 @@ const takeBlocked = (sessionID: string, stage: string): string | null => {
   return entry.reason
 }
 
-/** Consume (read-and-clear) the verdict record for a session's check stage, if any. */
+/**
+ * Consume (read-and-clear) the verdict record for a session's check stage, if
+ * any. A record for a DIFFERENT stage is left in place, not destroyed: it is
+ * not this caller's to take, and the unconditional delete let a caller for
+ * stage Y destroy a record belonging to stage X before X's owner read it.
+ */
 const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord | null => {
   const rec = recordedVerdicts.get(sessionID)
+  if (!rec || rec.stage !== stage) return null
   recordedVerdicts.delete(sessionID)
-  return rec && rec.stage === stage ? rec.record : null
+  return rec.record
 }
 
 /**
@@ -1112,9 +1120,22 @@ export const runStagePasses = async (
   /** Tear a pass session down. Never the driving session — that outlives the stage. */
   const closePassSession = async (passSessionID: string): Promise<void> => {
     if (passSessionID === sessionID) return
+    await client.session.delete({ path: { id: passSessionID } }).catch(() => {})
+    // Unregister only AFTER the session is gone: a late workflow_verdict from
+    // a subtask still settling in the abort-grace window walks up the parent
+    // chain, and with the pass unregistered first it resolved to the DRIVING
+    // session — landing in a table slot a sibling pass (or a shared-session
+    // fallback) reads next. Registered, the pass soaks it up harmlessly.
     clearWorkflow(passSessionID)
     passSessions.get(sessionID)?.delete(passSessionID)
-    await client.session.delete({ path: { id: passSessionID } }).catch(() => {})
+    // The pass's per-session table entries die with it — pass ids are never
+    // reused, so anything left behind is a straight leak.
+    recordedVerdicts.delete(passSessionID)
+    rejectedVerdicts.delete(passSessionID)
+    recordedBlocked.delete(passSessionID)
+    observedEvidence.delete(passSessionID)
+    axisRequirement.delete(passSessionID)
+    driftNoted.delete(passSessionID)
   }
 
   const runOnePass = async (i: number): Promise<void> => {
@@ -1177,6 +1198,20 @@ export const runStagePasses = async (
       // clear above is per attempt.
       for (const command of checkCommands(state.checks?.[stage] ?? [])) noteEvidence(passSessionID, { command })
       driftNoted.delete(passSessionID) // one drift note per stage attempt, not per run
+      // Each ATTEMPT gets a full stage timeout, so the advertised deadline and
+      // the claim stamp are refreshed here, not once per stage: a fan-out
+      // stage legitimately runs passes × attempts × timeout, and the stale
+      // budget (`staleClaimMinutes`, the marker deadline) covers exactly one —
+      // without the refresh a live REVIEW reads dead to doctor/recover
+      // mid-fan-out and its claim is swept out from under it. Parity with the
+      // Claude host, which restamps in every workflow_stage call.
+      await writeOpencodeStageMarker(
+        deps.$,
+        deps.directory,
+        config.tasksDir,
+        opencodeStageMarker(state, Date.now() + config.stageTimeoutMinutes * 60_000),
+      )
+      if (state.task) await refreshClaimStamp(deps.$, state.task)
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
         client,
@@ -2703,8 +2738,22 @@ export const handleCommand = async (
           "warning",
         )
       }
-      if (!(await claimTaskSweepingStale(deps.$, task, 0))) {
-        return report(client, `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`, "warning")
+      // A dead stage marker naming the task is crash evidence — take the claim
+      // over now. No marker at all is ambiguous: a just-claimed live run spends
+      // minutes in its setup window (isolation, stage checks) BEFORE its first
+      // marker write, and an unconditional sweep there started a second drive
+      // on the same feature/<id> branch. There, only a claim stamp older than
+      // the base stale window authorizes the takeover.
+      const crashed = await taskNamedByStageMarker(deps.$, deps.directory, config.tasksDir, id)
+      if (!(await claimTaskSweepingStale(deps.$, task, crashed ? 0 : STALE_CLAIM_MINUTES))) {
+        return report(
+          client,
+          crashed
+            ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
+            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
+                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
+          "warning",
+        )
       }
     }
     // Prefer an exact-stage resume from the state snapshot; fall back to
@@ -2752,7 +2801,10 @@ export const handleCommand = async (
       // nothing, but it lingers — name it rather than leave an unexplained marker.
       const queuedNow = await listByStatus(client, deps.directory, config.tasksDir, "queued", deps.log)
       const queuedIds = queuedNow.map((t) => t.id)
-      const strayRequests = await strayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds)
+      // CONFIRMED strays only: the listing can lag the real FS (and skips
+      // unparseable files), and a request written after it — the hub's Plan
+      // button, mid-doctor — must never be judged against it.
+      const strayRequests = await confirmedStrayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds, "queued", deps.log)
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
@@ -2807,8 +2859,10 @@ export const handleCommand = async (
       }
       // Unlike a claim, a stray request is never ambiguous: its task has left
       // the folder, so nothing can be driving it. No liveness check, and no
-      // commit — the markers were never tracked.
-      const revokedRequests = await sweepStalePlanRequests(deps.$, deps.directory, config.tasksDir, queuedIds)
+      // commit — the markers were never tracked. Only the CONFIRMED strays
+      // from above are revoked; a request written since (the hub's Plan
+      // button racing this doctor) is left alone.
+      const revokedRequests = await revokeStrayPlanRequests(deps.$, deps.directory, config.tasksDir, strayRequests)
       if (rescued.length) {
         await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }

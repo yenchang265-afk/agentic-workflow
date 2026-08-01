@@ -8,8 +8,6 @@ import path2 from "node:path";
 import { fileURLToPath } from "node:url";
 
 // plugins/claude/hooks/gate-parse.mjs
-var VERB = "(approve-plan|replan|approve)";
-var SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im");
 var CMD = "\\/(?:agentic-workflow:)?engineering(?=\\s|$)";
 var AT_START = "^\\s*";
 var APPROVE = new RegExp(`${AT_START}${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)`, "i");
@@ -26,13 +24,6 @@ var verbFor = (prompt) => {
 };
 var unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 var gateArgsFor = (prompt) => {
-  const sentinel = prompt.match(SENTINEL);
-  if (sentinel) {
-    const id = unquote((sentinel[2] || "").trim());
-    if (!id) return { passThrough: true };
-    const reason = (sentinel[3] || "").trim();
-    return { argv: ["gate", sentinel[1], id, ...reason ? [reason] : []] };
-  }
   const approve = prompt.match(APPROVE);
   if (approve) {
     const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");

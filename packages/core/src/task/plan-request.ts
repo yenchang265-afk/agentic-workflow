@@ -163,19 +163,36 @@ export const strayPlanRequestIds = async (
   return (await listPlanRequestIds($, directory, tasksDir, status)).filter((id) => !present.has(id))
 }
 
-/** Drop every stray request (see `strayPlanRequestIds`) and return the ids dropped. */
-export const sweepStalePlanRequests = async (
+/**
+ * Drop exactly `strayIds` and return the ids actually revoked. `strayIds` must
+ * be ids the caller CONFIRMED stray against the real filesystem (see
+ * `confirmedStrayPlanRequestIds` in `store.ts`). This deliberately re-lists
+ * nothing: the shape it replaces re-listed `.requests/` at delete time, so a
+ * request written after the caller's confirmation pass was judged only against
+ * a lagging listing — and a human's fresh ask was silently deleted.
+ */
+export const revokeStrayPlanRequests = async (
   $: Shell,
   directory: string,
   tasksDir: string,
-  presentIds: readonly string[],
+  strayIds: readonly string[],
   status: string = REQUESTS_STATUS,
 ): Promise<string[]> => {
   const swept: string[] = []
-  for (const id of await strayPlanRequestIds($, directory, tasksDir, presentIds, status)) {
+  for (const id of strayIds) {
     if (await revokePlanRequest($, directory, tasksDir, id, status)) swept.push(id)
   }
   return swept
+}
+
+/**
+ * Withdraw `id`'s request in the status folder at `statusDir` — for movers
+ * that hold only the task file's folder, not `directory`/`tasksDir`.
+ * Best-effort and silent: a mover must never fail on marker cleanup.
+ */
+export const revokePlanRequestAt = async ($: Shell, statusDir: string, id: string): Promise<void> => {
+  if (!isSafeTaskId(id)) return
+  await $`rm -f ${path.join(statusDir, ".requests", id)}`.quiet().nothrow()
 }
 
 /**

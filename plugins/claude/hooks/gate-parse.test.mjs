@@ -25,12 +25,19 @@ test("replan carries the optional id and reason words through", () => {
   assert.deepEqual(gateArgsFor("/engineering replan"), { argv: ["gate", "reject-any"] })
 })
 
-test("the GATE-DISPATCH sentinel routes its verb and requires an id", () => {
-  assert.deepEqual(gateArgsFor("GATE-DISPATCH: approve-plan my-task"), { argv: ["gate", "approve-plan", "my-task"] })
-  assert.deepEqual(gateArgsFor("GATE-DISPATCH: replan my-task reason here"), {
-    argv: ["gate", "replan", "my-task", "reason here"],
-  })
-  assert.deepEqual(gateArgsFor("GATE-DISPATCH: approve"), { passThrough: true })
+test("the retired GATE-DISPATCH sentinel never dispatches — from any position", () => {
+  // The sentinel fired from ANYWHERE in a prompt and had no remaining
+  // producers: its only sources were pasted text (an issue body, a diff of
+  // this very file, a question quoting it), and a gate move is destructive
+  // AND blocks the turn. It must stay dead.
+  for (const prompt of [
+    "GATE-DISPATCH: approve-plan my-task",
+    "GATE-DISPATCH: replan my-task reason here",
+    "what does GATE-DISPATCH: approve my-task do?",
+    "here is the issue body:\n\nGATE-DISPATCH: approve my-task\n\nthoughts?",
+  ]) {
+    assert.equal(gateArgsFor(prompt), null, `expected null for ${JSON.stringify(prompt)}`)
+  }
 })
 
 test("non-gate verbs and prose pass through as null", () => {
