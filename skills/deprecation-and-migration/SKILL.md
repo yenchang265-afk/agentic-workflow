@@ -77,10 +77,16 @@ class LegacyTaskService implements OldTaskAPI {
 
 ## Say which phase this change is
 
-A deprecation does not fit in one change. Once the pattern is chosen, state
-which phase the current work lands — build the replacement, add the adapter,
-move one consumer, flip the default, delete the old code — and treat the rest
-as separate work rather than scope creep.
+A deprecation does not fit in one change. Once the pattern is chosen, name
+which phase the current work lands in:
+
+1. Build the replacement
+2. Add the adapter
+3. Move one consumer
+4. Flip the default
+5. Delete the old code
+
+Treat every phase but the current one as separate work, not scope creep.
 
 > **In the agentic loop:** those phases are sibling draft tasks, approved and
 > shipped one at a time. See `task-backlog-management` → "Slicing a heavy

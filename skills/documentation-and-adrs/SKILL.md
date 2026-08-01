@@ -123,4 +123,3 @@ Commented-out code is not documentation. Delete it; git remembers.
 
 - [ ] Every comment explains why or flags a gotcha; none restates the line
       below it
-- [ ] See `references/documentation-patterns.md` for the other forms

@@ -60,8 +60,8 @@ lines:
 - **Read state, don't change it.** Query the DOM, read variables and computed
   values. Mutating the page or triggering side effects — clicking through to
   reproduce a bug — needs the user's confirmation first.
-- **No requests out.** No fetch, XHR, remote script loading, or anything else
-  that moves page data off the machine.
+- **Keep data on the machine.** No fetch, XHR, remote script loading, or
+  anything else that moves page data off the machine.
 - **No credential material.** Cookies, `localStorage` tokens, `sessionStorage`
   secrets, and auth headers stay unread; debug through non-sensitive
   application state instead.

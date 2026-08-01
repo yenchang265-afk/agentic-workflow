@@ -83,7 +83,7 @@ beat thirty theoretical ones. Say what the code does well — solid auth,
 parameterized queries — because that is what makes the remaining findings
 credible.
 
-## What a diff must not introduce
+## What every diff must guarantee
 
 Each of these is checkable from the diff, and each names what belongs there
 instead:

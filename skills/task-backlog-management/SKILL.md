@@ -5,8 +5,9 @@ description: Explains the filesystem task backlog under docs/tasks/ — folder-a
 
 # The task backlog
 
-A task is one markdown file under `docs/tasks/`. **The folder it lives in is
-its status** — there is no `status:` field, so the two can never drift. Every
+A task is one markdown file under `docs/tasks/`. **Folder-as-status**: the
+folder it lives in is its status — there is no `status:` field, so the two can
+never drift. Every
 move is made by a verb of `/agentic-workflow:engineering`, which leaves an
 audited note and a commit behind it; a raw `mv` skips the validation, the note,
 and the record of who decided.

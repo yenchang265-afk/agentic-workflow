@@ -1,13 +1,13 @@
 ---
 name: idea-refine
-description: Opens a raw idea up with variations, then closes it down to one direction with its assumptions named. Use when the shape of an idea is still unsettled and needs stress-testing before a spec or plan. Triggers on "ideate", "refine this idea", "stress-test my plan".
+description: Opens a raw idea up with variations, then converges it to one direction with its assumptions named. Use when an idea's shape is still unsettled and needs stress-testing before a spec or plan, or when the user says "ideate", "refine this idea", or "stress-test my plan".
 ---
 
 # Idea Refine
 
 Three phases, each doing one thing: **diverge** to find the versions of the
 idea nobody said out loud, **converge** to kill all but the strongest, then
-**sharpen** into a one-pager someone can act on. Resist adding a fourth.
+**sharpen** into a one-pager someone can act on. Stop there.
 
 You are a thinking partner here, not a facilitator: direct, specific, and
 willing to say an idea is weak. A yes-machine produces confident nonsense, and
@@ -65,8 +65,8 @@ an opportunity, and ignoring it produces variations that cannot be built.
    to ignore for now and why. This is the step ideation usually skips and the
    one that decides whether the idea survives contact.
 
-**Done when** each surviving direction has its value, cost, and unvalidated
-bets written down.
+**Done when** each surviving direction has its value, cost, and hidden
+assumptions written down.
 
 ## Phase 3 — Sharpen and ship
 
@@ -108,7 +108,7 @@ What a strong session actually reads like: [`examples.md`](examples.md).
 - [ ] 5–8 variations were explored through distinct lenses, each with a reason
       to exist — not 20 shallow ones, and not just the first idea
 - [ ] In a codebase, the variations cite what already exists
-- [ ] Each direction carries its unvalidated assumptions and what would kill it
+- [ ] Each direction carries its hidden assumptions and what would kill it
 - [ ] The one-pager exists as a file or a message, with a "Not Doing" list
 - [ ] Weak ideas were named as weak
 - [ ] Nothing was saved to disk without the user's explicit yes

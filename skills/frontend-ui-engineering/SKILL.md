@@ -70,7 +70,8 @@ Worked examples for all of the above: `references/frontend-patterns.md`.
 ## Every state renders something
 
 Loading, empty, and error are not edge cases — they are three of the four states
-every data-driven view has, and a blank screen is a bug. Use skeletons rather
+every data-driven view has (the fourth is the loaded state itself), and a blank
+screen is a bug. Use skeletons rather
 than spinners for content and mark them `aria-busy`, give every empty state the
 action that resolves it, and give every error state a retry. See
 `references/frontend-patterns.md` → States and Loading.
