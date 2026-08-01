@@ -69,12 +69,15 @@ const GateButton = ({
 
   // A claimed task is being driven right now; core refuses the move anyway, but
   // saying so up front beats a confirm dialog that leads to a refusal.
+  // Moves core explicitly honours under claim (`allowClaimed` — withdrawing a
+  // plan request) skip this: pre-disabling them made the withdrawal
+  // unreachable in exactly the state it was built for.
   //
   // `aria-disabled` rather than `disabled`: a disabled button is not focusable,
   // so the reason — which used to live only in a `title` — was unreachable by
   // keyboard, screen reader and touch alike. It stays focusable, announces
   // itself as unavailable, and says why in text.
-  if (claimed) {
+  if (claimed && !move.allowClaimed) {
     return (
       <Button
         aria-disabled

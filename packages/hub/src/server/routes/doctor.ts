@@ -14,6 +14,7 @@ import {
   rescueStray,
 } from "@agentic-workflow/core/task/store"
 import { revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import type { DoctorReport, DoctorFixResponse, HeldClaim } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { auditStatuses } from "../kindboard.js"
@@ -132,14 +133,24 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
   if (oracle.watcherLive && oracle.markerTaskId === null) {
     claimsSkipped = true
   } else {
-    const drivingByMarker = (id: string): boolean => oracle.markerTaskId === id
     for (const status of claimPools(deps)) {
       const ids = await listClaimIds(deps.sh, deps.directory, deps.tasksDir, status)
       if (ids.length === 0) continue
+      // Per-id marker LIVENESS (task match + deadline + writer pid via core's
+      // taskDrivenByStageMarker), never "the first parseable marker's taskId":
+      // that weaker test both pinned a SIGKILLed driver's task forever (its
+      // leftover marker read as driving, so the wedged claim the gate verbs
+      // send users here for could never be released) and let a stale marker
+      // for task A shadow the live one for task B (first-parseable-wins),
+      // releasing B's claim out from under a live drive.
+      const liveDriven = new Set<string>()
+      for (const id of ids) {
+        if (await taskDrivenByStageMarker(deps.sh, deps.directory, deps.tasksDir, id)) liveDriven.add(id)
+      }
       const tasks = await listByStatus(deps.client, deps.directory, deps.tasksDir, status, deps.log)
       released.push(
         ...(await releaseOrphanedClaims(deps.sh, tasks, ids, path.join(deps.directory, deps.tasksDir, status), {
-          isDriving: drivingByMarker,
+          isDriving: (id) => liveDriven.has(id),
           // A live stage can hold its marker for a whole stage timeout without
           // writing anything durable — never judge one dead before then.
           staleMinutes: staleClaimMinutes(deps.config.stageTimeoutMinutes),

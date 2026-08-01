@@ -30,6 +30,24 @@ test("the Plan button's copy promises no execution — the hub starts nothing it
   assert.equal(plan?.danger, undefined, "asking for a plan is not a destructive act")
 })
 
+test("only the plan-request withdrawal stays offered while a loop drives the task", () => {
+  // The cancel route explicitly honours a withdrawal under claim ("you must
+  // always be able to take back an ask, including one a loop has since started
+  // acting on") — pre-disabling the button with every gate move made it
+  // unreachable in exactly the state it was built for.
+  const cancel = forwardMoves("queued", { planRequested: true })[0]
+  assert.equal(cancel?.allowClaimed, true, "the withdrawal must be reachable under claim")
+  const everythingElse = [
+    ...["draft", "queued", "plan-review", "in-progress", "in-review", "completed", "abandoned"].flatMap((s) => [
+      ...forwardMoves(s),
+      ...cancellationMoves(s),
+    ]),
+  ]
+  for (const move of everythingElse) {
+    assert.notEqual(move.allowClaimed, true, `${move.action} must stay pre-disabled under claim`)
+  }
+})
+
 test("every other column's forward moves are unchanged", () => {
   // A regression snapshot: adding `endpoint` to Move touched the one component
   // all three call sites share, so the rest of the board has to be pinned.

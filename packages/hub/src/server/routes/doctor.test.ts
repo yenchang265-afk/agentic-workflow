@@ -63,10 +63,12 @@ const claim = (dir: string, status: string, id: string, ageMin = 0): void => {
   }
 }
 
-const stageMarker = (dir: string, taskId: string): void => {
-  const p = path.join(dir, "docs", "tasks", "runs", ".stage.json")
+/** A stage marker — LIVE by default (open deadline, this process's pid). */
+const stageMarker = (dir: string, taskId: string, opts: { host?: "claude" | "opencode"; deadline?: number; pid?: number } = {}): void => {
+  const file = opts.host === "opencode" ? ".stage-opencode.json" : ".stage.json"
+  const p = path.join(dir, "docs", "tasks", "runs", file)
   fs.mkdirSync(path.dirname(p), { recursive: true })
-  fs.writeFileSync(p, JSON.stringify({ stage: "build", taskId }))
+  fs.writeFileSync(p, JSON.stringify({ stage: "build", taskId, deadline: opts.deadline ?? Date.now() + 3_600_000, pid: opts.pid ?? process.pid }))
 }
 
 const lease = (dir: string): void => {
@@ -156,15 +158,50 @@ test("a stale, undriven claim is released; a fresh one is kept", async () => {
   cleanup(dir)
 })
 
-test("a claim the stage marker names is not released, however old", async () => {
+test("a claim a LIVE stage marker names is not released, however old", async () => {
   const dir = makeRepo()
   place(dir, "in-progress", "driven")
-  claim(dir, "in-progress", "driven", 60)
+  claim(dir, "in-progress", "driven", 120) // well past the 75m stale window
   stageMarker(dir, "driven") // a live Claude-host stage is running it
 
   const body = (await fix(dir)).body as DoctorFixResponse
   assert.deepEqual(body.releasedClaims, [], "a marker-named task is being driven")
   assert.deepEqual(claimIds(dir, "in-progress"), ["driven"])
+  cleanup(dir)
+})
+
+test("a DEAD stage marker pins nothing — the wedged claim it names is still released", async () => {
+  // The under-release bug: a SIGKILLed driver's leftover marker made its task
+  // read as driven forever, so the exact wedged claim the gate verbs send
+  // users to `doctor fix` for could never be released. Liveness is per id via
+  // core's taskDrivenByStageMarker (deadline + writer pid), not "the marker
+  // names it".
+  const dir = makeRepo()
+  place(dir, "in-progress", "crashed")
+  claim(dir, "in-progress", "crashed", 120)
+  stageMarker(dir, "crashed", { deadline: Date.now() - 60_000 }) // stage window over → dead
+
+  const body = (await fix(dir)).body as DoctorFixResponse
+  assert.deepEqual(body.releasedClaims, ["crashed"], "a dead marker must not pin the claim")
+  assert.deepEqual(claimIds(dir, "in-progress"), [])
+  cleanup(dir)
+})
+
+test("a stale marker for one task cannot shadow the live marker of another", async () => {
+  // The over-release bug: first-parseable-marker-wins meant a leftover Claude
+  // marker naming a dead task hid the live OpenCode marker naming another —
+  // and the live drive's claim was released out from under it.
+  const dir = makeRepo()
+  place(dir, "in-progress", "dead-task")
+  place(dir, "in-progress", "live-task")
+  claim(dir, "in-progress", "dead-task", 120)
+  claim(dir, "in-progress", "live-task", 120)
+  stageMarker(dir, "dead-task", { deadline: Date.now() - 60_000 }) // Claude host, dead — read first
+  stageMarker(dir, "live-task", { host: "opencode" }) // OpenCode host, live — shadowed before
+
+  const body = (await fix(dir)).body as DoctorFixResponse
+  assert.deepEqual(body.releasedClaims, ["dead-task"], "only the dead task's claim goes")
+  assert.deepEqual(claimIds(dir, "in-progress"), ["live-task"], "the live drive keeps its claim")
   cleanup(dir)
 })
 
