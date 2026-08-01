@@ -239,7 +239,14 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
     async release(work) {
       const { pool, task } = work.ref as { pool: Pool; task: Task }
       const fresh = await findByIdIn($, directory, tasksDir, pool.status, task.id)
-      if (!fresh) return
+      if (!fresh) {
+        // The file left the pool (a racing move) or no longer parses — but the
+        // pool's .claims/<id> marker is still held, and this is a drive-end
+        // path: every way a drive ends must release the marker. Fall back to
+        // the claim-time ref; releasing an already-released marker is a no-op.
+        await releaseClaim($, task)
+        return
+      }
       // A predicate pool's claim is ours to hand back only while the run did no
       // durable work — a drive that reached a "BUILD started" audit note must
       // keep its marker for `recover <id>`.

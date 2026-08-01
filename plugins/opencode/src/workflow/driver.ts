@@ -9,6 +9,7 @@ import {
   clearOpencodeStageMarker,
   opencodeStageMarker,
   taskDrivenByStageMarker,
+  taskNamedByStageMarker,
   writeOpencodeStageMarker,
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
@@ -1177,6 +1178,20 @@ export const runStagePasses = async (
       // clear above is per attempt.
       for (const command of checkCommands(state.checks?.[stage] ?? [])) noteEvidence(passSessionID, { command })
       driftNoted.delete(passSessionID) // one drift note per stage attempt, not per run
+      // Each ATTEMPT gets a full stage timeout, so the advertised deadline and
+      // the claim stamp are refreshed here, not once per stage: a fan-out
+      // stage legitimately runs passes × attempts × timeout, and the stale
+      // budget (`staleClaimMinutes`, the marker deadline) covers exactly one —
+      // without the refresh a live REVIEW reads dead to doctor/recover
+      // mid-fan-out and its claim is swept out from under it. Parity with the
+      // Claude host, which restamps in every workflow_stage call.
+      await writeOpencodeStageMarker(
+        deps.$,
+        deps.directory,
+        config.tasksDir,
+        opencodeStageMarker(state, Date.now() + config.stageTimeoutMinutes * 60_000),
+      )
+      if (state.task) await refreshClaimStamp(deps.$, state.task)
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
         client,
@@ -2703,8 +2718,22 @@ export const handleCommand = async (
           "warning",
         )
       }
-      if (!(await claimTaskSweepingStale(deps.$, task, 0))) {
-        return report(client, `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`, "warning")
+      // A dead stage marker naming the task is crash evidence — take the claim
+      // over now. No marker at all is ambiguous: a just-claimed live run spends
+      // minutes in its setup window (isolation, stage checks) BEFORE its first
+      // marker write, and an unconditional sweep there started a second drive
+      // on the same feature/<id> branch. There, only a claim stamp older than
+      // the base stale window authorizes the takeover.
+      const crashed = await taskNamedByStageMarker(deps.$, deps.directory, config.tasksDir, id)
+      if (!(await claimTaskSweepingStale(deps.$, task, crashed ? 0 : STALE_CLAIM_MINUTES))) {
+        return report(
+          client,
+          crashed
+            ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
+            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
+                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
+          "warning",
+        )
       }
     }
     // Prefer an exact-stage resume from the state snapshot; fall back to

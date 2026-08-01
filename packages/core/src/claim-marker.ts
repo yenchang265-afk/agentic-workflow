@@ -106,6 +106,15 @@ export const releaseMarkerIfStale = async ($: Shell, markerDir: string, minutes:
     // our rename. Put it back; a claim that is still running must survive.
     const restored = await $`mv ${graveyard} ${markerDir}`.quiet().nothrow()
     if (restored.exitCode !== 0) await $`rm -rf ${graveyard}`.quiet().nothrow() // someone re-took the path — drop our copy rather than leave debris
+    // A zero exit does NOT prove the restore landed AS the marker: POSIX `mv`
+    // onto a directory that exists again (a rival re-claimed the path inside
+    // our window) nests the source INSIDE it instead of failing — and that
+    // debris makes the rival's own stamp-then-rmdir release fail forever, a
+    // held claim with no owner. Same positive confirmation scheduler/lease.ts
+    // applies to its staging rename: the rival won the path, its claim
+    // stands, our copy goes.
+    const nested = path.join(markerDir, path.basename(graveyard))
+    if ((await $`test -d ${nested}`.quiet().nothrow()).exitCode === 0) await $`rm -rf ${nested}`.quiet().nothrow()
     return false
   }
   await $`rm -rf ${graveyard}`.quiet().nothrow()

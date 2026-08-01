@@ -326,6 +326,25 @@ test("release keeps a claim whose body reached BUILD started, even with a CLAIME
   )
 })
 
+test("release with the task gone from the pool still releases the claim-time marker", async () => {
+  // The tryClaim catch releases when a drive died before real work started; if
+  // the file has meanwhile left the pool (or no longer parses), skipping the
+  // release leaves the pool's .claims/<id> marker held with no live owner —
+  // and a held marker blocks every gate verb until the stale sweep.
+  const folders = { "in-progress": [file("t", { plan: true })], queued: [] }
+  const shellLog: string[] = []
+  const src = source(folders, new Set<string>(), { shellLog })
+  const { item } = await src.claimNext()
+  assert.ok(item)
+  folders["in-progress"] = []
+  shellLog.length = 0
+  await src.release(item)
+  assert.ok(
+    shellLog.some((c) => c.startsWith("rmdir") && c.includes(".claims/t")),
+    `marker released via the claim-time ref: ${shellLog.join(" | ")}`,
+  )
+})
+
 test("a CLAIMED note (durable claim evidence on the human branch) blocks re-claiming and points at recover", async () => {
   // The theater-booking-0 bug: isolation committed every BUILD note onto
   // feature/<id>, the human branch's task file looked untouched, and the

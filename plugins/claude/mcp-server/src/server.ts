@@ -7,7 +7,7 @@ import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
-import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
+import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
@@ -68,7 +68,7 @@ import {
 import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -2248,8 +2248,22 @@ server.registerTool(
       if (liveHost) {
         return fail(`Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`)
       }
-      tookClaim = await claimTaskSweepingStale(sh, t, 0)
-      if (!tookClaim) return fail(`Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`)
+      // A dead stage marker naming the task is crash evidence — take the claim
+      // over now. No marker at all is ambiguous: a just-claimed live run spends
+      // minutes in its setup window (isolation, stage checks) BEFORE its first
+      // marker write, and an unconditional sweep there started a second drive
+      // on the same feature/<id> branch. There, only a claim stamp older than
+      // the base stale window authorizes the takeover.
+      const crashed = await taskNamedByStageMarker(sh, directory, config.tasksDir, id)
+      tookClaim = await claimTaskSweepingStale(sh, t, crashed ? 0 : STALE_CLAIM_MINUTES)
+      if (!tookClaim) {
+        return fail(
+          crashed
+            ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
+            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
+                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
+        )
+      }
     }
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     samples = []

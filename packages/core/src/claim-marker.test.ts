@@ -77,8 +77,12 @@ const makeFs = () => {
           return { exitCode: 0, stdout: "" }
         }
         case "mv": {
-          const [, src, dest] = parts as [string, string, string]
+          const [, src, destArg] = parts as [string, string, string]
           if (!dirs.has(src)) return { exitCode: 1, stdout: "" } // source gone — the rename race's loser
+          // POSIX `mv` onto an EXISTING directory does not fail — it moves the
+          // source INSIDE it (exit 0). The fake used to overwrite instead,
+          // which hid the nesting branch of the restore race entirely.
+          const dest = dirs.has(destArg) ? `${destArg}/${src.slice(src.lastIndexOf("/") + 1)}` : destArg
           dirs.delete(src)
           dirs.add(dest)
           for (const [f, v] of [...files.entries()]) {
@@ -88,6 +92,12 @@ const makeFs = () => {
             }
           }
           return { exitCode: 0, stdout: "" }
+        }
+        case "test": {
+          const target = parts[parts.length - 1]!
+          const wantsDir = parts.includes("-d")
+          const exists = wantsDir ? dirs.has(target) : dirs.has(target) || files.has(target)
+          return { exitCode: exists ? 0 : 1, stdout: "" }
         }
         case "cat": {
           const v = files.get(parts[1]!)
@@ -228,6 +238,35 @@ test("releaseMarkerIfStale stands down when a rival re-claims mid-release", asyn
   assert.equal(await releaseMarkerIfStale($, MARKER, STALE_CLAIM_MINUTES, now), false, "what it moved aside was live — restored")
   assert.equal(fs.dirs.has(MARKER), true, "the rival's claim survives")
   assert.equal(JSON.parse(fs.files.get(stampPath(MARKER))!).claimedAt, now.toISOString(), "with the RIVAL's stamp")
+})
+
+test("releaseMarkerIfStale never nests its restore inside a rival's re-created marker", async () => {
+  // The double race: rival A restamps the marker fresh between our stale
+  // judgement and our rename-aside (so the moved-aside copy re-judges FRESH
+  // and we try to restore it), and rival B mkdir's the marker path before our
+  // restore `mv` lands. POSIX `mv` onto that existing directory does not fail
+  // — it NESTS our copy inside rival B's live marker, and the debris makes
+  // B's own stamp-then-rmdir release fail forever: a held claim with no owner
+  // that every gate verb refuses.
+  const fs = makeFs()
+  const { $ } = fs
+  await acquireMarker($, MARKER, T0)
+  const now = later(STALE_CLAIM_MINUTES + 5)
+  fs.interleave(`mv ${MARKER} `, async () => {
+    await restampMarker($, MARKER, now) // rival A: the marker is live again
+    fs.interleave(`mv ${MARKER}.dead`, async () => {
+      await acquireMarker($, MARKER, now) // rival B: re-takes the path pre-restore
+    })
+  })
+  assert.equal(await releaseMarkerIfStale($, MARKER, STALE_CLAIM_MINUTES, now), false)
+  assert.equal(fs.dirs.has(MARKER), true, "rival B's marker survives")
+  assert.deepEqual(
+    [...fs.dirs].filter((d) => d.startsWith(`${MARKER}/`)),
+    [],
+    "no copy nested inside the rival's marker",
+  )
+  await releaseMarker($, MARKER)
+  assert.equal(fs.dirs.has(MARKER), false, "the rival can still release its claim")
 })
 
 test("a swept marker leaves no graveyard directory behind", async () => {
