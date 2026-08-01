@@ -183,10 +183,11 @@ backlog (threat model T3/T3b):
   id duplicated across status folders. Surfaced at session start (both
   substrates), in `workflow_status`, and as warnings on claims.
 - **Doctor** (`workflow_doctor` / `/agentic-workflow:engineering doctor [fix]`): reports the sweep's
-  findings plus held claim markers; with `fix` it applies only the
+  findings plus held claim markers and stray plan-request markers (a request
+  whose task has left `queued/`); with `fix` it applies only the
   unambiguous repairs — rescue strays back to `draft/` (audited + committed),
-  remove emptied stray folders, release stale orphaned claim markers.
-  Duplicates are always a human call.
+  remove emptied stray folders, release stale orphaned claim markers, drop
+  stray plan requests. Duplicates are always a human call.
 
 The watch lease (one watch-mode process per clone, across every kind) is
 documented once, framework-level, in

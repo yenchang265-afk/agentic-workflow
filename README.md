@@ -258,7 +258,9 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 - [packages/hub/README.md](packages/hub/README.md) — the **admin hub (beta)**
   (`npm run hub -- --dir /path/to/repo` → http://127.0.0.1:4317): loop
   monitor (backlog board, live gate notifications, run history, per-stage
-  token usage) and visual loop creator; monitors one or many repos (`--dir`
+  token usage), a Plan button on queued cards that writes a plan-request
+  ordering hint for the next loop tick (never a claim), and visual loop
+  creator; monitors one or many repos (`--dir`
   is repeatable and takes `*` wildcards, or set `hub.repos` in the user-scope
   `~/.config/agentic-workflow/agentic-workflow.json` — no repos configured, no watching)
 
