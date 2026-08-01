@@ -172,14 +172,15 @@ const BaseConfigSchema = z.object({
         stageFanout: z.record(z.string(), z.enum(["axis", "none"])).optional(),
         /**
          * Stage name → how many of that stage's focused passes may run at once.
-         * Default 1 (sequential), which is what every existing loop does.
+         * Absent ⇒ a per-axis fan-out runs all its passes at once, everything
+         * else runs one at a time (see `concurrencyFor` for why).
          *
          * A fanned-out check stage's passes are independent by construction —
          * each is a read-only review of the same work tree, told to cover its own
          * axis or lens and not the others, merged worst-wins — so running them
-         * concurrently is a latency win, not a semantic change. It is opt-in
-         * because it is a COST change: N passes in flight means N concurrent
-         * model sessions against the user's rate limit.
+         * concurrently is a latency win, not a semantic change. Set it to clamp
+         * the COST: N passes in flight means N concurrent model sessions against
+         * the user's rate limit, and `1` takes a fanned-out stage back to serial.
          *
          * Value space is positive integers — no shell, no path — so, like
          * `stageContext`, this is safe to honor from the repo layer. Capped at
@@ -666,8 +667,23 @@ export const unknownStageFanoutKeys = (config: Config, kind: string, stageNames:
 
 /**
  * How many of a stage's focused passes may be in flight at once: config
- * `workflows.<kind>.stageConcurrency.<stage>`, else 1 (sequential — today's
- * behavior for every loop).
+ * `workflows.<kind>.stageConcurrency.<stage>`, else the default for the passes
+ * that actually run.
+ *
+ * That default is `passCount` for a per-axis fan-out and 1 for everything else.
+ * A fan-out is a request for N focused passes over one frozen work tree — they
+ * are read-only, each told to cover its own axis and not the others, and merged
+ * worst-wins — so serializing them buys nothing and costs a five-axis review
+ * five reviews of latency. Turning the fan-out on IS the request; making it
+ * parallel a second, separate knob meant the feature shipped slow by default.
+ *
+ * Two things deliberately keep the old default:
+ *  - **Lens passes.** `reviewLenses` predates fan-out, so an existing lens setup
+ *    keeps behaving exactly as it does today — including when lenses override a
+ *    declared fan-out, since the passes that run are then lens passes.
+ *  - **An explicit `stageConcurrency`**, which now clamps as well as opts in:
+ *    `1` is how a rate-limited user takes a fanned-out stage back to one pass at
+ *    a time, so it must not read as "unset".
  *
  * Clamped to `passCount` because concurrency beyond the number of passes buys
  * nothing and would make the pool's own bookkeeping lie, and floored at 1 so a
@@ -675,15 +691,19 @@ export const unknownStageFanoutKeys = (config: Config, kind: string, stageNames:
  * whatever the config says. Pure.
  */
 export const concurrencyFor = (config: Config, kind: string, def: StageDef, passCount: number): number => {
-  const configured = config.workflows[kind]?.stageConcurrency?.[def.name] ?? 1
+  // The passes' MODE, not `fanoutFor` — a declared fan-out that reviewLenses
+  // overrides runs lens passes, and must not inherit the fan-out's default.
+  const fannedOut = stagePasses(config, kind, def).some((p) => p.mode === "axis")
+  const configured = config.workflows[kind]?.stageConcurrency?.[def.name] ?? (fannedOut ? passCount : 1)
   return Math.max(1, Math.min(configured, passCount))
 }
 
 /**
  * The `stageConcurrency` keys that name no stage of `kind` — the same
  * silent-default trap `unknownStageFanoutKeys` closes, and a worse one to hit
- * here: a typo'd stage stays sequential, so the setting reads as "parallelism
- * doesn't work" rather than "that stage does not exist". Pure.
+ * here: a typo'd stage runs at the default concurrency instead, so the setting
+ * reads as "it doesn't work" rather than "that stage does not exist" — whether
+ * the user was opting a lens setup in or clamping a fan-out down. Pure.
  */
 export const unknownStageConcurrencyKeys = (config: Config, kind: string, stageNames: readonly string[]): string[] =>
   Object.keys(config.workflows[kind]?.stageConcurrency ?? {}).filter((name) => !stageNames.includes(name))

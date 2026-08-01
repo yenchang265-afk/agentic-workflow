@@ -40,10 +40,10 @@ secret redaction, run summaries) is configured in `.agentic-workflow.json`,
 layered over an optional user-scope `~/.config/agentic-workflow/agentic-workflow.json`
 (honoring `$XDG_CONFIG_HOME`, with the legacy `~/.agentic-workflow.json` still read
 as a fallback; repo wins) — see [configuration.md](configuration.md). A
-fanned-out check stage (`stageFanout`/`fanout: "axis"` or `reviewLenses`) runs
-its passes strictly sequentially by default; `workflows.<kind>.stageConcurrency`
-is an **OpenCode-only** opt-in that runs passes concurrently, each on its own
-sibling session — see the `stageConcurrency` entry under
+check stage fanned out per axis (`stageFanout`/`fanout: "axis"`) runs its passes
+**concurrently**, each on its own sibling session; `reviewLenses`' lens passes
+still run one at a time unless `workflows.<kind>.stageConcurrency` says
+otherwise. Both are **OpenCode-only** — see the `stageConcurrency` entry under
 [Workflow kinds](configuration.md#workflow-kinds-workflows) in
 configuration.md.
 

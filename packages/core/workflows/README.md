@@ -113,9 +113,10 @@ suppresses the **per-pass** enforcement (see `docs/configuration.md`).
 
 Such a stage may also declare `fanout: "axis"`: it then runs **one focused pass
 per required axis**, each pass told to review and report exactly that axis, and
-the passes merge worst-wins. Sequentially by default; the OpenCode plugin's
-`workflows.<kind>.stageConcurrency` runs them concurrently (see
-`docs/configuration.md`). Per-pass admission narrows to the
+the passes merge worst-wins. On the OpenCode plugin they run **concurrently** by
+default — the fan-out is the request for N focused passes — and
+`workflows.<kind>.stageConcurrency` clamps that (see `docs/configuration.md`);
+the Claude Code and Qwen Code hosts run them one at a time. Per-pass admission narrows to the
 pass's own axis — otherwise every focused pass would be rejected for the axes it
 was told not to review — and the stage-wide requirement moves to the accumulated
 record, so a fan-out that never reported an axis stops the loop with ERROR rather

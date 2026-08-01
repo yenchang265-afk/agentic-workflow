@@ -1078,8 +1078,8 @@ export const runStagePasses = async (
   /**
    * The session ONE pass runs in.
    *
-   * At concurrency 1 that is the driving session itself — the path every loop
-   * has always taken, kept byte-identical so the default carries no new risk.
+   * At concurrency 1 that is the driving session itself — the path a
+   * single-pass stage and a lens fan-out still take, byte-identical.
    * Above 1 each pass needs its own, because every table a pass writes
    * (`recordedVerdicts`, `axisRequirement`, `observedEvidence`) is keyed by
    * session alone: sharing one id is precisely what forces passes to be serial.
@@ -1583,8 +1583,9 @@ const driveChain = async (
         `ignored; that stage runs a single pass. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
-  // Same trap for a stageConcurrency key: a typo'd stage stays sequential, so the
-  // knob reads as "parallelism doesn't work" rather than "no such stage".
+  // Same trap for a stageConcurrency key: a typo'd stage silently runs at the
+  // default concurrency instead — so the knob reads as "it doesn't work" rather
+  // than "no such stage", whether the user was opting in or clamping down.
   const unknownConcurrency = unknownStageConcurrencyKeys(
     config,
     loaded.manifest.kind,
@@ -1594,7 +1595,7 @@ const driveChain = async (
     await deps.log(
       "warn",
       `workflows.${loaded.manifest.kind}.stageConcurrency names ${unknownConcurrency.map((k) => `"${k}"`).join(", ")}, which is not a stage of this loop — ` +
-        `ignored; that stage's passes stay sequential. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
+        `ignored; that stage's passes run at the default concurrency. Valid stages: ${loaded.manifest.stages.map((s) => s.name).join(", ")}.`,
     )
   }
   // reviewLenses suppresses per-pass axis-coverage enforcement, and the

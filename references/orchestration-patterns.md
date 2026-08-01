@@ -69,12 +69,13 @@ REVIEW stage → fan out ───┼─→ workflow-review (lens: security)    
 `workflow-review` pass per lens, then combines them with `worstOf` into a single
 machine-readable verdict (`packages/core/src/workflow/verdict.ts`; see
 [`docs/design/improvements/04-verdict-quality.md`](../docs/design/improvements/04-verdict-quality.md)).
-Those passes run **sequentially by default** — this page claimed parallel for a
-long time while both hosts serialized them, which is the kind of drift worth
-naming. On the OpenCode plugin, `workflows.<kind>.stageConcurrency` opts a stage
-into running them concurrently (each pass gets its own session, which is what
-separates the per-pass verdict, axis requirement and evidence ledger); the
-Claude Code and Qwen Code hosts still serialize and warn if the knob is set.
+On the OpenCode plugin a **per-axis fan-out runs its passes in parallel** (each
+pass gets its own session, which is what separates the per-pass verdict, axis
+requirement and evidence ledger), and `workflows.<kind>.stageConcurrency` clamps
+it. Free-text `reviewLenses` passes still run **sequentially** unless that knob
+opts them in — this page claimed parallel for a long time while both hosts
+serialized everything, which is the kind of drift worth naming. The Claude Code
+and Qwen Code hosts serialize every pass and warn if the knob is set.
 
 **Cost:** N parallel sub-agent contexts + one merge turn. Higher than direct invocation, but faster wall-clock and produces better reports because each sub-agent stays focused on its single perspective.
 

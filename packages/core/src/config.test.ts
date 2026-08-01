@@ -387,9 +387,29 @@ test("enforcesAxisCoverage: a stage requiring no axes is never gated", () => {
   assert.equal(enforcesAxisCoverage(c, "engineering", checkStage({ requiredAxes: undefined })), false)
 })
 
-test("concurrencyFor defaults to 1 — every existing loop runs its passes sequentially", () => {
+test("concurrencyFor defaults to 1 on a stage that does not fan out per axis", () => {
   assert.equal(concurrencyFor(DEFAULT_CONFIG, "engineering", checkStage(), 5), 1)
   assert.equal(concurrencyFor(parseConfig({ workflows: { engineering: {} } }), "engineering", checkStage(), 5), 1)
+})
+
+test("concurrencyFor: an axis fan-out runs its passes in parallel by default", () => {
+  // Fan-out exists to run one focused pass per axis; running them one at a time
+  // makes a five-axis review cost five reviews of latency for no semantic gain.
+  // The passes are independent by construction, so the fan-out IS the request.
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" } } } })
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 5), 5)
+  // Declared by the manifest, with no config at all — same default.
+  assert.equal(concurrencyFor(DEFAULT_CONFIG, "engineering", checkStage({ fanout: "axis" }), 5), 5)
+})
+
+test("concurrencyFor: lens passes stay sequential by default — an existing lens setup is unchanged", () => {
+  // reviewLenses predates fan-out and keeps behaving exactly as it does today;
+  // only a per-axis fan-out is a request to parallelize.
+  const c = { ...DEFAULT_CONFIG, reviewLenses: ["a hostile attacker", "the next maintainer"] }
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 2), 1)
+  // ...including when the lenses override a declared fan-out: the passes that
+  // actually run are lens passes, so the fan-out's default must not leak in.
+  assert.equal(concurrencyFor(c, "engineering", checkStage({ fanout: "axis" }), 2), 1)
 })
 
 test("concurrencyFor reads the configured value, clamped to the pass count and floored at 1", () => {
@@ -399,6 +419,16 @@ test("concurrencyFor reads the configured value, clamped to the pass count and f
   // pool's own bookkeeping lie, so it is clamped — a single-pass stage is always 1.
   assert.equal(concurrencyFor(c, "engineering", checkStage(), 2), 2)
   assert.equal(concurrencyFor(c, "engineering", checkStage(), 1), 1)
+})
+
+test("concurrencyFor: an explicit stageConcurrency still wins over the fan-out default, including 1", () => {
+  // The knob is now a clamp as well as an opt-in: `1` is how a rate-limited user
+  // takes a fanned-out stage back to one pass at a time, so it must not be read
+  // as "unset" and silently re-parallelized.
+  const c = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: 1 } } } })
+  assert.equal(concurrencyFor(c, "engineering", checkStage(), 5), 1)
+  const two = parseConfig({ workflows: { engineering: { stageFanout: { review: "axis" }, stageConcurrency: { review: 2 } } } })
+  assert.equal(concurrencyFor(two, "engineering", checkStage(), 5), 2)
 })
 
 test("parseConfig rejects a non-positive stageConcurrency", () => {

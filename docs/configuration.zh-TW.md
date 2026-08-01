@@ -702,8 +702,11 @@ issue 的 key/id 複製進任務裡。
   無論哪一種，完全沒有記錄裁定的視角都會變成 ERROR，而不是悄悄消失的意見。
   如果你要的是逐軸的分趟而不是自由文字的視角，請改用下面的 `stageFanout`。
 - **`workflows.<kind>.stageFanout`**——階段名稱 → `"axis"` 或 `"none"`：讓一個
-  check 階段依它的 `requiredAxes` 逐一、依序各跑一趟，每一趟只被要求審查並
-  回報**一個**軸。各趟以最差者勝合併。
+  check 階段依它的 `requiredAxes` 各跑一趟，每一趟只被要求審查並
+  回報**一個**軸。各趟以最差者勝合併，而且**在 OpenCode 上它們是平行跑的**——
+  把 fan-out 打開本身就是「我要 N 趟聚焦審查」的請求，不需要再靠
+  `stageConcurrency` 才不會慢。要夾住它請設 `stageConcurrency`（見下）；
+  Claude Code 與 Qwen Code 這兩個 host 不論你怎麼設都是一趟一趟跑。
 
   ```jsonc
   { "workflows": { "engineering": { "stageFanout": { "review": "axis" } } } }
@@ -724,21 +727,28 @@ issue 的 key/id 複製進任務裡。
   設定行為完全不變；當設定好的視角清單覆蓋掉已宣告的 fan-out 時，兩個 host
   都會警告。命名到不存在階段的鍵會被接受、忽略並警告，與 `stageModels` 相同。
 - **`workflows.<kind>.stageConcurrency`**——階段名稱 → 該階段的分趟最多可以有
-  幾趟**同時**進行。預設 `1`（依序執行，也就是目前所有迴圈的行為）。對上面兩種
+  幾趟**同時**進行。沒設的話，逐軸的 `stageFanout` 會把**所有**分趟同時跑掉，
+  其他情況則是一趟一趟跑。對上面兩種
   多趟模式都有效：`stageFanout` 的逐軸分趟，以及 `reviewLenses` 的視角分趟。
 
   ```jsonc
-  { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 5 } } } }
+  // 把五個軸的 fan-out 夾到同時只有兩趟
+  { "workflows": { "engineering": { "stageFanout": { "review": "axis" }, "stageConcurrency": { "review": 2 } } } }
+  // ……或是替視角設定開啟平行，它預設不平行
+  { "reviewLenses": ["a hostile attacker", "the next maintainer"], "workflows": { "engineering": { "stageConcurrency": { "review": 2 } } } }
   ```
 
   分趟的 check 階段在設計上彼此獨立——每一趟都是對同一個工作樹的唯讀審查，只被
   要求涵蓋自己的軸或視角、不涵蓋其他的，最後以最差者勝合併——所以同時跑它們是
   延遲上的收穫，而不是語意上的改變：五個軸的審查大約只花一次審查的時間，而不是
-  五次。
+  五次。這也是 fan-out 不再需要第二個開關才會平行的原因。
 
-  之所以**預設關閉，是因為這是成本上的改變**：同時有 N 趟進行，代表對你的用量
-  上限同時開了 N 個模型 session。這個值會被夾到該階段的分趟數，所以不管你設多少，
-  單趟的階段都不受影響。
+  它仍然是個**成本旋鈕**：同時有 N 趟進行，代表對你的用量
+  上限同時開了 N 個模型 session，所以 `1` 就是用量吃緊時把分趟階段拉回依序執行的
+  方式。這個值會被夾到該階段的分趟數，所以不管你設多少，單趟的階段都不受影響。
+
+  `reviewLenses` 維持原本依序執行的預設。它比 fan-out 更早存在，所以既有的視角
+  設定——包括覆蓋掉已宣告 fan-out 的那種——在你設這個旋鈕之前，行為完全不變。
 
   **僅限 OpenCode。** 在那裡每一趟都有自己的 session，這正是逐趟的裁定、軸要求
   與證據帳本能夠分開的原因。Claude Code 與 Qwen Code 由編排者去產生分趟的
