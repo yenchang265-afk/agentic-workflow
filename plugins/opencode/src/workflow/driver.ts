@@ -651,11 +651,17 @@ const takeBlocked = (sessionID: string, stage: string): string | null => {
   return entry.reason
 }
 
-/** Consume (read-and-clear) the verdict record for a session's check stage, if any. */
+/**
+ * Consume (read-and-clear) the verdict record for a session's check stage, if
+ * any. A record for a DIFFERENT stage is left in place, not destroyed: it is
+ * not this caller's to take, and the unconditional delete let a caller for
+ * stage Y destroy a record belonging to stage X before X's owner read it.
+ */
 const takeVerdictRecord = (sessionID: string, stage: CheckStage): VerdictRecord | null => {
   const rec = recordedVerdicts.get(sessionID)
+  if (!rec || rec.stage !== stage) return null
   recordedVerdicts.delete(sessionID)
-  return rec && rec.stage === stage ? rec.record : null
+  return rec.record
 }
 
 /**
@@ -1114,9 +1120,22 @@ export const runStagePasses = async (
   /** Tear a pass session down. Never the driving session — that outlives the stage. */
   const closePassSession = async (passSessionID: string): Promise<void> => {
     if (passSessionID === sessionID) return
+    await client.session.delete({ path: { id: passSessionID } }).catch(() => {})
+    // Unregister only AFTER the session is gone: a late workflow_verdict from
+    // a subtask still settling in the abort-grace window walks up the parent
+    // chain, and with the pass unregistered first it resolved to the DRIVING
+    // session — landing in a table slot a sibling pass (or a shared-session
+    // fallback) reads next. Registered, the pass soaks it up harmlessly.
     clearWorkflow(passSessionID)
     passSessions.get(sessionID)?.delete(passSessionID)
-    await client.session.delete({ path: { id: passSessionID } }).catch(() => {})
+    // The pass's per-session table entries die with it — pass ids are never
+    // reused, so anything left behind is a straight leak.
+    recordedVerdicts.delete(passSessionID)
+    rejectedVerdicts.delete(passSessionID)
+    recordedBlocked.delete(passSessionID)
+    observedEvidence.delete(passSessionID)
+    axisRequirement.delete(passSessionID)
+    driftNoted.delete(passSessionID)
   }
 
   const runOnePass = async (i: number): Promise<void> => {

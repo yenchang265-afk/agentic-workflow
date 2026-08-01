@@ -1436,7 +1436,13 @@ server.registerTool(
     // every run. Merging the passes is the point.
     if (freshStage) {
       pending = null // no stale verdict may leak into this stage
-      verdictRejected = null // ...nor a stale rejection into this stage's re-fire wording
+      // The kept rejection must SURVIVE the retry re-arm: the retry note tells
+      // the orchestrator to call workflow_stage before re-spawning, so wiping
+      // unconditionally here destroyed the very record `rejectedFallback`
+      // routes on — a FAIL rejected twice then ERRORed blaming a "channel"
+      // that answered both times. Only a genuinely new arming (no retry
+      // pending) may clear it; stage transitions clear both in workflow_advance.
+      if (!verdictRetried) verdictRejected = null
     }
     armedPass = pass.focus ? { stage, pass, index, total: passes.length } : null
     fanoutStage = pass.focus ? stage : null
@@ -1555,6 +1561,10 @@ server.registerTool(
     // consumed, no rebuild), then stop with a retryable ERROR instead of
     // burning build iterations on a stage that may have passed (the
     // theater-booking-0 failure mode: three rebuilds of an already-done task).
+    // Whether `pending` below is a record salvaged from a rejected declaration
+    // (a FAIL routed as declared) — the coverage gate must not convert it back
+    // to ERROR.
+    let salvagedFail = false
     if (stageDef(activeManifest().manifest, stage).kind === "check" && !pending) {
       // Diagnostic only — free text never flips control flow (verdict.ts).
       const prose = parseVerdict(stageOutput, `WORKFLOW_${stage.toUpperCase()}`)
@@ -1579,10 +1589,17 @@ server.registerTool(
     if (refireMarkerError) return fail(`Could not re-arm the stage marker for "${stage}" — ${refireMarkerError}. The stage is not re-fired.`)
         lastFireAt = Date.now()
         const retryModel = stageModel(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
+        // On a stage that runs focused passes, a bare "call workflow_stage"
+        // retry is a dead end — workflow_stage refuses an unfocused call on a
+        // labeled stage. Name the passes, exactly as the axis-gap retry does.
+        const retryLabels = passesFor(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
+          .map((p) => p.focus)
+          .filter((f): f is string => f !== null)
         return ok({
           action: { kind: "fire", stage },
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
           ...(retryModel ? { model: retryModel } : {}),
+          ...(retryLabels.length ? { passes: retryLabels } : {}),
           prompt: firePrompt(
             activeManifest(),
             active,
@@ -1599,9 +1616,12 @@ server.registerTool(
                 "If the tool is not in your tool list, state that explicitly in your final message and finish."),
           ),
           note: spawnNote(
-            verdictRejected
-              ? "check retry (no iteration consumed): the previous pass's verdict was rejected and never recorded — call workflow_stage, then spawn the stage subagent again"
-              : "check retry (no iteration consumed): the previous pass never called workflow_verdict — call workflow_stage, then spawn the stage subagent again",
+            (verdictRejected
+              ? "check retry (no iteration consumed): the previous pass's verdict was rejected and never recorded — "
+              : "check retry (no iteration consumed): the previous pass never called workflow_verdict — ") +
+              (retryLabels.length
+                ? `call workflow_stage({stage:"${stage}", focus:"<pass>"}) and spawn the stage subagent again for EACH pass in \`passes\``
+                : "call workflow_stage, then spawn the stage subagent again"),
             CHECK_VERDICT_TAIL,
           ),
         })
@@ -1612,6 +1632,7 @@ server.registerTool(
       // run. Only a never-recorded (or unearned-PASS) stage still ERRORs, and it
       // no longer blames plugin wiring that demonstrably worked.
       const salvaged = rejectedFallback(verdictRejected)
+      salvagedFail = salvaged !== null && effectiveVerdict(salvaged) === "FAIL"
       if (salvaged && active.task) {
         await appendNote(
           sh,
@@ -1639,13 +1660,16 @@ server.registerTool(
     const gatePasses = passesFor(activeManifest().manifest.kind, gateDef)
     if (gateDef.kind === "check" && pending && enforcesAxisCoverage(config, activeManifest().manifest.kind, gateDef)) {
       const gaps = uncoveredAxes(pending, gateDef.requiredAxes)
-      // The retry below re-fires one pass per missing AXIS, which only exists as a
-      // pass under axis fan-out: `workflow_stage({focus})` resolves focus against
-      // the pass list, and an axis name matches no lens. Under `reviewLenses` a
-      // gap therefore goes straight to ERROR — there is no targeted pass to re-run,
-      // and re-firing every lens would re-review what already reported.
-      const retryableByAxis = gatePasses.some((p) => p.mode === "axis")
-      if (gaps.length && retryableByAxis && !verdictRetried) {
+      // The retry below re-fires one pass per missing axis, so it needs a pass
+      // `workflow_stage({focus})` can resolve the axis name to: every axis pass
+      // by construction, and a lens set that names the axes verbatim — the only
+      // lens shape `enforcesAxisCoverage` turns this gate on for — where the
+      // axis name IS a lens name. Only a gap naming no pass (a partial lens
+      // overlap) still goes straight to ERROR: there is no targeted pass to
+      // re-run, and re-firing every lens would re-review what already reported.
+      const passFoci = new Set(gatePasses.map((p) => p.focus).filter((f): f is string => f !== null))
+      const retryableByFocus = gatePasses.some((p) => p.mode === "axis") || (gaps.length > 0 && gaps.every((g) => passFoci.has(g)))
+      if (gaps.length && retryableByFocus && !verdictRetried) {
         verdictRetried = true
         if (active.task) {
           await appendNote(
@@ -1678,7 +1702,16 @@ server.registerTool(
           ),
         })
       }
-      if (gaps.length) pending = withCoverageGap(pending, gaps)
+      if (gaps.length) {
+        // A salvaged FAIL stays FAIL — a rejected verdict is not a missing one.
+        // Converting it back to ERROR here would undo the salvage the spent
+        // retry just bought: `review.onError` would stop the run instead of
+        // `onFail` feeding BUILD the findings. The gap rides the reason so the
+        // rebuild knows coverage was partial.
+        pending = salvagedFail
+          ? { ...pending, reason: [pending.reason, `(coverage gap: no verdict recorded for ${gaps.join(", ")})`].filter(Boolean).join(" ") }
+          : withCoverageGap(pending, gaps)
+      }
     }
     // Floor the admitted record with the checks this host ran for the stage.
     // HERE, at finalization, and never inside `admitVerdict`: a pre-seeded check

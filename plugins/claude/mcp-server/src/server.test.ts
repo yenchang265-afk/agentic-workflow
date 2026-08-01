@@ -237,16 +237,40 @@ test("workflow_verdict admits a pass against that pass's own axes, not the stage
 test("workflow_advance gates a fan-out on the accumulated axis coverage, and a gap is ERROR not FAIL", () => {
   const body = toolBody(code(source()), "workflow_advance")
   assert.match(body, /uncoveredAxes\(pending, gateDef\.requiredAxes\)/, "the gate must read the accumulated record")
-  assert.match(body, /pending = withCoverageGap\(pending, gaps\)/, "a gap must degrade to ERROR, never to a FAIL that rebuilds")
-  assert.match(flat(body), /gaps\.length && retryableByAxis && !verdictRetried/, "the missing passes get one retry before the stage errors")
-  // …but only under axis fan-out. `workflow_stage({focus})` resolves focus against
-  // the pass list, so an axis name matches no LENS — a lens-mode gap has no
-  // targeted pass to re-run and must go straight to ERROR rather than re-firing
-  // every lens over what already reported.
-  assert.match(flat(body), /retryableByAxis = gatePasses\.some\(\(p\) => p\.mode === "axis"\)/)
+  assert.match(flat(body), /: withCoverageGap\(pending, gaps\)/, "a gap must degrade to ERROR, never to a FAIL that rebuilds")
+  // …except when the record was SALVAGED from a rejected declaration: a
+  // rejected verdict is not a missing one, and converting the salvaged FAIL
+  // back to ERROR undid the salvage the spent retry just bought — the run
+  // stopped on `review.onError` instead of feeding BUILD the findings.
+  assert.match(flat(body), /pending = salvagedFail \?/, "a salvaged FAIL must survive the coverage gate as FAIL")
+  assert.match(flat(body), /gaps\.length && retryableByFocus && !verdictRetried/, "the missing passes get one retry before the stage errors")
+  // Retryable whenever the gap names a resolvable focus: axis passes by
+  // construction, and a lens set naming the axes verbatim (the only lens shape
+  // enforcesAxisCoverage turns the gate on for). A gap naming no pass still
+  // goes straight to ERROR.
+  assert.match(flat(body), /gatePasses\.some\(\(p\) => p\.mode === "axis"\) \|\| \(gaps\.length > 0 && gaps\.every\(\(g\) => passFoci\.has\(g\)\)\)/)
   assert.match(flat(body), /enforcesAxisCoverage\(config, activeManifest\(\)\.manifest\.kind, gateDef\)/, "the gate is the shared predicate, not an inline mode test")
   assert.match(flat(body), /passes: gaps/, "the retry must name exactly the passes that recorded nothing")
   assert.match(flat(body), /armedPass = null/, "the retry arms its own pass; the finished one is already sampled")
+})
+
+// The no-verdict retry's own instruction has to be followable: on a stage that
+// runs focused passes, workflow_stage refuses an unfocused call, so a bare
+// "call workflow_stage" note was a deterministic dead end — the orchestrator
+// had to guess a focus or abandon the retry.
+test("the no-verdict retry names the stage's passes when the stage runs focused ones", () => {
+  const body = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(body, /retryLabels\.length \? \{ passes: retryLabels \}/, "the retry payload must carry the pass labels")
+  assert.match(body, /focus:"<pass>"\}\) and spawn the stage subagent again for EACH pass/, "…and the note must say to arm each one")
+})
+
+// The retry note tells the orchestrator to call workflow_stage before
+// re-spawning — and workflow_stage's fresh-arming wipe then destroyed the kept
+// rejection, so a FAIL rejected twice ERRORed blaming a channel that answered
+// both times. The wipe must skip the armed-retry window.
+test("workflow_stage preserves the kept rejection while a retry is armed", () => {
+  const body = flat(toolBody(code(source()), "workflow_stage"))
+  assert.match(body, /if \(!verdictRetried\) verdictRejected = null/, "the rejection wipe must be gated on no retry pending")
 })
 
 // The orchestrator could otherwise call workflow_stage once with no focus, spawn
