@@ -38,6 +38,7 @@ import {
   claimFirst,
   claimTask,
   claimTaskSweepingStale,
+  confirmedStrayPlanRequestIds,
   findByIdIn,
   hasPlan,
   isClaimable,
@@ -61,7 +62,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest, strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/core/scheduler/lease"
@@ -2781,7 +2782,10 @@ export const handleCommand = async (
       // nothing, but it lingers — name it rather than leave an unexplained marker.
       const queuedNow = await listByStatus(client, deps.directory, config.tasksDir, "queued", deps.log)
       const queuedIds = queuedNow.map((t) => t.id)
-      const strayRequests = await strayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds)
+      // CONFIRMED strays only: the listing can lag the real FS (and skips
+      // unparseable files), and a request written after it — the hub's Plan
+      // button, mid-doctor — must never be judged against it.
+      const strayRequests = await confirmedStrayPlanRequestIds(deps.$, deps.directory, config.tasksDir, queuedIds, "queued", deps.log)
       for (const line of formatAnomalies(anomalies, config.tasksDir)) await deps.log("warn", `doctor: ${line}`)
       if (heldQueued.length) await deps.log("info", `doctor: claim marker(s) held in queued/.claims: ${heldQueued.join(", ")}`)
       if (heldInProgress.length) await deps.log("info", `doctor: claim marker(s) held in in-progress/.claims: ${heldInProgress.join(", ")}`)
@@ -2836,8 +2840,10 @@ export const handleCommand = async (
       }
       // Unlike a claim, a stray request is never ambiguous: its task has left
       // the folder, so nothing can be driving it. No liveness check, and no
-      // commit — the markers were never tracked.
-      const revokedRequests = await sweepStalePlanRequests(deps.$, deps.directory, config.tasksDir, queuedIds)
+      // commit — the markers were never tracked. Only the CONFIRMED strays
+      // from above are revoked; a request written since (the hub's Plan
+      // button racing this doctor) is left alone.
+      const revokedRequests = await revokeStrayPlanRequests(deps.$, deps.directory, config.tasksDir, strayRequests)
       if (rescued.length) {
         await commitTasks(deps, config, `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
       }

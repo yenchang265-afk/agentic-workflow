@@ -94,6 +94,7 @@ import {
   auditNote,
   claimTask,
   claimTaskSweepingStale,
+  confirmedStrayPlanRequestIds,
   findByIdIn,
   isClaimable,
   isOrphanedPlanClaim,
@@ -113,7 +114,7 @@ import {
   summarizeBacklog,
   type TaskStatus,
 } from "@agentic-workflow/core/task/store"
-import { consumePlanRequest, strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { consumePlanRequest, revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { isLeaseStale, readLeaseOwner, staleThresholdMs } from "@agentic-workflow/core/scheduler/lease"
 
@@ -1958,11 +1959,16 @@ server.registerTool(
     // A plan request whose task has left queued/ reorders nothing and blocks
     // nothing, but it lingers — name it rather than leave an unexplained marker.
     const queuedNow = await listByStatus(fsClient, directory, config.tasksDir, "queued", log)
-    const strayRequests = await strayPlanRequestIds(
+    // CONFIRMED strays only: the listing can lag the real FS (and skips
+    // unparseable files), and a request written after it — the hub's Plan
+    // button, mid-doctor — must never be judged against it.
+    const strayRequests = await confirmedStrayPlanRequestIds(
       sh,
       directory,
       config.tasksDir,
       queuedNow.map((t) => t.id),
+      "queued",
+      log,
     )
     const report = {
       findings: formatAnomalies(anomalies, config.tasksDir),
@@ -2007,13 +2013,9 @@ server.registerTool(
     }
     // Unlike a claim, a stray request is never ambiguous: its task has left the
     // folder, so nothing can be driving it. No liveness check, and no commit —
-    // the markers were never tracked.
-    const revokedRequests = await sweepStalePlanRequests(
-      sh,
-      directory,
-      config.tasksDir,
-      queuedNow.map((t) => t.id),
-    )
+    // the markers were never tracked. Only the CONFIRMED strays from above are
+    // revoked; a request written since is left alone.
+    const revokedRequests = await revokeStrayPlanRequests(sh, directory, config.tasksDir, strayRequests)
     if (rescued.length) {
       await commitPaths(sh, directory, [config.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
     }

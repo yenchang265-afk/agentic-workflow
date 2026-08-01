@@ -5,6 +5,7 @@ import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit
 import {
   appendNote,
   auditNote,
+  confirmedStrayPlanRequestIds,
   isOrphanedPlanClaim,
   isOrphanedStartedClaim,
   listByStatus,
@@ -12,10 +13,11 @@ import {
   releaseOrphanedClaims,
   rescueStray,
 } from "@agentic-workflow/core/task/store"
-import { strayPlanRequestIds, sweepStalePlanRequests } from "@agentic-workflow/core/task/plan-request"
+import { revokeStrayPlanRequests } from "@agentic-workflow/core/task/plan-request"
 import type { DoctorReport, DoctorFixResponse, HeldClaim } from "../../shared/api.js"
 import type { HubDeps } from "../deps.js"
 import { auditStatuses } from "../kindboard.js"
+import { withGateLock } from "./gate.js"
 import { makeDrivingOracle } from "../driving.js"
 import { ok, type JsonResponse } from "../http.js"
 
@@ -49,11 +51,16 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
   // nothing, but it lingers — so the doctor names it rather than leaving a
   // marker on disk with no explanation.
   const queued = await listByStatus(deps.client, deps.directory, deps.tasksDir, "queued", deps.log)
-  const strayRequests = await strayPlanRequestIds(
+  // CONFIRMED strays only: the listing can lag the real FS (and skips
+  // unparseable files), and a request written after it — the Plan button, a
+  // just-approved task — must never be judged against it.
+  const strayRequests = await confirmedStrayPlanRequestIds(
     deps.sh,
     deps.directory,
     deps.tasksDir,
     queued.map((t) => t.id),
+    "queued",
+    deps.log,
   )
 
   const report: DoctorReport = {
@@ -77,7 +84,13 @@ export const getDoctor = async (deps: HubDeps): Promise<JsonResponse> => {
  * markers. Duplicates are never auto-resolved — the hub is the worst place to
  * guess which copy is canonical. One commit at the end when anything was rescued.
  */
-export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
+export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> =>
+  // Under the gate lock like every other mutating route: a fix that interleaves
+  // with a Plan click or an approve can otherwise judge markers against a board
+  // state mid-change.
+  withGateLock(deps.directory, () => doctorFix(deps))
+
+const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
   const anomalies = await auditBacklog(deps.client, deps.directory, deps.tasksDir, auditStatuses(deps.boards))
   const actor = await gitActor(deps.sh, deps.directory)
 
@@ -141,16 +154,20 @@ export const postDoctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
     }
   }
 
-  // Unlike a claim, a stray request is never ambiguous: its task has left the
-  // folder, so nothing can be driving it and nothing is racing for it. No
-  // watcher check, and no commit — the markers were never tracked.
+  // A stray request's task has left the folder, so nothing can be driving it —
+  // but the REQUEST marker itself can be racing a human's Plan click, so only
+  // strays CONFIRMED against the real filesystem are revoked, and a request
+  // written after that pass is left alone. No commit — never tracked.
   const queued = await listByStatus(deps.client, deps.directory, deps.tasksDir, "queued", deps.log)
-  const revokedRequests = await sweepStalePlanRequests(
+  const confirmedStrays = await confirmedStrayPlanRequestIds(
     deps.sh,
     deps.directory,
     deps.tasksDir,
     queued.map((t) => t.id),
+    "queued",
+    deps.log,
   )
+  const revokedRequests = await revokeStrayPlanRequests(deps.sh, deps.directory, deps.tasksDir, confirmedStrays)
 
   if (rescued.length > 0) {
     await commitPaths(deps.sh, deps.directory, [deps.tasksDir], `loop: doctor rescued ${rescued.length} stray task file(s) to draft/`)
