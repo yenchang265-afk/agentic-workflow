@@ -307,8 +307,14 @@ it. The warnings are advisory: they annotate a save, never block it. See
   }
   ```
 
-  This is a **small-context profile, not a default** — ship it only when you
-  point a stage at a small model. Convert with roughly 3.5–4 characters per
+  This is a **small-context profile, not a default** — it is essential when you
+  point a stage at a small model, and worth enabling (with looser ceilings) on
+  frontier models too once a backlog runs long: artifacts grow with every
+  iteration, and the prompt is largest exactly when the loop is struggling.
+  Don't guess the ceilings — the hub Metrics tab's prompt-size panel shows each
+  stage's composed prompt size and how much a budget elided, so set them from
+  observed sizes and tighten until the elision marker starts appearing where it
+  costs nothing. Convert with roughly 3.5–4 characters per
   token for prose and code, so 24,000 characters is ~6–7k tokens.
 
   Over-budget text is elided from the **middle**, keeping the head and the tail
