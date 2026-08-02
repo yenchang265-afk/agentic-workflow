@@ -2,7 +2,7 @@ import path from "node:path"
 import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, releaseMarkerIfStale, restampMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
-import { auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
+import { AUDIT_NOTE_LINE_RE, auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
 import { revokePlanRequestAt, strayPlanRequestIds } from "./plan-request.js"
 import { redact } from "./redact.js"
 import { buildTaskFile, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
@@ -58,6 +58,14 @@ export const markClaimed = async ($: Shell, task: FileRef, actor?: string | null
  */
 export const PLAN_APPROVED_MARKER = "> Plan approved"
 
+/**
+ * The audited note `replanTask` appends when a human rejects a plan (or a
+ * capped run is sent back). The rejection reason rides on this line, and
+ * `extractReplanReason` parses it back so the next PLAN pass receives it as a
+ * structured prompt section instead of being told to dig through audit notes.
+ */
+export const PLAN_REJECTED_MARKER = "> Plan rejected"
+
 /** Whether `marker` appears as an audit-note line (see `lastMarkerIndex`). Pure. */
 const hasMarkerLine = (body: string, marker: string): boolean => lastMarkerIndex(body, marker) !== -1
 
@@ -110,6 +118,35 @@ export const extractPlan = (task: Task): string | undefined => {
   if (idx === -1) return undefined
   const from = idx + PLAN_HEADING.length
   return task.body.slice(from, auditTailIndex(task.body, from)).trim()
+}
+
+/** The fixed prose between `PLAN_REJECTED_MARKER` and the reason on a rejection note. */
+const PLAN_REJECTED_REASON_PREFIX = "— sent back to queued for re-planning — "
+
+/**
+ * The PENDING rejection reason a human gave `replan`, or `undefined`. Pure.
+ *
+ * Reads the LAST `PLAN_REJECTED_MARKER` line, and only honors it when it comes
+ * AFTER the last `PLAN_HEADING`: a rejection note is appended after the plan it
+ * rejects, and the next PLAN pass appends its new plan after the note — so
+ * "note newer than heading" is exactly "rejection not yet addressed", which
+ * both retires a stale reason automatically and makes the latest of several
+ * successive rejections win. The line must carry `AUDIT_NOTE_LINE_RE`'s closing
+ * stamp, so a plan merely quoting a rejection line cannot inject a reason.
+ */
+export const extractReplanReason = (task: Task): string | undefined => {
+  const idx = lastMarkerIndex(task.body, PLAN_REJECTED_MARKER)
+  if (idx === -1 || idx < lastMarkerIndex(task.body, PLAN_HEADING)) return undefined
+  const end = task.body.indexOf("\n", idx)
+  const line = task.body.slice(idx, end === -1 ? task.body.length : end)
+  if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
+  const from = line.indexOf(PLAN_REJECTED_REASON_PREFIX)
+  if (from === -1) return undefined
+  const reason = line
+    .slice(from + PLAN_REJECTED_REASON_PREFIX.length)
+    .replace(/\s*\[[^\]\n]+\]\s*$/, "")
+    .trim()
+  return reason || undefined
 }
 
 /**

@@ -59,8 +59,11 @@ finished review → `completed/` (ship). Id-less, it resolves the single task
 waiting at a loop wait-gate, falling back to a lone draft only when no loop
 gate is waiting, so a pile of drafts never shadows a parked plan and
 never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole
-rejection verb, always back to `queued/`, with the reason audited for the next
-PLAN pass to address.
+rejection verb, always back to `queued/`. The reason is audited on the task
+file and threaded into the next PLAN pass's prompt as a structured
+"Rejection reason from the plan gate" section (`extractReplanReason` parses it
+back off the audit note), so the new plan addresses it directly instead of
+digging through notes; a newer plan heading retires it automatically.
 
 Deterministic plugin code enforces the plan gate by grepping for the
 `## Implementation Plan` heading, and BUILD only ever claims from

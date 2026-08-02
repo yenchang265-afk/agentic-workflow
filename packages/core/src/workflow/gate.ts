@@ -484,6 +484,19 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
 }
 
 /**
+ * A rejection reason flattened to one audit-note-safe line, or `undefined`.
+ *
+ * An audit note is a single `> …` line closed by a bracketed stamp; an embedded
+ * newline breaks that shape — line 2 loses the `> ` prefix and the stamp
+ * detaches — so neither the audit trail nor `extractReplanReason` (which
+ * threads the reason into the next PLAN pass's prompt) can read it back. Pure.
+ */
+export const oneLineReason = (reason?: string): string | undefined => {
+  const flat = reason?.replace(/\s+/g, " ").trim()
+  return flat || undefined
+}
+
+/**
  * replan: a rejected plan-review/ or cap-tripped in-progress/ task → queued/.
  * `liveTaskId` is the id of the task a live loop is currently driving (refused so
  * we never re-queue a task mid-build).
@@ -525,7 +538,8 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
     return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
   }
   const actor = await gitActor($, directory)
-  const why = reason ? ` — ${reason}` : ""
+  const flat = oneLineReason(reason)
+  const why = flat ? ` — ${flat}` : ""
   const moved = await noteThenMove(ctx, task, "queued", `Plan rejected — sent back to queued for re-planning${why}`, actor)
   if (!moved.ok) return moved.result
   const newPath = moved.path

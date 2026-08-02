@@ -63,6 +63,16 @@ test("buildEntryState enters at build with the persisted plan; planEntryState at
   assert.equal(plan.stage, "plan")
 })
 
+test("planEntryState threads a pending replan reason; absent otherwise", () => {
+  const rejected = task(
+    `${PLAN_HEADING}\n\nOld approach.\n` +
+      `\n> Plan rejected — sent back to queued for re-planning — wrong layer [2026-01-02T00:00:00.000Z by dev]\n`,
+  )
+  const state = planEntryState(rejected)
+  assert.deepEqual(state.replan, { reason: "wrong layer" })
+  assert.equal(planEntryState(task("no plan yet")).replan, undefined)
+})
+
 test("workflowWorkTree prefers the state's worktree over the main tree", () => {
   const base = planEntryState(task("x"))
   assert.equal(workflowWorkTree("/repo", base), "/repo")

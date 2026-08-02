@@ -2,11 +2,11 @@ English | [繁體中文](README.zh-TW.md)
 
 # Agentic loop — engineering workflow improvement plans
 
-**Every plan here — 01–09 — is implemented and tested**, living in the shared
+**Every plan here — 01–10 — is implemented and tested**, living in the shared
 `@agentic-workflow/core` package (`packages/core/`) consumed by both the
 OpenCode plugin and the Claude MCP server. They are kept as the design record
-for those features, not as a pending backlog. Plan 08 was the last one
-outstanding and shipped on 2026-07-29.
+for those features, not as a pending backlog. Plan 10 is the newest and
+shipped on 2026-08-02.
 
 Sourced from: the current code (all cited paths and function names verified
 against source at time of writing), the residual risks in
@@ -26,6 +26,7 @@ against source at time of writing), the residual risks in
 | 07 | [Multi-workflow kinds on a common scheduler](./07-multi-workflow-scheduler.md) | One scheduler drives many workflow kinds (engineering + PR sitter); `@agentic-workflow/core` extracted so both plugins share one implementation | `packages/core/src/manifest/` (schema, registry, template), `packages/core/src/scheduler/` (scheduler, lease), `packages/core/src/source/` (backlog, github-pr, ado-pr, ledger); `workflows/engineering/`, `workflows/pr-sitter/` |
 | 08 | [Deterministic check commands](./08-deterministic-gate-commands.md) | Declared test/typecheck/lint commands run driver-side; their exit codes are established fact for the check stage and floor its verdict, replacing the self-reported "tests are green" | `packages/core/src/workflow/checks.ts`, `checks` on `StageDefSchema` in `manifest/schema.ts`, `stageChecks`/`checksFor`/`unknownStageCheckKeys` in `config.ts` (and `SHELL_BEARING_WORKFLOW_KEYS`), `withCheckResults` in `workflow/engine.ts`, the fire-boundary run + finalization floor in both hosts; `checks.test.ts` |
 | 09 | [Context budgets for stage prompts](./09-context-management.md) | Prompts stop growing monotonically across iterations: the plan artifact no longer accretes audit notes (nor serves a stale plan after a replan), per-stage character ceilings clamp what a stage reads while never trimming the structured verdict block or the stage contract, a bounded attempts ledger stops a weak model re-trying a fix that already failed, and prompt size is visible per stage in the hub | `packages/core/src/workflow/budget.ts`, `contextFor`/`unknownStageContextKeys` in `config.ts`, `extractPlan` in `task/store.ts`, the seam + ledger in `workflow/engine.ts`, `promptSize` in `packages/hub/src/server/metrics/prompt.ts`; `budget.test.ts` |
+| 10 | [Replan-reason threading](./10-replan-reason-threading.md) | The plan gate's rejection reason reaches the next PLAN pass as a structured prompt section (parsed back off the audit note, retired automatically once a newer plan lands) instead of "dig through the audit notes"; multi-line reasons flattened to the single-line audit shape | `PLAN_REJECTED_MARKER`/`extractReplanReason` in `packages/core/src/task/store.ts`, `oneLineReason` in `workflow/gate.ts`, `replan` on `WorkflowState`, threading in `workflow/orchestrate.ts` + `workflow/engine.ts`, section in `workflows/engineering/stages/plan.md`; `store.test.ts`, `gate.test.ts`, `orchestrate.test.ts`, `engine.test.ts` |
 
 Residuals still open: cross-process `index.lock` races and redaction knobs. (Two
 entries this list used to carry have since shipped — bash worktree pinning in

@@ -107,6 +107,15 @@ export interface WorkflowState {
    */
   readonly attempts?: readonly AttemptRecord[]
   /**
+   * The human's pending rejection reason from the plan gate, re-derived from the
+   * task file at claim time (`extractReplanReason`) — never persisted, since a
+   * plan-stage snapshot is schema-invalidated by design. Present only on a
+   * PLAN-entry state for a task whose last plan was rejected; the plan prompt
+   * renders it as a structured section so the next pass addresses it instead of
+   * digging through audit notes.
+   */
+  readonly replan?: { readonly reason: string }
+  /**
    * Per-stage results of the check commands the DRIVER ran before firing that
    * stage (`workflow/checks.ts`). Absent ⇒ no checks are configured, which is
    * byte-identical to the behavior before they existed: no prompt section, no
@@ -359,12 +368,14 @@ export const resumeAtBuild = (goal: string, task: TaskRef, plan: string): Workfl
 
 /** Construct a WorkflowState entering at the PLAN stage, for a claimed `queued/`
  *  task. `priorPlan` carries a rejected/capped plan on a replan so the new
- *  plan addresses why the old one failed instead of repeating it. */
-export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string): WorkflowState => ({
+ *  plan addresses why the old one failed instead of repeating it; `replanReason`
+ *  carries the human's rejection reason alongside it (see `extractReplanReason`). */
+export const startAtPlan = (goal: string, task: TaskRef, priorPlan?: string, replanReason?: string): WorkflowState => ({
   goal,
   stage: "plan",
   iteration: 0,
   artifacts: priorPlan ? { plan: priorPlan } : {},
+  ...(replanReason ? { replan: { reason: replanReason } } : {}),
   task,
 })
 
