@@ -203,6 +203,12 @@ earlier stages' captured output as *artifacts*. A check stage's artifact leads
 with the **structured verdict block**: the reason, the failed criteria, and the
 blocking axis findings with `file:line`.
 
+The **goal arrives deduplicated**: the task file's `## Implementation Plan`
+section rides only in the `plan` artifact, and the audit-note tail
+(`> CLAIMED …`, `> BUILD started …`) is stripped at render — the task file on
+disk keeps both. A stage that needs the audit history reads the task file at
+its `task.path`.
+
 `workflows.<kind>.stageContext` (and a manifest stage's `context`) caps what a
 stage reads of each artifact; unset means unbounded. Under a budget: the
 **contract is never trimmed** (it is composed after the budget applies, so a

@@ -3,6 +3,7 @@ import { stageDef } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
+import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, stagePasses } from "../config.js"
@@ -125,14 +126,23 @@ const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, reco
 }
 
 /**
- * The template context a stage prompt renders against. Everything derivable
- * from the state is precomputed here (diff command, worktree pinning
- * paragraph) so ordinary workflow kinds need no compose hooks.
+ * The template context a stage prompt renders against, plus how many characters
+ * the stage's context budget elided. Everything derivable from the state is
+ * precomputed here (diff command, worktree pinning paragraph) so ordinary
+ * workflow kinds need no compose hooks.
+ *
+ * `goal` is rendered through `stripPlanAndAuditTail`: after PLAN, the persisted
+ * body carries the plan section (already injected separately as
+ * `artifacts.plan`) and the accreted audit tail, so rendering `state.goal` raw
+ * puts the plan in every prompt twice and grows the goal with every run. The
+ * strip is render-side only — `state.goal` and the snapshots keep the full
+ * text — and it may additionally be clamped by a `goal` budget key
+ * (`stageContext.<stage>.goal`), the one budget key that names no artifact.
  */
-export const promptContext = (
+export const promptContextWithStats = (
   state: WorkflowState,
   budgets: Readonly<Record<string, number>> = {},
-): TemplateContext => {
+): { ctx: TemplateContext; elided: number } => {
   const accept = state.task?.acceptance ?? []
   const wt = state.git?.worktree
   // Undefined when the stage ran no checks, so `renderPrompt` drops the section
@@ -145,8 +155,10 @@ export const promptContext = (
       ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
       : `git diff ${state.git.base}...${state.git.branch}`
     : ""
-  return {
-    goal: state.goal,
+  const goal = clampWithStats(stripPlanAndAuditTail(state.goal), budgets["goal"] ?? Number.POSITIVE_INFINITY)
+  const budgeted = budgetedArtifacts(state, budgets)
+  const ctx: TemplateContext = {
+    goal: goal.text,
     iteration: String(state.iteration),
     // Code-platform switches for prompt templates ({{#platform.ado}}…); absent platform ⇒ github.
     platform: {
@@ -162,7 +174,7 @@ export const promptContext = (
     // section drops and a first-plan prompt is unchanged.
     replan: state.replan ? { reason: state.replan.reason } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
-    artifacts: budgetedArtifacts(state, budgets).artifacts,
+    artifacts: budgeted.artifacts,
     checks,
     // Pre-rendered: TemplateValue has no arrays. Undefined when empty so
     // `renderPrompt` drops the section and a first-iteration prompt is unchanged.
@@ -187,7 +199,14 @@ export const promptContext = (
         }
       : undefined,
   }
+  return { ctx, elided: budgeted.elided + goal.elided }
 }
+
+/** `promptContextWithStats` without the elision count, for render-only callers. Pure. */
+export const promptContext = (
+  state: WorkflowState,
+  budgets: Readonly<Record<string, number>> = {},
+): TemplateContext => promptContextWithStats(state, budgets).ctx
 
 /**
  * Render one stage's prompt from its template source and context, appending the
@@ -249,8 +268,7 @@ export const composePromptWithStats = (
   const tpl = loaded.prompts[def.name]
   if (tpl === undefined) throw new Error(`workflow kind "${loaded.manifest.kind}" has no prompt loaded for stage "${def.name}"`)
   const budgets = config ? contextFor(config, loaded.manifest.kind, def) : {}
-  const { elided } = budgetedArtifacts(state, budgets)
-  const base = promptContext(state, budgets)
+  const { ctx: base, elided } = promptContextWithStats(state, budgets)
   const hookRef = loaded.manifest.hooks.compose[def.name]
   const ctx = hookRef ? resolveComposeHook(hookRef)(base, state) : base
   // The EFFECTIVE mode, not the manifest's: a configured `reviewLenses` beats a

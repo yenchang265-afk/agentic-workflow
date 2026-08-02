@@ -26,33 +26,31 @@ That block is authoritative — follow it, and ignore any other verb's
 description. The index below exists only so you can tell which verb you are
 on and who does the work; it is deliberately not a procedure.
 
-- **`new <idea>`** — interview the user into one or more planless drafts. **Yours.**
-- **`retask <id> [note]`** — reshape a planless draft. The move is the hook's; the interview is **yours**.
-- **`approve [id]`** — THE gate verb, unified and folder-driven. **The hook's, before your turn.**
-- **`replan [id] [reason]`** — the sole rejection verb, back to `queued/`. **The hook's, before your turn.**
-- **`remove <id>`** — hard-delete a task from the backlog. **The hook's, before your turn.** Destructive.
-- **`plan <id>`** — run PLAN on one approved task and park the plan for the gate. **Yours.**
-- **`claim`** — drive the next task: build-ready work through BUILD → VERIFY → REVIEW, else one to plan. **Yours.**
-- **`recover <id>`** — resume a run that stopped early. **Yours.**
-- **`stop`** (alias: `abort`) — abort the active loop. **Yours.**
-- **`status`** (or bare) — the active loop plus the backlog roll-up. **Yours.**
-- **`kinds`** — the workflow kinds and which are enabled. **Yours.**
-- **`doctor [fix]`** — audit, and with `fix` repair, backlog damage. **Yours.**
+- **`approve [id]`** / **`replan [id] [reason]`** / **`remove <id>`** — the gate
+  verbs: forward gate, reject back to `queued/`, hard-delete (destructive).
+  **All three are the hook's, done before your turn.**
+- **`retask <id> [note]`** — reshape a planless draft. The move is the hook's;
+  the interview is **yours**.
+- **`new <idea>`** — interview into planless draft(s); **`plan <id>`** — run
+  PLAN on one approved task and park the plan; **`claim`** — drive the next
+  task (BUILD → VERIFY → REVIEW, else one to plan); **`recover <id>`** — resume
+  a run that stopped early; **`stop`** (alias `abort`) — abort the active loop;
+  **`status`** (or bare) — loop + backlog roll-up; **`kinds`** — enabled
+  workflow kinds; **`doctor [fix]`** — audit (with `fix`, repair) the backlog.
+  **All yours.**
 - **anything else** (including a free-text goal) — do not run it. Show this usage instead.
 
-**If no VERB INSTRUCTIONS block reached you, the plugin's hooks are not
-running.** Do NOT improvise the procedure and do NOT touch the backlog:
-say the hooks are inactive, name the fix (run `plugins/claude/install.sh`,
-restart the session, then check `/hooks`), and stop. The same applies if the
-block names a different verb than the one you were asked for.
+**If no VERB INSTRUCTIONS block reached you — or it names a different verb —
+the plugin's hooks are not running.** Do NOT improvise the procedure and do
+NOT touch the backlog: say the hooks are inactive, name the fix (run
+`plugins/claude/install.sh`, restart the session, then check `/hooks`), and stop.
 
-**Verify before you report a gate.** A gate verb reaching you means the hook
-failed open — run the MCP fallback tool; if it is unavailable, the plugin's
-MCP server is not built. Either way, only report the gate as done after
-observing the task file in its **target** folder (glob `docs/tasks/*/<id>*`).
-File still in its old folder ⇒ nothing moved — report that the plugin isn't
-built/running (fix: run `plugins/claude/install.sh`, restart the session) and
-never claim the approval happened.
+**Verify before you report a gate.** A gate verb reaching you means the gate
+hook failed open — run the MCP fallback tool (unavailable ⇒ the MCP server is
+not built). Either way, report the gate as done only after observing the task
+file in its **target** folder (glob `docs/tasks/*/<id>*`); still in the old
+folder ⇒ nothing moved — say the plugin isn't built/running (same fix as
+above) and never claim the approval happened.
 
 Do not invent your own control flow — the `workflow-orchestration` skill defines
 the exact sequence of tool calls and Task spawns. The MCP tools own the state

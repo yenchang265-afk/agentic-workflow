@@ -32,11 +32,20 @@ iteration — a REVIEW FAIL sends the loop back to BUILD, not PLAN, because the
 plan is presumed correct at this point; the implementation quality is what's
 in question.
 
-Invoke the `code-review-and-quality` skill for the five-axis review structure
-and the severity scale;
-also invoke `security-and-hardening` when the diff touches auth, input
-handling, or secrets, and `performance-optimization` when it touches hot
-paths, loops over unbounded data, or queries.
+<!-- distilled from skills/code-review-and-quality/SKILL.md — its `## Severity`
+     table is the SSOT; keep the ladder below in sync (scripts/skill-severity.test.mjs) -->
+The five-axis structure under "Your job" IS this stage's method — do not load
+a general review skill for it. Every finding carries exactly one of three
+severities, the only three `workflow_verdict` accepts: `critical` (broken
+behaviour, data loss, or an exploitable vulnerability with a repro) and
+`important` (a real defect or structural regression the next iteration must
+fix) both block — they FAIL the stage; `suggestion` (worth doing, not worth
+blocking) never does. Lead with what matters — a few high-conviction findings
+beat a long list — say the severity you mean rather than hedging, and give
+every finding a `file:line` and the move that fixes it: propose the remedy,
+not just the problem. Invoke `security-and-hardening` when the diff touches
+auth, input handling, or secrets, and `performance-optimization` when it
+touches hot paths, loops over unbounded data, or queries.
 
 ## Your input
 
