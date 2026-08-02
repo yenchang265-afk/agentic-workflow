@@ -1,10 +1,15 @@
 import { type ReactNode } from "react"
 import { parseInline, type Block, type BlockBody } from "./parse.js"
+import { isMermaidLang } from "./mermaid-embed.js"
+import { MermaidBlock } from "./MermaidBlock.js"
 
 /**
  * Render parsed Markdown as React elements — never `dangerouslySetInnerHTML`.
  * A task file is repo content that may have arrived on someone else's branch;
  * building elements means it can carry no markup and no script into the hub.
+ * The one block that must become markup — a ```mermaid fence — renders inside
+ * a scriptless, origin-less `<iframe sandbox="">` (MermaidBlock), so the
+ * invariant holds for the hub document itself even there.
  *
  * Every block is wrapped in a hover target that offers "comment". That wrapper
  * is why this renders blocks instead of a string: a review comment belongs to a
@@ -49,7 +54,7 @@ const Body = ({ body }: { body: BlockBody }): ReactNode => {
         </p>
       )
     case "code":
-      return <pre className="md-code">{body.text}</pre>
+      return isMermaidLang(body.lang) ? <MermaidBlock text={body.text} /> : <pre className="md-code">{body.text}</pre>
     case "quote":
       return (
         <blockquote className="md-quote">

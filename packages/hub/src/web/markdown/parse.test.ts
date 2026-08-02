@@ -38,6 +38,11 @@ test("parseBlocks splits a task file into headings, paragraphs, lists, code and 
   assert.equal(blocks[4]?.body.kind === "quote" && blocks[4].body.text.startsWith("CLAIMED"), true)
 })
 
+test("parseBlocks keeps a mermaid fence's lang — the renderer routes on it", () => {
+  const blocks = parseBlocks("```mermaid\nstateDiagram-v2\n  a --> b\n```\n")
+  assert.deepEqual(blocks[0]?.body, { kind: "code", lang: "mermaid", text: "stateDiagram-v2\n  a --> b" })
+})
+
 test("parseBlocks ids blocks by their source line, so a re-parse re-attaches comments", () => {
   const md = "# Title\n\npara one\n\npara two\n"
   assert.deepEqual(

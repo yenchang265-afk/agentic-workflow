@@ -6,9 +6,10 @@ import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
-import { contextFor, stagePasses } from "../config.js"
+import { contextFor, planVisualizationFor, stagePasses } from "../config.js"
 import {
   planContractBlock,
+  planVisualizationBlock,
   verdictContractBlock,
   verdictFeedbackBlock,
   workScopeBlock,
@@ -268,11 +269,17 @@ export const composeStagePrompt = (
   // the EFFECTIVE mode instead, because config can turn fan-out on or off and
   // `reviewLenses` can replace it with lens passes entirely.
   mode: "single" | "axis" | "lens" = def.fanout === "axis" ? "axis" : "single",
+  // Same shape as `mode`: manifest default here, effective value
+  // (`planVisualizationFor`) from `composePromptWithStats`, because config can
+  // turn the block on for a shipped manifest the user cannot edit.
+  visualize: boolean = def.planContract && def.planVisualization,
 ): string => {
   const rendered = renderPrompt(tpl, ctx)
   return def.kind === "check"
     ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence)}`
-    : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}`
+    : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}${
+        visualize ? `\n\n${planVisualizationBlock(def.name)}` : ""
+      }`
 }
 
 /**
@@ -305,7 +312,11 @@ export const composePromptWithStats = (
   // will actually run — otherwise a lens pass is told to report one axis it was
   // never given, or an axis pass is told to report all five.
   const mode = config ? passMode(stagePasses(config, loaded.manifest.kind, def)) : undefined
-  return { prompt: composeStagePrompt(def, tpl, ctx, mode), elided }
+  // The EFFECTIVE visualization flag, for the same reason as `mode`: the
+  // shipped manifests are user-uneditable, so the config override is the only
+  // way the opt-in is reachable at all.
+  const visualize = config ? planVisualizationFor(config, loaded.manifest.kind, def) : undefined
+  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize), elided }
 }
 
 /** Render the prompt threaded into `target`'s stage command. */

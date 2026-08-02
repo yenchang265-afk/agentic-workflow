@@ -2040,6 +2040,36 @@ body {
   font-size: var(--fs-xs);
 }
 
+.md .md-mermaid {
+  margin: var(--sp-2) 0;
+}
+
+.md .md-mermaid__frame {
+  display: block;
+  width: 100%;
+  height: 360px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-2);
+  background: #fff;
+}
+
+.md .md-mermaid__toggle {
+  margin-top: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-1);
+  background: var(--panel-raised);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.md .md-mermaid__error {
+  margin: var(--sp-1) 0 0;
+  color: var(--danger, #b00020);
+  font-size: var(--fs-xs);
+}
+
 .md .md-quote {
   margin: var(--sp-2) 0;
   padding-left: var(--sp-3);
