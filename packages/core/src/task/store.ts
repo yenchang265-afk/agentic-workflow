@@ -2,9 +2,12 @@ import path from "node:path"
 import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, releaseMarkerIfStale, restampMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
+import { auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
 import { revokePlanRequestAt, strayPlanRequestIds } from "./plan-request.js"
 import { redact } from "./redact.js"
 import { buildTaskFile, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
+
+export { PLAN_HEADING } from "./plan-section.js"
 
 /**
  * Filesystem IO for the task backlog. **Impure**: reads via the host client
@@ -27,9 +30,6 @@ export const selectOrder = (tasks: readonly Task[]): Task[] =>
 
 /** Pick the next task: lowest priority number, ties broken by id. Pure. */
 export const selectNext = (tasks: readonly Task[]): Task | null => selectOrder(tasks)[0] ?? null
-
-/** Marks a task as planned, awaiting approval — appended to its body by `appendPlan`. */
-export const PLAN_HEADING = "## Implementation Plan"
 
 /**
  * The audited note a host appends to the task file — on the human-visible
@@ -57,20 +57,6 @@ export const markClaimed = async ($: Shell, task: FileRef, actor?: string | null
  * will ever claim.
  */
 export const PLAN_APPROVED_MARKER = "> Plan approved"
-
-/**
- * Index of the LAST occurrence of `marker` at the start of a line, or -1.
- * Audit notes are whole lines (`appendNote` writes `\n> …\n`), so body text
- * merely QUOTING a marker mid-line — a pasted log, a task about this system —
- * must not read as lifecycle state. (A pasted full audit line still would;
- * markers-as-text is inherently heuristic, this closes the common case.) Pure.
- */
-const lastMarkerIndex = (body: string, marker: string): number => {
-  for (let idx = body.lastIndexOf(marker); idx !== -1; idx = body.lastIndexOf(marker, idx - 1)) {
-    if (idx === 0 || body[idx - 1] === "\n") return idx
-  }
-  return -1
-}
 
 /** Whether `marker` appears as an audit-note line (see `lastMarkerIndex`). Pure. */
 const hasMarkerLine = (body: string, marker: string): boolean => lastMarkerIndex(body, marker) !== -1
@@ -108,31 +94,6 @@ export const isClaimable = (task: Task): boolean =>
  */
 export const isReleasableClaim = (task: Task): boolean =>
   hasPlan(task) && !hasMarkerLine(lifecycleWindow(task.body), "> BUILD started")
-
-/**
- * An audit-note line: `> …` closed by a bracketed stamp, the shape `auditNote`
- * gives every note a host appends (`[<ISO>]` or `[<ISO> by <actor>]`).
- *
- * Deliberately tighter than "any `> …` line": a plan may legitimately quote a
- * requirement as a blockquote, and treating that as the audit tail would silently
- * truncate the plan. The hub's `extractAuditNotes` is permissive on purpose (it
- * lists blockquotes for a timeline, where a false positive is cosmetic); this one
- * is a boundary, where a false positive loses plan text. The two must not be
- * merged. Pure.
- */
-const AUDIT_NOTE_LINE_RE = /^> .*\[[^\]\n]+\]\s*$/
-
-/** Offset of the first audit-note line at or after `from`, else `body.length`. Pure. */
-const auditTailIndex = (body: string, from: number): number => {
-  for (let idx = from; idx < body.length; ) {
-    const end = body.indexOf("\n", idx)
-    const stop = end === -1 ? body.length : end
-    if (AUDIT_NOTE_LINE_RE.test(body.slice(idx, stop))) return idx
-    if (end === -1) break
-    idx = end + 1
-  }
-  return body.length
-}
 
 /**
  * The persisted plan text following `PLAN_HEADING`, or `undefined` if absent. Pure.

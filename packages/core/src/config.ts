@@ -520,6 +520,14 @@ export const unknownStageCheckKeys = (config: Config, kind: string, stageNames: 
   Object.keys(config.workflows[kind]?.stageChecks ?? {}).filter((name) => !stageNames.includes(name))
 
 /**
+ * Budget keys that name no artifact but are still honored by the engine:
+ * `goal` clamps the task goal `promptContextWithStats` renders. Kept out of the
+ * unknown-key warning below, or every legitimate `stage.goal` would read as a
+ * typo.
+ */
+const RESERVED_CONTEXT_KEYS: ReadonlySet<string> = new Set(["goal"])
+
+/**
  * The `stageContext` keys that name no stage of `kind`, as `stage` or
  * `stage.artifact` — the same silent-default trap `unknownStageModelKeys`
  * closes, in both dimensions: a typo'd stage never applies, and a typo'd
@@ -531,7 +539,7 @@ export const unknownStageContextKeys = (config: Config, kind: string, stageNames
   Object.entries(config.workflows[kind]?.stageContext ?? {}).flatMap(([stage, budgets]) =>
     stageNames.includes(stage)
       ? Object.keys(budgets ?? {})
-          .filter((artifact) => !stageNames.includes(artifact))
+          .filter((artifact) => !stageNames.includes(artifact) && !RESERVED_CONTEXT_KEYS.has(artifact))
           .map((artifact) => `${stage}.${artifact}`)
       : [stage],
   )

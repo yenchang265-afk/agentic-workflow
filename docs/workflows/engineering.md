@@ -109,6 +109,10 @@ reason, the failed acceptance criteria, and the blocking axis findings with
 `stageContext` budget (see [configuration.md](../configuration.md)) the prose
 may arrive as a bounded excerpt with the elided middle marked, but the
 structured block is never trimmed and the run log always keeps the full text.
+Every stage's **goal is deduplicated at render**: the task body's
+`## Implementation Plan` section reaches the prompt only once (as the plan
+artifact) and the audit-note tail is stripped — the task file on disk keeps
+both, and a `stageContext` `goal` key can additionally cap what remains.
 Each counted iteration also appends one line to a bounded **attempts ledger**
 (stage, verdict, one-line reason) that the next BUILD prompt carries, so a
 re-build can see what the previous attempts already tried instead of

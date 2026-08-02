@@ -5,7 +5,7 @@ import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
 import { ADO_TOOLS } from "../source/ado-tools.js"
 import { effectiveAllowlist, effectivePlatformTools, stageDef } from "../manifest/schema.js"
-import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext, withCheckResults } from "./engine.js"
+import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext, promptContextWithStats, withCheckResults } from "./engine.js"
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
@@ -912,6 +912,43 @@ test("composePrompt is byte-identical for a budget-less state — the unset-knob
       )
     }
   }
+})
+
+test("promptContext renders the goal without the plan section or audit tail — the plan rides only in artifacts.plan", () => {
+  const goal = [
+    "add foo",
+    "",
+    "Requirements prose.",
+    "",
+    "> CLAIMED — loop starting [2026-07-05T13:16:25.138Z]",
+    "",
+    "## Implementation Plan",
+    "",
+    "1. the step",
+    "",
+    "> BUILD started [2026-07-05T13:20:00.000Z]",
+  ].join("\n")
+  const ctx = promptContext({ ...mk(goal), artifacts: { plan: "1. the step" } })
+  assert.ok((ctx.goal as string).includes("Requirements prose."))
+  assert.ok(!(ctx.goal as string).includes("Implementation Plan"), "the plan text must not enter the prompt twice")
+  assert.ok(!(ctx.goal as string).includes("CLAIMED"), "the audit tail is history, not goal")
+  // state.goal itself is untouched — the strip is render-side only.
+  const composed = composePrompt(eng, { ...mk(goal), artifacts: { plan: "1. the step" } }, "build", config)
+  assert.ok(!composed.includes("CLAIMED"))
+})
+
+test("a stageContext `goal` budget clamps the goal and counts into elided; unset leaves it byte-identical", () => {
+  const goal = `HEAD MARKER\n${"g".repeat(5_000)}\nTAIL MARKER`
+  const clamped = promptContextWithStats(mk(goal), { goal: 400 })
+  assert.ok((clamped.ctx.goal as string).startsWith("HEAD MARKER"))
+  assert.ok((clamped.ctx.goal as string).endsWith("TAIL MARKER"))
+  assert.ok((clamped.ctx.goal as string).length <= 400)
+  assert.match(clamped.ctx.goal as string, /elided by the stage context budget/)
+  assert.ok(clamped.elided > 0, "goal elision must surface in promptElided telemetry")
+
+  const unset = promptContextWithStats(mk(goal))
+  assert.equal(unset.ctx.goal, goal)
+  assert.equal(unset.elided, 0)
 })
 
 test("promptContext omits checks when the stage ran none — a check-less prompt is unchanged", () => {

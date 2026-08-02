@@ -8,6 +8,7 @@ import {
   BurnHistogram,
   CacheTable,
   DurationTable,
+  FanoutTable,
   FindingsTable,
   ModelTable,
   PromptSizeTable,
@@ -110,6 +111,13 @@ export const MetricsTab = () => {
 
       <h2 className="section-title">Prompt size</h2>
       <PromptSizeTable prompt={data.prompt} />
+
+      {data.fanout.stages.length > 0 && (
+        <>
+          <h2 className="section-title">Check fan-out</h2>
+          <FanoutTable fanout={data.fanout} />
+        </>
+      )}
 
       <h2 className="section-title">Recurring findings</h2>
       <FindingsTable findings={data.findings} />

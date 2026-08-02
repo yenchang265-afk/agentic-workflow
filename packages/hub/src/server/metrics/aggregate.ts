@@ -8,6 +8,7 @@ import type {
   StageDuration,
 } from "../../shared/api.js"
 import { cacheHit, countInProgress } from "./cache.js"
+import { fanoutStats } from "./fanout.js"
 import { findingsStats } from "./findings.js"
 import { modelStats } from "./models.js"
 import { promptSize } from "./prompt.js"
@@ -182,6 +183,7 @@ export const aggregateMetrics = (
     durations: stageDurations(passes),
     cache: cacheHit(inputs),
     prompt: promptSize(inputs),
+    fanout: fanoutStats(inputs),
     models: modelStats(inputs),
     tools: toolStats(inputs),
     ...stoppedSplit(inputs),

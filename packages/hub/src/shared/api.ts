@@ -840,6 +840,14 @@ export interface CacheHit {
 }
 
 /** Composed-prompt size for one stage, in characters. */
+/** One focused pass's (lens or axis) share of a stage's prompt-size row. */
+export interface PromptFocusSize {
+  readonly focus: string
+  readonly samples: number
+  readonly meanChars: number
+  readonly maxChars: number
+}
+
 export interface StagePromptSize {
   readonly stage: string
   /** Sidecar samples for this stage that carried a `promptChars` value. */
@@ -850,6 +858,8 @@ export interface StagePromptSize {
   /** Samples where a context budget elided anything — "the budget is biting". */
   readonly elidedSamples: number
   readonly elidedChars: number
+  /** Per-focus breakdown; present only when this stage ran focused (lens/axis) passes. */
+  readonly focuses?: readonly PromptFocusSize[]
 }
 
 export interface PromptSize {
@@ -861,6 +871,30 @@ export interface PromptSize {
   readonly runsCovered: number
   readonly samples: number
   readonly stages: readonly StagePromptSize[]
+}
+
+/**
+ * Fan-out cost of one check stage that ran focused (lens/axis) passes. One
+ * "arming" is a single firing of the stage — the sidecar samples sharing a run
+ * entry, stage, and iteration — and its passes each pay the full composed
+ * prompt, so the arming's context bill is the SUM of its passes' sizes.
+ */
+export interface StageFanout {
+  readonly stage: string
+  /** Stage firings that ran at least one focused pass. */
+  readonly armings: number
+  /** Distinct focuses per arming — retries of one focus do not inflate this. */
+  readonly meanPasses: number
+  readonly maxPasses: number
+  /**
+   * Mean per-arming SUM of `promptChars` (retries included — they were sent).
+   * Null when no arming carried prompt sizes.
+   */
+  readonly meanArmingPromptChars: number | null
+}
+
+export interface FanoutStats {
+  readonly stages: readonly StageFanout[]
 }
 
 /** Cost/latency roll-up for one stage × model pairing, sidecar samples only. */
@@ -943,6 +977,8 @@ export interface MetricsResponse {
   readonly cache: CacheHit
   /** Composed-prompt size per stage — the signal a context budget is (or isn't) needed. */
   readonly prompt: PromptSize
+  /** Fan-out multiplier of focused (lens/axis) check stages — what a review arming really costs. */
+  readonly fanout: FanoutStats
   /** Which model ran which stage, at what cost and retry burn — sidecar samples only. */
   readonly models: ModelStats
   /** Flakiest-tool signal: per-tool call/error totals across all sidecars, worst first. */
