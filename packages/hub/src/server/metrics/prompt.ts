@@ -1,4 +1,4 @@
-import type { PromptSize, StagePromptSize } from "../../shared/api.js"
+import type { PromptFocusSize, PromptSize, StagePromptSize } from "../../shared/api.js"
 import type { RunMetricsInput } from "./aggregate.js"
 import { stageLabel } from "./stage-label.js"
 
@@ -15,12 +15,17 @@ import { stageLabel } from "./stage-label.js"
  * iterations (each stage's transcript threads into the next), so growth here is
  * the signal that a context budget is needed — and `elidedSamples` is how you
  * tell "the budget is biting" from "the prompt is small".
+ *
+ * Samples carrying a `lens` label (a focused lens/axis pass) additionally bucket
+ * into a per-focus breakdown, so a fanned-out REVIEW shows what each pass paid
+ * rather than blending five passes into one mean.
  */
 
 interface Sums {
   chars: number[]
   elidedSamples: number
   elidedChars: number
+  byFocus: Map<string, number[]>
 }
 
 const mean = (xs: readonly number[]): number => (xs.length === 0 ? 0 : xs.reduce((sum, x) => sum + x, 0) / xs.length)
@@ -30,6 +35,17 @@ const median = (xs: readonly number[]): number => {
   const sorted = [...xs].sort((a, b) => a - b)
   const mid = Math.floor(sorted.length / 2)
   return sorted.length % 2 === 1 ? (sorted[mid] as number) : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2
+}
+
+// reduce, not Math.max(...xs): a spread call-stacks on huge arrays, and
+// reduce stays 0 (not -Infinity) if the bucket is ever empty.
+const maxOf = (xs: readonly number[]): number => xs.reduce((m, c) => (c > m ? c : m), 0)
+
+const focusRows = (byFocus: ReadonlyMap<string, readonly number[]>): PromptFocusSize[] | undefined => {
+  if (byFocus.size === 0) return undefined
+  return [...byFocus.entries()]
+    .map(([focus, chars]) => ({ focus, samples: chars.length, meanChars: mean(chars), maxChars: maxOf(chars) }))
+    .sort((a, b) => b.maxChars - a.maxChars)
 }
 
 export const promptSize = (inputs: readonly RunMetricsInput[]): PromptSize => {
@@ -46,12 +62,15 @@ export const promptSize = (inputs: readonly RunMetricsInput[]): PromptSize => {
         observedHere = true
         samples++
         const label = stageLabel(run.kind, sample.stage)
-        const s = byStage.get(label) ?? { chars: [], elidedSamples: 0, elidedChars: 0 }
+        const s = byStage.get(label) ?? { chars: [], elidedSamples: 0, elidedChars: 0, byFocus: new Map() }
         const elided = sample.promptElided ?? 0
+        const byFocus = new Map(s.byFocus)
+        if (sample.lens !== undefined) byFocus.set(sample.lens, [...(byFocus.get(sample.lens) ?? []), sample.promptChars])
         byStage.set(label, {
           chars: [...s.chars, sample.promptChars],
           elidedSamples: s.elidedSamples + (elided > 0 ? 1 : 0),
           elidedChars: s.elidedChars + elided,
+          byFocus,
         })
       }
     }
@@ -59,17 +78,19 @@ export const promptSize = (inputs: readonly RunMetricsInput[]): PromptSize => {
   }
 
   const stages: StagePromptSize[] = [...byStage.entries()]
-    .map(([stage, s]) => ({
-      stage,
-      samples: s.chars.length,
-      meanChars: mean(s.chars),
-      medianChars: median(s.chars),
-      // reduce, not Math.max(...xs): a spread call-stacks on huge arrays, and
-      // reduce stays 0 (not -Infinity) if the bucket is ever empty.
-      maxChars: s.chars.reduce((m, c) => (c > m ? c : m), 0),
-      elidedSamples: s.elidedSamples,
-      elidedChars: s.elidedChars,
-    }))
+    .map(([stage, s]) => {
+      const focuses = focusRows(s.byFocus)
+      return {
+        stage,
+        samples: s.chars.length,
+        meanChars: mean(s.chars),
+        medianChars: median(s.chars),
+        maxChars: maxOf(s.chars),
+        elidedSamples: s.elidedSamples,
+        elidedChars: s.elidedChars,
+        ...(focuses ? { focuses } : {}),
+      }
+    })
     .sort((a, b) => b.maxChars - a.maxChars)
 
   return { runsCovered, samples, stages }

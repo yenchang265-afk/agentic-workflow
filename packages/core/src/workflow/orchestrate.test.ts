@@ -46,6 +46,14 @@ test("taskGoal joins title and body; taskRef carries id/path/acceptance", () => 
   assert.deepEqual(taskRef(t, t.path), { id: "my-task", path: "/repo/docs/tasks/queued/my-task.md", acceptance: t.acceptance })
 })
 
+test("taskGoal keeps the FULL body — plan section and audit notes included", () => {
+  // The persistence pin: `state.goal` (and every snapshot recover reads) stays
+  // lossless. Deduplication happens at render, in `promptContextWithStats`.
+  const body = `Context.\n\n${PLAN_HEADING}\n\n1. Step.\n\n> CLAIMED — loop starting [2026-07-05T13:16:25.138Z]`
+  const t = task(body)
+  assert.equal(taskGoal(t), `Do the thing\n\n${body}`)
+})
+
 test("buildEntryState enters at build with the persisted plan; planEntryState at plan", () => {
   const planned = task(`${PLAN_HEADING}\n\n1. Step.`)
   const build = buildEntryState(planned)

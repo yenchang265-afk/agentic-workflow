@@ -5,7 +5,7 @@ import { promptSize } from "./prompt.js"
 import { runInput } from "./fixtures.js"
 
 const sidecar = (
-  samples: readonly { stage: string; promptChars?: number; promptElided?: number; tokens?: unknown }[],
+  samples: readonly { stage: string; promptChars?: number; promptElided?: number; lens?: string; tokens?: unknown }[],
   host: "opencode" | "claude" = "opencode",
 ): RunMetrics =>
   ({
@@ -54,6 +54,22 @@ test("promptSize separates 'the budget is biting' from 'the prompt is small'", (
   const verify = result.stages.find((s) => s.stage === "verify")
   assert.equal(verify?.elidedSamples, 0)
   assert.equal(verify?.elidedChars, 0)
+})
+
+test("promptSize breaks a fanned-out stage down per focus, and leaves lens-less stages alone", () => {
+  const result = promptSize([
+    runInput("a", "", sidecar([
+      { stage: "review", promptChars: 10_000, lens: "correctness" },
+      { stage: "review", promptChars: 14_000, lens: "security" },
+      { stage: "build", promptChars: 30_000 },
+    ])),
+  ])
+  const review = result.stages.find((s) => s.stage === "review")
+  assert.equal(review?.focuses?.length, 2)
+  // Sorted by max, so the heaviest focus leads.
+  assert.deepEqual(review?.focuses?.[0], { focus: "security", samples: 1, meanChars: 14_000, maxChars: 14_000 })
+  const build = result.stages.find((s) => s.stage === "build")
+  assert.equal(build?.focuses, undefined, "a single-pass stage carries no focus breakdown")
 })
 
 test("promptSize is empty when no sample carries promptChars — pre-upgrade sidecars", () => {

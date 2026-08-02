@@ -40,6 +40,11 @@ test("aggregateMetrics reports unknown outcome words rather than dropping them",
   assert.deepEqual(m.outcomes, { abandoned: 1 })
 })
 
+test("aggregateMetrics carries the fan-out roll-up", () => {
+  const m = aggregateMetrics([runInput("plain", summary("done", [row(1, "build", 1, "—", "5s")]))], [])
+  assert.deepEqual(m.fanout, { stages: [] })
+})
+
 // --- iteration burn ---------------------------------------------------------
 
 test("burn measures only passes whose footer recorded a cap", () => {
