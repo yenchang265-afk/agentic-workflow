@@ -326,6 +326,8 @@ export interface WorkflowKindConfig {
   readonly stageChecks?: Readonly<Record<string, readonly CheckDef[]>>
   /** Changed-diff-line ceiling a reviewer-role kind declines above; unset ⇒ `DEFAULT_MAX_DIFF_LINES`. */
   readonly maxDiffLines?: number
+  /** Whether the kind's plan-writing stage is prompted to include mermaid diagrams when the change shape warrants; wins over the manifest stage's `planVisualization`. */
+  readonly planVisualization?: boolean
   /** Kind-specific knobs (e.g. the PR sitter's `query`) — validated by the kind. */
   readonly [key: string]: unknown
 }

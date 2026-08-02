@@ -9,7 +9,7 @@ import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, prom
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { planContractBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -308,6 +308,32 @@ test("composePrompt appends the plan contract to the flagged PLAN stage only", (
   assert.match(plan, /### Verification/)
   // BUILD is a work stage too, but does not opt in — no contract, no drift.
   assert.doesNotMatch(composePrompt(eng, { ...resumeAtBuild("g", task, "P"), stage: "build" }, "build"), /PLAN CONTRACT/)
+})
+
+test("composePrompt appends the visualization block only when config opts the kind in", () => {
+  const state = startAtPlan("add foo", task)
+  // The shipped manifest leaves the flag off, so the default prompt must be
+  // byte-identical to what every existing loop renders today (the oracle test
+  // above already pins this; here the assertion is the block's absence).
+  assert.doesNotMatch(composePrompt(eng, state, "plan", config), /PLAN VISUALIZATION/)
+  const visual: Config = { ...config, workflows: { engineering: { planVisualization: true } } }
+  const plan = composePrompt(eng, state, "plan", visual)
+  assert.ok(
+    plan.endsWith(`${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}`),
+    "plan's tail is fence → contract → visualization, in order",
+  )
+  assert.match(plan, /```mermaid/)
+  // BUILD is a work stage with no planContract — the kind-level knob must stay
+  // inert there, or a diagram demand lands on a stage that writes no plan.
+  assert.doesNotMatch(composePrompt(eng, { ...resumeAtBuild("g", task, "P"), stage: "build" }, "build", visual), /PLAN VISUALIZATION/)
+})
+
+test("composeStagePrompt defaults its visualization from the stage, so the hub preview needs no config", () => {
+  const def = stageDef(eng.manifest, "plan")
+  const ctx = promptContext(startAtPlan("add foo", task))
+  const tpl = eng.prompts["plan"] ?? ""
+  assert.doesNotMatch(composeStagePrompt(def, tpl, ctx), /PLAN VISUALIZATION/)
+  assert.match(composeStagePrompt({ ...def, planVisualization: true }, tpl, ctx), /PLAN VISUALIZATION/)
 })
 
 test("composePrompt carries the five-axis payload contract on review, and none on verify", () => {

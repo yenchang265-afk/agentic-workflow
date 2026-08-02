@@ -216,6 +216,20 @@ const BaseConfigSchema = z.object({
          */
         maxDiffLines: z.number().int().positive().optional(),
         /**
+         * Whether the kind's plan-writing stage is prompted to include mermaid
+         * diagram(s) in the plan when the change's shape warrants it
+         * (`planVisualizationBlock`) — agent-judged, never gate-enforced. Wins
+         * over the manifest stage's `planVisualization`, in both directions;
+         * this is what makes the opt-in reachable at all, since the built-in
+         * kinds' manifests ship inside the core package (same rationale as
+         * `stageFanout`). Kind-level rather than stage-keyed because at most
+         * one stage per kind carries `planContract`, which the block requires.
+         *
+         * Honored from the repo layer, like `stageContext`: the value space is
+         * one boolean — no shell, no path, no fs reach.
+         */
+        planVisualization: z.boolean().optional(),
+        /**
          * Replaces the bundled `osv-scanner --format json -L <target>` call for
          * this kind's JVM (maven/gradle) scans with your own CLI. `{{target}}`
          * (the lockfile path) and `{{ecosystem}}` are substituted; a command
@@ -448,6 +462,17 @@ export const triggerFor = (config: Config, kind: string): WorkflowTrigger =>
  */
 export const modelFor = (config: Config, kind: string, def: StageDef): string | undefined =>
   config.workflows[kind]?.stageModels?.[def.name] ?? def.model
+
+/**
+ * Whether a stage's prompt carries the plan-visualization block: config
+ * `workflows.<kind>.planVisualization`, else the manifest stage's
+ * `planVisualization`. Only meaningful on a stage that sets `planContract`
+ * (the schema refuses the manifest flag without it, and callers gate the
+ * config override on it too — the block's diagram lives inside the contract's
+ * plan document). Pure.
+ */
+export const planVisualizationFor = (config: Config, kind: string, def: StageDef): boolean =>
+  def.planContract && (config.workflows[kind]?.planVisualization ?? def.planVisualization)
 
 /**
  * The `stageModels` keys that name no stage of `kind` — a typo'd or

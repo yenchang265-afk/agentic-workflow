@@ -156,6 +156,20 @@ export const StageDefSchema = z.object({
    */
   planContract: z.boolean().default(false),
   /**
+   * Whether this `work` stage's prompt also carries the plan-visualization
+   * block (`planVisualizationBlock`): an agent-judged instruction to include
+   * mermaid diagram(s) inside the written plan when the change's shape —
+   * state/lifecycle transitions, cross-package flow, concurrency, data-shape
+   * changes — is what the human plan gate has to judge. Never enforced by any
+   * gate: a diagram forced onto a mechanical plan is review noise, so the
+   * prompt states the heuristic and the author decides.
+   *
+   * Requires `planContract` (the diagram lives inside the plan document the
+   * contract defines). Default `false` leaves every existing kind
+   * byte-identical; config `workflows.<kind>.planVisualization` wins over this.
+   */
+  planVisualization: z.boolean().default(false),
+  /**
    * How this `check` stage's single pass expands into several focused passes.
    *
    * `"axis"` runs the stage once per entry in `requiredAxes`, SEQUENTIALLY, each
@@ -424,6 +438,18 @@ export const WorkflowManifestSchema = z
         // The contract governs a WRITTEN plan; a check stage writes none, so the
         // flag would append a demand nothing can satisfy.
         ctx.addIssue({ code: "custom", message: `check stage "${stage.name}" cannot set planContract (it writes no plan)` })
+      }
+      if (stage.kind === "check" && stage.planVisualization) {
+        ctx.addIssue({ code: "custom", message: `check stage "${stage.name}" cannot set planVisualization (it writes no plan)` })
+      }
+      if (stage.planVisualization && !stage.planContract) {
+        // The diagram lives inside the `## Implementation Plan` document the
+        // contract defines; without the contract there is no plan structure for
+        // the visualization instruction to attach to.
+        ctx.addIssue({
+          code: "custom",
+          message: `stage "${stage.name}" sets planVisualization without planContract (the diagram lives inside the contract's plan document)`,
+        })
       }
       if (stage.fanout && stage.kind !== "check") {
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set fanout (there is no verdict to fan out)` })

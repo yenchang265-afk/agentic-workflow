@@ -124,6 +124,16 @@ exit is the park into `plan-review/` for your gate. A PLAN run that crashes
 leaves a stale claim marker in `queued/.claims/`; the next claim walk releases
 it once it reads stale, and `doctor fix` releases it on demand.
 
+With `workflows.engineering.planVisualization: true`, PLAN's prompt also
+carries an opt-in **visualization block**: when the change's shape is what the
+plan gate has to judge — state/lifecycle transitions, flow across two or more
+packages, concurrency or locking, data-shape changes — the plan should include
+```mermaid`` diagram(s) inside `## Implementation Plan`. It is agent-judged,
+never enforced (small or mechanical plans are told to skip it, and the park
+gate does not check for a diagram); the hub's plan-review view renders the
+fence as an actual diagram in a sandboxed iframe, still commentable like any
+other block. See `docs/configuration.md`.
+
 Which queued task gets planned first is normally its priority number, but a
 **plan request** overrides that for one task: the admin hub's Plan button writes
 a marker in `queued/.requests/<id>` meaning "plan this one next". It is an
