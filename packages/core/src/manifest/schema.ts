@@ -143,6 +143,19 @@ export const StageDefSchema = z.object({
    */
   requireEvidence: z.boolean().default(false),
   /**
+   * Whether this `work` stage's prompt carries the plan-structure contract
+   * (`planContractBlock`): ordered steps naming file paths, a `### Verification`
+   * subsection mapping each acceptance criterion to its proof, and an explicit
+   * `### Out of Scope`. On the kinds that opt in, `runPark` also refuses to park
+   * a plan with no Verification subsection — the one clause of the contract a
+   * deterministic gate can check without regexing prose quality.
+   *
+   * Opt-in per stage (the pattern `requireEvidence` set): only a stage that
+   * writes a plan for a human gate wants it, and default `false` leaves every
+   * existing kind byte-identical.
+   */
+  planContract: z.boolean().default(false),
+  /**
    * How this `check` stage's single pass expands into several focused passes.
    *
    * `"axis"` runs the stage once per entry in `requiredAxes`, SEQUENTIALLY, each
@@ -406,6 +419,11 @@ export const WorkflowManifestSchema = z
       if (stage.kind === "work" && stage.requireEvidence) {
         // Only a verdict carries evidence, and only check stages record one.
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requireEvidence (no verdict to carry it)` })
+      }
+      if (stage.kind === "check" && stage.planContract) {
+        // The contract governs a WRITTEN plan; a check stage writes none, so the
+        // flag would append a demand nothing can satisfy.
+        ctx.addIssue({ code: "custom", message: `check stage "${stage.name}" cannot set planContract (it writes no plan)` })
       }
       if (stage.fanout && stage.kind !== "check") {
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set fanout (there is no verdict to fan out)` })

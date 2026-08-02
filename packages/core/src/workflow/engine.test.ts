@@ -9,7 +9,7 @@ import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, prom
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { planContractBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -153,7 +153,7 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
   const def = stageDef(eng.manifest, stage)
   return def.kind === "check"
     ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence)}`
-    : `${base}\n\n${workScopeBlock(stage)}`
+    : `${base}\n\n${workScopeBlock(stage)}${def.planContract ? `\n\n${planContractBlock(stage)}` : ""}`
 }
 
 const oracleFire = (state: WorkflowState, stage: string): { state: WorkflowState; action: Action } => ({
@@ -301,6 +301,15 @@ test("composePrompt appends the verdict contract to check stages only", () => {
   }
 })
 
+test("composePrompt appends the plan contract to the flagged PLAN stage only", () => {
+  const state = startAtPlan("add foo", task)
+  const plan = composePrompt(eng, state, "plan")
+  assert.ok(plan.endsWith(planContractBlock("plan")), "plan carries the contract after the scope fence")
+  assert.match(plan, /### Verification/)
+  // BUILD is a work stage too, but does not opt in — no contract, no drift.
+  assert.doesNotMatch(composePrompt(eng, { ...resumeAtBuild("g", task, "P"), stage: "build" }, "build"), /PLAN CONTRACT/)
+})
+
 test("composePrompt carries the five-axis payload contract on review, and none on verify", () => {
   const state = resumeAtBuild("add foo", task, "PLAN BODY")
   const review = composePrompt(eng, { ...state, stage: "review" }, "review")
@@ -374,7 +383,11 @@ test("composePrompt fences work stages to their own stage", () => {
   const state = resumeAtBuild("add foo", task, "PLAN BODY")
   for (const stage of ["plan", "build"]) {
     const prompt = composePrompt(eng, { ...state, stage }, stage)
-    assert.ok(prompt.endsWith(workScopeBlock(stage)), `${stage} carries the scope fence`)
+    // The flagged PLAN stage appends its plan contract AFTER the fence; the
+    // fence itself must still be present and in order for both.
+    assert.match(prompt, /STAGE SCOPE/, `${stage} carries the scope fence`)
+    const tail = stage === "plan" ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}` : workScopeBlock(stage)
+    assert.ok(prompt.endsWith(tail), `${stage} ends with its contract tail`)
   }
   // A check stage's own contract is the verdict one — never both.
   for (const stage of ["verify", "review"]) {

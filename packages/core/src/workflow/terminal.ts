@@ -1,7 +1,8 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, moveTask, planHeadingCount, releaseClaim } from "../task/store.js"
+import { appendNote, auditNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim } from "../task/store.js"
+import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
@@ -144,8 +145,25 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   // Validate the plan actually landed on disk before parking — a PLAN stage that
   // wrote nothing must not put a planless task in front of the human gate.
   const fresh = await findByIdIn($, directory, config.tasksDir, "queued", id)
-  if (!fresh || !hasPlan(fresh)) {
-    const why = fresh ? "the PLAN stage wrote no ## Implementation Plan" : "the task left queued/ mid-plan"
+  // `extractPlan` is the same predicate the plan-approval gate and `isClaimable`
+  // run (`hasPlan` is defined AS its truthiness) — the contract check runs on its
+  // output, never on the raw body, so the two gates cannot disagree about what a
+  // plan is. The Verification-heading veto reuses THIS failure arm rather than
+  // adding one: the arm already carries the delicate parts (note only when
+  // `fresh` exists, the UNCONDITIONAL claim release below, metrics), and every
+  // new exit path from a drive must release the marker.
+  const plan = fresh ? extractPlan(fresh) : undefined
+  // Tolerant lookup, not `stageDef` — that throws on an unknown stage, and a
+  // park landing here must always reach the claim release below, never crash
+  // out of runTerminal on a manifest/state mismatch. Missing def ⇒ no contract.
+  const wantsContract = ctx.manifest.manifest.stages?.find((s) => s.name === state.stage)?.planContract === true
+  const missingVerification = Boolean(plan) && wantsContract && !hasVerificationSection(plan ?? "")
+  if (!fresh || !plan || missingVerification) {
+    const why = !fresh
+      ? "the task left queued/ mid-plan"
+      : !plan
+        ? "the PLAN stage wrote no ## Implementation Plan"
+        : "the plan has no ### Verification subsection — the plan contract requires one mapping each acceptance criterion to its proof"
     await log("warn", `loop(${id}): not parking — ${why}`)
     // The note only makes sense on a file that is still there — appending to a
     // stale path would `>>`-recreate a moved task as a frontmatterless ghost.

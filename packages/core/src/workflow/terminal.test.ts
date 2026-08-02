@@ -154,6 +154,41 @@ test("park with the task gone from queued/ still releases the claim-time marker,
   assert.equal(metrics[0]?.outcome, "error")
 })
 
+// A manifest whose plan stage opts into the plan contract (only the fields
+// runPark reads — the tolerant stage lookup must not require a full manifest).
+const contractManifest = (stage: string): LoadedManifest =>
+  ({ manifest: { hooks: { validateBeforeTransition: {} }, stages: [{ name: stage, planContract: true }] } }) as unknown as LoadedManifest
+
+test("park refuses a contract-flagged plan with no ### Verification subsection, claim released, task stays queued", async () => {
+  const { ctx, fs, log, metrics } = makeCtx({ "queued/t.md": body(true) }, planState(), { manifest: contractManifest("plan") })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.match(report.kind === "error" ? report.message : "", /no ### Verification subsection/)
+  assert.ok("/repo/docs/tasks/queued/t.md" in fs, "the task stays in queued/")
+  assert.ok(!log.some((c) => c.startsWith("mv ") && c.includes("plan-review")), "no move to plan-review")
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes(".claims/t")),
+    "the refusal releases the claim — every way a drive ends must",
+  )
+  assert.equal(metrics[0]?.outcome, "error")
+})
+
+test("park accepts a contract-flagged plan whose Verification heading varies in case and suffix", async () => {
+  const planned = serializeTask({ title: "Do it", body: `${PLAN_HEADING}\n\n1. step\n\n### verification & testing\n\n- npm test` })
+  const { ctx, log } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park", "tolerant heading match — strictness here livelocks the queue")
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("plan-review")))
+})
+
+test("park without the contract flag parks a Verification-less plan exactly as before", async () => {
+  // The default fake manifest declares no stages at all — the tolerant lookup
+  // must read that as "no contract", not throw.
+  const { ctx } = makeCtx({ "queued/t.md": body(true) }, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+})
+
 test("park vetoed by a registered validateBeforeTransition hook errors, no move", async () => {
   registerValidateHook("test.veto", () => "the tree is dirty")
   const { ctx, log, metrics } = makeCtx({ "queued/t.md": body(true) }, planState(), { validate: "test.veto" })

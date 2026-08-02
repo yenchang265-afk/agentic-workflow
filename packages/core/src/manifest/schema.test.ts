@@ -211,6 +211,20 @@ test("rejects requireEvidence on a work stage — only a verdict can carry evide
   assert.throws(() => parseManifest(raw), /work stage "work" cannot set requireEvidence/)
 })
 
+test("planContract round-trips through a JSON save and defaults to false", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], planContract: true }, base.stages[1]] }
+  const parsed = parseManifest(raw)
+  assert.equal(parsed.stages[0]?.planContract, true)
+  assert.equal(parseManifest(base).stages[0]?.planContract, false)
+  // Survive the hub's parse→re-serialize save cycle, same as requireEvidence.
+  assert.equal(parseManifest(JSON.parse(JSON.stringify(parsed))).stages[0]?.planContract, true)
+})
+
+test("rejects planContract on a check stage — it writes no plan", () => {
+  const raw = { ...base, stages: [base.stages[0], { ...base.stages[1], planContract: true }] }
+  assert.throws(() => parseManifest(raw), /check stage "check" cannot set planContract/)
+})
+
 test("a check stage's fanout round-trips through a JSON save and defaults to undefined", () => {
   const raw = {
     ...base,

@@ -33,6 +33,7 @@
       "command": "plan-task",
       "agent": "workflow-plan-author",
       "prompt": "stages/plan.md",
+      "planContract": true,
       "isolation": "none"
     },
     {

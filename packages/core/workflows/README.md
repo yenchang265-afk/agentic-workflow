@@ -57,7 +57,8 @@ fails loud at host startup). A minimal two-stage kind:
       "prompt": "stages/work.md",       // template, relative to this folder
       "isolation": "worktree",          // "worktree" | "none" (main tree, no snapshot)
       "timeoutMinutes": 90,             // optional wall-clock cap override; defaults to config.stageTimeoutMinutes
-      "model": "anthropic/claude-sonnet-4-5"  // optional host-specific model; config workflows.<kind>.stageModels.<name> wins, unset = host default
+      "model": "anthropic/claude-sonnet-4-5",  // optional host-specific model; config workflows.<kind>.stageModels.<name> wins, unset = host default
+      "planContract": true              // optional; work stages only — append the plan-structure contract, and refuse to park a plan with no ### Verification subsection
     },
     {
       "name": "check",
@@ -150,6 +151,18 @@ falsifiable, not true. A host that does not record tool calls falls back to the
 declared-evidence rule alone — the gate weakens, it never silently vanishes.
 `requireEvidence` on a `work` stage is a manifest error (there is no verdict to
 carry it).
+
+A **work** stage may declare `planContract: true` (engineering's `plan` does).
+Its composed prompt then carries the plan-structure contract after the scope
+fence — numbered steps naming file paths, a `### Verification` subsection
+mapping each acceptance criterion to its proof, and an explicit
+`### Out of Scope` — and the park validator refuses to park a plan with no
+Verification subsection (the task stays queued, the claim is released). Only
+that one heading is enforced deterministically, with a tolerant match
+(case-insensitive, `### Verification & Testing` passes): the other clauses are
+prose-quality demands held by the contract text and the human plan gate, where
+a regex would be all false-refusal. `planContract` on a `check` stage is a
+manifest error (it writes no plan).
 
 A check stage may also declare `checks` — `{ name, command, cwd? }` entries the
 **driver** runs in the stage's work tree, sequentially, before the stage fires
