@@ -1,4 +1,4 @@
-import type { LoadedManifest, StageDef } from "../manifest/schema.js"
+import type { LoadedManifest, StageDef, WorkflowManifest } from "../manifest/schema.js"
 import { stageDef } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
@@ -126,6 +126,15 @@ const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, reco
 }
 
 /**
+ * The iteration cap in force for a run of this manifest — the ONE resolution
+ * both the stop decision in `advance` and the prompt's iteration-budget section
+ * use, so the number an agent is told can never drift from the number the loop
+ * stops at. Pure.
+ */
+export const iterationCap = (manifest: WorkflowManifest, config?: Config): number | undefined =>
+  manifest.maxIterations ?? config?.maxIterations
+
+/**
  * The template context a stage prompt renders against, plus how many characters
  * the stage's context budget elided. Everything derivable from the state is
  * precomputed here (diff command, worktree pinning paragraph) so ordinary
@@ -138,10 +147,15 @@ const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, reco
  * strip is render-side only — `state.goal` and the snapshots keep the full
  * text — and it may additionally be clamped by a `goal` budget key
  * (`stageContext.<stage>.goal`), the one budget key that names no artifact.
+ *
+ * `cap` is the resolved iteration cap (`iterationCap`); it feeds the
+ * `iterations` budget section. Omitted (a config-less caller, e.g. the hub's
+ * preview with no manifest cap) ⇒ the section is undefined and drops.
  */
 export const promptContextWithStats = (
   state: WorkflowState,
   budgets: Readonly<Record<string, number>> = {},
+  cap?: number,
 ): { ctx: TemplateContext; elided: number } => {
   const accept = state.task?.acceptance ?? []
   const wt = state.git?.worktree
@@ -160,6 +174,19 @@ export const promptContextWithStats = (
   const ctx: TemplateContext = {
     goal: goal.text,
     iteration: String(state.iteration),
+    // The iteration budget, human-numbered (iteration 0 is "1"). Gated on a
+    // counted re-fire having happened (`iteration > 0`): the first fire of every
+    // stage stays byte-identical to the pre-budget prompt, and the message lands
+    // where it matters — a re-build after a FAIL. `final` marks the iteration
+    // whose failure will trip the cap, using exactly `advance`'s stop predicate.
+    iterations:
+      cap !== undefined && state.iteration > 0
+        ? {
+            human: String(state.iteration + 1),
+            cap: String(cap),
+            ...(state.iteration + 1 >= cap ? { final: true } : {}),
+          }
+        : undefined,
     // Code-platform switches for prompt templates ({{#platform.ado}}…); absent platform ⇒ github.
     platform: {
       github: state.platform !== "ado",
@@ -206,7 +233,8 @@ export const promptContextWithStats = (
 export const promptContext = (
   state: WorkflowState,
   budgets: Readonly<Record<string, number>> = {},
-): TemplateContext => promptContextWithStats(state, budgets).ctx
+  cap?: number,
+): TemplateContext => promptContextWithStats(state, budgets, cap).ctx
 
 /**
  * Render one stage's prompt from its template source and context, appending the
@@ -268,7 +296,7 @@ export const composePromptWithStats = (
   const tpl = loaded.prompts[def.name]
   if (tpl === undefined) throw new Error(`workflow kind "${loaded.manifest.kind}" has no prompt loaded for stage "${def.name}"`)
   const budgets = config ? contextFor(config, loaded.manifest.kind, def) : {}
-  const { ctx: base, elided } = promptContextWithStats(state, budgets)
+  const { ctx: base, elided } = promptContextWithStats(state, budgets, iterationCap(loaded.manifest, config))
   const hookRef = loaded.manifest.hooks.compose[def.name]
   const ctx = hookRef ? resolveComposeHook(hookRef)(base, state) : base
   // The EFFECTIVE mode, not the manifest's: a configured `reviewLenses` beats a
@@ -359,7 +387,7 @@ export const advance = (
   switch (effect.kind) {
     case "fire": {
       if (effect.countIteration) {
-        const cap = manifest.maxIterations ?? config.maxIterations
+        const cap = iterationCap(manifest, config) ?? config.maxIterations
         if (s.iteration + 1 >= cap) {
           const message = (effect.capMessage ?? `✗ Loop stopped after {maxIterations} iterations.`).replaceAll(
             "{maxIterations}",

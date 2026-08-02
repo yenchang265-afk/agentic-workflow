@@ -202,7 +202,12 @@ wholesale — see `docs/configuration.md`.
 - `{{#path}}…{{/path}}` renders its span only when the value is truthy
   (non-empty string). Blocks nest.
 
-Context available: `goal`, `iteration`, `task.id`/`task.path`,
+Context available: `goal`, `iteration`, `iterations.human`/`iterations.cap`/
+`iterations.final` (the iteration budget, human-numbered against the resolved
+`maxIterations`; defined only after a counted re-fire and when a cap is
+resolvable, so a first fire and a config-less compose stay unchanged —
+`iterations.final` is truthy exactly on the iteration whose check failure
+trips the cap), `task.id`/`task.path`,
 `acceptance.bullets` (pre-rendered `- …` list), `artifacts.<stage>` (each
 completed stage's captured output; the approved plan under `artifacts.plan`),
 `git.base`/`git.branch`/`git.worktree`/`git.diffCmd` (precomputed review diff

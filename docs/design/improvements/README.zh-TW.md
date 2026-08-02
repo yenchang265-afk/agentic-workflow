@@ -2,10 +2,10 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–10）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–11）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
-backlog。計畫 10 是最新的一份，已於 2026-08-02 落地。
+backlog。計畫 11 是最新的一份，已於 2026-08-02 落地。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -25,6 +25,7 @@ backlog。計畫 10 是最新的一份，已於 2026-08-02 落地。
 | 08 | [決定性檢查指令](./08-deterministic-gate-commands.zh-TW.md) | 已宣告的測試／型別檢查／lint 指令改由驅動程式端執行；其結束碼成為檢查類階段的既定事實並約束其裁定，取代原本由代理人自行回報的「測試是綠的」 | `packages/core/src/workflow/checks.ts`、`manifest/schema.ts` 中 `StageDefSchema` 的 `checks`、`config.ts` 中的 `stageChecks`／`checksFor`／`unknownStageCheckKeys`（以及 `SHELL_BEARING_WORKFLOW_KEYS`）、`workflow/engine.ts` 中的 `withCheckResults`、兩個 host 的 fire 邊界執行與定案時的下修；`checks.test.ts` |
 | 09 | [階段提示詞的上下文預算](./09-context-management.zh-TW.md) | 提示詞不再隨疊代單調成長：計畫產出物不再累積稽核註記（也不會在 replan 後餵回舊計畫）、每個階段每份產出物的字元上限會裁剪階段讀到的內容但永不裁剪結構化裁定區塊與階段契約、有界的嘗試紀錄讓弱模型不再重試已失敗的修法，而提示詞大小也在管理面板中依階段可見 | `packages/core/src/workflow/budget.ts`、`config.ts` 中的 `contextFor`/`unknownStageContextKeys`、`task/store.ts` 中的 `extractPlan`、`workflow/engine.ts` 中的接縫與紀錄、`packages/hub/src/server/metrics/prompt.ts` 中的 `promptSize`；`budget.test.ts` |
 | 10 | [將 replan 理由結構化地傳入 PLAN](./10-replan-reason-threading.zh-TW.md) | 計畫閘門的駁回理由以結構化提示詞區段送達下一次 PLAN（從稽核註記解析回來，新計畫落地後自動退役），取代「翻稽核註記」；多行理由壓成單行稽核形狀 | `packages/core/src/task/store.ts` 的 `PLAN_REJECTED_MARKER`/`extractReplanReason`、`workflow/gate.ts` 的 `oneLineReason`、`WorkflowState` 的 `replan`、`workflow/orchestrate.ts` 與 `workflow/engine.ts` 的串接、`workflows/engineering/stages/plan.md` 的區段；`store.test.ts`、`gate.test.ts`、`orchestrate.test.ts`、`engine.test.ts` |
+| 11 | [在階段提示詞中揭示疊代預算](./11-iteration-budget-prompts.zh-TW.md) | 重建的 BUILD 被告知「iteration N of M」，最終疊代並被警告此後的 check 失敗會停止迴圈、交回人類重新規劃；VERIFY 的最後一趟被告知它的 FAIL 文字就是 replan 閘門讀到的內容。`iterationCap` 是停止判斷與提示詞共用的唯一解析點，兩者永不漂移 | `packages/core/src/workflow/engine.ts` 的 `iterationCap` 與 `iterations` context 鍵、`workflows/engineering/stages/build.md`/`verify.md` 的區段；`engine.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

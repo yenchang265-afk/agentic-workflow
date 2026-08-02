@@ -391,6 +391,11 @@ test("the scope fence reaches every kind's work stages, not just engineering", (
 
 /** The additive iteration-ledger section — the frozen oracle predates it. */
 const ATTEMPTS_SECTION = /\n\nPrevious attempts on this task[\s\S]*?(?=\n\n|$)/
+// The iteration-budget section (build.md) and its final-iteration warning
+// (verify.md) — additive prompt semantics the frozen oracle predates, stripped
+// the same way the attempts ledger is; their own rendering is pinned by the
+// iteration-budget tests below.
+const ITERATIONS_SECTION = /\n\n(?:Iteration budget: this is iteration |Final iteration \()[\s\S]*?(?=\n\n|$)/
 
 const strip = <T extends object>(o: T): Record<string, unknown> => {
   // Drop the fields the frozen legacy oracle could not express (additive manifest
@@ -400,7 +405,7 @@ const strip = <T extends object>(o: T): Record<string, unknown> => {
   // and the ledger's own rendering is pinned by the attempts tests.
   const { toStatus: _d, retryable: _r, promptElided: _e, ...rest } = o as Record<string, unknown>
   if (typeof rest["arguments"] === "string") {
-    rest["arguments"] = (rest["arguments"] as string).replace(ATTEMPTS_SECTION, "")
+    rest["arguments"] = (rest["arguments"] as string).replace(ATTEMPTS_SECTION, "").replace(ITERATIONS_SECTION, "")
   }
   return rest
 }
@@ -434,6 +439,40 @@ test("advance reproduces the frozen advanceOnIdle exactly (states and actions) a
     assert.deepEqual(state, legacy.state, `${c.label}: state`)
     assert.deepEqual(strip(engine.action), strip(legacy.action), `${c.label}: action`)
   }
+})
+
+// --- iteration budget in prompts (additive; `iterationCap` is advance's own resolution) ---
+
+test("promptContext renders the iteration budget only after a counted re-fire, with `final` on the cap edge", () => {
+  const base = mk("g")
+  // First fire: byte-identical to the pre-budget prompt — no section.
+  assert.equal(promptContext({ ...base, iteration: 0 }, {}, 3)["iterations"], undefined)
+  // No cap resolvable (config-less caller): no section, whatever the iteration.
+  assert.equal(promptContext({ ...base, iteration: 1 }, {})["iterations"], undefined)
+  assert.deepEqual(promptContext({ ...base, iteration: 1 }, {}, 3)["iterations"], { human: "2", cap: "3" })
+  // `final` uses exactly advance's stop predicate: a FAIL at iteration+1 >= cap stops.
+  assert.deepEqual(promptContext({ ...base, iteration: 2 }, {}, 3)["iterations"], { human: "3", cap: "3", final: true })
+})
+
+test("a re-fired BUILD is told its iteration budget; the final re-build is warned", () => {
+  const failed = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "gap", "FAIL")
+  assert.equal(failed.action.kind, "fire")
+  const args = failed.action.kind === "fire" ? failed.action.arguments : ""
+  assert.match(args, /Iteration budget: this is iteration 2 of 3\./)
+  assert.doesNotMatch(args, /FINAL iteration/)
+  const last = advance(eng, { ...mk("g"), stage: "verify", iteration: 1, artifacts: { plan: "P" } }, config, "gap", "FAIL")
+  const lastArgs = last.action.kind === "fire" ? last.action.arguments : ""
+  assert.match(lastArgs, /Iteration budget: this is iteration 3 of 3\. This is the FINAL iteration/)
+})
+
+test("VERIFY carries the final-iteration warning only on the last iteration", () => {
+  const final = composePrompt(eng, { ...mk("g"), stage: "verify", iteration: 2, artifacts: { plan: "P" } }, "verify", config)
+  assert.match(final, /Final iteration \(3 of 3\): a FAIL here ends the run/)
+  const mid = composePrompt(eng, { ...mk("g"), stage: "verify", iteration: 1, artifacts: { plan: "P" } }, "verify", config)
+  assert.doesNotMatch(mid, /Final iteration/)
+  // Config-less compose (the hub preview): no cap for a manifest that declares
+  // none, so the section cannot render a number that might be wrong.
+  assert.doesNotMatch(composePrompt(eng, { ...mk("g"), stage: "verify", iteration: 2 }, "verify"), /Final iteration/)
 })
 
 // --- the manifest's additive semantics (what the legacy fn could not express) ---
