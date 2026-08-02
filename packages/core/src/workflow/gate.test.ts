@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { abandonTask, approveAny, approvePlan, approveTask, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx, type GateResult } from "./gate.js"
+import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -377,6 +377,16 @@ test("replanTask sends a parked plan back to queued", async () => {
   const r = await replanTask(ctx, "t", "missed the cache")
   assert.ok(r.ok && r.data.requeued === true)
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("queued")))
+})
+
+test("oneLineReason flattens a multi-line reason to the single audit-note line shape", () => {
+  // The hub's per-line plan comments arrive pre-flattened; a CLI/MCP reason may
+  // not, and a raw newline detaches the note's closing stamp — unparseable by
+  // `extractReplanReason` from then on.
+  assert.equal(oneLineReason("step 2 is wrong\n  key on size too"), "step 2 is wrong key on size too")
+  assert.equal(oneLineReason("  already flat  "), "already flat")
+  assert.equal(oneLineReason("   "), undefined)
+  assert.equal(oneLineReason(undefined), undefined)
 })
 
 // `replan <id> <reason>` used to detect the leading id with an exact filename match,

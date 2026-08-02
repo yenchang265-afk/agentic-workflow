@@ -157,6 +157,10 @@ export const promptContext = (
     // arguments instead of telling the agent to derive them.
     ado: state.ado ? { project: state.ado.project, repository: state.ado.repository } : undefined,
     task: state.task ? { id: state.task.id, path: state.task.path } : undefined,
+    // The plan gate's rejection reason, threaded from the task file at claim
+    // (`extractReplanReason`). Undefined when no rejection is pending, so the
+    // section drops and a first-plan prompt is unchanged.
+    replan: state.replan ? { reason: state.replan.reason } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: budgetedArtifacts(state, budgets).artifacts,
     checks,

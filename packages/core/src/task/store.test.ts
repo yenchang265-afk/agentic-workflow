@@ -12,6 +12,7 @@ import {
   claimTask,
   releaseClaim,
   extractPlan,
+  extractReplanReason,
   findByIdIn,
   hasPlan,
   isClaimable,
@@ -199,6 +200,57 @@ test("extractPlan keeps a legitimate blockquote inside a plan", () => {
   // No `[…]` stamp ⇒ not an audit note, so a quoted requirement stays in the plan.
   const body = `${PLAN_HEADING}\n\n1. Honor the ticket:\n> the export must stay idempotent\n2. Test it.`
   assert.equal(extractPlan(task("a", 0, body)), "1. Honor the ticket:\n> the export must stay idempotent\n2. Test it.")
+})
+
+// The exact note shape `replanTask` writes: marker, fixed prose, reason, stamp.
+const rejectionNote = (reason?: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string =>
+  `\n> Plan rejected — sent back to queued for re-planning${reason ? ` — ${reason}` : ""} [${stamp}]\n`
+
+test("extractReplanReason reads the reason off a pending rejection note", () => {
+  // A reason may itself contain ` — `; only the FIRST fixed-prose prefix splits.
+  const body =
+    `Some description.\n\n${PLAN_HEADING}\n\nOld approach.\n` +
+    `\n> Plan approved [2026-01-01T00:00:00.000Z by dev]\n` +
+    rejectionNote("mtime is not enough on DrvFs — key on size too")
+  assert.equal(extractReplanReason(task("a", 0, body)), "mtime is not enough on DrvFs — key on size too")
+})
+
+test("extractReplanReason returns undefined when the rejection carried no reason", () => {
+  const body = `${PLAN_HEADING}\n\nOld approach.\n` + rejectionNote()
+  assert.equal(extractReplanReason(task("a", 0, body)), undefined)
+})
+
+test("extractReplanReason retires a reason once a newer plan heading follows it", () => {
+  // A re-plan appends its new heading at EOF — after the note — so the
+  // rejection is addressed and must not resurface on the NEXT replan cycle.
+  const body =
+    `${PLAN_HEADING}\n\nStale approach.\n` +
+    rejectionNote("wrong layer") +
+    `\n${PLAN_HEADING}\n\nCorrect approach.\n`
+  assert.equal(extractReplanReason(task("a", 0, body)), undefined)
+})
+
+test("extractReplanReason lets the latest of successive rejections win", () => {
+  const body =
+    `${PLAN_HEADING}\n\nStale approach.\n` +
+    rejectionNote("wrong layer", "2026-01-02T00:00:00.000Z by dev") +
+    `\n${PLAN_HEADING}\n\nSecond approach.\n` +
+    rejectionNote("still wrong — cache must be size-keyed", "2026-01-03T00:00:00.000Z by dev")
+  assert.equal(extractReplanReason(task("a", 0, body)), "still wrong — cache must be size-keyed")
+})
+
+test("extractReplanReason ignores the marker quoted mid-line or without the audit stamp", () => {
+  // Mid-line: prose about the system. Line-anchored but stamp-less: a plan's own
+  // blockquote. Neither is lifecycle state.
+  const midline = `${PLAN_HEADING}\n\nHandle the > Plan rejected — sent back to queued for re-planning — x [note] case.\n`
+  assert.equal(extractReplanReason(task("a", 0, midline)), undefined)
+  const unstamped = `${PLAN_HEADING}\n\n1. Cover this shape:\n> Plan rejected — sent back to queued for re-planning — fake reason\n`
+  assert.equal(extractReplanReason(task("a", 0, unstamped)), undefined)
+})
+
+test("extractReplanReason strips only the closing stamp — brackets inside a reason survive", () => {
+  const body = `${PLAN_HEADING}\n\nOld.\n` + rejectionNote("step [2] is wrong")
+  assert.equal(extractReplanReason(task("a", 0, body)), "step [2] is wrong")
 })
 
 test("extractPlan on an actorless audit note still stops", () => {
