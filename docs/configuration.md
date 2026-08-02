@@ -298,14 +298,20 @@ it. The warnings are advisory: they annotate a save, never block it. See
       "engineering": {
         "stageModels": { "verify": "openrouter/qwen/qwen3-coder" },
         "stageContext": {
-          "build":  { "plan": 24000, "verify": 8000, "review": 8000 },
-          "verify": { "plan": 16000, "build": 8000 },
-          "review": { "plan": 16000, "build": 8000 }
+          "build":  { "goal": 16000, "plan": 24000, "verify": 8000, "review": 8000 },
+          "verify": { "goal": 12000, "plan": 16000, "build": 8000 },
+          "review": { "goal": 12000, "plan": 16000, "build": 8000 }
         }
       }
     }
   }
   ```
+
+  Keys name the artifacts a stage consumes (`plan`, `build`, `verify`,
+  `review`), plus one reserved key: **`goal`** clamps the task goal itself.
+  The goal is already deduplicated at render — the plan section rides only in
+  the `plan` artifact, and the audit-note tail is stripped — so a `goal`
+  budget only bites on genuinely long task prose.
 
   This is a **small-context profile, not a default** — it is essential when you
   point a stage at a small model, and worth enabling (with looser ceilings) on

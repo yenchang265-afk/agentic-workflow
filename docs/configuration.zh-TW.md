@@ -281,14 +281,19 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
       "engineering": {
         "stageModels": { "verify": "openrouter/qwen/qwen3-coder" },
         "stageContext": {
-          "build":  { "plan": 24000, "verify": 8000, "review": 8000 },
-          "verify": { "plan": 16000, "build": 8000 },
-          "review": { "plan": 16000, "build": 8000 }
+          "build":  { "goal": 16000, "plan": 24000, "verify": 8000, "review": 8000 },
+          "verify": { "goal": 12000, "plan": 16000, "build": 8000 },
+          "review": { "goal": 12000, "plan": 16000, "build": 8000 }
         }
       }
     }
   }
   ```
+
+  鍵名對應該階段消費的產物（`plan`、`build`、`verify`、`review`），外加一個
+  保留鍵：**`goal`** 裁剪任務目標本身。目標在組成提示時已經去重——計畫段
+  只存在於 `plan` 產物中，稽核註記尾也已剝除——所以 `goal` 預算只會在任務
+  敘述本身真的很長時才生效。
 
   這是一份**小上下文設定範例，不是預設值**——當你把某個階段指向小模型時
   它是必需的；而當 backlog 跑得夠久，即使在前沿模型上也值得啟用（用較寬鬆
