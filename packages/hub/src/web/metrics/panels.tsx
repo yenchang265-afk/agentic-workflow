@@ -1,6 +1,8 @@
 import { formatDuration } from "@agentic-workflow/core/workflow/metrics"
+import { Fragment } from "react"
 import type {
   CacheHit,
+  FanoutStats,
   FindingsStats,
   IterationBurn,
   ModelStats,
@@ -272,6 +274,40 @@ export const FindingsTable = ({ findings }: { findings: FindingsStats }) => {
   )
 }
 
+/**
+ * Fan-out multiplier of focused (lens/axis) check stages. Every pass pays the
+ * whole composed prompt again, so the number that matters is the per-arming
+ * SUM — a five-lens review is five prompts, not one.
+ */
+export const FanoutTable = ({ fanout }: { fanout: FanoutStats }) => {
+  if (fanout.stages.length === 0)
+    return <div className="muted">No stage ran focused (lens/axis) passes — single-pass checks have no fan-out.</div>
+  return (
+    <table className="stage-table">
+      <thead>
+        <tr>
+          <th>stage</th>
+          <th title="stage firings that ran at least one focused pass">armings</th>
+          <th title="distinct focuses per arming — retries of one focus don't inflate this">passes / arming</th>
+          <th>max</th>
+          <th title="mean per-arming sum of prompt sizes — what one fanned-out firing costs">prompt / arming</th>
+        </tr>
+      </thead>
+      <tbody>
+        {fanout.stages.map((s) => (
+          <tr key={s.stage}>
+            <td>{s.stage}</td>
+            <td>{s.armings}</td>
+            <td>{s.meanPasses.toFixed(1)}</td>
+            <td>{s.maxPasses}</td>
+            <td>{s.meanArmingPromptChars === null ? "—" : formatChars(s.meanArmingPromptChars)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 /** Flakiest tools first: per-tool call/error totals across every sidecar. */
 export const ToolTable = ({ tools }: { tools: readonly ToolStats[] }) => {
   if (tools.length === 0) return <div className="muted">No sidecar recorded tool activity yet.</div>
@@ -323,17 +359,29 @@ export const PromptSizeTable = ({ prompt }: { prompt: PromptSize }) => {
       </thead>
       <tbody>
         {prompt.stages.map((p) => (
-          <tr key={p.stage}>
-            <td>{p.stage}</td>
-            <td>{formatChars(p.meanChars)}</td>
-            <td>{formatChars(p.medianChars)}</td>
-            <td>{formatChars(p.maxChars)}</td>
-            {/* Blank, not "0", when no budget is configured — nothing was elided
-                because nothing could be, which is not the same as a budget that
-                never bit. */}
-            <td>{p.elidedSamples === 0 ? "—" : `${formatChars(p.elidedChars)} in ${p.elidedSamples}`}</td>
-            <td>{p.samples}</td>
-          </tr>
+          <Fragment key={p.stage}>
+            <tr>
+              <td>{p.stage}</td>
+              <td>{formatChars(p.meanChars)}</td>
+              <td>{formatChars(p.medianChars)}</td>
+              <td>{formatChars(p.maxChars)}</td>
+              {/* Blank, not "0", when no budget is configured — nothing was elided
+                  because nothing could be, which is not the same as a budget that
+                  never bit. */}
+              <td>{p.elidedSamples === 0 ? "—" : `${formatChars(p.elidedChars)} in ${p.elidedSamples}`}</td>
+              <td>{p.samples}</td>
+            </tr>
+            {p.focuses?.map((f) => (
+              <tr key={`${p.stage}·${f.focus}`} className="muted">
+                <td>&nbsp;&nbsp;· {f.focus}</td>
+                <td>{formatChars(f.meanChars)}</td>
+                <td>—</td>
+                <td>{formatChars(f.maxChars)}</td>
+                <td>—</td>
+                <td>{f.samples}</td>
+              </tr>
+            ))}
+          </Fragment>
         ))}
       </tbody>
       <tfoot>

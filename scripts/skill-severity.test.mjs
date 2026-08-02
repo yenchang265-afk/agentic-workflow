@@ -79,3 +79,19 @@ test("the owning skill names all three severities", () => {
     assert.match(body, new RegExp(`\\b${severity}\\b`), `skills/${SSOT}/SKILL.md must define \`${severity}\``)
   }
 })
+
+test("the review persona's inlined ladder cites its SSOT and names all three severities", () => {
+  // The REVIEW persona no longer loads the skill per pass — it carries a
+  // distilled ladder inline. That copy must keep citing the owning skill (so a
+  // future edit knows where the definitions live) and must never drift off the
+  // three severities workflow_verdict accepts.
+  const persona = fs.readFileSync(path.join(ROOT, "prompts", "agents", "workflow-review", "body.md"), "utf8")
+  assert.match(persona, new RegExp(SSOT), `the persona must cite skills/${SSOT}/SKILL.md as the severity SSOT`)
+  for (const severity of ALLOWED) {
+    assert.match(persona, new RegExp(`\\b${severity}\\b`), `the persona's inlined ladder must name \`${severity}\``)
+  }
+  for (const { token, pattern, use } of RETIRED) {
+    pattern.lastIndex = 0
+    assert.equal(pattern.test(persona), false, `the persona says "${token}" — use "${use}"`)
+  }
+})

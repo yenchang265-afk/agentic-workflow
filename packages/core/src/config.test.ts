@@ -491,6 +491,11 @@ test("unknownStageContextKeys names a typo'd stage key and a typo'd artifact key
     "BUILD",
     "triage",
   ])
+  // `goal` is a reserved budget key, not an artifact — it must not read as a typo.
+  const withGoal = parseConfig({
+    workflows: { engineering: { stageContext: { build: { goal: 16_000, plan: 24_000 } } } },
+  })
+  assert.deepEqual(unknownStageContextKeys(withGoal, "engineering", ["plan", "build", "verify", "review"]), [])
   // Every key matching a stage, an absent section, and an absent stageContext are all clean.
   const clean = parseConfig({ workflows: { engineering: { stageContext: { build: { plan: 1_000, verify: 500 } } } } })
   assert.deepEqual(unknownStageContextKeys(clean, "engineering", ["plan", "build", "verify", "review"]), [])

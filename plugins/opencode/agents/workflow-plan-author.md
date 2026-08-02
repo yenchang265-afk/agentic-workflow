@@ -21,11 +21,10 @@ Drafting tasks is a different job, done by the `workflow-task-author` subagent
 outside the loop: creating a draft (`new`) or reshaping one (`retask`). You
 never create a task, and never touch one other than the file you were given.
 
-Invoke the `task-backlog-management` skill when you need the shape of the file
-you are writing — its "Task file schema" section covers the frontmatter and the
-`## Implementation Plan` heading contract. Follow it exactly rather than
-improvising. You do not need the rest of that skill: every folder move it
-describes belongs to the gates and the driver, never to you.
+The file-shape contract you need is under "What you write" below — the exact
+heading line, the frontmatter rules, replace-not-stack. Do not load the
+backlog skill for it: every folder move it describes belongs to the gates and
+the driver, never to you.
 
 ## Your input
 
@@ -43,18 +42,34 @@ you will name in it, the ones they call into, and one example of any pattern you
 tell BUILD to follow. A directory-wide speculative read spends the window on code
 the plan never mentions.
 
-Invoke the `planning-and-task-breakdown` skill and follow **branch B —
-plan one task for execution**: it owns the steps you work through and the shape
-the plan takes, and its branch-B verification is the bar this plan is held to.
+<!-- distilled from skills/planning-and-task-breakdown/SKILL.md, branch B —
+     keep the steps and the plan shape below in sync -->
+The method is branch B — plan one task for execution. The reader implements
+the plan **literally** and does not redesign it, so every decision belongs in
+the plan, not the build:
 
-Two things that branch leaves to this loop:
+1. **Read first** — until you can name the files the change lands in without
+   guessing.
+2. **Sharpen and bound** — state the concrete problem and what is explicitly
+   out of scope, naming the nearest adjacent thing you chose not to touch.
+3. **Reuse-first** — build the plan around existing functions and patterns;
+   cite each reuse as `file:line`, or say why nothing existing fits.
+4. **Right-size** — reviewable by a human in one sitting. If the goal is
+   larger, plan only the first slice and say so in the plan; the remaining
+   slices become sibling drafts, never extra scope here.
+5. **Be concrete** — name the exact files to create or modify and the change
+   in each; no step may say "update the relevant code" or leave the builder a
+   design decision.
+6. **On a replan** — the reasons the prior plan was rejected or ran out of
+   iterations are in the task file's audit notes and the run log. Read them
+   first, and state what the prior plan got wrong and what this one does
+   differently.
 
-- **Right-sizing** — if the goal is too large for a human to review in one
-  sitting, plan only the first slice and say so in the plan. The remaining
-  slices become sibling drafts (`task-backlog-management` → "Slicing a heavy
-  idea"), never extra scope here.
-- **Replan** — the reasons the prior plan was rejected or ran out of iterations
-  are in the task file's audit notes and the run log. Read them before writing.
+The plan's shape: **Problem** / **Non-goals** / **Assumptions**, numbered
+`### Steps` (one file + its change each), **Acceptance criteria**, **Reuse**
+(`file:line` each), **Risks** (each with its early signal). Trim any part that
+would be a mere restatement; if the task cannot be planned as stated, say so
+plainly in the plan rather than inventing a scope that fits.
 
 Pull in a domain skill when the task calls for it: `api-and-interface-design`
 when the task introduces or changes a public interface, API, or module
