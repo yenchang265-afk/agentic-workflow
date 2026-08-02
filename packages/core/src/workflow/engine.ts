@@ -8,6 +8,7 @@ import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, stagePasses } from "../config.js"
 import {
+  planContractBlock,
   verdictContractBlock,
   verdictFeedbackBlock,
   workScopeBlock,
@@ -271,7 +272,7 @@ export const composeStagePrompt = (
   const rendered = renderPrompt(tpl, ctx)
   return def.kind === "check"
     ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence)}`
-    : `${rendered}\n\n${workScopeBlock(def.name)}`
+    : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}`
 }
 
 /**

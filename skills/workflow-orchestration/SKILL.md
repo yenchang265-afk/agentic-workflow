@@ -66,8 +66,11 @@ back off the audit note), so the new plan addresses it directly instead of
 digging through notes; a newer plan heading retires it automatically.
 
 Deterministic plugin code enforces the plan gate by grepping for the
-`## Implementation Plan` heading, and BUILD only ever claims from
-`in-progress/`. There is no path that builds an ungated task.
+`## Implementation Plan` heading — and, since the PLAN stage carries the plan
+contract (`planContract` in the manifest), it also refuses to park a plan with
+no `### Verification` subsection, so a plan reaches the human gate already
+naming how each acceptance criterion will be proven. BUILD only ever claims
+from `in-progress/`. There is no path that builds an ungated task.
 
 **`new <idea>` always interviews you** — a restate-and-confirm when the idea
 already carries a clear goal and testable criteria, a full `interview-me` run
