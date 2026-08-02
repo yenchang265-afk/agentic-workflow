@@ -10,7 +10,8 @@ import {
   requestedFirst,
   requestsDir,
   revokePlanRequest,
-  sweepStalePlanRequests,
+  revokePlanRequestAt,
+  revokeStrayPlanRequests,
 } from "./plan-request.js"
 
 /**
@@ -173,12 +174,25 @@ test("junk dropped into .requests/ by hand is ignored rather than joined back in
   assert.deepEqual(await listPlanRequestIds($, DIR, TASKS), ["t1"])
 })
 
-test("sweepStalePlanRequests drops exactly the requests whose task has left the folder", async () => {
+test("revokeStrayPlanRequests drops exactly the ids it is handed, and re-lists nothing", async () => {
   const { $ } = makeFs()
   await requestPlan($, DIR, TASKS, "still-here")
   await requestPlan($, DIR, TASKS, "moved-on")
-  assert.deepEqual(await sweepStalePlanRequests($, DIR, TASKS, ["still-here"]), ["moved-on"])
+  assert.deepEqual(await revokeStrayPlanRequests($, DIR, TASKS, ["moved-on"]), ["moved-on"])
   assert.deepEqual(await listPlanRequestIds($, DIR, TASKS), ["still-here"])
+  // A request the caller never confirmed stray — e.g. one written AFTER the
+  // caller's confirmation pass — is untouchable by construction: the revoke
+  // takes an explicit id list and discovers nothing on its own.
+  assert.deepEqual(await revokeStrayPlanRequests($, DIR, TASKS, []), [])
+  assert.deepEqual(await listPlanRequestIds($, DIR, TASKS), ["still-here"])
+})
+
+test("revokePlanRequestAt withdraws by status folder path, screening the id", async () => {
+  const { $, files } = makeFs()
+  await requestPlan($, DIR, TASKS, "t1")
+  await revokePlanRequestAt($, `${DIR}/${TASKS}/queued`, "t1")
+  assert.equal(files.has(at("t1")), false, "the marker is gone")
+  await revokePlanRequestAt($, `${DIR}/${TASKS}/queued`, "../../etc/passwd") // unsafe id — silently refused
 })
 
 test("requestedFirst hoists the requested task and preserves selectOrder within each group", () => {

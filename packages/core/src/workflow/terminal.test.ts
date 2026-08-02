@@ -164,6 +164,21 @@ test("park vetoed by a registered validateBeforeTransition hook errors, no move"
   assert.deepEqual(metrics, [{ outcome: "error", detail: "the tree is dirty" }])
 })
 
+test("park vetoed with the task gone from queued/ still releases the claim-time marker", async () => {
+  // The veto arm is a drive-end path like every other: nesting its release
+  // under the `if (held)` lookup left the queued/.claims/<id> marker held
+  // whenever the task had left queued/ mid-plan — the exact wedge the
+  // not-parking arm below documents and guards against.
+  registerValidateHook("test.veto-gone", () => "the tree is dirty")
+  const { ctx, log } = makeCtx({}, planState(), { validate: "test.veto-gone" })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.ok(
+    log.some((c) => c.startsWith("rmdir ") && c.includes("queued/.claims/t")),
+    `claim marker released via the claim-time ref: ${log.join(" | ")}`,
+  )
+})
+
 test("park on a task-less loop reports park-free with no metrics", async () => {
   const { ctx, metrics } = makeCtx({}, { goal: "free text", stage: "plan", iteration: 0, artifacts: {} })
   const report = await runTerminal(ctx, park)

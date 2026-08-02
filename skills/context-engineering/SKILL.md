@@ -47,7 +47,7 @@ Host filenames differ (`CLAUDE.md`, `AGENTS.md`, `.cursorrules` /
 content is the same.
 
 Anything true about the project that is *not* written down does not exist. When
-the agent repeatedly gets a convention wrong, that is a missing rule, not a
+the agent gets a convention wrong twice, that is a missing rule, not a
 missing reminder — see `writing-for-agents` for keeping the file from
 silting up.
 

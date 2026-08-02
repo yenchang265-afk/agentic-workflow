@@ -10,11 +10,6 @@
  *   replan [id] [reason]   → gate reject-any [id] [reason...]
  *   abandon <id> [reason]  → gate abandon <id> …     (→ abandoned/; id required)
  *   remove <id> [--force]  → gate remove <id> …      (hard-delete; id required)
- * plus the `GATE-DISPATCH:` sentinel a command template may emit once
- * expanded — covering both possible UserPromptSubmit interception points
- * (pre- or post-expansion). Longest alternative first inside VERB —
- * `approve-plan` (sentinel-only, kept for older templates) is tried before
- * `approve` so `-plan` can't leak into the id.
  *
  * Unlike the old `agent-loop` prefix, `engineering` is an ordinary English
  * word — so the command match REQUIRES the leading slash form. Prose like
@@ -34,11 +29,11 @@
  * `$` instead would refuse to dispatch a perfectly ordinary
  * `approve my-task\nthanks!`, and adding `m` back is the bug above.
  */
-const VERB = "(approve-plan|replan|approve)"
-// The sentinel is the ONE form that may appear anywhere: a command template
-// emits it once expanded, so it arrives mid-body by construction. It is also
-// the form no human types, which is what makes that safe.
-const SENTINEL = new RegExp(`GATE-DISPATCH:\\s*${VERB}\\b[ \\t]*(\\S+)?[ \\t]*(.*)$`, "im")
+// The `GATE-DISPATCH:` sentinel that used to live here — a form that fired
+// from ANYWHERE in the prompt — is gone: no command template emits it any
+// more, so its only remaining producers were pasted text (an issue body, a
+// diff of this file, a question about it), and a gate move is destructive AND
+// blocks the turn. Never reintroduce a position-independent trigger.
 
 // The gate verbs of /agentic-workflow:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
@@ -111,20 +106,12 @@ const unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "")
 
 /**
  * Build the `gate` CLI argv from the prompt, or null when it is not a gate
- * command. The sentinel form requires an id (a bare one is malformed —
- * passed through so the model reports usage); the folder-driven verbs do not.
+ * command. Every form must OPEN the prompt — see the header.
  *
  * `continueTurn` marks a dispatch whose success must NOT block the model: the
  * CLI did the deterministic part, and the model still has work to do.
  */
 export const gateArgsFor = (prompt) => {
-  const sentinel = prompt.match(SENTINEL)
-  if (sentinel) {
-    const id = unquote((sentinel[2] || "").trim())
-    if (!id) return { passThrough: true } // malformed sentinel gate — let the model report it
-    const reason = (sentinel[3] || "").trim()
-    return { argv: ["gate", sentinel[1], id, ...(reason ? [reason] : [])] }
-  }
   const approve = prompt.match(APPROVE)
   if (approve) {
     // approve takes an optional id (first token); extra words are ignored.

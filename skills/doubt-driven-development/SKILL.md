@@ -26,9 +26,9 @@ Any one of these makes it so:
 - its blast radius is irreversible: production deploy, data migration, public
   API change
 
-Doubt those. Not mechanical edits, not one-line changes with obvious
-correctness, not reading or summarizing code, not an unambiguous instruction
-being followed, and not when the user has asked for speed over verification.
+Doubt those. Skip mechanical edits, one-line changes with obvious correctness,
+reading or summarizing code, an unambiguous instruction already being
+followed, and any point where the user has asked for speed over verification.
 Doubt every keystroke and you ship nothing.
 
 ## Loading constraints

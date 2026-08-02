@@ -510,6 +510,10 @@ test("moveTask succeeds on a valid adjacent hop and records the mv", async () =>
   const dest = await moveTask($, { id: "a", path: "/r/docs/tasks/draft/a.md" }, "queued")
   assert.equal(dest, "/r/docs/tasks/queued/a.md")
   assert.ok(log.some((cmd) => cmd.startsWith("mv ")))
+  assert.ok(
+    log.some((cmd) => cmd === "rm -f /r/docs/tasks/draft/.requests/a"),
+    `the source folder's plan request is withdrawn with the move: ${log.join(" | ")}`,
+  )
 })
 
 test("moveTask refuses to clobber an existing duplicate id at the destination", async () => {

@@ -141,7 +141,7 @@ iteration decide.
 
 ## Honesty in Review
 
-- **Don't rubber-stamp.** "LGTM" without evidence of review helps no one.
+- **Back every approval with evidence.** "LGTM" alone helps no one.
 - **Say the severity you mean.** "This might be a minor concern" about a bug that will hit production is dishonest — sycophancy is a review failure mode.
 - **Quantify when you can.** "This N+1 adds a query per row in the list" beats "this could be slow."
 - **Comment on code, not people**, and defer to the author when they have full context and disagree.

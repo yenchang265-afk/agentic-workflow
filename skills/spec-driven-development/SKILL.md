@@ -9,10 +9,10 @@ A spec is the shared source of truth between you and the human: what is being
 built, why, and how anyone will know it is done. Code written without one is a
 guess whose wrongness surfaces at review instead of at the cheapest moment.
 
-Write one when starting a project or feature, when requirements are ambiguous,
-when the change spans several modules, or before an architectural decision.
-Skip it for single-line fixes and changes whose requirements are unambiguous
-and self-contained — those need acceptance criteria, not a document.
+Also write one when the change spans several modules or touches an
+architectural decision. Skip it for single-line fixes and changes whose
+requirements are unambiguous and self-contained — those need acceptance
+criteria, not a document.
 
 ## The gate
 

@@ -128,8 +128,12 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   if (veto) {
     await log("warn", `loop: ${state.stage} park vetoed by validator — ${veto}`)
     if (state.task) {
+      // Drive-end path like every arm below: the release is unconditional,
+      // falling back to the claim-time ref when the task left queued/
+      // mid-plan — nesting it under the lookup wedged the claim (see the
+      // not-parking arm's comment).
       const held = await findByIdIn($, directory, config.tasksDir, "queued", state.task.id)
-      if (held) await releaseClaim($, held)
+      await releaseClaim($, held ?? state.task)
     }
     await ctx.writeMetrics("error", veto)
     return { kind: "error", message: `Park vetoed for "${state.task?.id ?? state.goal}" — ${veto}`, ...(state.task ? { taskId: state.task.id } : {}) }

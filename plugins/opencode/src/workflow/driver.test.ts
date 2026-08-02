@@ -471,6 +471,39 @@ test("recover <id> refuses while this session is already driving a loop (no clea
   }
 })
 
+test("recover <id> refuses a fresh claim with no stage marker (pre-marker setup window)", async () => {
+  // The unconditional-takeover regression: a just-claimed live run spends
+  // minutes in isolation/stage-check setup BEFORE writing its first stage
+  // marker. recover used to sweep the claim with minutes:0 there, starting a
+  // second drive on the same feature/<id> branch. With no crash evidence (no
+  // stage marker naming the task), only a stale claim stamp may authorize the
+  // takeover.
+  const body = serializeTask({
+    title: "Maybe crashed",
+    body: `${PLAN_HEADING}\n\n1. Step.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]`,
+  })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(
+      {
+        "docs/tasks/in-progress/t.md": body,
+        "docs/tasks/in-progress/.claims/t/claim.json": JSON.stringify({ claimedAt: new Date().toISOString() }),
+      },
+      log,
+      [{ cmd: "mkdir /repo/docs/tasks/in-progress/.claims/t", result: { exitCode: 1 } }],
+    ),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess-recover-freshclaim", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /still be setting up before its first stage/, toasts[0]?.message)
+})
+
 test("plan <id> on a plan-review task points at the gate verbs, no move", async () => {
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
   const { client, toasts } = makeClient()
@@ -1623,6 +1656,45 @@ const runSinglePassReview = async (sessionID: string, onCall: (deps: Deps) => vo
     clearWorkflow(sessionID)
   }
 }
+
+test("a fan-out stage refreshes the stage-marker deadline and claim stamp per pass", async () => {
+  // `staleClaimMinutes` and the marker deadline budget ONE stage timeout, but a
+  // fan-out check stage legitimately runs passes × attempts × timeout. Without
+  // a per-pass refresh a live REVIEW reads dead to doctor/recover mid-fan-out
+  // and its claim is stolen while lens 2 of N is still running.
+  const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
+  const sessionID = "sess-per-pass-restamp"
+  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const shellLog: string[] = []
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async () => {
+        recordVerdict(sessionID, "review", worked(sessionID, { verdict: "PASS", axes: cleanAxes }))
+        return { data: { parts: [{ type: "text", text: "review pass" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  try {
+    await runStagePasses(
+      deps,
+      sessionID,
+      lensConfig,
+      manifestFor("engineering"),
+      { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {}, task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] } },
+      "review",
+      "goal args",
+      0,
+    )
+  } finally {
+    clearWorkflow(sessionID)
+  }
+  const markerWrites = shellLog.filter((c) => c.startsWith("printf '%s' ") && c.includes(".stage-opencode.json"))
+  assert.equal(markerWrites.length, 2, `one fresh deadline per pass, got ${markerWrites.length}`)
+  const restamps = shellLog.filter((c) => c.startsWith("printf '%s' ") && c.includes(".claims/t/claim.json"))
+  assert.equal(restamps.length, 2, `one claim restamp per pass, got ${restamps.length}`)
+})
 
 test("review: a verdict missing axes is rejected and records nothing", async () => {
   const sessionID = "sess-axes-missing"

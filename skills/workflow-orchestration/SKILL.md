@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: Explains the automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need how the loop plans, builds, parks at a gate, schedules another kind, or terminates.
+description: Explains the automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need to know how the loop plans, builds, parks at a gate, schedules another kind, or terminates.
 ---
 
 # The agentic loop
@@ -73,9 +73,8 @@ subagents cannot converse; only after your confirmation does it hand the intent
 to the `workflow-task-author` subagent to write the draft. `retask <id>`
 re-interviews and reshapes a planless task in place.
 
-**Nothing claims work because a session went idle.** A human runs `watch` in a
-session to make it a worker, and that session drives work until `unwatch` or
-`stop`. An ordinary chat session going quiet must never start writing code.
+**A session claims work only when a human runs `watch` in it — never because it
+merely goes idle.** That session then drives work until `unwatch` or `stop`.
 
 The full folder lifecycle and file schema are `task-backlog-management`.
 
@@ -328,5 +327,5 @@ carrying them still parse; the keys are ignored.)
 - [ ] No session builds anything without a human having run `watch` or `claim`
       in it first
 - [ ] `unwatch` and `stop` stop the polling timer — no tick fires after either
-- [ ] A re-build addresses the threaded failure rather than repeating the
-      previous implementation
+- [ ] A re-build's diff changes the file(s)/behavior the failure reason named,
+      not a byte-for-byte repeat of the previous attempt

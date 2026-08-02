@@ -51,7 +51,8 @@ Before changing or removing anything, answer:
 - What does git blame say about the original context?
 ```
 
-Unanswered questions mean you're not ready to simplify. Read more context first.
+Any unanswered question means you're not ready to simplify — go find the answer
+before touching the code.
 
 ## Step 2: Find the signals
 
@@ -64,6 +65,10 @@ duplicated logic, dead code, wrappers that add no value, and one-implementation
 
 Comments explaining *why* ("Retry because the API is flaky under load") carry
 intent the code can't express — those stay.
+
+**Step 2 is done when** every signal you found is either queued for Step 3 or
+has a documented reason to stay — a *why* comment, a proven hot path, or
+similar.
 
 ## Step 3: Apply one change at a time
 
@@ -83,6 +88,9 @@ fixes — a PR that refactors *and* adds a feature is two PRs.
 automation — a codemod, a script, an AST transform. Manual edits at that scale
 are error-prone and exhausting to review.
 
+**Step 3 is done when** every simplification queued in Step 2 has been through
+this cycle — applied and kept, or reverted.
+
 ## Step 4: Judge the result
 
 Prefer clarity over cleverness: explicit code beats compact code whenever the
@@ -101,7 +109,11 @@ Then check the opposite failure — over-simplification:
 
 Compare the whole before and after: is it genuinely easier to understand, is the
 diff clean and reviewable, would a teammate approve it as a net improvement? If
-not, revert. Not every simplification attempt succeeds.
+the answer to any of these is no, revert — not every simplification attempt
+succeeds.
+
+**Done when** every signal found in Step 2 has passed through the Step 3 cycle
+and Step 4's judgment on the result.
 
 ## Verification
 

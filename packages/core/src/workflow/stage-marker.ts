@@ -131,6 +131,35 @@ export const clearOpencodeStageMarker = async ($: Shell, directory: string, task
  * Markers from older versions carry no pid and fall back to the deadline alone.
  * Every read is best-effort: a missing or garbled marker reads as "not driven".
  */
+/**
+ * Whether any host's stage marker names `taskId` at all, live or dead. For a
+ * caller that already got null from `taskDrivenByStageMarker`, a marker naming
+ * the task is CRASH evidence — a run reached a stage and its writer died — so
+ * taking its claim over immediately is safe. No marker at all is ambiguous:
+ * a just-claimed live run spends minutes inside its setup window (isolation,
+ * stage checks) BEFORE its first marker write, and sweeping its claim there
+ * starts a second drive on the same branch — the caller must fall back to
+ * claim-stamp staleness instead.
+ */
+export const taskNamedByStageMarker = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  taskId: string,
+): Promise<boolean> => {
+  for (const host of STAGE_MARKER_HOSTS) {
+    const out = await $`cat ${hostStageMarkerPath(directory, tasksDir, host)}`.quiet().nothrow()
+    if (out.exitCode !== 0) continue
+    try {
+      const m = JSON.parse(out.stdout.toString()) as { taskId?: unknown }
+      if (m.taskId === taskId) return true
+    } catch {
+      continue
+    }
+  }
+  return false
+}
+
 export const taskDrivenByStageMarker = async (
   $: Shell,
   directory: string,

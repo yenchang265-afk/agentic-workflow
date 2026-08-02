@@ -24,6 +24,13 @@ export interface Move {
   readonly detail: string
   readonly danger?: boolean
   readonly withReason?: boolean
+  /**
+   * Offered even while a loop drives the task. Gate moves are refused on a
+   * held claim so their buttons pre-disable; a move that core explicitly
+   * honours under claim (withdrawing a plan request) must not — the withdrawal
+   * was built precisely for "a loop has since started acting on it".
+   */
+  readonly allowClaimed?: boolean
 }
 
 /** Which moves a task's column offers. A status with no entry gets no buttons. */
@@ -104,6 +111,7 @@ const CANCEL_PLAN_MOVE: Move = {
   detail:
     "Deletes the plan-request marker. The task stays in queued/ and is still planned in the normal order on some later tick — " +
     "this only removes the “plan this one next” hint. Nothing is moved and nothing is committed.",
+  allowClaimed: true,
 }
 
 /**

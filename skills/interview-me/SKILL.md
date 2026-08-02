@@ -93,7 +93,7 @@ That single question often does more work than the previous five.
 
 ### Step 4: Restate intent in the user's own words
 
-When confidence is high, write back what you now think the user wants. Keep it tight, use their language, and structure it so they can confirm or correct line by line:
+When **predict-three** passes (see below), write back what you now think the user wants. Keep it tight, use their language, and structure it so they can confirm or correct line by line:
 
 ```
 Here's what I now think you want:

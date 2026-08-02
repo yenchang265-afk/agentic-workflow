@@ -3,6 +3,7 @@ import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, re
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
+import { revokePlanRequestAt, strayPlanRequestIds } from "./plan-request.js"
 import { redact } from "./redact.js"
 import { buildTaskFile, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
 
@@ -518,6 +519,31 @@ export const listClaimIds = async (
 }
 
 /**
+ * The stray plan requests CONFIRMED absent from their pool on the real
+ * filesystem — the only ids `revokeStrayPlanRequests` may be handed.
+ * `presentIds` is the caller's listing of the folder, which may lag the real
+ * FS (a watcher-backed index after a shell `mv`) and skips unparseable files —
+ * so every apparent stray is re-checked with `findByIdIn` before it is named.
+ * Without that, a request for a task the listing missed (just moved in, or
+ * momentarily unparseable) is judged stray and a human's live ask is deleted.
+ */
+export const confirmedStrayPlanRequestIds = async (
+  $: Shell,
+  directory: string,
+  tasksDir: string,
+  presentIds: readonly string[],
+  status: string = "queued",
+  log?: Log,
+): Promise<string[]> => {
+  const strays: string[] = []
+  for (const id of await strayPlanRequestIds($, directory, tasksDir, presentIds, status)) {
+    if (await findByIdIn($, directory, tasksDir, status, id, log)) continue
+    strays.push(id)
+  }
+  return strays
+}
+
+/**
  * An orphaned claim: the task body never recorded a BUILD (still claimable),
  * no live loop is driving it, and the marker has aged past the crash window.
  * Only such markers may be released without racing a live claimer. Pure.
@@ -754,6 +780,10 @@ export const moveTask = async ($: Shell, task: FileRef, toStatus: TaskStatus): P
     throw new Error(`cannot move ${task.id} → ${toStatus}: ${toStatus}/${task.id}.md was created concurrently — resolve the duplicate manually`)
   }
   await releaseClaim($, task) // a claim belongs to the status folder it was taken in
+  // So does a plan request: left behind it is a stray at best, and at worst a
+  // resurrected ordering hint — abandon then restore-to-queued/ would silently
+  // re-honour an ask nobody re-made.
+  await revokePlanRequestAt($, path.dirname(task.path), task.id)
   return dest
 }
 
@@ -774,6 +804,7 @@ export const removeTaskFile = async ($: Shell, task: FileRef): Promise<string> =
     throw new Error(`cannot remove task: unsafe id ${JSON.stringify(task.id)}`)
   }
   await releaseClaim($, task) // drop the marker before the file it belongs to goes
+  await revokePlanRequestAt($, path.dirname(task.path), task.id) // same for a plan request — nothing sweeps for a deleted task
   const out = await $`rm -f ${task.path}`.quiet().nothrow()
   if (out.exitCode !== 0) {
     throw new Error(`could not remove ${task.id}: ${out.stderr.toString().trim()}`)

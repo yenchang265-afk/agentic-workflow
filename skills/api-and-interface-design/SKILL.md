@@ -149,8 +149,8 @@ costs every consumer a lookup.
 - [ ] Each validation point sits at a boundary where untrusted data enters
 - [ ] Every change to an existing interface is additive, or goes through
       `deprecation-and-migration`
-- [ ] Naming follows the conventions above across the whole surface, verbs
-      included out of REST URLs
+- [ ] Naming follows the conventions above across the whole surface, including
+      no verbs in REST URLs
 - [ ] No operation returns a different shape depending on conditions
 
 **When the interface has been written:**
