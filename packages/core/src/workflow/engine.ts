@@ -173,6 +173,23 @@ export const promptContextWithStats = (
     : ""
   const goal = clampWithStats(stripPlanAndAuditTail(state.goal), budgets["goal"] ?? Number.POSITIVE_INFINITY)
   const budgeted = budgetedArtifacts(state, budgets)
+  // Each artifact's structured verdict head on its own (the seam `withArtifact`
+  // recorded), under the same `EXEMPT_MAX` ceiling as the in-artifact copy. Lets
+  // a template show what a check stage ESTABLISHED without inlining its whole
+  // transcript — review.md's "What VERIFY established" section. Undefined when no
+  // seam exists (a work stage, a record-less advance, a pre-seam snapshot), so
+  // those prompts stay byte-identical.
+  let seamElided = 0
+  const seams = Object.entries(state.feedback ?? {})
+  const verdicts = seams.length
+    ? Object.fromEntries(
+        seams.map(([stage, block]) => {
+          const c = clampWithStats(block, EXEMPT_MAX)
+          seamElided += c.elided
+          return [stage, c.text]
+        }),
+      )
+    : undefined
   const ctx: TemplateContext = {
     goal: goal.text,
     iteration: String(state.iteration),
@@ -204,6 +221,7 @@ export const promptContextWithStats = (
     replan: state.replan ? { reason: state.replan.reason } : undefined,
     acceptance: accept.length ? { bullets: accept.map((c) => `- ${c}`).join("\n") } : undefined,
     artifacts: budgeted.artifacts,
+    verdicts,
     checks,
     // Pre-rendered: TemplateValue has no arrays. Undefined when empty so
     // `renderPrompt` drops the section and a first-iteration prompt is unchanged.
@@ -228,7 +246,7 @@ export const promptContextWithStats = (
         }
       : undefined,
   }
-  return { ctx, elided: budgeted.elided + goal.elided }
+  return { ctx, elided: budgeted.elided + goal.elided + seamElided }
 }
 
 /** `promptContextWithStats` without the elision count, for render-only callers. Pure. */

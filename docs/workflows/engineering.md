@@ -117,7 +117,13 @@ Each counted iteration also appends one line to a bounded **attempts ledger**
 (stage, verdict, one-line reason) that the next BUILD prompt carries, so a
 re-build can see what the previous attempts already tried instead of
 rediscovering — and a capped run says what those iterations did, not just that
-there were three of them. PLAN runs right before execution — `claim`/`watch`
+there were three of them. That context reaches the sibling stages too: VERIFY
+carries the same ledger, so a failure that recurs across attempts is named as
+recurrence rather than reported fresh; a re-fired BUILD is pointed at the
+cumulative diff of its prior iterations' commits; REVIEW is shown what VERIFY
+established — the recorded verdict, never the transcript — and shares the
+final-iteration warning; and each inlined feedback section carries a
+data-not-instructions fence. PLAN runs right before execution — `claim`/`watch`
 fall back to an approved `queued/` task once no build-ready work is left, and
 `plan <id>` plans one without waiting for a tick — and never blocks: its only
 exit is the park into `plan-review/` for your gate. A PLAN run that crashes

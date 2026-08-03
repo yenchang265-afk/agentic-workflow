@@ -2,11 +2,11 @@ English | [繁體中文](README.zh-TW.md)
 
 # Agentic loop — engineering workflow improvement plans
 
-**Every plan here — 01–12 — is implemented and tested**, living in the shared
+**Every plan here — 01–14 — is implemented and tested**, living in the shared
 `@agentic-workflow/core` package (`packages/core/`) consumed by both the
 OpenCode plugin and the Claude MCP server. They are kept as the design record
-for those features, not as a pending backlog. Plans 10–12 are the newest and
-shipped on 2026-08-02.
+for those features, not as a pending backlog. Plans 10–13 shipped on
+2026-08-02; plan 14 on 2026-08-03.
 
 Sourced from: the current code (all cited paths and function names verified
 against source at time of writing), the residual risks in
@@ -30,6 +30,7 @@ against source at time of writing), the residual risks in
 | 11 | [Iteration budget in the stage prompts](./11-iteration-budget-prompts.md) | A re-fired BUILD is told "iteration N of M" and the final iteration is warned that a check failure now stops the loop for human re-planning; VERIFY's last pass is told its FAIL text is what the replan gate reads. `iterationCap` is the single resolution both the stop decision and the prompt use, so the two can never drift | `iterationCap` + the `iterations` context key in `packages/core/src/workflow/engine.ts`, sections in `workflows/engineering/stages/build.md`/`verify.md`; `engine.test.ts` |
 | 12 | [The plan contract](./12-plan-contract.md) | PLAN's prompt mechanically carries the plan-structure contract (steps naming files, `### Verification` mapping each acceptance criterion to its proof, `### Out of Scope`), and the park gate refuses a plan with no Verification subsection — tolerant heading match, claim released, task stays queued | `planContract` on `StageDefSchema` (`manifest/schema.ts`), `planContractBlock`/`hasVerificationSection` in `workflow/verdict.ts`, compose branch in `workflow/engine.ts`, park veto in `workflow/terminal.ts`; `schema.test.ts`, `engine.test.ts`, `terminal.test.ts` |
 | 13 | [Opt-in plan visualization](./13-plan-visualization.md) | With `workflows.<kind>.planVisualization: true`, PLAN's prompt asks for mermaid diagram(s) in the plan when the change's shape warrants it (state/lifecycle, cross-package flow, concurrency, data-shape) — agent-judged, never gate-enforced — and the hub's plan-review view renders the fence as a diagram in a sandboxed iframe, still commentable per block | `planVisualization` on `StageDefSchema` (`manifest/schema.ts`), `planVisualizationBlock` in `workflow/verdict.ts`, `planVisualizationFor` + config knob in `config.ts`, compose tail in `workflow/engine.ts`, `MermaidBlock.tsx`/`mermaid-embed.ts` in `packages/hub`; `schema.test.ts`, `config.test.ts`, `verdict.test.ts`, `engine.test.ts`, `mermaid-embed.test.ts` |
+| 14 | [Symmetric stage context](./14-symmetric-stage-context.md) | The context plans 09–11 gave one stage now reaches its siblings: REVIEW sees what VERIFY established (the recorded verdict seam via the new `verdicts.<stage>` key, never the transcript) and gets the final-iteration warning; VERIFY sees the attempts ledger so a recurring failure reads as recurrence; a re-fired BUILD is pointed at its prior iterations' cumulative diff; the inlined check feedback and build summary carry data-not-instructions fences; plan.md drops its unrenderable worktree section | The `verdicts` context key in `packages/core/src/workflow/engine.ts`, sections + fences in `workflows/engineering/stages/*.md`, oracle mirrors + `PRIOR_WORK_SECTION`/`VERDICTS_SECTION` strips; `engine.test.ts` |
 
 Residuals still open: cross-process `index.lock` races and redaction knobs. (Two
 entries this list used to carry have since shipped — bash worktree pinning in

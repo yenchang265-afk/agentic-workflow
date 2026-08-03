@@ -319,6 +319,15 @@ context: z.record(z.string(), z.number().int().positive()).optional(),
    未被量測的。這兩點都是把它限縮成內嵌規則、留待第 2 項再談的理由，而不是把它
    擴大的理由。
 2. **角色設定與強制 skill 的份量**（任務內容之前約 74 KB），如上。
+   **後來已落地**（PR #231、`eddcb3a`、`52a885e`）：無條件載入的 skill 已改為
+   蒸餾後的內嵌規則——BUILD 移除 `incremental-implementation` 與
+   `test-driven-development`、REVIEW 移除 `code-review-and-quality`（它*每個
+   fan-out pass* 都載入一次）、計畫作者移除 backlog／planning 那一對——每次
+   典型執行約少載入 100 KB 的 skill 文字，並有一個腳本測試把內嵌的嚴重度
+   階梯釘在 skill 的詞彙表上。
 3. **`reviewLenses` 沒有任何上下文計量。** 打開鏡頭會同時放大成本與產出物大小，
    而執行摘要裡沒有任何訊號顯示這件事發生了；本計畫的度量工作正是要能回報它的
    前置條件。
+   **後來已落地**（PR #231、`91a6128`）：管理面板的 Metrics 分頁現在按鏡頭
+   焦點分桶提示詞大小，並帶有檢查 fan-out 面板
+   （`packages/hub/src/server/metrics/fanout.ts`）。
