@@ -60,6 +60,10 @@ The number forces honesty. If you wrote a high number but can't predict the user
 
 **The floor.** When the ask already carries a clear goal and 2–5 testable criteria, the interview is a single restate-and-confirm question. It is never a silent skip: no path through this skill asks the user nothing.
 
+### Facts are looked up, decisions are asked
+
+Before sending any question, check whether its answer already lives in the environment — the repo, its docs, its git history. A question whose answer is greppable is legwork you skipped, not an interview question: `Glob`/`Grep`/`Read` it yourself and spend the user's turn on a genuine decision, preference, or piece of intent. When the codebase holds most of what's missing, `codebase-exploration` does that lookup wholesale, and its findings arrive here as your `GUESS:` lines.
+
 ### Step 2: Ask guess-first, one question at a time
 
 A **guess-first** question is one question with your hypothesis for its answer attached:
@@ -168,6 +172,8 @@ The ask was never a dashboard. It was a list — different artifact, different s
 
 ## Interaction with Other Skills
 
+- **`plan-router`** — upstream dispatcher: routes here when the missing information lives in the human's head.
+- **`codebase-exploration`** — the sibling for the other holder: facts living in the codebase are looked up there, decisions living in the human are asked here.
 - **`idea-refine`** — downstream. Confirmed intent that still needs scoping ("I want X, but I don't know how big X should be") hands off here for variations generated against the now-explicit intent.
 - **`spec-driven-development`** — downstream. Concrete confirmed intent hands off here to be written down.
 - **`doubt-driven-development`** — the far end of the same timeline. This skill is pre-decision intent extraction; doubt-driven is post-decision artifact review. Picking the wrong one wastes a round: nothing drafted yet → interview; a draft exists → doubt.
@@ -191,6 +197,7 @@ questions. Reframe rather than continue — the count is not the problem.
 
 - [ ] Step 1 opened with a hypothesis and a confidence number, from the right opening (cold start vs. reshape), and any number below ~70% named what was missing
 - [ ] Every question was **guess-first** and sent on its own
+- [ ] No question was asked whose answer was discoverable in the repo
 - [ ] A **no-justification probe** ran on each convention- or best-practice-signalling answer
 - [ ] The restate carried every line, including `Out of scope` and — for `new`/`retask` — 2–5 testable `Acceptance` checks
 - [ ] The confirming yes was explicit, not a **hollow yes**

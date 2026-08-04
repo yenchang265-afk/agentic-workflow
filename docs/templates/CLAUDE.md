@@ -78,6 +78,7 @@ invoke the matching skill directly and follow it exactly.
 
 If a task matches a skill, invoke it — never implement directly when one applies.
 
+- Unshaped work — vague ask, raw idea, symptom without a cause → `plan-router`
 - Feature / new functionality → `spec-driven-development`, then `incremental-implementation` + `test-driven-development`
 - Planning / breakdown → `planning-and-task-breakdown`
 - Bug / failure / unexpected behavior → `debugging-and-error-recovery`
