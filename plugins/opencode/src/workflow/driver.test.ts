@@ -1047,17 +1047,31 @@ test("report-and-stop verbs return their outcome for the command hook to surface
   assert.match(unwatched ?? "", /watching/i)
 })
 
-test("authoring/gate verbs return undefined so their command markdown reaches the model", async () => {
+test("authoring verbs return undefined so their command markdown reaches the model", async () => {
   const draft = serializeTask({ title: "Do the thing", body: "x" })
   const files = { "docs/tasks/draft/my-task.md": draft }
   const { client } = makeClientFS(files)
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  // new/approve intentionally pass through: overriding them would strip the
-  // interview turn / the approve glob-verify flow the markdown drives.
+  // new intentionally passes through: overriding it would strip the interview
+  // turn the markdown drives.
   assert.equal(await handleCommand(deps, "sess", "new add rate limiting", testConfig), undefined)
-  assert.equal(await handleCommand(deps, "sess", "approve my-task", testConfig), undefined)
+})
+
+test("approve is report-and-stop: it returns exactly what it toasted", async () => {
+  const draft = serializeTask({ title: "Do the thing", body: "x" })
+  const files = { "docs/tasks/draft/my-task.md": draft }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  // Core self-verifies the gate move, so the outcome rides back to the command
+  // hook to replace the rendered markdown — no model turn glob-verifies it.
+  const outcome = await handleCommand(deps, "sess", "approve my-task", testConfig)
+
+  assert.equal(outcome, toasts[0]?.message, "approve returns exactly what it toasted")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the task gate move ran")
 })
 
 test("an unknown verb gets the engineering usage toast", async () => {

@@ -2317,15 +2317,22 @@ const gateCtx = (deps: Deps, config: Config): GateCtx => ({
  * never shadowed by a pile of drafts. The never-approve epic tracking draft is
  * skipped in the id-less scan — leaving it in was what made drafts produce
  * false "multiple awaiting" and risk queuing the wrong one.
+ *
+ * Report-and-stop, like replan: every arm — the folder-driven resolution, the
+ * three gate moves, the ship's push/PR — is deterministic in core, and
+ * `noteThenMove` reports a failed move itself, so there is nothing left for a
+ * model turn to verify. The returned outcome replaces the rendered markdown;
+ * the markdown's approve block survives only when the plugin never ran, and
+ * is written as that tripwire.
  */
-export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
   try {
     const r = await approveAny(gateCtx(deps, config), id)
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
+    return report(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
 }
 
@@ -2543,10 +2550,9 @@ export const handleCommand = async (
   }
 
   if (engineering) {
-    // `new`/`retask`/`approve`/`remove` return undefined so the command hook
-    // leaves the rendered markdown in place: `new`/`retask` need the model's
-    // turn (interview), and approve/remove already have a working
-    // markdown-driven flow (approve glob-verifies the folder move). Only the
+    // `new`/`retask`/`remove` return undefined so the command hook leaves the
+    // rendered markdown in place: `new`/`retask` need the model's turn
+    // (interview), and remove has a working markdown-driven flow. Only the
     // report-and-stop verbs return an outcome string for the hook to surface —
     // a toast alone is invisible to the model.
     if (verb === "new") return
@@ -2554,9 +2560,9 @@ export const handleCommand = async (
 
     // The two deterministic gate verbs: the unified folder-driven approve, and
     // replan (the sole rejection verb). Both parse the post-verb remainder.
-    // Replan is report-and-stop — core self-verifies the move, so its outcome
+    // Both are report-and-stop — core self-verifies the move, so the outcome
     // replaces the markdown instead of a model turn glob-verifying it.
-    if (verb === "approve") return void (await handleApprove(deps, sessionID, rest, config))
+    if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
     if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
     if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
     if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))

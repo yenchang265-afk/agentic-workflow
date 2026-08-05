@@ -304,13 +304,15 @@ test("a verb whose block slices to nothing keeps the full body, not just the dra
   assert.ok(text.replace(/Invoke the[\s\S]*$/, "").trim().length > 0, "the note must not be the ENTIRE body")
 })
 
-test("replan is report-and-stop: the gate outcome replaces the rendered template", async () => {
-  const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
-  // Core self-verifies the move, so no model turn glob-verifies it — the
+test("replan and approve are report-and-stop: the gate outcome replaces the rendered template", async () => {
+  // Core self-verifies the moves, so no model turn glob-verifies them — the
   // hook must feed the deterministic outcome back as the whole prompt.
-  await runCommand("replan my-task too vague", output)
-  assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
-  assert.doesNotMatch(output.parts[0]!.text!, /interview the user/, "the descriptive template must be gone")
+  for (const args of ["replan my-task too vague", "approve my-task"]) {
+    const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
+    await runCommand(args, output)
+    assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/, args)
+    assert.doesNotMatch(output.parts[0]!.text!, /interview the user/, "the descriptive template must be gone")
+  }
 })
 
 test("the outcome override still wins over the slice for a report-and-stop verb", async () => {
@@ -349,9 +351,9 @@ const FAILURE_TEMPLATE = [
   "<!-- aw:verb recover -->",
   "re-claim the task and resume from its state snapshot",
   "<!-- /aw:verb recover -->",
-  "<!-- aw:verb approve -->",
-  "glob the folder to verify the move landed",
-  "<!-- /aw:verb approve -->",
+  "<!-- aw:verb retask -->",
+  "interview the user and reshape the draft in place",
+  "<!-- /aw:verb retask -->",
   "never touch docs/tasks yourself",
 ].join("\n")
 
@@ -372,15 +374,15 @@ test("a throw in the deterministic half overrides the body instead of leaving it
 })
 
 test("the failure override is inert when the deterministic half succeeds", async () => {
-  // The guard must not cost the pass-through verbs their body. `approve` needs
-  // its prose — it verifies the folder move the plugin just made — so a
+  // The guard must not cost the pass-through verbs their body. `retask` needs
+  // its prose — the interview and rewrite are the model's turn — so a
   // catch-all that fired on any swallowed internal error would silently break
-  // the gate. Same shell failure, but one the plugin handles itself.
+  // it. The plugin's own refusal (no such task) is handled, not thrown.
   const output = { parts: [{ type: "text", text: FAILURE_TEMPLATE }] }
   const hooks = (await makeHooks({})) as unknown as CmdHooks
-  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_g", arguments: "approve t1" }, output)
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_g", arguments: "retask t1" }, output)
   const text = output.parts[0]!.text!
-  assert.match(text, /verify the move landed/, "a pass-through verb keeps its instructions")
+  assert.match(text, /reshape the draft in place/, "a pass-through verb keeps its instructions")
   assert.doesNotMatch(text, /FAILED while running/, "no throw means no failure override")
   assert.doesNotMatch(text, /resume from its state snapshot/, "still sliced to the invoked verb")
 })

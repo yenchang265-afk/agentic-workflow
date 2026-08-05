@@ -108,7 +108,12 @@ Dispatch:
   at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
   `draft/` task only when neither has anything waiting — loop gates outrank the
   authoring gate, and never-approved epic tracking drafts are skipped, so the
-  loop never guesses.
+  loop never guesses. Fully deterministic plugin work whose outcome normally
+  REPLACES this text — so if you are reading this, the plugin did not run
+  (not loaded, or its `@agentic-workflow/core` build is stale). Glob
+  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+  that the gate did NOT happen, with the fix (`npm install` at the
+  agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
@@ -149,23 +154,6 @@ Dispatch:
     entirely, so a forced remove is usually permanent. Prefer `abandon` unless
     the user has said they want the file gone.
 <!-- /aw:verb remove -->
-
-<!-- aw:verb approve -->
-**Verify before you report a gate — `approve` ONLY.** Its move happens in
-the plugin's command hook *before* your turn, so by the time you run the
-file must ALREADY sit in its target folder — glob `docs/tasks/*/<id>*` and
-check. If it is still in its old folder, the plugin did not run (not loaded,
-or its `@agentic-workflow/core` build is stale) — report **that**, with the fix
-(`npm install` at the agentic-workflow repo root, then restart opencode),
-and never claim the gate happened. A gate is only "done" when you observed
-the file in its new folder.
-
-This check applies to NOTHING but this gate verb. `claim`, `plan`, `watch`,
-and `recover` defer their work until this turn settles — a task still
-sitting in its folder right after them is EXPECTED, not a plugin failure.
-For those verbs report the toast's outcome and stop; never prescribe a
-rebuild from an unmoved file on an execution verb.
-<!-- /aw:verb approve -->
 
 ## Execution
 
