@@ -213,7 +213,7 @@ test("no live loop → no session walk, edits pass through", async () => {
  * toast the model can't see, while the descriptive command template still
  * renders. The hook must replace that template with the plugin's outcome so the
  * model reports the action instead of reading it as information. Pass-through
- * verbs (new/retask/approve/replan/remove) must be left untouched.
+ * verbs (new/retask/approve/remove) must be left untouched.
  */
 type CmdHooks = {
   "command.execute.before": (
@@ -302,6 +302,15 @@ test("a verb whose block slices to nothing keeps the full body, not just the dra
   const text = output.parts[0]!.text!
   assert.match(text, /workflow-task-author/, "the drafting model note still rides along")
   assert.ok(text.replace(/Invoke the[\s\S]*$/, "").trim().length > 0, "the note must not be the ENTIRE body")
+})
+
+test("replan is report-and-stop: the gate outcome replaces the rendered template", async () => {
+  const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
+  // Core self-verifies the move, so no model turn glob-verifies it — the
+  // hook must feed the deterministic outcome back as the whole prompt.
+  await runCommand("replan my-task too vague", output)
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
+  assert.doesNotMatch(output.parts[0]!.text!, /interview the user/, "the descriptive template must be gone")
 })
 
 test("the outcome override still wins over the slice for a report-and-stop verb", async () => {

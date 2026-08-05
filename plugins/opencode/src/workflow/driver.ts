@@ -2330,13 +2330,6 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
 }
 
 /**
- * Handle `replan [id] [reason]` — the sole rejection verb. Sends a parked plan
- * back to `queued/` for re-planning. Auto-targets the single `plan-review/`
- * task; an explicit id may also name an `in-progress/` (cap-tripped) task.
- * When no leading token names a rejectable task, the whole argument is treated
- * as the reason and the single plan-review task is chosen.
- */
-/**
  * Handle `retask <id>` — the deterministic half of the authoring verb. The
  * interview and the rewrite are the agent's work, but WHERE the task must sit
  * before that is the plugin's: a `queued/` task is moved back to `draft/` (its
@@ -2366,13 +2359,27 @@ export const handleRetask = async (deps: Deps, _sessionID: string, args: string,
   }
 }
 
-export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+/**
+ * Handle `replan [id] [reason]` — the sole rejection verb. Sends a parked plan
+ * back to `queued/` for re-planning. Auto-targets the single `plan-review/`
+ * task; an explicit id may also name an `in-progress/` (cap-tripped) task.
+ * When no leading token names a rejectable task, the whole argument is treated
+ * as the reason and the single plan-review task is chosen.
+ *
+ * Report-and-stop: the whole flow — resolve, refuse (live loop / claim
+ * marker), move, record the reason, commit — is deterministic in core, and
+ * `noteThenMove` reports a failed move itself, so there is nothing left for a
+ * model turn to verify. The returned outcome replaces the rendered markdown;
+ * the markdown's replan block survives only when the plugin never ran, and is
+ * written as that tripwire.
+ */
+export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   try {
     const r = await rejectAny(gateCtx(deps, config), args.trim())
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Replan failed: ${(err as Error).message}`, "error")
+    return report(client, `Replan failed: ${(err as Error).message}`, "error")
   }
 }
 
@@ -2536,19 +2543,21 @@ export const handleCommand = async (
   }
 
   if (engineering) {
-    // `new`/`retask`/`approve`/`replan`/`remove` return undefined so the command
-    // hook leaves the rendered markdown in place: `new`/`retask` need the model's
-    // turn (interview), and the gate/remove verbs already have a working
-    // markdown-driven flow (approve/replan glob-verify the folder move). Only
-    // the report-and-stop verbs below return an outcome string for the hook to
-    // surface — a toast alone is invisible to the model.
+    // `new`/`retask`/`approve`/`remove` return undefined so the command hook
+    // leaves the rendered markdown in place: `new`/`retask` need the model's
+    // turn (interview), and approve/remove already have a working
+    // markdown-driven flow (approve glob-verifies the folder move). Only the
+    // report-and-stop verbs return an outcome string for the hook to surface —
+    // a toast alone is invisible to the model.
     if (verb === "new") return
     if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
 
     // The two deterministic gate verbs: the unified folder-driven approve, and
     // replan (the sole rejection verb). Both parse the post-verb remainder.
+    // Replan is report-and-stop — core self-verifies the move, so its outcome
+    // replaces the markdown instead of a model turn glob-verifying it.
     if (verb === "approve") return void (await handleApprove(deps, sessionID, rest, config))
-    if (verb === "replan") return void (await handleReplan(deps, sessionID, rest, config))
+    if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
     if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
     if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))
 

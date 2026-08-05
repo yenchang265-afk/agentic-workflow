@@ -563,11 +563,14 @@ test("replan sends a plan-review task back to queued/ with the reason noted", as
     log: () => {},
   }
 
-  await handleCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
+  const outcome = await handleCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
   assert.ok(log.some((cmd) => cmd.includes("misses the cache layer")))
+  // Report-and-stop: the outcome rides back to the command hook so it can
+  // replace the rendered markdown — a toast alone is invisible to the model.
+  assert.equal(outcome, toasts[0]?.message, "replan returns exactly what it toasted")
 })
 
 test("replan also accepts a cap-tripped in-progress task", async () => {

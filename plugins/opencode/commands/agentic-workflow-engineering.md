@@ -114,7 +114,12 @@ Dispatch:
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning; the reason is recorded in the audit note and the next PLAN
-  pass must address it.
+  pass must address it. Fully deterministic plugin work whose outcome
+  normally REPLACES this text — so if you are reading this, the plugin did
+  not run (not loaded, or its `@agentic-workflow/core` build is stale). Glob
+  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+  that the gate did NOT happen, with the fix (`npm install` at the
+  agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb replan -->
 <!-- aw:verb abandon -->
 - **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
@@ -145,22 +150,22 @@ Dispatch:
     the user has said they want the file gone.
 <!-- /aw:verb remove -->
 
-<!-- aw:verb approve|replan -->
-**Verify before you report a gate — `approve` and `replan` ONLY.** Their move
-happens in the plugin's command hook *before* your turn, so by the time you
-run the file must ALREADY sit in its target folder — glob
-`docs/tasks/*/<id>*` and check. If it is still in its old folder, the plugin
-did not run (not loaded, or its `@agentic-workflow/core` build is stale) — report
-**that**, with the fix (`npm install` at the agentic-workflow repo root, then
-restart opencode), and never claim the gate happened. A gate is only "done"
-when you observed the file in its new folder.
+<!-- aw:verb approve -->
+**Verify before you report a gate — `approve` ONLY.** Its move happens in
+the plugin's command hook *before* your turn, so by the time you run the
+file must ALREADY sit in its target folder — glob `docs/tasks/*/<id>*` and
+check. If it is still in its old folder, the plugin did not run (not loaded,
+or its `@agentic-workflow/core` build is stale) — report **that**, with the fix
+(`npm install` at the agentic-workflow repo root, then restart opencode),
+and never claim the gate happened. A gate is only "done" when you observed
+the file in its new folder.
 
-This check applies to NOTHING but those two gate verbs. `claim`, `plan`,
-`watch`, and `recover` defer their work until this turn settles — a task
-still sitting in its folder right after them is EXPECTED, not a plugin
-failure. For those verbs report the toast's outcome and stop; never prescribe
-a rebuild from an unmoved file on an execution verb.
-<!-- /aw:verb approve|replan -->
+This check applies to NOTHING but this gate verb. `claim`, `plan`, `watch`,
+and `recover` defer their work until this turn settles — a task still
+sitting in its folder right after them is EXPECTED, not a plugin failure.
+For those verbs report the toast's outcome and stop; never prescribe a
+rebuild from an unmoved file on an execution verb.
+<!-- /aw:verb approve -->
 
 ## Execution
 
@@ -247,7 +252,7 @@ a rebuild from an unmoved file on an execution verb.
 
 ## The pipeline
 
-<!-- aw:verb plan|claim|watch|recover|replan -->
+<!-- aw:verb plan|claim|watch|recover -->
 A queued task enters at PLAN — it writes the plan onto the task file in the
 main tree (no branch, no worktree) and parks. An approved-plan task enters at
 BUILD with the plan persisted on the task file (`## Implementation Plan`).
@@ -269,7 +274,7 @@ worktree` instead of the shared checkout — the stage prompts carry a
 `Worktree:` line pinning all reads/edits/tests there. When `reviewLenses` is
 configured, REVIEW runs once per lens and the loop takes the worst verdict.
 
-<!-- /aw:verb plan|claim|watch|recover|replan -->
+<!-- /aw:verb plan|claim|watch|recover -->
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
 `retask <id>` if it's off) → `approve <id>` queues it → the loop (plan,
 claim, or watch) plans it and parks the plan in `plan-review/` → human
