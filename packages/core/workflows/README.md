@@ -223,6 +223,10 @@ resolvable, so a first fire and a config-less compose stay unchanged —
 trips the cap), `task.id`/`task.path`,
 `acceptance.bullets` (pre-rendered `- …` list), `artifacts.<stage>` (each
 completed stage's captured output; the approved plan under `artifacts.plan`),
+`verdicts.<stage>` (the structured verdict head a check stage recorded through
+`workflow_verdict` — the seam alone, clamped to the exempt ceiling, without
+the transcript; undefined until a check stage records one, so a template can
+show what a stage *established* without inlining its whole output),
 `git.base`/`git.branch`/`git.worktree`/`git.diffCmd` (precomputed review diff
 command), `worktree.instructions` (the standard pinning paragraph — every
 kind gets isolation discipline for free by including it), and
