@@ -58,6 +58,15 @@ test("ordinary prose is left completely alone", () => {
   }
 })
 
+test("an id-less gate verb blocks with usage — no model turn, no spawn", () => {
+  // Deterministic usage refusal, matching the OpenCode host. Needs no MCP
+  // server: the block happens before any dispatch, which is also why this
+  // e2e can cover a gate-shaped prompt at all (see the header).
+  const out = run("/agentic-workflow:engineering retask")
+  assert.equal(out?.decision, "block")
+  assert.match(out?.reason ?? "", /Usage: \/agentic-workflow:engineering retask <id> \[note\]\./)
+})
+
 test("a malformed payload never fails the turn", () => {
   const res = spawnSync(process.execPath, [HOOK], { input: "not json", encoding: "utf8" })
   assert.equal(res.status, 0)

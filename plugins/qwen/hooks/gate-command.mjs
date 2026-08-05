@@ -38,21 +38,21 @@ var gateArgsFor = (prompt) => {
   const retask = prompt.match(RETASK);
   if (retask) {
     const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
-    if (!id) return { passThrough: true };
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering retask <id> [note]." };
     return { argv: ["gate", "retask", id], continueTurn: true };
   }
   const abandon = prompt.match(ABANDON);
   if (abandon) {
     const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean);
     const id = unquote(words[0] || "");
-    if (!id) return { passThrough: true };
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering abandon <id> [reason]." };
     return { argv: ["gate", "abandon", id, ...words.slice(1)] };
   }
   const remove = prompt.match(REMOVE);
   if (remove) {
     const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean);
     const id = unquote(words.find((w) => !w.startsWith("-")) || "");
-    if (!id) return { passThrough: true };
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering remove <id> [--force]." };
     const force = words.some((w) => w === "--force" || w === "-f");
     return { argv: ["gate", "remove", id, ...force ? ["--force"] : []] };
   }
@@ -236,7 +236,7 @@ var main = async () => {
   };
   const dispatch = gateArgsFor(prompt);
   if (!dispatch) return injectVerb();
-  if (dispatch.passThrough) return injectVerb();
+  if (dispatch.usage) return block(dispatch.usage);
   const args = dispatch.argv;
   const label = args.slice(1).join(" ");
   const serverJs = path2.join(pluginRoot, "mcp-server", "dist", "server.js");

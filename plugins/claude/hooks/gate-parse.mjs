@@ -110,6 +110,8 @@ const unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "")
  *
  * `continueTurn` marks a dispatch whose success must NOT block the model: the
  * CLI did the deterministic part, and the model still has work to do.
+ * `usage` marks an id-less form of a verb that requires one: deterministic
+ * refusal — the hook blocks the turn with that message, no spawn, no model.
  */
 export const gateArgsFor = (prompt) => {
   const approve = prompt.match(APPROVE)
@@ -129,17 +131,18 @@ export const gateArgsFor = (prompt) => {
   }
   const retask = prompt.match(RETASK)
   if (retask) {
-    // retask always names its target; a bare one is malformed — let the model
-    // report the usage error rather than guessing which task to un-approve.
+    // retask always names its target; a bare one is malformed — refused
+    // deterministically with usage rather than guessing which task to
+    // un-approve or spending a model turn to say so.
     const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "")
-    if (!id) return { passThrough: true }
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering retask <id> [note]." }
     return { argv: ["gate", "retask", id], continueTurn: true }
   }
   const abandon = prompt.match(ABANDON)
   if (abandon) {
     const words = (abandon[1] || "").trim().split(/\s+/).filter(Boolean)
     const id = unquote(words[0] || "")
-    if (!id) return { passThrough: true }
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering abandon <id> [reason]." }
     return { argv: ["gate", "abandon", id, ...words.slice(1)] }
   }
   const remove = prompt.match(REMOVE)
@@ -153,7 +156,7 @@ export const gateArgsFor = (prompt) => {
     // delete and deletes nothing.
     const words = (remove[1] || "").trim().split(/\s+/).filter(Boolean)
     const id = unquote(words.find((w) => !w.startsWith("-")) || "")
-    if (!id) return { passThrough: true }
+    if (!id) return { usage: "Usage: /agentic-workflow:engineering remove <id> [--force]." }
     const force = words.some((w) => w === "--force" || w === "-f")
     return { argv: ["gate", "remove", id, ...(force ? ["--force"] : [])] }
   }
