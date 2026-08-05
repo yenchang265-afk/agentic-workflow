@@ -73,12 +73,16 @@ Dispatch:
   interview, same as `new`:
   1. The plugin has already run the deterministic half before your turn: a
      `queued/` task was moved **back to `draft/`** (its approval withdrawn — the
-     reshaped goal has to be re-approved, and the toast says so), and a task
-     from `plan-review/` onward was refused with a pointer at `replan`. So
-     resolve `<id>` in `docs/tasks/draft/` **only**; if it isn't there, the
-     plugin refused or the id is wrong — report that and stop. The `[note]` is
-     also written onto that audit note, so why the goal was wrong survives in
-     the task file, not just in this turn's context.
+     reshaped goal has to be re-approved, and the toast says so). A refusal
+     (a planned task pointed at `replan`, an unknown id, a live loop, a held
+     claim marker) is report-and-stop — its outcome REPLACES this text, so
+     reading this means placement succeeded. Still resolve `<id>` in
+     `docs/tasks/draft/` **only**; if it isn't there, the plugin did not run
+     (not loaded, or its `@agentic-workflow/core` build is stale) — report that,
+     with the fix (`npm install` at the agentic-workflow repo root, then
+     restart opencode), and stop. The `[note]` is also written onto that audit
+     note, so why the goal was wrong survives in the task file, not just in
+     this turn's context.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with

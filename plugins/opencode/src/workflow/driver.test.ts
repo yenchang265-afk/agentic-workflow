@@ -147,7 +147,8 @@ test("a backlog with neither started nor held tasks falls back to the no-plan hi
  * Verb classification of the `/agentic-workflow:engineering` command. `new` is pure
  * agent work (interview + draft write) and must pass through silently — no
  * toast, no move — so the command template's model turn runs. `retask` is the
- * hybrid: its placement half is a plugin move, the reshape after it is not.
+ * hybrid: its placement half is a plugin move whose refusals are
+ * report-and-stop; only a successful placement passes through to the reshape.
  */
 
 test("new passes through without a toast or a move", async () => {
@@ -167,8 +168,9 @@ test("retask on a draft is a silent no-op — it is already where the interview 
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
+  const outcome = await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
 
+  assert.equal(outcome, undefined, "successful placement passes through — the interview markdown must reach the model")
   assert.equal(toasts.length, 0, "no toast — the agent's turn reports the reshape")
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "nothing to move")
 })
@@ -179,8 +181,9 @@ test("retask on an approved queued task sends it back to draft and says so", asy
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
+  const outcome = await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
 
+  assert.equal(outcome, undefined, "successful placement passes through — the interview markdown must reach the model")
   assert.equal(toasts[0]?.variant, "success")
   assert.match(toasts[0]?.message ?? "", /draft/)
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("draft")), "the task moves back to draft/")
@@ -192,11 +195,26 @@ test("retask on a parked plan is refused and points at replan", async () => {
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "retask my-task", testConfig)
+  const outcome = await handleCommand(deps, "sess", "retask my-task", testConfig)
 
   assert.equal(toasts[0]?.variant, "warning")
   assert.match(toasts[0]?.message ?? "", /replan/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "a planned task is never moved by retask")
+  // A refusal is report-and-stop: the outcome must replace the interview
+  // markdown, or the model interviews against a task that is not in draft/.
+  assert.equal(outcome, toasts[0]?.message, "a refused retask returns exactly what it toasted")
+})
+
+test("retask with no id is a usage outcome, not an interview", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  const outcome = await handleCommand(deps, "sess", "retask", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Usage/)
+  assert.equal(outcome, toasts[0]?.message, "the usage warning replaces the interview markdown")
 })
 
 /**

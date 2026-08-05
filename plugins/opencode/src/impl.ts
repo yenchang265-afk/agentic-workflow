@@ -468,8 +468,8 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       const { verb } = splitVerb(input.arguments)
       // Trim the rendered body to the invoked verb BEFORE dispatching. The
       // template describes every verb, but the ones whose template survives
-      // (new/retask — handleCommand returns undefined so
-      // the model does the work) are exactly the ones that pay for the other
+      // (new, and retask when its placement succeeded — handleCommand returns
+      // undefined so the model does the work) are exactly the ones that pay for the other
       // ~190 lines, and those lines describe deterministic plugin work in the
       // imperative. Slicing first means the trim holds even if reconcile or
       // handleCommand throws; the `if (outcome)` override below still wins for
@@ -525,8 +525,8 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // invisible to the model, and the rendered template is a DESCRIPTION of
       // the loop, so the model reads it as information and never reports the
       // action. Feed the real outcome back in (same mechanism as the refusal
-      // paths). Pass-through verbs (new/retask) return
-      // undefined here, so their markdown reaches the model untouched.
+      // paths). Pass-through verbs (new, and retask on successful placement)
+      // return undefined here, so their markdown reaches the model untouched.
       if (outcome) {
         overrideCommandPrompt(
           output,

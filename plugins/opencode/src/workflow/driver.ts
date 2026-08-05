@@ -2343,26 +2343,30 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
  * approval withdrawn), a `draft/` task is already right, and a planned task is
  * refused with a pointer at `replan`.
  *
- * The turn is NOT blocked either way — the command template's interview has to
- * run. It doesn't need blocking: after a refusal the file is not in `draft/`, so
- * the agent's own "resolve in draft/ only" step fails and it refuses too.
+ * The deterministic arms — no id, a refusal, a hard failure — are
+ * report-and-stop: their outcome replaces the rendered markdown, so the
+ * interview never runs against a task that is not in `draft/`. Only a
+ * successful placement returns undefined and lets the interview markdown
+ * through; its "resolve in draft/ only" step remains as the backstop for a
+ * plugin that never ran at all.
  */
-export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string | undefined> => {
   const { client } = deps
   // Split the id off the note verbatim rather than on whitespace — the note is
   // the human's prose and reaches the task file's audit trail intact.
   const parsed = /^(\S+)\s*([\s\S]*)$/.exec(args.trim())
   const id = parsed?.[1] ?? ""
-  if (!id) return void (await toast(client, `Usage: ${ECMD} retask <id> [note].`, "warning"))
+  if (!id) return report(client, `Usage: ${ECMD} retask <id> [note].`, "warning")
   const note = parsed?.[2]?.trim() || undefined
   try {
     const r = await retaskTask(gateCtx(deps, config), id, note)
+    if (!r.ok) return report(client, r.message, gateVariant(r))
     // Success is silent unless the plugin actually moved something — the agent's
     // turn reports the reshape, and a toast per retask would double up.
-    if (!r.ok) await toast(client, r.message, gateVariant(r))
-    else if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
+    if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
+    return
   } catch (err) {
-    await toast(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
+    return report(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -2563,12 +2567,14 @@ export const handleCommand = async (
   }
 
   if (engineering) {
-    // `new`/`retask` return undefined so the command hook leaves the rendered
-    // markdown in place — both need the model's turn (interview). Every other
-    // engineering verb is report-and-stop: it returns an outcome string for
-    // the hook to surface, because a toast alone is invisible to the model.
+    // `new` returns undefined so the command hook leaves the rendered markdown
+    // in place — the interview is the model's turn. `retask` is the hybrid:
+    // undefined (interview proceeds) only when its placement half succeeded;
+    // its refusals are report-and-stop like the gates. Every other engineering
+    // verb is report-and-stop: it returns an outcome string for the hook to
+    // surface, because a toast alone is invisible to the model.
     if (verb === "new") return
-    if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
+    if (verb === "retask") return handleRetask(deps, sessionID, rest, config)
 
     // The deterministic gate verbs: the unified folder-driven approve, replan
     // (the sole rejection verb), remove (dry-run unless --force), and abandon.
