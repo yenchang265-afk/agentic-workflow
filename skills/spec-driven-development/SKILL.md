@@ -35,7 +35,9 @@ than the whole document.
 misunderstandings before code does, and an unstated assumption is the form
 those take. Then ask clarifying questions until the requirements are concrete —
 when the ask is underspecified enough that you'd be guessing, `interview-me`
-is the tool for extracting it.
+is the tool for extracting it; when the missing information lives in the code
+rather than the human, `codebase-exploration` gathers it. `plan-router` owns
+that dispatch.
 
 Six areas, each of which leaks into every downstream task when missing:
 
@@ -103,3 +105,4 @@ value was in constraining the code that already got written.
 - [ ] Assumptions were stated and corrected before the spec was written
 - [ ] Anything undecided sits in Open Questions rather than being invented
 - [ ] The human has reviewed the spec, and it is committed to the repository
+- [ ] On a `ROUTE:` line from `plan-router`, the route's next skill was invoked — or the divergence was declared with an amended route

@@ -357,6 +357,16 @@ Deliberately **not** in this plan:
    is unmeasured. Both are reasons to keep it to inline rules and revisit under
    item 2, not reasons to expand it.
 2. **Persona and mandatory-skill weight** (~74 KB before task content), above.
+   **Since shipped** (PR #231, `eddcb3a`, `52a885e`): the unconditionally
+   loaded skills were replaced with distilled inline rules in the stage
+   personas — `incremental-implementation` + `test-driven-development` dropped
+   from BUILD, `code-review-and-quality` from REVIEW (it loaded once *per
+   fan-out pass*), the backlog/planning pair from the plan author — roughly
+   100 KB of skill text no longer loaded per typical run, with a script test
+   pinning the inlined severity ladder to the skill's vocabulary.
 3. **`reviewLenses` has no context accounting.** Turning lenses on multiplies both
    cost and artifact size with no signal in the run summary that it did; the
    metrics work in this plan is the prerequisite for reporting it.
+   **Since shipped** (PR #231, `91a6128`): the hub Metrics tab buckets prompt
+   sizes per lens focus and carries a check fan-out panel
+   (`packages/hub/src/server/metrics/fanout.ts`).

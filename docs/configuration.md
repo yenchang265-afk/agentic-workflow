@@ -822,6 +822,25 @@ Impact on the commands:
   attribute a verdict or a tool call to; those hosts **warn** rather than
   silently ignoring the knob. A key naming no stage is accepted, ignored, and
   warned about, exactly like `stageModels`.
+- **`workflows.<kind>.planVisualization`** — boolean: when `true`, the kind's
+  plan-writing stage (the one with `planContract`) is prompted to include
+  ```mermaid`` diagram(s) inside `## Implementation Plan` **when the change's
+  shape warrants it** — state/lifecycle transitions, flow across two or more
+  packages, concurrency or locking, data-shape changes. Agent-judged, never
+  gate-enforced: `runPark` does not check for a diagram, and small or
+  mechanical plans are told to skip it. The hub's plan-review view renders the
+  fence as an actual diagram (in a sandboxed iframe, with a source toggle);
+  per-block replan comments still anchor to it.
+
+  ```jsonc
+  { "workflows": { "engineering": { "planVisualization": true } } }
+  ```
+
+  Config wins over the manifest flag in both directions, as with `stageFanout`
+  — and it is how you reach the built-in kinds at all, since their manifests
+  ship inside the `@agentic-workflow/core` package. Off by default; unset is
+  byte-identical to today. The value is one boolean — no shell, no path — so
+  it is honored from the repo layer like `stageContext`.
 - Secrets echoed into audit notes, plans, or run logs are **shape-redacted**
   (`AKIA…`, `sk-…`, tokens, PEM blocks, `key/secret/token: …` assignments)
   before they are written and committed.

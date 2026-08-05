@@ -13,9 +13,12 @@ You are a thinking partner here, not a facilitator: direct, specific, and
 willing to say an idea is weak. A yes-machine produces confident nonsense, and
 the user came here to find out which of their ideas that is.
 
-Upstream, `interview-me` extracts what the user wants when even the intent is
-unclear; this skill takes a clear intent whose *shape* is still open.
-Downstream, `spec-driven-development` writes the chosen direction down.
+Upstream, `plan-router` dispatches here when intent is confirmed but the shape
+must still be invented, and `interview-me` extracts what the user wants when
+even the intent is unclear; this skill takes a clear intent whose *shape* is
+still open. Downstream, `spec-driven-development` writes the chosen direction
+down. When a `codebase-exploration` pass preceded this, its findings are
+Phase 1's read-before-you-diverge material — already gathered, cite them.
 
 Standing convictions that shape every phase: push toward the simplest version
 that still solves the real problem; start from the user's experience and work
@@ -112,3 +115,4 @@ What a strong session actually reads like: [`examples.md`](examples.md).
 - [ ] The one-pager exists as a file or a message, with a "Not Doing" list
 - [ ] Weak ideas were named as weak
 - [ ] Nothing was saved to disk without the user's explicit yes
+- [ ] On a `ROUTE:` line from `plan-router`, the route's next skill was invoked — or the divergence was declared with an amended route

@@ -14,6 +14,7 @@ import {
   mergeAxes,
   parseVerdict,
   passFocusBlock,
+  planVisualizationBlock,
   stageDriftNote,
   uncoveredAxes,
   verdictContractBlock,
@@ -272,6 +273,29 @@ test("workScopeBlock forbids calling workflow_verdict and claiming the loop fini
 
 test("workScopeBlock does not carry the check stages' MANDATORY VERDICT wording", () => {
   assert.doesNotMatch(workScopeBlock("build"), /MANDATORY VERDICT/)
+})
+
+// --- planVisualizationBlock (the opt-in diagram instruction for planContract stages) ---
+
+test("planVisualizationBlock names the stage, the mermaid fence, and every shape criterion", () => {
+  const block = planVisualizationBlock("plan")
+  assert.match(block, /PLAN VISUALIZATION/)
+  assert.match(block, /plan/)
+  assert.match(block, /```mermaid/)
+  assert.match(block, /## Implementation Plan/)
+  for (const shape of [/state or lifecycle/i, /two or more packages/i, /concurrency/i, /data-shape/i]) {
+    assert.match(block, shape)
+  }
+})
+
+test("planVisualizationBlock is agent-judged: no gate, steps beat the diagram, small plans skip it", () => {
+  const block = planVisualizationBlock("plan")
+  assert.match(block, /No gate enforces/i)
+  assert.match(block, /steps are authoritative/i)
+  assert.match(block, /skip the diagram/i)
+  // SHOULD, never MUST — a hard demand here would contradict "your judgment"
+  // and invite the livelock the planContract enforcement note warns about.
+  assert.doesNotMatch(block, /MUST/)
 })
 
 // --- stageDriftNote (the audit trail for a verdict recorded from the wrong stage) ---

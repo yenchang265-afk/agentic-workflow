@@ -14,9 +14,8 @@ here so no skill has to restate them.
 ```
 Task arrives
     │
-    ├── Don't know what you want yet? ──────→ interview-me
-    ├── Have a rough concept, need variants? → idea-refine
-    ├── New project/feature/change? ──→ spec-driven-development
+    ├── Unshaped work — vague ask, raw idea,
+    │   symptom, or feature with no spec? ──→ plan-router
     ├── Have a spec, need tasks? ──────→ planning-and-task-breakdown
     ├── Implementing code? ────────────→ incremental-implementation
     │   ├── UI work? ─────────────────→ frontend-ui-engineering
@@ -44,7 +43,9 @@ Several apply to one piece of work more often than one does: a feature runs
 `code-review-and-quality`. Follow each one's steps in order, verification
 included — a skill applied halfway is the one that leaves the defect its steps
 existed to catch. When the task is non-trivial and no spec exists, start with
-`spec-driven-development`.
+`plan-router` — it classifies by who holds the missing information (codebase,
+human, or nobody) and dispatches to `codebase-exploration`, `interview-me`,
+`idea-refine`, or straight to `spec-driven-development`.
 
 ## Shared Behaviors
 

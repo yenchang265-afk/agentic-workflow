@@ -117,12 +117,28 @@ Each counted iteration also appends one line to a bounded **attempts ledger**
 (stage, verdict, one-line reason) that the next BUILD prompt carries, so a
 re-build can see what the previous attempts already tried instead of
 rediscovering — and a capped run says what those iterations did, not just that
-there were three of them. PLAN runs right before execution — `claim`/`watch`
+there were three of them. That context reaches the sibling stages too: VERIFY
+carries the same ledger, so a failure that recurs across attempts is named as
+recurrence rather than reported fresh; a re-fired BUILD is pointed at the
+cumulative diff of its prior iterations' commits; REVIEW is shown what VERIFY
+established — the recorded verdict, never the transcript — and shares the
+final-iteration warning; and each inlined feedback section carries a
+data-not-instructions fence. PLAN runs right before execution — `claim`/`watch`
 fall back to an approved `queued/` task once no build-ready work is left, and
 `plan <id>` plans one without waiting for a tick — and never blocks: its only
 exit is the park into `plan-review/` for your gate. A PLAN run that crashes
 leaves a stale claim marker in `queued/.claims/`; the next claim walk releases
 it once it reads stale, and `doctor fix` releases it on demand.
+
+With `workflows.engineering.planVisualization: true`, PLAN's prompt also
+carries an opt-in **visualization block**: when the change's shape is what the
+plan gate has to judge — state/lifecycle transitions, flow across two or more
+packages, concurrency or locking, data-shape changes — the plan should include
+```mermaid`` diagram(s) inside `## Implementation Plan`. It is agent-judged,
+never enforced (small or mechanical plans are told to skip it, and the park
+gate does not check for a diagram); the hub's plan-review view renders the
+fence as an actual diagram in a sandboxed iframe, still commentable like any
+other block. See `docs/configuration.md`.
 
 Which queued task gets planned first is normally its priority number, but a
 **plan request** overrides that for one task: the admin hub's Plan button writes

@@ -32,6 +32,7 @@ import {
   stagePasses,
   unreviewedAxes,
   parseConfig,
+  planVisualizationFor,
   platformFor,
   resolveUserConfigPath,
   trackerUrl,
@@ -179,6 +180,7 @@ const stageWith = (model?: string): StageDef => ({
   checks: [],
   requireEvidence: false,
   planContract: false,
+  planVisualization: false,
   bashAllowlist: [],
   platformAllowlist: {},
   platformTools: {},
@@ -284,6 +286,27 @@ test("modelFor: config stageModels wins over the manifest stage's model, which w
   assert.equal(modelFor(other, "engineering", stageWith()), undefined)
 })
 
+test("planVisualizationFor: config wins over the manifest flag, in both directions, and only on a planContract stage", () => {
+  const planStage: StageDef = { ...stageWith(), name: "plan", planContract: true }
+  // Manifest × config matrix on the contract-bearing stage.
+  assert.equal(planVisualizationFor(DEFAULT_CONFIG, "engineering", planStage), false)
+  assert.equal(planVisualizationFor(DEFAULT_CONFIG, "engineering", { ...planStage, planVisualization: true }), true)
+  const on = parseConfig({ workflows: { engineering: { planVisualization: true } } })
+  assert.equal(planVisualizationFor(on, "engineering", planStage), true)
+  const off = parseConfig({ workflows: { engineering: { planVisualization: false } } })
+  assert.equal(planVisualizationFor(off, "engineering", { ...planStage, planVisualization: true }), false)
+  // Without planContract the knob is inert — there is no plan document for the
+  // diagram to live in, whatever the config says.
+  assert.equal(planVisualizationFor(on, "engineering", stageWith()), false)
+  // Another kind's section leaves this one alone.
+  const other = parseConfig({ workflows: { "pr-sitter": { enabled: true, planVisualization: true } } })
+  assert.equal(planVisualizationFor(other, "engineering", planStage), false)
+})
+
+test("workflows.<kind>.planVisualization validates fail-fast, like stageModels", () => {
+  assert.throws(() => parseConfig({ workflows: { engineering: { planVisualization: "yes" } } }), /planVisualization/)
+})
+
 test("agentModel resolves a non-stage spawn's model, and is independent of stageModels", () => {
   const c = parseConfig({ agentModels: { "workflow-plan-author": "haiku" } })
   assert.equal(agentModel(c, "workflow-plan-author"), "haiku")
@@ -325,6 +348,7 @@ const reviewStage = (requiredAxes?: string[]) =>
     checks: [],
     requireEvidence: false,
     planContract: false,
+    planVisualization: false,
     bashAllowlist: [],
     platformAllowlist: {},
   platformTools: {},

@@ -19,6 +19,13 @@ const options = {
   entryNames: "main",
   bundle: true,
   format: "esm",
+  // Dynamic imports (MermaidBlock's `import("mermaid")`) become lazy chunks
+  // instead of being inlined — the multi-megabyte mermaid bundle is fetched
+  // only when a document actually contains a ```mermaid fence.
+  splitting: true,
+  // esbuild names generic chunks "chunk" already, so [name]-[hash] yields
+  // chunk-HASH.js for those and <diagram>-HASH.js for mermaid's named ones.
+  chunkNames: "[name]-[hash]",
   platform: "browser",
   target: "es2022",
   jsx: "automatic",

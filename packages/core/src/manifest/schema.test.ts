@@ -225,6 +225,25 @@ test("rejects planContract on a check stage — it writes no plan", () => {
   assert.throws(() => parseManifest(raw), /check stage "check" cannot set planContract/)
 })
 
+test("planVisualization round-trips through a JSON save and defaults to false", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], planContract: true, planVisualization: true }, base.stages[1]] }
+  const parsed = parseManifest(raw)
+  assert.equal(parsed.stages[0]?.planVisualization, true)
+  assert.equal(parseManifest(base).stages[0]?.planVisualization, false)
+  // Survive the hub's parse→re-serialize save cycle, same as planContract.
+  assert.equal(parseManifest(JSON.parse(JSON.stringify(parsed))).stages[0]?.planVisualization, true)
+})
+
+test("rejects planVisualization on a check stage — it writes no plan", () => {
+  const raw = { ...base, stages: [base.stages[0], { ...base.stages[1], planVisualization: true }] }
+  assert.throws(() => parseManifest(raw), /check stage "check" cannot set planVisualization/)
+})
+
+test("rejects planVisualization without planContract — the diagram lives inside the contract's plan document", () => {
+  const raw = { ...base, stages: [{ ...base.stages[0], planVisualization: true }, base.stages[1]] }
+  assert.throws(() => parseManifest(raw), /sets planVisualization without planContract/)
+})
+
 test("a check stage's fanout round-trips through a JSON save and defaults to undefined", () => {
   const raw = {
     ...base,
