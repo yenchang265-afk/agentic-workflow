@@ -14,6 +14,7 @@ import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
 import { failurePrompt, overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
 import { sliceCommandPrompt } from "./command-slice.ts"
+import { splitVerb } from "./verb.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
 import { anyWorkflowActive, anyWorktreeWorkflowActive, findSessionDriving, getWorkflow, hasWorkflow, planStageTaskId } from "@agentic-workflow/core/workflow/state"
@@ -464,11 +465,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // read the task as "still in draft" until a retry (reconcile is guarded
       // to run once, so later attempts were fast — the "works after a few
       // tries" symptom). Move first keeps the gate deterministic on attempt 1.
-      const verb = input.arguments.trim().split(/\s+/)[0]?.toLowerCase() ?? ""
+      const { verb } = splitVerb(input.arguments)
       // Trim the rendered body to the invoked verb BEFORE dispatching. The
       // template describes every verb, but the ones whose template survives
-      // (new/retask/approve/replan/remove — handleCommand returns undefined so
-      // the model does the work) are exactly the ones that pay for the other
+      // (new, and retask when its placement succeeded — handleCommand returns
+      // undefined so the model does the work) are exactly the ones that pay for the other
       // ~190 lines, and those lines describe deterministic plugin work in the
       // imperative. Slicing first means the trim holds even if reconcile or
       // handleCommand throws; the `if (outcome)` override below still wins for
@@ -524,8 +525,8 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // invisible to the model, and the rendered template is a DESCRIPTION of
       // the loop, so the model reads it as information and never reports the
       // action. Feed the real outcome back in (same mechanism as the refusal
-      // paths). Pass-through verbs (new/retask/approve/replan/remove) return
-      // undefined here, so their markdown reaches the model untouched.
+      // paths). Pass-through verbs (new, and retask on successful placement)
+      // return undefined here, so their markdown reaches the model untouched.
       if (outcome) {
         overrideCommandPrompt(
           output,

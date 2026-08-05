@@ -130,6 +130,7 @@ import {
   unreviewedAxes,
 } from "@agentic-workflow/core/config"
 import type { Config } from "../config.ts"
+import { splitVerb } from "../verb.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
 import type { Action, WorkflowState, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
 import { anyWorkflowActive, clearWorkflow, findSessionDriving, getWorkflow, setWorkflow } from "@agentic-workflow/core/workflow/state"
@@ -2316,15 +2317,56 @@ const gateCtx = (deps: Deps, config: Config): GateCtx => ({
  * never shadowed by a pile of drafts. The never-approve epic tracking draft is
  * skipped in the id-less scan — leaving it in was what made drafts produce
  * false "multiple awaiting" and risk queuing the wrong one.
+ *
+ * Report-and-stop, like replan: every arm — the folder-driven resolution, the
+ * three gate moves, the ship's push/PR — is deterministic in core, and
+ * `noteThenMove` reports a failed move itself, so there is nothing left for a
+ * model turn to verify. The returned outcome replaces the rendered markdown;
+ * the markdown's approve block survives only when the plugin never ran, and
+ * is written as that tripwire.
  */
-export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
   try {
     const r = await approveAny(gateCtx(deps, config), id)
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
+    return report(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * Handle `retask <id>` — the deterministic half of the authoring verb. The
+ * interview and the rewrite are the agent's work, but WHERE the task must sit
+ * before that is the plugin's: a `queued/` task is moved back to `draft/` (its
+ * approval withdrawn), a `draft/` task is already right, and a planned task is
+ * refused with a pointer at `replan`.
+ *
+ * The deterministic arms — no id, a refusal, a hard failure — are
+ * report-and-stop: their outcome replaces the rendered markdown, so the
+ * interview never runs against a task that is not in `draft/`. Only a
+ * successful placement returns undefined and lets the interview markdown
+ * through; its "resolve in draft/ only" step remains as the backstop for a
+ * plugin that never ran at all.
+ */
+export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string | undefined> => {
+  const { client } = deps
+  // Split the id off the note verbatim rather than on whitespace — the note is
+  // the human's prose and reaches the task file's audit trail intact.
+  const parsed = /^(\S+)\s*([\s\S]*)$/.exec(args.trim())
+  const id = parsed?.[1] ?? ""
+  if (!id) return report(client, `Usage: ${ECMD} retask <id> [note].`, "warning")
+  const note = parsed?.[2]?.trim() || undefined
+  try {
+    const r = await retaskTask(gateCtx(deps, config), id, note)
+    if (!r.ok) return report(client, r.message, gateVariant(r))
+    // Success is silent unless the plugin actually moved something — the agent's
+    // turn reports the reshape, and a toast per retask would double up.
+    if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
+    return
+  } catch (err) {
+    return report(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -2334,44 +2376,21 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
  * task; an explicit id may also name an `in-progress/` (cap-tripped) task.
  * When no leading token names a rejectable task, the whole argument is treated
  * as the reason and the single plan-review task is chosen.
- */
-/**
- * Handle `retask <id>` — the deterministic half of the authoring verb. The
- * interview and the rewrite are the agent's work, but WHERE the task must sit
- * before that is the plugin's: a `queued/` task is moved back to `draft/` (its
- * approval withdrawn), a `draft/` task is already right, and a planned task is
- * refused with a pointer at `replan`.
  *
- * The turn is NOT blocked either way — the command template's interview has to
- * run. It doesn't need blocking: after a refusal the file is not in `draft/`, so
- * the agent's own "resolve in draft/ only" step fails and it refuses too.
+ * Report-and-stop: the whole flow — resolve, refuse (live loop / claim
+ * marker), move, record the reason, commit — is deterministic in core, and
+ * `noteThenMove` reports a failed move itself, so there is nothing left for a
+ * model turn to verify. The returned outcome replaces the rendered markdown;
+ * the markdown's replan block survives only when the plugin never ran, and is
+ * written as that tripwire.
  */
-export const handleRetask = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
-  const { client } = deps
-  // Split the id off the note verbatim rather than on whitespace — the note is
-  // the human's prose and reaches the task file's audit trail intact.
-  const parsed = /^(\S+)\s*([\s\S]*)$/.exec(args.trim())
-  const id = parsed?.[1] ?? ""
-  if (!id) return void (await toast(client, `Usage: ${ECMD} retask <id> [note].`, "warning"))
-  const note = parsed?.[2]?.trim() || undefined
-  try {
-    const r = await retaskTask(gateCtx(deps, config), id, note)
-    // Success is silent unless the plugin actually moved something — the agent's
-    // turn reports the reshape, and a toast per retask would double up.
-    if (!r.ok) await toast(client, r.message, gateVariant(r))
-    else if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
-  } catch (err) {
-    await toast(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
-  }
-}
-
-export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   try {
     const r = await rejectAny(gateCtx(deps, config), args.trim())
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Replan failed: ${(err as Error).message}`, "error")
+    return report(client, `Replan failed: ${(err as Error).message}`, "error")
   }
 }
 
@@ -2387,18 +2406,25 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
  * runs inside `command.execute.before`, so there is no turn in which a model
  * could ask the user first — the dry run is the only confirmation there is. Use
  * `abandon` when the task should merely leave the active backlog.
+ *
+ * Report-and-stop, like the gates: both arms — the dry run and the forced
+ * delete — complete deterministically in core, and the dry run's whole point
+ * is that the USER reads which task the id resolved to before confirming. A
+ * toast alone is invisible to the model, so the outcome must replace the
+ * rendered markdown for the model to relay it; the markdown's remove block
+ * survives only when the plugin never ran, and is written as that tripwire.
  */
-export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const words = args.trim().split(/\s+/).filter(Boolean)
   const force = words.some((w) => w === "--force" || w === "-f")
   const id = words.find((w) => !w.startsWith("-")) ?? ""
-  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id> [--force].`, "warning"))
+  if (!id) return report(client, `Usage: ${ECMD} remove <id> [--force].`, "warning")
   try {
     const r = await removeTask(gateCtx(deps, config), id, force)
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
+    return report(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -2406,16 +2432,22 @@ export const handleRemove = async (deps: Deps, _sessionID: string, args: string,
  * Handle `abandon <id> [reason]` — cancel a task by moving it to `abandoned/`.
  * The reversible counterpart to `remove`: the file survives, so unlike `remove`
  * this needs no confirmation. An id is required for the same reason.
+ *
+ * Report-and-stop, like the other gates: the whole flow — resolve, refuse a
+ * live-driven or claim-held task, move to `abandoned/`, release the worktree —
+ * is deterministic in core and self-reports a failed move. The returned
+ * outcome replaces the rendered markdown; the markdown's abandon block
+ * survives only when the plugin never ran, and is written as that tripwire.
  */
-export const handleAbandon = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleAbandon = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const [id = "", ...rest] = args.trim().split(/\s+/).filter(Boolean)
-  if (!id) return void (await toast(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning"))
+  if (!id) return report(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning")
   try {
     const r = await abandonTask(gateCtx(deps, config), id, rest.join(" ") || undefined)
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
+    return report(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -2479,12 +2511,6 @@ const USAGE =
   "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
-/** Split a command argument into its verb (lowercased) and the remainder. Pure. */
-const splitVerb = (arg: string): { verb: string; rest: string } => {
-  const m = /^(\S+)\s*([\s\S]*)$/.exec(arg)
-  return m ? { verb: m[1]!.toLowerCase(), rest: m[2]!.trim() } : { verb: "", rest: "" }
-}
-
 /**
  * Parse a `claim <pr>` target into a positive PR number. Accepts a bare number
  * (`42`), a `#`-prefixed number (`#42`), or a PR URL whose last path segment is
@@ -2532,7 +2558,6 @@ export const handleCommand = async (
 ): Promise<string | undefined> => {
   const { client } = deps
   const arg = args.trim()
-  const lower = arg.toLowerCase()
   const { verb, rest } = splitVerb(arg)
   const engineering = kind === "engineering"
 
@@ -2542,21 +2567,23 @@ export const handleCommand = async (
   }
 
   if (engineering) {
-    // `new`/`retask`/`approve`/`replan`/`remove` return undefined so the command
-    // hook leaves the rendered markdown in place: `new`/`retask` need the model's
-    // turn (interview), and the gate/remove verbs already have a working
-    // markdown-driven flow (approve/replan glob-verify the folder move). Only
-    // the report-and-stop verbs below return an outcome string for the hook to
-    // surface — a toast alone is invisible to the model.
+    // `new` returns undefined so the command hook leaves the rendered markdown
+    // in place — the interview is the model's turn. `retask` is the hybrid:
+    // undefined (interview proceeds) only when its placement half succeeded;
+    // its refusals are report-and-stop like the gates. Every other engineering
+    // verb is report-and-stop: it returns an outcome string for the hook to
+    // surface, because a toast alone is invisible to the model.
     if (verb === "new") return
-    if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
+    if (verb === "retask") return handleRetask(deps, sessionID, rest, config)
 
-    // The two deterministic gate verbs: the unified folder-driven approve, and
-    // replan (the sole rejection verb). Both parse the post-verb remainder.
-    if (verb === "approve") return void (await handleApprove(deps, sessionID, rest, config))
-    if (verb === "replan") return void (await handleReplan(deps, sessionID, rest, config))
-    if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
-    if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))
+    // The deterministic gate verbs: the unified folder-driven approve, replan
+    // (the sole rejection verb), remove (dry-run unless --force), and abandon.
+    // All report-and-stop — core self-verifies the move/delete, so the outcome
+    // replaces the markdown instead of a model turn glob-verifying it.
+    if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
+    if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
+    if (verb === "remove") return handleRemove(deps, sessionID, rest, config)
+    if (verb === "abandon") return handleAbandon(deps, sessionID, rest, config)
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {
@@ -2566,7 +2593,7 @@ export const handleCommand = async (
     }
 
     // List the workflow kinds this clone knows about and which are enabled.
-    if (lower === "kinds") {
+    if (verb === "kinds" && !rest) {
       const enabled = enabledWorkflowKinds(config)
       let known: string[]
       try {
@@ -2617,7 +2644,7 @@ export const handleCommand = async (
     return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
   }
 
-  if (lower === "stop" || lower === "abort") {
+  if ((verb === "stop" || verb === "abort") && !rest) {
     const wasWatching = await stopWatching(deps, sessionID)
     claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
@@ -2639,8 +2666,8 @@ export const handleCommand = async (
     return report(client, message, "info")
   }
 
-  if (lower === "watch" || lower.startsWith("watch ")) {
-    const parsed = parseWatchArgs(arg.slice("watch".length))
+  if (verb === "watch") {
+    const parsed = parseWatchArgs(rest)
     if ("error" in parsed) return report(client, parsed.error, "warning")
     // The kind's configured trigger (workflows.<kind>.trigger) is the default; any
     // `watch` argument — poll [interval], cron <schedule>, idle, or a bare
@@ -2694,13 +2721,13 @@ export const handleCommand = async (
     return message
   }
 
-  if (lower === "unwatch") {
+  if (verb === "unwatch" && !rest) {
     const was = await stopWatching(deps, sessionID)
     return report(client, was ? "Stopped watching." : "Not watching.", "info")
   }
 
-  if (lower === "recover" || lower.startsWith("recover ")) {
-    let id = arg.slice("recover".length).trim()
+  if (verb === "recover") {
+    let id = rest
     if (!id) return report(client, `Usage: ${ECMD} recover <id>.`, "warning")
     // Same busy guard as `claim`: recovering while this session drives a
     // DIFFERENT task would clearWorkflow that run's state and abandon it mid-stage.
@@ -2791,8 +2818,8 @@ export const handleCommand = async (
     )
   }
 
-  if (lower === "doctor" || lower.startsWith("doctor ")) {
-    const fix = /(^|\s)(--)?fix(\s|$)/.test(lower.slice("doctor".length))
+  if (verb === "doctor") {
+    const fix = /(^|\s)(--)?fix(\s|$)/.test(rest.toLowerCase())
     try {
       const anomalies = await auditBacklog(client, deps.directory, config.tasksDir)
       const heldQueued = await listClaimIds(deps.$, deps.directory, config.tasksDir, "queued")
@@ -2879,7 +2906,7 @@ export const handleCommand = async (
     }
   }
 
-  if (lower === "status" || lower === "") {
+  if ((verb === "status" && !rest) || verb === "") {
     const isWatching = watching.has(sessionID)
     const state = getWorkflow(sessionID)
     // Backlog roll-up accompanies the session-loop line — a whole-backlog view,

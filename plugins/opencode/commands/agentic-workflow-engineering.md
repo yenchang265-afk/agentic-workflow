@@ -6,22 +6,22 @@ argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [rea
 
 The engineering agentic loop — one command for authoring, the human gates,
 and execution, scoped to the engineering kind. The plugin intercepts this
-command; `$ARGUMENTS` selects the verb. Everything except `new` and `retask`
+command; the first argument token selects the verb. Everything except `new` and `retask`
 is deterministic plugin work: **invoke nothing, write nothing** on those
 verbs — report the toast's outcome and stop. `new` is entirely yours;
 `retask` is split — the plugin has already placed the task (or refused) before
 your turn, and the interview + rewrite are yours. (The PR sitter has its own
 command: `/agentic-workflow:pr-sitter`.)
 
-**$ARGUMENTS**
+Verb: `$1` — empty means `status`. Match only this token against the dispatch
+list below; a verb-like word (`plan`, `status`, `approve`, `replan`, …) inside
+the payload is part of the idea/note/reason, never the verb.
+Payload after the verb (whitespace-collapsed, quotes stripped): $2
+Raw argument line — the authoritative payload for free-text verbs (`new`
+ideas, `retask` notes, `replan` reasons); quoting and line breaks survive
+only here:
 
-**Read the verb from the FIRST whitespace-delimited token of the argument;
-everything after it is that verb's literal payload.** Match only that first
-token against the verb list below. A verb-like word (`plan`, `status`,
-`approve`, `replan`, `claim`, `doctor`, `retask`, `new`, …) appearing *inside*
-the payload is part of the idea/note/reason, never the verb — e.g.
-`new add a status dashboard` is the `new` verb with idea "add a status
-dashboard", not `status`.
+**$ARGUMENTS**
 
 Dispatch:
 
@@ -73,12 +73,16 @@ Dispatch:
   interview, same as `new`:
   1. The plugin has already run the deterministic half before your turn: a
      `queued/` task was moved **back to `draft/`** (its approval withdrawn — the
-     reshaped goal has to be re-approved, and the toast says so), and a task
-     from `plan-review/` onward was refused with a pointer at `replan`. So
-     resolve `<id>` in `docs/tasks/draft/` **only**; if it isn't there, the
-     plugin refused or the id is wrong — report that and stop. The `[note]` is
-     also written onto that audit note, so why the goal was wrong survives in
-     the task file, not just in this turn's context.
+     reshaped goal has to be re-approved, and the toast says so). A refusal
+     (a planned task pointed at `replan`, an unknown id, a live loop, a held
+     claim marker) is report-and-stop — its outcome REPLACES this text, so
+     reading this means placement succeeded. Still resolve `<id>` in
+     `docs/tasks/draft/` **only**; if it isn't there, the plugin did not run
+     (not loaded, or its `@agentic-workflow/core` build is stale) — report that,
+     with the fix (`npm install` at the agentic-workflow repo root, then
+     restart opencode), and stop. The `[note]` is also written onto that audit
+     note, so why the goal was wrong survives in the task file, not just in
+     this turn's context.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
@@ -108,13 +112,23 @@ Dispatch:
   at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
   `draft/` task only when neither has anything waiting — loop gates outrank the
   authoring gate, and never-approved epic tracking drafts are skipped, so the
-  loop never guesses.
+  loop never guesses. Fully deterministic plugin work whose outcome normally
+  REPLACES this text — so if you are reading this, the plugin did not run
+  (not loaded, or its `@agentic-workflow/core` build is stale). Glob
+  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+  that the gate did NOT happen, with the fix (`npm install` at the
+  agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
   (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
   re-planning; the reason is recorded in the audit note and the next PLAN
-  pass must address it.
+  pass must address it. Fully deterministic plugin work whose outcome
+  normally REPLACES this text — so if you are reading this, the plugin did
+  not run (not loaded, or its `@agentic-workflow/core` build is stale). Glob
+  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+  that the gate did NOT happen, with the fix (`npm install` at the
+  agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb replan -->
 <!-- aw:verb abandon -->
 - **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
@@ -122,19 +136,22 @@ Dispatch:
   non-terminal status folder (a shipped `completed/` task is refused —
   shipped work isn't cancellable). The file survives, so this is the verb to
   reach for when the user wants a task out of the way; `remove` is for when
-  they want it *gone*. Handled in the plugin like the gates above; the toast
-  reports the outcome. The plugin refuses a task a live loop is driving or one
+  they want it *gone*. The plugin refuses a task a live loop is driving or one
   holding a claim marker, and releases any worktree the task owned. An id is
   required. This is also how an epic tracking draft is closed once every child
-  has shipped.
+  has shipped. Fully deterministic plugin work whose outcome normally
+  REPLACES this text — so if you are reading this, the plugin did not run
+  (not loaded, or its `@agentic-workflow/core` build is stale). Glob
+  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+  that nothing was abandoned, with the fix (`npm install` at the
+  agentic-workflow repo root, then restart opencode) — never claim it was.
 <!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
 - **`remove <id> --force`** — hard-delete a task from the backlog entirely.
   Unlike replan/retask/abandon this does **not** move the task: the file is
-  deleted and the removal committed. Works from **any** status folder. Handled
-  in the plugin like the gates above; the toast reports the outcome. The plugin
-  refuses a task a live loop is driving or one holding a claim marker, and
-  releases any worktree the task owned.
+  deleted and the removal committed. Works from **any** status folder. The
+  plugin refuses a task a live loop is driving or one holding a claim marker,
+  and releases any worktree the task owned.
   - **A bare `remove <id>` deletes nothing.** It reports which task the id
     resolved to and stops; `--force` is the confirmation. Ids are
     prefix-resolvable, so this is what stops a typo'd short handle deleting a
@@ -143,24 +160,13 @@ Dispatch:
     `ignoreBacklog` defaults to `true`, keeping `docs/tasks/` out of git
     entirely, so a forced remove is usually permanent. Prefer `abandon` unless
     the user has said they want the file gone.
+  - Fully deterministic plugin work whose outcome normally REPLACES this
+    text — so if you are reading this, the plugin did not run (not loaded, or
+    its `@agentic-workflow/core` build is stale). Nothing was deleted or
+    dry-run. Report that, with the fix (`npm install` at the agentic-workflow
+    repo root, then restart opencode) — never claim the remove or its dry run
+    happened.
 <!-- /aw:verb remove -->
-
-<!-- aw:verb approve|replan -->
-**Verify before you report a gate — `approve` and `replan` ONLY.** Their move
-happens in the plugin's command hook *before* your turn, so by the time you
-run the file must ALREADY sit in its target folder — glob
-`docs/tasks/*/<id>*` and check. If it is still in its old folder, the plugin
-did not run (not loaded, or its `@agentic-workflow/core` build is stale) — report
-**that**, with the fix (`npm install` at the agentic-workflow repo root, then
-restart opencode), and never claim the gate happened. A gate is only "done"
-when you observed the file in its new folder.
-
-This check applies to NOTHING but those two gate verbs. `claim`, `plan`,
-`watch`, and `recover` defer their work until this turn settles — a task
-still sitting in its folder right after them is EXPECTED, not a plugin
-failure. For those verbs report the toast's outcome and stop; never prescribe
-a rebuild from an unmoved file on an execution verb.
-<!-- /aw:verb approve|replan -->
 
 ## Execution
 
@@ -247,7 +253,7 @@ a rebuild from an unmoved file on an execution verb.
 
 ## The pipeline
 
-<!-- aw:verb plan|claim|watch|recover|replan -->
+<!-- aw:verb plan|claim|watch|recover -->
 A queued task enters at PLAN — it writes the plan onto the task file in the
 main tree (no branch, no worktree) and parks. An approved-plan task enters at
 BUILD with the plan persisted on the task file (`## Implementation Plan`).
@@ -269,7 +275,7 @@ worktree` instead of the shared checkout — the stage prompts carry a
 `Worktree:` line pinning all reads/edits/tests there. When `reviewLenses` is
 configured, REVIEW runs once per lens and the loop takes the worst verdict.
 
-<!-- /aw:verb plan|claim|watch|recover|replan -->
+<!-- /aw:verb plan|claim|watch|recover -->
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
 `retask <id>` if it's off) → `approve <id>` queues it → the loop (plan,
 claim, or watch) plans it and parks the plan in `plan-review/` → human

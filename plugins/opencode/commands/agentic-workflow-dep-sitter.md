@@ -7,11 +7,11 @@ argument-hint: claim | watch [poll [interval] | cron <schedule> | idle | <interv
 The dep sitter agentic loop — sits on vulnerable and outdated dependencies
 (npm via `npm audit`/`npm outdated`; Maven/Gradle via OSV-Scanner over
 `pom.xml`/`gradle.lockfile`) and turns each auto-fixable one into a
-verified draft PR. The plugin intercepts this command; `$ARGUMENTS` selects
-the verb. Every verb is deterministic plugin work: **invoke nothing, write
+verified draft PR. The plugin intercepts this command; the first argument
+token selects the verb. Every verb is deterministic plugin work: **invoke nothing, write
 nothing** — report the toast's outcome and stop.
 
-**$ARGUMENTS**
+Verb: `$1` — empty means `status`. Argument after the verb: $2
 
 Dispatch:
 

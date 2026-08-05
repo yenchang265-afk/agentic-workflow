@@ -147,7 +147,8 @@ test("a backlog with neither started nor held tasks falls back to the no-plan hi
  * Verb classification of the `/agentic-workflow:engineering` command. `new` is pure
  * agent work (interview + draft write) and must pass through silently — no
  * toast, no move — so the command template's model turn runs. `retask` is the
- * hybrid: its placement half is a plugin move, the reshape after it is not.
+ * hybrid: its placement half is a plugin move whose refusals are
+ * report-and-stop; only a successful placement passes through to the reshape.
  */
 
 test("new passes through without a toast or a move", async () => {
@@ -167,8 +168,9 @@ test("retask on a draft is a silent no-op — it is already where the interview 
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
+  const outcome = await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
 
+  assert.equal(outcome, undefined, "successful placement passes through — the interview markdown must reach the model")
   assert.equal(toasts.length, 0, "no toast — the agent's turn reports the reshape")
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "nothing to move")
 })
@@ -179,8 +181,9 @@ test("retask on an approved queued task sends it back to draft and says so", asy
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
+  const outcome = await handleCommand(deps, "sess", "retask my-task tighten acceptance", testConfig)
 
+  assert.equal(outcome, undefined, "successful placement passes through — the interview markdown must reach the model")
   assert.equal(toasts[0]?.variant, "success")
   assert.match(toasts[0]?.message ?? "", /draft/)
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("draft")), "the task moves back to draft/")
@@ -192,11 +195,26 @@ test("retask on a parked plan is refused and points at replan", async () => {
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "retask my-task", testConfig)
+  const outcome = await handleCommand(deps, "sess", "retask my-task", testConfig)
 
   assert.equal(toasts[0]?.variant, "warning")
   assert.match(toasts[0]?.message ?? "", /replan/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "a planned task is never moved by retask")
+  // A refusal is report-and-stop: the outcome must replace the interview
+  // markdown, or the model interviews against a task that is not in draft/.
+  assert.equal(outcome, toasts[0]?.message, "a refused retask returns exactly what it toasted")
+})
+
+test("retask with no id is a usage outcome, not an interview", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  const outcome = await handleCommand(deps, "sess", "retask", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Usage/)
+  assert.equal(outcome, toasts[0]?.message, "the usage warning replaces the interview markdown")
 })
 
 /**
@@ -563,11 +581,14 @@ test("replan sends a plan-review task back to queued/ with the reason noted", as
     log: () => {},
   }
 
-  await handleCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
+  const outcome = await handleCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
   assert.ok(log.some((cmd) => cmd.includes("misses the cache layer")))
+  // Report-and-stop: the outcome rides back to the command hook so it can
+  // replace the rendered markdown — a toast alone is invisible to the model.
+  assert.equal(outcome, toasts[0]?.message, "replan returns exactly what it toasted")
 })
 
 test("replan also accepts a cap-tripped in-progress task", async () => {
@@ -896,11 +917,14 @@ test("/remove <id> without --force deletes nothing and reports what it would del
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleRemove(deps, "sess", "my-task", testConfig)
+  const outcome = await handleRemove(deps, "sess", "my-task", testConfig)
 
   assert.match(toasts[0]?.message ?? "", /--force/)
   assert.match(toasts[0]?.message ?? "", /Do the thing/, "names the task the id resolved to")
   assert.ok(!log.some((cmd) => cmd.startsWith("rm ")), "nothing deleted")
+  // The dry run IS the confirmation, and the USER confirms off what the model
+  // relays — so the outcome must ride back for the hook to put in the prompt.
+  assert.equal(outcome, toasts[0]?.message, "remove returns exactly what it toasted")
 })
 
 test("/abandon <id> moves the task to abandoned/ — mv, no rm", async () => {
@@ -909,10 +933,13 @@ test("/abandon <id> moves the task to abandoned/ — mv, no rm", async () => {
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleAbandon(deps, "sess", "my-task superseded", testConfig)
+  const outcome = await handleAbandon(deps, "sess", "my-task superseded", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
   assert.match(toasts[0]?.message ?? "", /abandoned/)
+  // Report-and-stop: the outcome rides back to the command hook so it can
+  // replace the rendered markdown — a toast alone is invisible to the model.
+  assert.equal(outcome, toasts[0]?.message, "abandon returns exactly what it toasted")
   assert.ok(log.some((cmd) => cmd.startsWith("mv ") && cmd.includes("/abandoned/")), "the file moves to abandoned/")
   // Claim-stamp/worktree cleanup legitimately shells out to `rm -f`; what must
   // never happen is the TASK FILE being deleted the way remove deletes it.
@@ -1044,17 +1071,31 @@ test("report-and-stop verbs return their outcome for the command hook to surface
   assert.match(unwatched ?? "", /watching/i)
 })
 
-test("authoring/gate verbs return undefined so their command markdown reaches the model", async () => {
+test("authoring verbs return undefined so their command markdown reaches the model", async () => {
   const draft = serializeTask({ title: "Do the thing", body: "x" })
   const files = { "docs/tasks/draft/my-task.md": draft }
   const { client } = makeClientFS(files)
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  // new/approve intentionally pass through: overriding them would strip the
-  // interview turn / the approve glob-verify flow the markdown drives.
+  // new intentionally passes through: overriding it would strip the interview
+  // turn the markdown drives.
   assert.equal(await handleCommand(deps, "sess", "new add rate limiting", testConfig), undefined)
-  assert.equal(await handleCommand(deps, "sess", "approve my-task", testConfig), undefined)
+})
+
+test("approve is report-and-stop: it returns exactly what it toasted", async () => {
+  const draft = serializeTask({ title: "Do the thing", body: "x" })
+  const files = { "docs/tasks/draft/my-task.md": draft }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  // Core self-verifies the gate move, so the outcome rides back to the command
+  // hook to replace the rendered markdown — no model turn glob-verifies it.
+  const outcome = await handleCommand(deps, "sess", "approve my-task", testConfig)
+
+  assert.equal(outcome, toasts[0]?.message, "approve returns exactly what it toasted")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the task gate move ran")
 })
 
 test("an unknown verb gets the engineering usage toast", async () => {
@@ -1063,6 +1104,28 @@ test("an unknown verb gets the engineering usage toast", async () => {
   const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
 
   await handleCommand(deps, "sess", "no-such-verb", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Unknown \/agentic-workflow:engineering mode/)
+})
+
+test("a quoted verb dispatches like its unquoted self — parity with the $1 the template renders", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "'unwatch'", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /watching/i, "quoted 'unwatch' must dispatch, not fall to the usage toast")
+})
+
+test("a multi-word quoted first token is one unknown verb, matching how $1 renders it", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", '"new idea" x', testConfig)
 
   assert.equal(toasts[0]?.variant, "warning")
   assert.match(toasts[0]?.message ?? "", /Unknown \/agentic-workflow:engineering mode/)

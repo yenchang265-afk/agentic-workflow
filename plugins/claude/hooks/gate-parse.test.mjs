@@ -60,8 +60,10 @@ test("retask dispatches with continueTurn — the move is deterministic, the res
   assert.equal(d.continueTurn, true, "the model must still run the interview")
 })
 
-test("a bare retask is malformed — passed through so the model reports usage", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering retask"), { passThrough: true })
+test("a bare retask is malformed — blocked deterministically with usage", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering retask"), {
+    usage: "Usage: /agentic-workflow:engineering retask <id> [note].",
+  })
 })
 
 test("remove routes to the gate remove CLI verb and blocks the turn", () => {
@@ -71,7 +73,9 @@ test("remove routes to the gate remove CLI verb and blocks the turn", () => {
 })
 
 test("a bare remove is malformed — never guess which task to delete", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove"), { passThrough: true })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove"), {
+    usage: "Usage: /agentic-workflow:engineering remove <id> [--force].",
+  })
 })
 
 test("remove forwards --force, and forwards nothing when the user didn't type it", () => {
@@ -83,7 +87,9 @@ test("remove forwards --force, and forwards nothing when the user didn't type it
 })
 
 test("a flag never becomes the id — `remove --force` names no task, so it is malformed", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove --force"), { passThrough: true })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering remove --force"), {
+    usage: "Usage: /agentic-workflow:engineering remove <id> [--force].",
+  })
 })
 
 test("abandon routes to the gate abandon CLI verb, carrying its reason", () => {
@@ -100,7 +106,9 @@ test("abandon routes to the gate abandon CLI verb, carrying its reason", () => {
 })
 
 test("a bare abandon is malformed — never guess which task to cancel", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering abandon"), { passThrough: true })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering abandon"), {
+    usage: "Usage: /agentic-workflow:engineering abandon <id> [reason].",
+  })
 })
 
 test("prose containing the plain word 'engineering' never fires a gate", () => {

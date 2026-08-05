@@ -98,7 +98,10 @@ const main = async () => {
 
   const dispatch = gateArgsFor(prompt)
   if (!dispatch) return injectVerb() // not a gate command (new/plan/claim/status/…) — the model does the work
-  if (dispatch.passThrough) return injectVerb() // malformed gate verb — the model reports usage from its own block
+  // An id-less gate verb is a deterministic usage refusal: block with the
+  // message directly — spending a model turn to restate usage is waste, and
+  // matches the OpenCode host, whose driver answers these arms itself.
+  if (dispatch.usage) return block(dispatch.usage)
   const args = dispatch.argv
   const label = args.slice(1).join(" ")
 
