@@ -915,10 +915,13 @@ test("/abandon <id> moves the task to abandoned/ — mv, no rm", async () => {
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleAbandon(deps, "sess", "my-task superseded", testConfig)
+  const outcome = await handleAbandon(deps, "sess", "my-task superseded", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
   assert.match(toasts[0]?.message ?? "", /abandoned/)
+  // Report-and-stop: the outcome rides back to the command hook so it can
+  // replace the rendered markdown — a toast alone is invisible to the model.
+  assert.equal(outcome, toasts[0]?.message, "abandon returns exactly what it toasted")
   assert.ok(log.some((cmd) => cmd.startsWith("mv ") && cmd.includes("/abandoned/")), "the file moves to abandoned/")
   // Claim-stamp/worktree cleanup legitimately shells out to `rm -f`; what must
   // never happen is the TASK FILE being deleted the way remove deletes it.

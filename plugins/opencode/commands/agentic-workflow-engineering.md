@@ -132,19 +132,22 @@ Dispatch:
   non-terminal status folder (a shipped `completed/` task is refused —
   shipped work isn't cancellable). The file survives, so this is the verb to
   reach for when the user wants a task out of the way; `remove` is for when
-  they want it *gone*. Handled in the plugin like the gates above; the toast
-  reports the outcome. The plugin refuses a task a live loop is driving or one
+  they want it *gone*. The plugin refuses a task a live loop is driving or one
   holding a claim marker, and releases any worktree the task owned. An id is
   required. This is also how an epic tracking draft is closed once every child
-  has shipped.
+  has shipped. Fully deterministic plugin work whose outcome normally
+  REPLACES this text — so if you are reading this, the plugin did not run
+  (not loaded, or its `@agentic-workflow/core` build is stale). Glob
+  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+  that nothing was abandoned, with the fix (`npm install` at the
+  agentic-workflow repo root, then restart opencode) — never claim it was.
 <!-- /aw:verb abandon -->
 <!-- aw:verb remove -->
 - **`remove <id> --force`** — hard-delete a task from the backlog entirely.
   Unlike replan/retask/abandon this does **not** move the task: the file is
-  deleted and the removal committed. Works from **any** status folder. Handled
-  in the plugin like the gates above; the toast reports the outcome. The plugin
-  refuses a task a live loop is driving or one holding a claim marker, and
-  releases any worktree the task owned.
+  deleted and the removal committed. Works from **any** status folder. The
+  plugin refuses a task a live loop is driving or one holding a claim marker,
+  and releases any worktree the task owned.
   - **A bare `remove <id>` deletes nothing.** It reports which task the id
     resolved to and stops; `--force` is the confirmation. Ids are
     prefix-resolvable, so this is what stops a typo'd short handle deleting a

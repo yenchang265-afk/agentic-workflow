@@ -2428,16 +2428,22 @@ export const handleRemove = async (deps: Deps, _sessionID: string, args: string,
  * Handle `abandon <id> [reason]` — cancel a task by moving it to `abandoned/`.
  * The reversible counterpart to `remove`: the file survives, so unlike `remove`
  * this needs no confirmation. An id is required for the same reason.
+ *
+ * Report-and-stop, like the other gates: the whole flow — resolve, refuse a
+ * live-driven or claim-held task, move to `abandoned/`, release the worktree —
+ * is deterministic in core and self-reports a failed move. The returned
+ * outcome replaces the rendered markdown; the markdown's abandon block
+ * survives only when the plugin never ran, and is written as that tripwire.
  */
-export const handleAbandon = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleAbandon = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const [id = "", ...rest] = args.trim().split(/\s+/).filter(Boolean)
-  if (!id) return void (await toast(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning"))
+  if (!id) return report(client, `Usage: ${ECMD} abandon <id> [reason].`, "warning")
   try {
     const r = await abandonTask(gateCtx(deps, config), id, rest.join(" ") || undefined)
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
+    return report(client, `Abandon failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -2565,13 +2571,13 @@ export const handleCommand = async (
     if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
 
     // The deterministic gate verbs: the unified folder-driven approve, replan
-    // (the sole rejection verb), and remove (dry-run unless --force). All
-    // report-and-stop — core self-verifies the move/delete, so the outcome
+    // (the sole rejection verb), remove (dry-run unless --force), and abandon.
+    // All report-and-stop — core self-verifies the move/delete, so the outcome
     // replaces the markdown instead of a model turn glob-verifying it.
     if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
     if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
     if (verb === "remove") return handleRemove(deps, sessionID, rest, config)
-    if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))
+    if (verb === "abandon") return handleAbandon(deps, sessionID, rest, config)
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.
     if (verb === "plan") {
