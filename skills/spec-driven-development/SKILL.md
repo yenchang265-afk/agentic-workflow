@@ -105,3 +105,4 @@ value was in constraining the code that already got written.
 - [ ] Assumptions were stated and corrected before the spec was written
 - [ ] Anything undecided sits in Open Questions rather than being invented
 - [ ] The human has reviewed the spec, and it is committed to the repository
+- [ ] On a `ROUTE:` line from `plan-router`, the route's next skill was invoked — or the divergence was declared with an amended route

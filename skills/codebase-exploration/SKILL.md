@@ -59,7 +59,12 @@ Three legal exits, and the user picks:
 - **Not worth doing, or not yet** → stop here. Nothing was written, so
   nothing needs cleaning up.
 
-**Done when** the exit is stated explicitly — including the bail.
+On a `ROUTE:` line from `plan-router`, the exit is already encoded: invoke
+the route's next skill, or declare which conditional exit fired and follow
+the amended route.
+
+**Done when** the exit is stated explicitly — including the bail — and the
+successor skill is invoked (a bail ends the route; nothing follows).
 
 ## Facts and decisions
 
@@ -91,4 +96,4 @@ its `GUESS:` lines.
 - [ ] One option carries a recommendation with its reasoning
 - [ ] Decisions surfaced along the way went to the user, not into assumptions
 - [ ] Nothing was written to disk without the user asking
-- [ ] The exit — spec, plan, or bail — was stated explicitly
+- [ ] The exit — spec, plan, or bail — was stated explicitly, and the route's successor skill was invoked (a bail ends the route)

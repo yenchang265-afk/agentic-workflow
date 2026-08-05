@@ -115,3 +115,4 @@ What a strong session actually reads like: [`examples.md`](examples.md).
 - [ ] The one-pager exists as a file or a message, with a "Not Doing" list
 - [ ] Weak ideas were named as weak
 - [ ] Nothing was saved to disk without the user's explicit yes
+- [ ] On a `ROUTE:` line from `plan-router`, the route's next skill was invoked — or the divergence was declared with an amended route
