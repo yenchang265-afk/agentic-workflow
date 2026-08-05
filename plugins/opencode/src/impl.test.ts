@@ -304,10 +304,10 @@ test("a verb whose block slices to nothing keeps the full body, not just the dra
   assert.ok(text.replace(/Invoke the[\s\S]*$/, "").trim().length > 0, "the note must not be the ENTIRE body")
 })
 
-test("replan and approve are report-and-stop: the gate outcome replaces the rendered template", async () => {
+test("replan, approve, and remove are report-and-stop: the gate outcome replaces the rendered template", async () => {
   // Core self-verifies the moves, so no model turn glob-verifies them — the
   // hook must feed the deterministic outcome back as the whole prompt.
-  for (const args of ["replan my-task too vague", "approve my-task"]) {
+  for (const args of ["replan my-task too vague", "approve my-task", "remove my-task"]) {
     const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
     await runCommand(args, output)
     assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/, args)

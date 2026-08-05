@@ -899,11 +899,14 @@ test("/remove <id> without --force deletes nothing and reports what it would del
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleRemove(deps, "sess", "my-task", testConfig)
+  const outcome = await handleRemove(deps, "sess", "my-task", testConfig)
 
   assert.match(toasts[0]?.message ?? "", /--force/)
   assert.match(toasts[0]?.message ?? "", /Do the thing/, "names the task the id resolved to")
   assert.ok(!log.some((cmd) => cmd.startsWith("rm ")), "nothing deleted")
+  // The dry run IS the confirmation, and the USER confirms off what the model
+  // relays — so the outcome must ride back for the hook to put in the prompt.
+  assert.equal(outcome, toasts[0]?.message, "remove returns exactly what it toasted")
 })
 
 test("/abandon <id> moves the task to abandoned/ — mv, no rm", async () => {

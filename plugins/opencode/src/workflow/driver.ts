@@ -2402,18 +2402,25 @@ export const handleReplan = async (deps: Deps, _sessionID: string, args: string,
  * runs inside `command.execute.before`, so there is no turn in which a model
  * could ask the user first — the dry run is the only confirmation there is. Use
  * `abandon` when the task should merely leave the active backlog.
+ *
+ * Report-and-stop, like the gates: both arms — the dry run and the forced
+ * delete — complete deterministically in core, and the dry run's whole point
+ * is that the USER reads which task the id resolved to before confirming. A
+ * toast alone is invisible to the model, so the outcome must replace the
+ * rendered markdown for the model to relay it; the markdown's remove block
+ * survives only when the plugin never ran, and is written as that tripwire.
  */
-export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<void> => {
+export const handleRemove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const words = args.trim().split(/\s+/).filter(Boolean)
   const force = words.some((w) => w === "--force" || w === "-f")
   const id = words.find((w) => !w.startsWith("-")) ?? ""
-  if (!id) return void (await toast(client, `Usage: ${ECMD} remove <id> [--force].`, "warning"))
+  if (!id) return report(client, `Usage: ${ECMD} remove <id> [--force].`, "warning")
   try {
     const r = await removeTask(gateCtx(deps, config), id, force)
-    await toast(client, r.message, gateVariant(r))
+    return report(client, r.message, gateVariant(r))
   } catch (err) {
-    await toast(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
+    return report(client, `Remove failed for "${id}": ${(err as Error).message}`, "error")
   }
 }
 
@@ -2550,21 +2557,20 @@ export const handleCommand = async (
   }
 
   if (engineering) {
-    // `new`/`retask`/`remove` return undefined so the command hook leaves the
-    // rendered markdown in place: `new`/`retask` need the model's turn
-    // (interview), and remove has a working markdown-driven flow. Only the
-    // report-and-stop verbs return an outcome string for the hook to surface —
-    // a toast alone is invisible to the model.
+    // `new`/`retask` return undefined so the command hook leaves the rendered
+    // markdown in place — both need the model's turn (interview). Every other
+    // engineering verb is report-and-stop: it returns an outcome string for
+    // the hook to surface, because a toast alone is invisible to the model.
     if (verb === "new") return
     if (verb === "retask") return void (await handleRetask(deps, sessionID, rest, config))
 
-    // The two deterministic gate verbs: the unified folder-driven approve, and
-    // replan (the sole rejection verb). Both parse the post-verb remainder.
-    // Both are report-and-stop — core self-verifies the move, so the outcome
+    // The deterministic gate verbs: the unified folder-driven approve, replan
+    // (the sole rejection verb), and remove (dry-run unless --force). All
+    // report-and-stop — core self-verifies the move/delete, so the outcome
     // replaces the markdown instead of a model turn glob-verifying it.
     if (verb === "approve") return handleApprove(deps, sessionID, rest, config)
     if (verb === "replan") return handleReplan(deps, sessionID, rest, config)
-    if (verb === "remove") return void (await handleRemove(deps, sessionID, rest, config))
+    if (verb === "remove") return handleRemove(deps, sessionID, rest, config)
     if (verb === "abandon") return void (await handleAbandon(deps, sessionID, rest, config))
 
     // Plan one approved (queued/) task now. Building is claim/watch's job.

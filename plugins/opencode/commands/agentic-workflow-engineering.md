@@ -153,6 +153,12 @@ Dispatch:
     `ignoreBacklog` defaults to `true`, keeping `docs/tasks/` out of git
     entirely, so a forced remove is usually permanent. Prefer `abandon` unless
     the user has said they want the file gone.
+  - Fully deterministic plugin work whose outcome normally REPLACES this
+    text — so if you are reading this, the plugin did not run (not loaded, or
+    its `@agentic-workflow/core` build is stale). Nothing was deleted or
+    dry-run. Report that, with the fix (`npm install` at the agentic-workflow
+    repo root, then restart opencode) — never claim the remove or its dry run
+    happened.
 <!-- /aw:verb remove -->
 
 ## Execution
