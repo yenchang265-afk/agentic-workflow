@@ -203,3 +203,4 @@ questions. Reframe rather than continue — the count is not the problem.
 - [ ] The confirming yes was explicit, not a **hollow yes**
 - [ ] **Predict-three** passed at the stop point, or the 8-question escalation fired
 - [ ] No spec, plan, or task file was written before that yes
+- [ ] On a `ROUTE:` line from `plan-router`, the route's next skill was invoked — or the divergence was declared with an amended route

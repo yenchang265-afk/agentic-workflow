@@ -10,8 +10,8 @@ information**: the codebase (nobody has read it yet), the human (they haven't
 decided yet), or nobody (the shape must be invented). Each holder has a skill
 built to extract from it, and running the wrong one wastes the scarcest
 resource — an interview cannot read code, and an exploration cannot read
-minds. This skill classifies, dispatches, and stops; the dispatched skill is
-then followed fully, not summarized.
+minds. This skill classifies, states the route, dispatches, and stops; the
+dispatched skill is then followed fully, not summarized.
 
 Route in order — each step either exits or falls through to the next.
 
@@ -58,6 +58,23 @@ decisions cost human turns, which are scarce. When both hold pieces, run
 `interview-me` as its `GUESS:` lines — every fact looked up is a question the
 human never has to answer.
 
+## The route card
+
+The chain is decided here, once. Before the first dispatch, state the whole
+route as one line of data, conditional exits included:
+
+```
+ROUTE: codebase-exploration → spec-driven-development → planning-and-task-breakdown
+  exits: exploration may bail (route ends); a surfaced decision cluster
+  inserts interview-me after exploration
+```
+
+Every skill on the route, on finishing, invokes the next skill the card
+names instead of re-deciding from its own cross-references — the card is the
+chain's single decision point, and each skill's verification holds its own
+hand-off. The one legal divergence is a conditional exit named on the card
+firing: restate the amended `ROUTE:` line at the divergence, then follow it.
+
 ## Secondary considerations
 
 | Consideration | Effect on the route |
@@ -71,5 +88,6 @@ human never has to answer.
 - [ ] The skip arm was tested before any interview or exploration started
 - [ ] The chosen arm names the signal that selected it
 - [ ] On mixed holders, facts were looked up before decisions were asked
+- [ ] The full `ROUTE:` line was stated before the first dispatch, conditional exits named
 - [ ] In an unattended context, no human-latency route was chosen
 - [ ] The dispatched skill was then followed fully, steps and verification included
