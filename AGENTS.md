@@ -216,6 +216,16 @@ whole line — that is what stops a marker pasted into `$ARGUMENTS` from
 truncating the prompt — and HTML comments do not nest, so never write a literal
 marker inside a comment.
 
+The OpenCode entry commands render their verb from positional placeholders,
+and opencode makes the **highest-numbered** placeholder greedy — it receives
+every remaining argument joined by spaces. `$2` is what pins `$1` to the verb
+token, so never delete it as unused (`command-slice.test.ts` guards all five
+files). `$ARGUMENTS` stays the authoritative payload for free-text verbs
+because positional tokens are whitespace-collapsed and quote-stripped — and
+the plugin's own dispatch (`src/verb.ts`) reads the verb token quote-aware for
+the same reason: it must agree with what `$1` renders. Never write a literal
+dollar-digit sequence in command prose — substitution has no escape.
+
 ### Claim markers mean "a loop is driving this NOW"
 
 A held `.claims/<id>` marker asserts a LIVE loop, nothing weaker — every gate

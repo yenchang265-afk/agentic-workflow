@@ -130,6 +130,7 @@ import {
   unreviewedAxes,
 } from "@agentic-workflow/core/config"
 import type { Config } from "../config.ts"
+import { splitVerb } from "../verb.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
 import type { Action, WorkflowState, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
 import { anyWorkflowActive, clearWorkflow, findSessionDriving, getWorkflow, setWorkflow } from "@agentic-workflow/core/workflow/state"
@@ -2479,12 +2480,6 @@ const USAGE =
   "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
-/** Split a command argument into its verb (lowercased) and the remainder. Pure. */
-const splitVerb = (arg: string): { verb: string; rest: string } => {
-  const m = /^(\S+)\s*([\s\S]*)$/.exec(arg)
-  return m ? { verb: m[1]!.toLowerCase(), rest: m[2]!.trim() } : { verb: "", rest: "" }
-}
-
 /**
  * Parse a `claim <pr>` target into a positive PR number. Accepts a bare number
  * (`42`), a `#`-prefixed number (`#42`), or a PR URL whose last path segment is
@@ -2532,7 +2527,6 @@ export const handleCommand = async (
 ): Promise<string | undefined> => {
   const { client } = deps
   const arg = args.trim()
-  const lower = arg.toLowerCase()
   const { verb, rest } = splitVerb(arg)
   const engineering = kind === "engineering"
 
@@ -2566,7 +2560,7 @@ export const handleCommand = async (
     }
 
     // List the workflow kinds this clone knows about and which are enabled.
-    if (lower === "kinds") {
+    if (verb === "kinds" && !rest) {
       const enabled = enabledWorkflowKinds(config)
       let known: string[]
       try {
@@ -2617,7 +2611,7 @@ export const handleCommand = async (
     return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")
   }
 
-  if (lower === "stop" || lower === "abort") {
+  if ((verb === "stop" || verb === "abort") && !rest) {
     const wasWatching = await stopWatching(deps, sessionID)
     claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
@@ -2639,8 +2633,8 @@ export const handleCommand = async (
     return report(client, message, "info")
   }
 
-  if (lower === "watch" || lower.startsWith("watch ")) {
-    const parsed = parseWatchArgs(arg.slice("watch".length))
+  if (verb === "watch") {
+    const parsed = parseWatchArgs(rest)
     if ("error" in parsed) return report(client, parsed.error, "warning")
     // The kind's configured trigger (workflows.<kind>.trigger) is the default; any
     // `watch` argument — poll [interval], cron <schedule>, idle, or a bare
@@ -2694,13 +2688,13 @@ export const handleCommand = async (
     return message
   }
 
-  if (lower === "unwatch") {
+  if (verb === "unwatch" && !rest) {
     const was = await stopWatching(deps, sessionID)
     return report(client, was ? "Stopped watching." : "Not watching.", "info")
   }
 
-  if (lower === "recover" || lower.startsWith("recover ")) {
-    let id = arg.slice("recover".length).trim()
+  if (verb === "recover") {
+    let id = rest
     if (!id) return report(client, `Usage: ${ECMD} recover <id>.`, "warning")
     // Same busy guard as `claim`: recovering while this session drives a
     // DIFFERENT task would clearWorkflow that run's state and abandon it mid-stage.
@@ -2791,8 +2785,8 @@ export const handleCommand = async (
     )
   }
 
-  if (lower === "doctor" || lower.startsWith("doctor ")) {
-    const fix = /(^|\s)(--)?fix(\s|$)/.test(lower.slice("doctor".length))
+  if (verb === "doctor") {
+    const fix = /(^|\s)(--)?fix(\s|$)/.test(rest.toLowerCase())
     try {
       const anomalies = await auditBacklog(client, deps.directory, config.tasksDir)
       const heldQueued = await listClaimIds(deps.$, deps.directory, config.tasksDir, "queued")
@@ -2879,7 +2873,7 @@ export const handleCommand = async (
     }
   }
 
-  if (lower === "status" || lower === "") {
+  if ((verb === "status" && !rest) || verb === "") {
     const isWatching = watching.has(sessionID)
     const state = getWorkflow(sessionID)
     // Backlog roll-up accompanies the session-loop line — a whole-backlog view,

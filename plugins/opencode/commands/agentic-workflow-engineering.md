@@ -6,22 +6,22 @@ argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [rea
 
 The engineering agentic loop — one command for authoring, the human gates,
 and execution, scoped to the engineering kind. The plugin intercepts this
-command; `$ARGUMENTS` selects the verb. Everything except `new` and `retask`
+command; the first argument token selects the verb. Everything except `new` and `retask`
 is deterministic plugin work: **invoke nothing, write nothing** on those
 verbs — report the toast's outcome and stop. `new` is entirely yours;
 `retask` is split — the plugin has already placed the task (or refused) before
 your turn, and the interview + rewrite are yours. (The PR sitter has its own
 command: `/agentic-workflow:pr-sitter`.)
 
-**$ARGUMENTS**
+Verb: `$1` — empty means `status`. Match only this token against the dispatch
+list below; a verb-like word (`plan`, `status`, `approve`, `replan`, …) inside
+the payload is part of the idea/note/reason, never the verb.
+Payload after the verb (whitespace-collapsed, quotes stripped): $2
+Raw argument line — the authoritative payload for free-text verbs (`new`
+ideas, `retask` notes, `replan` reasons); quoting and line breaks survive
+only here:
 
-**Read the verb from the FIRST whitespace-delimited token of the argument;
-everything after it is that verb's literal payload.** Match only that first
-token against the verb list below. A verb-like word (`plan`, `status`,
-`approve`, `replan`, `claim`, `doctor`, `retask`, `new`, …) appearing *inside*
-the payload is part of the idea/note/reason, never the verb — e.g.
-`new add a status dashboard` is the `new` verb with idea "add a status
-dashboard", not `status`.
+**$ARGUMENTS**
 
 Dispatch:
 

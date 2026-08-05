@@ -280,3 +280,31 @@ test("every verb's block opens with that verb's own bullet, not mid-sentence", (
     assert.match(slice, bullet, `${verb}'s slice must open on its own bullet — a marker is one line off`)
   }
 })
+
+/** Every OpenCode entry command whose verb line renders from `$1`. */
+const ENTRY_COMMANDS = [
+  "agentic-workflow-engineering",
+  "agentic-workflow-pr-sitter",
+  "agentic-workflow-review-sitter",
+  "agentic-workflow-dep-sitter",
+  "agentic-workflow-main-sitter",
+]
+
+test("every entry command references $1 AND $2 — opencode's highest positional is greedy", () => {
+  // opencode substitutes positional placeholders BEFORE command.execute.before
+  // fires, and the HIGHEST-numbered placeholder receives ALL remaining
+  // arguments joined by spaces (opencode packages/opencode/src/session/
+  // prompt.ts). A template referencing $1 alone therefore renders the ENTIRE
+  // argument line into the Verb: line — $2 is what pins $1 to the verb token.
+  // $2 looks unused; it is load-bearing.
+  for (const name of ENTRY_COMMANDS) {
+    const body = commandFile(name)
+    assert.match(body, /\$1\b/, `${name}: the Verb line renders from $1`)
+    assert.match(body, /\$2\b/, `${name}: $2 must stay referenced — without it $1 greedily swallows the whole argument line`)
+    assert.doesNotMatch(body, /\$[3-9]/, `${name}: a higher positional would steal the greedy rest-of-args slot from $2`)
+  }
+  // Positional tokens are whitespace-collapsed and quote-stripped — lossy for
+  // free-text payloads (`new` ideas, `retask` notes), so engineering keeps the
+  // raw argument line too. The sitters take only single-token arguments.
+  assert.match(commandFile("agentic-workflow-engineering"), /\$ARGUMENTS/, "engineering keeps the raw $ARGUMENTS line for free-text payloads")
+})

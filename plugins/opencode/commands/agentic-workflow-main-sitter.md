@@ -7,11 +7,11 @@ argument-hint: claim | watch [poll [interval] | cron <schedule> | idle | <interv
 The main sitter agentic loop — sits on the watched branch's CI (`gh run
 list`): when the newest head goes red it diagnoses (bisecting when needed)
 and publishes a verified draft fix or revert PR. The plugin intercepts this
-command; `$ARGUMENTS` selects the verb. Every verb is deterministic plugin
+command; the first argument token selects the verb. Every verb is deterministic plugin
 work: **invoke nothing, write nothing** — report the toast's outcome and
 stop.
 
-**$ARGUMENTS**
+Verb: `$1` — empty means `status`. Argument after the verb: $2
 
 Dispatch:
 

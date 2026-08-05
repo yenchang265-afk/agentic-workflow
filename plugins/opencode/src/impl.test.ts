@@ -271,6 +271,17 @@ test("command hook slices a marked template to the invoked verb for a pass-throu
   assert.doesNotMatch(text, /aw:verb/, "markers must not reach the model")
 })
 
+test("command hook slices on the quote-trimmed verb, matching what $1 renders", async () => {
+  const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
+  // opencode's $1 placeholder reads the first token quote-aware and trims the
+  // quotes, so `'new' …` renders `Verb: new` — the slice must agree with it
+  // rather than fall back to the full body on the verb `'new'`.
+  await runCommand("'new' add rate limiting", output)
+  const text = output.parts[0]!.text!
+  assert.match(text, /interview the user/, "the quoted verb must still slice to new's block")
+  assert.doesNotMatch(text, /claim the next build-ready task/)
+})
+
 test("a verb whose block slices to nothing keeps the full body, not just the draft note", async () => {
   // `base = sliced ?? rendered` treated an EMPTY slice as a usable one, so a
   // verb block that tidies to nothing plus a configured drafting model replaced

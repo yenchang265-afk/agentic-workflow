@@ -1068,6 +1068,28 @@ test("an unknown verb gets the engineering usage toast", async () => {
   assert.match(toasts[0]?.message ?? "", /Unknown \/agentic-workflow:engineering mode/)
 })
 
+test("a quoted verb dispatches like its unquoted self — parity with the $1 the template renders", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", "'unwatch'", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /watching/i, "quoted 'unwatch' must dispatch, not fall to the usage toast")
+})
+
+test("a multi-word quoted first token is one unknown verb, matching how $1 renders it", async () => {
+  const { client, toasts } = makeClientFS({})
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess", '"new idea" x', testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Unknown \/agentic-workflow:engineering mode/)
+})
+
 test("plan <id> on a draft points at approve, no move", async () => {
   const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
   const { client, toasts } = makeClientFS(files)
