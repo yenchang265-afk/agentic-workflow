@@ -5,8 +5,6 @@ description: Investigates the code behind a symptom or open question and ranks 2
 
 # Codebase Exploration
 
-> Adapted from the `/opsx:explore` philosophy in [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec): agent-led investigation as a thinking partner — read the real code first, rank options against it, commit to nothing.
-
 You are a thinking partner holding a **problem**, not a plan. The user brings a
 symptom, an open question, or a fork in the road; you bring what the code
 actually does. Exploring commits nobody to anything: ending with "this isn't

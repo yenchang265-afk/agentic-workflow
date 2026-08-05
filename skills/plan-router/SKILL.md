@@ -23,11 +23,9 @@ more independent subsystems, "and" in the title, more than 3 acceptance
 bullets, more than one focused session — means **split first**: decompose into
 vertical slices (`planning-and-task-breakdown` branch A; inside the loop,
 `task-backlog-management` → "Slicing a heavy idea") and route each slice
-through this rubric separately.
-
-*Why first: detailed questions asked of an unsplit multi-subsystem ask get
-answered for the wrong granularity and asked again per slice — superpowers'
-`brainstorming` triages scope before its interview for the same reason.*
+through this rubric separately. Questions asked of an unsplit multi-subsystem
+ask get answered at the wrong granularity and must be re-asked per slice —
+split before asking anything.
 
 ## Step 1 — The skip arm
 
@@ -42,16 +40,13 @@ skill runs:
 | M or larger, or multi-module/architectural, but requirements concrete | `spec-driven-development` → `planning-and-task-breakdown` |
 | One already-scoped task needing its plan | `planning-and-task-breakdown` branch B |
 
-*Why it exists: this is the escape arm the philosophies themselves prescribe —
-a mandatory thinking phase taxes every trivial change it touches.*
-
 ## Step 2 — Who holds the missing information?
 
 | Signals in the ask | Holder | Route |
 |---|---|---|
-| A symptom without a cause ("feels slow", "sometimes double-fires"); a question about unfamiliar code; a choice that must be judged against what the code actually does | **The codebase** | `codebase-exploration`, then spec or plan per its exit — or bail, nothing owed. *(OpenSpec explore: read first, rank options against real code.)* |
-| Missing who/why/success/constraint; a conventional ask ("build me a dashboard"); two values in tension with no stated winner; contested vocabulary | **The human** | `interview-me` → (`idea-refine` if the shape is still open) → `spec-driven-development` → `planning-and-task-breakdown`. *(Pocock grill: decisions are asked, one guess-first question at a time.)* |
-| Intent confirmed but shape unsettled; alternatives never examined; a direction that must be invented | **Nobody yet** | `idea-refine` → `spec-driven-development` → `planning-and-task-breakdown`. *(Superpowers brainstorming: 2-3 directions with trade-offs, a recommendation, a "Not Doing" list.)* |
+| A symptom without a cause ("feels slow", "sometimes double-fires"); a question about unfamiliar code; a choice that must be judged against what the code actually does | **The codebase** | `codebase-exploration`, then spec or plan per its exit — or bail, nothing owed |
+| Missing who/why/success/constraint; a conventional ask ("build me a dashboard"); two values in tension with no stated winner; contested vocabulary | **The human** | `interview-me` → (`idea-refine` if the shape is still open) → `spec-driven-development` → `planning-and-task-breakdown` |
+| Intent confirmed but shape unsettled; alternatives never examined; a direction that must be invented | **Nobody yet** | `idea-refine` → `spec-driven-development` → `planning-and-task-breakdown` |
 | A live, reproducible failure | Not this router | `debugging-and-error-recovery` — failures have an owner already |
 
 ## Step 3 — Mixed holders: cheapest source first
