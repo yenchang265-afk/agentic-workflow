@@ -20,7 +20,7 @@
   },
   "dependencies": {
     "@agentic-workflow/core": "*",
-    "@modelcontextprotocol/sdk": "^1.29.0"
+    "@modelcontextprotocol/sdk": "^1.30.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.9",
