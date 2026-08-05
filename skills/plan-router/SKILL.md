@@ -1,6 +1,6 @@
 ---
 name: plan-router
-description: Routes unshaped work to the right thinking skill by who holds the missing information — codebase, human, or nobody — sized against the task scale first. Use when work arrives without a spec: a vague ask, a raw idea, a symptom without a cause, or when unsure which planning skill applies.
+description: Routes unshaped work to the right thinking skill by who holds the missing information — codebase, human, or nobody — sized against the task scale first. Use when work arrives without a spec — a vague ask, a raw idea, a symptom without a cause — or when unsure which planning skill applies.
 ---
 
 # Plan Router
