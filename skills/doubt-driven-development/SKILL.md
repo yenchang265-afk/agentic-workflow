@@ -1,6 +1,6 @@
 ---
 name: doubt-driven-development
-description: Cross-examines a non-trivial decision with a fresh-context reviewer briefed to disprove it, before it stands. Use when correctness beats speed: unfamiliar code, production- or security-sensitive logic, irreversible operations.
+description: Cross-examines a non-trivial decision with a fresh-context reviewer briefed to disprove it, before it stands. Use when correctness beats speed — unfamiliar code, production- or security-sensitive logic, irreversible operations.
 ---
 
 # Doubt-Driven Development
@@ -192,8 +192,10 @@ classified actionable. That is validating, not doubting. Stop and escalate.
 - **`test-driven-development`** — the RED step is doubt made concrete. Where
   TDD applies, that failing test *is* the doubt step for a behavioral claim.
 - **`debugging-and-error-recovery`** — take a confirmed failure mode there.
-- **`interview-me`** — the other end of the timeline: nothing drafted yet means
-  interview, a draft in hand means doubt.
+- **`interview-me`** / **`codebase-exploration`** — the other end of the
+  timeline: nothing drafted yet means extraction — unknowns in the human go to
+  interview, unknowns in the code go to exploration; a draft in hand means
+  doubt.
 
 ## Verification
 

@@ -92,6 +92,7 @@ stateDiagram-v2
 
 ### Intent → Skill Mapping
 
+- Unshaped work — vague ask, raw idea, symptom without a cause → `plan-router` (routes by who holds the missing information — codebase, human, or nobody — then dispatches)
 - Feature / new functionality → `spec-driven-development`, then `incremental-implementation`, `test-driven-development`
 - Planning / breakdown → `planning-and-task-breakdown`
 - Bug / failure / unexpected behavior → `debugging-and-error-recovery`

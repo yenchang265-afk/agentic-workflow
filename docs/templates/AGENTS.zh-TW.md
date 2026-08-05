@@ -78,6 +78,7 @@ id），而
 
 如果一項任務符合某個 skill，就呼叫它——只要有適用的 skill，絕不直接實作。
 
+- 未成形的工作——模糊的請求、原始想法、找不到原因的症狀 → `plan-router`
 - 功能／新功能 → `spec-driven-development`，然後 `incremental-implementation` + `test-driven-development`
 - 規劃／拆解 → `planning-and-task-breakdown`
 - Bug／失敗／非預期行為 → `debugging-and-error-recovery`

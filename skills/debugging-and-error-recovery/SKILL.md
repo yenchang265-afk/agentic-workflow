@@ -10,6 +10,10 @@ Two branches. **Triage** localizes the failure and ends on a root-cause report.
 both, in that order; a check stage running read-only stops at the report and
 hands it to whoever builds next.
 
+This skill starts when something has actually failed. A complaint that names
+no failure yet — "feels slow", no error, nothing red — belongs to
+`codebase-exploration` instead.
+
 ## Stop the line
 
 The moment something unexpected happens, the failure becomes the work: preserve
