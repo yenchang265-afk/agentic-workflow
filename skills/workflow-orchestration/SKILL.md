@@ -62,14 +62,21 @@ never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole
 rejection verb, always back to `queued/`. The reason is audited on the task
 file and threaded into the next PLAN pass's prompt as a structured
 "Rejection reason from the plan gate" section (`extractReplanReason` parses it
-back off the audit note), so the new plan addresses it directly instead of
-digging through notes; a newer plan heading retires it automatically.
+back off the audit note) — on the explicit `plan <id>` path AND the
+claim/watch path alike — so the new plan addresses it directly instead of
+digging through notes; a successful park (the `Plan written` note) retires it
+automatically, which holds whether PLAN replaced its section in place or
+stacked a new heading.
 
 Deterministic plugin code enforces the plan gate by grepping for the
 `## Implementation Plan` heading — and, since the PLAN stage carries the plan
 contract (`planContract` in the manifest), it also refuses to park a plan with
 no `### Verification` subsection, so a plan reaches the human gate already
-naming how each acceptance criterion will be proven. BUILD only ever claims
+naming how each acceptance criterion will be proven. A refusal is recorded as
+the same rejection note a human `replan` writes, so the retry PLAN pass is
+told exactly why; after three consecutive refusals with no successful park
+between them, the task is returned to `draft/` for human triage instead of
+burning a PLAN run per poll tick forever. BUILD only ever claims
 from `in-progress/`. There is no path that builds an ungated task.
 
 **`new <idea>` always interviews you** — a restate-and-confirm when the idea
