@@ -52,7 +52,9 @@ configuration.md.
 Authoring + gates (`/agentic-workflow:engineering`):
 
 - `/agentic-workflow:engineering new <idea>` — interview you (always — at minimum a
-  restate-and-confirm) into a **planless draft** in `docs/tasks/draft/`
+  restate-and-confirm) into a **planless draft** in `docs/tasks/draft/`. Each
+  interview question arrives in OpenCode's `question` dialog, one at a time,
+  with the agent's guess as the first choice and free text still open
 - `/agentic-workflow:engineering retask <id> [note]` — reshape a **planless** task:
   re-interview you (seeded by the optional note) and rewrite it in place — same
   id, no plan. Works on a `draft/` task, and on one already approved into

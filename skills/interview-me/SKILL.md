@@ -81,6 +81,29 @@ One at a time, because the user can't react to a hypothesis buried in a list, ba
 
 The risk is a polite user agreeing with your guess to be agreeable. Mitigate by being visibly willing to be wrong, and by occasionally guessing in a direction you expect pushback on.
 
+**Delivery — use the host's question tool.** When the host has a structured ask
+(`AskUserQuestion` on Claude Code, `ask_user_question` on Qwen Code, `question`
+on OpenCode), send the question through it rather than typing it into the chat.
+All three take the same shape, so there is one mapping:
+
+- `header` — the topic, ≤30 characters (every host caps it there).
+- `question` — the `Q:` line, verbatim.
+- **first option — the guess**, with the reasoning that produced it as its
+  `description`. Moving the guess into a window does not demote it to a menu
+  item: it becomes the answer the user reacts to first, which is the entire
+  point of attaching it.
+- one or two further options — the concrete alternatives you actually expect
+  pushback toward. Never a filler option to reach a count.
+- free text — set `custom: true` where the host takes it; Claude Code's "Other"
+  is always there. **The open answer must stay reachable**, or the window turns
+  the interview into a survey.
+- **Exactly one question per call.** Every host takes a `questions` array;
+  putting two in it reinstates the batching this step exists to prevent — the
+  user can no longer react to the first before the second is framed.
+
+Fall back to the prose `Q:` / `GUESS:` form when the host has no such tool: the
+interview must still run in a bare host.
+
 ### Step 3: Listen for "want vs. should want", then probe
 
 The most dangerous answers are the ones where the user says what a thoughtful answer *sounds like* rather than what they want. The tells:
@@ -123,7 +146,7 @@ A **hollow yes** is agreement that isn't confirmation. Four kinds, each with its
 
 | The user says | What it means | Counter-move |
 |---|---|---|
-| "Whatever you think is best." | Delegation — they don't have 95% confidence either | Re-ask as a choice between two concrete options |
+| "Whatever you think is best." | Delegation — they don't have 95% confidence either | Re-ask as a choice between two concrete options — the question tool's own shape, so send it that way |
 | "Sounds good." / "Sure, let's go." | Politeness, possibly a polite exit | Ask "anything you'd refine?" — silence isn't confirmation |
 | Silence, then "okay let's start." | They've given up on the interview, not converged | Stop and ask what you've missed |
 | A yes on a vague restate | The restate committed to nothing falsifiable | Restate in the Step 4 shape and re-confirm |
@@ -190,6 +213,13 @@ what they want and is choosing between trade-offs; here they don't yet, so a
 menu widens the search where a guess-first question narrows it. Two concrete
 options are for breaking a **hollow yes**, not for opening.
 
+**A question window is not that menu.** The rule above bans *replacing* the
+guess with a list of choices; it does not ban the host's question tool. In the
+window, option one **is** the guess and free text stays reachable, so the ask is
+still guess-first — the window only changes how it is delivered. Read as
+contradictory, one of these two rules gets reverted; they are one rule about
+where the guess sits.
+
 **Three rounds with the confidence number flat** means you are asking the wrong
 questions. Reframe rather than continue — the count is not the problem.
 
@@ -197,6 +227,9 @@ questions. Reframe rather than continue — the count is not the problem.
 
 - [ ] Step 1 opened with a hypothesis and a confidence number, from the right opening (cold start vs. reshape), and any number below ~70% named what was missing
 - [ ] Every question was **guess-first** and sent on its own
+- [ ] Each question went through the host's question tool — one question per
+      call, the guess as its first option, free text reachable — or the host has
+      none and the prose form was used
 - [ ] No question was asked whose answer was discoverable in the repo
 - [ ] A **no-justification probe** ran on each convention- or best-practice-signalling answer
 - [ ] The restate carried every line, including `Out of scope` and — for `new`/`retask` — 2–5 testable `Acceptance` checks

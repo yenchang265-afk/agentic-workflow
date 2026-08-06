@@ -214,7 +214,15 @@ const TOKENS = {
   opencode: {
     hostName: "OpenCode",
     spawnTool: "subtask command",
-    askTool: "a follow-up question",
+    // A TOOL NAME, not prose. This read "a follow-up question" for as long as
+    // OpenCode had no structured ask — every `{{askTool}}` sentence then told
+    // the model to type a question into the chat, which is why the `new`
+    // interview never opened a question window on this host. OpenCode ships the
+    // `question` tool as of @opencode-ai/plugin 1.18.5 (`PermissionConfig.question`,
+    // `QuestionRequest`/`QuestionInfo`, and the TUI's question dialog), and its
+    // payload is the same shape as the other two hosts' — so do not "restore"
+    // the prose form: it silently disables the window rather than failing.
+    askTool: "`question`",
     modelClause: "",
   },
   claude: {

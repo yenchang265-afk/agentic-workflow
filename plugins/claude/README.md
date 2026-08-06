@@ -73,7 +73,9 @@ Authoring + gates (`/agentic-workflow:engineering`):
 
 - `/agentic-workflow:engineering new <idea>` — the main agent **always interviews you** (at
   minimum a restate-and-confirm) to pin down the goal and testable acceptance
-  criteria, then writes a **planless draft** into `docs/tasks/draft/`.
+  criteria, then writes a **planless draft** into `docs/tasks/draft/`. Each
+  question comes through `AskUserQuestion`, one at a time, with the agent's
+  guess as the first choice and "Other" still open for a free-text answer.
 - `/agentic-workflow:engineering retask <id> [note]` — reshape a **planless** task before
   it is planned: the main agent re-interviews you (seeded by the optional note)
   and rewrites the task in place — same id, no plan. Takes a `draft/` task, or

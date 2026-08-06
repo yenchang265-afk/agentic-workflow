@@ -49,7 +49,8 @@ OpenCode 版本如何執行、它完整的指令面，以及安裝細節。共�
 
 - `/agentic-workflow:engineering new <idea>`——訪談你（一律如此——至少
   會重述並確認一次）之後產生一份 `docs/tasks/draft/` 下的**planless
-  草稿**
+  草稿**。每一個訪談問題都會出現在 OpenCode 的 `question` 對話框裡，一次
+  一題，代理的猜測是第一個選項，自由作答的入口仍然保留
 - `/agentic-workflow:engineering retask <id> [note]`——重塑一份**尚未規劃**的
   任務：重新訪談你（以可選的 note 作為引子）並就地重寫——id 不變，沒有
   計畫。適用於 `draft/` 中的草稿，也適用於已核准進入 `queued/` 的任務：
