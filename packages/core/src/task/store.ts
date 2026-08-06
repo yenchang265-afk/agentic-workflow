@@ -66,6 +66,29 @@ export const PLAN_APPROVED_MARKER = "> Plan approved"
  */
 export const PLAN_REJECTED_MARKER = "> Plan rejected"
 
+/**
+ * The audit note `runPark` appends when a plan lands and parks successfully.
+ * This is the retirement anchor for `extractReplanReason`: PLAN replaces its
+ * `## Implementation Plan` section IN PLACE (the stage prompt demands it, to
+ * stop the body growing a heading per replan), so the heading's byte offset
+ * never advances past a rejection note — "note newer than heading" would leave
+ * every reason pending forever. "Note older than the last successful park" is
+ * the invariant that survives in-place replacement.
+ */
+export const PLAN_WRITTEN_MARKER = "> Plan written"
+
+/**
+ * The one formatter for a plan-rejection audit note. `extractReplanReason`
+ * parses this exact shape back (marker + reason prefix); a second hand-built
+ * copy of the string is how a writer and the parser drift apart — the plan
+ * contract's park refusal wrote a free-form note for a while, and the retry
+ * PLAN pass never learned why it was refused.
+ */
+export const planRejectedNote = (reason?: string): string => {
+  const flat = reason?.trim()
+  return `Plan rejected — sent back to queued for re-planning${flat ? ` — ${flat}` : ""}`
+}
+
 /** Whether `marker` appears as an audit-note line (see `lastMarkerIndex`). Pure. */
 const hasMarkerLine = (body: string, marker: string): boolean => lastMarkerIndex(body, marker) !== -1
 
@@ -124,19 +147,25 @@ export const extractPlan = (task: Task): string | undefined => {
 const PLAN_REJECTED_REASON_PREFIX = "— sent back to queued for re-planning — "
 
 /**
- * The PENDING rejection reason a human gave `replan`, or `undefined`. Pure.
+ * The PENDING rejection reason a human gave `replan` (or the plan contract's
+ * park refusal recorded), or `undefined`. Pure.
  *
  * Reads the LAST `PLAN_REJECTED_MARKER` line, and only honors it when it comes
- * AFTER the last `PLAN_HEADING`: a rejection note is appended after the plan it
- * rejects, and the next PLAN pass appends its new plan after the note — so
- * "note newer than heading" is exactly "rejection not yet addressed", which
- * both retires a stale reason automatically and makes the latest of several
- * successive rejections win. The line must carry `AUDIT_NOTE_LINE_RE`'s closing
- * stamp, so a plan merely quoting a rejection line cannot inject a reason.
+ * AFTER the rejection was last ADDRESSED — the later of the last `PLAN_HEADING`
+ * and the last `PLAN_WRITTEN_MARKER` note. The heading alone was the old
+ * anchor, and it silently broke when plan.md started demanding REPLACE-in-place
+ * (the heading's offset never moves past the note, so every reason stayed
+ * pending and leaked into unrelated later PLAN passes). A successful park
+ * appends the `Plan written` note after the rejection, which retires it
+ * whatever the writer did to the heading; legacy tasks with no such note keep
+ * the heading comparison via the max. The line must carry
+ * `AUDIT_NOTE_LINE_RE`'s closing stamp, so a plan merely quoting a rejection
+ * line cannot inject a reason.
  */
 export const extractReplanReason = (task: Task): string | undefined => {
   const idx = lastMarkerIndex(task.body, PLAN_REJECTED_MARKER)
-  if (idx === -1 || idx < lastMarkerIndex(task.body, PLAN_HEADING)) return undefined
+  const addressed = Math.max(lastMarkerIndex(task.body, PLAN_HEADING), lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER))
+  if (idx === -1 || idx < addressed) return undefined
   const end = task.body.indexOf("\n", idx)
   const line = task.body.slice(idx, end === -1 ? task.body.length : end)
   if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
@@ -165,8 +194,34 @@ export const extractReplanReason = (task: Task): string | undefined => {
  * drift from the one `extractPlan` and `hasPlan` agree on.
  */
 export const planHeadingCount = (body: string): number => {
+  // Single forward pass with the same line-anchoring rule as `lastMarkerIndex`
+  // — the previous slice-per-hit reverse walk was O(k·n) with an allocation per
+  // heading, and k is exactly what grows when PLAN stacks instead of replacing.
   let count = 0
-  for (let idx = lastMarkerIndex(body, PLAN_HEADING); idx !== -1; idx = lastMarkerIndex(body.slice(0, idx), PLAN_HEADING)) count++
+  for (let idx = body.indexOf(PLAN_HEADING); idx !== -1; idx = body.indexOf(PLAN_HEADING, idx + 1)) {
+    if (idx === 0 || body[idx - 1] === "\n") count++
+  }
+  return count
+}
+
+/**
+ * How many stamped `PLAN_REJECTED_MARKER` notes sit after the last successful
+ * park (`PLAN_WRITTEN_MARKER`) — i.e. rejections no plan has yet answered.
+ * Consecutive counts here mean the planner is looping on the same refusal: the
+ * park gate uses it to stop-for-human instead of burning a PLAN run per poll
+ * tick forever. Only lines with `AUDIT_NOTE_LINE_RE`'s closing stamp count, so
+ * quoted rejection text cannot inflate the tally. Pure.
+ */
+export const unaddressedRejectionCount = (body: string): number => {
+  const addressed = lastMarkerIndex(body, PLAN_WRITTEN_MARKER)
+  let count = 0
+  for (let idx = body.indexOf(PLAN_REJECTED_MARKER); idx !== -1; idx = body.indexOf(PLAN_REJECTED_MARKER, idx + 1)) {
+    if (idx !== 0 && body[idx - 1] !== "\n") continue
+    if (idx < addressed) continue
+    const end = body.indexOf("\n", idx)
+    const line = body.slice(idx, end === -1 ? body.length : end)
+    if (AUDIT_NOTE_LINE_RE.test(line)) count++
+  }
   return count
 }
 

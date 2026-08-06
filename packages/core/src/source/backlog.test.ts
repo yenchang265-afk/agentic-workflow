@@ -198,6 +198,23 @@ test("a queued-only backlog is claimed and enters at PLAN", async () => {
   )
 })
 
+test("a claim-path PLAN entry carries the pending rejection reason", async () => {
+  // The claim/watch path is the one most runs take, and its entry state used to
+  // be built without `extractReplanReason` — plan.md's {{#replan}} section then
+  // silently never rendered there, and the re-plan ran blind to why the human
+  // rejected the last plan (the explicit `plan <id>` path threaded it fine).
+  const rejected: FakeFile = {
+    name: "replan-me.md",
+    content:
+      `---\ntitle: replan-me\npriority: 2\n---\n\nBody.\n\n${PLAN_HEADING}\n\n1. Old plan.\n` +
+      `\n> Plan rejected — sent back to queued for re-planning — cache must be size-keyed [2026-01-02T00:00:00.000Z by dev]\n`,
+  }
+  const src = source({ "in-progress": [], queued: [rejected] })
+  const { item } = await src.claimNext()
+  assert.equal(item?.entryStage, "plan")
+  assert.equal(item?.state.replan?.reason, "cache must be size-keyed")
+})
+
 test("a plan request wins the queued pool over a lower priority number", async () => {
   // The whole point of the hub's Plan button: "plan THIS one next" has to beat
   // the ordinary priority walk, or the click does nothing you can see.

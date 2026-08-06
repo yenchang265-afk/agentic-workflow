@@ -43,11 +43,16 @@ test("a plan heading quoted mid-line is not a plan section", () => {
   assert.equal(stripPlanAndAuditTail(goal), goal)
 })
 
-test("a replanned task loses only the LAST plan — superseded plans are prose history", () => {
+test("a replanned task loses EVERY plan section — superseded plans no longer grow the goal", () => {
+  // Deliberate change: superseded plans used to stay as "prose history", which
+  // grew the rendered goal by one stale plan per replan cycle — text that
+  // duplicates an older version of artifacts.plan and informs no stage. The
+  // goal now stops at the FIRST heading.
   const goal = `fix it\n\n${PLAN_HEADING}\n\nold plan\n\n> replanned [2026-07-05T13:16:25.138Z]\n\n${PLAN_HEADING}\n\nnew plan\n`
   const stripped = stripPlanAndAuditTail(goal)
-  assert.ok(stripped.includes("old plan"), "the superseded plan stays — extractPlan never returns it")
+  assert.ok(!stripped.includes("old plan"), "the superseded plan is gone too — it informed no stage")
   assert.ok(!stripped.includes("new plan"), "the live plan is gone — it rides in artifacts.plan")
+  assert.ok(stripped.includes("fix it"), "the prose before the first heading survives")
 })
 
 test("stripping is idempotent", () => {

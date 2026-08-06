@@ -47,7 +47,10 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
       )
     }
     if (a.plan) {
-      parts.push(`Prior plan (rejected or capped out — the new plan must address why this one failed):\n${a.plan}`)
+      // Deliberate post-freeze rewording: a queued task can carry a plan that
+      // was never rejected (human-authored in the draft, a retask round-trip),
+      // and the old label asserted a failure that never happened.
+      parts.push(`Prior plan — superseded; where a rejection reason follows below, the new plan must address it:\n${a.plan}`)
     }
     // A deliberate post-freeze addition, on the same footing as verify's "Change
     // scope" block below. The replan reason used to live only in an audit note

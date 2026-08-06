@@ -181,6 +181,52 @@ test("park accepts a contract-flagged plan whose Verification heading varies in 
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("plan-review")))
 })
 
+test("a contract refusal writes the canonical rejection note the next PLAN pass can parse", async () => {
+  // The refusal reason must reach the retry's {{#replan}} section, which means
+  // the note must be the exact shape `extractReplanReason` parses — the old
+  // free-form "PLAN stage failed" note matched nothing and the retry
+  // re-planned blind, repeating the same contract mistake every tick.
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), { manifest: contractManifest("plan") })
+  await runTerminal(ctx, park)
+  assert.ok(
+    log.some((c) => c.includes("Plan rejected — sent back to queued for re-planning — the plan has no ### Verification subsection")),
+    `refusal note carries planRejectedNote's parseable shape: ${log.filter((c) => c.includes(">>")).join(" | ")}`,
+  )
+})
+
+test("the third unaddressed refusal returns the task to draft/ for human triage", async () => {
+  // Two stamped, unaddressed rejection notes already on the body + the one this
+  // refusal appends = 3 → the park gate stops re-queueing (the queued pool
+  // re-claims instantly, so each refusal otherwise burns a PLAN run per poll
+  // tick forever) and hands the task back to a human.
+  const stamped = (text: string) => `> ${text} [2026-08-01T00:00:00.000Z by tester]`
+  const planned = serializeTask({
+    title: "Do it",
+    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected — sent back to queued for re-planning — refusal one")}\n${stamped("Plan rejected — sent back to queued for re-planning — refusal two")}`,
+  })
+  const { ctx, fs, metrics } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.match(report.kind === "error" ? report.message : "", /Returned to .*draft/)
+  assert.ok("/repo/docs/tasks/draft/t.md" in fs, "the task landed in draft/")
+  assert.ok(!("/repo/docs/tasks/queued/t.md" in fs), "…and left queued/ — no more claim walks")
+  assert.match(metrics[0]?.detail ?? "", /returned to draft after 3 refusals/)
+})
+
+test("a prior successful park retires old rejections — the strike counter never reaches across cycles", async () => {
+  // Same two old rejections, but a `Plan written` note after them: they were
+  // addressed, so this refusal is strike ONE and the task stays queued.
+  const stamped = (text: string) => `> ${text} [2026-08-01T00:00:00.000Z by tester]`
+  const planned = serializeTask({
+    title: "Do it",
+    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected — sent back to queued for re-planning — refusal one")}\n${stamped("Plan rejected — sent back to queued for re-planning — refusal two")}\n${stamped("Plan written — parked for plan review")}`,
+  })
+  const { ctx, fs } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.ok("/repo/docs/tasks/queued/t.md" in fs, "strike one: still queued, not drafted")
+})
+
 test("park without the contract flag parks a Verification-less plan exactly as before", async () => {
   // The default fake manifest declares no stages at all — the tolerant lookup
   // must read that as "no contract", not throw.
