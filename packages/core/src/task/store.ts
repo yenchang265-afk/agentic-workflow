@@ -563,8 +563,9 @@ const claimMarker = (task: FileRef): string => path.join(claimsDir(task.path), t
  */
 export const claimTask = ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> => acquireMarker($, claimMarker(task), now)
 
-/** Release a task's claim marker, if present. Best-effort. */
-export const releaseClaim = ($: Shell, task: FileRef): Promise<void> => releaseMarker($, claimMarker(task))
+/** Release a task's claim marker, if present. Best-effort; a wedged marker is
+ *  logged when the caller passes a log (see `releaseMarker`). */
+export const releaseClaim = ($: Shell, task: FileRef, log?: Log): Promise<void> => releaseMarker($, claimMarker(task), log)
 
 /**
  * Claim a task, atomically sweeping a stale leftover marker first (rename-aside

@@ -1,5 +1,5 @@
 import path from "node:path"
-import type { Shell } from "./host.js"
+import type { Log, Shell } from "./host.js"
 
 /**
  * The mkdir-marker claim primitive, shared by every work source.
@@ -64,13 +64,25 @@ export const acquireMarker = async ($: Shell, markerDir: string, now: Date = new
 }
 
 /**
- * Release `markerDir`, if present. Best-effort. The stamp goes first — `rmdir`
- * (kept over `rm -rf` for blast-radius reasons) needs the marker empty; a crash
- * in between leaves a stamp-less marker the mtime fallback still sweeps.
+ * Release `markerDir`, if present. Best-effort but never SILENTLY partial. The
+ * stamp goes first — `rmdir` (kept over `rm -rf` for blast-radius reasons)
+ * needs the marker empty — along with any `claim.json.tmp-*` temporaries the
+ * atomic restamp can leave behind on a crash. A failed `rmdir` used to go
+ * unchecked: the marker survived with no owner, and for an in-progress task
+ * that never self-heals (`isOrphanedClaim` requires `isClaimable`, false once
+ * the CLAIMED note lands) — every gate verb refused on the wedged marker until
+ * a human ran doctor fix. Now the failure is at least LOUD when a log is
+ * passed.
  */
-export const releaseMarker = async ($: Shell, markerDir: string): Promise<void> => {
-  await $`rm -f ${stampPath(markerDir)}`.quiet().nothrow()
-  await $`rmdir ${markerDir}`.quiet().nothrow()
+export const releaseMarker = async ($: Shell, markerDir: string, log?: Log): Promise<void> => {
+  await $`rm -f ${stampPath(markerDir)} ${stampPath(markerDir)}.tmp-*`.quiet().nothrow()
+  const out = await $`rmdir ${markerDir}`.quiet().nothrow()
+  if (out.exitCode === 0) return
+  if ((await $`test -d ${markerDir}`.quiet().nothrow()).exitCode !== 0) return // already gone — released by someone else
+  await log?.(
+    "warn",
+    `claim-marker: could not release ${markerDir} — it still holds foreign entries; gate verbs will refuse this task until doctor fix clears it`,
+  )
 }
 
 /**
@@ -81,10 +93,24 @@ export const releaseMarker = async ($: Shell, markerDir: string): Promise<void> 
  * task to a second claimer. No-op when the marker is absent (never re-creates a
  * released claim).
  */
+/** Uniquifies concurrent restamp temp files within one process — N overlapped
+ *  passes restamp the same marker, and a shared `.tmp-<pid>` would tear. */
+let stampSeq = 0
+
 export const restampMarker = async ($: Shell, markerDir: string, now: Date = new Date()): Promise<void> => {
   const held = await $`test -d ${markerDir}`.quiet().nothrow()
   if (held.exitCode !== 0) return
-  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${stampPath(markerDir)}`.quiet().nothrow()
+  // Temp + rename, never truncate-in-place: a concurrent `markerOlderThan`
+  // `cat` landing mid-truncate fails to parse and falls back to the marker
+  // DIRECTORY's mtime — which an in-place overwrite never advances, so it is
+  // still claim-creation time and a LIVE long run reads stale, gets swept, and
+  // a second drive starts on the same branch. (acquireMarker's plain write is
+  // fine: a brand-new dir's mtime IS the claim time.) The trailing `touch`
+  // keeps the mtime fallback honest for stamps a crash left garbled.
+  const tmp = `${stampPath(markerDir)}.tmp-${process.pid}-${++stampSeq}`
+  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${tmp}`.quiet().nothrow()
+  await $`mv ${tmp} ${stampPath(markerDir)}`.quiet().nothrow()
+  await $`touch ${markerDir}`.quiet().nothrow()
 }
 
 /**

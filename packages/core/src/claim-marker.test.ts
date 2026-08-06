@@ -68,16 +68,31 @@ const makeFs = () => {
           return { exitCode: 0, stdout: "" }
         }
         case "rm": {
-          const target = parts[parts.length - 1]!
-          files.delete(target)
-          if (parts.includes("-rf")) {
-            dirs.delete(target)
-            for (const f of [...files.keys()]) if (f.startsWith(`${target}/`)) files.delete(f)
+          // Every non-flag argument is a target (releaseMarker passes the stamp
+          // AND its `.tmp-*` glob); a trailing `*` models bash glob expansion.
+          for (const target of parts.slice(1).filter((p) => !p.startsWith("-"))) {
+            if (target.endsWith("*")) {
+              const prefix = target.slice(0, -1)
+              for (const f of [...files.keys()]) if (f.startsWith(prefix)) files.delete(f)
+              continue
+            }
+            files.delete(target)
+            if (parts.includes("-rf")) {
+              dirs.delete(target)
+              for (const f of [...files.keys()]) if (f.startsWith(`${target}/`)) files.delete(f)
+            }
           }
           return { exitCode: 0, stdout: "" }
         }
         case "mv": {
           const [, src, destArg] = parts as [string, string, string]
+          // A FILE move (the atomic restamp's temp→stamp rename) overwrites the
+          // destination, like rename(2).
+          if (files.has(src)) {
+            files.set(destArg, files.get(src)!)
+            files.delete(src)
+            return { exitCode: 0, stdout: "" }
+          }
           if (!dirs.has(src)) return { exitCode: 1, stdout: "" } // source gone — the rename race's loser
           // POSIX `mv` onto an EXISTING directory does not fail — it moves the
           // source INSIDE it (exit 0). The fake used to overwrite instead,
@@ -139,6 +154,49 @@ test("acquireMarker is exclusive and stamps the winner", async () => {
   assert.equal(await acquireMarker($, MARKER, T0), true)
   assert.equal(await acquireMarker($, MARKER, T0), false, "a held marker cannot be won twice")
   assert.equal(JSON.parse(files.get(stampPath(MARKER))!).claimedAt, T0.toISOString())
+})
+
+test("releaseMarker clears a stray restamp temporary and still removes the marker", async () => {
+  const { $, dirs, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  // A crash between the atomic restamp's write and rename leaves this behind;
+  // rmdir needs the marker empty, and the debris must not wedge the release.
+  files.set(`${stampPath(MARKER)}.tmp-123-4`, "torn")
+  await releaseMarker($, MARKER)
+  assert.ok(!dirs.has(MARKER), "marker released despite the temp debris")
+})
+
+test("releaseMarker is loud, never silent, when foreign entries wedge the marker", async () => {
+  const { $, dirs, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  files.set(`${MARKER}/foreign.txt`, "not ours")
+  const warnings: string[] = []
+  await releaseMarker($, MARKER, (level, message) => void warnings.push(`${level}: ${message}`))
+  assert.ok(dirs.has(MARKER), "foreign content is never rm -rf'd away")
+  assert.equal(warnings.length, 1, "the wedged release is reported")
+  assert.match(warnings[0]!, /could not release/)
+})
+
+test("restampMarker goes through temp+rename — no truncate window on the live stamp", async () => {
+  const { $, files, cmds } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  await restampMarker($, MARKER, later(30))
+  assert.equal(JSON.parse(files.get(stampPath(MARKER))!).claimedAt, later(30).toISOString(), "the stamp advanced")
+  const directWrites = cmds.filter((c) => /^printf '%s' .* > \S*claim\.json$/.test(c))
+  assert.equal(directWrites.length, 1, "only acquireMarker writes the stamp path directly (fresh dir, no reader yet)")
+  assert.ok([...files.keys()].every((f) => !f.includes(".tmp-")), "no temp residue after the rename")
+})
+
+test("a live claim never reads stale across repeated restamps", async () => {
+  // The long-run liveness contract: restamped at every stage/pass boundary, a
+  // healthy multi-stage run must never be judged dead by another process's
+  // sweep, whatever interleaving the reads land in.
+  const { $ } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  for (let i = 1; i <= 50; i++) {
+    await restampMarker($, MARKER, later(i * 10))
+    assert.equal(await markerOlderThan($, MARKER, STALE_CLAIM_MINUTES, later(i * 10 + 1)), false, `stale read after restamp ${i}`)
+  }
 })
 
 test("markerOlderThan reads the stamp, not the clock alone", async () => {

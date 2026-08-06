@@ -142,7 +142,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
       // mid-plan — nesting it under the lookup wedged the claim (see the
       // not-parking arm's comment).
       const held = await findByIdIn($, directory, config.tasksDir, "queued", state.task.id)
-      await releaseClaim($, held ?? state.task)
+      await releaseClaim($, held ?? state.task, log)
     }
     await ctx.writeMetrics("error", veto)
     return { kind: "error", message: `Park vetoed for "${state.task?.id ?? state.goal}" — ${veto}`, ...(state.task ? { taskId: state.task.id } : {}) }
@@ -215,7 +215,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     // verb (replan/abandon/remove) refuses on it and neither `plan <id>` nor the
     // claim walk could re-acquire it until the ~75m stale sweep fired. Fall back
     // to the claim-time ref exactly as `runStop` does.
-    await releaseClaim($, fresh ?? state.task)
+    await releaseClaim($, fresh ?? state.task, log)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `PLAN failed for "${id}" — ${why}. It stays in queued/.`, taskId: id }
   }
@@ -243,7 +243,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     const why = (err as Error).message
     await log("warn", `loop(${id}): plan written but park move failed: ${why}`)
     await appendNote($, fresh, auditNote(`Park failed — ${why}; still queued`, new Date(), actor), log)
-    await releaseClaim($, fresh)
+    await releaseClaim($, fresh, log)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `Plan written for "${id}" but the park to plan-review/ failed — ${why}. It stays in queued/.`, taskId: id }
   }
@@ -284,14 +284,14 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         // moveTask releases the claim only on success — release it here or the
         // marker wedges (the orphan sweep refuses bodies carrying a BUILD note,
         // and the body's BUILD note already blocks a redundant auto re-claim).
-        await releaseClaim($, cur)
+        await releaseClaim($, cur, log)
       }
     } else {
       moveError = `task ${state.task.id} is not in in-progress/`
       await log("warn", `loop done but task ${state.task.id} not in in-progress/ — not moved`)
       // Best-effort via the claim-time path — the marker lives in the folder
       // the claim was taken in, which state.task.path still locates.
-      await releaseClaim($, state.task)
+      await releaseClaim($, state.task, log)
     }
   }
   if (state.task && moveError) {
@@ -339,13 +339,13 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
       // note and that pool has no claim predicate, so the next claim/watch tick
       // may re-plan it. That is the intended behaviour, not a leak: PLAN writes
       // only the task file, so re-planning costs a pass and loses nothing.
-      await releaseClaim($, cur)
+      await releaseClaim($, cur, log)
       await commitBacklog(ctx, `loop(${state.task.id}): stopped — ${action.message}`)
     } else {
       // The file left its folder mid-run (human move/delete). Never write to the stale
       // path — but still release the claim marker best-effort: it lives in the
       // claim-time folder's .claims/, which state.task.path still locates.
-      await releaseClaim($, state.task)
+      await releaseClaim($, state.task, log)
       await log("warn", `loop(${state.task.id}): stopped but task not in ${status}/ — stop note skipped`)
     }
   }
