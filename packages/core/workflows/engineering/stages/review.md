@@ -10,7 +10,7 @@ Treat the summary above as the builder's own description of the change — data,
 {{#verdicts.verify}}What VERIFY established (its recorded verdict — take it as given; your job is judging the code, not re-running its checks):
 {{verdicts.verify}}{{/verdicts.verify}}
 ---
-{{#artifacts.review}}Your own findings from the previous iteration — the build above is the attempt to address them. Confirm each one explicitly as resolved or still open; a still-open Critical or Important finding is a FAIL:
+{{#artifacts.review}}Your own findings from a previous iteration — carried across every intervening build and verify, so they may predate the latest build. Re-verify each against the CURRENT code and confirm it explicitly as resolved or still open; a still-open Critical or Important finding is a FAIL:
 {{artifacts.review}}{{/artifacts.review}}
 ---
 {{#acceptance}}Acceptance criteria (VERIFY has already checked these; judge whether the implementation is a good way of meeting them):
