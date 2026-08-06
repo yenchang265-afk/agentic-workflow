@@ -59,6 +59,32 @@ const chunkEnd = (content: string, from: number): number => {
  * `ShellOutput` so an existing caller's error path covers it unchanged. Default
  * off — replacing IS the point everywhere else.
  */
+/**
+ * Append `text` to `dest` in argv-safe chunks — the append-side twin of
+ * `writeFileAtomic`'s chunk loop, for callers whose semantic is `>>`.
+ *
+ * The task-store append helpers (`appendRunLog`, `appendPlan`, `appendNote`)
+ * used to pass their whole payload as ONE printf argument. A stage transcript
+ * routinely exceeds MAX_ARG_STRLEN on the spawn("bash",["-c"]) hosts — execve
+ * fails E2BIG, the shim reports exit 127, and the durable run-log section was
+ * silently missing from the record. Same surrogate-pair-safe chunking as the
+ * atomic writer; no temp+rename because appending to the live file IS the
+ * semantic, and a failure partway leaves a prefix — the same failure shape a
+ * plain `>>` already had, now merely bounded per chunk. Returns the failing
+ * chunk's output, or the last chunk's on success.
+ */
+export const appendFileChunked = async ($: Shell, dest: string, content: string): Promise<ShellOutput> => {
+  let out: ShellOutput | null = null
+  for (let i = 0; i < content.length || out === null; ) {
+    const end = chunkEnd(content, i)
+    out = await $`printf '%s' ${content.slice(i, end)} >> ${dest}`.quiet().nothrow()
+    if (out.exitCode !== 0) return out
+    i = end
+    if (content.length === 0) break // empty append still touches the file once
+  }
+  return out
+}
+
 export const writeFileAtomic = async (
   $: Shell,
   dest: string,

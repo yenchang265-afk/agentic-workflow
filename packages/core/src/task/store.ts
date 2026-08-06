@@ -1,6 +1,6 @@
 import path from "node:path"
 import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, releaseMarkerIfStale, restampMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
-import { writeFileAtomic } from "../fsatomic.js"
+import { appendFileChunked, writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { AUDIT_NOTE_LINE_RE, auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
 import { revokePlanRequestAt, strayPlanRequestIds } from "./plan-request.js"
@@ -1031,7 +1031,9 @@ export const appendNote = async ($: Shell, task: FileRef, note: string, log?: Lo
     await log?.("warn", `note on ${task.id} never landed: ${task.path} no longer exists — the task moved or was removed`)
     return
   }
-  const out = await $`printf '\n> %s\n' ${text} >> ${task.path}`.quiet().nothrow()
+  // Chunked (fsatomic): the payload as one printf argument dies with E2BIG past
+  // MAX_ARG_STRLEN on the spawn("bash",["-c"]) hosts — a silently lost note.
+  const out = await appendFileChunked($, task.path, `\n> ${text}\n`)
   await warnLostAppend(out.exitCode, `note on ${task.id}`, log)
 }
 
@@ -1070,7 +1072,9 @@ export const appendRunLog = async (
   const file = path.join(dir, `${id}.md`)
   const clean = redact(text)
   warnRedaction(clean.hits, `run log ${id}.md`, log)
-  const out = await $`printf '\n## %s\n\n%s\n' ${header} ${clean.text} >> ${file}`.quiet().nothrow()
+  // Chunked (fsatomic): a stage transcript routinely exceeds MAX_ARG_STRLEN as
+  // one printf argument — E2BIG, and the durable record's section vanished.
+  const out = await appendFileChunked($, file, `\n## ${header}\n\n${clean.text}\n`)
   await warnLostAppend(out.exitCode, `run log ${id}.md`, log)
 }
 
@@ -1078,7 +1082,8 @@ export const appendRunLog = async (
 export const appendPlan = async ($: Shell, task: FileRef, plan: string, log?: Log): Promise<void> => {
   const { text, hits } = redact(plan)
   warnRedaction(hits, `plan on ${task.id}`, log)
-  const out = await $`printf '\n%s\n\n%s\n' ${PLAN_HEADING} ${text} >> ${task.path}`.quiet().nothrow()
+  // Chunked (fsatomic): a large plan as one printf argument dies with E2BIG.
+  const out = await appendFileChunked($, task.path, `\n${PLAN_HEADING}\n\n${text}\n`)
   await warnLostAppend(out.exitCode, `plan on ${task.id}`, log)
 }
 
