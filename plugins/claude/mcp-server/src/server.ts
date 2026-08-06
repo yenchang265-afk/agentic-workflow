@@ -51,6 +51,7 @@ import {
   admitVerdict,
   axisVerdict,
   effectiveVerdict,
+  mergeRejected,
   noAdmissibleVerdictReason,
   parseVerdict,
   passFocusBlock,
@@ -1307,9 +1308,10 @@ server.registerTool(
       // Keep the refused record, not just the fact of a refusal: if the retry
       // below produces nothing admissible either, `rejectedFallback` routes the
       // stage on what it DECLARED rather than ERROR-stopping a check that
-      // reported. Last rejection wins — a stage correcting itself toward a
-      // still-invalid shape is best described by its latest attempt.
-      verdictRejected = { record: rec, message: admission.message }
+      // reported. Rejections MERGE worst-wins (`mergeRejected`) — keeping only
+      // the last one let a rejected FAIL vanish behind a later rejected PASS,
+      // and the run ERROR-stopped instead of rebuilding on the findings.
+      verdictRejected = mergeRejected(verdictRejected, { record: rec, message: admission.message })
       return fail(admission.message)
     }
     pending = admission.record

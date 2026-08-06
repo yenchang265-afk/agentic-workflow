@@ -90,6 +90,7 @@ import {
   admitVerdict,
   effectiveVerdict,
   mergeAxes,
+  mergeRejected,
   noAdmissibleVerdictReason,
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
@@ -605,8 +606,15 @@ export const recordVerdict = (
   if (!admission.ok) {
     // Keep the refused record, not just the fact of a refusal: a stage that
     // reported twice and was refused twice is routed on what it DECLARED rather
-    // than ERROR-stopping (see `rejectedFallback`). Last rejection wins.
-    rejectedVerdicts.set(sessionID, { stage, rejected: { record, message: admission.message } })
+    // than ERROR-stopping (see `rejectedFallback`). Rejections MERGE worst-wins
+    // (`mergeRejected`) — keeping only the last one let a rejected FAIL vanish
+    // behind a later rejected PASS, and the run ERROR-stopped instead of
+    // rebuilding on the findings.
+    const prevRejected = rejectedVerdicts.get(sessionID)
+    rejectedVerdicts.set(sessionID, {
+      stage,
+      rejected: mergeRejected(prevRejected?.stage === stage ? prevRejected.rejected : null, { record, message: admission.message }),
+    })
     return reject(admission.message)
   }
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
