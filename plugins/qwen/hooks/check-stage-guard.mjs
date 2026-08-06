@@ -608,6 +608,11 @@ var isGitPushViolation = (cmd) => {
 var chainedGithubPrMutation = (cmd) => splitSegments2(cmd).some(isGithubPrMutation);
 var chainedGitPushViolation = (cmd) => splitSegments2(cmd).some(isGitPushViolation);
 
+// plugins/claude/hooks/src/emit.mjs
+var exitAfterWrite = (stream, payload, code) => {
+  stream.write(payload, () => process.exit(code));
+};
+
 // plugins/claude/hooks/src/pretooluse.mjs
 var readStdin = () => new Promise((resolve) => {
   let s = "";
@@ -615,12 +620,10 @@ var readStdin = () => new Promise((resolve) => {
 });
 var allow = () => process.exit(0);
 var block2 = (reason) => {
-  process.stderr.write(reason + "\n");
-  process.exit(2);
+  exitAfterWrite(process.stderr, reason + "\n", 2);
 };
 var rewriteInput = (updatedInput) => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n");
-  process.exit(0);
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n", 0);
 };
 
 // plugins/claude/hooks/src/marker.mjs
@@ -670,7 +673,6 @@ var readMarker = (cwd, markerFile) => {
 // plugins/claude/hooks/src/evidence.mjs
 import fs2 from "node:fs";
 import path4 from "node:path";
-var EVIDENCE_MAX = 200;
 var READ_PATH_KEYS = ["file_path", "absolute_path", "path", "notebook_path", "paths"];
 var evidenceEntry = (d, tool, toolInput, command) => {
   const ti = toolInput || {};
@@ -689,39 +691,11 @@ var evidenceEntry = (d, tool, toolInput, command) => {
   }
   return reads.length ? { commands: [], reads } : null;
 };
-var emptyLedger = (stage) => ({ stage: stage ?? null, commands: [], reads: [] });
-var withEntry = (ledger, entry) => {
-  const add = (list, incoming) => {
-    const out = list.slice();
-    for (const value of incoming) {
-      if (out.length >= EVIDENCE_MAX) break;
-      if (!out.includes(value)) out.push(value);
-    }
-    return out;
-  };
-  return {
-    stage: ledger.stage,
-    commands: add(ledger.commands, entry.commands),
-    reads: add(ledger.reads, entry.reads)
-  };
-};
-var parseLedger = (raw) => {
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    const list = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
-    return { stage: typeof parsed.stage === "string" ? parsed.stage : null, commands: list(parsed.commands), reads: list(parsed.reads) };
-  } catch {
-    return null;
-  }
-};
 var noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
   if (!entry) return;
   const file = path4.join(runsDirPath, evidenceFile);
   try {
-    const existing = fs2.existsSync(file) ? parseLedger(fs2.readFileSync(file, "utf8")) : null;
-    const base = existing && existing.stage === stage ? existing : emptyLedger(stage);
-    fs2.writeFileSync(file, JSON.stringify(withEntry(base, entry)));
+    fs2.appendFileSync(file, "\n" + JSON.stringify({ stage: stage ?? null, commands: entry.commands, reads: entry.reads }) + "\n");
   } catch {
   }
 };

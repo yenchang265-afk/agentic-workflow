@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url"
 import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
 import { dialectFor, hostFor } from "./src/dialect.mjs"
+import { exitAfterWrite } from "./src/emit.mjs"
 import { verbContext } from "./verb-slice.mjs"
 
 const read = () =>
@@ -53,19 +54,24 @@ const passThrough = () => process.exit(0)
  * task now sits.
  */
 const augment = (message) => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message } }))
-  process.exit(0)
+  // Exit in the write callback (src/emit.mjs): an early exit truncates the
+  // JSON and the host silently drops the whole envelope.
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message } }), 0)
 }
 
 const block = (message) => {
-  process.stdout.write(
+  // A truncated envelope loses `decision: "block"` — the model then runs the
+  // gate verb AFTER the CLI already moved the task, the double-move this
+  // block exists to prevent. Exit only once the payload is flushed.
+  exitAfterWrite(
+    process.stdout,
     JSON.stringify({
       decision: "block",
       reason: message,
       hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message },
     }),
+    0,
   )
-  process.exit(0)
 }
 
 const main = async () => {

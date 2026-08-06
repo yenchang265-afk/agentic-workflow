@@ -399,9 +399,31 @@ const stageEvidencePath = () => hostStageEvidencePath(directory, config.tasksDir
  */
 const observedEvidence = (stage: string): ObservedEvidence | null => {
   try {
-    const raw = JSON.parse(fs.readFileSync(stageEvidencePath(), "utf8")) as Record<string, unknown>
-    if (raw.stage !== stage) return null
+    // The ledger is NDJSON — one line per observed tool call, appended by
+    // concurrent hook processes (hooks/src/evidence.mjs `foldLedger` is the
+    // reference fold; this is its TS twin). Lines from another stage and torn
+    // lines are skipped; the legacy single-blob format folds for free (one
+    // JSON line of the same shape).
+    const raw = fs.readFileSync(stageEvidencePath(), "utf8")
     const list = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [])
+    const commands: string[] = []
+    const reads: string[] = []
+    let observed = false
+    for (const line of raw.split("\n")) {
+      const t = line.trim()
+      if (!t) continue
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(t)
+      } catch {
+        continue
+      }
+      if (!parsed || typeof parsed !== "object" || (parsed as Record<string, unknown>).stage !== stage) continue
+      observed = true
+      commands.push(...list((parsed as Record<string, unknown>).commands))
+      reads.push(...list((parsed as Record<string, unknown>).reads))
+    }
+    if (!observed) return null
     // The driver-run check commands count as observed: THIS process ran them and
     // holds their exit codes. Without them a stage that correctly trusts the
     // results instead of re-running them cites work the ledger never saw, and
@@ -412,7 +434,7 @@ const observedEvidence = (stage: string): ObservedEvidence | null => {
     // to the declared-evidence rule; manufacturing a set here would flip every
     // repo without the hooks installed into strict matching.
     const seeded = checkCommands(active?.checks?.[stage] ?? [])
-    return { commands: [...new Set([...list(raw.commands), ...seeded])], reads: list(raw.reads) }
+    return { commands: [...new Set([...commands, ...seeded])], reads: [...new Set(reads)] }
   } catch {
     return null
   }
@@ -660,12 +682,27 @@ const CHECK_VERDICT_TAIL =
  */
 const spawnNote = (lead: string, tail = ""): string => `${lead}${SPAWN_TOOL_NOTE}${SPAWN_MODEL_NOTE}${tail}`
 
+/**
+ * Temp+rename write for the stage marker. The PreToolUse hook is a separate
+ * process; a `writeFileSync` straight onto the marker path opens a
+ * truncate-to-write window, and the hook's reader (marker.mjs) returns null on
+ * any parse failure — which the guard treats as "no loop stage" and ALLOWS. A
+ * torn read therefore skips the check-stage allowlist, the worktree pin, and
+ * the stage deadline for that call, with every layer reporting success. Same
+ * durability story as OpenCode's writeOpencodeStageMarker (temp + rename).
+ */
+const writeMarkerAtomic = (file: string, content: string): void => {
+  const tmp = `${file}.tmp-${process.pid}`
+  fs.writeFileSync(tmp, content)
+  fs.renameSync(tmp, file)
+}
+
 /** Flip the stage marker's `verdictRecorded` flag in place once workflow_verdict
  *  lands, so the SubagentStop guard (check-verdict-guard.mjs) stops nagging. */
 const stampVerdictRecorded = () => {
   try {
     const m = JSON.parse(fs.readFileSync(stageMarkerPath(), "utf8")) as Record<string, unknown>
-    fs.writeFileSync(stageMarkerPath(), JSON.stringify({ ...m, verdictRecorded: true }))
+    writeMarkerAtomic(stageMarkerPath(), JSON.stringify({ ...m, verdictRecorded: true }))
     fs.rmSync(verdictNagPath(), { force: true })
   } catch {
     /* best-effort */
@@ -719,7 +756,7 @@ const writeStageMarker = (stage: string | null): string | null => {
       const platform = active?.platform ?? platformFor(config, m.manifest.kind)
       const allowlist = effectiveAllowlist(def, platform)
       const stageAgentModelMap = stageAgentModels(m)
-      fs.writeFileSync(
+      writeMarkerAtomic(
         stageMarkerPath(),
         JSON.stringify({
           kind: m.manifest.kind,

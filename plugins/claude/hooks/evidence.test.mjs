@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { test } from "node:test"
 import { dialectFor } from "./src/dialect.mjs"
-import { EVIDENCE_MAX, evidenceEntry, noteEvidence, parseLedger, withEntry } from "./src/evidence.mjs"
+import { EVIDENCE_MAX, evidenceEntry, foldLedger, noteEvidence, parseLedger, withEntry } from "./src/evidence.mjs"
 
 /**
  * The check-stage proof-of-work ledger: the account of a stage's tool calls that
@@ -87,20 +88,26 @@ test("parseLedger rejects a blob that is not a ledger, and keeps only strings", 
   })
 })
 
-test("noteEvidence starts a fresh ledger when the one on disk belongs to another stage", () => {
+test("foldLedger keeps stages apart — a previous stage's work never corroborates this one", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-evidence-"))
   const file = path.join(dir, claude.evidenceFile)
+  // A LEGACY single-blob ledger (old write-whole-file format, no trailing
+  // newline) left by a previous stage, with new NDJSON lines appended after it.
   fs.writeFileSync(file, JSON.stringify({ stage: "build", commands: ["npm run build"], reads: [] }))
   noteEvidence(dir, claude.evidenceFile, "verify", { commands: ["npm test"], reads: [] })
-  // A previous stage's work must never corroborate this stage's PASS.
-  assert.deepEqual(parseLedger(fs.readFileSync(file, "utf8")), { stage: "verify", commands: ["npm test"], reads: [] })
+  const raw = fs.readFileSync(file, "utf8")
+  assert.deepEqual(foldLedger(raw, "verify"), { stage: "verify", commands: ["npm test"], reads: [] })
+  // The legacy blob is one JSON line of the same shape — it folds for free.
+  assert.deepEqual(foldLedger(raw, "build"), { stage: "build", commands: ["npm run build"], reads: [] })
+  // No line for the stage means "not observed", never an empty set.
+  assert.equal(foldLedger(raw, "review"), null)
 })
 
 test("noteEvidence appends within one stage and never throws on an unwritable dir", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-evidence-"))
   noteEvidence(dir, claude.evidenceFile, "verify", { commands: ["npm test"], reads: [] })
   noteEvidence(dir, claude.evidenceFile, "verify", { commands: [], reads: ["/wt/a.ts"] })
-  assert.deepEqual(parseLedger(fs.readFileSync(path.join(dir, claude.evidenceFile), "utf8")), {
+  assert.deepEqual(foldLedger(fs.readFileSync(path.join(dir, claude.evidenceFile), "utf8"), "verify"), {
     stage: "verify",
     commands: ["npm test"],
     reads: ["/wt/a.ts"],
@@ -109,6 +116,31 @@ test("noteEvidence appends within one stage and never throws on an unwritable di
   // own ledger is worse than a weaker gate.
   assert.doesNotThrow(() => noteEvidence(path.join(dir, "nope", "nope"), claude.evidenceFile, "verify", { commands: ["x"], reads: [] }))
   assert.doesNotThrow(() => noteEvidence(dir, claude.evidenceFile, "verify", null))
+})
+
+test("a torn line costs one entry, never the ledger", () => {
+  const raw = ['{"stage":"verify","commands":["a"],"reads":[]}', '{"stage":"verify","commands":["b"', '{"stage":"verify","commands":["c"],"reads":[]}'].join("\n")
+  assert.deepEqual(foldLedger(raw, "verify"), { stage: "verify", commands: ["a", "c"], reads: [] })
+})
+
+test("concurrent hook processes both land their appends — the RMW race the NDJSON form removes", async () => {
+  // The guard runs as one process per tool call, and one assistant message with
+  // several tool_use blocks runs several at once. The old read-modify-write
+  // ledger kept only the last writer's entry; append-only must keep them all.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aw-evidence-"))
+  const evidencePath = path.join(path.dirname(fileURLToPath(import.meta.url)), "src", "evidence.mjs")
+  const child = (tag) =>
+    new Promise((resolve, reject) => {
+      const code = `import { noteEvidence } from ${JSON.stringify("file://" + evidencePath)};
+        for (let i = 0; i < 50; i++) noteEvidence(${JSON.stringify(dir)}, ${JSON.stringify(claude.evidenceFile)}, "verify", { commands: ["${tag}-" + i], reads: [] });`
+      const p = spawn(process.execPath, ["--input-type=module", "-e", code], { stdio: "inherit" })
+      p.on("exit", (c) => (c === 0 ? resolve() : reject(new Error(`child ${tag} exited ${c}`))))
+      p.on("error", reject)
+    })
+  await Promise.all([child("a"), child("b")])
+  const ledger = foldLedger(fs.readFileSync(path.join(dir, claude.evidenceFile), "utf8"), "verify")
+  assert.equal(ledger.commands.length, 100, "every append from both processes survives")
+  assert.ok(ledger.commands.includes("a-0") && ledger.commands.includes("b-49"))
 })
 
 test("each host writes its own ledger — one host's session cannot corroborate another's PASS", () => {

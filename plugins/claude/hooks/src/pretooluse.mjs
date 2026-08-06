@@ -11,6 +11,8 @@
  * Contract: exit 0 allows; exit 2 blocks and feeds stderr back to the model.
  */
 
+import { exitAfterWrite } from "./emit.mjs"
+
 /** Read the hook's stdin payload to completion. */
 export const readStdin = () =>
   new Promise((resolve) => {
@@ -21,8 +23,9 @@ export const readStdin = () =>
 export const allow = () => process.exit(0)
 
 export const block = (reason) => {
-  process.stderr.write(reason + "\n")
-  process.exit(2)
+  // Exit in the write callback (see emit.mjs): the exit CODE blocks either
+  // way, but an early exit truncates the reason the model is meant to read.
+  exitAfterWrite(process.stderr, reason + "\n", 2)
 }
 
 /**
@@ -47,6 +50,8 @@ export const block = (reason) => {
  * value you have not validated.
  */
 export const rewriteInput = (updatedInput) => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n")
-  process.exit(0)
+  // Exit in the write callback (see emit.mjs): the worktree pin's envelope
+  // carries whole file contents — truncated JSON is dropped by the host and
+  // the ORIGINAL, uncorrected input runs.
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n", 0)
 }

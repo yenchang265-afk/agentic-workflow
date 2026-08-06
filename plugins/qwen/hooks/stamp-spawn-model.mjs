@@ -196,6 +196,11 @@ var readMarker = (cwd, markerFile) => {
   }
 };
 
+// plugins/claude/hooks/src/emit.mjs
+var exitAfterWrite = (stream, payload, code) => {
+  stream.write(payload, () => process.exit(code));
+};
+
 // plugins/claude/hooks/src/pretooluse.mjs
 var readStdin = () => new Promise((resolve) => {
   let s = "";
@@ -203,8 +208,7 @@ var readStdin = () => new Promise((resolve) => {
 });
 var allow = () => process.exit(0);
 var rewriteInput = (updatedInput) => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n");
-  process.exit(0);
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", updatedInput } }) + "\n", 0);
 };
 
 // plugins/claude/hooks/src/stamp-spawn-model.entry.mjs

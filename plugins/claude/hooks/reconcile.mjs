@@ -120,6 +120,11 @@ var hostFor = (env = process.env) => {
 };
 var dialectFor = (host) => host && host in DIALECTS ? DIALECTS[host] : null;
 
+// plugins/claude/hooks/src/emit.mjs
+var exitAfterWrite = (stream, payload, code) => {
+  stream.write(payload, () => process.exit(code));
+};
+
 // plugins/claude/hooks/src/idlist.mjs
 var SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 var MAX_LISTED = 20;
@@ -254,9 +259,6 @@ var main = async () => {
     if (all.length > MAX_LISTED) lines.push(`agentic-workflow: +${all.length - MAX_LISTED} more backlog anomaly finding(s) \u2014 run \`workflow_doctor\` for the full report.`);
   }
   if (!lines.length) return process.exit(0);
-  process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }),
-    () => process.exit(0)
-  );
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }), 0);
 };
 main();
