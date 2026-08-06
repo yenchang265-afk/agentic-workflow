@@ -35,7 +35,9 @@ Dispatch:
      if the idea already states a clear goal and testable criteria, a single
      restate-and-confirm question suffices; when anything is vague, run the
      full one-question-at-a-time interview. Pin down the goal and 2–5
-     testable acceptance criteria.
+     testable acceptance criteria. Ask through the **`question`** tool — one
+     question per call, your guess as the first option, `custom: true` so free
+     text stays open — per the skill's Step 2 *Delivery* rules.
   2. **Judge scope — one draft, or a slice set?** A single task is built,
      verified, and reviewed by **one agent in one worktree context** (often a
      cheaper/degraded model), so a heavy idea won't fit in a working context
@@ -87,7 +89,8 @@ Dispatch:
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
      the optional `note` and the current draft. Re-confirm the goal and 2–5
-     testable acceptance criteria, then get an explicit "looks right".
+     testable acceptance criteria, then get an explicit "looks right". Ask
+     through the **`question`** tool, on the same terms as `new` step 1.
   4. Invoke the **`workflow-task-author`** subagent in **`retask` mode** with the
      id and the confirmed title/priority/acceptance/body (carry forward the
      `tracker` block if the draft had one) to rewrite `docs/tasks/draft/<id>.md`
