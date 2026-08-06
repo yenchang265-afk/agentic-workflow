@@ -517,9 +517,16 @@ var hasShellExpansion2 = (seg) => {
   }
   return false;
 };
+var FIND_MUTATING_FLAGS = /* @__PURE__ */ new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"]);
+var isFindMutation = (seg) => {
+  const tokens = seg.trim().split(/\s+/);
+  if (tokens[0] !== "find") return false;
+  return tokens.some((t) => FIND_MUTATING_FLAGS.has(t));
+};
 var commandAllowed = (cmd, globs) => {
   const segments = splitSegments2(cmd);
   if (segments.some(hasShellExpansion2)) return false;
+  if (segments.some(isFindMutation)) return false;
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny3(s, globs));
 };
 var isGithubPrMutation = (cmd) => {

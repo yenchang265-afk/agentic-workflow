@@ -133,16 +133,42 @@ export const hasShellExpansion = (seg) => {
 }
 
 /**
+ * `find` action flags that execute commands (`-exec`, `-execdir`, `-ok`, `-okdir`)
+ * or write to the filesystem (`-delete`, `-fprint`/`-fprintf`/`-fprint0`, `-fls`).
+ * The read allowlists carry `find *`, which compiles to `^find .*$` with dotAll —
+ * so `find . -exec rm {} +` and `find . -delete` are single segments the glob
+ * happily matches, with none of the substitution/redirection characters
+ * `hasShellExpansion` rejects. find is an execution primitive behind a read-shaped
+ * name; the glob can never exclude a trailing flag, so this classifier must.
+ */
+const FIND_MUTATING_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"])
+
+/**
+ * A `find` segment carrying a mutating action flag. Token equality, not substring:
+ * a quoted pattern (`-name '-delete'`) keeps its quote characters after
+ * whitespace-split and so never equals the bare flag; an UNQUOTED `-delete`
+ * anywhere in the argv is indistinguishable from the flag and is rejected —
+ * fail-safe, matching find's own parsing.
+ */
+export const isFindMutation = (seg) => {
+  const tokens = seg.trim().split(/\s+/)
+  if (tokens[0] !== "find") return false
+  return tokens.some((t) => FIND_MUTATING_FLAGS.has(t))
+}
+
+/**
  * Whether EVERY chained/piped segment of `cmd` is on the allowlist (a bare `cd`
  * counts as allowed). A command with no runnable segment is rejected. This is the
  * check-stage read-only guarantee (threat-model T2) and the pr-sitter publish
  * "never merge" backstop (T1/T8) — both hinge on splitting before matching, since
  * the globs compile with dotAll so a whole-command match is chain-bypassable, and
- * on rejecting substitution/redirection for the same reason.
+ * on rejecting substitution/redirection for the same reason. A `find` segment with
+ * a mutating action flag is rejected regardless of the globs (`isFindMutation`).
  */
 export const commandAllowed = (cmd, globs) => {
   const segments = splitSegments(cmd)
   if (segments.some(hasShellExpansion)) return false
+  if (segments.some(isFindMutation)) return false
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny(s, globs))
 }
 
