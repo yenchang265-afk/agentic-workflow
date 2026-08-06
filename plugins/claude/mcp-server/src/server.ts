@@ -70,7 +70,7 @@ import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-w
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
-import { commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
+import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
@@ -208,6 +208,27 @@ let armedPass: { readonly stage: string; readonly pass: StagePass; readonly inde
  * transition.
  */
 let fanoutStage: string | null = null
+
+/**
+ * Reset every piece of per-loop scratch state a new (or recovered) loop must
+ * not inherit. ONE helper, called by every loop entry point, so the next entry
+ * point cannot forget a field: `armedPass`/`fanoutStage` were reset only on a
+ * stage transition, and a loop stopped mid-fan-out left `fanoutStage` armed —
+ * loop B's first REVIEW then read `freshStage === false` and silently skipped
+ * `runStageChecks` for the whole stage (no evidence seed, no check floor),
+ * while a straggler verdict could be admitted against the stale pass's
+ * narrowed axes.
+ */
+const resetLoopScratch = (): void => {
+  samples = []
+  pending = null
+  verdictRetried = false
+  verdictRejected = null
+  blocked = null // no blocked signal may outlive the run that recorded it
+  buildNoteFor = null
+  armedPass = null
+  fanoutStage = null
+}
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
 let samples: StageSample[] = [] // per-run metrics
 let lastFireAt = Date.now()
@@ -868,7 +889,7 @@ const terminalCtx = (state: WorkflowState, actor: string | null): TerminalCtx =>
   // Worktree checkpoints exclude the backlog dir — the frozen `<tasksDir>` copy
   // must never ride feature/<id> (task-file lifecycle lives on the main tree).
   checkpoint: async (message) =>
-    void (await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir] : undefined)),
+    void (await commitAll(sh, workflowWorkTree(directory, state), message, state.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES])),
   writeMetrics: async (outcome, detail, retryable) => {
     const stamp = new Date().toISOString()
     const summary = renderRunSummary(samples, outcome, detail, config.maxIterations, stamp, state.kind ?? "engineering")
@@ -897,12 +918,7 @@ const sourcesFor = (only?: string, target?: number): WorkSource[] =>
  *  Shared by workflow_start and workflow_claim. */
 const startTask = async (t: Task): Promise<{ error: string } | { state: WorkflowState }> => {
   if (!(await claimTask(sh, t))) return { error: `Task "${t.id}" was just claimed by another session.` }
-  samples = []
-  pending = null
-  verdictRetried = false
-  verdictRejected = null
-  blocked = null // no blocked signal may outlive the run that recorded it
-  buildNoteFor = null
+  resetLoopScratch()
   // Only workflow_claim sets activeClaim; a stale one left by a claim flow that
   // died mid-setup would fire onTerminal against the WRONG work item at this
   // loop's end. A workflow_start loop has no scheduler claim behind it.
@@ -939,12 +955,7 @@ const startPlan = async (t: Task): Promise<{ error: string } | { state: Workflow
   // would, so the marker must not outlive this — otherwise the board keeps
   // showing "plan requested" for a task that is being planned right now.
   await consumePlanRequest(sh, directory, config.tasksDir, t.id, "queued")
-  samples = []
-  pending = null
-  verdictRetried = false
-  verdictRejected = null
-  blocked = null // no blocked signal may outlive the run that recorded it
-  buildNoteFor = null
+  resetLoopScratch()
   activeClaim = null // see startTask — a workflow_start loop has no scheduler claim behind it
   const state = planEntryState(t)
   active = state
@@ -1159,12 +1170,7 @@ server.registerTool(
     await emitSchedEvent({ type: "claim", kind: claim.item.workflowKind, id: claim.item.id })
     activeClaim = claim
     let state = claim.item.state
-    samples = []
-    pending = null
-    verdictRetried = false
-    verdictRejected = null
-    blocked = null // no blocked signal may outlive the run that recorded it
-    buildNoteFor = null
+    resetLoopScratch()
     const loaded = manifestFor(claim.item.workflowKind)
     if (stageDef(loaded.manifest, state.stage).isolation !== "none") {
       try {
@@ -1512,7 +1518,10 @@ server.registerTool(
       ...(model ? { model } : {}),
       worktree: active.git?.worktree ?? null,
       ...(active.isolationWarning ? { isolationWarning: active.isolationWarning } : {}),
-      deadlineMinutes: config.stageTimeoutMinutes,
+      // The HONORED deadline (writeStageMarker applies def.timeoutMinutes ??
+      // config), not the raw config — reporting the config while honoring the
+      // override told the orchestrator the wrong number.
+      deadlineMinutes: def.timeoutMinutes ?? config.stageTimeoutMinutes,
       // A focused pass gets its OWN prompt: the fire payload composed one prompt
       // for the stage, and each pass has to be told which axis it covers.
       ...(pass.focus
@@ -1560,7 +1569,7 @@ server.registerTool(
     if (isOverdue(stageDeadline, Date.now())) {
       const action: Action = {
         kind: "stop",
-        message: `✗ Loop stopped — ${stage} exceeded stageTimeoutMinutes (${config.stageTimeoutMinutes}m). Fix what hung it, then /agentic-workflow:engineering recover the task.`,
+        message: `✗ Loop stopped — ${stage} exceeded its stage timeout (${(stageDef(activeManifest().manifest, stage).timeoutMinutes ?? config.stageTimeoutMinutes).toString()}m). Fix what hung it, then /agentic-workflow:engineering recover the task.`,
       }
       samples.push({
         stage,
@@ -1765,11 +1774,13 @@ server.registerTool(
     const actor = await gitActor(sh, directory)
     if (stage === "build" && active.task) {
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
+      // Lockfiles excluded (CHECKPOINT_LOCKFILE_EXCLUDES): VERIFY's npm install
+      // churn must not ride the checkpoint into REVIEW's diff boundary.
       await commitAll(
         sh,
         workTree(),
         `loop(${workflowId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
-        active.git?.worktree ? [config.tasksDir] : undefined,
+        active.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES],
       )
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
@@ -1868,6 +1879,7 @@ const runPark = async (
   if (!active) {
     activeClaim = null
     active = null
+    resetLoopScratch() // a loop that ends leaves no pass armed for the next one
     writeStageMarker(null)
     return { error: "No task-backed loop to park." }
   }
@@ -1878,6 +1890,7 @@ const runPark = async (
   if (report.kind !== "park") {
     activeClaim = null // core already released any queued claim
     active = null
+    resetLoopScratch()
     writeStageMarker(null)
     return { error: report.kind === "park-free" ? "No task-backed loop to park." : report.message }
   }
@@ -1889,6 +1902,7 @@ const runPark = async (
     activeClaim = null
   }
   active = null
+  resetLoopScratch()
   writeStageMarker(null)
   return {
     action: { kind: "park", message: action.message },
@@ -1950,6 +1964,7 @@ const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
     activeClaim = null
   }
   active = null
+  resetLoopScratch() // a loop stopped mid-fan-out must not leave fanoutStage armed for the next loop
   return report
 }
 
@@ -1958,7 +1973,7 @@ server.registerTool(
   { description: "Commit the current build state as a checkpoint on the loop branch/worktree.", inputSchema: { message: z.string() } },
   async ({ message }) => {
     if (!active?.git) return ok({ committed: false, note: "no isolation active" })
-    const done = await commitAll(sh, workTree(), message, active.git.worktree ? [config.tasksDir] : undefined)
+    const done = await commitAll(sh, workTree(), message, active.git.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES])
     return ok({ committed: done })
   },
 )
@@ -2340,12 +2355,7 @@ server.registerTool(
       }
     }
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
-    samples = []
-    pending = null
-    verdictRetried = false
-    verdictRejected = null
-    blocked = null // no blocked signal may outlive the run that recorded it
-    buildNoteFor = null
+    resetLoopScratch()
     const actor = await gitActor(sh, directory)
     if (snap && snap.task?.id === id) {
       active = { ...snap, task: { ...snap.task, path: t.path } }

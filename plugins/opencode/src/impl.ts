@@ -13,7 +13,7 @@ import {
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
 import { failurePrompt, overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
-import { sliceCommandPrompt } from "./command-slice.ts"
+import { neutralizeArgumentMarkers, sliceCommandPrompt } from "./command-slice.ts"
 import { splitVerb } from "./verb.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
@@ -486,7 +486,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // handleCommand throws; the `if (outcome)` override below still wins for
       // the report-and-stop verbs, which is the right precedence. Markers
       // missing or verb unknown -> keep the full body, never a partial one.
-      const rendered = readCommandPrompt(output)
+      // Defuse marker-shaped lines the ARGUMENT substituted into the body
+      // first — without this, a pasted spec quoting the marker syntax denied
+      // the whole slice and the model got all ~230 lines (command-slice.ts).
+      const renderedRaw = readCommandPrompt(output)
+      const rendered = renderedRaw === undefined ? undefined : neutralizeArgumentMarkers(renderedRaw, input.arguments)
       const sliced = rendered === undefined ? undefined : sliceCommandPrompt(rendered, verb)
       // The drafting invocation has no stage behind it, so `agentModels` reaches it
       // only by riding the body the model reads. Appended after the slice so it

@@ -43,6 +43,21 @@ export const checkoutBranch = async ($: Shell, cwd: string, branch: string): Pro
 }
 
 /**
+ * Lockfiles kept OUT of automatic checkpoints. VERIFY's allowlist permits
+ * `npm install`/`npm ci` (an isolated worktree may have no installed deps), and
+ * npm rewrites the lockfile on the way through — registry metadata, resolved
+ * URLs, lockfileVersion. The next checkpoint's `git add -A` then committed that
+ * churn, and REVIEW's diff boundary showed an unexplained lockfile bump the
+ * plan never mentioned: a plausible spurious FAIL, or the churn shipped with
+ * the feature. A task that LEGITIMATELY changes dependencies commits its
+ * lockfile explicitly (the BUILD prompt says so) — an explicit `git add
+ * <lockfile>` is untouched by the `:(exclude)` pathspec, which only narrows
+ * the automatic `add -A`. The leading `*` matches nested workspaces (git
+ * pathspec wildcards cross directory separators).
+ */
+export const CHECKPOINT_LOCKFILE_EXCLUDES: readonly string[] = ["*package-lock.json", "*npm-shrinkwrap.json", "*pnpm-lock.yaml", "*yarn.lock", "*bun.lock", "*bun.lockb"]
+
+/**
  * Stage everything and commit. Returns false when there was nothing to commit
  * or the commit failed — callers treat both as "no checkpoint taken".
  *
