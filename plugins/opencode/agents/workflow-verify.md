@@ -10,10 +10,12 @@ permission:
     "git diff*": allow
     "git log*": allow
     "git show*": allow
+    "git blame*": allow
     "git -C * status*": allow
     "git -C * diff*": allow
     "git -C * log*": allow
     "git -C * show*": allow
+    "git -C * blame*": allow
     "ls*": allow
     "cat *": allow
     "head *": allow
@@ -33,16 +35,57 @@ permission:
     "npx vitest*": allow
     "npx jest*": allow
     "npx eslint*": allow
+    "npx prettier*": allow
+    "npx biome*": allow
+    "npx playwright test*": allow
+    "deno check*": allow
+    "deno lint*": allow
+    "deno test*": allow
     "pytest*": allow
+    "python -m pytest*": allow
+    "python3 -m pytest*": allow
+    "ruff*": allow
+    "mypy*": allow
+    "tox*": allow
+    "uv run pytest*": allow
+    "uv run ruff*": allow
+    "uv run mypy*": allow
+    "poetry run pytest*": allow
+    "poetry run ruff*": allow
+    "poetry run mypy*": allow
     "go test*": allow
+    "go build*": allow
+    "go vet*": allow
     "cargo test*": allow
+    "cargo check*": allow
+    "cargo clippy*": allow
+    "cargo build*": allow
+    "dotnet test*": allow
+    "dotnet build*": allow
+    "rspec*": allow
+    "bundle exec rspec*": allow
+    "bundle exec rake*": allow
+    "composer test*": allow
+    "./vendor/bin/phpunit*": allow
     "make test*": allow
     "make check*": allow
+    "make build*": allow
+    "make lint*": allow
     "npm ci*": allow
     "npm install*": allow
     "npm audit*": allow
     "npm ls*": allow
     "npm outdated*": allow
+    "pnpm install*": allow
+    "yarn install*": allow
+    "bun install*": allow
+    "pip install*": allow
+    "python -m pip install*": allow
+    "uv sync*": allow
+    "poetry install*": allow
+    "dotnet restore*": allow
+    "bundle install*": allow
+    "composer install*": allow
     "osv-scanner *": allow
     "mvn test*": allow
     "mvn verify*": allow
@@ -70,15 +113,57 @@ permission:
     "cd * && npx vitest*": allow
     "cd * && npx jest*": allow
     "cd * && npx eslint*": allow
+    "cd * && npx prettier*": allow
+    "cd * && npx biome*": allow
+    "cd * && npx playwright test*": allow
+    "cd * && deno check*": allow
+    "cd * && deno lint*": allow
+    "cd * && deno test*": allow
     "cd * && pytest*": allow
+    "cd * && python -m pytest*": allow
+    "cd * && python3 -m pytest*": allow
+    "cd * && ruff*": allow
+    "cd * && mypy*": allow
+    "cd * && tox*": allow
+    "cd * && uv run pytest*": allow
+    "cd * && uv run ruff*": allow
+    "cd * && uv run mypy*": allow
+    "cd * && poetry run pytest*": allow
+    "cd * && poetry run ruff*": allow
+    "cd * && poetry run mypy*": allow
     "cd * && go test*": allow
+    "cd * && go build*": allow
+    "cd * && go vet*": allow
     "cd * && cargo test*": allow
+    "cd * && cargo check*": allow
+    "cd * && cargo clippy*": allow
+    "cd * && cargo build*": allow
+    "cd * && dotnet test*": allow
+    "cd * && dotnet build*": allow
+    "cd * && rspec*": allow
+    "cd * && bundle exec rspec*": allow
+    "cd * && bundle exec rake*": allow
+    "cd * && composer test*": allow
+    "cd * && ./vendor/bin/phpunit*": allow
     "cd * && make test*": allow
     "cd * && make check*": allow
+    "cd * && make build*": allow
+    "cd * && make lint*": allow
     "cd * && npm ci*": allow
     "cd * && npm install*": allow
     "cd * && npm audit*": allow
     "cd * && npm ls*": allow
+    "cd * && npm outdated*": allow
+    "cd * && pnpm install*": allow
+    "cd * && yarn install*": allow
+    "cd * && bun install*": allow
+    "cd * && pip install*": allow
+    "cd * && python -m pip install*": allow
+    "cd * && uv sync*": allow
+    "cd * && poetry install*": allow
+    "cd * && dotnet restore*": allow
+    "cd * && bundle install*": allow
+    "cd * && composer install*": allow
     "cd * && osv-scanner *": allow
     "cd * && mvn test*": allow
     "cd * && mvn verify*": allow
@@ -191,8 +276,9 @@ Above the verdict, give:
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
 - Your bash allowlist bounds you to the project's *own* commands — but several of
-  them (`npm run …`, `npm ci`, `npm install`) execute scripts and lifecycle hooks
-  the project author wrote, so the allowlist is a scope boundary, not a
+  them (`npm run …`, and the install commands: `npm ci`, `pnpm install`,
+  `uv sync`, `bundle install`, `dotnet restore`, …) execute scripts and lifecycle
+  hooks the project author wrote, so the allowlist is a scope boundary, not a
   read-only one. They are allowed because an isolated worktree may have no
   installed dependencies and the tests cannot run without them. Run only the
   scripts whose purpose is test, typecheck, lint, or build; a script that
