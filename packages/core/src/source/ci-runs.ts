@@ -3,7 +3,7 @@ import { acquireOrSweepMarker, releaseMarker, STALE_CLAIM_MINUTES } from "../cla
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger, shortSha } from "./ci-runs-shared.js"
-import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
+import { withClaimMarker, type ClaimSkipReason, type TerminalOutcome, type WorkSource } from "./types.js"
 
 export { shortSha }
 
@@ -85,6 +85,8 @@ interface CiRunsDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
+  /** Claim-marker stale window (`staleClaimMinutes`, threaded from `buildWorkSources`); unset ⇒ the bare 15m constant. */
+  readonly staleMinutes?: number
   /** Config override of the manifest's watched branch (`workflows.<kind>.branch`). */
   readonly branch?: string
   /** Clock injection for ledger stamps; defaults to the real time. */
@@ -102,7 +104,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   const headMarker = (sha: string): string => `${claimsDir}/head-${shortSha(sha)}`
   /** Win the head's marker, sweeping it first if a dead run left it behind. */
-  const claimHead = (sha: string): Promise<boolean> => acquireOrSweepMarker($, headMarker(sha), STALE_CLAIM_MINUTES)
+  const claimHead = (sha: string): Promise<boolean> => acquireOrSweepMarker($, headMarker(sha), deps.staleMinutes ?? STALE_CLAIM_MINUTES)
   let resolvedBranch: string | null = null
 
   const branch = async (): Promise<string> => {
@@ -196,7 +198,7 @@ export const makeCiRunsSource = (deps: CiRunsDeps): WorkSource => {
           return { item: null, skip: { message: `${kind}: could not pin the red head locally`, actionable: true } }
         }
       }
-      return { item: redHeadWorkItem(loaded, "github", b, judged.sha, judged.failing), skip: null }
+      return { item: withClaimMarker(redHeadWorkItem(loaded, "github", b, judged.sha, judged.failing), headMarker(judged.sha)), skip: null }
     },
 
     async release(work) {

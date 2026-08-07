@@ -655,6 +655,17 @@ test("an onError (ERROR verdict) stop is marked retryable; a cap stop is not (C2
   if (cap.action.kind === "stop") assert.equal(cap.action.retryable, undefined)
 })
 
+test("the failure that trips the cap enters the attempts ledger — a capped run reports all N, not N−1", () => {
+  const record = { verdict: "FAIL" as Verdict, reason: "still two red tests" }
+  const capped = advance(eng, { ...mk("g"), stage: "verify", iteration: 2 }, config, "gaps remain", "FAIL", record)
+  assert.equal(capped.action.kind, "stop")
+  const last = capped.state.attempts?.at(-1)
+  assert.equal(last?.stage, "verify")
+  assert.equal(last?.iteration, 2)
+  assert.equal(last?.verdict, "FAIL")
+  assert.equal(last?.reason, "still two red tests")
+})
+
 test("a blocked work stage takes its onError arm instead of firing the next stage", () => {
   // BUILD reporting the approved plan is impossible. Before this arm existed, saying
   // so changed nothing: VERIFY fired anyway, failed, re-fired BUILD, and the loop
@@ -1250,6 +1261,25 @@ test("a VERIFY FAIL keeps REVIEW's prior findings — no verdict flip through an
   assert.ok(reviewFailed.artifacts.review?.includes("critical: auth bypass"), "review findings recorded on FAIL")
   const verifyFailed = advance(eng, { ...reviewFailed, stage: "verify" }, config, "flaky test", "FAIL", { verdict: "FAIL" }).state
   assert.equal(verifyFailed.artifacts.review, reviewFailed.artifacts.review, "the findings survive the intervening VERIFY FAIL")
+})
+
+test("a clean VERIFY PASS clears the previous iteration's seam — REVIEW is never served a stale FAIL as fact", () => {
+  // VERIFY FAIL → BUILD → VERIFY PASS is the common retry path, and
+  // verify.onFail drops no artifacts. A PASS needs no reason, so its block is
+  // empty — which used to LEAVE the old FAIL block in feedback.verify, and
+  // review.md's "What VERIFY established (take it as given)" served the
+  // previous iteration's failure text as established fact.
+  const failed = advance(eng, { ...mk("g"), stage: "verify", artifacts: { plan: "P" } }, config, "V1 prose", "FAIL", {
+    verdict: "FAIL",
+    reason: "missing test",
+  }).state
+  assert.ok(failed.feedback?.verify?.includes("missing test"), "the FAIL seam was recorded")
+  const built = advance(eng, failed, config, "build output").state
+  const passed = advance(eng, built, config, "clean pass prose", "PASS", { verdict: "PASS" })
+  assert.equal(passed.state.feedback?.verify, undefined, "the stale FAIL seam outlived the PASS")
+  const review = passed.action.kind === "fire" ? passed.action.arguments : ""
+  assert.doesNotMatch(review, /What VERIFY established/)
+  assert.doesNotMatch(review, /missing test/, "REVIEW was served the previous iteration's failure text")
 })
 
 test("an artifact whose seam no longer matches is clamped whole — fails safe", () => {

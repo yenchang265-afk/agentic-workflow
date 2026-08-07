@@ -191,20 +191,31 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
       // which `fresh.body` (read before it) does not carry.
       const refusals = unaddressedRejectionCount(fresh.body) + 1
       if (refusals >= CONTRACT_REFUSAL_LIMIT) {
+        // The try spans ONLY the note and the move: once the move has landed,
+        // the task IS in draft/, and a later failure (a commit hiccup) must not
+        // fall into the stay-queued arm — that arm logs and reports "It stays
+        // in queued/", the one place the task no longer is.
+        let newPath: string | null = null
         try {
           await appendNote($, fresh, auditNote(`Plan contract unmet after ${refusals} attempts — returned to draft for human triage`, new Date(), actor), log)
-          const newPath = await moveTask($, fresh, "draft" as TaskStatus) // also releases the queued/ claim marker
-          await commitBacklog(ctx, `loop(${id}): plan contract unmet ${refusals}× — returned to draft`)
+          newPath = await moveTask($, fresh, "draft" as TaskStatus) // also releases the queued/ claim marker
+        } catch (err) {
+          // A failed draft return falls through to the stay-queued arm below —
+          // which still releases the claim, the invariant every exit path keeps.
+          await log("warn", `loop(${id}): draft return failed (${(err as Error).message}) — staying queued`)
+        }
+        if (newPath) {
+          try {
+            await commitBacklog(ctx, `loop(${id}): plan contract unmet ${refusals}× — returned to draft`)
+          } catch (err) {
+            await log("warn", `loop(${id}): draft return landed but the backlog commit failed (${(err as Error).message}) — the move is on disk, uncommitted`)
+          }
           await ctx.writeMetrics("error", `${why} — returned to draft after ${refusals} refusals`)
           return {
             kind: "error",
             message: `PLAN failed for "${id}" ${refusals} times — ${why}. Returned to ${newPath} for human triage.`,
             taskId: id,
           }
-        } catch (err) {
-          // A failed draft return falls through to the stay-queued arm below —
-          // which still releases the claim, the invariant every exit path keeps.
-          await log("warn", `loop(${id}): draft return failed (${(err as Error).message}) — staying queued`)
         }
       }
     }

@@ -232,14 +232,15 @@ test("workflow_compose reuses recorded check results and never runs a check", ()
   assert.match(body, /composePrompt\(activeManifest\(\), active, stage, config\)/, "it composes from state, which carries the results")
 })
 
-// Flooring at finalization rather than inside admitVerdict: a pre-seeded check
-// axis would flow through blockingFindingsIssue and get a genuine agent PASS
-// REJECTED rather than derived down.
-test("workflow_advance floors the admitted verdict with the checks, and admission is left alone", () => {
+// Finalizing (floor + all-unassessed guard, one bundled call) at finalization
+// rather than inside admitVerdict: a pre-seeded check axis would flow through
+// blockingFindingsIssue and get a genuine agent PASS REJECTED rather than
+// derived down.
+test("workflow_advance finalizes the admitted verdict with the checks, and admission is left alone", () => {
   const advanceBody = flat(toolBody(code(source()), "workflow_advance"))
-  assert.match(advanceBody, /pending = withCheckFloor\(pending, active\.checks\?\.\[stage\] \?\? \[\]\)/)
+  assert.match(advanceBody, /pending = finalizeCheckRecord\(pending, active\.checks\?\.\[stage\] \?\? \[\]\)/)
   const verdictBody = flat(toolBody(code(source()), "workflow_verdict"))
-  assert.doesNotMatch(verdictBody, /withCheckFloor/, "the admission contract must stay exactly as it was")
+  assert.doesNotMatch(verdictBody, /withCheckFloor|finalizeCheckRecord/, "the admission contract must stay exactly as it was")
 })
 
 // A rejected verdict is not "nothing happened": the channel worked and the SHAPE

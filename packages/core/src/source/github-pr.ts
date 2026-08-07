@@ -3,7 +3,7 @@ import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { attentionTriggers, emptyLedger, loadLedger, saveLedger, type PrSnapshot, type PrTrigger } from "./ledger.js"
 import { fetchHead, makeClaimMarkers, prWorkItem, terminalLedgerUpdate } from "./pr-shared.js"
-import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
+import { withClaimMarker, type ClaimSkipReason, type TerminalOutcome, type WorkSource } from "./types.js"
 
 /**
  * The GitHub-PR work source (the PR sitter's): claimable units of work are
@@ -78,6 +78,8 @@ interface GithubPrDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
+  /** Claim-marker stale window (`staleClaimMinutes`, threaded from `buildWorkSources`); unset ⇒ the bare 15m constant. */
+  readonly staleMinutes?: number
   /** Override of the manifest's search query (config `workflows.pr-sitter.query`). */
   readonly query?: string
   /**
@@ -117,7 +119,7 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
     return viewerLogin
   }
 
-  const markers = makeClaimMarkers($, directory, tasksDir, kind)
+  const markers = makeClaimMarkers($, directory, tasksDir, kind, deps.staleMinutes)
 
   const fields =
     "number,title,headRefName,baseRefName,headRefOid,isDraft,mergeable,reviewDecision,isCrossRepository,statusCheckRollup,comments"
@@ -195,7 +197,13 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
         skip: { message: `${kind}: could not fetch ${pr.headRefName} for PR #${target} — skipping`, actionable: true },
       }
     }
-    return { item: prWorkItem(loaded, "github", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }), skip: null }
+    return {
+      item: withClaimMarker(
+        prWorkItem(loaded, "github", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }),
+        markers.markerDir(target),
+      ),
+      skip: null,
+    }
   }
 
   return {
@@ -259,7 +267,13 @@ export const makeGithubPrSource = (deps: GithubPrDeps): WorkSource => {
           await markers.release(pr.number)
           continue
         }
-        return { item: prWorkItem(loaded, "github", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }), skip: null }
+        return {
+          item: withClaimMarker(
+            prWorkItem(loaded, "github", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }),
+            markers.markerDir(pr.number),
+          ),
+          skip: null,
+        }
       }
       if (heldIds.length) {
         return {

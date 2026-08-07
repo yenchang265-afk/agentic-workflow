@@ -31,6 +31,17 @@ export interface WorkItem {
   readonly ref?: unknown
 }
 
+/**
+ * Stamp the claim marker's on-disk path onto a claimed item's entry state, so
+ * drivers can restamp the marker at every stage boundary (`refreshWorkClaim`).
+ * Applied by every task-less source right where `claimNext` returns its item —
+ * a closure on `ref` could not survive the state snapshot, a path does. Pure.
+ */
+export const withClaimMarker = (item: WorkItem, claimMarkerDir: string): WorkItem => ({
+  ...item,
+  state: { ...item.state, claimMarkerDir },
+})
+
 /** How a claimed item's drive ended. */
 export interface TerminalOutcome {
   readonly kind: "done" | "park" | "stop" | "error"

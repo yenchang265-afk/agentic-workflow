@@ -2,10 +2,11 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–14）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–15）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
-backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03。
+backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
+2026-08-07。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -29,6 +30,7 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03。
 | 12 | [計畫契約](./12-plan-contract.zh-TW.md) | PLAN 的提示詞機械式攜帶計畫結構契約（標明檔案的步驟、將每條驗收準則對應到證明的 `### Verification`、`### Out of Scope`），park 閘門拒絕沒有 Verification 子節的計畫 —— 寬容標題比對、釋放 claim、任務留在 queued | `manifest/schema.ts` 的 `planContract`、`workflow/verdict.ts` 的 `planContractBlock`/`hasVerificationSection`、`workflow/engine.ts` 的組裝分支、`workflow/terminal.ts` 的 park 否決；`schema.test.ts`、`engine.test.ts`、`terminal.test.ts` |
 | 13 | [選擇性加入的計畫視覺化](./13-plan-visualization.zh-TW.md) | 設定 `workflows.<kind>.planVisualization: true` 後，當變更的形狀值得（狀態／生命週期、跨套件流程、並行、資料形狀）時，PLAN 的提示詞要求在計畫中附上 mermaid 圖——由代理人判斷、永不由閘門強制——管理面板的計畫審查視圖在沙箱 iframe 中把圍欄渲染成圖，且每個區塊仍可留言 | `manifest/schema.ts` 的 `planVisualization`、`workflow/verdict.ts` 的 `planVisualizationBlock`、`config.ts` 的 `planVisualizationFor` 與設定、`workflow/engine.ts` 的組裝尾段、`packages/hub` 的 `MermaidBlock.tsx`/`mermaid-embed.ts`；`schema.test.ts`、`config.test.ts`、`verdict.test.ts`、`engine.test.ts`、`mermaid-embed.test.ts` |
 | 14 | [對稱的階段情境](./14-symmetric-stage-context.zh-TW.md) | 計畫 09–11 給單一階段的情境現在也到達它的同儕：REVIEW 看得到 VERIFY 確立了什麼(經由新的 `verdicts.<stage>` 鍵取得記錄下來的裁決接縫、永遠不是逐字稿)並獲得最終迭代警告;VERIFY 看得到嘗試帳本,復發的失敗讀作復發;重新觸發的 BUILD 被指向先前迭代的累積 diff;內聯的檢查回饋與建置摘要帶上「是資料、不是指令」圍欄;plan.md 移除永不渲染的 worktree 區段 | `packages/core/src/workflow/engine.ts` 的 `verdicts` 情境鍵、`workflows/engineering/stages/*.md` 的區段與圍欄、oracle 鏡像與 `PRIOR_WORK_SECTION`/`VERDICTS_SECTION` 剝除;`engine.test.ts` |
+| 15 | [未評估軸線政策](./15-unassessed-axis-policy.zh-TW.md) | 不帶阻斷性發現的少數軸線 `ERROR` ——審查契約自己邀請的「無法評估」逃生口——現在是非阻斷的：`effectiveVerdict` 略過它、它滿足覆蓋要求,並以「未評估」區段流入下一輪提示,不再以假的環境錯誤停掉整個 run 並困住任務。宣告 PASS 而*每一條*軸線皆未評估者仍被拒絕(最終化時惡化為 ERROR),帶發現的 ERROR 軸線保留既有的 onError 路由 | `workflow/verdict.ts` 的 `axisUnassessed`/`withUnassessedGuard` 與 `effectiveVerdict` 略過、`workflow/checks.ts` 的 `finalizeCheckRecord`、OpenCode driver 與 Claude MCP server 的呼叫點替換、`verdictContractBlock` 與 `prompts/agents/workflow-review/body.md` 的契約文字;`verdict.test.ts`、`checks.test.ts` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

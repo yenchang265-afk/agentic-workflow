@@ -45,15 +45,22 @@ export const triggerSummary = (triggers: readonly PrTrigger[], snapshot: PrSnaps
  * that never reached `onTerminal` left the marker on disk forever and that PR
  * was never sitted again — the backlog markers have had this recovery since
  * `STALE_CLAIM_MINUTES` existed, these never did. The sweep is the same
- * stamp-based check, so a marker whose loop is genuinely still running is left
- * alone until it ages out.
+ * stamp-based check. `staleMinutes` must be the timeout-aware window
+ * (`staleClaimMinutes`, threaded from `buildWorkSources`), not the bare
+ * constant: a multi-stage sitter drive legitimately outlives 15 minutes, and a
+ * live drive's marker read stale, got swept, and a second loop drove the same
+ * PR. The other half of that fix is the restamp — drivers stamp
+ * `claimMarkerDir` onto entry state and `refreshWorkClaim` restamps it at
+ * every stage boundary, exactly like the backlog's `refreshClaimStamp`.
  */
-export const makeClaimMarkers = ($: Shell, directory: string, tasksDir: string, kind: string) => {
+export const makeClaimMarkers = ($: Shell, directory: string, tasksDir: string, kind: string, staleMinutes: number = STALE_CLAIM_MINUTES) => {
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   const marker = (pr: number): string => `${claimsDir}/pr-${pr}`
   return {
-    claim: (pr: number, now: Date = new Date()): Promise<boolean> => acquireOrSweepMarker($, marker(pr), STALE_CLAIM_MINUTES, now),
+    claim: (pr: number, now: Date = new Date()): Promise<boolean> => acquireOrSweepMarker($, marker(pr), staleMinutes, now),
     release: (pr: number): Promise<void> => releaseMarker($, marker(pr)),
+    /** The marker's on-disk path — stamped onto entry state so drivers can restamp a live drive (`refreshWorkClaim`). */
+    markerDir: (pr: number): string => marker(pr),
   }
 }
 

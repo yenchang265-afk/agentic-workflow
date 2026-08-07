@@ -163,6 +163,28 @@ test("re-claiming a head whose remedy branch already has commits reuses it, neve
   assert.ok(!shellLog.some((c) => c.startsWith("git -C /r branch -f")), "must not reset a remedy branch that already has commits")
 })
 
+test("the head claim is stamped and sweepable — never the bare mkdir/rmdir pair", async () => {
+  // Regression: this source used a bare mkdir with no stamp and no sweep, so a
+  // SIGKILL between claim and release wedged the head forever (the exact
+  // failure the shared claim-marker helpers exist to prevent — see
+  // claim-marker.ts). The stamp write is what makes the marker recoverable,
+  // and the entry state carries the marker path so drivers can restamp a live
+  // drive (refreshWorkClaim).
+  const shellLog: string[] = []
+  const src = source([build()], { shellLog })
+  const { item } = await src.claimNext()
+  const marker = `/r/docs/tasks/runs/main-sitter/.claims/head-${shortSha(SHA)}`
+  assert.ok(
+    shellLog.some((c) => c.startsWith(`printf '%s' {"claimedAt"`) && c.includes(`${marker}/claim.json`)),
+    "the claim writes the staleness stamp",
+  )
+  assert.equal(item?.state.claimMarkerDir, marker)
+  await src.release({ ...item!, ref: { sha: SHA } })
+  const stampRm = shellLog.findIndex((c) => c.startsWith(`rm -f ${marker}/claim.json`))
+  const rmdir = shellLog.findIndex((c) => c.startsWith(`rmdir ${marker}`))
+  assert.ok(stampRm !== -1 && rmdir !== -1 && stampRm < rmdir, "release drops the stamp, then the marker")
+})
+
 test("a green newest head (succeeded result) claims nothing", async () => {
   const { item, skip } = await source([build({ result: "succeeded" })]).claimNext()
   assert.equal(item, null)

@@ -45,12 +45,15 @@ export const EXEMPT_MAX = 4_000
  * degrades to "the block is clamped too", never to "the block is missing".
  */
 const withArtifact = (state: WorkflowState, stage: string, output: string, block: string): WorkflowState => {
-  const text = block ? `${block}\n\n${output}` : output
-  return {
-    ...state,
-    artifacts: { ...state.artifacts, [stage]: text },
-    ...(block ? { feedback: { ...state.feedback, [stage]: block } } : {}),
-  }
+  const artifacts = { ...state.artifacts, [stage]: block ? `${block}\n\n${output}` : output }
+  if (block) return { ...state, artifacts, feedback: { ...state.feedback, [stage]: block } }
+  // An empty block must DELETE the stage's previous seam, not leave it: a clean
+  // VERIFY PASS after a VERIFY FAIL otherwise keeps the old FAIL block, and
+  // review.md's "What VERIFY established" serves last iteration's failure as
+  // fact. Only this stage's key — other stages' seams still match their artifacts.
+  if (!state.feedback || !(stage in state.feedback)) return { ...state, artifacts }
+  const { [stage]: _stale, ...feedback } = state.feedback
+  return { ...state, artifacts, feedback }
 }
 
 /**
@@ -430,13 +433,16 @@ export const advance = (
   switch (effect.kind) {
     case "fire": {
       if (effect.countIteration) {
-        const cap = iterationCap(manifest, config) ?? config.maxIterations
+        const cap = iterationCap(manifest, config) ?? config.maxIterations // the trailing ?? types the value non-optional; iterationCap already falls back to config
         if (s.iteration + 1 >= cap) {
           const message = (effect.capMessage ?? `✗ Loop stopped after {maxIterations} iterations.`).replaceAll(
             "{maxIterations}",
             String(cap),
           )
-          return { state: s, action: { kind: "stop", message } }
+          // The failure that TRIPS the cap is an attempt too: without this the
+          // ledger of a capped run reports N−1 failures, and state.ts promises
+          // it reports what all N tried.
+          return { state: withAttempt(s, s.stage, verdict ?? "FAIL", record), action: { kind: "stop", message } }
         }
         // Recorded here, on the counted re-fire, not on every check completion:
         // a verdict-channel retry must not inflate the ledger.

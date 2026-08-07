@@ -74,6 +74,13 @@ const WorkflowStateSchema = z.object({
     )
     .optional(),
   task: TaskRefSchema.optional(),
+  /**
+   * A task-less drive's claim-marker path, restamped at stage boundaries
+   * (`refreshWorkClaim`). Optional for the fail-closed reason above — and it
+   * must be listed here at all because zod STRIPS unknown keys: without it a
+   * resumed sitter drive silently loses the restamp and reads stale mid-run.
+   */
+  claimMarkerDir: z.string().optional(),
   git: GitRefSchema.optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */
   platform: z.enum(CODE_PLATFORMS).optional(),
