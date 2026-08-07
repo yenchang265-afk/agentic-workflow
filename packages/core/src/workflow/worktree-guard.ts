@@ -5,9 +5,9 @@ import { splitSegments } from "../task/write-backstop.js"
 /**
  * Worktree pin: keeps a worktree-isolated stage agent's shell commands and file
  * edits inside its worktree. The engine only ever CONVEYS the worktree as prompt
- * text ("prefix every shell command with `cd <wt> && `") — neither host can set
- * the agent session's real cwd — so a command that forgets the prefix silently
- * runs in the main tree. Both hosts enforce this the same way: OpenCode in
+ * text ("prefix a command that must RUN inside it with `cd <wt> && `") — neither
+ * host can set the agent session's real cwd — so a command that forgets the
+ * prefix silently runs in the main tree. Both hosts enforce this the same way: OpenCode in
  * `tool.execute.before`, the Claude Code PreToolUse hook via the esbuild-bundled
  * entry.
  *

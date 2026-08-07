@@ -271,6 +271,27 @@ on `pass.mode === "axis"` inline again; a lens set that spans the axes is
 enforceable and a lens set that cannot is not, and only that predicate knows the
 difference.
 
+### The two hosts match a bash command differently
+
+The Claude Code / Qwen guard splits a command on `&&`/`|`/`;` and matches each
+segment (`commandAllowed`), accepting a bare `cd` as its own segment. **OpenCode
+matches the WHOLE command string** against the agent frontmatter's
+`permission.bash` globs. So one allowlist has to satisfy both, and only OpenCode
+needs the `cd * && <glob>` twins — `gen-prompts.mjs` (`allowlistFor`) derives one
+per glob for every worktree-isolated stage. Declare **bare forms only** in
+`workflows/<kind>/workflow.json`; a hand-written `cd * && ` prefix there now fails
+`scripts/workflow-allowlist.test.mjs`.
+
+Hand-listing them is how this broke twice: `npm outdated*` once shipped without
+its twin, and REVIEW — whose allowlist is *entirely* inspection commands — never
+had one at all, so on OpenCode every command it ran hit the `"*": deny` sentinel
+and the starved stage ERRORed instead of recording a verdict. The prompt half
+mattered as much as the data half: `worktree.instructions` used to order "prefix
+**every** shell command with `cd <wt> && `", i.e. exactly the form REVIEW's own
+allowlist denied. Keep that paragraph shaped per command-kind (inspection via
+`git -C <wt>`/absolute paths, runners via the prefix) — a blanket rule there is
+a blanket denial here.
+
 ### A rejected verdict is not a missing one
 
 `admitVerdict` refusing a call means the channel WORKED and the shape was wrong.

@@ -6,11 +6,9 @@ permission:
   webfetch: deny
   bash:
     "*": deny
-    # Comment-only authority: no push, no gh api, no gh pr review. The ADO curl
-    # is scoped to `/threads*` so votes/completions can't get through.
-    "gh pr comment *": allow
-    "gh pr view*": allow
-    # to the pullRequestThreads resource, mirroring /threads*.
+    # Comment-only authority: no push, no gh api, no gh pr review. ADO never
+    # touches bash — the thread is posted through the Azure DevOps MCP tool
+    # below, backstopped by an argument-level write guard.
     "git status*": allow
     "git diff*": allow
     "git log*": allow
@@ -25,6 +23,8 @@ permission:
     "tail *": allow
     "grep *": allow
     "wc *": allow
+    "gh pr comment *": allow
+    "gh pr view*": allow
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:

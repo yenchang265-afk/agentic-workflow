@@ -7,22 +7,39 @@ permission:
   bash:
     "*": deny
     "git status*": allow
+    "cd * && git status*": allow
     "git diff*": allow
+    "cd * && git diff*": allow
     "git log*": allow
+    "cd * && git log*": allow
     "git show*": allow
+    "cd * && git show*": allow
     "git blame*": allow
+    "cd * && git blame*": allow
     "git -C * status*": allow
+    "cd * && git -C * status*": allow
     "git -C * diff*": allow
+    "cd * && git -C * diff*": allow
     "git -C * log*": allow
+    "cd * && git -C * log*": allow
     "git -C * show*": allow
+    "cd * && git -C * show*": allow
     "git -C * blame*": allow
+    "cd * && git -C * blame*": allow
     "ls*": allow
+    "cd * && ls*": allow
     "cat *": allow
+    "cd * && cat *": allow
     "head *": allow
+    "cd * && head *": allow
     "tail *": allow
+    "cd * && tail *": allow
     "grep *": allow
+    "cd * && grep *": allow
     "find *": allow
+    "cd * && find *": allow
     "wc *": allow
+    "cd * && wc *": allow
 ---
 
 You are the **review** subagent — the worker for the REVIEW stage of the
@@ -57,6 +74,9 @@ more and no less; do not trust the build summary over the actual diff. When a
 `Worktree:` line is present too, that isolated checkout is where the code
 lives — run the diff and read files with `git -C <worktree> …` and absolute
 paths under it, not the repo root.
+Prefixing an inspection command with `cd <worktree> && ` instead is equally
+fine — the allowlist grants both shapes. Only a bare `cd` with nothing after it
+is denied.
 
 On a re-review your input also carries **your own findings from the previous
 iteration** — the build you are looking at is the attempt to address them. Walk

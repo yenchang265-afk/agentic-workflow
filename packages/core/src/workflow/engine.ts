@@ -244,11 +244,18 @@ export const promptContextWithStats = (
     worktree: wt
       ? {
           path: wt,
+          // Per SHAPE, not "every shell command". A check stage's allowlist is
+          // read-only globs, and the OpenCode host matches the WHOLE command
+          // string — so blanket-mandating the `cd <wt> && ` prefix told REVIEW to
+          // emit exactly the form its own allowlist denies, and every command it
+          // ran was refused. Inspection has a pinned form that needs no prefix
+          // (`git -C`, absolute paths); only a command that must RUN in the
+          // worktree does.
           instructions:
             `Worktree: this loop's isolated checkout is ${wt} — every file you read, edit, or ` +
-            `test lives THERE, not in the repo root. Use absolute paths under it for edit/read; prefix every ` +
-            `shell command with \`cd ${wt} && \` (or use \`git -C ${wt} …\`). ` +
-            `Never modify anything outside it.`,
+            `test lives THERE, not in the repo root. Use absolute paths under it for edit/read and ` +
+            `\`git -C ${wt} …\` for git; prefix a command that must RUN inside it (test/build/install ` +
+            `runners) with \`cd ${wt} && \`. Never modify anything outside it.`,
         }
       : undefined,
   }

@@ -40,6 +40,9 @@ const HOSTS = [
  * frontmatter can't switch on platform, so all platforms are allowed and the
  * stage prompt uses the configured one). Same agent in two manifests must declare
  * the identical allowlist. Keyed by agent name; only agents that declare one appear.
+ *
+ * `worktree` records whether any declaring stage is worktree-isolated, which is
+ * what `expandAllowlist` needs to decide on the `cd * && ` twins.
  */
 const agentAllowlists = () => {
   const byAgent = new Map()
@@ -51,18 +54,55 @@ const agentAllowlists = () => {
       const globs = [...(stage.bashAllowlist ?? []), ...Object.values(stage.platformAllowlist ?? {}).flat()]
       if (globs.length === 0) continue
       const existing = byAgent.get(stage.agent)
-      if (existing && JSON.stringify(existing) !== JSON.stringify(globs)) {
+      if (existing && JSON.stringify(existing.globs) !== JSON.stringify(globs)) {
         throw new Error(
           `agent "${stage.agent}" has conflicting bash allowlists across manifests — reconcile them in workflows/*/workflow.json`,
         )
       }
-      byAgent.set(stage.agent, globs)
+      // Isolation is OR-ed, not compared: an agent bound worktree-isolated by any
+      // kind must carry the twins, and an extra twin on an unisolated binding is
+      // inert (no worktree ⇒ nothing tells the agent to prefix).
+      byAgent.set(stage.agent, { globs, worktree: (existing?.worktree ?? false) || stage.isolation === "worktree" })
     }
   }
   return byAgent
 }
 
 const ALLOWLISTS = agentAllowlists()
+
+const CD_PREFIX = "cd * && "
+
+/**
+ * The globs an OpenCode agent's `permission.bash` map carries: the manifest's,
+ * plus a `cd * && <glob>` twin for each when the stage is worktree-isolated.
+ *
+ * The twins exist because the two halves of the isolation contract are enforced
+ * by different matchers. The engine tells a worktree stage to run commands inside
+ * its checkout, and OpenCode matches the WHOLE command string against these globs
+ * — it does not split on `&&` the way the Claude Code guard's `commandAllowed`
+ * does. So without a twin, `cd <wt> && git diff` matches no glob and falls through
+ * to the `"*": deny` sentinel: a REVIEW stage whose allowlist is entirely
+ * inspection commands had EVERY command it ran refused, and the starved stage
+ * ERRORed instead of recording a verdict.
+ *
+ * Generated rather than authored: hand-listing them in each manifest is what let
+ * `npm outdated*` ship without its twin, and what left every read glob without one.
+ * The `cd` target is not widened by this — the worktree pin (`pinBash`, run on
+ * every bash call in the OpenCode plugin's `tool.execute.before`) blocks a `cd`
+ * out of the worktree independently of these globs.
+ */
+const allowlistFor = (agent) => {
+  const entry = ALLOWLISTS.get(agent)
+  if (!entry) return null
+  if (!entry.worktree) return entry.globs
+  const out = []
+  for (const glob of entry.globs) {
+    if (!out.includes(glob)) out.push(glob)
+    const twin = CD_PREFIX + glob
+    if (!glob.startsWith(CD_PREFIX) && !out.includes(twin)) out.push(twin)
+  }
+  return out
+}
 
 /**
  * The MCP tool names each agent may call, from `platformTools` in the manifests.
@@ -182,7 +222,8 @@ const setCommandAgent = (src, agent, command) => {
  * Expand a `# {{allowlist}}` marker line in an OpenCode frontmatter's
  * `permission.bash` map into `"<glob>": allow` lines from the manifest, preserving
  * the marker's indentation. This is what single-sources the allowlist: the yaml
- * declares only the `"*": deny` sentinel and the marker; the globs live in workflow.json.
+ * declares only the `"*": deny` sentinel and the marker; the globs live in
+ * workflow.json and their `cd * && ` twins come from `allowlistFor`.
  */
 const expandAllowlist = (frontmatter, agent) => {
   // Match the whole marker line (any surrounding comment text), capturing its
@@ -190,7 +231,7 @@ const expandAllowlist = (frontmatter, agent) => {
   const marker = /^([ \t]*)#.*\{\{allowlist\}\}.*$/m
   const m = marker.exec(frontmatter)
   if (!m) return frontmatter
-  const globs = ALLOWLISTS.get(agent)
+  const globs = allowlistFor(agent)
   if (!globs) throw new Error(`agent "${agent}" uses {{allowlist}} but declares no bashAllowlist in any workflow.json`)
   const indent = m[1]
   const lines = globs.map((g) => `${indent}${JSON.stringify(g)}: allow`).join("\n")

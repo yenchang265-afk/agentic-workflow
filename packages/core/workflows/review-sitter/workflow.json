@@ -90,24 +90,7 @@
         "go test*",
         "cargo test*",
         "make test*",
-        "make check*",
-        "cd * && npm test*",
-        "cd * && npm run *",
-        "cd * && pnpm test*",
-        "cd * && pnpm run *",
-        "cd * && yarn test*",
-        "cd * && yarn run *",
-        "cd * && bun test*",
-        "cd * && node --test*",
-        "cd * && npx tsc*",
-        "cd * && npx vitest*",
-        "cd * && npx jest*",
-        "cd * && npx eslint*",
-        "cd * && pytest*",
-        "cd * && go test*",
-        "cd * && cargo test*",
-        "cd * && make test*",
-        "cd * && make check*"
+        "make check*"
       ]
     },
     {

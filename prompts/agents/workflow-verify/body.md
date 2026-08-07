@@ -18,9 +18,10 @@ When your input contains a `Worktree:` line, the change lives in that isolated
 checkout, not the repo root. Read and test **there**: run test commands as
 `cd <worktree> && <runner>` and inspect with `git -C <worktree> …`.
 {{#host opencode}}
-The `cd <worktree> && <runner>` form is the shape the bash allowlist accepts —
-a bare `cd` is denied. If a test command is denied, remember that form is what
-the allowlist accepts; only record ERROR if the runner itself is genuinely
+The allowlist accepts both shapes — every glob it grants is granted again with a
+`cd <worktree> && ` prefix — but a bare `cd` with nothing after it is denied. If
+a command is refused, it is the command itself that is off the allowlist, not the
+prefix: re-read what you ran, and only record ERROR if the runner is genuinely
 unavailable.
 {{/host}}
 
