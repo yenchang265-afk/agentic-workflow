@@ -1,0 +1,27 @@
+{
+  "comment": "Shared find-mutation vectors consumed by BOTH twins' suites — packages/core/src/task/write-backstop.test.ts and plugins/claude/hooks/allowlist.test.mjs — so the classifiers cannot drift between hosts. 'mutating' must be rejected by isFindMutation; 'readOnly' must pass.",
+  "mutating": [
+    "find . -exec rm -rf {} +",
+    "find . -name '*.ts' -exec sed -i s/a/b/ {} +",
+    "find . -execdir sh -c 'echo pwned' ;",
+    "find src -ok rm {} ;",
+    "find src -okdir rm {} ;",
+    "find . -name '*.tsbuildinfo' -delete",
+    "find . -newer x -delete",
+    "find . -fprint /tmp/out",
+    "find . -fprintf /etc/x fmt",
+    "find . -fprint0 /tmp/out0",
+    "find . -fls /tmp/ls",
+    "find / -type f -delete"
+  ],
+  "readOnly": [
+    "find . -name '*.ts'",
+    "find src -type f -newer package.json",
+    "find . -maxdepth 2 -type d",
+    "find . -name '*.md' -print",
+    "find . -name '-delete'",
+    "find /repo -path '*/node_modules' -prune -o -type f -print",
+    "grep -r exec src",
+    "cat find-results.txt"
+  ]
+}

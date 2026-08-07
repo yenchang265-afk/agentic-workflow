@@ -205,8 +205,23 @@ test("workflow_advance floors the admitted verdict with the checks, and admissio
 // to route on.
 test("workflow_verdict keeps the refused record, not just the fact of a refusal", () => {
   const body = flat(toolBody(code(source()), "workflow_verdict"))
-  assert.match(body, /verdictRejected = \{ record: rec, message: admission\.message \}/)
+  // Rejections MERGE worst-wins — keeping only the last one let a rejected
+  // FAIL vanish behind a later rejected PASS and ERROR-stop the run.
+  assert.match(body, /verdictRejected = mergeRejected\(verdictRejected, \{ record: rec, message: admission\.message \}\)/)
   assert.doesNotMatch(body, /verdictRejected = true/, "a boolean cannot be routed on")
+})
+
+test("every loop entry and terminal path resets the pass-arming scratch through the one helper", () => {
+  // `armedPass`/`fanoutStage` used to be reset only on a stage transition, so a
+  // loop stopped mid-fan-out left `fanoutStage` armed: the NEXT loop's REVIEW
+  // read `freshStage === false` and silently skipped `runStageChecks` for the
+  // whole stage, while a straggler verdict could be admitted against the stale
+  // pass's narrowed axes. One helper, called everywhere, so the next entry
+  // point cannot forget a field.
+  const body = code(source())
+  assert.match(body, /const resetLoopScratch = /)
+  const calls = body.match(/resetLoopScratch\(\)/g) ?? []
+  assert.ok(calls.length >= 8, `startTask, startPlan, workflow_claim, workflow_recover, runPark (3 exits) and runTerminal must all reset — found ${calls.length} calls`)
 })
 
 test("workflow_advance routes a twice-rejected verdict on what the stage declared", () => {

@@ -62,6 +62,11 @@ var hostFor = (env = process.env) => {
 };
 var dialectFor = (host) => host && host in DIALECTS ? DIALECTS[host] : null;
 
+// plugins/claude/hooks/src/emit.mjs
+var exitAfterWrite = (stream, payload, code) => {
+  stream.write(payload, () => process.exit(code));
+};
+
 // plugins/claude/hooks/src/marker.mjs
 import fs from "node:fs";
 import os from "node:os";
@@ -114,8 +119,7 @@ var read = () => new Promise((resolve) => {
 });
 var allow = () => process.exit(0);
 var block = (reason) => {
-  process.stderr.write(reason + "\n");
-  process.exit(2);
+  exitAfterWrite(process.stderr, reason + "\n", 2);
 };
 var main = async () => {
   let input;

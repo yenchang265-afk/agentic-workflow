@@ -1,7 +1,7 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim } from "../task/store.js"
+import { appendNote, auditNote, extractPlan, findByIdIn, moveTask, planHeadingCount, planRejectedNote, releaseClaim, unaddressedRejectionCount } from "../task/store.js"
 import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
@@ -116,6 +116,14 @@ const commitBacklog = async (ctx: TerminalCtx, message: string): Promise<void> =
   await ctx.commitBacklog(message)
 }
 
+/**
+ * Consecutive contract refusals (rejection notes with no successful park
+ * between them) before the park gate stops re-queueing and returns the task to
+ * draft/ for human triage. Derived from the audit tail, never stored — the
+ * task file IS the ledger, so the count is crash-safe by construction.
+ */
+const CONTRACT_REFUSAL_LIMIT = 3
+
 /** park: PLAN finished — validate the plan landed, move the task to plan-review/, or veto. */
 const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
@@ -134,7 +142,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
       // mid-plan — nesting it under the lookup wedged the claim (see the
       // not-parking arm's comment).
       const held = await findByIdIn($, directory, config.tasksDir, "queued", state.task.id)
-      await releaseClaim($, held ?? state.task)
+      await releaseClaim($, held ?? state.task, log)
     }
     await ctx.writeMetrics("error", veto)
     return { kind: "error", message: `Park vetoed for "${state.task?.id ?? state.goal}" — ${veto}`, ...(state.task ? { taskId: state.task.id } : {}) }
@@ -165,9 +173,41 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
         ? "the PLAN stage wrote no ## Implementation Plan"
         : "the plan has no ### Verification subsection — the plan contract requires one mapping each acceptance criterion to its proof"
     await log("warn", `loop(${id}): not parking — ${why}`)
-    // The note only makes sense on a file that is still there — appending to a
-    // stale path would `>>`-recreate a moved task as a frontmatterless ghost.
-    if (fresh) await appendNote($, fresh, auditNote(`PLAN stage failed — ${why}; still queued`, new Date(), actor), log)
+    if (fresh) {
+      // The refusal is recorded as a CANONICAL rejection note (`planRejectedNote`
+      // — the exact shape `extractReplanReason` parses), so the next PLAN pass
+      // receives this reason in its {{#replan}} section. The old free-form
+      // "PLAN stage failed" note matched nothing, and the retry re-planned
+      // blind to the refusal — repeating the same contract mistake every poll
+      // tick. The note only makes sense on a file that is still there —
+      // appending to a stale path would `>>`-recreate a moved task as a
+      // frontmatterless ghost.
+      await appendNote($, fresh, auditNote(planRejectedNote(why), new Date(), actor), log)
+      // Three rejections with no successful park between them mean the planner
+      // is looping on the same refusal — each poll tick burns a full PLAN run
+      // and appends another note, forever, because the queued pool re-claims
+      // immediately. Stop-for-human: return the task to draft/ (out of every
+      // claim walk) with a triage note. `+ 1` counts the note just appended,
+      // which `fresh.body` (read before it) does not carry.
+      const refusals = unaddressedRejectionCount(fresh.body) + 1
+      if (refusals >= CONTRACT_REFUSAL_LIMIT) {
+        try {
+          await appendNote($, fresh, auditNote(`Plan contract unmet after ${refusals} attempts — returned to draft for human triage`, new Date(), actor), log)
+          const newPath = await moveTask($, fresh, "draft" as TaskStatus) // also releases the queued/ claim marker
+          await commitBacklog(ctx, `loop(${id}): plan contract unmet ${refusals}× — returned to draft`)
+          await ctx.writeMetrics("error", `${why} — returned to draft after ${refusals} refusals`)
+          return {
+            kind: "error",
+            message: `PLAN failed for "${id}" ${refusals} times — ${why}. Returned to ${newPath} for human triage.`,
+            taskId: id,
+          }
+        } catch (err) {
+          // A failed draft return falls through to the stay-queued arm below —
+          // which still releases the claim, the invariant every exit path keeps.
+          await log("warn", `loop(${id}): draft return failed (${(err as Error).message}) — staying queued`)
+        }
+      }
+    }
     // The RELEASE, though, is unconditional: this ends the drive, and every way a
     // drive ends must release the marker. When the task left queued/ mid-plan
     // `fresh` is null, and nesting the release under it wedged the queued/ claim
@@ -175,7 +215,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     // verb (replan/abandon/remove) refuses on it and neither `plan <id>` nor the
     // claim walk could re-acquire it until the ~75m stale sweep fired. Fall back
     // to the claim-time ref exactly as `runStop` does.
-    await releaseClaim($, fresh ?? state.task)
+    await releaseClaim($, fresh ?? state.task, log)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `PLAN failed for "${id}" — ${why}. It stays in queued/.`, taskId: id }
   }
@@ -203,7 +243,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     const why = (err as Error).message
     await log("warn", `loop(${id}): plan written but park move failed: ${why}`)
     await appendNote($, fresh, auditNote(`Park failed — ${why}; still queued`, new Date(), actor), log)
-    await releaseClaim($, fresh)
+    await releaseClaim($, fresh, log)
     await ctx.writeMetrics("error", why)
     return { kind: "error", message: `Plan written for "${id}" but the park to plan-review/ failed — ${why}. It stays in queued/.`, taskId: id }
   }
@@ -244,14 +284,14 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         // moveTask releases the claim only on success — release it here or the
         // marker wedges (the orphan sweep refuses bodies carrying a BUILD note,
         // and the body's BUILD note already blocks a redundant auto re-claim).
-        await releaseClaim($, cur)
+        await releaseClaim($, cur, log)
       }
     } else {
       moveError = `task ${state.task.id} is not in in-progress/`
       await log("warn", `loop done but task ${state.task.id} not in in-progress/ — not moved`)
       // Best-effort via the claim-time path — the marker lives in the folder
       // the claim was taken in, which state.task.path still locates.
-      await releaseClaim($, state.task)
+      await releaseClaim($, state.task, log)
     }
   }
   if (state.task && moveError) {
@@ -299,13 +339,13 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
       // note and that pool has no claim predicate, so the next claim/watch tick
       // may re-plan it. That is the intended behaviour, not a leak: PLAN writes
       // only the task file, so re-planning costs a pass and loses nothing.
-      await releaseClaim($, cur)
+      await releaseClaim($, cur, log)
       await commitBacklog(ctx, `loop(${state.task.id}): stopped — ${action.message}`)
     } else {
       // The file left its folder mid-run (human move/delete). Never write to the stale
       // path — but still release the claim marker best-effort: it lives in the
       // claim-time folder's .claims/, which state.task.path still locates.
-      await releaseClaim($, state.task)
+      await releaseClaim($, state.task, log)
       await log("warn", `loop(${state.task.id}): stopped but task not in ${status}/ — stop note skipped`)
     }
   }

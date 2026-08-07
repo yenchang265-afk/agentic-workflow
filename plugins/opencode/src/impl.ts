@@ -13,7 +13,7 @@ import {
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
 import { failurePrompt, overrideCommandPrompt, readCommandPrompt, refusalPrompt } from "./command-prompt.ts"
-import { sliceCommandPrompt } from "./command-slice.ts"
+import { neutralizeArgumentMarkers, sliceCommandPrompt } from "./command-slice.ts"
 import { splitVerb } from "./verb.ts"
 import { listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { listSnapshotIds } from "@agentic-workflow/core/workflow/persist"
@@ -22,7 +22,7 @@ import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit
 import { classifyBash, classifyEdit } from "@agentic-workflow/core/task/guard"
 import { pinBash, pinEditPath } from "@agentic-workflow/core/workflow/worktree-guard"
 import { effectivePlatformTools, stageDef } from "@agentic-workflow/core/manifest/schema"
-import { chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "@agentic-workflow/core/task/write-backstop"
+import { chainedFindMutation, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "@agentic-workflow/core/task/write-backstop"
 import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { findByIdIn, isOrphanedPlanClaim, listClaimIds, listInProgress, listQueued, releaseOrphanedClaims, wasInterrupted } from "@agentic-workflow/core/task/store"
 
@@ -391,6 +391,17 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     }
   }
 
+  /** Whether the loop's current stage is a check stage (VERIFY/REVIEW-shaped, read-only). */
+  const stageIsCheck = (state: { kind?: string; stage: string }): boolean => {
+    try {
+      const loaded = driver.manifestFor(state.kind ?? "engineering")
+      return stageDef(loaded.manifest, state.stage).kind === "check"
+    } catch {
+      // An unreadable manifest never started a loop; nothing to gate.
+      return false
+    }
+  }
+
   return {
     /**
      * Bind `agentModels` as a real opencode setting rather than as prose.
@@ -475,7 +486,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // handleCommand throws; the `if (outcome)` override below still wins for
       // the report-and-stop verbs, which is the right precedence. Markers
       // missing or verb unknown -> keep the full body, never a partial one.
-      const rendered = readCommandPrompt(output)
+      // Defuse marker-shaped lines the ARGUMENT substituted into the body
+      // first — without this, a pasted spec quoting the marker syntax denied
+      // the whole slice and the model got all ~230 lines (command-slice.ts).
+      const renderedRaw = readCommandPrompt(output)
+      const rendered = renderedRaw === undefined ? undefined : neutralizeArgumentMarkers(renderedRaw, input.arguments)
       const sliced = rendered === undefined ? undefined : sliceCommandPrompt(rendered, verb)
       // The drafting invocation has no stage behind it, so `agentModels` reaches it
       // only by riding the body the model reads. Appended after the slice so it
@@ -618,6 +633,18 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             throw new Error(
               "agentic-workflow: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
                 "approves, force-pushes, or pushes the default branch; those stay a human call.",
+            )
+          }
+          // Check stages are read-only, but `find` is an execution/write
+          // primitive their allowlist's `find *` glob can never narrow —
+          // `find . -exec rm {} +` is a single segment with none of the
+          // substitution characters the guard rejects. The Claude host folds
+          // this into its PreToolUse `commandAllowed`; OpenCode's frontmatter
+          // allowlist can't express a flag exclusion, so the deny lives here.
+          if (loop && stageIsCheck(loop) && chainedFindMutation(cmd)) {
+            throw new Error(
+              `agentic-workflow: blocked a mutating find (-exec/-execdir/-ok/-okdir/-delete/-fprint*/-fls) — ` +
+                `the ${loop.stage} stage is read-only; locate files with plain find and report instead of mutating.`,
             )
           }
           // Worktree bash pin: the session's real cwd is the MAIN tree (the

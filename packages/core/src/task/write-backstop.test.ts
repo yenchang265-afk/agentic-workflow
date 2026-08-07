@@ -1,14 +1,24 @@
 import assert from "node:assert/strict"
+import { readFileSync } from "node:fs"
+import path from "node:path"
 import { test } from "node:test"
+import { fileURLToPath } from "node:url"
 import {
+  chainedFindMutation,
   chainedGithubPrMutation,
   chainedGitPushViolation,
   isAdoMcpToolOutOfStageScope,
   isAdoMcpWriteViolation,
+  isFindMutation,
   isGithubPrMutation,
   isGitPushViolation,
   splitSegments,
 } from "./write-backstop.js"
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const findVectors: { mutating: string[]; readOnly: string[] } = JSON.parse(
+  readFileSync(path.join(here, "..", "__fixtures__", "find-abuse-vectors.json"), "utf8"),
+)
 
 /**
  * Vectors shared with the twin `plugins/claude/hooks/src/allowlist.mjs`
@@ -86,6 +96,18 @@ test("chained variants catch a mutation hidden behind an allowed read", () => {
   assert.equal(chainedGithubPrMutation("gh pr view 12 && gh api -X PUT repos/o/r/pulls/12/merge"), true)
   assert.equal(chainedGithubPrMutation("gh pr view 12 && gh pr comment 12 --body ok"), false)
   assert.equal(chainedGitPushViolation("git status && git push --force origin x"), true)
+})
+
+test("isFindMutation rejects every shared abuse vector and passes every read-only one", () => {
+  for (const cmd of findVectors.mutating) assert.equal(isFindMutation(cmd), true, cmd)
+  for (const cmd of findVectors.readOnly) assert.equal(isFindMutation(cmd), false, cmd)
+})
+
+test("chainedFindMutation catches a mutating find hidden behind an allowed read", () => {
+  assert.equal(chainedFindMutation("git status && find . -delete"), true)
+  assert.equal(chainedFindMutation("find . -name '*.ts' | head"), false)
+  // A quoted -delete stays a pattern, not a flag.
+  assert.equal(chainedFindMutation("find . -name '-delete'"), false)
 })
 
 

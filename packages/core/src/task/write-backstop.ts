@@ -107,6 +107,36 @@ export const hasShellExpansion = (seg: string): boolean => {
 }
 
 /**
+ * `find` action flags that execute commands (`-exec`, `-execdir`, `-ok`, `-okdir`)
+ * or write to the filesystem (`-delete`, `-fprint`/`-fprintf`/`-fprint0`, `-fls`).
+ * The check-stage read allowlists carry `find *`, which compiles to `^find .*$`
+ * with dotAll — so `find . -exec rm {} +` and `find . -delete` are single
+ * segments the glob happily matches, with none of the substitution/redirection
+ * characters `hasShellExpansion` rejects. find is an execution primitive behind a
+ * read-shaped name; the glob can never exclude a trailing flag, so this
+ * classifier must.
+ *
+ * TWIN: `plugins/claude/hooks/src/allowlist.mjs` folds the identical classifier
+ * into `commandAllowed`; here the chained variant is applied to check-stage bash
+ * by the OpenCode host, whose allowlist (agent frontmatter `permission.bash`)
+ * cannot express a flag exclusion.
+ */
+const FIND_MUTATING_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"])
+
+/**
+ * A `find` segment carrying a mutating action flag. Token equality, not substring:
+ * a quoted pattern (`-name '-delete'`) keeps its quote characters after
+ * whitespace-split and so never equals the bare flag; an UNQUOTED `-delete`
+ * anywhere in the argv is indistinguishable from the flag and is rejected —
+ * fail-safe, matching find's own parsing.
+ */
+export const isFindMutation = (seg: string): boolean => {
+  const tokens = seg.trim().split(/\s+/)
+  if (tokens[0] !== "find") return false
+  return tokens.some((t) => FIND_MUTATING_FLAGS.has(t))
+}
+
+/**
  * A `gh` command that mutates a pull request. The loop must NEVER merge, close,
  * approve, or otherwise change PR state:
  *
@@ -248,3 +278,4 @@ export const isGitPushViolation = (cmd: string): boolean => {
  */
 export const chainedGithubPrMutation = (cmd: string): boolean => splitSegments(cmd).some(isGithubPrMutation)
 export const chainedGitPushViolation = (cmd: string): boolean => splitSegments(cmd).some(isGitPushViolation)
+export const chainedFindMutation = (cmd: string): boolean => splitSegments(cmd).some(isFindMutation)

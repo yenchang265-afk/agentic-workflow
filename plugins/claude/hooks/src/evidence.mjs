@@ -83,7 +83,7 @@ export const withEntry = (ledger, entry) => {
   }
 }
 
-/** Parse a ledger blob, or null when it is absent/unusable. Pure. */
+/** Parse one ledger line (or the legacy whole-file blob — same shape), or null. Pure. */
 export const parseLedger = (raw) => {
   try {
     const parsed = JSON.parse(raw)
@@ -96,17 +96,49 @@ export const parseLedger = (raw) => {
 }
 
 /**
- * Append this tool call's contribution to the stage's ledger. Never throws:
- * every failure path leaves the ledger as it was and the gate degrades.
+ * Fold the ledger file's NDJSON lines into one per-stage ledger, or null when
+ * no line belongs to `stage` (null means "this host did not observe" — the gate
+ * degrades to the declared-evidence rule; an EMPTY set would reject a PASS).
+ *
+ * Lines from another stage are skipped, an unparseable line is skipped (a torn
+ * concurrent append costs one entry, never the file), and the legacy single-blob
+ * format folds for free — it is one JSON line of the exact same shape. The
+ * `EVIDENCE_MAX` cap applies at fold in first-seen order, preserving the
+ * "cannot flush an early command out of the record" property. Pure.
+ */
+export const foldLedger = (raw, stage) => {
+  let ledger = null
+  for (const line of String(raw ?? "").split("\n")) {
+    const t = line.trim()
+    if (!t) continue
+    const parsed = parseLedger(t)
+    if (!parsed || parsed.stage !== stage) continue
+    ledger = withEntry(ledger ?? emptyLedger(stage), parsed)
+  }
+  return ledger
+}
+
+/**
+ * Append this tool call's contribution to the stage's ledger as one NDJSON
+ * line. APPEND-ONLY by design: the guard runs as a separate process per tool
+ * call, and several hook processes fire concurrently when one assistant message
+ * carries several tool_use blocks — the previous read-modify-write ledger lost
+ * every concurrent write but the last, and the missing reads then made
+ * `evidenceIssue` reject an honest PASS. An O_APPEND write per call has no
+ * read-modify-write to race; folding happens at read (`foldLedger`).
+ *
+ * Never throws: every failure path leaves the ledger as it was and the gate
+ * degrades.
  */
 export const noteEvidence = (runsDirPath, evidenceFile, stage, entry) => {
   if (!entry) return
   const file = path.join(runsDirPath, evidenceFile)
   try {
-    const existing = fs.existsSync(file) ? parseLedger(fs.readFileSync(file, "utf8")) : null
-    // A ledger left over from a previous stage is not this stage's evidence.
-    const base = existing && existing.stage === stage ? existing : emptyLedger(stage)
-    fs.writeFileSync(file, JSON.stringify(withEntry(base, entry)))
+    // LEADING newline, not trailing: a legacy single-blob file has no trailing
+    // newline, and appending bare JSON right after it would merge both into one
+    // unparseable line. A leading separator keeps every record on its own line
+    // whatever wrote before; blank lines are filtered at fold.
+    fs.appendFileSync(file, "\n" + JSON.stringify({ stage: stage ?? null, commands: entry.commands, reads: entry.reads }) + "\n")
   } catch {
     /* best-effort — bookkeeping must never fail a tool call */
   }

@@ -12,6 +12,7 @@ import {
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
   mergeAxes,
+  mergeRejected,
   parseVerdict,
   passFocusBlock,
   planVisualizationBlock,
@@ -722,6 +723,45 @@ test("rejectedFallback salvages on the DERIVED verdict, not the declared one", (
 test("rejectedFallback keeps a declared ERROR an ERROR", () => {
   const salvaged = rejectedFallback({ record: { verdict: "ERROR", reason: "no test runner" }, message: "Verdict NOT recorded — bad shape." })
   assert.equal(effectiveVerdict(salvaged!), "ERROR", "an unrunnable check still stops the loop")
+})
+
+test("mergeRejected keeps a rejected FAIL from vanishing behind a later rejected PASS", () => {
+  // The two-rejection sequence that used to ERROR-stop a run: attempt 0 FAILs
+  // with axes but no blocking finding (refused), attempt 1 "corrects" to an
+  // uncorroborated PASS (refused). Last-rejection-wins made rejectedFallback
+  // see an effective PASS → null → ERROR; worst-wins routing keeps the FAIL,
+  // so onFail fires BUILD with the findings.
+  const first = {
+    record: { verdict: "FAIL" as const, reason: "auth bypass", axes: fiveAxes() },
+    message: "Verdict NOT recorded — a FAIL must name what has to change.",
+  }
+  const second = {
+    record: { verdict: "PASS" as const, axes: fiveAxes() },
+    message: "Verdict NOT recorded — a PASS must cite evidence.",
+  }
+  const merged = mergeRejected(first, second)
+  const salvaged = rejectedFallback(merged)
+  assert.ok(salvaged, "the merged rejection still routes — no ERROR stop")
+  assert.equal(effectiveVerdict(salvaged), "FAIL", "worst-wins: the FAIL survives the later PASS")
+  assert.match(salvaged.reason!, /auth bypass/, "the FAIL's own reason survives the merge")
+  assert.match(merged.message, /cite evidence/, "the newest rejection message names the current shape fault")
+})
+
+test("mergeRejected merges axes and findings like admitVerdict's accepted merge", () => {
+  const withFinding = fiveAxes().map((a) => (a.axis === "security" ? { ...a, verdict: "FAIL" as const, findings: [{ severity: "critical" as const, detail: "secret logged" }] } : a))
+  const merged = mergeRejected(
+    { record: { verdict: "FAIL", axes: withFinding }, message: "first refusal" },
+    { record: { verdict: "PASS", axes: fiveAxes() }, message: "second refusal" },
+  )
+  const security = merged.record.axes!.find((a) => a.axis === "security")!
+  assert.equal(security.verdict, "FAIL", "per-axis worst-wins")
+  assert.equal(security.findings?.[0]?.detail, "secret logged", "findings survive the later clean pass")
+})
+
+test("mergeRejected with no prior rejection is the incoming one", () => {
+  const incoming = { record: { verdict: "FAIL" as const }, message: "refused" }
+  assert.deepEqual(mergeRejected(null, incoming), incoming)
+  assert.deepEqual(mergeRejected(undefined, incoming), incoming)
 })
 
 test("rejectedFallback of nothing is nothing", () => {

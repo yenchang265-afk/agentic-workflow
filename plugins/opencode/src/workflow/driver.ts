@@ -69,6 +69,7 @@ import { acquireLease, heartbeatLease, releaseLease } from "@agentic-workflow/co
 import {
   addWorktree,
   checkoutBranch,
+  CHECKPOINT_LOCKFILE_EXCLUDES,
   commitAll,
   commitPaths,
   currentBranch,
@@ -90,6 +91,7 @@ import {
   admitVerdict,
   effectiveVerdict,
   mergeAxes,
+  mergeRejected,
   noAdmissibleVerdictReason,
   WORKFLOW_REVIEW_TAG,
   WORKFLOW_VERIFY_TAG,
@@ -605,8 +607,15 @@ export const recordVerdict = (
   if (!admission.ok) {
     // Keep the refused record, not just the fact of a refusal: a stage that
     // reported twice and was refused twice is routed on what it DECLARED rather
-    // than ERROR-stopping (see `rejectedFallback`). Last rejection wins.
-    rejectedVerdicts.set(sessionID, { stage, rejected: { record, message: admission.message } })
+    // than ERROR-stopping (see `rejectedFallback`). Rejections MERGE worst-wins
+    // (`mergeRejected`) — keeping only the last one let a rejected FAIL vanish
+    // behind a later rejected PASS, and the run ERROR-stopped instead of
+    // rebuilding on the findings.
+    const prevRejected = rejectedVerdicts.get(sessionID)
+    rejectedVerdicts.set(sessionID, {
+      stage,
+      rejected: mergeRejected(prevRejected?.stage === stage ? prevRejected.rejected : null, { record, message: admission.message }),
+    })
     return reject(admission.message)
   }
   recordedVerdicts.set(sessionID, { stage, record: admission.record })
@@ -849,7 +858,9 @@ const checkpoint = async (deps: Deps, config: Config, state: WorkflowState, mess
   // checkout-time copy of `<tasksDir>` whose sweep onto feature/<id> resurrects
   // task files in the wrong status folder on merge. Shared-tree mode keeps
   // committing it — there the backlog deliberately rides the checkpoints.
-  const excludes = state.git?.worktree ? [config.tasksDir] : undefined
+  // Lockfiles are excluded in BOTH modes (see CHECKPOINT_LOCKFILE_EXCLUDES):
+  // VERIFY's npm install churn must not ride the checkpoint into REVIEW's diff.
+  const excludes = state.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES]
   await withCommitLock(tree, () => commitAll(deps.$, tree, message, excludes))
 }
 
@@ -994,8 +1005,18 @@ const runStage = async (
       // the loop still beats wedging the driver forever.
       // Mark the abort as driver-initiated FIRST: it surfaces as the same
       // MessageAbortedError a user ESC does, and onInterrupt must not treat a
-      // stage timeout as a human interrupt (which killed watch mode).
-      driverAborts.set(sessionID, Date.now() + ABORT_GRACE_MS * 2)
+      // stage timeout as a human interrupt (which killed watch mode). Filed
+      // under the PASS session AND its driving session: closePassSession
+      // unregisters the pass within this grace window, and a later event's
+      // chain walk then lands on the driving session where a pass-keyed expiry
+      // is invisible — the timeout read as a user ESC after all. (The driving
+      // entry can swallow a real ESC landing inside the same window; the stage
+      // is already unwinding through its timeout error path then, which is the
+      // lesser harm.)
+      const abortExpiry = Date.now() + ABORT_GRACE_MS * 2
+      driverAborts.set(sessionID, abortExpiry)
+      const drivingID = getWorkflow(sessionID)?.passOf
+      if (drivingID) driverAborts.set(drivingID, abortExpiry)
       await client.session.abort({ path: { id: sessionID } }).catch(() => {})
       let grace: ReturnType<typeof setTimeout> | undefined
       await Promise.race([
@@ -1206,11 +1227,15 @@ export const runStagePasses = async (
       // without the refresh a live REVIEW reads dead to doctor/recover
       // mid-fan-out and its claim is swept out from under it. Parity with the
       // Claude host, which restamps in every workflow_stage call.
+      // `def.timeoutMinutes` (the manifest's per-stage override) wins over the
+      // config default — the schema and hub have declared it for a while, but
+      // only the Claude host honored it; here the override was silently ignored.
+      const timeoutMinutes = def.timeoutMinutes ?? config.stageTimeoutMinutes
       await writeOpencodeStageMarker(
         deps.$,
         deps.directory,
         config.tasksDir,
-        opencodeStageMarker(state, Date.now() + config.stageTimeoutMinutes * 60_000),
+        opencodeStageMarker(state, Date.now() + timeoutMinutes * 60_000),
       )
       if (state.task) await refreshClaimStamp(deps.$, state.task)
       const t0 = Date.now()
@@ -1219,7 +1244,7 @@ export const runStagePasses = async (
         passSessionID,
         stageCommand(loaded, stage),
         passArgs,
-        config.stageTimeoutMinutes,
+        timeoutMinutes,
         model,
       )
       const ms = Date.now() - t0
@@ -1479,30 +1504,37 @@ const renderMetrics = async (
   runSamples.delete(sessionID)
   driftNoted.delete(sessionID) // the run is over — nothing left to dedupe against
   recordedBlocked.delete(sessionID) // ditto: no blocked signal may outlive its run
-  // Report against the EFFECTIVE cap the engine enforced — a kind's manifest may
-  // override `config.maxIterations` (pr-sitter caps at 3), so `config.maxIterations`
-  // alone would mislabel the footer (e.g. "iterations used: 3/1").
-  const cap = manifestFor(state.kind ?? "engineering").manifest.maxIterations ?? config.maxIterations
-  const stamp = new Date().toISOString()
-  const summary = renderRunSummary(samples, outcome, detail, cap, stamp, state.kind ?? "engineering")
-  await appendRunLog(deps.$, deps.directory, config.tasksDir, workflowId(state), `run · ${outcome}`, summary, deps.log)
-  // Structured twin of the summary table — the machine-readable record token
-  // dashboards join against. sessionID lets host storage be joined exactly.
-  const file = metricsPath(deps.directory, config.tasksDir, workflowId(state))
-  const existing = await deps.$`cat ${file}`.quiet().nothrow()
-  // Upsert (not append): replace the trailing `open` entry that the per-stage
-  // flush left behind — appending here would double-count the run.
-  const doc = upsertRunMetrics(existing.exitCode === 0 ? existing.stdout.toString() : null, {
-    endedAt: stamp,
-    outcome,
-    detail,
-    host: "opencode",
-    sessionID,
-    kind: state.kind ?? "engineering",
-    ...(retryable !== undefined ? { retryable } : {}),
-    samples,
+  // Under the run lock like every other per-run writer (the AGENTS.md rule):
+  // this is ordered after the pass pool drains today, so it was safe only by
+  // call-site ordering — one refactor from interleaving with a late pass's
+  // appendRunLog or flushMetrics. The lock makes the invariant local.
+  const runKey = workflowId(state)
+  await withLock(runLocks, runKey, async () => {
+    // Report against the EFFECTIVE cap the engine enforced — a kind's manifest may
+    // override `config.maxIterations` (pr-sitter caps at 3), so `config.maxIterations`
+    // alone would mislabel the footer (e.g. "iterations used: 3/1").
+    const cap = manifestFor(state.kind ?? "engineering").manifest.maxIterations ?? config.maxIterations
+    const stamp = new Date().toISOString()
+    const summary = renderRunSummary(samples, outcome, detail, cap, stamp, state.kind ?? "engineering")
+    await appendRunLog(deps.$, deps.directory, config.tasksDir, runKey, `run · ${outcome}`, summary, deps.log)
+    // Structured twin of the summary table — the machine-readable record token
+    // dashboards join against. sessionID lets host storage be joined exactly.
+    const file = metricsPath(deps.directory, config.tasksDir, runKey)
+    const existing = await deps.$`cat ${file}`.quiet().nothrow()
+    // Upsert (not append): replace the trailing `open` entry that the per-stage
+    // flush left behind — appending here would double-count the run.
+    const doc = upsertRunMetrics(existing.exitCode === 0 ? existing.stdout.toString() : null, {
+      endedAt: stamp,
+      outcome,
+      detail,
+      host: "opencode",
+      sessionID,
+      kind: state.kind ?? "engineering",
+      ...(retryable !== undefined ? { retryable } : {}),
+      samples,
+    })
+    await writeFileAtomic(deps.$, file, doc)
   })
-  await writeFileAtomic(deps.$, file, doc)
 }
 
 /**
@@ -1701,7 +1733,8 @@ const driveChain = async (
       deps.$,
       deps.directory,
       config.tasksDir,
-      opencodeStageMarker(step.state, Date.now() + config.stageTimeoutMinutes * 60_000),
+      // The manifest's per-stage timeout override wins, as in runPassBody.
+      opencodeStageMarker(step.state, Date.now() + (stageDef(loaded.manifest, stage).timeoutMinutes ?? config.stageTimeoutMinutes) * 60_000),
     )
     // Keep the claim stamp fresh at every stage boundary: `staleClaimMinutes`
     // covers one stage, but a whole loop can outlive it — without the refresh a

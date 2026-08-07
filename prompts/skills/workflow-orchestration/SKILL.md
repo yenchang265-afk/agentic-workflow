@@ -112,7 +112,17 @@ before you advance — and never pass or invent a `model`. Changing
    task file named by the prompt's `Task file:` line. When it returns, call
    `workflow_advance({stageOutput: <plan summary>})` — the server validates the
    plan landed, parks the task in `plan-review/`, and returns `{kind:"park"}`
-   with a `gate` field. **The plan gate is now live.** Show the user a short
+   with a `gate` field. **A park REFUSAL comes back as `{kind:"error"}`
+   instead**: the plan never landed as `## Implementation Plan`, or the plan
+   contract found no `### Verification` subsection. The task stays in
+   `queued/` with the refusal recorded as a rejection note, so the NEXT plan
+   pass receives the reason in its "Rejection reason from the plan gate"
+   section — report the error to the user and stop; do not re-fire PLAN
+   yourself (the next claim/`workflow_start` does, with the reason threaded).
+   After three consecutive refusals with no successful park between them, the
+   server returns the task to `draft/` for human triage instead of re-queueing
+   it — the error message says so.
+   On `{kind:"park"}`, **the plan gate is now live.** Show the user a short
    summary of the plan, then ask with **{{askTool}}**:
    - **Approve** → `workflow_plan_approve({id})` — the task moves to
      `in-progress/` (build-ready) only. Then ask a second

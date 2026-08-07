@@ -135,6 +135,11 @@ var hostFor = (env = process.env) => {
 };
 var dialectFor = (host) => host && host in DIALECTS ? DIALECTS[host] : null;
 
+// plugins/claude/hooks/src/emit.mjs
+var exitAfterWrite = (stream, payload, code) => {
+  stream.write(payload, () => process.exit(code));
+};
+
 // plugins/claude/hooks/verb-slice.mjs
 import fs from "node:fs";
 import path from "node:path";
@@ -206,18 +211,18 @@ var read = () => new Promise((resolve) => {
 });
 var passThrough = () => process.exit(0);
 var augment = (message) => {
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message } }));
-  process.exit(0);
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message } }), 0);
 };
 var block = (message) => {
-  process.stdout.write(
+  exitAfterWrite(
+    process.stdout,
     JSON.stringify({
       decision: "block",
       reason: message,
       hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: message }
-    })
+    }),
+    0
   );
-  process.exit(0);
 };
 var main = async () => {
   let input = {};

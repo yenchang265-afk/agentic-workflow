@@ -194,16 +194,22 @@ export const promptContextWithStats = (
     goal: goal.text,
     iteration: String(state.iteration),
     // The iteration budget, human-numbered (iteration 0 is "1"). Gated on a
-    // counted re-fire having happened (`iteration > 0`): the first fire of every
-    // stage stays byte-identical to the pre-budget prompt, and the message lands
-    // where it matters — a re-build after a FAIL. `final` marks the iteration
-    // whose failure will trip the cap, using exactly `advance`'s stop predicate.
+    // counted re-fire having happened (`iteration > 0`) — the first fire of
+    // every stage stays byte-identical to the pre-budget prompt — OR on the
+    // FIRST iteration already being the last (`maxIterations: 1`): gating on
+    // re-fires alone meant a cap-1 run was never told its only iteration was
+    // final, and its VERIFY wrote its FAIL as if a retry were coming. `final`
+    // marks the iteration whose failure will trip the cap, using exactly
+    // `advance`'s stop predicate (`iteration + 1 >= cap`) — the same
+    // expression, so the two cannot drift. `retry` marks a counted re-fire, so
+    // a template's "a prior attempt failed" prose renders only when one did.
     iterations:
-      cap !== undefined && state.iteration > 0
+      cap !== undefined && (state.iteration > 0 || state.iteration + 1 >= cap)
         ? {
             human: String(state.iteration + 1),
             cap: String(cap),
             ...(state.iteration + 1 >= cap ? { final: true } : {}),
+            ...(state.iteration > 0 ? { retry: true } : {}),
           }
         : undefined,
     // Code-platform switches for prompt templates ({{#platform.ado}}…); absent platform ⇒ github.

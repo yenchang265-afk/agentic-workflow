@@ -285,9 +285,6 @@
         "kind": "fire",
         "stage": "build",
         "countIteration": true,
-        "dropArtifacts": [
-          "review"
-        ],
         "capMessage": "✗ Workflow stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
       },
       "onError": {

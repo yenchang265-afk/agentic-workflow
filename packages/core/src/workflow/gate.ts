@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
@@ -538,9 +538,10 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
     return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
   }
   const actor = await gitActor($, directory)
-  const flat = oneLineReason(reason)
-  const why = flat ? ` — ${flat}` : ""
-  const moved = await noteThenMove(ctx, task, "queued", `Plan rejected — sent back to queued for re-planning${why}`, actor)
+  // One formatter (`planRejectedNote`) for every rejection note — the park
+  // gate's contract refusal writes the same shape, and `extractReplanReason`
+  // parses it back; a hand-built copy here is how writer and parser drift.
+  const moved = await noteThenMove(ctx, task, "queued", planRejectedNote(oneLineReason(reason)), actor)
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)

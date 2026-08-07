@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { writeFileAtomic } from "./fsatomic.js"
+import { appendFileChunked, writeFileAtomic } from "./fsatomic.js"
 import type { Shell } from "./host.js"
 
 /**
@@ -75,6 +75,52 @@ const makeShell = (opts: { failAt?: number; failMv?: boolean } = {}) => {
   }) as any as Shell
   return { $, files, cmds }
 }
+
+test("appendFileChunked lands a 200 KiB append intact with no command near the argv ceiling", async () => {
+  // THE run-log regression. appendRunLog passed a whole stage transcript as one
+  // printf argument; past MAX_ARG_STRLEN execve fails E2BIG, the shim reports
+  // exit 127, and the durable record's section silently vanished.
+  const { $, files, cmds } = makeShell()
+  files["/d/runs/t.md"] = "## earlier section\n"
+  const big = "x".repeat(200 * 1024)
+  const r = await appendFileChunked($, "/d/runs/t.md", `\n## review\n\n${big}\n`)
+  assert.equal(r.exitCode, 0)
+  assert.equal(files["/d/runs/t.md"], `## earlier section\n\n## review\n\n${big}\n`, "appended after the existing content, byte-identical")
+  for (const c of cmds) assert.ok(c.length < MAX_ARG, `a command of ${c.length} bytes would be rejected by execve`)
+})
+
+test("appendFileChunked survives quote-heavy content — the 4x escaping worst case", async () => {
+  const { $, files, cmds } = makeShell()
+  const quotes = "'".repeat(100 * 1024)
+  const r = await appendFileChunked($, "/d/f", quotes)
+  assert.equal(r.exitCode, 0)
+  assert.equal(files["/d/f"], quotes)
+  for (const c of cmds) assert.ok(c.length * 4 < MAX_ARG, "escaped worst case must still clear the ceiling")
+})
+
+test("appendFileChunked never splits a surrogate pair across chunks", async () => {
+  const { $, files } = makeShell()
+  // Enough astral characters to force several chunk boundaries.
+  const emoji = "🙂".repeat(40 * 1024)
+  await appendFileChunked($, "/d/f", emoji)
+  assert.equal(files["/d/f"], emoji, "no U+FFFD from a torn pair")
+})
+
+test("appendFileChunked reports a failed chunk instead of pretending the append landed", async () => {
+  const { $, files } = makeShell({ failAt: 2 })
+  files["/d/f"] = "prefix"
+  const r = await appendFileChunked($, "/d/f", "b".repeat(100 * 1024))
+  assert.equal(r.exitCode, 1, "the failing chunk's output reaches the caller (warnLostAppend)")
+  assert.ok(files["/d/f"]!.startsWith("prefix"), "an append failure leaves a bounded prefix — the same shape a plain >> had")
+})
+
+test("an empty append still touches the file once", async () => {
+  const { $, files, cmds } = makeShell()
+  const r = await appendFileChunked($, "/d/f", "")
+  assert.equal(r.exitCode, 0)
+  assert.equal(files["/d/f"], "")
+  assert.equal(cmds.filter((c) => c.startsWith("printf")).length, 1)
+})
 
 test("a small write goes out in one printf, then renames into place", async () => {
   const { $, files, cmds } = makeShell()

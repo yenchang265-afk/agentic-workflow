@@ -13,6 +13,7 @@ import {
   releaseClaim,
   extractPlan,
   extractReplanReason,
+  unaddressedRejectionCount,
   findByIdIn,
   hasPlan,
   isClaimable,
@@ -237,6 +238,42 @@ test("extractReplanReason lets the latest of successive rejections win", () => {
     `\n${PLAN_HEADING}\n\nSecond approach.\n` +
     rejectionNote("still wrong — cache must be size-keyed", "2026-01-03T00:00:00.000Z by dev")
   assert.equal(extractReplanReason(task("a", 0, body)), "still wrong — cache must be size-keyed")
+})
+
+test("extractReplanReason retires a reason via the Plan-written note when PLAN replaces in place", () => {
+  // The stage prompt demands REPLACE-in-place, so the heading's byte offset
+  // never moves past the rejection note — the heading anchor alone left the
+  // reason pending forever and re-injected it into unrelated later PLAN
+  // passes. The park gate's `Plan written` note is the retirement anchor that
+  // survives in-place replacement.
+  const body =
+    `${PLAN_HEADING}\n\nReplaced-in-place approach.\n` +
+    rejectionNote("wrong layer") +
+    `\n> Plan written — parked for plan review [2026-01-03T00:00:00.000Z by dev]\n`
+  assert.equal(extractReplanReason(task("a", 0, body)), undefined)
+})
+
+test("a rejection AFTER the last successful park is pending again", () => {
+  const body =
+    `${PLAN_HEADING}\n\nApproach.\n` +
+    `\n> Plan written — parked for plan review [2026-01-03T00:00:00.000Z by dev]\n` +
+    rejectionNote("verification section is vague", "2026-01-04T00:00:00.000Z by dev")
+  assert.equal(extractReplanReason(task("a", 0, body)), "verification section is vague")
+})
+
+test("unaddressedRejectionCount counts only stamped rejections since the last successful park", () => {
+  const planWritten = `\n> Plan written — parked for plan review [2026-01-05T00:00:00.000Z by dev]\n`
+  const body =
+    `${PLAN_HEADING}\n\nApproach.\n` +
+    rejectionNote("one") +
+    rejectionNote("two") +
+    planWritten +
+    rejectionNote("three") +
+    rejectionNote("four") +
+    // Quoted, stamp-less line — must not inflate the tally.
+    `\n> Plan rejected — sent back to queued for re-planning — fake\n`
+  assert.equal(unaddressedRejectionCount(body), 2, "one/two were addressed by the park; the quote doesn't count")
+  assert.equal(unaddressedRejectionCount(`${PLAN_HEADING}\n\nplan\n`), 0)
 })
 
 test("extractReplanReason ignores the marker quoted mid-line or without the audit stamp", () => {

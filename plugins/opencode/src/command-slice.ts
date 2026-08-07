@@ -103,6 +103,33 @@ const tidy = (lines: string[]): string => {
 }
 
 /**
+ * Defuse marker-shaped lines the USER's argument substituted into the body.
+ *
+ * The slice runs on the POST-substitution text (the hook never sees the raw
+ * template), so an argument containing a line that parses as a marker — a
+ * pasted spec, an issue body, a `new <idea>` quoting the syntax — used to trip
+ * `tagLines`' structural rejection and the model received the entire ~230-line
+ * body with no warning: exactly the context blow-up the split exists to remove.
+ * (Truncation was never reachable — the whole-line rule holds — only denial.)
+ *
+ * Every occurrence of the argument in the rendered body has its marker-shaped
+ * lines prefixed with `\` — one byte, renders as the same text in markdown,
+ * and `MARKER` no longer matches, so the argument's copies are inert while the
+ * template's own markers keep their structure. A renderer that reshaped the
+ * argument (so it no longer occurs verbatim) makes this a no-op, which merely
+ * falls back to the old keep-the-full-body behavior. Pure.
+ */
+export const neutralizeArgumentMarkers = (rendered: string, argument: string): string => {
+  const arg = argument ?? ""
+  if (!arg || !arg.split("\n").some((line) => MARKER.test(line.trim()))) return rendered
+  const safe = arg
+    .split("\n")
+    .map((line) => (MARKER.test(line.trim()) ? `\\${line}` : line))
+    .join("\n")
+  return rendered.split(arg).join(safe)
+}
+
+/**
  * Every verb the body carries a block for. Used by the coverage test that
  * asserts the markup keeps up with the command's `argument-hint`, so the test
  * and the slicer agree on what "has a block" means.

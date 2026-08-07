@@ -22,6 +22,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { auditBacklog, formatAnomalies, hasAnomalies } from "@agentic-workflow/core/task/audit"
 import { dialectFor, hostFor } from "./dialect.mjs"
+import { exitAfterWrite } from "./emit.mjs"
 import { idList, MAX_LISTED } from "./idlist.mjs"
 import { backlogRoot, readTasksDir } from "./marker.mjs"
 
@@ -157,13 +158,11 @@ const main = async () => {
   }
   if (!lines.length) return process.exit(0)
 
-  // Exit in the write callback: an explicit `process.exit` right after a large
-  // async-buffered write can truncate stdout mid-payload, and Claude Code then
-  // drops the malformed JSON — and with it every warning above — silently.
-  process.stdout.write(
-    JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }),
-    () => process.exit(0),
-  )
+  // Exit in the write callback (emit.mjs): an explicit `process.exit` right
+  // after a large async-buffered write can truncate stdout mid-payload, and
+  // Claude Code then drops the malformed JSON — and with it every warning
+  // above — silently.
+  exitAfterWrite(process.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join("\n") } }), 0)
 }
 
 main()

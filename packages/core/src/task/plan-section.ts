@@ -49,7 +49,18 @@ export const auditTailIndex = (body: string, from: number): number => {
 }
 
 /**
- * Goal text with the persisted plan section and the trailing audit-note run
+ * Index of the FIRST occurrence of `marker` at the start of a line, or -1.
+ * Same line-anchoring rule as `lastMarkerIndex`. Pure.
+ */
+export const firstMarkerIndex = (body: string, marker: string): number => {
+  for (let idx = body.indexOf(marker); idx !== -1; idx = body.indexOf(marker, idx + 1)) {
+    if (idx === 0 || body[idx - 1] === "\n") return idx
+  }
+  return -1
+}
+
+/**
+ * Goal text with every persisted plan section and the trailing audit-note run
  * removed. Pure.
  *
  * The engine renders `{{goal}}` from the whole task body, which after PLAN
@@ -60,15 +71,16 @@ export const auditTailIndex = (body: string, from: number): number => {
  * runs. This strips at render time only; the persisted body, `state.goal`, and
  * snapshots keep the full text.
  *
- * Slices at the LAST heading — byte-matched to `extractPlan`, so the goal loses
- * exactly what the plan artifact carries; a replanned task's superseded plans
- * remain (they are prose history, and `extractPlan` never returns them). Then
- * drops the trailing run of audit-note and blank lines. Identity when the text
- * has neither — every sitter-kind goal and every plan-less task — so prompts
- * without a plan stay byte-identical.
+ * Slices at the FIRST heading, not the last: a PLAN pass that stacked instead
+ * of replacing leaves superseded plans between the first heading and the live
+ * one, and keeping them grew the goal by a full stale plan per replan cycle —
+ * text that duplicates (an older version of) what `artifacts.plan` carries and
+ * informs no stage. Then drops the trailing run of audit-note and blank lines.
+ * Identity when the text has neither — every sitter-kind goal and every
+ * plan-less task — so prompts without a plan stay byte-identical.
  */
 export const stripPlanAndAuditTail = (text: string): string => {
-  const planIdx = lastMarkerIndex(text, PLAN_HEADING)
+  const planIdx = firstMarkerIndex(text, PLAN_HEADING)
   const head = planIdx === -1 ? text : text.slice(0, planIdx)
   const lines = head.split("\n")
   let end = lines.length

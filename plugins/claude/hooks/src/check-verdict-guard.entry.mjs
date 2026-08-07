@@ -17,6 +17,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { dialectFor, hostFor } from "./dialect.mjs"
+import { exitAfterWrite } from "./emit.mjs"
 import { runsDir } from "./marker.mjs"
 import { decideVerdictGuard, nagMessage } from "./verdict-guard.mjs"
 
@@ -28,8 +29,9 @@ const read = () =>
 
 const allow = () => process.exit(0)
 const block = (reason) => {
-  process.stderr.write(reason + "\n")
-  process.exit(2)
+  // Exit in the write callback (emit.mjs): the exit code blocks either way,
+  // but an early exit truncates the reason the model is meant to read.
+  exitAfterWrite(process.stderr, reason + "\n", 2)
 }
 
 const main = async () => {
