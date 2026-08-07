@@ -67,7 +67,7 @@ flowchart TB
 
     subgraph execution["THE LOOP — /agentic-workflow:engineering · unattended, driven on session.idle"]
         direction TB
-        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now, no tick needed<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull<br/><b>/agentic-workflow:engineering watch [interval]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build-ready in-progress/ first, then queued/ to plan)"]
+        claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now, no tick needed<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build-ready in-progress/ first, then queued/ to plan)"]
         planstage["<b>PLAN</b><br/>agent: workflow-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: workflow-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
         verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via workflow_verdict tool only</i>"]

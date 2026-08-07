@@ -53,7 +53,9 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 階段指向小模型時這一點很重要（見
 [docs/configuration.md](docs/configuration.md)）。
 
-執行是在 `feature/<id>` git 分支上隔離進行的，裁定（verdict）只透過外掛工具
+執行是在 `feature/<id>` git 分支上隔離進行的，且預設會在自己的 git worktree
+（`.workflow-worktrees`）中簽出，因此你的工作樹永遠不會被動到——可設定
+`worktreesDir: false` 退出。裁定（verdict）只透過外掛工具
 取信，每一次狀態轉換都會被稽核，迴圈本身從不推送或開啟 PR——由你審查 diff
 並執行 `/agentic-workflow:engineering approve`，它會推送分支並開啟（或重複使用）一個
 **draft** PR（GitHub 或 Azure DevOps，視 `codePlatform` 而定）作為發布流程的一
@@ -87,9 +89,9 @@ OpenCode 上還有 `watch [trigger]` / `unwatch`）。**四個 sitter 全都是
 
 ## 安裝
 
-以下步驟假設系統先決條件已就緒（Node ≥ 20、git、`gh`、`curl`，如需瀏覽器相關
-作業還需要 Chrome）。Azure DevOps 只需要 `curl` 加上 `AZURE_DEVOPS_EXT_PAT`
-中的一個 PAT。對於全新的機器，`./bootstrap.sh` 會為你驗證/安裝這些相依項，
+以下步驟假設系統先決條件已就緒（Node ≥ 22.13、git、`gh`、`curl`，如需瀏覽器
+相關作業還需要 Chrome）。Azure DevOps 需要附帶 `npx` 的 Node（用來啟動 Azure
+DevOps MCP 伺服器），外加 `AZURE_DEVOPS_EXT_PAT` 中的一個 PAT。對於全新的機器，`./bootstrap.sh` 會為你驗證/安裝這些相依項，
 註冊 `chrome-devtools` MCP 伺服器，然後為你執行 `./install.sh`：
 
 ```bash
@@ -120,9 +122,9 @@ npm install
 重新執行才能更新）。
 
 - 在儲存庫根目錄執行 `npm install` 會安裝所有 workspace（OpenCode 外掛、
-  `packages/core`、`plugins/claude/mcp-server`），並透過 `prepare` 腳本建置核心
-  套件——每個外掛都消費核心套件建置出的 `dist/`。
-- `./install.sh opencode` 會把 agents/commands/skills/references 符號連結進
+  `packages/core`、`packages/ado-mcp`、`packages/hub`、`plugins/claude/mcp-server`），
+  並透過 `prepare` 腳本建置核心套件——每個外掛都消費核心套件建置出的 `dist/`。
+- `./install.sh opencode`（`.\install.ps1 opencode`）會把 agents/commands/skills/references 符號連結進
   `~/.config/opencode/`（或 `$OPENCODE_CONFIG_DIR`）並註冊外掛——細節和參數
   （`--copy`、自訂目錄）見 [docs/opencode.md](docs/opencode.md)。
 - `./install.sh claude` 會建置內建的 MCP 伺服器並連結共用的
@@ -184,12 +186,14 @@ npm install
   任務 —— `--force` 才是確認。只有在你設定 `ignoreBacklog: false` 時才能從 git
   還原；預設會把 `docs/tasks/` 完全排除在 git 之外，所以除非你真的要讓檔案消失，
   否則請優先使用 `abandon`
-- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]`（OpenCode）·
+- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [trigger]`（OpenCode）·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ——
   `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存，不必等巡查；
   `claim` 拉取下一個項目——先取可建置的 `in-progress/` 工作，沒有時再取一個
-  已核准的 `queued/` 任務來規劃；`watch` 是一個僅作用於 engineering 類型的常駐 worker
-- `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [interval]`（OpenCode）· `unwatch` ·
+  已核准的 `queued/` 任務來規劃；`watch` 是一個僅作用於 engineering 類型的常駐
+  worker，排程依 `workflows.<kind>.trigger` 決定，除非以參數覆寫
+  （`poll [interval]`、像 `5m` 這樣的純間隔、`cron <schedule>` 或 `idle`）
+- `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [trigger]`（OpenCode）· `unwatch` ·
   `stop` · `status` —— 相同的 claim/watch 語意，作用範圍限定在 PR sitter
   （`claim` 可傳入選填的 PR 編號／網址以強制處理特定的 PR）
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
@@ -204,6 +208,8 @@ npm install
 
 ## 文件
 
+- [docs/manual.html](docs/manual.html) —— **單頁使用手冊**：從安裝、設定精靈、
+  迴圈、把關到參考表格的導讀。請用瀏覽器開啟；新手請從這裡開始
 - [docs/README.md](docs/README.md) —— `docs/` 下每份文件的索引，以及針對
   某個主題哪份文件是權威版本
 - [docs/workflows/](docs/workflows/README.md) —— 每種類型一份檔案（engineering、
@@ -219,8 +225,8 @@ npm install
 - [`plugins/claude/README.md`](plugins/claude/README.md) —— Claude Code 安裝、
   指令、已知限制
 - [docs/configuration.md](docs/configuration.md) —— `.agentic-workflow.json`
-  參考（使用者層級 + 儲存庫層級分層）、各類型的 `workflows` 區塊，以及可選的強化項
-  （worktree、每軸審查 fan-out、審查視角、去識別化）
+  參考（使用者層級 + 儲存庫層級分層）、各類型的 `workflows` 區塊，以及隔離與強化項
+  （worktree——預設開啟、每軸審查 fan-out、審查視角、去識別化）
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) —— 可複製到由
   agentic-workflow 驅動的專案中的起始 `AGENTS.md`/`CLAUDE.md`（迴圈工作流程 +
   skill 對應）
