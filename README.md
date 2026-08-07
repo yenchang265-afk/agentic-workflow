@@ -57,7 +57,9 @@ already tried; `workflows.<kind>.stageContext` can cap what else a stage's promp
 carries, which matters once you point a stage at a small model
 ([docs/configuration.md](docs/configuration.md)).
 
-Execution is isolated on a `feature/<id>` git branch, verdicts are only trusted
+Execution is isolated on a `feature/<id>` git branch, checked out in its own
+git worktree by default (`.workflow-worktrees`, so your tree is never touched
+— set `worktreesDir: false` to opt out), verdicts are only trusted
 through a plugin tool, every transition is audited, and the loop itself never
 pushes or opens a PR — you review the diff and run
 `/agentic-workflow:engineering approve`, which pushes the branch and opens (or
@@ -205,13 +207,15 @@ task files and `.agentic-workflow.json`) by hand.
   task the id resolved to — `--force` is the confirmation. Recoverable from git
   only if you set `ignoreBacklog: false`; the default keeps `docs/tasks/` out of
   git entirely, so prefer `abandon` unless you want the file gone
-- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [interval]` (OpenCode) ·
+- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [trigger]` (OpenCode) ·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` —
   `plan` runs PLAN on one queued task and parks it, without waiting for a tick;
   `claim` pulls the next item — build-ready `in-progress/` work first, then an
   approved `queued/` task to plan; `watch` is a standing worker scoped to the
-  engineering kind
-- `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [interval]` (OpenCode) · `unwatch` ·
+  engineering kind, scheduled by `workflows.<kind>.trigger` unless the argument
+  overrides it (`poll [interval]`, a bare interval like `5m`, `cron <schedule>`,
+  or `idle`)
+- `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [trigger]` (OpenCode) · `unwatch` ·
   `stop` · `status` — the same claim/watch semantics, scoped to the PR sitter
   (`claim` takes an optional PR number/URL to force a specific one)
 - `/agentic-workflow:review-sitter` · `/agentic-workflow:dep-sitter` ·
@@ -227,6 +231,9 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
 
 ## Documentation
 
+- [docs/manual.html](docs/manual.html) — the **single-page user manual**: a
+  guided read from install through the config wizard, the loop, the gates, and
+  reference tables. Open it in a browser; start here if you're new
 - [docs/README.md](docs/README.md) — index of every doc under `docs/`, and
   which one is canonical for a given topic
 - [docs/workflows/](docs/workflows/README.md) — one file per kind (engineering,
@@ -246,7 +253,8 @@ to the bundled skills library via [AGENTS.md](AGENTS.md).
   commands, known limitations
 - [docs/configuration.md](docs/configuration.md) — `.agentic-workflow.json`
   reference (user-scope + repo-scope layering), per-kind `workflows` sections, and
-  optional hardening (worktrees, per-axis review fan-out, review lenses, redaction)
+  isolation & hardening (worktrees — on by default, per-axis review fan-out,
+  review lenses, redaction)
 - [docs/templates/AGENTS.md](docs/templates/AGENTS.md) — starter
   `AGENTS.md`/`CLAUDE.md` (loop workflow + skill mapping) to copy into
   projects driven by agentic-workflow

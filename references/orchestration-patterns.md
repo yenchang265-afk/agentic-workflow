@@ -68,7 +68,7 @@ REVIEW stage → fan out ───┼─→ workflow-review (lens: security)    
 **Examples in this repo:** the `reviewLenses` config (up to 5 lenses) runs one
 `workflow-review` pass per lens, then combines them with `worstOf` into a single
 machine-readable verdict (`packages/core/src/workflow/verdict.ts`; see
-[`docs/design/improvements/04-verdict-quality.md`](../docs/design/improvements/04-verdict-quality.md)).
+`docs/design/improvements/04-verdict-quality.md`).
 On the OpenCode plugin a **per-axis fan-out runs its passes in parallel** (each
 pass gets its own session, which is what separates the per-pass verdict, axis
 requirement and evidence ledger), and `workflows.<kind>.stageConcurrency` clamps

@@ -35,8 +35,8 @@ channel, so a parked plan or a finished loop always waits for
 a plan back) — see [`plugins/claude/README.md`](../plugins/claude/README.md)
 for the Claude Code variant, which offers the same choices inline instead.
 
-All of the above (and the optional hardening: worktrees, review lenses,
-secret redaction, run summaries) is configured in `.agentic-workflow.json`,
+All of the above (and the isolation/hardening knobs: worktrees — on by
+default, review lenses, secret redaction, run summaries) is configured in `.agentic-workflow.json`,
 layered over an optional user-scope `~/.config/agentic-workflow/agentic-workflow.json`
 (honoring `$XDG_CONFIG_HOME`, with the legacy `~/.agentic-workflow.json` still read
 as a fallback; repo wins) — see [configuration.md](configuration.md). A

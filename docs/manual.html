@@ -319,13 +319,13 @@ footer .fine{color:var(--muted-txt);font-size:12.5px;margin-top:26px;font-family
 
       <div class="pillrow">
         <span class="pill"><b>engineering</b> · default-on · PLAN→BUILD→VERIFY→REVIEW</span>
-        <span class="pill"><b>pr-sitter</b> · experimental, opt-in · watches your open PRs</span>
+        <span class="pill"><b>4 sitters</b> · experimental, opt-in · watch PRs, reviews, deps, red CI</span>
         <span class="pill">ships as 3 plugins · OpenCode + Claude Code + Qwen Code</span>
       </div>
 
       <div class="guarantees">
         <div class="g"><span class="ic">⊘</span><b>Human gates</b><span>The agent parks at review points; you approve before it moves on. It never merges on your behalf.</span></div>
-        <div class="g"><span class="ic">⑃</span><b>Git isolation</b><span>Code-writing stages run on a loop branch or an isolated worktree — your working tree is untouched.</span></div>
+        <div class="g"><span class="ic">⑃</span><b>Git isolation</b><span>Code-writing stages run in their own git worktree by default (<code>.workflow-worktrees</code>) — your working tree is untouched.</span></div>
         <div class="g"><span class="ic">✓</span><b>Trusted verdicts</b><span>PASS / FAIL / ERROR count only through a dedicated tool. A stage that just <em>says</em> "passed" is ignored.</span></div>
         <div class="g"><span class="ic">▤</span><b>Audit trail</b><span>Every run writes a summary — per-stage wall-clock, verdict history, iterations used — committed alongside the work.</span></div>
       </div>
@@ -407,20 +407,23 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="wizard">
       <div class="eyebrow">Setup</div>
       <h2>The config wizard</h2>
-      <p class="lede"><code>./install.sh</code> ends with a short interactive wizard that seeds <code>.agentic-workflow.json</code> into the project the loop will drive. Blank always accepts the <span class="def">[default]</span>. It never overwrites an existing file and is skipped under pipes/CI.</p>
+      <p class="lede"><code>./install.sh</code> ends with a short interactive wizard that seeds a <code>.agentic-workflow.json</code>. Blank always accepts the <span class="def">[default]</span>. It never overwrites an existing file and is skipped under pipes/CI.</p>
 
       <div class="pillrow">
         <span class="pill"><b>--config</b> force the wizard on</span>
         <span class="pill"><b>--no-config</b> skip it</span>
-        <span class="pill"><b>-y / --yes</b> write all-defaults <code>{}</code>, no prompts</span>
+        <span class="pill"><b>-y / --yes</b> write an all-defaults file, no prompts</span>
+        <span class="pill"><b>--user / --repo</b> force the scope</span>
       </div>
 
       <p style="margin-top:18px">Every question below is optional — the wizard only writes the keys you set, so a mostly-default config stays tiny.</p>
 
-      <details class="q" open><summary><span class="step">Q0</span> Which project directory should the loop drive?</summary>
+      <details class="q" open><summary><span class="step">Q0</span> Which scope, and which project?</summary>
         <div class="body">
-          <p>Prompts <em>"Write config for which project directory"</em>, defaulting to the current dir. The file is written to <code>&lt;dir&gt;/.agentic-workflow.json</code> — the same directory the plugin reads config from at runtime. Skips if it isn't a directory or the file already exists.</p>
-          <div class="kv">writes → <b>&lt;dir&gt;/.agentic-workflow.json</b></div>
+          <div class="opt"><span>[1] This project only <span style="color:var(--muted-txt)">(repo scope, default)</span></span><span class="writes">&lt;dir&gt;/.agentic-workflow.json</span></div>
+          <div class="opt"><span>[2] User scope — shared across every repo you drive</span><span class="writes">~/.config/agentic-workflow/agentic-workflow.json</span></div>
+          <p>Repo scope then prompts <em>"Write config for which project directory"</em>, defaulting to the current dir — the same directory the plugin reads config from at runtime. User scope honors <code>$AGENTIC_WORKFLOW_USER_CONFIG</code> / <code>$XDG_CONFIG_HOME</code>. At runtime the repo layer overrides the user layer field by field, so shared settings (the <code>ado</code> block, review lenses) belong in user scope and project-specific ones (a PR query, <code>worktreesDir</code>) in the repo file. Skips if the target isn't a directory or the file already exists.</p>
+          <div class="kv">writes → <b>the chosen file</b> · force it with <b>--user</b> / <b>--repo</b></div>
         </div>
       </details>
 
@@ -428,22 +431,31 @@ npm install                    <span class="c"># workspaces + builds core dist/<
         <div class="body">
           <div class="opt"><span>[1] GitHub <span style="color:var(--muted-txt)">(default)</span></span><span class="writes">codePlatform: "github"</span></div>
           <div class="opt"><span>[2] Azure DevOps (MCP server + PAT)</span><span class="writes">codePlatform: "ado"</span></div>
-          <p>Choosing Azure DevOps then prompts for the required <code>organization</code> URL and <code>project</code> (re-asked until given), a required <code>selfLogin</code> (a PAT can't resolve identity), and an optional <code>repository</code>. Set <code>AZURE_DEVOPS_EXT_PAT</code> to a PAT with Code (read) + Pull Request (contribute) scopes.</p>
-          <div class="kv">writes → <b>codePlatform</b>, and <b>ado</b>: {organization, project, repository?, selfLogin?}</div>
+          <p>Choosing Azure DevOps then prompts for the <code>organization</code> URL, <code>project</code> and <code>repository</code> — all three optional here, since they can be set later in the project's own file — plus a <b>required</b> <code>selfLogin</code> (a PAT can't resolve identity; leaving it blank aborts the wizard without writing). Set <code>AZURE_DEVOPS_EXT_PAT</code> to a PAT with Code (read) + Pull Request (contribute) scopes, or put it in <code>ado.pat</code> in the (gitignored) config — the env var wins.</p>
+          <div class="kv">writes → <b>codePlatform</b>, and <b>ado</b>: {organization?, project?, repository?, selfLogin}</div>
         </div>
       </details>
 
       <details class="q"><summary><span class="step">Q2</span> Enable the PR-sitter loop?</summary>
         <div class="body">
           <p>Default <b>No</b>. If yes on GitHub, also asks for a <em>"PR search query"</em> (default <code>is:open author:@me</code>). On ADO the sitter watches its own PRs, so no query is asked.</p>
-          <div class="kv">writes → <b>workflows.pr-sitter</b>: { enabled?, query? }</div>
+          <div class="kv">writes → <b>workflows.pr-sitter</b>: { enabled, query? }</div>
         </div>
       </details>
 
-      <details class="q"><summary><span class="step">Q3</span> Run each task in an isolated git worktree?</summary>
+      <details class="q"><summary><span class="step">Q2b</span> Enable any of the other experimental sitters?</summary>
         <div class="body">
-          <p>Default <b>No</b>. If yes, asks for a <em>"Worktrees directory"</em> (default <code>.worktrees</code>) and an optional setup command run in each fresh worktree (e.g. <code>npm ci</code>, since a new worktree has no installed deps).</p>
-          <div class="kv">writes → <b>worktreesDir</b>, <b>worktreeSetup?</b></div>
+          <p>Default <b>No</b>. One gate, then a question per sitter — each defaults to No as well:</p>
+          <p><b>review-sitter</b> — sit on PRs awaiting your review and post one review comment. On GitHub also asks a review-request query (default <code>is:open review-requested:@me</code>). → <code>workflows.review-sitter</code>: { enabled, query? }</p>
+          <p><b>dep-sitter</b> — open a draft PR for patch/minor bumps. Also asks the minimum advisory severity to act on: high (default) / critical / moderate / low. → <code>workflows.dep-sitter</code>: { enabled, severityFloor }</p>
+          <p><b>main-sitter</b> — open a draft remedy PR when the default branch's CI goes red. Also asks which branch to watch (blank = the remote default branch). → <code>workflows.main-sitter</code>: { enabled, branch? }</p>
+        </div>
+      </details>
+
+      <details class="q"><summary><span class="step">Q3</span> Customize worktree isolation, or opt out?</summary>
+        <div class="body">
+          <p>Worktree isolation is <b>on by default</b> (<code>worktreesDir: ".workflow-worktrees"</code>), so nothing is written unless you change it. Answering yes offers a second question — opt out entirely (<code>worktreesDir: false</code>, back to shared-tree branch switching) or set a different directory. Unless you opted out, the wizard then asks for an optional setup command run in each fresh worktree (e.g. <code>npm ci</code>, since a new worktree has no installed deps).</p>
+          <div class="kv">writes → <b>worktreesDir?</b>, <b>worktreeSetup?</b></div>
         </div>
       </details>
 
@@ -590,36 +602,60 @@ npm install                    <span class="c"># workspaces + builds core dist/<
     <section id="config">
       <div class="eyebrow">Reference</div>
       <h2>Config reference</h2>
-      <p class="lede"><code>.agentic-workflow.json</code> lives at the root of the project the loop drives. Optional — every field has a default. A <em>misconfigured</em> file fails fast with a clear message rather than silently falling back.</p>
+      <p class="lede"><code>.agentic-workflow.json</code> lives at the root of the project the loop drives, layered over an optional user-scope <code>~/.config/agentic-workflow/agentic-workflow.json</code> (the repo layer wins field by field). Optional — every field has a default. A <em>misconfigured</em> file fails fast with a clear message rather than silently falling back. The tables below are the common fields; <a href="configuration.md">docs/configuration.md</a> is the complete reference.</p>
       <div class="tblwrap">
         <table>
           <thead><tr><th>Field</th><th>Default</th><th>What it does</th></tr></thead>
           <tbody>
             <tr><td><code>maxIterations</code></td><td><span class="def">3</span></td><td>Max iterations before stopping on repeated check-stage failures. Cap tripped → send the task back with <code>replan</code>.</td></tr>
             <tr><td><code>tasksDir</code></td><td><span class="def">"docs/tasks"</span></td><td>Root of the task backlog; subfolders are statuses. Also hosts the ephemeral <code>runs/</code> machine state.</td></tr>
+            <tr><td><code>ignoreBacklog</code></td><td><span class="def">true</span></td><td>Keep <code>tasksDir</code> out of git via the per-clone <code>info/exclude</code> list rather than committing every task move. Set <code>false</code> to commit each move as an audit trail.</td></tr>
             <tr><td><code>stageTimeoutMinutes</code></td><td><span class="def">60</span></td><td>Wall-clock cap on one stage; exceeding it fails the loop instead of hanging.</td></tr>
             <tr><td><code>watchIntervalMinutes</code></td><td><span class="def">5</span></td><td>Polling cadence for <code>watch</code> (either kind's command). <b>OpenCode-only</b> — Claude Code has no watch timer.</td></tr>
             <tr><td><code>workflows</code></td><td><span class="def">{}</span></td><td>Per-kind sections. <code>engineering</code> runs unless disabled; all four sitters (<code>pr-sitter</code>, <code>review-sitter</code>, <code>dep-sitter</code>, <code>main-sitter</code>) are experimental and opt-in with <code>"enabled": true</code>.</td></tr>
             <tr><td><code>codePlatform</code></td><td><span class="def">"github"</span></td><td><code>"github"</code> (gh) or <code>"ado"</code> (reached only through the Azure DevOps MCP server, PAT auth via <code>AZURE_DEVOPS_EXT_PAT</code>). Overridable per kind.</td></tr>
             <tr><td><code>ado</code></td><td><span class="def">unset</span></td><td><code>{organization, project, repository?, selfLogin}</code>. Required for <code>"ado"</code>; <code>selfLogin</code> is required too (a PAT can't resolve identity).</td></tr>
             <tr><td><code>projectManagement</code></td><td><span class="def">unset</span></td><td><code>{system, baseUrl?, defaultType?}</code>. Pairs local tasks to a Jira / ADO tracker. Pairing is manual — the loop never calls the tracker API.</td></tr>
-            <tr><td><code>worktreesDir</code></td><td><span class="def">unset</span></td><td>Run each loop in its own <code>git worktree</code> instead of switching branches. Pair with <code>worktreeSetup</code>.</td></tr>
-            <tr><td><code>worktreeSetup</code></td><td><span class="def">unset</span></td><td>Shell command run in a fresh worktree, e.g. <code>"npm ci"</code>.</td></tr>
+            <tr><td><code>worktreesDir</code></td><td><span class="def">".workflow-worktrees"</span></td><td><b>On by default</b> — each loop runs in its own <code>git worktree</code> instead of switching branches in your checkout. Set <code>false</code> to opt back into shared-tree branch switching. A fresh worktree has no installed deps, so pair it with <code>worktreeSetup</code>.</td></tr>
+            <tr><td><code>worktreeSetup</code></td><td><span class="def">unset</span></td><td>Shell command run in a fresh worktree, e.g. <code>"npm ci"</code>. <b>Shell-bearing: honored from the user-scope file only</b> — a cloned repo can't make the driver run a command.</td></tr>
             <tr><td><code>reviewLenses</code></td><td><span class="def">[]</span></td><td>Run REVIEW once per lens and take the worst verdict. Max 5. Costs ~N× review time.</td></tr>
-            <tr><td><code>workflows.&lt;kind&gt;.stageFanout</code></td><td><span class="def">unset</span></td><td>Stage name → <code>"axis"</code>: run that check stage once per required axis, each pass reviewing exactly one, merged worst-wins. Same ~N× cost as <code>reviewLenses</code> but keeps the axis-coverage guarantee (a gap stops the loop with ERROR). <code>reviewLenses</code> wins over this on <code>review</code>.</td></tr>
+            <tr><td><code>agentModels</code></td><td><span class="def">unset</span></td><td>Agent name → model, for spawns that are <em>not</em> stage runs (draft authoring, the ad-hoc <code>workflow-plan</code>). Stage models live under <code>workflows.&lt;kind&gt;.stageModels</code>.</td></tr>
           </tbody>
         </table>
       </div>
+
+      <h3>Per-kind keys (<code>workflows.&lt;kind&gt;</code>)</h3>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Key</th><th>Default</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><code>enabled</code></td><td><span class="def">unset</span></td><td>The opt-in switch. <code>engineering</code> runs unless set to <code>false</code>; every sitter needs an explicit <code>true</code>.</td></tr>
+            <tr><td><code>codePlatform</code></td><td><span class="def">inherits</span></td><td>Per-kind override of the top-level <code>codePlatform</code>.</td></tr>
+            <tr><td><code>trigger</code></td><td><span class="def">poll</span></td><td>How a watching host schedules claims for this kind: <code>{"type":"poll","intervalMinutes":N}</code>, <code>{"type":"cron","schedule":"…"}</code>, or <code>{"type":"idle"}</code>. OpenCode-only — the pull-only Claude/Qwen hosts ignore it.</td></tr>
+            <tr><td><code>stageChecks</code></td><td><span class="def">manifest</span></td><td>Stage name → the commands the driver itself runs in that stage's work tree; their exit codes bind the verdict instead of being self-reported. This is the test/typecheck/lint knob. Replaces the manifest's list wholesale. <b>Shell-bearing: user scope only.</b></td></tr>
+            <tr><td><code>stageModels</code></td><td><span class="def">manifest</span></td><td>Stage name → model for that stage. Bound by the host (a hook rewrites the spawn), never asked of a model in prose.</td></tr>
+            <tr><td><code>stageContext</code></td><td><span class="def">manifest</span></td><td>Stage name → per-artifact character ceilings on that stage's composed prompt. Matters once you point a stage at a small model.</td></tr>
+            <tr><td><code>stageFanout</code></td><td><span class="def">manifest</span></td><td>Stage name → <code>"axis"</code>: run that check stage once per required axis, each pass reviewing exactly one, merged worst-wins. Same ~N× cost as <code>reviewLenses</code> but keeps the axis-coverage guarantee (a gap stops the loop with ERROR). <code>"none"</code> turns a manifest-declared fan-out back off; <code>reviewLenses</code> wins over this on <code>review</code>.</td></tr>
+            <tr><td><code>stageConcurrency</code></td><td><span class="def">unset</span></td><td>Stage name → how many of that stage's focused passes may run at once. Unset, a per-axis fan-out runs all its passes at once and everything else runs one at a time; <code>1</code> takes a fanned-out stage back to serial to clamp cost.</td></tr>
+            <tr><td><code>maxDiffLines</code></td><td><span class="def">2000</span></td><td>Changed diff lines past which <code>review-sitter</code> declines a PR instead of reviewing it.</td></tr>
+            <tr><td><code>planVisualization</code></td><td><span class="def">manifest</span></td><td>Whether the plan-writing stage is prompted to include mermaid diagram(s) when the change's shape warrants it. Agent-judged, never gate-enforced.</td></tr>
+            <tr><td><code>scannerCommand</code></td><td><span class="def">osv-scanner</span></td><td><code>dep-sitter</code> only: replace the bundled JVM (maven/gradle) scan with your own CLI. <b>Shell-bearing: user scope only.</b></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Each kind also carries its own knobs — <code>pr-sitter.query</code>, <code>dep-sitter.severityFloor</code>, <code>main-sitter.branch</code> — documented in <a href="workflows/README.md">docs/workflows/</a>, one file per kind.</p>
       <div class="code"><div class="cbar"><span>.agentic-workflow.json — example</span><button class="copy">Copy</button></div><pre>{
   <span class="p">"codePlatform"</span>: "github",
-  <span class="p">"worktreesDir"</span>: ".worktrees",
   <span class="p">"worktreeSetup"</span>: "npm ci",
   <span class="p">"reviewLenses"</span>: ["correctness", "security", "test-adequacy"],
   <span class="p">"workflows"</span>: {
-    <span class="p">"engineering"</span>: { "enabled": true },
-    <span class="p">"pr-sitter"</span>: { "query": "is:open author:@me" }
+    <span class="p">"engineering"</span>: {
+      <span class="p">"stageChecks"</span>: { "verify": [{ "name": "tests", "command": "npm test" }] }
+    },
+    <span class="p">"pr-sitter"</span>: { "enabled": true, "query": "is:open author:@me" }
   }
 }</pre></div>
+      <p style="color:var(--muted-txt)"><code>worktreesDir</code> is omitted on purpose — isolation is already on. <code>worktreeSetup</code> and <code>stageChecks</code> are shell-bearing, so they only take effect from the user-scope file.</p>
     </section>
 
     <!-- ===================================================== COMMANDS -->
@@ -638,7 +674,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
             <tr><td><code>remove &lt;id&gt; --force</code></td><td>Hard-delete a task from the backlog entirely, from any folder — file deleted, not moved, and the removal committed. Bare <code>remove</code> is a dry run that deletes nothing.</td></tr>
             <tr><td><code>plan &lt;id&gt;</code></td><td>Run PLAN on one queued task now and park it in plan-review, without waiting for a claim tick.</td></tr>
             <tr><td><code>claim</code></td><td>Pull &amp; drive the next item: build-ready in-progress/ work first, then an approved queued/ task to plan.</td></tr>
-            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><code>watch [trigger]</code> · <code>unwatch</code></td><td>Standing worker scoped to the engineering kind / clear the watch flag (OpenCode only). Bare <code>watch</code> uses <code>workflows.&lt;kind&gt;.trigger</code> (default poll); the argument overrides it for this session — <code>poll [interval]</code> or a bare interval (<code>30s</code>, <code>5m</code>, <code>2h</code>, bare number = minutes), <code>cron &lt;schedule&gt;</code>, or <code>idle</code>.</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>Pause a running loop — halts after the in-flight stage settles and keeps the snapshot. Resume with <code>recover</code>.</td></tr>
             <tr><td><code>recover &lt;id&gt;</code></td><td>Resume an interrupted task (crash or <kbd>Esc</kbd> pause) at the exact stage it stopped.</td></tr>
             <tr><td><code>kinds</code> · <code>doctor [fix]</code></td><td>List the workflow kinds &amp; enabled state; diagnose/repair backlog damage.</td></tr>
@@ -649,7 +685,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <h4 style="margin-top:0">/agentic-workflow:pr-sitter <span style="text-transform:none;color:var(--ink-2)">— the PR sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: the next actionable open PR through triage → fix → verify → publish.</td></tr>
-            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the pr-sitter kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><code>watch [trigger]</code> · <code>unwatch</code></td><td>Standing worker scoped to the pr-sitter kind / clear the watch flag (OpenCode only). Bare <code>watch</code> uses <code>workflows.&lt;kind&gt;.trigger</code> (default poll); the argument overrides it for this session — <code>poll [interval]</code> or a bare interval (<code>30s</code>, <code>5m</code>, <code>2h</code>, bare number = minutes), <code>cron &lt;schedule&gt;</code>, or <code>idle</code>.</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
@@ -659,7 +695,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <h4 style="margin-top:0">/agentic-workflow:review-sitter <span style="text-transform:none;color:var(--ink-2)">— the review sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: the next PR awaiting your review through fetch → assess → publish (one comment).</td></tr>
-            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the review-sitter kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><code>watch [trigger]</code> · <code>unwatch</code></td><td>Standing worker scoped to the review-sitter kind / clear the watch flag (OpenCode only). Bare <code>watch</code> uses <code>workflows.&lt;kind&gt;.trigger</code> (default poll); the argument overrides it for this session — <code>poll [interval]</code> or a bare interval (<code>30s</code>, <code>5m</code>, <code>2h</code>, bare number = minutes), <code>cron &lt;schedule&gt;</code>, or <code>idle</code>.</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
@@ -669,7 +705,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <h4 style="margin-top:0">/agentic-workflow:dep-sitter <span style="text-transform:none;color:var(--ink-2)">— the dependency sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: the next advisory through scan → upgrade → verify → publish (draft PR).</td></tr>
-            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the dep-sitter kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><code>watch [trigger]</code> · <code>unwatch</code></td><td>Standing worker scoped to the dep-sitter kind / clear the watch flag (OpenCode only). Bare <code>watch</code> uses <code>workflows.&lt;kind&gt;.trigger</code> (default poll); the argument overrides it for this session — <code>poll [interval]</code> or a bare interval (<code>30s</code>, <code>5m</code>, <code>2h</code>, bare number = minutes), <code>cron &lt;schedule&gt;</code>, or <code>idle</code>.</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
@@ -679,7 +715,7 @@ npm install                    <span class="c"># workspaces + builds core dist/<
           <h4 style="margin-top:0">/agentic-workflow:main-sitter <span style="text-transform:none;color:var(--ink-2)">— the default-branch CI sitter</span></h4>
           <div class="tblwrap" style="margin-top:8px"><table style="min-width:0"><tbody>
             <tr><td><code>claim</code></td><td>One-shot pull: a red CI run through diagnose → remedy → verify → publish (draft remedy PR).</td></tr>
-            <tr><td><code>watch [interval]</code> · <code>unwatch</code></td><td>Standing worker scoped to the main-sitter kind / clear the watch flag (OpenCode only).</td></tr>
+            <tr><td><code>watch [trigger]</code> · <code>unwatch</code></td><td>Standing worker scoped to the main-sitter kind / clear the watch flag (OpenCode only). Bare <code>watch</code> uses <code>workflows.&lt;kind&gt;.trigger</code> (default poll); the argument overrides it for this session — <code>poll [interval]</code> or a bare interval (<code>30s</code>, <code>5m</code>, <code>2h</code>, bare number = minutes), <code>cron &lt;schedule&gt;</code>, or <code>idle</code>.</td></tr>
             <tr><td><code>status</code></td><td>Active loop + watch state (bare command = status).</td></tr>
             <tr><td><code>stop</code></td><td>Abort the active loop.</td></tr>
           </tbody></table></div>
@@ -749,8 +785,10 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
     <a href="../packages/core/workflows/README.md">packages/core/workflows/README.md — author a kind</a>
     <a href="../plugins/claude/README.md">plugins/claude/README.md — Claude host</a>
     <a href="design/threat-model.md">design/threat-model.md — security</a>
+    <a href="README.md">docs/README.md — the full docs index</a>
   </div>
-  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · this manual is generated from the repo docs and reflects the five kinds that ship today: the default-on engineering, plus the four experimental, opt-in sitters — pr-sitter, review-sitter, dep-sitter, and main-sitter.</p>
+  <p class="fine">agentic-workflow · supervised state machines for long-lived goals · it covers the five kinds that ship today: the default-on engineering, plus the four experimental, opt-in sitters — pr-sitter, review-sitter, dep-sitter, and main-sitter.</p>
+  <p class="fine"><b>This page is hand-maintained, not generated.</b> It restates the canonical docs above for convenience; where it and one of them disagree, <b>the canonical doc wins</b> — please fix this page in the same change. Last reviewed against the repo: 2026-08-07.</p>
 </footer>
 
 <script>
@@ -825,7 +863,7 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
       cond:["frontend-ui-engineering","observability-and-instrumentation","code-simplification"],
       transit:[["done","→","onDone fires VERIFY"]]},
     verify:{name:"VERIFY",kind:"check",agent:"workflow-verify",iso:"isolation: worktree",
-      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Records only PASS / FAIL / ERROR through the trusted <code>workflow_verdict</code> tool.",
+      what:"Runs tests &amp; acceptance criteria. No edits; bash is restricted to a test-runner allowlist. Commands declared in <code>workflows.&lt;kind&gt;.stageChecks</code> are run by the loop <em>itself</em> and their exit codes bind the verdict rather than being self-reported. Records only PASS / FAIL / ERROR through the trusted <code>workflow_verdict</code> tool.",
       skills:["debugging-and-error-recovery"],
       transit:[["pass","→","fires REVIEW"],["fail","→","re-fires BUILD (counts an iteration)"],["error","→","stops for a human"]]},
     review:{name:"REVIEW",kind:"check",agent:"workflow-review",iso:"isolation: worktree",
@@ -879,6 +917,8 @@ npm run hub -- --dir /path --port 4400  <span class="c"># override the port</spa
     ["using-agent-skills",["machinery"],"The meta-skill: discovers and invokes agent skills; governs how every other skill is found and applied."],
     ["interview-me",["authoring"],"Extracts what you actually want via a one-question-at-a-time interview until ~95% confident about the underlying intent. Each question arrives in your host's question dialog, guess first, free text still open."],
     ["idea-refine",["authoring"],"Refines a raw idea into a sharp, actionable concept through structured divergent then convergent thinking."],
+    ["plan-router",["plan","authoring"],"Routes unshaped work — a vague ask, a raw idea, a symptom without a cause — to the right thinking skill by who holds the missing information: the codebase, a human, or nobody."],
+    ["codebase-exploration",["plan","library"],"Investigates the code behind a symptom or open question and ranks 2-3 options against what is actually there — no artifact owed, cheap to abandon."],
     ["planning-and-task-breakdown",["plan"],"Two branches: decomposes a goal into ordered, verifiable tasks, or writes the executable plan for one already-scoped task."],
     ["spec-driven-development",["plan","library"],"Creates a specification before coding when requirements are unclear or only a vague idea exists."],
     ["incremental-implementation",["build"],"Delivers multi-file changes in small landed steps instead of one large write."],

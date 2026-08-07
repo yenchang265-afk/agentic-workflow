@@ -9,6 +9,7 @@ should link.
 
 | Doc | Canonical for |
 |-----|---------------|
+| [manual.html](manual.html) | The guided, single-page **user manual** — install → config wizard → the loop → gates → reference tables. Start here if you're new; it restates the docs below rather than owning any topic (see the note under this table) |
 | [workflows/](workflows/README.md) | Each kind's full picture (engineering, pr-sitter, review-sitter, dep-sitter, main-sitter) — architecture (stage pipeline, mermaid diagram, config keys), enable snippet, command surface, and 1-2 worked examples, all in one file per kind |
 | [architecture.md](architecture.md) | The framework only (core package, manifest engine, scheduler, work sources, the watch lease) and how the Claude Code variant + admin hub differ — per-kind architecture lives in `workflows/` |
 | [sitters.md](sitters.md) | What the four sitters have in common (shape, opt-in, untrusted-input handling), why all four are experimental, and an index into their individual files under `workflows/` |
@@ -27,11 +28,18 @@ should link.
 | [templates/AGENTS.md](templates/AGENTS.md) | Starter `AGENTS.md`/`CLAUDE.md` to copy into a project driven by agentic-workflow |
 | [`../prompts/README.md`](../prompts/README.md) | How the single-source agent-prompt pipeline works (`prompts/agents/` → `npm run gen:prompts` → all three plugins) |
 
-`manual.html` is a hand-maintained, single-page HTML manual that restates
-most of the above for convenience (quickstart, config reference, command
-cheat-sheet). It is **not regenerated from these docs** — treat it as a
-known staleness risk, not a source of truth; if it and a canonical doc above
-disagree, the canonical doc wins.
+`manual.html` restates most of the above for convenience (quickstart, config
+reference, command cheat-sheet), so it is **canonical for nothing**: if it and
+a doc above disagree, the doc above wins.
+
+It is hand-maintained, **not generated** — which makes it the one file here
+that drifts silently. Two rules keep it honest:
+
+1. A change that touches a **default, a wizard question, a config key, or a
+   command's arguments** must update `manual.html` in the same PR.
+2. Its footer carries a **"last reviewed against the repo"** date. Bump it
+   whenever you sweep the page against the source, so a reader can tell at a
+   glance how much to trust it.
 
 ## Translations
 
