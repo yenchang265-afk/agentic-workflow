@@ -56,6 +56,7 @@ import {
   parseVerdict,
   passFocusBlock,
   rejectedFallback,
+  stageDriftAdvice,
   stageDriftNote,
   uncoveredAxes,
   withCoverageGap,
@@ -180,7 +181,16 @@ let verdictRetried = false // whether the current check stage already got its on
  * of ERROR-stopping a review that plainly failed (see verdict.ts).
  */
 let verdictRejected: RejectedVerdict | null = null
-let driftNoted = false // whether this stage attempt already audited an out-of-stage verdict (a drifting agent may call repeatedly)
+/**
+ * The out-of-stage verdict this stage attempt already audited, or null.
+ *
+ * The RECORD, not a boolean: it still dedupes the task-file note (a drifting
+ * agent may call repeatedly), but it is also what `workflow_advance` reports back
+ * to the orchestrator. The note alone was invisible where it mattered — the
+ * driving model never reads the task file, and on this host the driving model is
+ * the thing that skipped the call.
+ */
+let drifted: { readonly requested: string; readonly verdict: Verdict } | null = null
 /**
  * A "cannot do this work at all" signal from `workflow_blocked` for the current
  * WORK stage — the approved plan is impossible, not merely hard.
@@ -518,6 +528,23 @@ const stageAgentModels = (m: LoadedManifest): Record<string, string> => {
 }
 
 /**
+ * Every agent this kind's manifest binds — the set the PreToolUse spawn guard
+ * (check-spawn-stage) asks "is this a stage agent of the loop that is running?".
+ *
+ * Parked here for the same reason as `stageAgentModels`: a bundled hook cannot
+ * load a manifest, so the server answers once and the marker carries it.
+ *
+ * It is a WHOLE-KIND set, and the marker's per-arming `agent` field is what says
+ * which one may be spawned right now. Both are needed and neither substitutes for
+ * the other: without the set the guard cannot tell a stage agent from
+ * `workflow-task-author`, and would deny spawns that were never part of the
+ * protocol; without `agent` it cannot tell the armed stage from its siblings,
+ * which is the whole check. Unlike `agent`, this set cannot go stale within a run
+ * — a marker belongs to one loop of one kind. Pure.
+ */
+const stageAgents = (m: LoadedManifest): string[] => [...new Set(m.manifest.stages.flatMap((def) => (def.agent ? [def.agent] : [])))]
+
+/**
  * The focused passes a stage runs, in order. Takes the kind explicitly rather
  * than reading `activeManifest()`: `firePayload` composes for a state that is
  * not the active loop yet.
@@ -757,7 +784,7 @@ const writeStageMarker = (stage: string | null): string | null => {
     // its OWN work. Carrying a previous attempt's commands forward would let a
     // re-fired check PASS on the work of the attempt that failed.
     fs.rmSync(stageEvidencePath(), { force: true })
-    driftNoted = false // likewise the drift note: one per stage attempt, not one per run
+    drifted = null // likewise the drift record: one note (and one report) per stage attempt, not one per run
     if (stage === null) {
       stageDeadline = null
       fs.rmSync(stageMarkerPath(), { force: true })
@@ -794,8 +821,14 @@ const writeStageMarker = (stage: string | null): string | null => {
           adoTools: effectivePlatformTools(def, platform),
           // The subagent this stage binds, straight from the manifest — the driver
           // (workflow-orchestration SKILL) spawns whatever is named here, so a new kind
-          // needs no prose edit.
+          // needs no prose edit. Also the ARMED agent the spawn guard admits: on a
+          // host with no driver, spawning any other stage agent of this kind means a
+          // workflow_advance/workflow_stage call was skipped.
           agent: def.agent,
+          // The rest of this kind's stage agents, so the guard can tell a sibling
+          // stage's agent (deny — the protocol was skipped) from an agent that is
+          // not part of the loop at all (allow). See stageAgents().
+          kindAgents: stageAgents(m),
           // Check stages must record a verdict via workflow_verdict before ending;
           // the SubagentStop guard blocks a first stop that hasn't (see
           // check-verdict-guard.mjs). workflow_verdict flips verdictRecorded in place.
@@ -1278,9 +1311,11 @@ server.registerTool(
       // The rejection alone reaches only the calling agent. Audit it on the task
       // so a work stage that ran a later stage's work inside its own turn is
       // visible in the trail, not just as odd behavior one stage later.
-      if (!driftNoted && active.task) {
-        driftNoted = true
-        await appendNote(sh, active.task, auditNote(stageDriftNote(active.stage, stage, verdict), new Date(), await gitActor(sh, directory)), log)
+      if (!drifted) {
+        drifted = { requested: stage, verdict }
+        if (active.task) {
+          await appendNote(sh, active.task, auditNote(stageDriftNote(active.stage, stage, verdict), new Date(), await gitActor(sh, directory)), log)
+        }
       }
       return fail(`The loop is at ${active.stage}, not ${stage} — verdict ignored.`)
     }
@@ -1566,6 +1601,15 @@ server.registerTool(
   async ({ stageOutput }) => {
     if (!active) return fail("No active loop.")
     const stage = active.stage
+    // Captured HERE, before `advance` moves `active.stage`: the advice names the
+    // stage the loop was at when the verdict was refused, and it rides out on
+    // every arm that hands the orchestrator its next action. Without it the only
+    // trace of a skipped workflow_advance was a note in a file the driving model
+    // never reads — so a REVIEW that ran and was thrown away looked, from the
+    // orchestrator's seat, exactly like a REVIEW that had not run yet.
+    const driftReport = drifted ? stageDriftAdvice(stage, drifted.requested, drifted.verdict) : null
+    const withDrift = <T extends object>(payload: T): T & { drift?: string } =>
+      driftReport ? { ...payload, drift: driftReport } : payload
     if (isOverdue(stageDeadline, Date.now())) {
       const action: Action = {
         kind: "stop",
@@ -1579,7 +1623,10 @@ server.registerTool(
         ...promptSizeFields(),
       })
       await runTerminal(action)
-      return ok({ action })
+      // Every arm that returns to the orchestrator carries the drift, this one
+      // included — a stage that hung AND had a verdict refused is exactly the run
+      // whose "it timed out" must not be the only thing reported.
+      return ok(withDrift({ action }))
     }
     // record a metrics sample for the stage that just finished — startedAt
     // anchors the time window transcript-based token joins attribute against
@@ -1643,7 +1690,7 @@ server.registerTool(
         const retryLabels = passesFor(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
           .map((p) => p.focus)
           .filter((f): f is string => f !== null)
-        return ok({
+        return ok(withDrift({
           action: { kind: "fire", stage },
           agent: agentRef(stageDef(activeManifest().manifest, stage).agent),
           ...(retryModel ? { model: retryModel } : {}),
@@ -1672,7 +1719,7 @@ server.registerTool(
                 : "call workflow_stage, then spawn the stage subagent again"),
             CHECK_VERDICT_TAIL,
           ),
-        })
+        }))
       }
       // The retry is spent. A stage that DID report — twice, refused twice — is
       // routed on what it declared: a rejected FAIL becomes the stage's FAIL, so
@@ -1738,7 +1785,7 @@ server.registerTool(
         lastFireAt = Date.now()
         armedPass = null // its sample is already recorded; the retry arms its own
         const gapModel = stageModel(activeManifest().manifest.kind, gateDef)
-        return ok({
+        return ok(withDrift({
           action: { kind: "fire", stage },
           agent: agentRef(gateDef.agent),
           ...(gapModel ? { model: gapModel } : {}),
@@ -1748,7 +1795,7 @@ server.registerTool(
               `workflow_stage({stage:"${stage}", focus:"<axis>"}) and spawn the stage subagent again for EACH of them`,
             CHECK_VERDICT_TAIL,
           ),
-        })
+        }))
       }
       if (gaps.length) {
         // A salvaged FAIL stays FAIL — a rejected verdict is not a missing one.
@@ -1811,13 +1858,14 @@ server.registerTool(
     verdictRejected = null
     armedPass = null // no pass of the finished stage may admit a verdict for the next one
     fanoutStage = null
+    drifted = null // reported above via `driftReport`; the next stage attempt starts clean
 
     if (action.kind === "fire") {
       await snapshot()
       const nextDef = stageDef(activeManifest().manifest, action.stage)
       const nextModel = stageModel(activeManifest().manifest.kind, nextDef)
       const nextPasses = passLabels(activeManifest().manifest.kind, nextDef)
-      return ok({
+      return ok(withDrift({
         action: { kind: "fire", stage: action.stage },
         agent: agentRef(nextDef.agent),
         ...(nextModel ? { model: nextModel } : {}),
@@ -1829,14 +1877,14 @@ server.registerTool(
             : "call workflow_stage, then spawn the subagent named in the `agent` field",
           nextDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
         ),
-      })
+      }))
     }
     if (action.kind === "park") {
       // PLAN finished — validate the plan landed on the task file, then park
       // it in plan-review/ for the human gate and end the loop. No snapshot:
       // PLAN never resumes from one.
       const result = await runPark(action)
-      return "error" in result ? fail(result.error) : ok(result)
+      return "error" in result ? fail(result.error) : ok(withDrift(result))
     }
     // terminal: done / stop
     const taskId = active.task?.id ?? null // runTerminal nulls `active`
@@ -1846,7 +1894,10 @@ server.registerTool(
     // blocked) must not announce the ship gate — the task is still in
     // in-progress/. Surface core's failure message instead.
     const parked = action.kind !== "done" || report?.kind === "done"
-    return ok({
+    // Carried onto the terminal arm too: a run that ended having silently thrown
+    // away a stage's verdict is exactly the run whose result must not be read as
+    // clean, and this is the last thing the orchestrator sees.
+    return ok(withDrift({
       action: parked
         ? { kind: action.kind, message: (action as { message: string }).message }
         : { kind: "stop", message: report?.message ?? (action as { message: string }).message },
@@ -1860,7 +1911,7 @@ server.registerTool(
               `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later).`,
           }
         : {}),
-    })
+    }))
   },
 )
 

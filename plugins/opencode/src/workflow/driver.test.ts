@@ -2740,3 +2740,30 @@ test("configSources reports a disabled user layer rather than naming a phantom p
     /user-scope layer is disabled/,
   )
 })
+
+// --- driveChain publishes the transition immediately, not one stage later ---
+
+// The stage a verdict is judged against is `getWorkflow(sessionID).stage`, and
+// `driveChain` used to publish it only at the TOP of the next iteration — after
+// `ensureIsolation` and `runStageChecks`, which shell out and can take minutes.
+// For that whole window the store still named the stage the loop had already
+// left, so a straggler workflow_verdict from the finished stage's subagent (still
+// settling in the abort-grace window) was ACCEPTED into the stage that just
+// ended rather than rejected as drift.
+//
+// A source lint rather than a behavioural test because `driveChain` is not
+// exported and the window is defined by statement ORDER, which is exactly what a
+// refactor loses. Same technique the Claude server's tests use for its ordering
+// invariants.
+test("driveChain publishes the advanced state before awaiting anything else", async () => {
+  const fs = await import("node:fs")
+  const path = await import("node:path")
+  const src = fs.readFileSync(path.join(import.meta.dirname, "driver.ts"), "utf8")
+  const advanceAt = src.indexOf("step = advance(loaded, step.state")
+  assert.ok(advanceAt > -1, "driveChain's transition moved — re-point this lint")
+  // The loop body ends at the next line that closes it; everything the transition
+  // is followed by lives in this slice.
+  const afterAdvance = src.slice(advanceAt, src.indexOf("\n  }\n", advanceAt))
+  assert.match(afterAdvance, /setWorkflow\(sessionID, step\.state\)/, "the transition must be published before the next await")
+  assert.doesNotMatch(afterAdvance, /await /, "nothing may be awaited between the transition and publishing it")
+})

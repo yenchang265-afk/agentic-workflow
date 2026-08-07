@@ -16,6 +16,7 @@ import {
   parseVerdict,
   passFocusBlock,
   planVisualizationBlock,
+  stageDriftAdvice,
   stageDriftNote,
   uncoveredAxes,
   verdictContractBlock,
@@ -312,6 +313,33 @@ test("stageDriftNote records both stages, the dropped verdict, and names the dri
 
 test("stageDriftNote works without a verdict value", () => {
   assert.match(stageDriftNote("build", "review", null), /review/i)
+})
+
+// --- stageDriftAdvice (the same drift, addressed to the orchestrator) ---
+
+test("stageDriftAdvice names both stages, the ignored verdict, and the skipped calls", () => {
+  // The reported failure: a REVIEW subagent runs while the machine is at VERIFY,
+  // and the only trace was a note in a file the driving model never reads. The
+  // advice has to say what was lost AND what to do, or the orchestrator reads a
+  // re-fired VERIFY as "the review has not happened yet" and reports the
+  // discarded findings as if the loop had taken them.
+  const advice = stageDriftAdvice("verify", "review", "FAIL")
+  assert.match(advice, /VERIFY/)
+  assert.match(advice, /REVIEW/)
+  assert.match(advice, /FAIL/)
+  assert.match(advice, /IGNORED/)
+  assert.match(advice, /workflow_advance|workflow_stage/)
+  assert.match(advice, /re-run/i)
+})
+
+test("stageDriftAdvice covers the other cause too — a stage running a later stage's work", () => {
+  assert.match(stageDriftAdvice("build", "verify", "PASS"), /inside its own turn/i)
+})
+
+test("stageDriftAdvice works without a verdict value", () => {
+  const advice = stageDriftAdvice("verify", "review", null)
+  assert.match(advice, /REVIEW/)
+  assert.doesNotMatch(advice, /\(\)/) // no empty parenthetical where the verdict would be
 })
 
 // --- worstOf (multi-lens review combination) ---

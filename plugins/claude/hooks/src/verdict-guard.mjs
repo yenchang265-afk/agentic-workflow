@@ -25,9 +25,19 @@ export const decideVerdictGuard = (marker, nagAlreadyFired) => {
  * `aliases` names the tool as the host actually surfaces it. Qwen registers
  * MCP tools with the identical `mcp__<server>__<tool>` spelling, so only
  * Claude's extra plugin-bundled alias varies.
+ *
+ * The last clause is not politeness. The stage name here comes from the MARKER —
+ * the stage the loop ARMED — and the guard cannot see which subagent is stopping.
+ * A subagent spawned out of step (the failure check-spawn-stage now blocks) would
+ * therefore be told to record under the armed stage's name, and that call is
+ * ACCEPTED: a REVIEW's findings would be filed as the VERIFY verdict, which is
+ * worse than the missing verdict this nag exists to prevent. Recording nothing is
+ * always the safe answer, so say so rather than let it be inferred.
  */
 export const nagMessage = (stage, aliases = "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict") =>
   `agentic-workflow: this ${String(stage ?? "check").toUpperCase()} stage recorded no verdict — call the workflow_verdict MCP tool now ` +
   `(${aliases}) ` +
   `with stage: "${String(stage ?? "check")}" and verdict PASS/FAIL/ERROR. A verdict in prose is ignored. ` +
-  `If the tool is not in your tool list, state that explicitly in your final message and finish.`
+  `If the tool is not in your tool list, state that explicitly in your final message and finish. ` +
+  `If "${String(stage ?? "check")}" is NOT the stage you were asked to run, record no verdict at all — say which stage you ran ` +
+  `in your final message instead. Recording under another stage's name would file your findings as that stage's verdict.`
