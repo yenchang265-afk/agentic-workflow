@@ -168,34 +168,102 @@ permission:
     "cd * && composer install*": allow
     "osv-scanner *": allow
     "cd * && osv-scanner *": allow
+    "mvn compile*": allow
+    "cd * && mvn compile*": allow
+    "mvn * compile*": allow
+    "cd * && mvn * compile*": allow
     "mvn test*": allow
     "cd * && mvn test*": allow
+    "mvn * test*": allow
+    "cd * && mvn * test*": allow
+    "mvn package*": allow
+    "cd * && mvn package*": allow
+    "mvn * package*": allow
+    "cd * && mvn * package*": allow
     "mvn verify*": allow
     "cd * && mvn verify*": allow
+    "mvn * verify*": allow
+    "cd * && mvn * verify*": allow
+    "mvn install*": allow
+    "cd * && mvn install*": allow
+    "mvn * install*": allow
+    "cd * && mvn * install*": allow
     "mvn dependency:tree*": allow
     "cd * && mvn dependency:tree*": allow
+    "mvn * dependency:tree*": allow
+    "cd * && mvn * dependency:tree*": allow
+    "./mvnw compile*": allow
+    "cd * && ./mvnw compile*": allow
+    "./mvnw * compile*": allow
+    "cd * && ./mvnw * compile*": allow
     "./mvnw test*": allow
     "cd * && ./mvnw test*": allow
+    "./mvnw * test*": allow
+    "cd * && ./mvnw * test*": allow
+    "./mvnw package*": allow
+    "cd * && ./mvnw package*": allow
+    "./mvnw * package*": allow
+    "cd * && ./mvnw * package*": allow
     "./mvnw verify*": allow
     "cd * && ./mvnw verify*": allow
+    "./mvnw * verify*": allow
+    "cd * && ./mvnw * verify*": allow
+    "./mvnw install*": allow
+    "cd * && ./mvnw install*": allow
+    "./mvnw * install*": allow
+    "cd * && ./mvnw * install*": allow
     "./mvnw dependency:tree*": allow
     "cd * && ./mvnw dependency:tree*": allow
+    "./mvnw * dependency:tree*": allow
+    "cd * && ./mvnw * dependency:tree*": allow
     "gradle test*": allow
     "cd * && gradle test*": allow
+    "gradle * test*": allow
+    "cd * && gradle * test*": allow
+    "gradle *:test*": allow
+    "cd * && gradle *:test*": allow
     "gradle check*": allow
     "cd * && gradle check*": allow
+    "gradle * check*": allow
+    "cd * && gradle * check*": allow
+    "gradle *:check*": allow
+    "cd * && gradle *:check*": allow
     "gradle build*": allow
     "cd * && gradle build*": allow
+    "gradle * build*": allow
+    "cd * && gradle * build*": allow
+    "gradle *:build*": allow
+    "cd * && gradle *:build*": allow
     "gradle dependencyInsight*": allow
     "cd * && gradle dependencyInsight*": allow
+    "gradle * dependencyInsight*": allow
+    "cd * && gradle * dependencyInsight*": allow
+    "gradle *:dependencyInsight*": allow
+    "cd * && gradle *:dependencyInsight*": allow
     "./gradlew test*": allow
     "cd * && ./gradlew test*": allow
+    "./gradlew * test*": allow
+    "cd * && ./gradlew * test*": allow
+    "./gradlew *:test*": allow
+    "cd * && ./gradlew *:test*": allow
     "./gradlew check*": allow
     "cd * && ./gradlew check*": allow
+    "./gradlew * check*": allow
+    "cd * && ./gradlew * check*": allow
+    "./gradlew *:check*": allow
+    "cd * && ./gradlew *:check*": allow
     "./gradlew build*": allow
     "cd * && ./gradlew build*": allow
+    "./gradlew * build*": allow
+    "cd * && ./gradlew * build*": allow
+    "./gradlew *:build*": allow
+    "cd * && ./gradlew *:build*": allow
     "./gradlew dependencyInsight*": allow
     "cd * && ./gradlew dependencyInsight*": allow
+    "./gradlew * dependencyInsight*": allow
+    "cd * && ./gradlew * dependencyInsight*": allow
+    "./gradlew *:dependencyInsight*": allow
+    "cd * && ./gradlew *:dependencyInsight*": allow
 ---
 
 You are the **verify** subagent — the worker for the VERIFY stage of the agentic
@@ -294,10 +362,10 @@ Above the verdict, give:
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
 - Your bash allowlist bounds you to the project's *own* commands — but several of
-  them (`npm run …`, and the install commands: `npm ci`, `pnpm install`,
-  `uv sync`, `bundle install`, `dotnet restore`, …) execute scripts and lifecycle
-  hooks the project author wrote, so the allowlist is a scope boundary, not a
-  read-only one. They are allowed because an isolated worktree may have no
+  them (`npm run …`, `mvn`/`gradle` goals, and the install commands: `npm ci`,
+  `pnpm install`, `uv sync`, `bundle install`, `dotnet restore`, …) execute scripts
+  and lifecycle hooks the project author wrote, so the allowlist is a scope
+  boundary, not a read-only one. They are allowed because an isolated worktree may have no
   installed dependencies and the tests cannot run without them. Run only the
   scripts whose purpose is test, typecheck, lint, or build; a script that
   deploys, publishes, migrates, writes to a real service, or rewrites the tree

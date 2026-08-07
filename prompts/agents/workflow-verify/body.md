@@ -118,10 +118,10 @@ Above the verdict, give:
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
 - Your bash allowlist bounds you to the project's *own* commands — but several of
-  them (`npm run …`, and the install commands: `npm ci`, `pnpm install`,
-  `uv sync`, `bundle install`, `dotnet restore`, …) execute scripts and lifecycle
-  hooks the project author wrote, so the allowlist is a scope boundary, not a
-  read-only one. They are allowed because an isolated worktree may have no
+  them (`npm run …`, `mvn`/`gradle` goals, and the install commands: `npm ci`,
+  `pnpm install`, `uv sync`, `bundle install`, `dotnet restore`, …) execute scripts
+  and lifecycle hooks the project author wrote, so the allowlist is a scope
+  boundary, not a read-only one. They are allowed because an isolated worktree may have no
   installed dependencies and the tests cannot run without them. Run only the
   scripts whose purpose is test, typecheck, lint, or build; a script that
   deploys, publishes, migrates, writes to a real service, or rewrites the tree
