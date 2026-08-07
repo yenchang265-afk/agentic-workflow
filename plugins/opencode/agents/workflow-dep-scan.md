@@ -14,13 +14,25 @@ permission:
     "npm view *": allow
     "osv-scanner *": allow
     "mvn dependency:tree*": allow
+    "mvn * dependency:tree*": allow
     "mvn help:evaluate*": allow
+    "mvn * help:evaluate*": allow
     "./mvnw dependency:tree*": allow
+    "./mvnw * dependency:tree*": allow
     "./mvnw help:evaluate*": allow
+    "./mvnw * help:evaluate*": allow
     "gradle dependencies*": allow
+    "gradle * dependencies*": allow
+    "gradle *:dependencies*": allow
     "gradle dependencyInsight*": allow
+    "gradle * dependencyInsight*": allow
+    "gradle *:dependencyInsight*": allow
     "./gradlew dependencies*": allow
+    "./gradlew * dependencies*": allow
+    "./gradlew *:dependencies*": allow
     "./gradlew dependencyInsight*": allow
+    "./gradlew * dependencyInsight*": allow
+    "./gradlew *:dependencyInsight*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow

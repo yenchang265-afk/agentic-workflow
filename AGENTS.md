@@ -292,6 +292,19 @@ allowlist denied. Keep that paragraph shaped per command-kind (inspection via
 `git -C <wt>`/absolute paths, runners via the prefix) — a blanket rule there is
 a blanket denial here.
 
+A glob is also **position-anchored**, so it must be declared in the shape the
+tool is actually invoked with, not the shape its docs list first. `mvn test*`
+matched a bare `mvn test` and nothing else: Maven and Gradle take global options
+(`-B`, `-pl core -am`, `--no-daemon`) and preceding phases (`clean`) BEFORE the
+goal, and Gradle qualifies tasks by module (`:core:test`), so `mvn clean test`
+and `./gradlew :core:test` hit the deny sentinel and VERIFY ERRORed on a runner
+the project has. Hence the second form per goal (`mvn * test*`, `gradle *:test*`).
+That is not a widening of what a check stage can reach: every glob ends in `*`
+compiled with dotAll, so a trailing second goal was always matched — the goal
+names are a scope boundary against a confused agent (T2), never a sandbox. When
+adding a runner, check where its argv puts the subcommand before copying the
+`npm test*` shape.
+
 ### On the model-driven hosts, the spawn is the protocol's weakest link
 
 OpenCode has a driver, so its loop cannot get out of step with itself. Claude Code

@@ -119,3 +119,86 @@ test("an agent bound by several manifests declares identical allowlists", () => 
   // would pass vacuously and the invariant above would be untested.
   assert.ok(byAgent.has("workflow-verify"), "expected workflow-verify to declare an allowlist")
 })
+
+/**
+ * A glob is POSITION-anchored, and the JVM build tools are the toolchains that
+ * do not put their goal first: Maven and Gradle take global options (`-B`, `-q`,
+ * `-pl core -am`, `--no-daemon`) and preceding lifecycle phases (`clean`) BEFORE
+ * the goal, and Gradle qualifies a task by module (`:core:test`). So `mvn test*`
+ * — the shape every other runner uses — matched only the bare `mvn test`, and
+ * `mvn clean test` / `mvn -B test` / `./gradlew :core:test` all fell through to
+ * the deny sentinel. VERIFY then recorded ERROR for a runner the project has,
+ * which is exactly the failure the widening in #241 set out to remove.
+ *
+ * Hence the second form per goal (`mvn * test*`, and `gradle *:test*`). It grants
+ * no capability the list did not already grant: every glob ends in `*` compiled
+ * with dotAll, so `mvn test <anything>` — including a second goal — has always
+ * matched. The goal names are a scope boundary against a confused agent (threat
+ * model T2), not a sandbox, so tolerating leading options keeps the boundary and
+ * drops the false denials.
+ *
+ * Asserted against BOTH hosts' matchers, because they differ: the Claude Code /
+ * Qwen guard splits on `&&` and matches each segment, while OpenCode matches the
+ * WHOLE command string against the generated frontmatter — which is why the
+ * worktree form is tested there and not here.
+ */
+const verifyGlobs = () => {
+  const stage = manifests
+    .flatMap(({ manifest }) => manifest.stages ?? [])
+    .find((s) => s.agent === "workflow-verify")
+  assert.ok(stage, "no workflow-verify stage found — wrong path?")
+  return stageGlobs(stage)
+}
+
+/** OpenCode's matcher: the whole command string against one frontmatter glob. */
+const toRe = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")
+const openCodeAllows = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()))
+
+const JVM_ACCEPTED = [
+  "mvn test",
+  "mvn clean test",
+  "mvn -B test",
+  "mvn -q -B clean verify",
+  "mvn compile",
+  "mvn test-compile",
+  "mvn --batch-mode test",
+  "mvn -pl core -am test",
+  "mvn -Dtest=FooTest test",
+  "mvn clean install",
+  "mvn package",
+  "./mvnw clean verify",
+  "./mvnw -B test",
+  "gradle clean test",
+  "gradle --no-daemon check",
+  "./gradlew clean build",
+  "./gradlew :core:test",
+  "./gradlew -q :app:core:check",
+]
+
+test("the VERIFY allowlist accepts idiomatic Maven and Gradle invocations", async () => {
+  const { commandAllowed } = await import("../plugins/claude/hooks/src/allowlist.mjs")
+  const globs = verifyGlobs()
+  const frontmatter = new Set(
+    [...fs.readFileSync(path.join(OPENCODE_AGENTS, "workflow-verify.md"), "utf8").matchAll(/^ *"(.+)": allow$/gm)].map((m) => m[1]),
+  )
+  for (const cmd of JVM_ACCEPTED) {
+    assert.ok(commandAllowed(cmd, globs), `Claude/Qwen guard denies "${cmd}" — the manifest glob is goal-position-anchored`)
+    assert.ok(openCodeAllows(cmd, [...frontmatter]), `OpenCode denies "${cmd}" — run \`npm run gen:prompts\``)
+    // In a worktree the stage is told to prefix the runner; OpenCode needs the twin.
+    assert.ok(openCodeAllows(`cd /wt/x && ${cmd}`, [...frontmatter]), `OpenCode denies "${cmd}" inside a worktree`)
+  }
+})
+
+/**
+ * The widening must not reach the publish half of either tool's lifecycle: a
+ * check stage builds and tests, it never releases. `mvn deploy` / `gradle publish`
+ * stay off the list, and (unlike `install`, which writes only to the local `~/.m2`
+ * repository the build itself reads) they push artifacts to a remote.
+ */
+test("the VERIFY allowlist still refuses the JVM publish goals", async () => {
+  const { commandAllowed } = await import("../plugins/claude/hooks/src/allowlist.mjs")
+  const globs = verifyGlobs()
+  for (const cmd of ["mvn deploy", "mvn clean deploy", "mvn release:perform", "./mvnw deploy -B", "gradle publish", "./gradlew publishToMavenLocal"]) {
+    assert.equal(commandAllowed(cmd, globs), false, `VERIFY allows "${cmd}" — a check stage must never publish`)
+  }
+})
