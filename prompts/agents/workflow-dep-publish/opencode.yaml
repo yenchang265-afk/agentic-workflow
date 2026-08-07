@@ -6,32 +6,13 @@ permission:
   bash:
     "*": deny
     # Push is scoped to feature/* so the default branch can never be pushed.
-    "git push origin feature/*": allow
-    "git -C * push origin feature/*": allow
-    "gh pr create *": allow
-    "gh pr view*": allow
-    "gh pr list*": allow
-    "gh pr comment *": allow
+    # {{allowlist}} — globs generated from the stage's allowlists in workflows/*/workflow.json; edit the manifest, not here
     # GitHub only — ADO never touches bash. ADO writes go through the Azure
     # DevOps MCP tools listed below instead, backstopped by an argument-level
     # write guard (tool.execute.before here; a PreToolUse hook on Claude Code)
     # that permits only reads, thread replies, and creating a draft PR, so
     # complete/abandon/vote/branch-create/pipeline-run can't get through even
     # though the tool names are granted.
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git -C * status*": allow
-    "git -C * diff*": allow
-    "git -C * log*": allow
-    "git -C * show*": allow
-    "ls*": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "grep *": allow
-    "wc *": allow
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:

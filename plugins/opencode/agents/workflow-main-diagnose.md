@@ -6,69 +6,89 @@ permission:
   webfetch: deny
   bash:
     "*": deny
+    "git status*": allow
+    "cd * && git status*": allow
+    "git diff*": allow
+    "cd * && git diff*": allow
+    "git log*": allow
+    "cd * && git log*": allow
+    "git show*": allow
+    "cd * && git show*": allow
+    "git bisect*": allow
+    "cd * && git bisect*": allow
+    "git -C * status*": allow
+    "cd * && git -C * status*": allow
+    "git -C * diff*": allow
+    "cd * && git -C * diff*": allow
+    "git -C * log*": allow
+    "cd * && git -C * log*": allow
+    "git -C * show*": allow
+    "cd * && git -C * show*": allow
+    "git -C * bisect*": allow
+    "cd * && git -C * bisect*": allow
+    "ls*": allow
+    "cd * && ls*": allow
+    "cat *": allow
+    "cd * && cat *": allow
+    "head *": allow
+    "cd * && head *": allow
+    "tail *": allow
+    "cd * && tail *": allow
+    "grep *": allow
+    "cd * && grep *": allow
+    "find *": allow
+    "cd * && find *": allow
+    "wc *": allow
+    "cd * && wc *": allow
+    "npm ci*": allow
+    "cd * && npm ci*": allow
+    "npm install*": allow
+    "cd * && npm install*": allow
+    "npm test*": allow
+    "cd * && npm test*": allow
+    "npm run *": allow
+    "cd * && npm run *": allow
+    "pnpm test*": allow
+    "cd * && pnpm test*": allow
+    "pnpm run *": allow
+    "cd * && pnpm run *": allow
+    "yarn test*": allow
+    "cd * && yarn test*": allow
+    "yarn run *": allow
+    "cd * && yarn run *": allow
+    "bun test*": allow
+    "cd * && bun test*": allow
+    "node --test*": allow
+    "cd * && node --test*": allow
+    "npx tsc*": allow
+    "cd * && npx tsc*": allow
+    "npx vitest*": allow
+    "cd * && npx vitest*": allow
+    "npx jest*": allow
+    "cd * && npx jest*": allow
+    "npx eslint*": allow
+    "cd * && npx eslint*": allow
+    "pytest*": allow
+    "cd * && pytest*": allow
+    "go test*": allow
+    "cd * && go test*": allow
+    "cargo test*": allow
+    "cd * && cargo test*": allow
+    "make test*": allow
+    "cd * && make test*": allow
+    "make check*": allow
+    "cd * && make check*": allow
     "gh run view*": allow
+    "cd * && gh run view*": allow
     "gh run list*": allow
+    "cd * && gh run list*": allow
     "gh pr list*": allow
+    "cd * && gh pr list*": allow
     "gh pr view*": allow
+    "cd * && gh pr view*": allow
     # Both platforms are allowed here (static frontmatter can't switch); config
     # codePlatform decides which the stage prompt actually uses. ADO is the REST
     # API via curl+PAT — host-pinned so the PAT never leaves an ADO host.
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git bisect*": allow
-    "git -C * status*": allow
-    "git -C * diff*": allow
-    "git -C * log*": allow
-    "git -C * show*": allow
-    "git -C * bisect*": allow
-    "ls*": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "grep *": allow
-    "find *": allow
-    "wc *": allow
-    "npm ci*": allow
-    "npm install*": allow
-    "npm test*": allow
-    "npm run *": allow
-    "pnpm test*": allow
-    "pnpm run *": allow
-    "yarn test*": allow
-    "yarn run *": allow
-    "bun test*": allow
-    "node --test*": allow
-    "npx tsc*": allow
-    "npx vitest*": allow
-    "npx jest*": allow
-    "npx eslint*": allow
-    "pytest*": allow
-    "go test*": allow
-    "cargo test*": allow
-    "make test*": allow
-    "make check*": allow
-    "cd * && npm ci*": allow
-    "cd * && npm install*": allow
-    "cd * && npm test*": allow
-    "cd * && npm run *": allow
-    "cd * && pnpm test*": allow
-    "cd * && pnpm run *": allow
-    "cd * && yarn test*": allow
-    "cd * && yarn run *": allow
-    "cd * && bun test*": allow
-    "cd * && node --test*": allow
-    "cd * && npx tsc*": allow
-    "cd * && npx vitest*": allow
-    "cd * && npx jest*": allow
-    "cd * && npx eslint*": allow
-    "cd * && pytest*": allow
-    "cd * && go test*": allow
-    "cd * && cargo test*": allow
-    "cd * && make test*": allow
-    "cd * && make check*": allow
-    "cd * && git bisect*": allow
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:

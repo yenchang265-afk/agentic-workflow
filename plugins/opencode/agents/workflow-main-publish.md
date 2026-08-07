@@ -8,31 +8,51 @@ permission:
     "*": deny
     # Push is scoped to main-sitter/* so the watched branch can never be pushed.
     "git push origin main-sitter/*": allow
+    "cd * && git push origin main-sitter/*": allow
     "git -C * push origin main-sitter/*": allow
+    "cd * && git -C * push origin main-sitter/*": allow
+    "git status*": allow
+    "cd * && git status*": allow
+    "git diff*": allow
+    "cd * && git diff*": allow
+    "git log*": allow
+    "cd * && git log*": allow
+    "git show*": allow
+    "cd * && git show*": allow
+    "git -C * status*": allow
+    "cd * && git -C * status*": allow
+    "git -C * diff*": allow
+    "cd * && git -C * diff*": allow
+    "git -C * log*": allow
+    "cd * && git -C * log*": allow
+    "git -C * show*": allow
+    "cd * && git -C * show*": allow
+    "ls*": allow
+    "cd * && ls*": allow
+    "cat *": allow
+    "cd * && cat *": allow
+    "head *": allow
+    "cd * && head *": allow
+    "tail *": allow
+    "cd * && tail *": allow
+    "grep *": allow
+    "cd * && grep *": allow
+    "wc *": allow
+    "cd * && wc *": allow
     "gh pr create *": allow
+    "cd * && gh pr create *": allow
     "gh pr view*": allow
+    "cd * && gh pr view*": allow
     "gh pr list*": allow
+    "cd * && gh pr list*": allow
     "gh pr comment *": allow
+    "cd * && gh pr comment *": allow
     # GitHub only — ADO never touches bash. ADO writes go through the Azure
     # DevOps MCP tools listed below instead, backstopped by an argument-level
     # write guard (tool.execute.before here; a PreToolUse hook on Claude Code)
     # that permits only reads, thread replies, and creating a draft PR, so
     # complete/abandon/vote/branch-create/pipeline-run can't get through even
     # though the tool names are granted.
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git -C * status*": allow
-    "git -C * diff*": allow
-    "git -C * log*": allow
-    "git -C * show*": allow
-    "ls*": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "grep *": allow
-    "wc *": allow
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:

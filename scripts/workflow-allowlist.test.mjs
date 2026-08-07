@@ -4,16 +4,21 @@ import path from "node:path"
 import { test } from "node:test"
 
 /**
- * Invariants over every stage `bashAllowlist` in workflows/<kind>/workflow.json.
+ * Invariants over every stage `bashAllowlist` in workflows/<kind>/workflow.json,
+ * and over the OpenCode frontmatter generated from it.
  *
- * Both are enforced somewhere already, but only indirectly: the cross-manifest
- * one throws out of `gen-prompts.mjs` (a generator stack trace that doesn't name
- * the offending file), and the twin one wasn't enforced at all — `npm outdated*`
- * shipped without its `cd * && ` twin, which on the OpenCode host made the entry
- * dead. Asserting them here fails with the file and the glob in the message.
+ * The `cd * && ` twins used to be hand-listed here, which is how `npm outdated*`
+ * shipped without one, and how EVERY read glob (`git *`, `cat *`, …) went without
+ * one — the defect that had REVIEW's whole allowlist unreachable in a worktree.
+ * `gen-prompts.mjs` derives them now, so the invariants flipped: the manifest must
+ * carry only bare forms, and the GENERATED frontmatter must carry both.
+ *
+ * Reading the committed frontmatter (rather than calling the generator) also
+ * catches a stale `npm run gen:prompts`.
  */
 
 const WORKFLOWS = path.join(import.meta.dirname, "..", "packages", "core", "workflows")
+const OPENCODE_AGENTS = path.join(import.meta.dirname, "..", "plugins", "opencode", "agents")
 
 const manifests = fs
   .readdirSync(WORKFLOWS)
@@ -26,44 +31,54 @@ assert.ok(manifests.length > 0, "no workflow manifests found — wrong path?")
 
 const CD_PREFIX = "cd * && "
 
-/**
- * Globs that intentionally carry no `cd * && ` twin. A check stage reaches files
- * in its worktree by absolute path and git by `git -C <worktree> …`, so these
- * never need the prefix — only commands that must RUN in the worktree do.
- */
-const NO_TWIN = /^(?:git |ls|cat |head |tail |grep |find |wc |gh |curl )/
+/** Every glob a stage grants, `bashAllowlist` plus each platform's extras. */
+const stageGlobs = (stage) => [...(stage.bashAllowlist ?? []), ...Object.values(stage.platformAllowlist ?? {}).flat()]
 
-test("every runner glob has its `cd * && ` twin", () => {
+test("no manifest glob is hand-written with the `cd * && ` prefix", () => {
   for (const { kind, manifest } of manifests) {
     for (const stage of manifest.stages ?? []) {
-      // Only a worktree-isolated stage is told to prefix its commands; a stage
-      // running in the repo root (isolation "none") needs no twin.
-      if (stage.isolation !== "worktree") continue
-      const globs = stage.bashAllowlist ?? []
-      const present = new Set(globs)
-      for (const glob of globs) {
-        if (glob.startsWith(CD_PREFIX) || NO_TWIN.test(glob)) continue
+      for (const glob of stageGlobs(stage)) {
         assert.ok(
-          present.has(CD_PREFIX + glob),
-          `${kind}/${stage.name}: "${glob}" has no "${CD_PREFIX}${glob}" twin — ` +
-            `the OpenCode host matches the whole command string, so the bare form alone is unreachable in a worktree`,
+          !glob.startsWith(CD_PREFIX),
+          `${kind}/${stage.name}: "${glob}" hand-writes the "${CD_PREFIX}" prefix — ` +
+            `gen-prompts.mjs derives the twins for worktree-isolated stages, so declare the bare form only`,
         )
       }
     }
   }
 })
 
-test("every `cd * && ` twin has a bare form", () => {
+/**
+ * The generated frontmatter must grant both shapes for a worktree-isolated stage.
+ * OpenCode matches the WHOLE command string — it does not split on `&&` the way
+ * the Claude Code guard does — so a stage told to run commands inside its
+ * worktree has the bare form unreachable there, and without the twin every such
+ * command falls through to the `"*": deny` sentinel.
+ */
+test("the generated OpenCode frontmatter carries both shapes for a worktree stage", () => {
+  let checked = 0
   for (const { kind, manifest } of manifests) {
     for (const stage of manifest.stages ?? []) {
-      const present = new Set(stage.bashAllowlist ?? [])
-      for (const glob of present) {
-        if (!glob.startsWith(CD_PREFIX)) continue
-        const bare = glob.slice(CD_PREFIX.length)
-        assert.ok(present.has(bare), `${kind}/${stage.name}: "${glob}" has no bare "${bare}" form`)
+      if (stage.isolation !== "worktree") continue
+      const globs = stageGlobs(stage)
+      if (globs.length === 0) continue
+      const file = path.join(OPENCODE_AGENTS, `${stage.agent}.md`)
+      assert.ok(fs.existsSync(file), `${kind}/${stage.name}: no generated agent at ${file}`)
+      const granted = new Set([...fs.readFileSync(file, "utf8").matchAll(/^ *"(.+)": allow$/gm)].map((m) => m[1]))
+      for (const glob of globs) {
+        for (const want of [glob, CD_PREFIX + glob]) {
+          assert.ok(
+            granted.has(want),
+            `${kind}/${stage.name}: ${stage.agent}.md does not grant "${want}" — run \`npm run gen:prompts\``,
+          )
+        }
+        checked++
       }
     }
   }
+  // Guards the guard: a path that stopped finding worktree stages would pass
+  // vacuously and leave the whole invariant untested.
+  assert.ok(checked > 0, "no worktree-isolated stage with an allowlist found — wrong path?")
 })
 
 test("no stage allowlist repeats a glob", () => {

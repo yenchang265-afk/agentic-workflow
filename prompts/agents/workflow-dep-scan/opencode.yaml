@@ -7,27 +7,4 @@ permission:
     "*": deny
     # All ecosystems' read verbs coexist here (static frontmatter can't switch);
     # the work order names which the stage actually uses.
-    "npm audit*": allow
-    "npm ls*": allow
-    "npm outdated*": allow
-    "npm view *": allow
-    "osv-scanner *": allow
-    "mvn dependency:tree*": allow
-    "mvn help:evaluate*": allow
-    "./mvnw dependency:tree*": allow
-    "./mvnw help:evaluate*": allow
-    "gradle dependencies*": allow
-    "gradle dependencyInsight*": allow
-    "./gradlew dependencies*": allow
-    "./gradlew dependencyInsight*": allow
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "ls*": allow
-    "cat *": allow
-    "head *": allow
-    "tail *": allow
-    "grep *": allow
-    "find *": allow
-    "wc *": allow
+    # {{allowlist}} — globs generated from the stage's allowlists in workflows/*/workflow.json; edit the manifest, not here

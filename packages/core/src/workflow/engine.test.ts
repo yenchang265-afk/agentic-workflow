@@ -165,9 +165,9 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
   if (state.git?.worktree && target !== "plan") {
     parts.push(
       `Worktree: this loop's isolated checkout is ${state.git.worktree} — every file you read, edit, or ` +
-        `test lives THERE, not in the repo root. Use absolute paths under it for edit/read; prefix every ` +
-        `shell command with \`cd ${state.git.worktree} && \` (or use \`git -C ${state.git.worktree} …\`). ` +
-        `Never modify anything outside it.`,
+        `test lives THERE, not in the repo root. Use absolute paths under it for edit/read and ` +
+        `\`git -C ${state.git.worktree} …\` for git; prefix a command that must RUN inside it (test/build/install ` +
+        `runners) with \`cd ${state.git.worktree} && \`. Never modify anything outside it.`,
     )
   }
   return parts.join("\n\n")
@@ -983,7 +983,10 @@ test("dep-sitter allowlists cover all three ecosystems' read/test verbs; publish
   const verify = depSitter.manifest.stages.find((s) => s.name === "verify")
   assert.ok(verify?.bashAllowlist.includes("osv-scanner *"))
   assert.ok(verify?.bashAllowlist.includes("./gradlew test*"))
-  assert.ok(verify?.bashAllowlist.includes("cd * && ./mvnw verify*"))
+  // Bare forms only: the `cd * && ` twins a worktree stage needs on the OpenCode
+  // host are derived by gen-prompts.mjs, never declared here.
+  assert.ok(verify?.bashAllowlist.includes("./mvnw verify*"))
+  assert.ok(verify?.bashAllowlist.every((g) => !g.startsWith("cd * && ")))
   // Publish gains nothing: still push-to-feature/* + platform PR verbs only.
   const publish = depSitter.manifest.stages.find((s) => s.name === "publish")
   assert.ok(publish?.bashAllowlist.every((g) => !/osv-scanner|mvn |gradle/.test(g)))

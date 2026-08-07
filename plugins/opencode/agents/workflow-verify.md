@@ -7,177 +7,194 @@ permission:
   bash:
     "*": deny
     "git status*": allow
+    "cd * && git status*": allow
     "git diff*": allow
+    "cd * && git diff*": allow
     "git log*": allow
+    "cd * && git log*": allow
     "git show*": allow
+    "cd * && git show*": allow
     "git blame*": allow
+    "cd * && git blame*": allow
     "git -C * status*": allow
+    "cd * && git -C * status*": allow
     "git -C * diff*": allow
+    "cd * && git -C * diff*": allow
     "git -C * log*": allow
+    "cd * && git -C * log*": allow
     "git -C * show*": allow
+    "cd * && git -C * show*": allow
     "git -C * blame*": allow
+    "cd * && git -C * blame*": allow
     "ls*": allow
+    "cd * && ls*": allow
     "cat *": allow
+    "cd * && cat *": allow
     "head *": allow
+    "cd * && head *": allow
     "tail *": allow
+    "cd * && tail *": allow
     "grep *": allow
+    "cd * && grep *": allow
     "find *": allow
+    "cd * && find *": allow
     "wc *": allow
+    "cd * && wc *": allow
     "npm test*": allow
-    "npm run *": allow
-    "pnpm test*": allow
-    "pnpm run *": allow
-    "yarn test*": allow
-    "yarn run *": allow
-    "bun test*": allow
-    "node --test*": allow
-    "npx tsc*": allow
-    "npx vitest*": allow
-    "npx jest*": allow
-    "npx eslint*": allow
-    "npx prettier*": allow
-    "npx biome*": allow
-    "npx playwright test*": allow
-    "deno check*": allow
-    "deno lint*": allow
-    "deno test*": allow
-    "pytest*": allow
-    "python -m pytest*": allow
-    "python3 -m pytest*": allow
-    "ruff*": allow
-    "mypy*": allow
-    "tox*": allow
-    "uv run pytest*": allow
-    "uv run ruff*": allow
-    "uv run mypy*": allow
-    "poetry run pytest*": allow
-    "poetry run ruff*": allow
-    "poetry run mypy*": allow
-    "go test*": allow
-    "go build*": allow
-    "go vet*": allow
-    "cargo test*": allow
-    "cargo check*": allow
-    "cargo clippy*": allow
-    "cargo build*": allow
-    "dotnet test*": allow
-    "dotnet build*": allow
-    "rspec*": allow
-    "bundle exec rspec*": allow
-    "bundle exec rake*": allow
-    "composer test*": allow
-    "./vendor/bin/phpunit*": allow
-    "make test*": allow
-    "make check*": allow
-    "make build*": allow
-    "make lint*": allow
-    "npm ci*": allow
-    "npm install*": allow
-    "npm audit*": allow
-    "npm ls*": allow
-    "npm outdated*": allow
-    "pnpm install*": allow
-    "yarn install*": allow
-    "bun install*": allow
-    "pip install*": allow
-    "python -m pip install*": allow
-    "uv sync*": allow
-    "poetry install*": allow
-    "dotnet restore*": allow
-    "bundle install*": allow
-    "composer install*": allow
-    "osv-scanner *": allow
-    "mvn test*": allow
-    "mvn verify*": allow
-    "mvn dependency:tree*": allow
-    "./mvnw test*": allow
-    "./mvnw verify*": allow
-    "./mvnw dependency:tree*": allow
-    "gradle test*": allow
-    "gradle check*": allow
-    "gradle build*": allow
-    "gradle dependencyInsight*": allow
-    "./gradlew test*": allow
-    "./gradlew check*": allow
-    "./gradlew build*": allow
-    "./gradlew dependencyInsight*": allow
     "cd * && npm test*": allow
+    "npm run *": allow
     "cd * && npm run *": allow
+    "pnpm test*": allow
     "cd * && pnpm test*": allow
+    "pnpm run *": allow
     "cd * && pnpm run *": allow
+    "yarn test*": allow
     "cd * && yarn test*": allow
+    "yarn run *": allow
     "cd * && yarn run *": allow
+    "bun test*": allow
     "cd * && bun test*": allow
+    "node --test*": allow
     "cd * && node --test*": allow
+    "npx tsc*": allow
     "cd * && npx tsc*": allow
+    "npx vitest*": allow
     "cd * && npx vitest*": allow
+    "npx jest*": allow
     "cd * && npx jest*": allow
+    "npx eslint*": allow
     "cd * && npx eslint*": allow
+    "npx prettier*": allow
     "cd * && npx prettier*": allow
+    "npx biome*": allow
     "cd * && npx biome*": allow
+    "npx playwright test*": allow
     "cd * && npx playwright test*": allow
+    "deno check*": allow
     "cd * && deno check*": allow
+    "deno lint*": allow
     "cd * && deno lint*": allow
+    "deno test*": allow
     "cd * && deno test*": allow
+    "pytest*": allow
     "cd * && pytest*": allow
+    "python -m pytest*": allow
     "cd * && python -m pytest*": allow
+    "python3 -m pytest*": allow
     "cd * && python3 -m pytest*": allow
+    "ruff*": allow
     "cd * && ruff*": allow
+    "mypy*": allow
     "cd * && mypy*": allow
+    "tox*": allow
     "cd * && tox*": allow
+    "uv run pytest*": allow
     "cd * && uv run pytest*": allow
+    "uv run ruff*": allow
     "cd * && uv run ruff*": allow
+    "uv run mypy*": allow
     "cd * && uv run mypy*": allow
+    "poetry run pytest*": allow
     "cd * && poetry run pytest*": allow
+    "poetry run ruff*": allow
     "cd * && poetry run ruff*": allow
+    "poetry run mypy*": allow
     "cd * && poetry run mypy*": allow
+    "go test*": allow
     "cd * && go test*": allow
+    "go build*": allow
     "cd * && go build*": allow
+    "go vet*": allow
     "cd * && go vet*": allow
+    "cargo test*": allow
     "cd * && cargo test*": allow
+    "cargo check*": allow
     "cd * && cargo check*": allow
+    "cargo clippy*": allow
     "cd * && cargo clippy*": allow
+    "cargo build*": allow
     "cd * && cargo build*": allow
+    "dotnet test*": allow
     "cd * && dotnet test*": allow
+    "dotnet build*": allow
     "cd * && dotnet build*": allow
+    "rspec*": allow
     "cd * && rspec*": allow
+    "bundle exec rspec*": allow
     "cd * && bundle exec rspec*": allow
+    "bundle exec rake*": allow
     "cd * && bundle exec rake*": allow
+    "composer test*": allow
     "cd * && composer test*": allow
+    "./vendor/bin/phpunit*": allow
     "cd * && ./vendor/bin/phpunit*": allow
+    "make test*": allow
     "cd * && make test*": allow
+    "make check*": allow
     "cd * && make check*": allow
+    "make build*": allow
     "cd * && make build*": allow
+    "make lint*": allow
     "cd * && make lint*": allow
+    "npm ci*": allow
     "cd * && npm ci*": allow
+    "npm install*": allow
     "cd * && npm install*": allow
+    "npm audit*": allow
     "cd * && npm audit*": allow
+    "npm ls*": allow
     "cd * && npm ls*": allow
+    "npm outdated*": allow
     "cd * && npm outdated*": allow
+    "pnpm install*": allow
     "cd * && pnpm install*": allow
+    "yarn install*": allow
     "cd * && yarn install*": allow
+    "bun install*": allow
     "cd * && bun install*": allow
+    "pip install*": allow
     "cd * && pip install*": allow
+    "python -m pip install*": allow
     "cd * && python -m pip install*": allow
+    "uv sync*": allow
     "cd * && uv sync*": allow
+    "poetry install*": allow
     "cd * && poetry install*": allow
+    "dotnet restore*": allow
     "cd * && dotnet restore*": allow
+    "bundle install*": allow
     "cd * && bundle install*": allow
+    "composer install*": allow
     "cd * && composer install*": allow
+    "osv-scanner *": allow
     "cd * && osv-scanner *": allow
+    "mvn test*": allow
     "cd * && mvn test*": allow
+    "mvn verify*": allow
     "cd * && mvn verify*": allow
+    "mvn dependency:tree*": allow
     "cd * && mvn dependency:tree*": allow
+    "./mvnw test*": allow
     "cd * && ./mvnw test*": allow
+    "./mvnw verify*": allow
     "cd * && ./mvnw verify*": allow
+    "./mvnw dependency:tree*": allow
     "cd * && ./mvnw dependency:tree*": allow
+    "gradle test*": allow
     "cd * && gradle test*": allow
+    "gradle check*": allow
     "cd * && gradle check*": allow
+    "gradle build*": allow
     "cd * && gradle build*": allow
+    "gradle dependencyInsight*": allow
     "cd * && gradle dependencyInsight*": allow
+    "./gradlew test*": allow
     "cd * && ./gradlew test*": allow
+    "./gradlew check*": allow
     "cd * && ./gradlew check*": allow
+    "./gradlew build*": allow
     "cd * && ./gradlew build*": allow
+    "./gradlew dependencyInsight*": allow
     "cd * && ./gradlew dependencyInsight*": allow
 ---
 
@@ -193,9 +210,10 @@ changed. Verify the change against those criteria using evidence, not assumption
 When your input contains a `Worktree:` line, the change lives in that isolated
 checkout, not the repo root. Read and test **there**: run test commands as
 `cd <worktree> && <runner>` and inspect with `git -C <worktree> …`.
-The `cd <worktree> && <runner>` form is the shape the bash allowlist accepts —
-a bare `cd` is denied. If a test command is denied, remember that form is what
-the allowlist accepts; only record ERROR if the runner itself is genuinely
+The allowlist accepts both shapes — every glob it grants is granted again with a
+`cd <worktree> && ` prefix — but a bare `cd` with nothing after it is denied. If
+a command is refused, it is the command itself that is off the allowlist, not the
+prefix: re-read what you ran, and only record ERROR if the runner is genuinely
 unavailable.
 
 ## Your job

@@ -292,8 +292,9 @@ full set is `docs/configuration.md`.
 
 **Worktree isolation** keeps the human's tree untouched and lets several watch
 sessions drive concurrently. Stage prompts carry a `Worktree:` line pinning all
-reads, edits, and tests there; VERIFY/REVIEW allowlists accept
-`cd <worktree> && <runner>` and `git -C <worktree> …`. The backlog stays
+reads, edits, and tests there; a worktree stage's allowlist grants every glob in
+both shapes — bare, and with the `cd <worktree> && ` prefix — so
+`git -C <worktree> …` and `cd <worktree> && git diff` are equally accepted. The backlog stays
 canonical in the main tree, committed there per terminal event. A task's
 worktree is created on its first BUILD and removed only when the task
 **ships** — a run ending for any reason keeps it, so a retry, a `recover`, or a
