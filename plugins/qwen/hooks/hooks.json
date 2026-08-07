@@ -5,13 +5,17 @@
     "the Claude plugin's hooks.json this file is not loaded by the host directly —",
     "the installer copies it in, rewriting AGENTIC_WORKFLOW_PLUGIN_ROOT to an",
     "absolute path. The four events mirror the Claude plugin exactly; only the",
-    "PreToolUse matcher differs, because the tool ids do.",
+    "PreToolUse matchers differ, because the tool ids do.",
     "ONE INTENTIONAL ASYMMETRY: build-hooks.mjs also emits stamp-spawn-model.mjs",
     "into this directory, and it is deliberately NOT registered here. Qwen's",
     "`agent` tool has no `model` parameter to stamp into, so the binding happens",
     "at install time instead (scripts/qwen-agents.mjs bakes `model:` into each",
     "copied agent file). The hook no-ops under AGENTIC_WORKFLOW_HOST=qwen anyway",
-    "— pinned by a test — so registering it later would be safe, not wrong."
+    "— pinned by a test — so registering it later would be safe, not wrong.",
+    "check-spawn-stage.mjs IS registered, on the same `agent` tool: it does not",
+    "stamp anything, it refuses a spawn of a stage agent the live marker has not",
+    "armed. Qwen drives the loop from a model exactly as Claude Code does, so it",
+    "has exactly the same skipped-workflow_advance failure to guard against."
   ],
   "hooks": {
     "UserPromptSubmit": [
@@ -59,6 +63,18 @@
             "type": "command",
             "name": "agentic-workflow-evidence",
             "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-evidence.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      },
+      {
+        "_comment": "The spawn-stage guard — the Qwen mirror of the Claude plugin's. Qwen's subagent spawner is the `agent` tool; the guard blocks spawning a stage agent the live stage marker has not armed, which is how a skipped workflow_advance surfaces before a stage runs instead of as a rejected verdict after it.",
+        "matcher": "^(agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-spawn-guard",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-spawn-stage.mjs\"",
             "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
           }
         ]

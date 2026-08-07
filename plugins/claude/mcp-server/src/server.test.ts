@@ -47,6 +47,52 @@ test("the stage marker carries stageAgentModels, resolved by the same stageModel
   assert.match(resolver.slice(0, resolver.indexOf("\n}")), /stageModel\(m\.manifest\.kind, def\)/)
 })
 
+// The marker's second manifest-derived spawn fact, and the one that closes the
+// reported bug: with no driver on this host, an orchestrating model owns
+// workflow_stage -> spawn -> workflow_advance, and skipping a call leaves the
+// machine at VERIFY while a REVIEW subagent runs — its verdict then rejected as
+// drift after a whole stage was paid for. The PreToolUse spawn guard blocks that
+// spawn, and it can only tell a sibling stage agent from an unrelated one if the
+// server parks the kind's agents here (a bundled hook cannot read a manifest).
+test("the stage marker carries kindAgents, so the spawn guard can recognise a sibling stage's agent", () => {
+  const src = code(source())
+  assert.match(src, /const stageAgents = \(m: LoadedManifest\): string\[\]/, "the resolver must exist")
+  assert.match(src, /kindAgents: stageAgents\(m\)/, "writeStageMarker must emit the set")
+  // Both fields are needed and neither substitutes for the other: `kindAgents`
+  // answers "is this a stage of the running loop", `agent` answers "is it the one
+  // armed right now". Dropping either turns the guard into a no-op or a source of
+  // false denials.
+  assert.match(src, /agent: def\.agent/, "the armed agent must stay on the marker")
+  // Deduped: an agent backing two stages of one kind (workflow-verify does, across
+  // kinds) must not appear twice.
+  const resolver = src.slice(src.indexOf("const stageAgents = "))
+  assert.match(resolver.slice(0, resolver.indexOf("\n")), /new Set/)
+})
+
+// The drift was audited on the task file and nowhere else — and on this host the
+// thing that caused it (the driving model) never reads the task file. So a REVIEW
+// that ran and was discarded looked, from the orchestrator's seat, exactly like a
+// REVIEW that had not run yet: it would re-report the dropped findings as the
+// loop's own.
+test("workflow_advance reports a refused out-of-stage verdict back to the orchestrator", () => {
+  const src = code(source())
+  // The record, not a boolean: the advice names what drifted.
+  assert.match(src, /let drifted: \{ readonly requested: string; readonly verdict: Verdict \} \| null/)
+  assert.match(src, /drifted = \{ requested: stage, verdict \}/, "the verdict handler must capture the drift")
+  // Captured BEFORE advance moves active.stage, or the advice names the stage the
+  // loop moved on to rather than the one that refused the verdict.
+  const advance = toolBody(src, "workflow_advance")
+  const capture = advance.indexOf("stageDriftAdvice(stage,")
+  assert.ok(capture > -1, "workflow_advance must compose the advice")
+  assert.ok(capture < advance.indexOf("advance(activeManifest()"), "the advice must be composed before the transition")
+  // EVERY arm that hands back an action carries it — a retry arm is exactly where
+  // a drifting orchestrator lands, so missing one there defeats the point, and
+  // "which arms carry it" is not a judgement call worth re-litigating per arm.
+  assert.equal((advance.match(/ok\(/g) ?? []).length, (advance.match(/ok\(withDrift\(/g) ?? []).length, "an ok() arm that skips withDrift silently drops the report")
+  assert.equal((advance.match(/ok\(withDrift\(/g) ?? []).length, 6, "the arm count changed — confirm the new arm carries the drift")
+  assert.match(advance, /drifted = null/, "the transition must clear it")
+})
+
 // Claude Code's spawn tool validates `model` against sonnet|opus|haiku|fable and
 // errors the WHOLE spawn on a miss rather than falling back, so the server must
 // hand out an alias, never a model id. Emitting `bareModel(...)` here described a

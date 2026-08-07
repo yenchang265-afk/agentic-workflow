@@ -22,10 +22,11 @@ var DIALECTS = {
     // model is baked into the installed agent file, so telling the orchestrator
     // to "set `model`" would name a parameter that does not exist.
     conveysSpawnModel: true,
-    // The tool names that spawn a subagent, for the PreToolUse stamp. `Task` was
-    // renamed `Agent` in Claude Code 2.1.63 and is still accepted as an alias, so
-    // both are matched — a rename that silently stopped matching would disable
-    // the model binding without failing anything.
+    // The tool names that spawn a subagent — read by the PreToolUse model stamp
+    // AND by the spawn-stage guard. `Task` was renamed `Agent` in Claude Code
+    // 2.1.63 and is still accepted as an alias, so both are matched: a rename
+    // that silently stopped matching would disable the model binding and the
+    // stage guard without failing anything.
     spawn: ["Agent", "Task"],
     // What the host prepends to a plugin agent's name in `subagent_type`
     // (`agentic-workflow:workflow-build`). Stripped before the name is checked
@@ -42,10 +43,13 @@ var DIALECTS = {
     read: ["read_file", "read_many_files", "search_file_content", "glob"],
     spawnTool: "`agent` tool",
     conveysSpawnModel: false,
-    // Empty on purpose, and unreachable: `conveysSpawnModel: false` already
-    // stops the stamp before it looks at a tool name, because Qwen's `agent`
-    // tool has no `model` parameter to stamp into.
-    spawn: [],
+    // Qwen spawns a subagent with the `agent` tool, passing the bare agent name
+    // as `subagent_type` (docs/qwen.md). This list was empty while the model
+    // stamp was its only reader — `conveysSpawnModel: false` stops that hook
+    // before it looks at a tool name — but the spawn-stage guard reads it too and
+    // is NOT gated by that flag, so an empty list would silently disable the
+    // guard on this host.
+    spawn: ["agent"],
     agentPrefixes: [],
     installer: "./install.sh qwen"
   }

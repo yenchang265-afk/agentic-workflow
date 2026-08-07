@@ -1844,6 +1844,17 @@ const driveChain = async (
     // `stageDef(eng.manifest, "triage")` throws. For engineering, `loaded` IS
     // `eng` (same map entry), so this is byte-identical there.
     step = advance(loaded, step.state, config, output, verdict, record)
+    // Publish the transition NOW, not at the top of the next iteration.
+    // `setWorkflow` up there runs only AFTER `ensureIsolation` and
+    // `runStageChecks`, which shell out and can take minutes — and throughout
+    // that window `getWorkflow(sessionID).stage` still named the stage the loop
+    // had already left. `recordVerdict` judges against exactly that field, so a
+    // straggler workflow_verdict from the finished stage's subagent (still
+    // settling in the abort-grace window `closePassSession` describes) was
+    // ACCEPTED into the stage that just ended instead of rejected as drift. The
+    // call up there stays: `step.state` is legitimately replaced by the isolation
+    // and check-command recomposition above it, and this one cannot know that yet.
+    setWorkflow(sessionID, step.state)
   }
 
   const { state, action } = step

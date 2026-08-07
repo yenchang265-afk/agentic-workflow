@@ -292,6 +292,38 @@ allowlist denied. Keep that paragraph shaped per command-kind (inspection via
 `git -C <wt>`/absolute paths, runners via the prefix) — a blanket rule there is
 a blanket denial here.
 
+### On the model-driven hosts, the spawn is the protocol's weakest link
+
+OpenCode has a driver, so its loop cannot get out of step with itself. Claude Code
+and Qwen have none: an orchestrating MODEL calls `workflow_stage` → spawn →
+`workflow_advance` for every stage AND every fan-out pass, and `workflow_stage`
+and the spawn are routinely emitted as two tool_use blocks in one turn. Skip one
+call and the machine sits at VERIFY while a REVIEW subagent runs — and the only
+thing that noticed was `workflow_verdict` refusing the finished review ("the loop
+is at verify, not review"): a whole stage paid for and discarded, then a
+no-verdict retry, then an ERROR stop. `stageOrderError` cannot catch it, because
+it only fires if `workflow_stage` is called at all.
+
+So the enforcement is a PreToolUse DENY on the SPAWN
+(`hooks/src/check-spawn-stage.entry.mjs`): a stage agent of the active kind may
+only be spawned while the live marker has armed it. Three things it depends on:
+the marker carries `kindAgents` (a hook cannot read a manifest — same reason it
+carries `bashAllowlist` and `stageAgentModels`), it shares the model stamp's
+matcher but never emits an `updatedInput` envelope (two PreToolUse hooks
+rewriting one call is undocumented), and it fails OPEN on every uncertainty
+— no marker, an expired one, an older marker without `kindAgents`, an unknown
+host. That asymmetry is deliberate: a false allow only restores the old
+behavior, a false deny stalls a run with no way out.
+
+Never relax `workflow_verdict`'s stage check to "fix" this. That check is what
+stops a BUILD agent grading its own work, and a verdict from an un-armed stage ran
+under the previous stage's bash allowlist and evidence ledger. And never express
+the rule as prose in a stage prompt — the orchestrator is precisely the thing that
+is already not following prose, the same reason `stageModels` is BOUND by a hook
+rather than asked for. For the same reason the SubagentStop nag names the marker's
+stage: it must tell a subagent that is not that stage to record NOTHING, or a
+drifted REVIEW files its findings as the VERIFY verdict.
+
 ### A rejected verdict is not a missing one
 
 `admitVerdict` refusing a call means the channel WORKED and the shape was wrong.

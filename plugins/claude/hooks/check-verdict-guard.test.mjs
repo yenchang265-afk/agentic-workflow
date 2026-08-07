@@ -38,3 +38,15 @@ test("nag message names the tool (both registered forms) and the stage", () => {
   assert.match(msg, /VERIFY/)
   assert.match(msg, /stage: "verify"/)
 })
+
+test("the nag tells a subagent that is not the armed stage to record NOTHING", () => {
+  // The stage here comes from the MARKER — the stage the loop armed — and this
+  // guard cannot see which subagent is stopping. A subagent spawned out of step
+  // would otherwise be told to record under the armed stage's name, and that call
+  // IS accepted: a REVIEW's findings filed as the VERIFY verdict, which is worse
+  // than the missing verdict the nag exists to prevent. check-spawn-stage now
+  // blocks that spawn; this clause is the layer behind it.
+  const msg = nagMessage("verify")
+  assert.match(msg, /NOT the stage you were asked to run/)
+  assert.match(msg, /record no verdict at all/)
+})

@@ -50,6 +50,16 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/stamp-spawn-model.mjs\""
           }
         ]
+      },
+      {
+        "_comment": "The spawn-stage guard: this host has no driver, so an orchestrating model owns workflow_stage -> spawn -> workflow_advance, and skipping a call leaves the machine at VERIFY while a REVIEW subagent runs — its verdict then rejected as stage drift after a whole stage was paid for. Blocks a spawn of a stage agent the live marker has not armed. It shares the matcher above but NOT that hook's job: it only ever exits 0 or 2 and never emits an updatedInput envelope, which is the one thing two hooks on one call must not both do — that is why this is a third entry rather than more code inside the stamp. Their failure preferences are opposites too (the stamp fails open on everything; this one refuses), the same reason check-evidence is split from check-stage-guard.",
+        "matcher": "^(Agent|Task)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/check-spawn-stage.mjs\""
+          }
+        ]
       }
     ],
     "SessionStart": [

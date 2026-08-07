@@ -39,28 +39,13 @@ import { rawAgentModel, readRawConfigLayers, spawnAlias } from "@agentic-workflo
 import { dialectFor, hostFor } from "./dialect.mjs"
 import { readMarker } from "./marker.mjs"
 import { allow, readStdin, rewriteInput } from "./pretooluse.mjs"
+// Shared with the spawn-stage guard, which reads the same `subagent_type` off the
+// same tool call: one copy of the prefix-stripping, so a host that changes how it
+// namespaces plugin agents cannot leave the two hooks disagreeing about who is
+// being spawned. Re-exported because this module's tests address it here.
+import { agentNameOf } from "./spawn-guard.mjs"
 
-/** Agents this plugin ships are all `workflow-*`; nothing else may be retargeted. */
-const OURS = /^workflow-[a-z0-9-]+$/
-
-/**
- * The bare agent name behind a `subagent_type`, or null when it is not one of
- * ours. Stripping the host's plugin prefix is what makes
- * `agentic-workflow:workflow-build` match; the `OURS` test is what stops
- * `agentModels: {"general-purpose": "opus"}` from hijacking a host built-in the
- * user never meant to rebind.
- */
-export const agentNameOf = (subagentType, prefixes = []) => {
-  if (typeof subagentType !== "string") return null
-  let name = subagentType.trim()
-  for (const prefix of prefixes) {
-    if (name.startsWith(prefix)) {
-      name = name.slice(prefix.length)
-      break
-    }
-  }
-  return OURS.test(name) ? name : null
-}
+export { agentNameOf }
 
 /**
  * The model to bind for `agent`, or null to leave the spawn alone.
