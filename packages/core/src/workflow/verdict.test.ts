@@ -2,7 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
   admitVerdict,
+  allAxesUnassessedReason,
   axisCoverageIssue,
+  axisUnassessed,
   noAdmissibleVerdictReason,
   rejectedFallback,
   evidenceIssue,
@@ -22,6 +24,7 @@ import {
   verdictContractBlock,
   verdictFeedbackBlock,
   withCoverageGap,
+  withUnassessedGuard,
   workScopeBlock,
   worstOf,
   type VerdictRecord,
@@ -411,7 +414,11 @@ test("verdictFeedbackBlock renders failing axes with their blocking findings onl
   assert.match(block, /Failing review axes \(from workflow_verdict\):/)
   assert.match(block, /- security \(FAIL\)/)
   assert.match(block, /\[critical\] unvalidated id in SQL template — src\/db\/query\.ts:41/)
-  assert.match(block, /- performance \(ERROR\)/)
+  // A finding-less ERROR axis is unassessed, not failing — reported in its own
+  // non-blocking section so the fact still reaches the next iteration.
+  assert.doesNotMatch(block, /- performance \(ERROR\)/)
+  assert.match(block, /Unassessed review axes .*non-blocking.*:/)
+  assert.match(block, /- performance$/m)
   assert.doesNotMatch(block, /correctness/) // a passing axis is not next-BUILD's problem
   assert.doesNotMatch(block, /rename the helper/) // suggestions never block
 })
@@ -446,8 +453,50 @@ test("effectiveVerdict: a declared PASS cannot outrank a failing axis", () => {
   assert.equal(effectiveVerdict({ verdict: "PASS", axes: fiveAxes({ security: { verdict: "FAIL" } }) }), "FAIL")
 })
 
-test("effectiveVerdict: any ERROR axis makes the stage ERROR", () => {
-  assert.equal(effectiveVerdict({ verdict: "PASS", axes: fiveAxes({ performance: { verdict: "ERROR" } }) }), "ERROR")
+test("effectiveVerdict: a minority unassessed axis is non-blocking", () => {
+  // The contract invites "ERROR on an axis you genuinely could not assess"
+  // (no hot path → performance unassessable). Letting that one axis make the
+  // STAGE ERROR routed an honest review to onError — a stop blaming the
+  // environment and a stranded task. The skip is scoped: only a finding-less
+  // ERROR axis is neutral.
+  assert.equal(effectiveVerdict({ verdict: "PASS", axes: fiveAxes({ performance: { verdict: "ERROR" } }) }), "PASS")
+  assert.equal(effectiveVerdict({ verdict: "FAIL", axes: fiveAxes({ performance: { verdict: "ERROR" } }) }), "FAIL")
+})
+
+test("effectiveVerdict: an ERROR axis WITH a blocking finding still makes the stage ERROR", () => {
+  // The checks axis relies on this: a broken runner records ERROR with critical
+  // findings, and ERROR outranking FAIL is what routes it to onError.
+  const axes = [
+    ...fiveAxes(),
+    { axis: "checks", verdict: "ERROR" as const, findings: [{ severity: "critical" as const, detail: "npm test exited 127" }] },
+  ]
+  assert.equal(effectiveVerdict({ verdict: "PASS", axes }), "ERROR")
+})
+
+test("axisUnassessed: a finding-less ERROR is unassessed; anything else is not", () => {
+  assert.equal(axisUnassessed({ axis: "performance", verdict: "ERROR" }), true)
+  assert.equal(axisUnassessed({ axis: "performance", verdict: "ERROR", findings: [] }), true)
+  assert.equal(axisUnassessed({ axis: "performance", verdict: "ERROR", findings: [{ severity: "suggestion", detail: "x" }] }), true)
+  assert.equal(axisUnassessed({ axis: "performance", verdict: "ERROR", findings: [{ severity: "critical", detail: "x" }] }), false)
+  assert.equal(axisUnassessed({ axis: "performance", verdict: "PASS" }), false)
+  assert.equal(axisUnassessed({ axis: "performance", verdict: "FAIL" }), false)
+})
+
+test("withUnassessedGuard: a declared PASS whose every axis is unassessed is refused as ERROR", () => {
+  const record: VerdictRecord = { verdict: "PASS", axes: AXES.map((axis) => ({ axis, verdict: "ERROR" as const })) }
+  const guarded = withUnassessedGuard(record)
+  assert.equal(guarded?.verdict, "ERROR")
+  assert.ok(guarded?.reason?.includes(allAxesUnassessedReason()))
+})
+
+test("withUnassessedGuard: identity on FAIL/ERROR, a mixed record, no axes, and null", () => {
+  const fail: VerdictRecord = { verdict: "FAIL", axes: AXES.map((axis) => ({ axis, verdict: "ERROR" as const })) }
+  assert.equal(withUnassessedGuard(fail), fail, "a declared FAIL stays FAIL — rejectedFallback's rule")
+  const mixed: VerdictRecord = { verdict: "PASS", axes: fiveAxes({ performance: { verdict: "ERROR" } }) }
+  assert.equal(withUnassessedGuard(mixed), mixed, "one assessed axis is enough")
+  const bare: VerdictRecord = { verdict: "PASS" }
+  assert.equal(withUnassessedGuard(bare), bare, "no axes ⇒ nothing to judge (VERIFY, sitters)")
+  assert.equal(withUnassessedGuard(null), null)
 })
 
 test("effectiveVerdict: a record with no axes keeps its declared verdict", () => {
@@ -529,6 +578,13 @@ test("blockingFindingsIssue: a clean PASS and an ERROR are both accepted", () =>
 
 test("blockingFindingsIssue: unenforced where no axes are required (a bare VERIFY FAIL stays legal)", () => {
   assert.equal(blockingFindingsIssue({ verdict: "FAIL", reason: "tests red" }, undefined), null)
+})
+
+test("blockingFindingsIssue: a FAIL whose every axis is a finding-less ERROR is rejected, not admitted", () => {
+  // Used to slide through admission as effective-ERROR; unassessed axes are now
+  // skipped, so the record is effective-FAIL with nothing named to fix.
+  const record: VerdictRecord = { verdict: "FAIL", axes: AXES.map((axis) => ({ axis, verdict: "ERROR" as const })) }
+  assert.ok(blockingFindingsIssue(record, AXES))
 })
 
 // --- admitVerdict (the single seam both hosts record through) ---

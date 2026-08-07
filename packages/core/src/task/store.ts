@@ -585,6 +585,22 @@ export const refreshClaimStamp = ($: Shell, task: FileRef, now: Date = new Date(
   restampMarker($, claimMarker(task), now)
 
 /**
+ * The one restamp seam a driver calls at every stage boundary, whatever kind of
+ * work it drives: a task-backed loop restamps through `refreshClaimStamp`; a
+ * task-less (sitter) drive restamps the marker path its work source stamped
+ * onto the state (`claimMarkerDir`, see `withClaimMarker`); a state with
+ * neither is a no-op. One export, so a host cannot restamp tasks and forget
+ * sitters — that asymmetry is exactly how sitter drives ran unstamped against
+ * a 15-minute window and got double-driven.
+ */
+export const refreshWorkClaim = (
+  $: Shell,
+  state: { readonly task?: FileRef; readonly claimMarkerDir?: string },
+  now: Date = new Date(),
+): Promise<void> =>
+  state.task ? refreshClaimStamp($, state.task, now) : state.claimMarkerDir ? restampMarker($, state.claimMarkerDir, now) : Promise.resolve()
+
+/**
  * Whether a `FileRef`'s claim marker exists and is older than `minutes`.
  * On a task with no BUILD note and no live loop, that means orphaned — its
  * claimer died between `claimTask` and the first "BUILD started" note.

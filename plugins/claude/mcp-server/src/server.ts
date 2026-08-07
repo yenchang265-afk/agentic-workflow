@@ -11,7 +11,7 @@ import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/c
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
-import { checkCommands, runChecks, withCheckFloor } from "@agentic-workflow/core/workflow/checks"
+import { checkCommands, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
@@ -49,6 +49,7 @@ import {
 } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
+  axisUnassessed,
   axisVerdict,
   effectiveVerdict,
   mergeRejected,
@@ -107,7 +108,7 @@ import {
   markClaimed,
   moveTask,
   pairingCoverage,
-  refreshClaimStamp,
+  refreshWorkClaim,
   releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
@@ -1508,7 +1509,9 @@ server.registerTool(
     // Keep the claim stamp fresh at every stage boundary: `staleClaimMinutes`
     // covers one stage, but a whole loop can outlive it — without the refresh a
     // live run's marker reads as stale to another process's sweep/recover.
-    if (active?.task) await refreshClaimStamp(sh, active.task)
+    // `refreshWorkClaim`, not `refreshClaimStamp`: a task-less sitter drive
+    // restamps its own marker (state.claimMarkerDir) through the same seam.
+    if (active) await refreshWorkClaim(sh, active)
     lastFireAt = Date.now()
     // Wiping `pending` is right for a FRESH stage and catastrophic mid-fan-out:
     // the orchestrator calls workflow_stage before every pass, so wiping here
@@ -1808,12 +1811,13 @@ server.registerTool(
           : withCoverageGap(pending, gaps)
       }
     }
-    // Floor the admitted record with the checks this host ran for the stage.
-    // HERE, at finalization, and never inside `admitVerdict`: a pre-seeded check
+    // Floor the admitted record with the checks this host ran for the stage,
+    // then refuse a declared PASS whose every axis was unassessed. HERE, at
+    // finalization, and never inside `admitVerdict`: a pre-seeded check
     // axis would flow through `blockingFindingsIssue` and get a genuine agent
-    // PASS rejected rather than derived down. Identity when every check passed,
-    // so a green run records exactly what the agent recorded.
-    pending = withCheckFloor(pending, active.checks?.[stage] ?? [])
+    // PASS rejected rather than derived down. Identity when every check passed
+    // and something was assessed, so a green run records exactly what the agent recorded.
+    pending = finalizeCheckRecord(pending, active.checks?.[stage] ?? [])
     // `advance` threads the structured feedback (reason, failed criteria, failing
     // axes) ahead of the prose for the next iteration and records the seam, so a
     // stage context budget can clamp the prose without touching the block. The
@@ -1832,8 +1836,13 @@ server.registerTool(
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
       const failed = pending?.criteria?.filter((c) => !c.pass).length ?? 0
-      const failedAxes = (pending?.axes ?? []).filter((a) => axisVerdict(a) !== "PASS").map((a) => a.axis)
-      const detail = [failed ? `${failed} criteria unmet` : "", failedAxes.length ? `axes: ${failedAxes.join(", ")}` : ""].filter(Boolean).join("; ")
+      const failedAxes = (pending?.axes ?? []).filter((a) => !axisUnassessed(a) && axisVerdict(a) !== "PASS").map((a) => a.axis)
+      const unassessed = (pending?.axes ?? []).filter(axisUnassessed).map((a) => a.axis)
+      const detail = [
+        failed ? `${failed} criteria unmet` : "",
+        failedAxes.length ? `axes: ${failedAxes.join(", ")}` : "",
+        unassessed.length ? `unassessed: ${unassessed.join(", ")}` : "",
+      ].filter(Boolean).join("; ")
       await appendNote(sh, active.task, auditNote(`${stage.toUpperCase()} verdict: ${pending ? effectiveVerdict(pending) : "none → FAIL"}${detail ? ` (${detail})` : ""} (iteration ${active.iteration + 1})`, new Date(), actor), log)
     }
     // A work stage that called `workflow_blocked`: hand `advance` an ERROR so it

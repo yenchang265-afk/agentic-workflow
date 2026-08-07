@@ -118,6 +118,13 @@ const makeFs = () => {
           const v = files.get(parts[1]!)
           return v === undefined ? { exitCode: 1, stdout: "" } : { exitCode: 0, stdout: v }
         }
+        case "touch": {
+          // Models the one property the restamp relies on: `-c` never creates.
+          const noCreate = parts.includes("-c")
+          const target = parts[parts.length - 1]!
+          if (!dirs.has(target) && !files.has(target) && !noCreate) files.set(target, "")
+          return { exitCode: 0, stdout: "" }
+        }
         case "find":
           return { exitCode: 1, stdout: "" } // no mtime fallback in these tests — every marker is stamped
         default:
@@ -271,6 +278,36 @@ test("restampMarker never re-creates a released marker", async () => {
   await restampMarker(fs.$, MARKER, later(1))
   assert.equal(fs.dirs.has(MARKER), false)
   assert.equal(fs.files.has(stampPath(MARKER)), false, "no orphan stamp for a marker nobody holds")
+})
+
+test("a release landing mid-restamp never resurrects the marker as a file", async () => {
+  // The `test -d` guard at the top of restampMarker is three subprocess
+  // round-trips stale by the time the trailing touch runs. A bare `touch`
+  // there re-created a released marker as an empty regular FILE — un-mkdir-able
+  // by every claimer, and reported "already gone" by releaseMarker (test -d
+  // fails on a file). `touch -c` is what makes this window harmless.
+  const fs = makeFs()
+  await acquireMarker(fs.$, MARKER, T0)
+  fs.interleave("touch", async () => {
+    await releaseMarker(fs.$, MARKER)
+  })
+  await restampMarker(fs.$, MARKER, later(1))
+  assert.equal(fs.files.has(MARKER), false, "the marker path came back as a regular file")
+  assert.equal(fs.dirs.has(MARKER), false)
+  assert.equal(await acquireMarker(fs.$, MARKER, later(2)), true, "the next claimer can still win the path")
+})
+
+test("markerOlderThan with a zero window judges a stampless marker by existence — the unconditional takeover", async () => {
+  // `find -mmin +0` matches only strictly older than a whole minute, so a
+  // stampless marker touched seconds ago read "not stale" and recover refused
+  // a takeover it had already justified (claimTaskSweepingStale's minutes: 0).
+  const fs = makeFs()
+  fs.dirs.add(MARKER) // an old-version marker: held, no claim.json
+  assert.equal(await markerOlderThan(fs.$, MARKER, 0, later(0)), true, "held ⇒ takeable at minutes: 0")
+  assert.equal(await acquireOrSweepMarker(fs.$, MARKER, 0, later(0)), true, "the takeover wins")
+  fs.dirs.delete(MARKER)
+  fs.files.delete(stampPath(MARKER))
+  assert.equal(await markerOlderThan(fs.$, MARKER, 0, later(1)), false, "absent ⇒ nothing to take over")
 })
 
 test("releaseMarkerIfStale releases only a stale marker, atomically", async () => {

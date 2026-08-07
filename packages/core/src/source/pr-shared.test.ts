@@ -236,6 +236,28 @@ test("release drops the stamp before the marker, so rmdir sees an empty dir", as
   assert.ok(cmds.indexOf(`rm -f ${MARKER}/claim.json`) < cmds.indexOf(`rmdir ${MARKER}`))
 })
 
+test("the timeout-aware window keeps a live multi-stage drive's marker; past it the marker is swept", async () => {
+  // THE double-drive regression. Sitter drives are multi-stage and never used
+  // to restamp, so against the bare 15-minute constant a live 30-minute drive's
+  // marker read stale to any rival poller — which swept it, claimed the same
+  // PR, and both loops pushed the same head. `staleMinutes` (threaded from
+  // buildWorkSources as staleClaimMinutes(stage timeout)) is what makes 30
+  // minutes read as "still running".
+  const { $ } = markerShell()
+  const markers = makeClaimMarkers($, "/repo", "docs/tasks", "pr-sitter", 75)
+  await markers.claim(7, NOW_DATE)
+  const thirtyLater = new Date(NOW_DATE.getTime() + 30 * 60_000)
+  assert.equal(await markers.claim(7, thirtyLater), false, "a live long drive keeps its PR")
+  const pastWindow = new Date(NOW_DATE.getTime() + 76 * 60_000)
+  assert.equal(await markers.claim(7, pastWindow), true, "a genuinely dead run is still recoverable")
+})
+
+test("markerDir names the marker path drivers restamp (withClaimMarker → refreshWorkClaim)", () => {
+  const { $ } = markerShell()
+  const markers = makeClaimMarkers($, "/repo", "docs/tasks", "pr-sitter")
+  assert.equal(markers.markerDir(7), MARKER)
+})
+
 test("markers are keyed by kind, so two PR-shaped kinds cannot clash", async () => {
   const shared = markerShell()
   const pr = makeClaimMarkers(shared.$, "/repo", "docs/tasks", "pr-sitter")

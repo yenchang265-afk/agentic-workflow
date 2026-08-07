@@ -130,6 +130,16 @@ export interface WorkflowState {
   /** Set when the loop was started from a backlog task; absent only for defensive fallbacks. */
   readonly task?: TaskRef
   /**
+   * The on-disk claim marker a scheduler-claimed, TASK-LESS drive holds (a
+   * sitter's `.claims/pr-<n>` / `head-<sha>` / dependency marker), stamped by
+   * the work source at claim time (`withClaimMarker`). Drivers restamp it at
+   * every stage boundary via `refreshWorkClaim` — without the restamp a live
+   * multi-stage drive eventually reads stale to a rival's sweep and the same PR
+   * is driven twice. The TaskRef-backed twin is `task` + `refreshClaimStamp`.
+   * Serialized into snapshots (persist.ts) so a recovered drive keeps restamping.
+   */
+  readonly claimMarkerDir?: string
+  /**
    * Set ONLY on the throwaway state a driver registers for one focused PASS of a
    * fanned-out check stage, naming the driving session the pass belongs to.
    *

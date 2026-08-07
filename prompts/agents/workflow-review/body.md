@@ -119,6 +119,10 @@ axes: [
 - An axis with no findings is a clean `PASS` — say so, don't omit it.
 - Use `ERROR` on an **axis** you genuinely could not assess (e.g. no hot path
   in this diff to judge performance against). Don't invent a finding to fill it.
+  An axis `ERROR` is **non-blocking** — it neither fails nor stops the stage,
+  and it is reported to the next iteration as *unassessed*. But a `PASS` in
+  which **every** axis is `ERROR` is refused: if the whole review could not
+  run, record the overall verdict `ERROR` instead.
 - A call that misses an axis **the loop asked you for** is **rejected and not
   recorded**, and partial submissions are **not** accumulated across calls. The
   rejection message names what is missing.

@@ -75,6 +75,22 @@ test("saveState → loadState round-trips a full WorkflowState", async () => {
   assert.deepEqual(loaded, sampleState)
 })
 
+test("claimMarkerDir round-trips — a resumed sitter drive keeps restamping its marker", async () => {
+  // zod strips unknown keys, so without the schema field a recovered task-less
+  // drive would silently lose the restamp path and read stale mid-run.
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
+  const sitter: WorkflowState = {
+    goal: "sit PR #7",
+    stage: "triage",
+    iteration: 0,
+    artifacts: {},
+    claimMarkerDir: "/repo/docs/tasks/runs/pr-sitter/.claims/pr-7",
+  }
+  await saveState(fakeShell(), dir, "docs/tasks", "pr-7", sitter)
+  const loaded = await loadState(fakeClient(dir), dir, "docs/tasks", "pr-7", ["triage"])
+  assert.equal(loaded?.claimMarkerDir, sitter.claimMarkerDir)
+})
+
 test("loadState returns null for an absent snapshot", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   assert.equal(await loadState(fakeClient(dir), dir, "docs/tasks", "missing"), null)

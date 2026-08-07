@@ -110,7 +110,12 @@ export const restampMarker = async ($: Shell, markerDir: string, now: Date = new
   const tmp = `${stampPath(markerDir)}.tmp-${process.pid}-${++stampSeq}`
   await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${tmp}`.quiet().nothrow()
   await $`mv ${tmp} ${stampPath(markerDir)}`.quiet().nothrow()
-  await $`touch ${markerDir}`.quiet().nothrow()
+  // `-c` (no-create) is load-bearing: the `test -d` above is three subprocess
+  // round-trips stale by now, and a release/sweep landing in that window made a
+  // bare `touch` resurrect the marker as an empty regular FILE — un-mkdir-able
+  // by every claimer, "released" silently by releaseMarker (test -d fails on a
+  // file), and only cleared once the mtime sweep aged it out.
+  await $`touch -c ${markerDir}`.quiet().nothrow()
 }
 
 /**
@@ -190,6 +195,12 @@ export const markerOlderThan = async ($: Shell, markerDir: string, minutes: numb
       /* garbled stamp — fall through to the mtime check */
     }
   }
+  // `minutes: 0` is the documented unconditional takeover (see
+  // `claimTaskSweepingStale`) — but `find -mmin +0` matches only strictly
+  // OLDER than a whole minute, so a stampless marker touched seconds ago read
+  // "not stale" and `recover` refused a takeover it had already justified.
+  // Existence is the right zero-window judgement.
+  if (minutes <= 0) return (await $`test -e ${markerDir}`.quiet().nothrow()).exitCode === 0
   const out = await $`find ${markerDir} -maxdepth 0 -mmin +${String(minutes)}`.quiet().nothrow()
   return out.exitCode === 0 && out.stdout.toString().trim().length > 0
 }

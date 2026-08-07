@@ -17,7 +17,7 @@
 
 import type { CheckDef } from "../manifest/schema.js"
 import type { Shell } from "../host.js"
-import type { AxisResult, VerdictRecord } from "./verdict.js"
+import { withUnassessedGuard, type AxisResult, type VerdictRecord } from "./verdict.js"
 
 /** How much of a check's combined output rides along into the prompt. */
 export const CHECK_OUTPUT_MAX = 2_000
@@ -166,3 +166,16 @@ export const withCheckFloor = (record: VerdictRecord | null, results: readonly C
   if (!axis || !record) return record
   return { ...record, axes: [...(record.axes ?? []).filter((a) => a.axis !== CHECKS_AXIS), axis] }
 }
+
+/**
+ * The ONE finalization call both hosts make on a check stage's accumulated
+ * record: floor it with the driver-run checks, then refuse a declared PASS
+ * whose every axis was unassessed (`withUnassessedGuard`). Bundled into a
+ * single export so a host cannot apply the floor and forget the guard — the
+ * same silent-drop failure `verdictFeedbackBlock` names. Order is load-bearing:
+ * a red or broken check adds the (assessed) checks axis first, so its FAIL or
+ * ERROR wins and only a green-check, assessed-nothing PASS trips the guard.
+ * Identity on empty results and on null. Pure.
+ */
+export const finalizeCheckRecord = (record: VerdictRecord | null, results: readonly CheckResult[]): VerdictRecord | null =>
+  withUnassessedGuard(withCheckFloor(record, results))

@@ -9,7 +9,7 @@ import { writeFileAtomic } from "../fsatomic.js"
 import { osvCandidates } from "./osv.js"
 import { parseOsvPayload } from "./osv-payload.js"
 import { slugify } from "../task/schema.js"
-import type { ClaimSkipReason, TerminalOutcome, WorkItem, WorkSource } from "./types.js"
+import { withClaimMarker, type ClaimSkipReason, type TerminalOutcome, type WorkItem, type WorkSource } from "./types.js"
 
 /**
  * The dependency-scan work source (dep-sitter): claimable units of work are
@@ -223,6 +223,8 @@ interface DependencyScanDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
+  /** Claim-marker stale window (`staleClaimMinutes`, threaded from `buildWorkSources`); unset ⇒ the bare 15m constant. */
+  readonly staleMinutes?: number
   /** Config overrides of the manifest policy (`workflows.<kind>.severityFloor` …). */
   readonly severityFloor?: string
   readonly includeOutdated?: boolean
@@ -263,7 +265,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
   const depMarker = (pkg: string): string => `${claimsDir}/${depKey(pkg)}`
   /** Win the dependency's marker, sweeping it first if a dead run left it behind. */
-  const claimDep = (pkg: string): Promise<boolean> => acquireOrSweepMarker($, depMarker(pkg), STALE_CLAIM_MINUTES)
+  const claimDep = (pkg: string): Promise<boolean> => acquireOrSweepMarker($, depMarker(pkg), deps.staleMinutes ?? STALE_CLAIM_MINUTES)
 
   const readText = async (rel: string): Promise<string> => {
     const read = await client.file.read({ query: { path: rel, directory } }).catch(() => null)
@@ -589,7 +591,7 @@ export const makeDependencyScanSource = (deps: DependencyScanDeps): WorkSource =
           heldIds.push(depKey(candidate.pkg))
           continue
         }
-        return { item: workItem(candidate), skip: null }
+        return { item: withClaimMarker(workItem(candidate), depMarker(candidate.pkg)), skip: null }
       }
       if (heldIds.length) {
         return {

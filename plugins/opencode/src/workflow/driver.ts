@@ -51,7 +51,7 @@ import {
   listQueued,
   markClaimed,
   moveTask,
-  refreshClaimStamp,
+  refreshWorkClaim,
   releaseClaim,
   releaseOrphanedClaims,
   rescueStray,
@@ -109,7 +109,7 @@ import {
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
-import { checkCommands, runChecks, withCheckFloor } from "@agentic-workflow/core/workflow/checks"
+import { checkCommands, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import {
   EXPERIMENTAL_KINDS,
   checksFor,
@@ -1052,7 +1052,11 @@ const combineRecords = (records: readonly (VerdictRecord | null)[], lenses: read
     // passed an axis still holds evidence about it, and dropping that leaves a
     // later lens's FAIL rendering with no context. Per-axis worst-wins.
     axes = mergeAxes(axes, r.axes)
-    if (r.verdict === "PASS") return
+    // The EFFECTIVE verdict, matching line one of this function: a pass that
+    // declared PASS while carrying a Critical axis finding is a failing pass,
+    // and skipping it here silently dropped its reason and criteria from the
+    // combined record.
+    if (effectiveVerdict(r) === "PASS") return
     const lens = lenses[i]
     if (r.reason) reasons.push(lens ? `[${lens}] ${r.reason}` : r.reason)
     for (const c of r.criteria ?? []) criteria.push(c)
@@ -1237,7 +1241,7 @@ export const runStagePasses = async (
         config.tasksDir,
         opencodeStageMarker(state, Date.now() + timeoutMinutes * 60_000),
       )
-      if (state.task) await refreshClaimStamp(deps.$, state.task)
+      await refreshWorkClaim(deps.$, state)
       const t0 = Date.now()
       const { text: out, usage, activity } = await runStage(
         client,
@@ -1412,12 +1416,13 @@ export const runStagePasses = async (
   // thing keeping `requiredAxes` required. See `enforcesAxisCoverage`.
   const gapped = combined && enforcesAxisCoverage(config, loaded.manifest.kind, def) ? uncoveredAxes(combined, def.requiredAxes) : []
   const gapChecked = combined && gapped.length ? withCoverageGap(combined, gapped) : combined
-  // Floor the admitted record with the checks the driver ran. Applied HERE, at
+  // Floor the admitted record with the checks the driver ran, then refuse a
+  // declared PASS whose every axis was unassessed. Applied HERE, at
   // finalization, and never inside `admitVerdict`: a pre-seeded check axis would
   // flow through `blockingFindingsIssue` and get a genuine agent PASS rejected
-  // rather than derived down. Identity when every check passed, so a green run
-  // records exactly what the agent recorded.
-  const record = withCheckFloor(gapChecked, state.checks?.[stage] ?? [])
+  // rather than derived down. Identity when every check passed and something
+  // was assessed, so a green run records exactly what the agent recorded.
+  const record = finalizeCheckRecord(gapChecked, state.checks?.[stage] ?? [])
   if (gapped.length) {
     await deps.log("warn", `${stage} fan-out finished with no result for ${gapped.join(", ")} — stopping with ERROR`)
   }
@@ -1739,7 +1744,9 @@ const driveChain = async (
     // Keep the claim stamp fresh at every stage boundary: `staleClaimMinutes`
     // covers one stage, but a whole loop can outlive it — without the refresh a
     // live run's marker reads as stale to another process's sweep/recover.
-    if (step.state.task) await refreshClaimStamp(deps.$, step.state.task)
+    // `refreshWorkClaim`, not `refreshClaimStamp`: a task-less sitter drive
+    // restamps its own marker (state.claimMarkerDir) through the same seam.
+    await refreshWorkClaim(deps.$, step.state)
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
@@ -2692,6 +2699,13 @@ export const handleCommand = async (
     const wasWatching = await stopWatching(deps, sessionID)
     claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
+    // Stop the fanned-out passes the user cannot see, exactly as onInterrupt
+    // does: they run in their own sessions, so clearing the workflow alone
+    // leaves N lens/axis turns burning tokens against a loop the user just
+    // killed, their late verdicts racing closePassSession's table cleanup.
+    for (const id of passSessions.get(sessionID) ?? []) {
+      await client.session.abort({ path: { id } }).catch(() => {})
+    }
     const state = getWorkflow(sessionID)
     if (state?.task) {
       await appendNote(

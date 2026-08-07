@@ -8,6 +8,7 @@ import {
   checkCommands,
   checksBlock,
   classifyExit,
+  finalizeCheckRecord,
   runChecks,
   withCheckFloor,
   type CheckResult,
@@ -175,6 +176,31 @@ test("withCheckFloor keeps the agent's own axes and replaces only a stale checks
   // And it survives the merge the hosts run over multi-pass records.
   const merged = mergeAxes(floored.axes, [{ axis: "security", verdict: "PASS" }])
   assert.equal(merged.length, 3)
+})
+
+test("finalizeCheckRecord refuses a green-check PASS whose every axis was unassessed", () => {
+  const allUnassessed: VerdictRecord = {
+    verdict: "PASS",
+    axes: ["correctness", "security"].map((axis) => ({ axis, verdict: "ERROR" as const })),
+  }
+  const finalized = finalizeCheckRecord(allUnassessed, [result()])!
+  assert.equal(finalized.verdict, "ERROR", "a review that assessed nothing must not ship")
+  assert.match(finalized.reason ?? "", /assessed nothing/)
+})
+
+test("finalizeCheckRecord: a red check floors first, so its assessed axis wins over the guard", () => {
+  const allUnassessed: VerdictRecord = { verdict: "PASS", axes: [{ axis: "correctness", verdict: "ERROR" }] }
+  const finalized = finalizeCheckRecord(allUnassessed, [result({ name: "types", command: "tsc", outcome: "fail", exitCode: 2 })])!
+  // The checks axis carries critical findings ⇒ assessed ⇒ the guard does not
+  // fire; the record keeps its declared PASS and derives FAIL through the axis.
+  assert.equal(finalized.verdict, "PASS")
+  assert.equal(effectiveVerdict(finalized), "FAIL")
+})
+
+test("finalizeCheckRecord is identity on a healthy record and on null", () => {
+  const healthy: VerdictRecord = { verdict: "PASS", axes: [{ axis: "correctness", verdict: "PASS" }] }
+  assert.equal(finalizeCheckRecord(healthy, [result()]), healthy)
+  assert.equal(finalizeCheckRecord(null, [result({ outcome: "fail", exitCode: 1 })]), null, "null stays null — no verdict keeps meaning that")
 })
 
 test("checksBlock lists every check and the failing ones' output; checkCommands feeds the evidence seed", () => {

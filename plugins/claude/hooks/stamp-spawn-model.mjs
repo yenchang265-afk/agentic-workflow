@@ -234,7 +234,8 @@ var modelFor = (marker, rawConfig, agent, now = Date.now()) => {
   const live = marker && typeof marker === "object" && (typeof marker.deadline !== "number" || now <= marker.deadline);
   const fromMarker = live ? marker.stageAgentModels : null;
   const staged = fromMarker && typeof fromMarker === "object" ? fromMarker[agent] : null;
-  const configured = staged ?? rawAgentModel(rawConfig, agent);
+  const stageSpawn = live && Array.isArray(marker.kindAgents) && marker.kindAgents.includes(agent);
+  const configured = staged ?? (stageSpawn ? null : rawAgentModel(rawConfig, agent));
   return spawnAlias(configured);
 };
 var main = async () => {

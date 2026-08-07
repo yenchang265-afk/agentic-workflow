@@ -16,7 +16,7 @@ import {
   stripRef,
 } from "./ado-shared.js"
 import type { AdoGateway, AdoResult } from "./ado-gateway.js"
-import type { ClaimSkipReason, TerminalOutcome, WorkSource } from "./types.js"
+import { withClaimMarker, type ClaimSkipReason, type TerminalOutcome, type WorkSource } from "./types.js"
 
 /**
  * The Azure DevOps PR work source: the `gh`-backed `github-pr.ts` mirrored onto
@@ -59,6 +59,8 @@ interface AdoPrDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
+  /** Claim-marker stale window (`staleClaimMinutes`, threaded from `buildWorkSources`); unset ⇒ the bare 15m constant. */
+  readonly staleMinutes?: number
   /** Azure DevOps coordinates (config `ado`); `selfLogin` is required for this platform. */
   readonly ado: AdoConfig
   /** The Azure DevOps MCP gateway every call goes through. */
@@ -97,7 +99,7 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
   /** Rendered literally into the ADO stage prompts, so no agent parses a git remote. */
   const coords = { project, repository: ado.repository ?? "" }
 
-  const markers = makeClaimMarkers($, directory, tasksDir, kind)
+  const markers = makeClaimMarkers($, directory, tasksDir, kind, deps.staleMinutes)
 
   /** The repository identifier per-PR calls address, preferring the PR's own over the configured one. */
   const repoIdOf = (pr: AdoPr): string => pr.repository?.id || pr.repository?.name || ado.repository || ""
@@ -239,7 +241,13 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
         skip: { message: `${kind}: could not fetch ${snapshot.headRefName} for PR #${target} — skipping`, actionable: true },
       }
     }
-    return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords), skip: null }
+    return {
+      item: withClaimMarker(
+        prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords),
+        markers.markerDir(target),
+      ),
+      skip: null,
+    }
   }
 
   return {
@@ -339,7 +347,13 @@ export const makeAdoPrSource = (deps: AdoPrDeps): WorkSource => {
           await markers.release(number)
           continue
         }
-        return { item: prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords), skip: null }
+        return {
+          item: withClaimMarker(
+            prWorkItem(loaded, "ado", snapshot, triggers, { ...(deps.maxDiffLines != null ? { maxDiffLines: deps.maxDiffLines } : {}) }, coords),
+            markers.markerDir(number),
+          ),
+          skip: null,
+        }
       }
       if (heldIds.length) {
         return {

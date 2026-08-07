@@ -126,6 +126,35 @@ test("the marker wins over agentModels for the same agent", () => {
   assert.equal(rewriteOf(run(cwd, input))?.model, "opus")
 })
 
+test("agentModels never retargets an ARMED stage agent, even as a fallback", () => {
+  // The header's bleed rule, closed for the unconfigured-stage case: with
+  // `stageModels.review` unset, the marker is live and arming workflow-review,
+  // and `agentModels["workflow-review"]` used to slide in through the `??`
+  // fallback and retarget the stage. `kindAgents` on the marker is what tells
+  // a stage spawn apart from an ordinary one.
+  const cwd = makeRepo({
+    config: { agentModels: { "workflow-review": "haiku" } },
+    marker: { kind: "engineering", stage: "review", agent: "workflow-review", kindAgents: ["workflow-plan", "workflow-build", "workflow-verify", "workflow-review"], stageAgentModels: {} },
+  })
+  const input = { ...SPAWN, subagent_type: "agentic-workflow:workflow-review" }
+  assert.equal(rewriteOf(run(cwd, input)), null, "the stage runs the host default, not agentModels")
+})
+
+test("agentModels still binds a NON-stage agent while a marker is live, and everything when kindAgents is absent", () => {
+  // The suppression is scoped by kindAgents membership: an agent outside the
+  // active kind keeps its agentModels binding, and an older marker with no
+  // kindAgents fails open to today's behavior — the spawn guard's degradation rule.
+  const live = { kind: "engineering", stage: "review", agent: "workflow-review", kindAgents: ["workflow-review"], stageAgentModels: {} }
+  const outside = makeRepo({ config: { agentModels: { "workflow-plan": "haiku" } }, marker: live })
+  assert.equal(rewriteOf(run(outside, SPAWN))?.model, "haiku", "workflow-plan is not in kindAgents — agentModels applies")
+  const legacy = makeRepo({
+    config: { agentModels: { "workflow-review": "haiku" } },
+    marker: { kind: "engineering", stage: "review", agent: "workflow-review", stageAgentModels: {} },
+  })
+  const input = { ...SPAWN, subagent_type: "agentic-workflow:workflow-review" }
+  assert.equal(rewriteOf(run(legacy, input))?.model, "haiku", "no kindAgents ⇒ fail open")
+})
+
 test("a marker past its deadline no longer binds anything — a crashed loop's map must not rule the repo forever", () => {
   // A killed process never runs writeStageMarker(null); the leftover marker
   // would otherwise retarget every later workflow-* spawn silently. Same

@@ -134,6 +134,14 @@ export const buildWorkSources = (
         tasksDir: config.tasksDir,
         log: deps.log,
         loaded,
+        // One stale window for EVERY source's claim markers, sized to the
+        // worst stage this kind can run (a manifest stage may override
+        // `stageTimeoutMinutes` upward): a marker judged against the bare
+        // 15-minute constant sweeps a LIVE multi-stage drive — the sitter
+        // double-drive the backlog fixed with staleClaimMinutes + restamps.
+        staleMinutes: staleClaimMinutes(
+          Math.max(config.stageTimeoutMinutes, ...loaded.manifest.stages.map((s) => s.timeoutMinutes ?? 0)),
+        ),
       }
       if (loaded.manifest.workSource.type === "pull-request") {
         const targeting = target != null ? { target } : {}
@@ -181,7 +189,6 @@ export const buildWorkSources = (
         makeBacklogSource({
           ...base,
           isDriving: deps.isDriving,
-          staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
           ...(deps.hostName ? { hostName: deps.hostName } : {}),
         }),
       ]

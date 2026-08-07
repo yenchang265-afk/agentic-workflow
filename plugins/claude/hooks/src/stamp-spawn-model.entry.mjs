@@ -66,7 +66,14 @@ export const modelFor = (marker, rawConfig, agent, now = Date.now()) => {
   const live = marker && typeof marker === "object" && (typeof marker.deadline !== "number" || now <= marker.deadline)
   const fromMarker = live ? marker.stageAgentModels : null
   const staged = fromMarker && typeof fromMarker === "object" ? fromMarker[agent] : null
-  const configured = staged ?? rawAgentModel(rawConfig, agent)
+  // A live marker whose `kindAgents` names this agent means the spawn IS a
+  // stage run of the active kind. `agentModels` must not reach it even as a
+  // fallback — that is the bleed the header names: with the stage's own model
+  // unconfigured, `agentModels["workflow-review"]` used to silently retarget
+  // the armed REVIEW stage. Fails open when `kindAgents` is absent (an older
+  // marker), the same degradation rule the spawn guard applies.
+  const stageSpawn = live && Array.isArray(marker.kindAgents) && marker.kindAgents.includes(agent)
+  const configured = staged ?? (stageSpawn ? null : rawAgentModel(rawConfig, agent))
   return spawnAlias(configured)
 }
 

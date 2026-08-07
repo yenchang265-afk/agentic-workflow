@@ -77,12 +77,16 @@ export const claimSkipReason = (
   queuedCount: number,
   startedIds: readonly string[],
   heldIds: readonly string[],
+  // The window the claim walk ACTUALLY ran (deps.staleMinutes, default 75) —
+  // quoting the bare constant promised a 15m auto-release the sweep would not
+  // deliver for another hour.
+  staleMinutes: number = STALE_CLAIM_MINUTES,
 ): ClaimSkipReason => {
   if (heldIds.length) {
     return {
       message:
         `watch: claim marker held for ${heldIds.join(", ")} — another watcher may be working it; ` +
-        `a stale marker auto-releases after ${STALE_CLAIM_MINUTES}m`,
+        `a stale marker auto-releases after ${staleMinutes}m`,
       actionable: true,
     }
   }
@@ -247,7 +251,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       const started = primaryTasks.filter(isRecoverable).map((t) => t.id)
       return {
         item: null,
-        skip: claimSkipReason(primaryTasks.length, primaryClaimable, lastPoolCount, started, heldIds),
+        skip: claimSkipReason(primaryTasks.length, primaryClaimable, lastPoolCount, started, heldIds, deps.staleMinutes),
       }
     },
 

@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { acquireOrSweepMarker, releaseMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
 import type { Client, Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import type { AdoConfig } from "../workflow/state.js"
@@ -6,7 +7,7 @@ import { newestHeadVerdict, shortSha, type CiRun } from "./ci-runs.js"
 import { loadHeadLedger, redHeadWorkItem, saveHeadLedger } from "./ci-runs-shared.js"
 import { AdoBuildListSchema, adoList, normalizeAdoBuild } from "./ado-shared.js"
 import type { AdoGateway } from "./ado-gateway.js"
-import type { TerminalOutcome, WorkSource } from "./types.js"
+import { withClaimMarker, type TerminalOutcome, type WorkSource } from "./types.js"
 
 /**
  * The Azure DevOps CI-runs work source: the `gh`-backed `ci-runs.ts` mirrored
@@ -34,6 +35,8 @@ interface AdoCiRunsDeps {
   readonly tasksDir: string
   readonly log: Log
   readonly loaded: LoadedManifest
+  /** Claim-marker stale window (`staleClaimMinutes`, threaded from `buildWorkSources`); unset ⇒ the bare 15m constant. */
+  readonly staleMinutes?: number
   /** Azure DevOps coordinates (config `ado`). */
   readonly ado: AdoConfig
   /** The Azure DevOps MCP gateway every call goes through. */
@@ -54,6 +57,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
   const now = deps.now ?? (() => new Date().toISOString())
   const project = ado.project
   const claimsDir = `${directory}/${tasksDir}/runs/${kind}/.claims`
+  const headMarker = (sha: string): string => `${claimsDir}/head-${shortSha(sha)}`
   let resolvedBranch: string | null = null
 
   const branch = async (): Promise<string> => {
@@ -118,9 +122,11 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
           },
         }
       }
-      await $`mkdir -p ${claimsDir}`.quiet().nothrow()
-      const marker = await $`mkdir ${`${claimsDir}/head-${shortSha(judged.sha)}`}`.quiet().nothrow()
-      if (marker.exitCode !== 0) {
+      // The stamped, sweep-aware helper — NEVER a bare mkdir/rmdir pair (the
+      // CLAUDE.md atomic-helpers rule): a SIGKILL between claim and release
+      // used to leave this marker on disk forever, and that head was never
+      // remedied again without a human `rm -rf`.
+      if (!(await acquireOrSweepMarker($, headMarker(judged.sha), deps.staleMinutes ?? STALE_CLAIM_MINUTES))) {
         return {
           item: null,
           skip: { message: `${kind}: claim marker held for head-${shortSha(judged.sha)}`, actionable: true },
@@ -134,7 +140,7 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
       const tip = await $`git -C ${directory} rev-parse ${`refs/remotes/origin/${b}`}`.quiet().nothrow()
       if (tip.exitCode !== 0 || tip.stdout.toString().trim() !== judged.sha) {
         await log("info", `${kind}: ${b} moved past ${shortSha(judged.sha)} — re-judging on the next poll`)
-        await $`rmdir ${`${claimsDir}/head-${shortSha(judged.sha)}`}`.quiet().nothrow()
+        await releaseMarker($, headMarker(judged.sha))
         return { item: null, skip: { message: `${kind}: ${b} moved during claim — retrying next poll`, actionable: false } }
       }
       // `branch -f` would silently discard prior remedy commits when the same
@@ -146,16 +152,22 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
         const pin = await $`git -C ${directory} branch -f ${remedyBranch} ${judged.sha}`.quiet().nothrow()
         if (pin.exitCode !== 0) {
           await log("warn", `${kind}: could not pin ${remedyBranch} at ${shortSha(judged.sha)} — skipping`)
-          await $`rmdir ${`${claimsDir}/head-${shortSha(judged.sha)}`}`.quiet().nothrow()
+          await releaseMarker($, headMarker(judged.sha))
           return { item: null, skip: { message: `${kind}: could not pin the red head locally`, actionable: true } }
         }
       }
-      return { item: redHeadWorkItem(loaded, "ado", b, judged.sha, judged.failing, { project, repository: ado.repository ?? "" }), skip: null }
+      return {
+        item: withClaimMarker(
+          redHeadWorkItem(loaded, "ado", b, judged.sha, judged.failing, { project, repository: ado.repository ?? "" }),
+          headMarker(judged.sha),
+        ),
+        skip: null,
+      }
     },
 
     async release(work) {
       const { sha } = work.ref as { sha: string }
-      await $`rmdir ${`${claimsDir}/head-${shortSha(sha)}`}`.quiet().nothrow()
+      await releaseMarker($, headMarker(sha))
     },
 
     async onTerminal(work, outcome: TerminalOutcome) {
