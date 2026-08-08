@@ -372,11 +372,45 @@ test("replanTask refuses a task a live loop is driving", async () => {
   assert.ok(!log.some((c) => c.startsWith("mv ")))
 })
 
-test("replanTask sends a parked plan back to queued", async () => {
+test("replanTask sends a parked plan back to queued, stamped plan-next", async () => {
   const { ctx, log } = makeCtx({ "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) })
   const r = await replanTask(ctx, "t", "missed the cache")
   assert.ok(r.ok && r.data.requeued === true)
+  assert.ok(r.ok && r.data.id === "t", "hosts chain the re-plan from data.id")
+  // The id must ride in the MESSAGE too — the Claude host's model chains its
+  // PLAN pass from this text alone (gate-command surfaces only the message).
+  assert.match(r.ok ? r.message : "", /\(t\)/)
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("queued")))
+  // The marker write is best-effort, so the attempt is what's pinned here.
+  assert.ok(
+    log.some((c) => c.startsWith("mkdir -p /repo/docs/tasks/queued/.requests")),
+    "the plan-next request marker is stamped",
+  )
+})
+
+test("replanTask on an already-queued task records the fresh reason and restamps plan-next", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) })
+  const r = await replanTask(ctx, "t", "still misses the cache")
+  assert.ok(r.ok && r.data.alreadyDone === true && r.data.requeued === true && r.data.id === "t")
+  assert.match(r.ok ? r.message : "", /\(t\)/, "the id rides in the message for the model-driven chain")
+  // The only `mv` allowed is the marker's atomic rename — the task file stays put.
+  assert.ok(!log.some((c) => c.startsWith("mv ") && c.includes("t.md")), "the task file does not move")
+  assert.ok(
+    log.some((c) => c.includes("Plan rejected") && c.includes("still misses the cache")),
+    "the fresh reason lands as the canonical rejection note",
+  )
+  assert.ok(log.some((c) => c.startsWith("mkdir -p /repo/docs/tasks/queued/.requests")))
+})
+
+test("replanTask on a queued task being planned right now refuses instead of racing the planner", async () => {
+  // Appending a note to a file the plan author is actively rewriting is a lost
+  // update — and the run holding the claim is already doing what replan asks.
+  const { ctx, log } = makeCtx({ "queued/t.md": task("Do it"), "queued/.claims/t": "" })
+  const r = await replanTask(ctx, "t", "another thought")
+  assert.equal(r.ok, false)
+  assert.match(!r.ok ? r.message : "", /being planned right now/)
+  assert.ok(!log.some((c) => c.includes("Plan rejected")), "no note lands under the planner")
+  assert.ok(!log.some((c) => c.startsWith("mkdir -p /repo/docs/tasks/queued/.requests")), "no restamp either")
 })
 
 test("oneLineReason flattens a multi-line reason to the single audit-note line shape", () => {
@@ -659,6 +693,7 @@ for (const { verb, from, to, run, body } of collidingMoves) {
       `${verb} must append a correction after its audit note`,
     )
     assert.ok(!log.some((c) => c.startsWith("git commit")), "a move that did not happen is not committed")
+    assert.ok(!log.some((c) => c.includes("/.requests")), "no plan-next marker for a move that did not happen")
   })
 }
 

@@ -470,14 +470,17 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         overrideCommandPrompt(output, refusalPrompt(`the workflow kind "${kind}" is not enabled.`, remedy))
         return
       }
-      // The engineering gate verbs (approve / replan) are pure task-file moves
-      // with no dependency on reconciliation — run the move FIRST, then
+      // The engineering gate verbs (approve / replan) put their task-file move
+      // first, with no dependency on reconciliation — run the move, THEN
       // reconcile. On the first-ever command reconcileOnce() does heavy git/fs
       // work (claim sweeps, worktree prune, backlog audit); doing it before the
       // move delayed the move past opencode's command-hook window, so the model
       // read the task as "still in draft" until a retry (reconcile is guarded
       // to run once, so later attempts were fast — the "works after a few
       // tries" symptom). Move first keeps the gate deterministic on attempt 1.
+      // (replan additionally chains a re-plan claim after its move — cheap fs
+      // ops, and the fresh claim survives the sweep, which frees stale markers
+      // only.)
       const { verb } = splitVerb(input.arguments)
       // Trim the rendered body to the invoked verb BEFORE dispatching. The
       // template describes every verb, but the ones whose template survives

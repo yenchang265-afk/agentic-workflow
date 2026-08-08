@@ -130,11 +130,26 @@
   asks inline and follows up with a "plan it now?" question.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
-- **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
-  (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
-  re-planning. **Handled by the same hook**; the reason is recorded in the
-  audit note. (Fallback: `mcp__agentic-workflow__workflow_reject({id, reason})`, id
-  optional.)
+- **`replan [id] [reason]`** — the sole rejection verb, and it chains the
+  re-plan: what the gate wants is a REVISED plan, not a task idling in
+  `queued/`. **The rejection half is handled by the hook before your turn** —
+  it records the reason in the audit note and moves the parked plan (or a
+  cap-tripped `in-progress/` task, by id) to `queued/` marked plan-next — and
+  the outcome message above is your cue to drive ONE PLAN pass now:
+  - Take the task id from the outcome message and call
+    `mcp__agentic-workflow__workflow_start({id})` — it claims the queued task and
+    starts at PLAN (no git isolation); the rejection reason is threaded into
+    the PLAN prompt. Spawn `workflow-plan-author` (Task tool) with the
+    returned prompt (its `model` is already pinned from the response's `model` field when present), then `workflow_advance` — the revised plan
+    parks in `plan-review/` and the plan gate goes live again: ask the user
+    inline (AskUserQuestion — Approve / Replan / Park for later, per the
+    `workflow-orchestration` skill).
+  - **Do nothing else** — no build, no other task. If `workflow_start`
+    refuses (another loop is live), report that the task is queued plan-next —
+    the next `claim` re-plans it first — and stop.
+  - No outcome message means the hook never ran: call
+    `mcp__agentic-workflow__workflow_reject({id, reason})` (id optional) first,
+    then run the same single PLAN pass.
 <!-- /aw:verb replan -->
 <!-- aw:verb abandon -->
 - **`abandon <id> [reason]`** — cancel a task: it moves to `abandoned/`, the
@@ -227,12 +242,12 @@
 - **anything else** (including a free-text goal) — do not run it. Show this
   usage instead.
 <!-- /aw:verb unknown -->
-<!-- aw:verb new|retask|plan|claim|recover -->
+<!-- aw:verb new|retask|plan|claim|recover|replan -->
 Read the `workflow-orchestration` skill now — it is the authoritative protocol
 for how you (the main agent) drive the stages and how verdicts terminate the
 loop. It is scoped to these verbs on purpose: `status`, `kinds`, `doctor`,
-`stop` and the gate verbs never drive a stage, and the skill is larger than
-this whole command.
+`stop` and the other gate verbs never drive a stage, and the skill is larger
+than this whole command.
 
 The flow: `new` (interview → draft) → human reviews the draft (reshape with
 `retask <id>` if it's off) → approve queues it (asked inline right after
@@ -241,12 +256,12 @@ breath, or `plan <id>` later) and parks the plan in `plan-review/` →
 human reviews the plan → approve (asked inline, or `replan <why>`) → build it
 (asked inline as a separate question, or `claim` later) → `in-review/` →
 `approve` ships it.
-<!-- /aw:verb new|retask|plan|claim|recover -->
+<!-- /aw:verb new|retask|plan|claim|recover|replan -->
 <!-- aw:verb plan|claim|replan -->
 On a VERIFY or REVIEW FAIL the loop re-**builds** with the feedback threaded
 in, within the iteration cap; when the cap trips, the plan itself is suspect
-— a human sends it back with `/agentic-workflow:engineering replan <id> <why>`
-and the next PLAN pass addresses the failure.
+— a human sends it back with `/agentic-workflow:engineering replan <id> <why>`,
+which immediately re-runs PLAN with the failure threaded in.
 <!-- /aw:verb plan|claim|replan -->
 <!-- aw:verb new|retask|plan|claim -->
 When a loop you are driving hits a gate live (a draft just written, a plan

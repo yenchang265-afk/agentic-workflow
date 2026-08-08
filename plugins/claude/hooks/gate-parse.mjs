@@ -7,7 +7,7 @@
  * `/agentic-workflow:engineering` (or the bare `/engineering` disambiguation
  * Claude Code offers for plugin commands):
  *   approve [id]           → gate approve-any [id]   (unified folder-driven gate)
- *   replan [id] [reason]   → gate reject-any [id] [reason...]
+ *   replan [id] [reason]   → gate reject-any [id] [reason...]  (hybrid: the model then chains the re-plan)
  *   abandon <id> [reason]  → gate abandon <id> …     (→ abandoned/; id required)
  *   remove <id> [--force]  → gate remove <id> …      (hard-delete; id required)
  *
@@ -53,6 +53,10 @@ const CMD = "\\/(?:agentic-workflow:)?engineering(?=\\s|$)"
 // in the prompt is content rather than an invocation.
 const AT_START = "^\\s*"
 const APPROVE = new RegExp(`${AT_START}${CMD}\\s+approve(?!-)\\b[ \\t]*(.*)`, "i")
+// replan is the second HYBRID verb (see retask below): the rejection move is
+// deterministic, but the point of the gate is a REVISED plan — so on success
+// the turn continues and the model chains one PLAN pass (workflow_start →
+// plan author → advance; the verb block carries the procedure).
 const REPLAN = new RegExp(`${AT_START}${CMD}\\s+replan\\b[ \\t]*(.*)`, "i")
 // retask is the one HYBRID verb: its move is deterministic (queued/ → draft/, or
 // a refusal) but the reshape that follows is an interview only the model can
@@ -127,7 +131,7 @@ export const gateArgsFor = (prompt) => {
   if (replan) {
     const words = (replan[1] || "").trim().split(/\s+/).filter(Boolean)
     if (words.length) words[0] = unquote(words[0]) // the id; later words are the reason, kept verbatim
-    return { argv: ["gate", "reject-any", ...words] }
+    return { argv: ["gate", "reject-any", ...words], continueTurn: true }
   }
   const retask = prompt.match(RETASK)
   if (retask) {

@@ -2429,24 +2429,59 @@ export const handleRetask = async (deps: Deps, _sessionID: string, args: string,
 }
 
 /**
- * Handle `replan [id] [reason]` — the sole rejection verb. Sends a parked plan
- * back to `queued/` for re-planning. Auto-targets the single `plan-review/`
- * task; an explicit id may also name an `in-progress/` (cap-tripped) task.
- * When no leading token names a rejectable task, the whole argument is treated
- * as the reason and the single plan-review task is chosen.
- *
- * Report-and-stop: the whole flow — resolve, refuse (live loop / claim
- * marker), move, record the reason, commit — is deterministic in core, and
- * `noteThenMove` reports a failed move itself, so there is nothing left for a
- * model turn to verify. The returned outcome replaces the rendered markdown;
- * the markdown's replan block survives only when the plugin never ran, and is
- * written as that tripwire.
+ * Claim a queued task and queue a PLAN drive on this session — the one
+ * primitive every "plan it now" path shares (`plan <id>`, replan's chained
+ * re-plan). False = lost the claim race to another watcher, which then plans
+ * it there. Callers own the busy/liveness guards; this owns the atomic claim,
+ * spending any plan-request marker, and deferring the drive to the next idle.
  */
-export const handleReplan = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
+const claimForPlan = async (deps: Deps, sessionID: string, task: Task, config: Config): Promise<boolean> => {
+  if (!(await claimTask(deps.$, task))) return false
+  // Planning it now honours any plan request for it just as a claim walk
+  // would, so the marker must not outlive this — otherwise the board keeps
+  // showing "plan requested" for a task that is being planned right now.
+  await consumePlanRequest(deps.$, deps.directory, config.tasksDir, task.id, "queued")
+  clearWorkflow(sessionID)
+  await setPending(deps, sessionID, { kind: "start-plan", task, goal: taskGoal(task) })
+  return true
+}
+
+/**
+ * Handle `replan [id] [reason]` — the sole rejection verb, and since what the
+ * gate wants is a REVISED plan, it chains the re-plan: core records the
+ * rejection and re-queues the task plan-next, then this session claims it and
+ * fires a PLAN pass immediately — the revised plan parks back in
+ * `plan-review/` with the rejection reason threaded into its prompt.
+ * Auto-targets the single `plan-review/` task; an explicit id may also name an
+ * `in-progress/` (cap-tripped) task. When no leading token names a rejectable
+ * task, the whole argument is treated as the reason and the single plan-review
+ * task is chosen.
+ *
+ * The rejection half stays report-and-stop: resolve, refuse (live loop /
+ * claim marker), move, record the reason, commit — all deterministic in core,
+ * and `noteThenMove` reports a failed move itself. The chain is best-effort on
+ * top: a busy session, a claim race, or a stale core dist (no `data.id`)
+ * falls back to reporting core's outcome, whose plan-next marker already
+ * promises the next worker re-plans this task first. The returned outcome
+ * replaces the rendered markdown; the markdown's replan block survives only
+ * when the plugin never ran, and is written as that tripwire.
+ */
+export const handleReplan = async (deps: Deps, sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   try {
     const r = await rejectAny(gateCtx(deps, config), args.trim())
-    return report(client, r.message, gateVariant(r))
+    const id = r.ok && r.data.requeued && typeof r.data.id === "string" ? r.data.id : null
+    if (!id) return report(client, r.message, gateVariant(r))
+    // Chain the re-plan unless this session is mid-loop or the task is taken —
+    // the same guards `plan <id>` runs, minus the resolution core already did.
+    if (driving.has(sessionID) || getWorkflow(sessionID) || findSessionDriving(id)) {
+      return report(client, r.message, gateVariant(r))
+    }
+    const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
+    if (!queued || !(await claimForPlan(deps, sessionID, queued, config))) {
+      return report(client, r.message, gateVariant(r)) // raced by a watcher — it re-plans the task there
+    }
+    return report(client, `Plan rejected for "${queued.title}" — re-planning now… (a revised plan will park in plan-review/ for your gate)`, "info")
   } catch (err) {
     return report(client, `Replan failed: ${(err as Error).message}`, "error")
   }
@@ -2549,15 +2584,9 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   if (findSessionDriving(id)) {
     return report(client, `Task "${id}" is already being driven by a live loop.`, "warning")
   }
-  if (!(await claimTask(deps.$, queued))) {
+  if (!(await claimForPlan(deps, sessionID, queued, config))) {
     return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
   }
-  // Planning it by hand honours any hub plan request for it just as a claim
-  // would, so the marker must not outlive this — otherwise the board keeps
-  // showing "plan requested" for a task that is being planned right now.
-  await consumePlanRequest(deps.$, deps.directory, config.tasksDir, id, "queued")
-  clearWorkflow(sessionID)
-  await setPending(deps, sessionID, { kind: "start-plan", task: queued, goal: taskGoal(queued) })
   return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
 }
 

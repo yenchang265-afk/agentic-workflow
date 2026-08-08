@@ -270,8 +270,8 @@ export const TaskReview = ({
                   detail={
                     <>
                       <p>
-                        Moves the task back to queued/ with your comments as its audit note, and commits the move. The
-                        next PLAN pass must address them.
+                        Moves the task back to queued/ marked plan-next, with your comments as its audit note, and
+                        commits the move. The next PLAN pass runs this task first and must address them.
                       </p>
                       <p className="muted">Your comments travel as that note — nothing else about them is kept.</p>
                     </>

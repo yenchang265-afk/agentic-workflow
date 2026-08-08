@@ -123,13 +123,16 @@ Dispatch:
   agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
-- **`replan [id] [reason]`** — the sole rejection verb: send a parked plan
-  (or a cap-tripped `in-progress/` task, by id) back to `queued/` for
-  re-planning; the reason is recorded in the audit note and the next PLAN
-  pass must address it. Fully deterministic plugin work whose outcome
-  normally REPLACES this text — so if you are reading this, the plugin did
-  not run (not loaded, or its `@agentic-workflow/core` build is stale). Glob
-  `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
+- **`replan [id] [reason]`** — the sole rejection verb, and it chains the
+  re-plan: the plugin rejects the parked plan (or a cap-tripped
+  `in-progress/` task, by id), records the reason in the audit note, re-queues
+  the task marked plan-next, and immediately starts a PLAN pass on it in this
+  session — the revised plan parks back in `plan-review/` for the gate (a busy
+  session or a claim race falls back to plan-next, which the next
+  `claim`/`watch` honours first). Fully deterministic plugin work whose
+  outcome normally REPLACES this text — so if you are reading this, the plugin
+  did not run (not loaded, or its `@agentic-workflow/core` build is stale).
+  Glob `docs/tasks/*/<id>*`: the task will still sit in its old folder. Report
   that the gate did NOT happen, with the fix (`npm install` at the
   agentic-workflow repo root, then restart opencode) — never claim it did.
 <!-- /aw:verb replan -->
