@@ -198,7 +198,11 @@ test("agentModels wins over the stage-derived model", () => {
 // workflow-verify backs a stage in four kinds today. Two kinds asking for
 // different models is a genuine ambiguity a static binding cannot express, so it
 // is reported rather than resolved by whichever manifest happened to load last.
-test("one agent given two different stage models is reported, not silently resolved", () => {
+test("one agent given two different stage models is left unset, not silently resolved", () => {
+  // "Reported" has to mean UNSET: the installer prints "leaving the model
+  // unset for that agent", and keeping the first-iterated kind's model made
+  // that warning a lie — the agent file shipped with an arbitrary model baked
+  // in, chosen by manifest directory order.
   const { models, conflicts } = resolveAgentModels(
     {
       workflows: {
@@ -208,9 +212,41 @@ test("one agent given two different stage models is reported, not silently resol
     },
     MANIFESTS,
   )
-  assert.equal(models["workflow-verify"], "fast-1")
+  assert.equal(models["workflow-verify"], undefined)
   assert.equal(conflicts.length, 1)
   assert.match(conflicts[0], /workflow-verify/)
+})
+
+test("a third kind cannot resurrect a conflicted agent's model", () => {
+  // The conflict is a property of the agent, not of the last pair compared.
+  const { models, conflicts } = resolveAgentModels(
+    {
+      workflows: {
+        engineering: { stageModels: { verify: "fast-1" } },
+        "pr-sitter": { stageModels: { verify: "fast-2" } },
+        "main-sitter": { stageModels: { verify: "fast-1" } },
+      },
+    },
+    MANIFESTS,
+  )
+  assert.equal(models["workflow-verify"], undefined)
+  assert.ok(conflicts.length >= 1)
+})
+
+test("an explicit agentModels entry still resolves a conflicted agent", () => {
+  // The documented way out — it is applied after the stage pass and wins
+  // outright, so a conflict never leaves the operator stuck.
+  const { models } = resolveAgentModels(
+    {
+      workflows: {
+        engineering: { stageModels: { verify: "fast-1" } },
+        "pr-sitter": { stageModels: { verify: "fast-2" } },
+      },
+      agentModels: { "workflow-verify": "provider/decided-1" },
+    },
+    MANIFESTS,
+  )
+  assert.equal(models["workflow-verify"], "decided-1")
 })
 
 test("the same model in two kinds is not a conflict", () => {

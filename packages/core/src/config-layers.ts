@@ -271,8 +271,10 @@ export interface KindStages {
  * `agentModels.<agent>` is the explicit per-agent knob and wins outright.
  * Otherwise an agent inherits the model configured for the STAGE it backs, via
  * each kind's manifest. An agent backing two kinds' stages with different
- * models is a genuine ambiguity, so it is reported rather than silently
- * resolved — `workflow-verify` is shared by four kinds today.
+ * models is a genuine ambiguity, so it is reported AND left unset rather than
+ * silently resolved — `workflow-verify` is shared by four kinds today. An
+ * explicit `agentModels.<agent>` still resolves it, which is the documented
+ * way out.
  *
  * Promoted here from `scripts/qwen-agents.mjs` so the installer and core share
  * one `bareModel`: the local copy stripped only the FIRST path segment, so
@@ -288,6 +290,14 @@ export const resolveAgentModels = (
   const norm = (model: string): string => (bare ? bareModel(model) : model)
   const models: Record<string, string> = {}
   const conflicts: string[] = []
+  // Agents whose stage models disagreed. A conflict must leave the agent
+  // UNSET, which is what the docs above and the installer's warning both
+  // promise: `continue`-ing on the clash kept whichever kind was iterated
+  // first (manifests are read in directory order), so the operator was told
+  // "leaving the model unset for that agent" while an arbitrary one was in
+  // fact baked in. Membership is tracked separately from `models` because a
+  // LATER binding for the same agent must not resurrect it.
+  const conflicted = new Set<string>()
   const workflows = isPlainObject(config) && isPlainObject(config.workflows) ? config.workflows : {}
   for (const { kind, stages } of manifests) {
     const kindConfigRaw = workflows[kind]
@@ -296,8 +306,14 @@ export const resolveAgentModels = (
       const model = stageModels[stage.name]
       if (typeof model !== "string" || !model.trim() || !stage.agent) continue
       const value = norm(model.trim())
+      if (conflicted.has(stage.agent)) {
+        conflicts.push(`${stage.agent}: unset (conflicting stage models) vs "${value}" (${kind}.${stage.name})`)
+        continue
+      }
       if (models[stage.agent] && models[stage.agent] !== value) {
         conflicts.push(`${stage.agent}: "${models[stage.agent]}" vs "${value}" (${kind}.${stage.name})`)
+        conflicted.add(stage.agent)
+        delete models[stage.agent]
         continue
       }
       models[stage.agent] = value
