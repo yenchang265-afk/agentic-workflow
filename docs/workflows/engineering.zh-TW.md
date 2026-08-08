@@ -71,7 +71,7 @@ flowchart TB
         claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — 立即規劃一個任務，不必等巡查<br/><b>/agentic-workflow:engineering claim</b> — 一次性拉取<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session，<br/>透過原子性的 mkdir lock 認領<br/>（先取 in-progress/ 的可建置工作，再取 queued/ 來規劃）"]
         planstage["<b>PLAN</b><br/>agent：workflow-plan-author · 僅限任務檔案，於主樹（main tree）<br/>skill：planning-and-task-breakdown<br/>（相關時 + api-and-interface-design、deprecation-and-migration、<br/>documentation-and-adrs）<br/><i>就地寫入 ## Implementation Plan，<br/>然後暫存 —— 迴圈結束</i>"]
         build["<b>BUILD</b><br/>agent：workflow-build · edit ✅ bash ✅<br/>skills：incremental-implementation、<br/>test-driven-development<br/>（相關時 + frontend-ui-engineering、observability-and-instrumentation、<br/>code-simplification）<br/><i>在 feature/&lt;id&gt; 分支或 worktree 上進行 TDD，<br/>每次疊代一個 commit checkpoint</i>"]
-        verify["<b>VERIFY</b><br/>agent：workflow-verify · edit ❌ bash：測試白名單<br/>FAIL 時的 skill：debugging-and-error-recovery<br/><i>執行測試 + 驗收標準，<br/>裁定只透過 workflow_verdict 工具產生</i>"]
+        verify["<b>VERIFY</b><br/>agent：workflow-verify · edit ❌ bash：測試白名單<br/>FAIL 時的 skill：debugging-and-error-recovery<br/><i>迴圈先跑計畫的 agentic-checks（結束碼具約束力），<br/>再判驗收標準——裁定只透過 workflow_verdict 工具產生</i>"]
         review["<b>REVIEW</b><br/>agent：workflow-review · edit ❌ bash：唯讀<br/>skills：code-review-and-quality<br/>（+ security-and-hardening、performance-optimization）<br/><i>五軸向 diff 審查；可選擇每個軸各一次<br/>（stageFanout）或每個 reviewLens 各一次——取最差裁定</i>"]
     end
 
@@ -166,6 +166,21 @@ engineering 迴圈從不會自行推送或
 裁定只透過 `workflow_verdict` 外掛工具才可信——階段 agent 在文字中宣稱
 「PASS」會被忽略。階段 agent 無法核准任務、移動待辦資料夾或發布；每一次
 狀態間的轉換都由外掛和人類擁有。
+
+VERIFY 另外宣告 `discoverChecks`：階段開火前，迴圈會在工作樹中執行已核准計畫
+於 `### Verification` 的 `agentic-checks` 區塊所宣告的指令，其結束碼會約束裁決
+（0 不加任何東西，124/126/127 ⇒ ERROR，其餘 ⇒ FAIL）。agent 被告知那是既成
+事實，只能引用、不得重跑。
+
+比便利更重要的是兩個性質。指令在**計畫階段就被凍結**——區塊是任務檔裡的文字，
+每次迭代重新讀取——所以 BUILD→VERIFY→BUILD 每一輪的檢查方式完全相同；一個每次
+自行挑指令的階段，會在程式沒動的情況下讓裁決飄移。而能跑什麼由 **VERIFY 自己的
+bash 白名單**封頂：被發現的指令只有在該階段的 agent 本來就能主動執行時才會被接受。
+邊界是白名單而不是你對計畫的核准，因為任務檔位於 `tasksDir`——那是 clone 下來的
+repo 可以夾帶的內容。所有失敗模式都退化成「少跑幾個檢查 + 一則警告」：沒有區塊、
+JSON 壞掉、指令被拒、二進位檔沒安裝，迴圈都與這個功能出現前完全一樣。要自己釘選
+指令用 `workflows.engineering.stageChecks`（存在但為空的清單會同時關掉兩者），或用
+`"discoverChecks": false` 關閉這個管道。
 
 VERIFY 與 REVIEW 另外宣告 `requireEvidence`，因此兩者的 **PASS** 都必須列出
 自己實際執行過的指令與讀過的檔案（`evidence: [{ kind, ref, result }]`）。這些

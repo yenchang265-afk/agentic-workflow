@@ -110,6 +110,16 @@ const BaseConfigSchema = z.object({
   /** Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. */
   stageTimeoutMinutes: z.number().int().positive().default(60),
   /**
+   * Wall-clock cap on ONE driver-run check command (`workflow/checks.ts`).
+   * Separate from `stageTimeoutMinutes` because checks run OUTSIDE that cap on
+   * both hosts — OpenCode's stage timer races the model session, and the Claude
+   * host tests its deadline in `workflow_advance` while checks run back in
+   * `workflow_stage`. A timed-out check reports exit 124, which `classifyExit`
+   * reads as ERROR: the loop stops once for a human instead of re-firing a
+   * BUILD that will hang again.
+   */
+  checkTimeoutMinutes: z.number().int().positive().default(10),
+  /**
    * Repo-relative (or absolute) directory for per-task git worktrees. Each
    * loop's BUILD/VERIFY/REVIEW runs against its own worktree instead of
    * switching branches in the shared checkout — the human's tree is never
@@ -229,6 +239,18 @@ const BaseConfigSchema = z.object({
          * the driver execute an arbitrary command on first claim.
          */
         stageChecks: z.record(z.string(), z.array(CheckDefSchema)).optional(),
+        /**
+         * Turn the manifest's per-stage `discoverChecks` off (or on) for this
+         * kind — whether a check stage with no configured and no manifest checks
+         * may take them from the approved plan's `agentic-checks` block.
+         *
+         * NOT shell-bearing, deliberately: the value space is one boolean, and
+         * enabling it grants a repo nothing it does not already have, because
+         * every discovered command must pass the stage's own `bashAllowlist`,
+         * which its agent already runs against unconditionally. The shell-bearing
+         * boundary stays on `stageChecks`, which is arbitrary shell.
+         */
+        discoverChecks: z.boolean().optional(),
         /**
          * Changed diff lines past which a reviewer-role kind (review-sitter)
          * declines a PR instead of reviewing it. Unset ⇒
@@ -593,13 +615,47 @@ export const contextFor = (config: Config, kind: string, def: StageDef): Readonl
 /**
  * The check commands a stage runs before it fires: config
  * `workflows.<kind>.stageChecks.<stage>`, else the manifest stage's `checks`,
+ * else `discovered` (from the approved plan — see `workflow/discovered-checks.ts`),
  * else `[]` (no checks — byte-identical to before they existed).
  *
  * Replaces the manifest's list wholesale rather than merging into it, exactly as
- * `contextFor` replaces `context` and `modelFor` replaces `model`. Pure.
+ * `contextFor` replaces `context` and `modelFor` replaces `model`.
+ *
+ * A PRESENT config entry wins even when it is empty: `{ verify: [] }` means "my
+ * project's checks, and there are none", which must also suppress discovery or
+ * the explicit opt-out would not be one. `discovered` is defaulted so the
+ * callers that predate discovery keep today's behavior. Pure.
  */
-export const checksFor = (config: Config, kind: string, def: StageDef): readonly CheckDef[] =>
-  config.workflows[kind]?.stageChecks?.[def.name] ?? def.checks
+export const checksFor = (
+  config: Config,
+  kind: string,
+  def: StageDef,
+  discovered: readonly CheckDef[] = [],
+): readonly CheckDef[] => {
+  const configured = configuredChecks(config, kind, def)
+  if (configured) return configured
+  if (def.checks.length) return def.checks
+  return discovered
+}
+
+/**
+ * The stage's config-declared checks, or undefined when the user declared none.
+ *
+ * Separate from `checksFor` because PRESENT-but-empty is meaningful and an
+ * empty array is not distinguishable from "nothing" once merged: `{ verify: [] }`
+ * is the explicit "run nothing, and discover nothing" opt-out. Pure.
+ */
+export const configuredChecks = (config: Config, kind: string, def: StageDef): readonly CheckDef[] | undefined =>
+  config.workflows[kind]?.stageChecks?.[def.name]
+
+/**
+ * Whether a check stage may take its commands from the approved plan: config
+ * `workflows.<kind>.discoverChecks`, else the manifest stage's `discoverChecks`.
+ * Config wins so a user can turn the channel off for a shipped manifest they
+ * cannot edit — the same direction as `planVisualizationFor`. Pure.
+ */
+export const discoverChecksFor = (config: Config, kind: string, def: StageDef): boolean =>
+  config.workflows[kind]?.discoverChecks ?? def.discoverChecks
 
 /**
  * The `stageChecks` keys that name no stage of `kind` — the same silent-default

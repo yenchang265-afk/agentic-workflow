@@ -32,7 +32,8 @@ checkout, not the repo root. Read and test **there**: run test commands as
    are already recorded: they are established fact. Do not re-run them to
    confirm, and do not argue with them — a red one has already floored this
    stage's verdict, and no amount of reasoning in your transcript can lift it
-   (the escape hatch is removing the check from config, not disputing it here).
+   (the escape hatch is a human editing the plan's `agentic-checks` block or
+   pinning `stageChecks` in config, not disputing it here).
    Cite them in your evidence, and spend your run on the parts a command cannot
    decide: the criteria, and the tests themselves. Run something yourself only
    for what the block does not cover.

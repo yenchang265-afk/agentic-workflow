@@ -38,6 +38,20 @@ const PUBLISH_ALLOW = [
   "gh api *",
 ]
 
+const here = path.dirname(fileURLToPath(import.meta.url))
+const admission = JSON.parse(
+  fs.readFileSync(path.join(here, "..", "..", "..", "packages", "core", "src", "__fixtures__", "allowlist-admission-vectors.json"), "utf8"),
+)
+
+test("commandAllowed agrees with its core twin on every shared vector", () => {
+  // The same table packages/core/src/task/write-backstop.test.ts runs. core
+  // needs commandAllowed to admit a plan-discovered check command
+  // (workflow/discovered-checks.ts); this hook needs it to guard a stage
+  // agent's bash. Two private vector tables would let the twins drift silently.
+  for (const cmd of admission.allowed) assert.equal(commandAllowed(cmd, admission.globs), true, `must allow: ${cmd}`)
+  for (const cmd of admission.denied) assert.equal(commandAllowed(cmd, admission.globs), false, `must deny: ${cmd}`)
+})
+
 test("commandAllowed permits plain read/test commands", () => {
   assert.equal(commandAllowed("git status", VERIFY_ALLOW), true)
   assert.equal(commandAllowed("npm test", VERIFY_ALLOW), true)

@@ -199,20 +199,28 @@ what actually failed — never control flow, which is `verdict` alone.
 
 ### Declared check commands are established fact
 
-A check stage may carry **check commands**, declared in
-`workflows.<kind>.stageChecks` or the manifest stage's `checks`. The **driver**
-runs them in the stage's work tree before the stage fires, and the stage does
-not get to disagree:
+A check stage may carry **check commands** from any of three places, in
+precedence order: `workflows.<kind>.stageChecks`, the manifest stage's `checks`,
+or — when the stage sets `discoverChecks`, as engineering's VERIFY does — the
+`agentic-checks` block the approved plan declared. The **driver** runs them in
+the stage's work tree before the stage fires, and the stage does not get to
+disagree:
 
 - **Exit 0** adds nothing — the verdict is what the stage recorded.
-- **Exit 126/127** (not found / not executable) means the check could not run:
-  **ERROR**, which stops for a human without spending an iteration.
+- **Exit 124/126/127** (timed out / not found / not executable) means the check
+  could not run: **ERROR**, which stops for a human without spending an iteration.
 - **Any other exit code** resolves the stage to **FAIL**, however it voted.
+
+Discovered commands are frozen at plan time, not re-derived per run — that is
+the point, since a stage that picks its own commands each time moves the verdict
+without the code moving — and each one is admitted only if the stage's own bash
+allowlist would have let its agent run it.
 
 The mechanism is the findings one: each red check becomes a `critical` finding
 on a synthetic `checks` axis, so `effectiveVerdict` derives the stage down. A
-stage cannot argue a red check into a PASS; a broken check is fixed by removing
-it from config, not by disputing it in the transcript. Those commands also
+stage cannot argue a red check into a PASS; a broken check is fixed by a human
+editing the plan's block or pinning `stageChecks`, not by disputing it in the
+transcript. Those commands also
 count as **observed evidence**, so a `requireEvidence` stage should cite them
 rather than re-run them — re-running is exactly the run-to-run variance the
 declaration exists to remove.
