@@ -58,6 +58,7 @@ const baseConfig: Config = {
   stageTimeoutMinutes: 60,
   ignoreBacklog: true,
   worktreesDir: false,
+  taskBranch: "feature/",
   reviewLenses: [],
   workflows: {},
 }
@@ -277,4 +278,65 @@ test("shipPr never throws on an unexpected error", async () => {
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
   assert.ok(result.reason)
+})
+
+// --- Which branch gets shipped ---
+
+test("an explicitly recorded branch wins over the configured prefix", async () => {
+  // `extractRunBranch` reads it off the task file, and it is the authority: the
+  // prefix is only a guess once `taskBranch` may have changed since the run.
+  const $ = scriptedShell([
+    { cmd: "git -C /repo rev-parse --verify --quiet refs/heads/claude/my-feature", result: { exitCode: 0 } },
+    { cmd: "git -C /repo push -u origin claude/my-feature", result: { exitCode: 0 } },
+    { cmd: "gh pr view claude/my-feature", result: { exitCode: 1 } },
+    { cmd: "gh repo view", result: { exitCode: 0, stdout: "main\n" } },
+    { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/11\n" } },
+  ])
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, "claude/my-feature")
+  assert.deepEqual(result, { attempted: true, created: true, url: "https://github.com/acme/widgets/pull/11" })
+})
+
+test("a configured prefix names the branch when nothing was recorded", async () => {
+  const $ = scriptedShell([
+    { cmd: "git -C /repo rev-parse --verify --quiet refs/heads/wip-task-1", result: { exitCode: 0 } },
+    { cmd: "git -C /repo push -u origin wip-task-1", result: { exitCode: 0 } },
+    { cmd: "gh pr view wip-task-1", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/12\n" } },
+  ])
+  const result = await shipPr($, noop, "/repo", { ...baseConfig, taskBranch: "wip-" }, "engineering", "task-1", "T")
+  assert.equal(result.url, "https://github.com/acme/widgets/pull/12")
+})
+
+test("with taskBranch:false and nothing recorded, the tree's own branch is the last resort", async () => {
+  // Correct only because teardown deliberately leaves the tree on that branch;
+  // the recorded branch above is what makes this a fallback rather than the rule.
+  const $ = scriptedShell([
+    { cmd: "git -C /repo rev-parse --abbrev-ref HEAD", result: { exitCode: 0, stdout: "my-work\n" } },
+    { cmd: "git -C /repo rev-parse --verify --quiet refs/heads/my-work", result: { exitCode: 0 } },
+    { cmd: "git -C /repo push -u origin my-work", result: { exitCode: 0 } },
+    { cmd: "gh pr view my-work", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/13\n" } },
+  ])
+  const result = await shipPr($, noop, "/repo", { ...baseConfig, taskBranch: false }, "engineering", "task-1", "T")
+  assert.equal(result.url, "https://github.com/acme/widgets/pull/13")
+})
+
+test("the PR base never equals the head when gh repo view fails", async () => {
+  // In current-branch mode the tree is still ON the shipped branch at ship time,
+  // so the old `?? currentBranch` fallback asked for a PR from a branch onto
+  // itself and gh refused.
+  const calls: string[] = []
+  const $ = scriptedShell(
+    [
+      { cmd: "git -C /repo rev-parse --verify --quiet refs/heads/my-work", result: { exitCode: 0 } },
+      { cmd: "git -C /repo push -u origin my-work", result: { exitCode: 0 } },
+      { cmd: "gh pr view my-work", result: { exitCode: 1 } },
+      { cmd: "gh repo view", result: { exitCode: 1 } },
+      { cmd: "git -C /repo rev-parse --abbrev-ref HEAD", result: { exitCode: 0, stdout: "my-work\n" } },
+      { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/14\n" } },
+    ],
+    calls,
+  )
+  await shipPr($, noop, "/repo", { ...baseConfig, taskBranch: false }, "engineering", "task-1", "T", undefined, "my-work")
+  const create = calls.find((c) => c.includes("gh pr create"))
+  assert.ok(create?.includes("--head my-work"), create)
+  assert.ok(create?.includes("--base main"), create) // the "main" backstop, never --base my-work
 })

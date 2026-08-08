@@ -124,6 +124,14 @@ Neither covers separate opencode *processes* racing the same clone on
 `index.lock` during backlog commits — run additional watchers in their own
 clones for hard isolation.
 
+**Current-branch mode** (`taskBranch: false`) is the third: the loop cuts no
+branch and moves nothing, running in the main tree on the branch already checked
+out. It forces worktrees off, refuses to start on the default branch (its
+checkpoints `git add -A` the human's own tree), and holds a cross-process
+one-run-per-tree marker under `<git-common-dir>` — two runs sharing a branch
+would land inside each other's diff boundary. `git.base` is a commit sha there,
+not a branch.
+
 `recover <id>` resumes a run that died mid-build, from its **state snapshot** at
 the exact stage it reached or from the persisted plan when no valid snapshot
 exists; cross-process liveness is judged by the stage marker, not by any
@@ -281,6 +289,7 @@ full set is `docs/configuration.md`.
   "stageTimeoutMinutes": 60,    // wall-clock cap per stage
   "watchIntervalMinutes": 5,    // default watch cadence (override: watch 30s)
   "worktreesDir": ".workflow-worktrees", // per-task worktree isolation; false = shared-tree
+  "taskBranch": "feature/",     // work-branch prefix; false = build on the branch already checked out
   "worktreeSetup": "npm ci",    // OPTIONAL: run in a fresh worktree (deps aren't checked out)
   "reviewLenses": ["correctness", "security", "test-adequacy"], // OPTIONAL: multi-pass review
   "workflows": {                // OPTIONAL: per-kind sections; sitters off until "enabled": true

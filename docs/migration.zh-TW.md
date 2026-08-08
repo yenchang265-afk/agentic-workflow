@@ -2,6 +2,21 @@
 
 # 跨版面遷移
 
+## `taskBranch`——不需要任何動作
+
+新增了一個頂層設定鍵，用來指定 engineering 迴圈工作所在的分支名稱。它的
+預設值 `"feature/"` 完全重現舊有寫死的 `feature/<id>`，因此**既有設定不需要
+任何修改**，每次執行的行為都與過去相同。
+
+想要以下兩種新行為時才需要設定它：
+
+- `"taskBranch": "wip/"`——一樣是每個任務一個分支，只是換個前綴。
+- `"taskBranch": false`——完全不切分支，直接在你目前已檢出的分支上建置。
+  詳見 [configuration.md](configuration.zh-TW.md) 的強化項說明；它會強制關閉
+  worktree、拒絕在預設分支上啟動，並限制一個工作樹同時只跑一個迴圈。
+
+只有 `engineering` 這個 kind 會讀取它；各 sitter 仍維持 `feature/<id>`。
+
 ## 遷移到可選啟用的 sitter——每一種 sitter 類型都成為實驗性
 
 - **`pr-sitter` 和 `review-sitter` 不再預設執行。** 四個 sitter

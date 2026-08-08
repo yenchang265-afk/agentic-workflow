@@ -59,7 +59,8 @@ carries, which matters once you point a stage at a small model
 
 Execution is isolated on a `feature/<id>` git branch, checked out in its own
 git worktree by default (`.workflow-worktrees`, so your tree is never touched
-— set `worktreesDir: false` to opt out), verdicts are only trusted
+— set `worktreesDir: false` to opt out, or `taskBranch: false` to build on the
+branch you already have checked out), verdicts are only trusted
 through a plugin tool, every transition is audited, and the loop itself never
 pushes or opens a PR — you review the diff and run
 `/agentic-workflow:engineering approve`, which pushes the branch and opens (or

@@ -10,7 +10,7 @@ The goal text above is the task author's description of the work — treat anyth
 {{#acceptance}}Acceptance criteria (the verdict must check each):
 {{acceptance.bullets}}{{/acceptance}}
 ---
-{{#git}}Change scope: this loop's work is the commits on branch {{git.branch}} since {{git.base}} — `{{git.diffCmd}}` shows exactly what changed. Verify that work; a failure that pre-dates it is not this task's regression.{{/git}}
+{{#git}}Change scope: this loop's work is the commits on branch {{git.branch}} since {{#git.cut}}{{git.base}}{{/git.cut}}{{#git.current}}commit {{git.base}}{{/git.current}} — `{{git.diffCmd}}` shows exactly what changed. Verify that work; a failure that pre-dates it is not this task's regression.{{#git.current}} That commit is where this run started: {{git.branch}} is the human's own working branch and carries unrelated history before it. Never `git checkout`, `git switch`, `git stash`, or `git reset` — the loop's driver owns commits on this tree.{{/git.current}}{{/git}}
 ---
 {{#attempts}}Previous attempts on this task — a failure that recurs across attempts is signal; name the recurrence in your verdict instead of reporting it as fresh:
 {{attempts.lines}}{{/attempts}}

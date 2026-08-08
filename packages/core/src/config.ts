@@ -121,6 +121,32 @@ const BaseConfigSchema = z.object({
   /** Optional shell command run inside a freshly created worktree (e.g. "npm ci"). */
   worktreeSetup: z.string().min(1).optional(),
   /**
+   * Branch-name PREFIX the engineering loop cuts its work branch with
+   * (`<prefix><id>`), or `false` — "cut nothing; run BUILD/VERIFY/REVIEW on the
+   * branch the working tree already has checked out", for the human who is
+   * already on the branch this work belongs on. `false` implies shared-tree
+   * mode (`worktreesDirFor`): git refuses `worktree add` for a branch that is
+   * already checked out in the main tree, so the two cannot both hold.
+   *
+   * Honored for the `engineering` kind only — see `taskBranchFor`.
+   *
+   * The value is concatenated with a workflow id and handed to `git checkout -b`
+   * and `git push`, so ref-format is enforced HERE rather than surfacing as an
+   * opaque git failure three stages into a run.
+   */
+  taskBranch: z
+    .union([
+      z
+        .string()
+        .min(1)
+        .regex(/^[A-Za-z0-9][A-Za-z0-9._\-/]*$/, "must start with a letter or digit and use only letters, digits, . _ - /")
+        .refine((p) => !p.includes("..") && !p.includes("//") && !p.endsWith(".lock"), {
+          message: "must not contain '..' or '//', or end in '.lock' (git ref-format)",
+        }),
+      z.literal(false),
+    ])
+    .default("feature/"),
+  /**
    * Extra REVIEW lenses; each runs the review stage once more focused on that
    * lens, and the loop takes the worst verdict across all passes. Unset/[] →
    * a single review (today's behavior). See docs/design/improvements/04.
@@ -423,6 +449,47 @@ export const enabledWorkflowKinds = (config: Config): string[] => {
 /** The code platform a workflow kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config: Config, kind: string): CodePlatform =>
   config.workflows[kind]?.codePlatform ?? config.codePlatform ?? "github"
+
+/**
+ * The branch-name prefix a kind's loop cuts with, or null when `taskBranch:
+ * false` says to build on the branch already checked out. Pure.
+ *
+ * `taskBranch` is honored for `engineering` alone; every other kind keeps
+ * `feature/`, for two independent reasons that both make an override a
+ * regression rather than a feature:
+ *
+ *  - `pr-sitter` and `main-sitter` PRE-SET `state.git` from their work source (a
+ *    PR's own head branch, a remedy branch named after the red commit). That
+ *    branch is externally determined — the loop does not choose it and cannot.
+ *  - `dep-sitter`'s publish stage pins the literal `git push origin feature/*`
+ *    in its manifest bash allowlist, and those manifests ship read-only inside
+ *    the core package. Any other prefix makes its own guard deny its push.
+ */
+export const taskBranchPrefix = (config: Config, kind: string): string | null =>
+  kind !== "engineering" ? "feature/" : config.taskBranch === false ? null : config.taskBranch
+
+/** The branch a kind's loop cuts for `id`, or null in current-branch mode. Pure. */
+export const taskBranchFor = (config: Config, kind: string, id: string): string | null => {
+  const prefix = taskBranchPrefix(config, kind)
+  return prefix === null ? null : `${prefix}${id}`
+}
+
+/**
+ * The effective worktree root for a kind. `taskBranch: false` wins over
+ * `worktreesDir`: git refuses `worktree add` for a branch already checked out
+ * in the main tree, so a current-branch loop cannot also have a worktree.
+ *
+ * FORCED rather than rejected in the schema, because `worktreesDir` has a
+ * truthy DEFAULT — a `superRefine` would fail a user who wrote only
+ * `taskBranch: false` and blame a key they never set. (Seeing whether
+ * `worktreesDir` was explicitly written needs the pre-default raw object, i.e.
+ * `z.preprocess`, which returns a `ZodPipe` and would destroy both
+ * `ConfigSchema.shape` — what the hub's `knownTopLevelKeys` enumerates — and
+ * `.safeExtend`, which the OpenCode host's config depends on.) The override is
+ * never silent: `ensureIsolation` logs once when it drops a configured value.
+ */
+export const worktreesDirFor = (config: Config, kind: string): string | false =>
+  taskBranchPrefix(config, kind) === null ? false : config.worktreesDir
 
 /**
  * Azure DevOps config keys that no longer do anything, in config order.

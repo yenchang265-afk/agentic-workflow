@@ -237,7 +237,7 @@ test("a failed worktree add throws with git's own reason attached", async () => 
 test("teardown keeps the worktree so the next run resumes in it", async () => {
   const log: string[] = []
   const $ = makeShell(() => ({ exitCode: 0 }), log)
-  await teardownIsolation($, noopLog, "/repo", {
+  await teardownIsolation($, noopLog, "/repo", config, {
     ...state,
     git: { base: "main", branch: "feature/add-foo", worktree: WT },
     isolated: true,
@@ -248,12 +248,131 @@ test("teardown keeps the worktree so the next run resumes in it", async () => {
 test("shared-tree teardown still returns the main tree to its base branch", async () => {
   const log: string[] = []
   const $ = makeShell(() => ({ exitCode: 0 }), log)
-  await teardownIsolation($, noopLog, "/repo", {
+  await teardownIsolation($, noopLog, "/repo", config, {
     ...state,
     git: { base: "main", branch: "feature/add-foo" },
     isolated: true,
   })
   assert.ok(log.some((c) => c.includes("checkout main")), log.join(" | "))
+})
+
+// --- Current-branch mode (`taskBranch: false`) ---
+
+const HEAD_SHA = "0123456789abcdef0123456789abcdef01234567"
+const currentBranchConfig = { ...DEFAULT_CONFIG, taskBranch: false as const }
+
+/** Canned git for a clean repo on `headBranch`, with `main` as the default branch
+ *  and no current-branch lock held. */
+const currentBranchGit = (headBranch: string, over: (cmd: string) => FakeResult | undefined = () => undefined) =>
+  (cmd: string): FakeResult => {
+    const o = over(cmd)
+    if (o) return o
+    if (cmd.includes("is-inside-work-tree")) return { exitCode: 0 }
+    if (cmd.includes("path-format=absolute")) return { exitCode: 0, stdout: "/repo/.git" }
+    if (cmd.includes("abbrev-ref HEAD")) return { exitCode: 0, stdout: headBranch }
+    if (cmd.includes("symbolic-ref refs/remotes/origin/HEAD")) return { exitCode: 0, stdout: "refs/remotes/origin/main" }
+    if (cmd.includes("rev-parse HEAD")) return { exitCode: 0, stdout: HEAD_SHA }
+    if (cmd.includes("status --porcelain")) return { exitCode: 0, stdout: "" }
+    if (cmd.startsWith("cat ")) return { exitCode: 1 } // no lock owner file
+    return { exitCode: 0 } // mkdir (lock won), printf, mv, …
+  }
+
+test("taskBranch:false records HEAD's sha as the base and never moves the tree", async () => {
+  const log: string[] = []
+  const $ = makeShell(currentBranchGit("my-work"), log)
+  const next = await ensureIsolation($, noopLog, "/repo", currentBranchConfig, state)
+  assert.deepEqual(next.git, { base: HEAD_SHA, branch: "my-work", onCurrentBranch: true })
+  assert.equal(next.isolated, true)
+  // The whole point: no branch is cut and the human's checkout is never switched.
+  assert.ok(!log.some((c) => c.includes("checkout")), log.join(" | "))
+  assert.ok(!log.some((c) => c.includes("worktree add")), log.join(" | "))
+})
+
+test("taskBranch:false forces worktrees off even with a configured worktreesDir", async () => {
+  const log: string[] = []
+  const $ = makeShell(currentBranchGit("my-work"), log)
+  // `worktreesDir` keeps its truthy default here — git cannot check one branch
+  // out twice, so the branch policy has to win.
+  const next = await ensureIsolation($, noopLog, "/repo", { ...currentBranchConfig, worktreesDir: ".wt" }, state)
+  assert.equal(next.git?.worktree, undefined)
+  assert.ok(!log.some((c) => c.includes("worktree add")), log.join(" | "))
+})
+
+test("taskBranch:false refuses to start on the default branch, before any write", async () => {
+  const log: string[] = []
+  const $ = makeShell(currentBranchGit("main"), log)
+  await assert.rejects(
+    () => ensureIsolation($, noopLog, "/repo", currentBranchConfig, state),
+    /HEAD is on "main", this repo's default branch/,
+  )
+  // Nothing was committed, locked, or moved on the way to the refusal.
+  assert.ok(!log.some((c) => c.includes("commit") || c.includes("checkout") || c.includes("mkdir")), log.join(" | "))
+})
+
+test("taskBranch:false falls back to the conventional names when origin/HEAD is unset", async () => {
+  const $ = makeShell(
+    currentBranchGit("master", (cmd) =>
+      cmd.includes("symbolic-ref") || cmd.includes("config --get init.defaultBranch") ? { exitCode: 1 } : undefined,
+    ),
+  )
+  await assert.rejects(() => ensureIsolation($, noopLog, "/repo", currentBranchConfig, state), /HEAD is on "master"/)
+})
+
+test("taskBranch:false refuses when another workflow holds the tree's lock", async () => {
+  const $ = makeShell(
+    currentBranchGit("my-work", (cmd) => {
+      if (cmd.startsWith("mkdir /repo/.git/agentic-workflow/current-branch")) return { exitCode: 1 } // held
+      if (cmd.startsWith("cat ")) return { exitCode: 0, stdout: JSON.stringify({ id: "other-task", branch: "my-work" }) }
+      if (cmd.startsWith("find ")) return { exitCode: 1 } // fresh, not stale
+      return undefined
+    }),
+  )
+  await assert.rejects(() => ensureIsolation($, noopLog, "/repo", currentBranchConfig, state), /other-task/)
+})
+
+test("a current-branch reconcile verifies HEAD and refuses to move it back", async () => {
+  const log: string[] = []
+  const $ = makeShell(currentBranchGit("somewhere-else"), log)
+  const next = await ensureIsolation($, noopLog, "/repo", currentBranchConfig, {
+    ...state,
+    git: { base: HEAD_SHA, branch: "my-work", onCurrentBranch: true },
+    isolated: true,
+  })
+  // NOT isolated — `isolated` gates every main-tree write, and this run's
+  // `git add -A` must not land on the branch the human moved to.
+  assert.equal(next.isolated, false)
+  assert.match(next.isolationWarning ?? "", /moved from my-work to somewhere-else/)
+  assert.ok(!log.some((c) => c.includes("checkout")), log.join(" | "))
+})
+
+test("teardown in current-branch mode releases the lock and never checks out the sha base", async () => {
+  const log: string[] = []
+  const $ = makeShell((cmd) => (cmd.includes("path-format=absolute") ? { exitCode: 0, stdout: "/repo/.git" } : { exitCode: 0 }), log)
+  await teardownIsolation($, noopLog, "/repo", currentBranchConfig, {
+    ...state,
+    git: { base: HEAD_SHA, branch: "my-work", onCurrentBranch: true },
+    isolated: true,
+  })
+  // `checkoutBranch` would fall through to `git checkout -b <sha>` and strand
+  // the human on a branch named after a commit.
+  assert.ok(!log.some((c) => c.includes("checkout")), log.join(" | "))
+  // Under the git common dir, never in the working tree: this is the one mode
+  // whose checkpoints `git add -A` the human's own checkout.
+  assert.ok(log.some((c) => c.includes("rmdir /repo/.git/agentic-workflow/current-branch")), log.join(" | "))
+})
+
+test("a non-default taskBranch prefix names the branch; other kinds keep feature/", async () => {
+  const log: string[] = []
+  const $ = makeShell(gitHandler("main"), log)
+  const next = await ensureIsolation($, noopLog, "/repo", { ...config, taskBranch: "wip-" }, state)
+  assert.equal(next.git?.branch, "wip-add-foo")
+
+  // A sitter's branch is source-determined or pinned by its own push allowlist,
+  // so `taskBranch` must not reach it.
+  const sitterLog: string[] = []
+  const sitter$ = makeShell(gitHandler("main"), sitterLog)
+  const sitter = await ensureIsolation(sitter$, noopLog, "/repo", { ...config, taskBranch: "wip-" }, { ...state, kind: "dep-sitter" })
+  assert.equal(sitter.git?.branch, "feature/add-foo")
 })
 
 test("releaseWorktree removes the shipped task's worktree and prunes", async () => {

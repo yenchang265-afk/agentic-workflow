@@ -118,6 +118,10 @@ const sampleState = (manifest: WorkflowManifest, stage: string, sample: PreviewS
     ...(sample.task
       ? { task: { id: "sample-task-id", path: "docs/tasks/in-progress/sample-task-id.md", acceptance: ["<sample acceptance criterion>"] } }
       : {}),
+    // Deliberately the branch-cutting shape regardless of the watched repo's
+    // `taskBranch`: this route previews an UNSAVED manifest and has no repo
+    // config in scope, and the sample's job is to exercise the manifest's
+    // prompts, not to mirror one repo's branch policy.
     ...(sample.git ? { git: { base: "main", branch: "feature/sample-task-id", ...(worktree ? { worktree } : {}) } } : {}),
   }
 }

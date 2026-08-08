@@ -28,6 +28,15 @@ const GitRefSchema = z.object({
   base: z.string(),
   branch: z.string(),
   worktree: z.string().optional(),
+  /**
+   * Must be listed here at all because zod STRIPS unknown keys — the same trap
+   * `claimMarkerDir` documents below. Without it a snapshot-resumed
+   * current-branch run silently loses the flag, and `teardownIsolation` then
+   * reads its sha `base` as a branch and checks the human out onto it.
+   * Optional for the fail-closed reason `feedback` gives: a required field
+   * would invalidate every snapshot written before this existed.
+   */
+  onCurrentBranch: z.literal(true).optional(),
 })
 
 const TaskRefSchema = z.object({

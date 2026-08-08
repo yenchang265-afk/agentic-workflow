@@ -12,6 +12,7 @@ import {
   claimTask,
   releaseClaim,
   extractPlan,
+  extractRunBranch,
   extractReplanReason,
   unaddressedRejectionCount,
   findByIdIn,
@@ -206,6 +207,36 @@ test("extractPlan keeps a legitimate blockquote inside a plan", () => {
 // The exact note shape `replanTask` writes: marker, fixed prose, reason, stamp.
 const rejectionNote = (reason?: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string =>
   `\n> Plan rejected — sent back to queued for re-planning${reason ? ` — ${reason}` : ""} [${stamp}]\n`
+
+// The exact note shape `runDone` writes. The branch is recorded here because
+// nothing else survives to the ship gate — the state snapshot is cleared by
+// `runDone` itself, and `shipTask` runs later from a fresh process.
+const doneNote = (branch?: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string =>
+  `\n> Loop done — review passed${branch ? ` on branch ${branch}` : ""}, awaiting human diff review [${stamp}]\n`
+
+test("extractRunBranch reads the branch the completed run built on", () => {
+  assert.equal(extractRunBranch(task("a", 0, `Body.\n${doneNote("claude/my-feature")}`)), "claude/my-feature")
+})
+
+test("extractRunBranch lets the newest run win", () => {
+  // A replanned-and-rebuilt task carries one note per run; only the last names
+  // the branch that actually holds the work.
+  const body = doneNote("feature/first", "2026-01-02T00:00:00.000Z by dev") + doneNote("feature/second", "2026-01-03T00:00:00.000Z by dev")
+  assert.equal(extractRunBranch(task("a", 0, body)), "feature/second")
+})
+
+test("extractRunBranch returns undefined for a note without a branch, or no note at all", () => {
+  assert.equal(extractRunBranch(task("a", 0, doneNote())), undefined)
+  assert.equal(extractRunBranch(task("a", 0, "Just a description.")), undefined)
+})
+
+test("extractRunBranch ignores an unstamped line and rejects a non-ref branch", () => {
+  // This value reaches `git push`, so a plan or comment merely QUOTING the note
+  // must not be able to inject one.
+  const quoted = "\n> Loop done — review passed on branch attacker/branch, awaiting human diff review\n"
+  assert.equal(extractRunBranch(task("a", 0, quoted)), undefined)
+  assert.equal(extractRunBranch(task("a", 0, doneNote("--upload-pack=evil"))), undefined)
+})
 
 test("extractReplanReason reads the reason off a pending rejection note", () => {
   // A reason may itself contain ` — `; only the FIRST fixed-prose prefix splits.

@@ -130,6 +130,7 @@ import {
   unknownStageModelKeys,
   deprecatedAdoKeys,
   unreviewedAxes,
+  worktreesDirFor,
 } from "@agentic-workflow/core/config"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
@@ -748,11 +749,11 @@ const report = async (
 const ensureIsolation = (deps: Deps, config: Config, state: WorkflowState): Promise<WorkflowState> =>
   coreEnsureIsolation(deps.$, deps.log, deps.directory, config, state)
 
-const teardownIsolation = (deps: Deps, state: WorkflowState): Promise<void> =>
+const teardownIsolation = (deps: Deps, config: Config, state: WorkflowState): Promise<void> =>
   // Gate on `isolated`, not `git`: a PR source pre-sets `git` to name the branch to
   // isolate onto, so a stage that never isolated (pr-sitter `triage` → done) must NOT
   // reach `coreTeardownIsolation`, which would checkout the base branch on the main tree.
-  state.isolated ? coreTeardownIsolation(deps.$, deps.log, deps.directory, state) : Promise.resolve()
+  state.isolated ? coreTeardownIsolation(deps.$, deps.log, deps.directory, config, state) : Promise.resolve()
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. */
 const workTree = (deps: Deps, state: WorkflowState): string => workflowWorkTree(deps.directory, state)
@@ -1784,7 +1785,7 @@ const driveChain = async (
       // Mirrors the `retryable: true` on this path's TerminalOutcome below.
       await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`, true)
       await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): incomplete — ${how} during ${stage}`)
-      await teardownIsolation(deps, step.state)
+      await teardownIsolation(deps, config, step.state)
       // The drive is over — release the claim marker (any stage). This guard
       // bypasses `runTerminal`, so without it an ESC/stop during PLAN left the
       // queued/ claim held: `plan <id>` then lied "just claimed by another
@@ -2164,12 +2165,18 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   const idleMayClaim = claimsOnIdle(watchTriggerMode.get(sessionID) ?? "poll")
   const shouldWatch = ((watching.has(sessionID) && idleMayClaim) || oneShotClaim) && !getWorkflow(sessionID)
   if (!work && !shouldWatch) return
-  // Serialize drives per working tree ONLY in shared-tree mode — there, two
-  // loops would switch branches out from under each other. In worktree mode
-  // each drive owns its own checkout, so concurrent drives are safe and the
-  // lock is skipped (`ensureIsolation` throws rather than falling back to
-  // shared-tree switching, so the main tree's HEAD is never touched).
-  const serialize = !config.worktreesDir
+  // Serialize drives per working tree whenever they SHARE one — shared-tree
+  // mode (two loops would switch branches out from under each other) and
+  // current-branch mode (`taskBranch: false`, where two loops would commit
+  // inside each other's diff boundary). In worktree mode each drive owns its own
+  // checkout, so concurrent drives are safe and the lock is skipped
+  // (`ensureIsolation` throws rather than falling back to shared-tree switching,
+  // so the main tree's HEAD is never touched).
+  //
+  // In-process only — this Set belongs to one plugin instance. Current-branch
+  // mode additionally holds a cross-process marker in `ensureIsolation`, because
+  // there a second host's drive corrupts a verdict rather than a checkout.
+  const serialize = !worktreesDirFor(config, "engineering")
   if (serialize && executingDirs.has(deps.directory)) return
   if (work) pending.delete(sessionID)
   driving.add(sessionID)
@@ -2228,7 +2235,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       await renderMetrics(deps, sessionID, config, state, "error", message)
       if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
       await checkpoint(deps, config, state, `loop(${workflowId(state)}): incomplete — loop error`)
-      await teardownIsolation(deps, state)
+      await teardownIsolation(deps, config, state)
     } else {
       runSamples.delete(sessionID)
     }

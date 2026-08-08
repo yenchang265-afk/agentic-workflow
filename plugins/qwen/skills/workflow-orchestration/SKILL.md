@@ -83,7 +83,8 @@ before you advance — and never pass or invent a `model`. Changing
    without waiting for a claim), and
    `/agentic-workflow:pr-sitter claim` passes `{kind: "pr-sitter"}` to poll its
    PRs instead. An in-progress task is claimed, isolated (the `feature/<id>`
-   branch, or a git worktree when `worktreesDir` is configured), and entered
+   branch — or the branch already checked out when `taskBranch: false`, or a git
+   worktree when `worktreesDir` is configured), and entered
    at BUILD; a queued task started by `workflow_start` is claimed and entered at
    PLAN with **no git
    isolation** (it writes only the task file, in the main tree). The composed

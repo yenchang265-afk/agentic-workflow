@@ -223,6 +223,17 @@ export const ConfigEditor = () => {
             <Field label="worktree setup command" path="worktreeSetup" provenance={prov("worktreeSetup")} hint="e.g. npm ci — runs in a fresh worktree">
               <input value={str("worktreeSetup")} onChange={(e) => setOrClear("worktreeSetup", e.target.value)} />
             </Field>
+            <Field
+              label="task branch prefix"
+              path="taskBranch"
+              provenance={prov("taskBranch")}
+              hint='"feature/" cuts a branch per task; set to "false" to build on the branch you have checked out'
+            >
+              <input
+                value={str("taskBranch")}
+                onChange={(e) => setOrClear("taskBranch", e.target.value, (s) => (s === "false" ? false : s))}
+              />
+            </Field>
             <Field label="review lenses" path="reviewLenses" provenance={prov("reviewLenses")} hint="comma-separated, max 5 — each runs REVIEW again focused on that lens">
               <input
                 value={(pending("reviewLenses") as string[] | undefined)?.join(", ") ?? ""}
