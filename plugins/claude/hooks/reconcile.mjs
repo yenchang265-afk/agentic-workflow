@@ -244,7 +244,7 @@ var main = async () => {
   }
   const anomalies = await auditBacklog(fsClient, root, tasksDir);
   const pluginRoot = process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT || process.env.CLAUDE_PLUGIN_ROOT || path2.resolve(path2.dirname(fileURLToPath(import.meta.url)), "..");
-  const serverBuilt = fs2.existsSync(path2.join(pluginRoot, "mcp-server", "dist", "server.js"));
+  const serverBuilt = fs2.existsSync(process.env.AGENTIC_WORKFLOW_SERVER_JS || path2.join(pluginRoot, "mcp-server", "dist", "server.js"));
   const lines = [];
   if (!serverBuilt)
     lines.push(

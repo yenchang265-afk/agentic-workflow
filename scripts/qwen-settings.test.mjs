@@ -13,7 +13,7 @@ import { bareModel, resolveAgentModels, withModel } from "./qwen-agents.mjs"
  */
 
 const fragment = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, "..", "plugins", "qwen", "hooks", "hooks.json"), "utf8"))
-const resolved = () => resolveFragment(fragment, "/plugin/root")
+const resolved = () => resolveFragment(fragment, "/plugin/root", "/repo/dist/server.js")
 const merge = (settings) => mergeOwned(settings, { serverJs: "/repo/dist/server.js", fragment: resolved() })
 
 test("merge preserves unrelated keys verbatim", () => {
@@ -66,7 +66,7 @@ test("the merged MCP server carries the qwen host switch and an absolute server 
   assert.equal(entry.args[0], "/repo/dist/server.js")
 })
 
-test("every hook resolves the plugin root and declares both env vars", () => {
+test("every hook resolves the plugin root and declares every env var", () => {
   const r = resolved()
   const hooks = Object.values(r.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks))
   assert.ok(hooks.length >= 5, `expected every hook; got ${hooks.length}`)
@@ -75,8 +75,31 @@ test("every hook resolves the plugin root and declares both env vars", () => {
     assert.match(h.command, /^node "\/plugin\/root\/hooks\//)
     assert.equal(h.env.AGENTIC_WORKFLOW_HOST, "qwen")
     assert.equal(h.env.AGENTIC_WORKFLOW_PLUGIN_ROOT, "/plugin/root")
+    // The server is NOT under the plugin root on this host — it is Claude's
+    // build, reused. A hook that derives `<pluginRoot>/mcp-server/dist` finds
+    // nothing, which is what made every gate verb refuse with "not built" and
+    // banner-warned at the top of every healthy session.
+    assert.equal(h.env.AGENTIC_WORKFLOW_SERVER_JS, "/repo/dist/server.js")
     assert.ok(String(h.name).startsWith("agentic-workflow"), `${h.name} would not be removed on uninstall`)
   }
+})
+
+test("the stamped server path is the one the MCP entry runs, not a plugin-root guess", () => {
+  // The two must agree: the gate CLI and the MCP server are the same binary,
+  // and a hook pointed anywhere else fails open into a fabricated gate.
+  const r = resolved()
+  const entry = mergeOwned({}, { serverJs: "/repo/dist/server.js", fragment: r }).mcpServers["agentic-workflow"]
+  const hooks = Object.values(r.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks))
+  for (const h of hooks) assert.equal(h.env.AGENTIC_WORKFLOW_SERVER_JS, entry.args[0])
+  assert.ok(!entry.args[0].startsWith("/plugin/root"), "the qwen plugin root has no mcp-server/ — that was the bug")
+})
+
+test("resolveFragment omits the server var when no path is given", () => {
+  // The `remove` path and any older caller pass no serverJs; stamping an
+  // `undefined` would poison the env with a literal "undefined" path.
+  const r = resolveFragment(fragment, "/plugin/root")
+  const hooks = Object.values(r.hooks).flatMap((groups) => groups.flatMap((g) => g.hooks))
+  for (const h of hooks) assert.ok(!("AGENTIC_WORKFLOW_SERVER_JS" in h.env))
 })
 
 // The four events must match the Claude plugin's, or a guard silently never runs.

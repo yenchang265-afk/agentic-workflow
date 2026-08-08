@@ -100,17 +100,33 @@ export const mergeOwned = (settings, { serverJs, fragment }) => {
   return next
 }
 
-/** Substitute the plugin root into the fragment's command strings. */
-export const resolveFragment = (fragment, pluginRoot) => {
+/**
+ * Substitute the plugin root into the fragment's command strings.
+ *
+ * Two env vars, because on this host they name DIFFERENT directories: the
+ * plugin root is `plugins/qwen` (its `hooks/` and `verbs/` live there), but the
+ * MCP server is built once under `plugins/claude/mcp-server/` and reused —
+ * `plugins/qwen/mcp-server/` does not exist and never will. The hooks used to
+ * derive the server from the plugin root alone, so `dist/server.js` was ALWAYS
+ * missing on Qwen: every gate verb blocked the turn with "the plugin is not
+ * built — run ./install.sh qwen" (which could not fix it, and blocked the MCP
+ * fallback too), and every session opened with a false "not built" banner.
+ * `serverJs` is optional so the `remove` path and older callers still work.
+ */
+export const resolveFragment = (fragment, pluginRoot, serverJs) => {
   const raw = JSON.stringify(fragment).replaceAll("${AGENTIC_WORKFLOW_PLUGIN_ROOT}", pluginRoot)
   const resolved = JSON.parse(raw)
   delete resolved._comment
   // The hooks run under bare `node` from this path; tell them where the plugin
-  // lives so gate-command can find verbs/ and the MCP server's dist.
+  // lives so gate-command can find verbs/, and where the MCP server's dist is.
   for (const groups of Object.values(resolved.hooks ?? {})) {
     for (const group of groups) {
       for (const hook of group.hooks ?? []) {
-        hook.env = { ...(hook.env ?? {}), AGENTIC_WORKFLOW_PLUGIN_ROOT: pluginRoot }
+        hook.env = {
+          ...(hook.env ?? {}),
+          AGENTIC_WORKFLOW_PLUGIN_ROOT: pluginRoot,
+          ...(serverJs ? { AGENTIC_WORKFLOW_SERVER_JS: serverJs } : {}),
+        }
       }
     }
   }
@@ -155,7 +171,7 @@ const main = () => {
     console.error(`qwen-settings: cannot read ${fragmentPath}`)
     process.exit(1)
   }
-  write(file, mergeOwned(existing, { serverJs, fragment: resolveFragment(fragment, pluginRoot) }))
+  write(file, mergeOwned(existing, { serverJs, fragment: resolveFragment(fragment, pluginRoot, serverJs) }))
   console.log(`qwen-settings: merged agentic-workflow MCP server + hooks into ${file}`)
 }
 

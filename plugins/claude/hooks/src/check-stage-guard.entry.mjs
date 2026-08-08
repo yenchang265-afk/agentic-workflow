@@ -186,8 +186,12 @@ const main = async () => {
   // explicitly leaves the worktree blocks.
   //
   // Runs BEFORE the check-stage allowlist so the allowlist sees the command that
-  // will actually execute — the manifest lists the compound `cd * && <runner>`
-  // form, so a bare `npm test` in VERIFY passes only once it has been pinned.
+  // will actually execute. The manifests declare BARE forms only (a hand-written
+  // `cd * && ` prefix there fails scripts/workflow-allowlist.test.mjs); the
+  // compound twins exist solely in OpenCode's generated frontmatter, whose
+  // matcher tests the whole string. This host instead splits on `&&` and matches
+  // each segment, accepting a bare `cd` as its own — so a pinned `cd <wt> && npm
+  // test` and an unpinned `npm test` both match the same bare `npm test*` glob.
   const stageWorktree = typeof marker.worktree === "string" && marker.worktree ? marker.worktree : null
   // The worktree the LOOP owns, regardless of whether THIS stage is isolated
   // (engineering plan is `isolation: "none"`). Without it every write during an

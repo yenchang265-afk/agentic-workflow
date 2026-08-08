@@ -111,7 +111,13 @@ const main = async () => {
   const args = dispatch.argv
   const label = args.slice(1).join(" ")
 
-  const serverJs = path.join(pluginRoot, "mcp-server", "dist", "server.js")
+  // AGENTIC_WORKFLOW_SERVER_JS first: on hosts that REUSE this plugin's built
+  // server (Qwen installs `plugins/qwen` as its plugin root but runs
+  // `plugins/claude/mcp-server/dist/server.js`), the server does not live under
+  // the plugin root at all. Deriving it from the root alone made `distExists`
+  // permanently false there, so every gate verb blocked with "not built" and
+  // re-running the installer could never fix it.
+  const serverJs = process.env.AGENTIC_WORKFLOW_SERVER_JS || path.join(pluginRoot, "mcp-server", "dist", "server.js")
 
   const distExists = fs.existsSync(serverJs)
   const res = distExists
@@ -139,7 +145,7 @@ const main = async () => {
   // letting it proceed is exactly how a second copy of a live task's id gets
   // authored into draft/.
   if (dispatch.continueTurn && outcome.ok) {
-    const context = verbContext(pluginRoot, verbFor(prompt), cwd)
+    const context = verbContext(pluginRoot, verbFor(prompt))
     return augment(context ? `${message}\n\n${context}` : message)
   }
 
