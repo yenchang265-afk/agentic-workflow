@@ -2930,9 +2930,23 @@ export const handleCommand = async (
       for (const [status, ids] of [["queued", heldQueued], ["in-progress", heldInProgress]] as const) {
         if (!ids.length) continue
         const tasks = await listByStatus(client, deps.directory, config.tasksDir, status, deps.log)
+        // Liveness must be judged ACROSS processes, not just in this one.
+        // `findSessionDriving` only knows this app's own sessions, so a task
+        // driven by the Claude host (or another OpenCode instance) reads as
+        // "not driving" here — and paired with `isOrphanedStartedClaim`, which
+        // ignores the CLAIMED/BUILD body on purpose, doctor would release a
+        // LIVE drive's claim the moment its marker aged past the window (a
+        // stalled orchestrator, a slow subagent). The stage marker is the
+        // cross-process witness (deadline + writer pid), same oracle the hub's
+        // doctor uses; a dead or expired one still releases, so the wedged
+        // markers doctor exists for are unaffected.
+        const liveDriven = new Set<string>()
+        for (const id of ids) {
+          if (await taskDrivenByStageMarker(deps.$, deps.directory, config.tasksDir, id)) liveDriven.add(id)
+        }
         released.push(
           ...(await releaseOrphanedClaims(deps.$, tasks, ids, path.join(deps.directory, config.tasksDir, status), {
-            isDriving: (id) => findSessionDriving(id) !== undefined,
+            isDriving: (id) => findSessionDriving(id) !== undefined || liveDriven.has(id),
             staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
             // Doctor releases a stale, undriven marker whatever the body says
             // (`isOrphanedStartedClaim`) — the default rule's `isClaimable`

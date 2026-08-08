@@ -113,6 +113,52 @@ test("a heading is kept when shared prose sits under it — that prose is its se
   assert.match(sliceCommandPrompt(BODY, "status")!, /## Authoring/)
 })
 
+test("headings the user pasted in their argument are never dropped", () => {
+  // $ARGUMENTS is substituted BEFORE the hook sees the body, so the tidy pass
+  // runs over the user's own text. Dropping a heading merely because the next
+  // line is also a heading deleted content out of a pasted spec — an outcome
+  // the shared-is-the-complement promise forbids, and one the user cannot see.
+  const argument = ["build the importer", "## Goals", "## Non-goals", "- keep it small"].join("\n")
+  const slice = sliceCommandPrompt(`arg was: ${argument}\n\n${BODY}`, "new")!
+  assert.match(slice, /## Goals/, "an argument heading followed by another heading survives")
+  assert.match(slice, /## Non-goals/)
+  assert.match(slice, /- keep it small/)
+})
+
+test("a trailing heading in the argument survives too", () => {
+  // The end-of-input arm was the other half of the same bug: nothing follows
+  // the last heading, which read as "emptied" regardless of the slice. The
+  // engineering command substitutes the argument at more than one site, so it
+  // really can land at the very end of the rendered body.
+  const argument = "ship it\n## Open questions"
+  const slice = sliceCommandPrompt(`${BODY}\n\nrepeat: ${argument}`, "status")!
+  assert.match(slice, /## Open questions/)
+})
+
+test("a heading is still dropped when the slice is what emptied it", () => {
+  // The guard is "did the slice remove anything here", not "is the next line a
+  // heading" — so genuine emptied sections must still go.
+  const body = [
+    "<!-- aw:verb y -->",
+    "y only",
+    "<!-- /aw:verb y -->",
+    "",
+    "## Kept",
+    "",
+    "shared prose",
+    "",
+    "## Gone",
+    "",
+    "<!-- aw:verb x -->",
+    "x only",
+    "<!-- /aw:verb x -->",
+  ].join("\n")
+  const slice = sliceCommandPrompt(body, "y")!
+  assert.doesNotMatch(slice, /## Gone/, "the heading whose only content was x's block goes with it")
+  assert.match(slice, /## Kept/, "a heading with shared prose under it stays")
+  assert.match(slice, /shared prose/)
+})
+
 test("one block can serve a verb and its alias", () => {
   assert.match(sliceCommandPrompt(BODY, "stop")!, /stop instructions/)
   assert.match(sliceCommandPrompt(BODY, "abort")!, /stop instructions/)

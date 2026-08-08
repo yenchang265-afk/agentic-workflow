@@ -248,7 +248,7 @@ var main = async () => {
   if (dispatch.usage) return block(dispatch.usage);
   const args = dispatch.argv;
   const label = args.slice(1).join(" ");
-  const serverJs = path2.join(pluginRoot, "mcp-server", "dist", "server.js");
+  const serverJs = process.env.AGENTIC_WORKFLOW_SERVER_JS || path2.join(pluginRoot, "mcp-server", "dist", "server.js");
   const distExists = fs2.existsSync(serverJs);
   const res = distExists ? spawnSync("node", [serverJs, ...args], {
     cwd,
@@ -263,7 +263,7 @@ var main = async () => {
   if (outcome.action === "pass") return injectVerb();
   const message = outcome.message || `Gate ${label} ${outcome.ok ? "done" : "failed \u2014 see the backlog"}.`;
   if (dispatch.continueTurn && outcome.ok) {
-    const context = verbContext(pluginRoot, verbFor(prompt), cwd);
+    const context = verbContext(pluginRoot, verbFor(prompt));
     return augment(context ? `${message}
 
 ${context}` : message);

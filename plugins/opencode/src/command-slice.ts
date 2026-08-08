@@ -78,28 +78,70 @@ const tagLines = (rendered: string): Line[] | undefined => {
 }
 
 /**
+ * Marks a line the slice removed. Removed lines are kept in place as sentinels
+ * rather than spliced out, because `tidy` must distinguish "this heading's
+ * section was emptied BY THE SLICE" from "these two headings were always
+ * adjacent" — and once the lines are gone those look identical.
+ */
+const DROP = Symbol("dropped by the slice")
+type Sliced = string | typeof DROP
+
+const isHeading = (line: string): boolean => /^#{1,6}\s/.test(line)
+
+/**
  * Drop headings the slice emptied, then collapse the blank runs the removed
  * blocks left behind. A heading whose section is gone reads as a promise the
  * slice does not keep ("## Human gates" with nothing under it), and the
  * `\n{3,}` collapse is the same idiom scripts/gen-prompts.mjs uses after
  * dropping a host block.
+ *
+ * A heading is dropped only when the slice actually emptied it: the scan must
+ * see at least one REMOVED line before reaching either the next kept heading or
+ * the end. Without that condition this also deleted headings that were adjacent
+ * in the source — and since `$ARGUMENTS` is substituted into the body BEFORE
+ * the hook runs, "the source" includes the user's own text. A pasted spec whose
+ * `## Goals` was immediately followed by `## Non-goals` silently lost the first
+ * heading, which is precisely the "text outside every block is always kept"
+ * promise this module opens with. (`neutralizeArgumentMarkers` defuses marker
+ * lines in the argument; nothing defuses a `#`, and nothing should have to.)
  */
-const tidy = (lines: string[]): string => {
+const tidy = (lines: readonly Sliced[]): string => {
   const kept = [...lines]
   // Iterate to a fixpoint: emptying "## Introspection" can in turn empty the
   // "## Execution" above it once everything between them is gone.
   for (let changed = true; changed; ) {
     changed = false
     for (let i = 0; i < kept.length; i++) {
-      if (!/^#{1,6}\s/.test(kept[i]!)) continue
-      const next = kept.slice(i + 1).find((line) => line.trim().length > 0)
-      if (next !== undefined && !/^#{1,6}\s/.test(next)) continue
-      kept.splice(i, 1)
+      const line = kept[i]
+      if (typeof line !== "string" || !isHeading(line)) continue
+      let sawDropped = false
+      let emptied = true
+      for (let j = i + 1; j < kept.length; j++) {
+        const next = kept[j]!
+        // Sentinels and blanks are skipped, never decisive: a section whose
+        // verb blocks were dropped but whose SHARED prose survives is not
+        // empty, and that prose can sit below the sentinels.
+        if (next === DROP) {
+          sawDropped = true
+          continue
+        }
+        if (next.trim().length === 0) continue
+        emptied = isHeading(next)
+        break
+      }
+      if (!emptied || !sawDropped) continue
+      // A dropped heading is itself a removal, so the heading above it can
+      // empty in the same pass.
+      kept[i] = DROP
       changed = true
       break
     }
   }
-  return kept.join("\n").replace(/\n{3,}/g, "\n\n").trim()
+  return kept
+    .filter((line): line is string => typeof line === "string")
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
 }
 
 /**
@@ -155,5 +197,5 @@ export const sliceCommandPrompt = (rendered: string, verb: string): string | und
   if (!tagged) return undefined
   const wanted = verb.trim().toLowerCase() || BARE_VERB
   if (!tagged.some((line) => line.verbs?.includes(wanted))) return undefined
-  return tidy(tagged.filter((line) => line.verbs === null || line.verbs.includes(wanted)).map((line) => line.text))
+  return tidy(tagged.map((line) => (line.verbs === null || line.verbs.includes(wanted) ? line.text : DROP)))
 }

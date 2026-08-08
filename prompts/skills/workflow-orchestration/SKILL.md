@@ -78,9 +78,10 @@ concreteness — a new workflow kind needs no edit to this protocol.
 {{#host claude}}
 The same responses may also carry a `model` field — the model the user
 configured for that stage (manifest `model` or config
-`workflows.<kind>.stageModels`). When present, pass it as the {{spawnTool}}'s
-`model` parameter when spawning that stage's subagent; when absent, don't set
-`model` (host default). Never hardcode a per-stage model.
+`workflows.<kind>.stageModels`). It is **already bound for you**: a
+`PreToolUse` hook rewrites the spawn call's `model` before the tool runs, so
+the subagent starts on the configured model whether or not you set anything.
+Don't hardcode a per-stage model, and don't work around the field.
 {{/host}}
 {{#host qwen}}
 Responses carry no `model` field on this host: the `agent` tool has no per-call
@@ -157,8 +158,8 @@ before you advance — and never pass or invent a `model`. Changing
    `{fire, review}`; FAIL → `{fire, build}` (re-build, threading the failure)
    if the iteration budget remains, else `{stop}`; ERROR → `{stop}`.
 5. **Review.** `workflow_stage({stage:"review"})`, spawn the response's `agent`
-   (**`workflow-review`**, which calls `workflow_verdict`) with the response's `model`
-   when present, then `workflow_advance`. PASS → `{done}`. FAIL →
+   (**`workflow-review`**, which calls `workflow_verdict`) with the
+   prompt{{modelClause}}, then `workflow_advance`. PASS → `{done}`. FAIL →
    `{fire, build}` if budget remains, else `{stop}`.
    - **Focused passes.** When the fire action (or a `workflow_stage` response)
      carries a `passes` array, REVIEW runs as **one subagent pass per entry,
@@ -167,7 +168,7 @@ before you advance — and never pass or invent a `model`. Changing
      `workflow_stage({stage:"review", focus:"<entry>"})` — it arms a fresh
      deadline for that pass and returns **that pass's** `prompt`, which you hand
      to the subagent instead of the fire payload's — then spawn the response's
-     `agent` (**`workflow-review`**) with the response's `model` when present.
+     `agent` (**`workflow-review`**) with that pass's prompt{{modelClause}}.
      Each pass calls `workflow_verdict` itself — with its own axis under a
      per-axis fan-out, or with the axes its lens bears on under `reviewLenses`;
      you never call it on its behalf. Run them one at a time: the server arms one
@@ -210,7 +211,7 @@ pr-sitter: `triage`/`verify`) and rejects anything else.
 **Missing verdict = broken channel, retried once.** When a check stage ends
 with no `workflow_verdict` call, `workflow_advance` does NOT burn an iteration: it
 re-fires the same check once (`note` says "check retry") — call `workflow_stage`
-and spawn the stage subagent again with the returned prompt and `model`. If the retry also
+and spawn the stage subagent again with the returned prompt{{modelClause}}. If the retry also
 records nothing, the loop stops with a retryable ERROR naming the wiring
 problem; report it and suggest `workflow_recover` after the fix. A SubagentStop
 hook also nags the check subagent once, in-session, when it tries to finish

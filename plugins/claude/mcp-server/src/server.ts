@@ -236,6 +236,7 @@ const resetLoopScratch = (): void => {
   verdictRetried = false
   verdictRejected = null
   blocked = null // no blocked signal may outlive the run that recorded it
+  drifted = null // a drift report belongs to the run that observed it, not the next one
   buildNoteFor = null
   armedPass = null
   fanoutStage = null
@@ -2147,8 +2148,21 @@ server.registerTool(
       const ids = heldClaims[status] ?? []
       if (!ids.length) continue
       const tasks = await listByStatus(fsClient, directory, config.tasksDir, status, log)
+      // Liveness must be judged ACROSS processes, not just in this one.
+      // `active` is this server's own loop, so a task driven by the OpenCode
+      // host (or a second Claude session) reads as "not driving" here — and
+      // paired with `isOrphanedStartedClaim`, which ignores the CLAIMED/BUILD
+      // body on purpose, doctor would release a LIVE drive's claim once its
+      // marker aged past the window. The stage marker is the cross-process
+      // witness (deadline + writer pid), the same oracle the hub's doctor
+      // uses; a dead or expired one still releases, so the wedged markers
+      // doctor exists for are unaffected.
+      const liveDriven = new Set<string>()
+      for (const id of ids) {
+        if (await taskDrivenByStageMarker(sh, directory, config.tasksDir, id)) liveDriven.add(id)
+      }
       const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
-        isDriving: (id) => active?.task?.id === id,
+        isDriving: (id) => active?.task?.id === id || liveDriven.has(id),
         staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
         // Doctor releases a stale, undriven marker whatever the body says
         // (`isOrphanedStartedClaim`) — the default rule's `isClaimable` gate

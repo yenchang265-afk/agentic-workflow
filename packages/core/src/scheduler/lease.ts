@@ -42,9 +42,16 @@ export const isLeaseStale = (owner: LeaseOwner | null, now: Date, staleMs: numbe
   return now.getTime() - beat > staleMs
 }
 
-/** Read and validate the current owner record; null when absent or unparseable. */
-export const readLeaseOwner = async ($: Shell, directory: string, tasksDir: string): Promise<LeaseOwner | null> => {
-  const out = await $`cat ${ownerFile(directory, tasksDir)}`.quiet().nothrow()
+/**
+ * Read and validate an owner record at an explicit path; null when absent or
+ * unparseable.
+ *
+ * Split out of `readLeaseOwner` (whose `directory`/`tasksDir` signature is
+ * consumed by both hosts and the hub) so the takeover can re-judge a lease it
+ * has already renamed ASIDE — that record no longer lives at the lease path.
+ */
+const readOwnerAt = async ($: Shell, file: string): Promise<LeaseOwner | null> => {
+  const out = await $`cat ${file}`.quiet().nothrow()
   if (out.exitCode !== 0) return null
   try {
     const parsed: unknown = JSON.parse(out.stdout.toString())
@@ -61,6 +68,10 @@ export const readLeaseOwner = async ($: Shell, directory: string, tasksDir: stri
     return null
   }
 }
+
+/** Read and validate the current owner record; null when absent or unparseable. */
+export const readLeaseOwner = async ($: Shell, directory: string, tasksDir: string): Promise<LeaseOwner | null> =>
+  readOwnerAt($, ownerFile(directory, tasksDir))
 
 const writeOwner = async ($: Shell, directory: string, tasksDir: string, owner: LeaseOwner): Promise<boolean> => {
   const out = await writeFileAtomic($, ownerFile(directory, tasksDir), JSON.stringify(owner))
@@ -138,6 +149,25 @@ export const acquireLease = async (
     const claimed = await $`mv ${dir} ${graveyard}`.quiet().nothrow()
     if (claimed.exitCode !== 0) {
       // Lost the rename race (or the owner refreshed/released) — report who holds it now.
+      return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
+    }
+    // Re-judge what we actually moved, exactly as `releaseMarkerIfStale` does
+    // (claim-marker.ts, which cites this file as the idiom's origin). Winning
+    // the rename does NOT prove the thing renamed was the stale lease we
+    // judged: a rival that completed its `stagedAcquire` between our judgement
+    // and our `mv` put a FRESH lease at that path, and the unconditional
+    // `rm -rf` below then destroyed a live watcher's lease while we took our
+    // own — two watchers on one clone, the T3 failure this lease prevents.
+    const moved = await readOwnerAt($, path.join(graveyard, "owner.json"))
+    if (!isLeaseStale(moved, now, staleThresholdMs(moved?.intervalMs || owner.intervalMs))) {
+      // A live lease: put it back and stand down.
+      const restored = await $`mv ${graveyard} ${dir}`.quiet().nothrow()
+      if (restored.exitCode !== 0) await $`rm -rf ${graveyard}`.quiet().nothrow() // someone re-took the path — drop our copy rather than leave debris
+      // A zero exit does NOT prove the restore landed AS the lease: POSIX `mv`
+      // onto a path that exists again nests the source INSIDE it. Same
+      // positive confirmation `stagedAcquire` and `releaseMarkerIfStale` apply.
+      const nested = path.join(dir, path.basename(graveyard))
+      if ((await $`test -d ${nested}`.quiet().nothrow()).exitCode === 0) await $`rm -rf ${nested}`.quiet().nothrow()
       return { ok: false, owner: await readLeaseOwner($, directory, tasksDir) }
     }
     await $`rm -rf ${graveyard}`.quiet().nothrow()

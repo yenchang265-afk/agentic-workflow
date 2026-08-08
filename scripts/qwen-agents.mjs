@@ -67,20 +67,38 @@ export const bareModel = (model) =>
  * `agentModels.<agent>` is the explicit per-agent knob and wins outright.
  * Otherwise an agent inherits the model configured for the STAGE it backs, via
  * each kind's manifest. An agent backing two kinds' stages with different
- * models is a genuine ambiguity, so it is reported rather than silently
- * resolved — `workflow-verify` is shared by four kinds today.
+ * models is a genuine ambiguity, so it is reported AND left unset rather than
+ * silently resolved — `workflow-verify` is shared by four kinds today. An
+ * explicit `agentModels.<agent>` still resolves it, which is the way out the
+ * warning points at.
+ *
+ * Kept in step with `resolveAgentModels` in packages/core/src/config-layers.ts
+ * — the same rule, and the tests pin both to the same answers.
  */
 export const resolveAgentModels = (config, manifests) => {
   const models = {}
   const conflicts = []
+  // Agents whose stage models disagreed — left UNSET, exactly as the docstring
+  // above and main()'s warning both say. `continue`-ing on the clash instead
+  // kept whichever kind was iterated first (manifests are read in directory
+  // order), so the operator read "leaving the model unset for that agent"
+  // while an arbitrary kind's model was baked into the installed agent file.
+  // Tracked separately from `models` so a LATER binding cannot resurrect it.
+  const conflicted = new Set()
   for (const { kind, stages } of manifests) {
     const stageModels = config?.workflows?.[kind]?.stageModels ?? {}
     for (const stage of stages) {
       const model = stageModels[stage.name]
       if (!model || !stage.agent) continue
       const bare = bareModel(model)
+      if (conflicted.has(stage.agent)) {
+        conflicts.push(`${stage.agent}: unset (conflicting stage models) vs "${bare}" (${kind}.${stage.name})`)
+        continue
+      }
       if (models[stage.agent] && models[stage.agent] !== bare) {
         conflicts.push(`${stage.agent}: "${models[stage.agent]}" vs "${bare}" (${kind}.${stage.name})`)
+        conflicted.add(stage.agent)
+        delete models[stage.agent]
         continue
       }
       models[stage.agent] = bare

@@ -189,9 +189,11 @@ test("resolveAgentModels lets agentModels win outright over a stage-derived mode
   assert.equal(models["workflow-build"], "haiku")
 })
 
-test("resolveAgentModels reports a cross-kind conflict rather than picking one", () => {
+test("resolveAgentModels reports a cross-kind conflict and leaves the agent unset", () => {
   // workflow-verify backs a stage in several kinds; two different models for it
-  // is a genuine ambiguity, and guessing would silently run the wrong one.
+  // is a genuine ambiguity, and guessing would silently run the wrong one —
+  // which is what keeping the first-iterated kind's model amounted to, since
+  // manifests are read in directory order.
   const { models, conflicts } = resolveAgentModels(
     {
       workflows: {
@@ -201,10 +203,24 @@ test("resolveAgentModels reports a cross-kind conflict rather than picking one",
     },
     MANIFESTS,
   )
-  assert.equal(models["workflow-verify"], "claude-haiku-4-5")
+  assert.equal(models["workflow-verify"], undefined)
   assert.equal(conflicts.length, 1)
   assert.match(conflicts[0] ?? "", /workflow-verify/)
   assert.match(conflicts[0] ?? "", /pr-sitter\.verify/)
+})
+
+test("an explicit agentModels entry resolves a conflicted agent", () => {
+  const { models } = resolveAgentModels(
+    {
+      workflows: {
+        engineering: { stageModels: { verify: "claude-haiku-4-5" } },
+        "pr-sitter": { stageModels: { verify: "claude-opus-5" } },
+      },
+      agentModels: { "workflow-verify": "claude-sonnet-5" },
+    },
+    MANIFESTS,
+  )
+  assert.equal(models["workflow-verify"], "claude-sonnet-5")
 })
 
 test("resolveAgentModels agrees with itself across kinds when the model matches", () => {

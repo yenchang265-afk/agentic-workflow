@@ -130,12 +130,15 @@ test("an agent bound by several manifests declares identical allowlists", () => 
  * the deny sentinel. VERIFY then recorded ERROR for a runner the project has,
  * which is exactly the failure the widening in #241 set out to remove.
  *
- * Hence the second form per goal (`mvn * test*`, and `gradle *:test*`). It grants
- * no capability the list did not already grant: every glob ends in `*` compiled
- * with dotAll, so `mvn test <anything>` — including a second goal — has always
- * matched. The goal names are a scope boundary against a confused agent (threat
- * model T2), not a sandbox, so tolerating leading options keeps the boundary and
- * drops the false denials.
+ * Hence the second form per goal (`mvn * test*`, and `gradle *:test*`). This IS a
+ * deliberate widening, and the shape of it is worth stating exactly: trailing
+ * goals were always admitted (every glob ends in `*` compiled with dotAll, so
+ * `mvn test <anything>` has always matched), but the second form additionally
+ * admits a goal BEFORE the anchor — `mvn deploy test` matches `mvn * test*`.
+ * That is accepted rather than closed: the goal names are a scope boundary
+ * against a confused agent (threat model T2), never a sandbox, and pinning the
+ * prefix would re-introduce the false denials this widening removes. Anything
+ * that needs to be a real boundary belongs in the guard, not in a glob.
  *
  * Asserted against BOTH hosts' matchers, because they differ: the Claude Code /
  * Qwen guard splits on `&&` and matches each segment, while OpenCode matches the

@@ -96,6 +96,50 @@ test("no Qwen command tells the orchestrator to pass a spawn model", () => {
   }
 })
 
+// Model binding is a MECHANISM on this host — a PreToolUse hook rewrites the
+// spawn call's `model` — and expressing it as an instruction is what made
+// stageModels look broken before the hook existed: every stage silently ran the
+// host default while the config said otherwise, and nothing failed. Prose may
+// STATE which model was bound (that is the only way a hook regression shows up
+// in a transcript); it must never be the thing that carries it.
+test("no Claude command asks the orchestrator to pass a spawn model", () => {
+  // Matched against WHITESPACE-COLLAPSED text: these files are hard-wrapped
+  // prose, so a clause routinely straddles a newline. A line-shaped regex is
+  // how the original instruction survived the qwen guard that already existed.
+  for (const file of fs.readdirSync(path.join(REPO, "plugins", "claude", "commands"))) {
+    if (!file.endsWith(".md")) continue
+    const body = read("plugins", "claude", "commands", file).replace(/\s+/g, " ")
+    assert.doesNotMatch(body, /passing the response's `model`/, `${file} instructs the model to pass a spawn model`)
+    assert.doesNotMatch(body, /pass (?:it|the response's `model`(?: field)?) as the Task tool's/, `${file} instructs the model to pass a spawn model`)
+  }
+})
+
+test("neither host's orchestration skill asks the orchestrator to pass a spawn model", () => {
+  // Rendered per host from one source, so an untokenized clause reaches BOTH —
+  // including Qwen, whose `agent` tool has no `model` parameter at all and
+  // whose own skill text says never to invent one.
+  for (const host of ["claude", "qwen"]) {
+    const body = read("plugins", host, "skills", "workflow-orchestration", "SKILL.md").replace(/\s+/g, " ")
+    assert.doesNotMatch(body, /with the response's `model`/, `${host}'s skill still passes a spawn model`)
+    assert.doesNotMatch(body, /prompt and `model`/, `${host}'s skill still passes a spawn model`)
+  }
+})
+
+// The sharpest form of the same rule: on Qwen the parameter does not exist, so
+// ANY instruction to supply one is unfollowable. The only `model` sentences its
+// rendering may carry are the ones explaining that it takes none.
+test("the Qwen skill never tells the orchestrator to supply a model", () => {
+  const body = read("plugins", "qwen", "skills", "workflow-orchestration", "SKILL.md")
+  for (const line of body.split("\n")) {
+    if (!line.includes("`model`")) continue
+    assert.match(
+      line,
+      /no per-call|never pass or invent|no model parameter/,
+      `an untokenized model clause rendered into the Qwen skill: ${line.trim()}`,
+    )
+  }
+})
+
 test("the Qwen verbs rendering carries no Claude-only spawn prose", () => {
   const body = qwenVerbs()
   assert.doesNotMatch(body, /Task tool/, "the Qwen rendering still names Claude's spawn tool")

@@ -21,6 +21,23 @@ const sitter = loadManifest(WORKFLOWS_DIR, "main-sitter")
 const SHA = "abcdef1234567890abcdef1234567890abcdef12"
 const OLD = "0123456789abcdef0123456789abcdef01234567"
 
+/**
+ * Assert the head marker was released through `releaseMarker`, i.e. the stamp
+ * went first and the directory second.
+ *
+ * A bare `rmdir` assertion cannot see this bug: `onTerminal` always issued one,
+ * it just never SUCCEEDED, because `acquireMarker` writes `claim.json` inside
+ * the marker and `.nothrow()` swallowed the ENOTEMPTY. The `rm -f …/claim.json`
+ * preceding it is the only part that distinguishes a real release from a
+ * silent no-op that leaves the head claimed until the stale sweep.
+ */
+const assertMarkerReleased = (shellLog: readonly string[], sha: string = SHA): void => {
+  const marker = `/r/docs/tasks/runs/main-sitter/.claims/head-${shortSha(sha)}`
+  const stampRm = shellLog.findIndex((c) => c.startsWith(`rm -f ${marker}/claim.json`))
+  const rmdir = shellLog.findIndex((c) => c.startsWith(`rmdir ${marker}`))
+  assert.ok(stampRm !== -1 && rmdir !== -1 && stampRm < rmdir, "the head marker is released stamp-first, not by a bare rmdir")
+}
+
 type Cmd = { cmd: string; result: { exitCode?: number; stdout?: string; stderr?: string } }
 
 /** Scripted git/claim shell: first matching prefix wins; unmatched commands succeed empty. */
@@ -243,7 +260,7 @@ test("onTerminal(done) marks the head handled under runs/main-sitter/; stop reco
   const write = shellLog.find((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`))
   assert.ok(write, "ledger written")
   assert.match(write ?? "", /"handled": true/)
-  assert.ok(shellLog.some((c) => c.startsWith("rmdir") && c.includes(`head-${shortSha(SHA)}`)))
+  assertMarkerReleased(shellLog)
 })
 
 test("a retryable stop leaves the ledger untouched so the next poll re-claims the head", async () => {
@@ -259,7 +276,10 @@ test("a retryable stop leaves the ledger untouched so the next poll re-claims th
     !shellLog.some((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`)),
     "no ledger write on a retryable stop",
   )
-  assert.ok(shellLog.some((c) => c.startsWith("rmdir") && c.includes(`head-${shortSha(SHA)}`)))
+  // The retryable arm depends on the release MOST: its contract is that the
+  // next poll re-claims this head immediately, which a wedged marker blocks
+  // for the whole stale window.
+  assertMarkerReleased(shellLog)
 })
 
 test("a non-retryable stop records a failed attempt", async () => {
@@ -271,6 +291,7 @@ test("a non-retryable stop records a failed attempt", async () => {
   const write = shellLog.find((c) => c.startsWith("printf") && c.includes(`head-${shortSha(SHA)}.json`))
   assert.ok(write, "ledger written")
   assert.match(write ?? "", /failedAttempts/)
+  assertMarkerReleased(shellLog)
 })
 
 test("a configured branch override skips default-branch detection", async () => {

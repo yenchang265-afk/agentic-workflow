@@ -126,7 +126,11 @@ const main = async () => {
     process.env.AGENTIC_WORKFLOW_PLUGIN_ROOT ||
     process.env.CLAUDE_PLUGIN_ROOT ||
     path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-  const serverBuilt = fs.existsSync(path.join(pluginRoot, "mcp-server", "dist", "server.js"))
+  // AGENTIC_WORKFLOW_SERVER_JS first, for the same reason gate-command reads it:
+  // a host may reuse another plugin's built server (Qwen runs Claude's), so the
+  // dist is not under ITS plugin root and deriving it from the root alone
+  // banner-warned "not built" at the top of every healthy session.
+  const serverBuilt = fs.existsSync(process.env.AGENTIC_WORKFLOW_SERVER_JS || path.join(pluginRoot, "mcp-server", "dist", "server.js"))
 
   const lines = []
   if (!serverBuilt)

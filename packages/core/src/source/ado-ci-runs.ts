@@ -182,7 +182,12 @@ export const makeAdoCiRunsSource = (deps: AdoCiRunsDeps): WorkSource => {
             ? ledger
             : { ...ledger, failedAttempts: [...ledger.failedAttempts, { at: now() }], updatedAt: now() }
       if (updated !== ledger) await saveHeadLedger($, directory, tasksDir, kind, updated)
-      await $`rmdir ${`${claimsDir}/head-${shortSha(sha)}`}`.quiet().nothrow()
+      // `releaseMarker`, never a bare `rmdir` on the marker: `acquireMarker`
+      // writes `claim.json` INSIDE it, so an rmdir here always failed with
+      // ENOTEMPTY and `.nothrow()` swallowed it — every drive left its head
+      // claimed until the stale window expired, and a `retryable` stop (whose
+      // whole point is that the next poll re-claims immediately) could not.
+      await releaseMarker($, headMarker(sha))
     },
   }
 }
