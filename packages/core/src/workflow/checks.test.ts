@@ -3,6 +3,7 @@ import { test } from "node:test"
 import {
   CHECKS_AXIS,
   CHECK_OUTPUT_MAX,
+  CHECK_TIMEOUT_EXIT,
   anyFailed,
   checkAxis,
   checkCommands,
@@ -67,13 +68,17 @@ const result = (over: Partial<CheckResult> = {}): CheckResult => ({
   ...over,
 })
 
-test("classifyExit: 0 passes, 126/127 error, everything else fails", () => {
+test("classifyExit: 0 passes, 124/126/127 error, everything else fails", () => {
   assert.equal(classifyExit(0), "pass")
   assert.equal(classifyExit(1), "fail")
   assert.equal(classifyExit(2), "fail")
   // The whole point of the split: a missing/unrunnable runner is not a red suite.
   assert.equal(classifyExit(126), "error")
   assert.equal(classifyExit(127), "error")
+  // A timeout is "the check could not run" too, and listing it explicitly is
+  // load-bearing: falling through to FAIL would re-fire a BUILD that hangs again.
+  assert.equal(classifyExit(CHECK_TIMEOUT_EXIT), "error")
+  assert.equal(classifyExit(124), "error")
 })
 
 test("runChecks runs each command in the work tree, in order, and never throws on a red one", async () => {
@@ -119,6 +124,51 @@ test("runChecks truncates a torrential output to a tail, keeping the end", async
   // The tail, not the head: a runner's failure summary is at the end.
   assert.match(r!.output, /THE ACTUAL FAILURE$/)
   assert.match(r!.output, /chars elided/)
+})
+
+test("runChecks gives up on a hanging check and reports the timeout exit, not success", async () => {
+  // No `timeout` on this shell — the core race fallback, which is what a host
+  // that cannot kill its child (Bun's `$`) gets. Bounding the DRIVE LOOP is the
+  // point: with no cap a hanging check wedges the run with no way out, since
+  // neither host's stage deadline covers the check phase.
+  const hangs = (() => {
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      then: () => new Promise(() => {}),
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (() => chain) as any
+  })()
+  const [r] = await runChecks(hangs, [{ name: "tests", command: "npm test" }], "/repo", 20)
+  assert.equal(r!.exitCode, CHECK_TIMEOUT_EXIT)
+  // ERROR, not FAIL: a FAIL re-fires a BUILD whose VERIFY hangs again, burning
+  // every iteration to the cap on a stage that never produced a result.
+  assert.equal(r!.outcome, "error")
+  assert.equal(checkAxis([r!])?.verdict, "ERROR")
+  assert.match(r!.output, /timed out/)
+})
+
+test("runChecks prefers the host's own timeout when it has one — only the host can kill the child", async () => {
+  let asked: number | null = null
+  const killer = (() => {
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      timeout: (ms: number) => {
+        asked = ms
+        return Promise.resolve({ exitCode: 124, stdout: { toString: () => "" }, stderr: { toString: () => "killed" } })
+      },
+      then: (resolve: (v: unknown) => unknown) => Promise.resolve({ exitCode: 0, stdout: { toString: () => "" }, stderr: { toString: () => "" } }).then(resolve),
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (() => chain) as any
+  })()
+  const [r] = await runChecks(killer, [{ name: "tests", command: "npm test" }], "/repo", 1_234)
+  assert.equal(asked, 1_234)
+  assert.equal(r!.outcome, "error", "the host's 124 classifies the same as the fallback's")
 })
 
 test("checkAxis is null when every check passed — nothing is merged into the verdict", () => {

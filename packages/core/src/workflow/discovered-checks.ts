@@ -70,9 +70,19 @@ const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/
 
 /**
  * `cwd` is joined onto the work tree by naive string concatenation
- * (`checks.ts`), so `../..` escapes it. Relative, no `..`, no leading slash.
+ * (`checks.ts`), so `../..` escapes it. Relative, no leading slash.
  */
 const CWD_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/
+
+/**
+ * A work-tree-relative directory that cannot climb out of it.
+ *
+ * The `..` check is SEPARATE from `CWD_RE` and not folded into it: `.` is a
+ * legitimate character in a directory name, so the character class alone happily
+ * matches `..` and `../..` — which is exactly the escape the rule exists to
+ * stop. Pure.
+ */
+const safeCwd = (cwd: string): boolean => CWD_RE.test(cwd) && cwd.split("/").every((seg) => seg !== "..")
 
 /** A binary name safe to interpolate into the `command -v` probe. */
 const BIN_RE = /^[A-Za-z0-9._\-/]+$/
@@ -177,7 +187,7 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: "the name is rendered into the stage prompt and must be plain text (letters, digits, spaces, . _ -)" })
       continue
     }
-    if (def.cwd !== undefined && !CWD_RE.test(def.cwd)) {
+    if (def.cwd !== undefined && !safeCwd(def.cwd)) {
       rejected.push({ name: def.name, reason: `cwd "${def.cwd}" is not a plain relative path inside the work tree` })
       continue
     }

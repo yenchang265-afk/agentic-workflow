@@ -129,6 +129,7 @@ hand-edited afterward.
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
 | `ignoreBacklog` | `true` | See hardening below. Set to `false` to commit every task move as an audit trail (the old behavior). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
+| `checkTimeoutMinutes` | `10` | Wall-clock cap on ONE driver-run check command (`stageChecks` / the plan's discovered checks). Separate from `stageTimeoutMinutes`, which does not cover them: checks run outside the stage cap on both hosts. A check that exceeds it is killed and reported as exit `124` ⇒ stage ERROR. |
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-workflow:engineering watch`; overridable per session via `/agentic-workflow:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `workflows` | `{}` | Per-workflow-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the Azure DevOps MCP server + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
@@ -352,13 +353,15 @@ it. The warnings are advisory: they annotate a save, never block it. See
 - **`workflows.<kind>.stageChecks`** — check stage name → the commands the
   **driver** runs in that stage's work tree before firing it. Their exit codes
   are established fact for the stage: rendered into its prompt, counted as
-  observed evidence, and folded into its verdict. Unset ⇒ no checks, which is
-  exactly today's behavior.
+  observed evidence, and folded into its verdict. Unset ⇒ the stage falls back
+  to the commands its approved plan declared (`discoverChecks`, below), and to
+  no checks when the plan declared none.
 
-  This is the test/typecheck/lint knob the config never had. Without it, VERIFY
-  discovers the commands itself on every run — so the same repo at the same
-  commit can be checked with `npm test` on one iteration and `npm test` plus
-  `npx tsc` on the next, and the verdict moves without the code moving.
+  This is the test/typecheck/lint knob for a project whose commands you want to
+  pin by hand. The problem both this and `discoverChecks` solve: left to itself,
+  VERIFY picks the commands on every run — so the same repo at the same commit
+  can be checked with `npm test` on one iteration and `npm test` plus `npx tsc`
+  on the next, and the verdict moves without the code moving.
 
   ```jsonc
   {
@@ -391,14 +394,19 @@ it. The warnings are advisory: they annotate a save, never block it. See
 
   A red check cannot be argued down: the stage can no longer PASS, whatever it
   reports. If a check is itself broken, the escape hatch is removing it from
-  this list — not disputing it in the transcript. There are no per-check
-  timeouts yet; `stageTimeoutMinutes` bounds the stage, not an individual
-  command, exactly as with `worktreeSetup`.
+  this list — not disputing it in the transcript. Each command is bounded by
+  `checkTimeoutMinutes` (10 by default); a check that exceeds it is killed and
+  reported as exit `124`, which reads as ERROR for the reason above.
+  `stageTimeoutMinutes` does **not** cover checks — they run outside it on both
+  hosts.
 
-  Precedence per stage: this key → the manifest stage's `checks` field → none.
-  Like `stageModels`, it **replaces** the manifest's list rather than merging
-  into it. Keys must be check-stage names; one naming no stage is accepted,
-  ignored, and warned about when a loop starts — that stage then runs no checks
+  Precedence per stage: this key → the manifest stage's `checks` field → the
+  plan's discovered commands → none. Like `stageModels`, it **replaces** the
+  manifest's list rather than merging into it. A **present but empty** list
+  (`"verify": []`) is the explicit opt-out: it means "these are my project's
+  checks, and there are none", so it also suppresses discovery. Keys must be
+  check-stage names; one naming no stage is accepted, ignored, and warned about
+  when a loop starts — that stage then falls back to discovery or to no checks
   at all, so the warning is worth reading.
 
   **Honored from the user layer only** (`SHELL_BEARING_WORKFLOW_KEYS`), like
@@ -406,6 +414,56 @@ it. The warnings are advisory: they annotate a save, never block it. See
   cloned repo must not be able to supply it. Setting it in a repo's
   `.agentic-workflow.json` drops it with a warning naming the kind; the rest of
   that section, and a user-layer value for it, both survive.
+
+- **`workflows.<kind>.discoverChecks`** — whether a check stage with no
+  `stageChecks` entry and no manifest `checks` may take its commands from the
+  **approved plan**. Unset ⇒ whatever the manifest stage declares; engineering's
+  VERIFY declares it on, every other shipped stage off.
+
+  The PLAN stage already has to map each acceptance criterion to "the exact
+  command or observable check that proves it". With this on, its prompt also
+  asks for those commands in machine-readable form — a fenced block at the end
+  of `### Verification`:
+
+  ~~~markdown
+  ### Verification
+  - AC1 "rate limit returns 429" → `npm run test:all` (root package.json defines
+    `test:all`; there is no bare `test` script)
+
+  ```agentic-checks
+  [
+    { "name": "tests", "command": "npm run test:all" },
+    { "name": "types", "command": "npm run typecheck:all" }
+  ]
+  ```
+  ~~~
+
+  Why the plan and not the check stage itself: **the commands must be frozen.**
+  The block is text in the task file, re-read on every iteration, so
+  BUILD→VERIFY→BUILD checks the same way each time. A stage that re-derived its
+  commands per run would put back the drift described above. The only way the
+  set changes is `replan`, which re-runs PLAN and re-parks for your gate.
+
+  What it can run is capped by **the stage's own bash allowlist** — a discovered
+  command is admitted only if the stage's agent could have run it unprompted.
+  That is the boundary, not your approval of the plan: task files live in
+  `tasksDir`, which is repo content, so a cloned repo could ship one. Commands
+  are also capped at 5, `cwd` must be a plain relative path inside the work
+  tree, and a command whose binary is not installed here is dropped with a
+  warning rather than 127-ing the run.
+
+  Everything that can go wrong degrades to **fewer checks plus a warning** —
+  never a refused plan and never a stopped loop. No block, malformed JSON, a
+  refused command, a missing binary: the loop checks exactly as it did before
+  the feature existed.
+
+  Unlike `stageChecks`, this key is **not** shell-bearing and is honored from a
+  repo's `.agentic-workflow.json`: its value space is one boolean, and turning
+  it on grants a repo nothing it does not already have, since the allowlist
+  gate is the same one its VERIFY agent already runs under.
+
+  Turn it off with `"discoverChecks": false`, or by pinning your own commands —
+  `"stageChecks": { "verify": [] }` disables both.
 
 - **`agentModels`** — agent name → the model that agent runs with, for the
   spawns that are **not** stage runs and so have no `stageModels` entry to read:

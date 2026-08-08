@@ -131,12 +131,53 @@ test("no shipped manifest sets context — every stage is unbounded today", () =
   }
 })
 
-test("no shipped manifest declares checks — every kind still runs exactly as it did", () => {
+test("no shipped manifest declares checks — the no-static-command-table pin", () => {
+  // This started as a backward-compat pin and is now a DESIGN pin: engineering's
+  // verify stage takes its checks from the approved plan (`discoverChecks`), not
+  // from a per-ecosystem command table baked in here. Such a table would be
+  // wrong for every repo it did not anticipate, and wrong here is not inert — a
+  // missing runner exits 127, which routes to the stage's `onError` stop arm.
   const workflowsDir = path.join(import.meta.dirname, "..", "..", "workflows")
   for (const kind of fs.readdirSync(workflowsDir).filter((d) => fs.existsSync(path.join(workflowsDir, d, "workflow.json")))) {
     const m = parseManifest(JSON.parse(fs.readFileSync(path.join(workflowsDir, kind, "workflow.json"), "utf8")))
     for (const s of m.stages) assert.deepEqual(s.checks, [], `${kind}/${s.name} declares check commands`)
   }
+})
+
+test("the engineering verify stage discovers its checks, and no other shipped stage does", () => {
+  const workflowsDir = path.join(import.meta.dirname, "..", "..", "workflows")
+  const discovering: string[] = []
+  for (const kind of fs.readdirSync(workflowsDir).filter((d) => fs.existsSync(path.join(workflowsDir, d, "workflow.json")))) {
+    const m = parseManifest(JSON.parse(fs.readFileSync(path.join(workflowsDir, kind, "workflow.json"), "utf8")))
+    for (const s of m.stages) if (s.discoverChecks) discovering.push(`${kind}/${s.name}`)
+  }
+  assert.deepEqual(discovering, ["engineering/verify"])
+})
+
+test("discoverChecks round-trips on a check stage and defaults off", () => {
+  assert.equal(parseManifest(base).stages[1]?.discoverChecks, false)
+  const m = parseManifest({
+    ...base,
+    stages: [base.stages[0], { ...base.stages[1], discoverChecks: true, bashAllowlist: ["npm test*"] }],
+  })
+  assert.equal(m.stages[1]?.discoverChecks, true)
+})
+
+test("a work stage cannot set discoverChecks — same rule as checks, there is no verdict to floor", () => {
+  assert.throws(
+    () => parseManifest({ ...base, stages: [{ ...base.stages[0], discoverChecks: true, bashAllowlist: ["npm test*"] }, base.stages[1]] }),
+    /cannot set discoverChecks/,
+  )
+})
+
+test("discoverChecks with an empty bashAllowlist is refused — the allowlist IS the admission gate", () => {
+  // Every discovered command must pass the stage's own allowlist, so an empty
+  // one silently refuses all of them: the flag would read as on while the
+  // feature is dead.
+  assert.throws(
+    () => parseManifest({ ...base, stages: [base.stages[0], { ...base.stages[1], discoverChecks: true }] }),
+    /empty bashAllowlist/,
+  )
 })
 
 test("a check stage's checks round-trip, with cwd optional", () => {
