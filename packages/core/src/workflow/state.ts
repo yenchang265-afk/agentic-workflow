@@ -46,8 +46,14 @@ export interface TaskRef {
   readonly acceptance: readonly string[]
 }
 
-/** The git isolation for one loop's execution: work happens on `branch`, cut from `base`. */
+/** The git isolation for one loop's execution: work happens on `branch`, measured from `base`. */
 export interface GitRef {
+  /**
+   * What this loop's work is measured FROM. A branch NAME in the two
+   * branch-cutting modes; a **commit sha** when `onCurrentBranch` is set, where
+   * base and branch would otherwise name the same ref and the diff be empty.
+   * Read it as a ref, never as a branch, unless `onCurrentBranch` is absent.
+   */
   readonly base: string
   readonly branch: string
   /**
@@ -56,6 +62,17 @@ export interface GitRef {
    * checked out in the main tree. Present ⇒ stages run pinned to this directory.
    */
   readonly worktree?: string
+  /**
+   * Set only when this loop is building on the branch the tree ALREADY had
+   * checked out (`taskBranch: false`) — it cut nothing and moved nothing.
+   *
+   * It is the discriminant for the three behaviors that would otherwise read
+   * `base` as a branch name. The sharpest is teardown: `checkoutBranch` falls
+   * through to `git checkout -b <base>` when the ref doesn't resolve, so
+   * returning "to base" here would create a branch literally named after a
+   * commit and strand the human on it.
+   */
+  readonly onCurrentBranch?: true
 }
 
 /**
@@ -354,6 +371,8 @@ export interface Config {
   readonly worktreesDir: string | false
   /** Shell command run in a fresh worktree after creation. */
   readonly worktreeSetup?: string
+  /** Branch-name prefix the engineering loop cuts its work branch with (`<prefix><id>`); `false` ⇒ build on the branch already checked out. */
+  readonly taskBranch: string | false
   /** Extra REVIEW lenses; each runs one more focused review pass. */
   readonly reviewLenses: readonly string[]
   /** Global code platform for PR-shaped work sources; per-kind override via `workflows.<kind>.codePlatform`. */

@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { Log, Shell } from "../host.js"
-import { platformFor } from "../config.js"
+import { platformFor, taskBranchFor } from "../config.js"
 import { adoList } from "../source/ado-shared.js"
 import type { AdoGateway } from "../source/ado-gateway.js"
 import type { Config } from "./state.js"
@@ -18,7 +18,7 @@ import { branchExists, currentBranch, pushBranch } from "./git.js"
  */
 
 export interface ShipPrResult {
-  /** False when there's no `feature/<id>` branch to ship (e.g. a manually authored task) — a silent no-op. */
+  /** False when there's no branch to ship (e.g. a manually authored task) — a silent no-op. */
   readonly attempted: boolean
   /** True only when a new PR was opened this call; a reused existing PR still carries `url` with `created: false`. */
   readonly created: boolean
@@ -45,7 +45,11 @@ const ghDefaultBranch = async ($: Shell, cwd: string): Promise<string | null> =>
 const shipGithub = async ($: Shell, log: Log, directory: string, branch: string, title: string): Promise<ShipPrResult> => {
   const existing = await ghExistingPrUrl($, directory, branch)
   if (existing) return { attempted: true, created: false, url: existing }
-  const base = (await ghDefaultBranch($, directory)) ?? (await currentBranch($, directory)) ?? "main"
+  // The `currentBranch` fallback must never equal the head: in current-branch
+  // mode (`taskBranch: false`) teardown leaves the tree ON the shipped branch,
+  // so the old chain asked for a PR from a branch onto itself and `gh` refused.
+  const cur = await currentBranch($, directory)
+  const base = (await ghDefaultBranch($, directory)) ?? (cur && cur !== branch ? cur : null) ?? "main"
   // No `--json`/`-q` here: those are `gh pr view`/`gh pr list` flags. `gh pr create`
   // rejects them ("unknown flag: --json") and prints the new PR's URL on stdout.
   const out = await $`gh pr create --draft --head ${branch} --base ${base} --title ${title} --body ${""}`
@@ -124,7 +128,9 @@ const shipAdo = async (
   const existingId = await adoExistingPrId(gateway, project, repository, branch)
   if (existingId) return { attempted: true, created: false, url: prUrl(existingId) }
 
-  const base = (await adoDefaultBranch(gateway, project, repository)) ?? (await currentBranch($, directory)) ?? "main"
+  // Same head-is-not-base rule as the GitHub arm above.
+  const cur = await currentBranch($, directory)
+  const base = (await adoDefaultBranch(gateway, project, repository)) ?? (cur && cur !== branch ? cur : null) ?? "main"
   const createOut = await gateway.createPullRequest({
     project,
     repositoryId: repository,
@@ -151,9 +157,16 @@ const shipAdo = async (
 }
 
 /**
- * Ship a task's branch: push `feature/<id>` and open (or reuse) a draft PR.
- * `kind` resolves the platform via `platformFor` — the `<tasksDir>` file
- * backlog is always the `"engineering"` kind. Never throws.
+ * Ship a task's branch: push it and open (or reuse) a draft PR. `kind` resolves
+ * the platform via `platformFor` — the `<tasksDir>` file backlog is always the
+ * `"engineering"` kind. Never throws.
+ *
+ * `branch` is the branch the run ACTUALLY built on, read off the task file by
+ * `extractRunBranch`. It is the authority when present, because the two
+ * fallbacks are both guesses: the configured prefix is wrong if `taskBranch`
+ * changed since the run, and in current-branch mode (`taskBranch: false`) no
+ * id→branch function exists at all — there the tree's own branch is the last
+ * resort, correct only because teardown deliberately leaves the tree on it.
  */
 export const shipPr = async (
   $: Shell,
@@ -164,16 +177,17 @@ export const shipPr = async (
   id: string,
   title: string,
   gateway?: AdoGateway,
+  branch?: string,
 ): Promise<ShipPrResult> => {
   try {
-    const branch = `feature/${id}`
-    if (!(await branchExists($, directory, branch))) return NOT_ATTEMPTED
-    if (!(await pushBranch($, directory, branch))) {
-      await log("warn", `ship: git push failed for ${branch}`)
+    const head = branch ?? taskBranchFor(config, kind, id) ?? (await currentBranch($, directory))
+    if (!head || !(await branchExists($, directory, head))) return NOT_ATTEMPTED
+    if (!(await pushBranch($, directory, head))) {
+      await log("warn", `ship: git push failed for ${head}`)
       return { attempted: true, created: false, reason: "git push failed" }
     }
     const platform = platformFor(config, kind)
-    return platform === "ado" ? await shipAdo($, log, directory, gateway, config, branch, title) : await shipGithub($, log, directory, branch, title)
+    return platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title) : await shipGithub($, log, directory, head, title)
   } catch (err) {
     return { attempted: true, created: false, reason: (err as Error).message }
   }

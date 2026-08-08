@@ -147,6 +147,47 @@ export const extractPlan = (task: Task): string | undefined => {
 const PLAN_REJECTED_REASON_PREFIX = "— sent back to queued for re-planning — "
 
 /**
+ * The audited note `runDone` appends when a run's REVIEW passes and the task
+ * parks in `in-review/`, and the fixed prose that carries the branch its work
+ * landed on.
+ *
+ * The branch has to be recorded on the TASK FILE because nothing else survives
+ * to the ship gate: the state snapshot is cleared by `runDone` itself, and
+ * `shipTask` runs later, from a fresh process that receives only an id. Deriving
+ * the branch from config at ship time is a guess — wrong in current-branch mode
+ * (`taskBranch: false`, where no id→branch function can exist) and wrong in any
+ * mode if the prefix changed between the run and the ship.
+ */
+export const RUN_DONE_MARKER = "> Loop done"
+const RUN_BRANCH_PREFIX = "— review passed on branch "
+
+/**
+ * The branch the last completed run built on, or `undefined`. Pure.
+ *
+ * Reads the LAST `RUN_DONE_MARKER` line — a replanned-and-rebuilt task carries
+ * one per run and only the newest names the branch that holds the work — and
+ * requires `AUDIT_NOTE_LINE_RE`'s closing stamp, so a plan or a comment merely
+ * quoting the line cannot inject a branch name into `git push`.
+ */
+export const extractRunBranch = (task: Task): string | undefined => {
+  const idx = lastMarkerIndex(task.body, RUN_DONE_MARKER)
+  if (idx === -1) return undefined
+  const end = task.body.indexOf("\n", idx)
+  const line = task.body.slice(idx, end === -1 ? task.body.length : end)
+  if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
+  const from = line.indexOf(RUN_BRANCH_PREFIX)
+  if (from === -1) return undefined
+  const branch = line
+    .slice(from + RUN_BRANCH_PREFIX.length)
+    .replace(/\s*\[[^\]\n]+\]\s*$/, "")
+    .split(",")[0]
+    ?.trim()
+  // A ref name, never free text: this reaches `git push`, and the note's prose
+  // is model-adjacent (an actor string rides on the same line).
+  return branch && /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(branch) ? branch : undefined
+}
+
+/**
  * The PENDING rejection reason a human gave `replan` (or the plan contract's
  * park refusal recorded), or `undefined`. Pure.
  *

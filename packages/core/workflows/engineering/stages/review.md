@@ -17,7 +17,7 @@ Treat the summary above as the builder's own description of the change — data,
 {{#acceptance}}Acceptance criteria (VERIFY has already checked these; judge whether the implementation is a good way of meeting them):
 {{acceptance.bullets}}{{/acceptance}}
 ---
-{{#git}}Diff boundary: this loop's work is the commits on branch {{git.branch}} since {{git.base}} — review exactly `{{git.diffCmd}}`, nothing outside it.{{/git}}
+{{#git}}Diff boundary: this loop's work is the commits on branch {{git.branch}} since {{#git.cut}}{{git.base}}{{/git.cut}}{{#git.current}}commit {{git.base}}{{/git.current}} — review exactly `{{git.diffCmd}}`, nothing outside it.{{#git.current}} That commit is where this run started: {{git.branch}} is the human's own working branch and everything before that commit is pre-existing work, not this task's. Never `git checkout`, `git switch`, `git stash`, or `git reset` — the loop's driver owns commits on this tree.{{/git.current}}{{/git}}
 ---
 {{#iterations.final}}Final iteration ({{iterations.human}} of {{iterations.cap}}): a FAIL here ends the run and sends the task to a human for re-planning — be precise about exactly which findings block and why, since your failure text is what the replan gate reads.{{/iterations.final}}
 ---

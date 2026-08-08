@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, extractRunBranch, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
@@ -604,7 +604,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
       let missedPr = false
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
       if (!prAlreadyRecorded) {
-        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway)
+        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, extractRunBranch(done))
         if (pr.url) {
           data.pr = { url: pr.url }
           await appendNote($, { id, path: done.path }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
@@ -619,7 +619,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
         if (pr.url || pr.attempted) tail = prOutcome(pr)
         missedPr = prMissed(pr)
       }
-      await releaseWorktree($, log, directory, config, id)
+      await releaseWorktree($, log, directory, config, id, kind)
       return { ok: true, message: `"${done.title}" is already completed.${tail}`, path: done.path, data, ...(missedPr ? { variant: "warning" as const } : {}) }
     }
     return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : ((await unparseableAt(ctx, id)) ?? `No in-review task "${id}".`) }
@@ -629,7 +629,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
-  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway)
+  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, extractRunBranch(t))
   const data: Record<string, unknown> = { completed: newPath }
   if (pr.url) {
     data.pr = { url: pr.url }
@@ -643,7 +643,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   // The task is done: its worktree — kept across every earlier run so retries
   // and recoveries build on prior iterations — is finally disposable. The
   // branch survives, so the PR opened just above is unaffected.
-  await releaseWorktree($, log, directory, config, id)
+  await releaseWorktree($, log, directory, config, id, kind)
   // A caveated ship is still a ship: `ok` stays true (the CLI exits 0, no host
   // reads it as a refusal) and the variant is what makes the note VISIBLE rather
   // than a green toast the user scrolls past.

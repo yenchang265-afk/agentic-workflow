@@ -55,7 +55,8 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 
 執行是在 `feature/<id>` git 分支上隔離進行的，且預設會在自己的 git worktree
 （`.workflow-worktrees`）中簽出，因此你的工作樹永遠不會被動到——可設定
-`worktreesDir: false` 退出。裁定（verdict）只透過外掛工具
+`worktreesDir: false` 退出，或設 `taskBranch: false` 直接在你目前已檢出的
+分支上建置。裁定（verdict）只透過外掛工具
 取信，每一次狀態轉換都會被稽核，迴圈本身從不推送或開啟 PR——由你審查 diff
 並執行 `/agentic-workflow:engineering approve`，它會推送分支並開啟（或重複使用）一個
 **draft** PR（GitHub 或 Azure DevOps，視 `codePlatform` 而定）作為發布流程的一

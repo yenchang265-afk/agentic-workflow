@@ -9,6 +9,7 @@ import {
   readRawConfigLayers,
   resolveUserConfigPath,
   unknownAgentModelKeys,
+  worktreesDirFor,
 } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
 import * as driver from "./workflow/driver.ts"
@@ -351,10 +352,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     // in-review is the NORMAL post-run state (kept until the ship gate releases
     // it) — only one with no such task is worth a warning. Never auto-delete
     // (another process may own it; a crashed diff is evidence).
-    if (config.worktreesDir) {
+    const worktreesDir = worktreesDirFor(config, "engineering")
+    if (worktreesDir) {
       try {
         await pruneWorktrees($, directory)
-        const root = path.resolve(directory, config.worktreesDir)
+        const root = path.resolve(directory, worktreesDir)
         const kept = (await listWorktrees($, directory)).filter((w) => w.path.startsWith(root))
         for (const w of kept) {
           const id = path.basename(w.path)

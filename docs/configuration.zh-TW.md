@@ -122,6 +122,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`mcp`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
 | `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
+| `taskBranch` | `"feature/"` | engineering 迴圈用來切出工作分支的分支名稱前綴（`<prefix><id>`）。設成 `false` 就直接在你目前已檢出的分支上建置——見下方強化項。 |
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
 | `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 
@@ -679,6 +680,33 @@ issue 的 key/id 複製進任務裡。
   使用（例如 `"npm ci"`），否則 VERIFY 會在一個空的檢出上失敗。
   稽核記錄和任務移動仍然留在主工作樹中，是否在那裡提交則取決於
   下方的 `ignoreBacklog`。
+- **`taskBranch`**——engineering 迴圈如何稱呼它工作所在的分支。
+  預設 `"feature/"` 會切出 `feature/<task-id>`。改成別的前綴
+  （`"wip/"`）可以換個名字，或設成 **`false`** 表示完全不切分支：
+  BUILD、VERIFY 與 REVIEW 會直接在你的主工作樹、**你目前已檢出的
+  那個分支**上執行——適合你人已經在某個 PR 的分支上，希望迴圈的
+  成果就落在那裡，而不是落到它自己另開的分支。
+
+  `taskBranch: false` 會改變四件事，設定前都值得先知道：
+
+  - 該迴圈的 **worktree 會被強制關閉**，不論 `worktreesDir` 怎麼設
+    （git 不會讓同一個分支被檢出兩次）。捨棄設定值時迴圈會記錄一次。
+  - **它會拒絕在預設分支上啟動。** 這個模式的檢查點是在你自己的
+    工作樹裡執行 `git add -A && git commit`，所以從 `main` 起跑會把
+    迴圈的成果直接提交上去。請先檢出一個工作分支。
+  - 基於同樣的原因，**你未提交的變更會一起進入迴圈的提交**——檢查點
+    會把所有東西都 stage 起來。想分開保留就先 commit 或 stash。
+    （共用工作樹模式一直都是這樣；只是在這裡它從例外變成常態。）
+  - **一個工作樹同時只跑一個迴圈。** 兩個迴圈共用一個分支會落進彼此
+    的 diff 邊界，REVIEW 會去評斷沒有人規劃過的變更，因此第一個迴圈
+    持有期間，同一工作樹上的第二個迴圈會被拒絕——跨行程有效，而不只
+    是同一個編輯器內。
+
+  出貨的形式不變：對 `in-review/` 任務執行 `approve`，會推送該次執行
+  實際建置的分支，並照樣針對預設分支開一個草稿 PR。只有 **engineering**
+  這個 kind 會採用此設定；各 sitter 仍維持 `feature/<id>`，因為它們的
+  分支不是來自工作來源（`pr-sitter`、`main-sitter`），就是被自己的 push
+  allowlist 綁定（`dep-sitter`）。
 - **`ignoreBacklog`**——完全不讓 `tasksDir` 進入 git：迴圈不會把每次
   任務移動（approve、plan、ship、park、done、stop）都提交為稽核紀錄，
   而是把它登記進 `<git-common-dir>/info/exclude`——一份僅限本機、

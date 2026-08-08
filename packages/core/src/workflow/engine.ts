@@ -242,7 +242,19 @@ export const promptContextWithStats = (
         }
       : undefined,
     git: state.git
-      ? { base: state.git.base, branch: state.git.branch, worktree: wt ?? "", diffCmd }
+      ? {
+          base: state.git.base,
+          branch: state.git.branch,
+          worktree: wt ?? "",
+          diffCmd,
+          // Complementary flags rather than one negated at the call site: the
+          // template language has no inverted section (`{{^…}}`), so a template
+          // that must say something different per mode needs both. Same shape as
+          // `platform` above. `current` ⇒ `base` is a COMMIT, and the tree the
+          // stage is working in is the human's own checkout.
+          current: state.git.onCurrentBranch === true,
+          cut: state.git.onCurrentBranch !== true,
+        }
       : undefined,
     worktree: wt
       ? {

@@ -247,6 +247,31 @@ task. Cross-process liveness for `recover` is judged by
 `taskDrivenByStageMarker` (stage-marker deadline + writer pid), never by the
 in-memory per-process driving map alone.
 
+### `state.git.base` is a ref, not always a branch
+
+`taskBranch: false` runs the loop on the branch the tree already has checked
+out. There base and branch would name the SAME ref, so `git diff <base>...<branch>`
+is empty and REVIEW grades nothing — hence `base` holds HEAD's **sha** at the
+first BUILD instead. That makes it polymorphic, and `git.onCurrentBranch` is the
+only discriminant. The sharp edge is teardown: `checkoutBranch` falls through to
+`git checkout -b <ref>` when the ref is not a branch, so "return to base" there
+invents a branch named after a commit and strands the human on it. Anything
+reading `base` as a branch NAME must check the flag first — and `persist.ts`'s
+`GitRefSchema` must carry it, because zod strips unknown keys and a
+snapshot-resumed run would otherwise lose it and hit exactly that.
+
+Two more things this mode's shape forces, both learned from a real-git test:
+
+- **Its machine state cannot live in the working tree.** This is the one mode
+  whose checkpoints `git add -A` the human's own checkout, so the
+  one-run-per-tree marker sits under `<git-common-dir>`; in the backlog it rode
+  straight into the user's feature commits.
+- **`taskBranch` is engineering-only** (`taskBranchFor`). `pr-sitter` and
+  `main-sitter` get their branch from the work source, and `dep-sitter`'s publish
+  stage pins `git push origin feature/*` in a manifest that ships read-only
+  inside the core package — a prefix override there makes its own guard deny its
+  push.
+
 ### A focused pass's contract must match the passes that will run
 
 A check stage's prompt is composed ONCE, then each pass gets `passFocusBlock`

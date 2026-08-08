@@ -228,7 +228,11 @@ completed stage's captured output; the approved plan under `artifacts.plan`),
 the transcript; undefined until a check stage records one, so a template can
 show what a stage *established* without inlining its whole output),
 `git.base`/`git.branch`/`git.worktree`/`git.diffCmd` (precomputed review diff
-command), `worktree.instructions` (the standard pinning paragraph — every
+command), `git.cut`/`git.current` (exactly one is truthy: `cut` when the loop
+made its own branch — then `git.base` is a branch NAME; `current` when it is
+building on the branch the tree already had checked out (`taskBranch: false`)
+— then `git.base` is a commit SHA, so a template must not call it a branch),
+`worktree.instructions` (the standard pinning paragraph — every
 kind gets isolation discipline for free by including it), and
 `platform.github`/`platform.ado` (exactly one is truthy, per the resolved
 code platform — pr-sitter stages branch on these to pick `gh` vs ADO

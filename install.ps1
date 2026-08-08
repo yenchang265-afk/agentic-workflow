@@ -625,6 +625,7 @@ function Set-UserDefaults {
         stageTimeoutMinutes = 60
         codePlatform        = 'github'
         worktreesDir        = '.workflow-worktrees'
+        taskBranch          = 'feature/'
         reviewLenses        = @()
         workflows           = [ordered]@{
             'pr-sitter'     = [ordered]@{ enabled = $false; query = 'is:open author:@me' }
@@ -643,6 +644,7 @@ function Set-UserDefaults {
     Write-Host "           stageTimeoutMinutes (60)           — wall-clock cap per stage"
     Write-Host "           codePlatform (`"github`")            — or `"ado`" (needs an `"ado`" section)"
     Write-Host "           worktreesDir (`".workflow-worktrees`")   — per-task git worktree isolation; false to opt out"
+    Write-Host "           taskBranch (`"feature/`")           — work-branch prefix; false to build on your current branch"
     Write-Host "           reviewLenses ([])                  — extra REVIEW passes, e.g. [`"security`"]"
     Write-Host "           workflows.pr-sitter    (off) — watches your own open PRs"
     Write-Host "           workflows.review-sitter (off) — comments on PRs awaiting your review"

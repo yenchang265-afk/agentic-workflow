@@ -391,6 +391,7 @@ const testConfig: Config = {
   stageTimeoutMinutes: 10,
   watchIntervalMinutes: 5,
   worktreesDir: false,
+  taskBranch: "feature/",
   reviewLenses: [],
   workflows: {},
 }

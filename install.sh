@@ -707,6 +707,7 @@ ensure_user_defaults() {
   "stageTimeoutMinutes": 60,
   "codePlatform": "github",
   "worktreesDir": ".workflow-worktrees",
+  "taskBranch": "feature/",
   "reviewLenses": [],
   "workflows": {
     "pr-sitter": { "enabled": false, "query": "is:open author:@me" },
@@ -733,6 +734,7 @@ EOF
   echo "           stageTimeoutMinutes (60)           — wall-clock cap per stage"
   echo "           codePlatform (\"github\")            — or \"ado\" (needs an \"ado\" section)"
   echo "           worktreesDir (\".workflow-worktrees\")   — per-task git worktree isolation; false to opt out"
+  echo "           taskBranch (\"feature/\")           — work-branch prefix; false to build on your current branch"
   echo "           reviewLenses ([])                  — extra REVIEW passes, e.g. [\"security\"]"
   echo "           workflows.pr-sitter    (off) — watches your own open PRs"
   echo "           workflows.review-sitter (off) — comments on PRs awaiting your review"

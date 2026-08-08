@@ -97,10 +97,10 @@ export type TerminalReport =
  * done/stop, before any backlog write — see the module doc's ordering invariant.
  */
 const closeIsolation = async (ctx: TerminalCtx, checkpointMessage: string): Promise<void> => {
-  const { $, directory, state, log } = ctx
+  const { $, directory, config, state, log } = ctx
   if (!state.isolated) return
   await ctx.checkpoint(checkpointMessage)
-  await teardownIsolation($, log, directory, state)
+  await teardownIsolation($, log, directory, config, state)
 }
 
 /**
@@ -285,7 +285,13 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
     const cur = await findByIdIn($, directory, config.tasksDir, "in-progress", state.task.id)
     if (cur) {
       try {
-        await appendNote($, cur, auditNote("Loop done — review passed, awaiting human diff review", new Date(), actor), log)
+        // Naming the branch is what lets the ship gate push the right one: it
+        // runs from a fresh process long after `clearState` below dropped the
+        // snapshot, and `extractRunBranch` reads it back off this line.
+        const doneNote = state.git
+          ? `Loop done — review passed on branch ${state.git.branch}, awaiting human diff review`
+          : "Loop done — review passed, awaiting human diff review"
+        await appendNote($, cur, auditNote(doneNote, new Date(), actor), log)
         await moveTask($, cur, (action.toStatus ?? "in-review") as TaskStatus)
         await commitBacklog(ctx, `loop(${state.task.id}): done — parked in in-review`)
         moved = true

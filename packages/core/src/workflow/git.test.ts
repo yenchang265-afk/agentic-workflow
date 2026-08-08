@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { addWorktree, branchExists, commitAll, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
+import { addWorktree, branchExists, commitAll, defaultBranchName, headSha, listWorktrees, pushBranch, worktreeForBranch } from "./git.js"
 
 /**
  * git.ts shells out via Bun's `$` (redirections, quoting) which the node+tsx
@@ -169,4 +169,34 @@ test("pushBranch pushes to origin with -u", async () => {
 test("pushBranch returns false when the push fails", async () => {
   const $ = makeShell(() => ({ exitCode: 1, stderr: "rejected" }))
   assert.equal(await pushBranch($, "/repo", "feature/add-foo"), false)
+})
+
+test("headSha returns the commit HEAD points at", async () => {
+  const $ = makeShell(() => ({ exitCode: 0, stdout: "0123456789abcdef0123456789abcdef01234567\n" }))
+  assert.equal(await headSha($, "/repo"), "0123456789abcdef0123456789abcdef01234567")
+})
+
+test("headSha returns null on an empty repo, and on anything that isn't a sha", async () => {
+  assert.equal(await headSha(makeShell(() => ({ exitCode: 128, stderr: "fatal: bad revision 'HEAD'" })), "/repo"), null)
+  // The shape is validated, not trusted: this value reaches a composed prompt
+  // and a `git diff`, so stray chatter must read as "no sha", not ride along.
+  assert.equal(await headSha(makeShell(() => ({ exitCode: 0, stdout: "warning: something\nabc123" })), "/repo"), null)
+})
+
+test("defaultBranchName prefers origin/HEAD, then init.defaultBranch, then null — never the network", async () => {
+  const log: string[] = []
+  const fromRemote = makeShell(
+    (cmd) => (cmd.includes("symbolic-ref") ? { exitCode: 0, stdout: "refs/remotes/origin/trunk" } : { exitCode: 0, stdout: "nope" }),
+    log,
+  )
+  assert.equal(await defaultBranchName(fromRemote, "/repo"), "trunk")
+
+  const fromConfig = makeShell((cmd) =>
+    cmd.includes("symbolic-ref") ? { exitCode: 1 } : { exitCode: 0, stdout: "mainline" },
+  )
+  assert.equal(await defaultBranchName(fromConfig, "/repo"), "mainline")
+
+  assert.equal(await defaultBranchName(makeShell(() => ({ exitCode: 1 })), "/repo"), null)
+  // It gates every fresh BUILD, so it must never pay a round trip.
+  assert.ok(!log.some((c) => c.includes("gh ")), log.join(" | "))
 })

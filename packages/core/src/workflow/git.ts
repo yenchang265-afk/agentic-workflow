@@ -33,6 +33,40 @@ export const isDirty = async ($: Shell, cwd: string): Promise<boolean> => {
 }
 
 /**
+ * The commit HEAD points at, or null (empty repo, not a repo, failure).
+ *
+ * This is what a current-branch loop (`taskBranch: false`) records as its diff
+ * `base`: there the loop cuts no branch, so base and branch would be the SAME
+ * ref and `git diff <base>...<branch>` empty. HEAD's sha at the first BUILD is
+ * the honest boundary — it is an ancestor of every checkpoint that follows.
+ *
+ * The shape is validated rather than trusted: `base` flows into the composed
+ * stage prompt and into `git diff`, so a stray line of git chatter must read as
+ * "no sha" (the caller then refuses) instead of riding into a command.
+ */
+export const headSha = async ($: Shell, cwd: string): Promise<string | null> => {
+  const { ok, stdout } = await run($, cwd, ["rev-parse", "HEAD"])
+  return ok && /^[0-9a-f]{7,64}$/.test(stdout) ? stdout : null
+}
+
+/**
+ * The repo's default branch, resolved LOCALLY: `origin/HEAD` (set by clone, or
+ * by `git remote set-head`), else `init.defaultBranch`, else null.
+ *
+ * Deliberately never `gh repo view` — `ship-pr` may pay a network round trip
+ * because it runs once per ship, but this runs before every fresh BUILD and
+ * gates whether the loop starts at all. A default branch that can't be resolved
+ * offline must degrade to the caller's fallback, not to a hang.
+ */
+export const defaultBranchName = async ($: Shell, cwd: string): Promise<string | null> => {
+  const head = await run($, cwd, ["symbolic-ref", "refs/remotes/origin/HEAD"])
+  const fromRemote = head.ok ? head.stdout.replace(/^refs\/remotes\/origin\//, "").trim() : ""
+  if (fromRemote) return fromRemote
+  const cfg = await run($, cwd, ["config", "--get", "init.defaultBranch"])
+  return cfg.ok && cfg.stdout ? cfg.stdout : null
+}
+
+/**
  * Check out `branch`, creating it from the current HEAD when it doesn't exist
  * yet (an existing branch — e.g. from a recovered run — is reused as-is,
  * never reset). Returns false when the checkout failed.
@@ -231,6 +265,20 @@ export const excludeFromWorktree = async ($: Shell, wtPath: string, rel: string)
   if (!set.ok || /not up to date/i.test(set.stderr)) return false
   // Trust the outcome, not the exit code: confirm the path is actually gone.
   return !fs.existsSync(path.join(wtPath, dir))
+}
+
+/**
+ * The absolute `<git-common-dir>` (`.git` in an ordinary clone; the shared one
+ * from any linked worktree), or null outside a repo.
+ *
+ * The home for per-clone machine state that must NOT be a working-tree file: it
+ * is outside every checkout by construction, so nothing there can be swept into
+ * a `git add -A`, and it is shared by every worktree of the repo — which is what
+ * makes a marker written there visible to a second process.
+ */
+export const gitCommonDir = async ($: Shell, cwd: string): Promise<string | null> => {
+  const { ok, stdout } = await run($, cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
+  return ok && stdout ? stdout : null
 }
 
 /**

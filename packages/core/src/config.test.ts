@@ -30,7 +30,10 @@ import {
   enforcesAxisCoverage,
   passAxes,
   stagePasses,
+  taskBranchFor,
+  taskBranchPrefix,
   unreviewedAxes,
+  worktreesDirFor,
   parseConfig,
   planVisualizationFor,
   platformFor,
@@ -63,6 +66,39 @@ test("parseConfig rejects an empty worktreesDir", () => {
 
 test("parseConfig rejects an empty worktreeSetup", () => {
   assert.throws(() => parseConfig({ worktreeSetup: "" }), /Invalid .*worktreeSetup/)
+})
+
+test("taskBranch defaults to feature/, so an existing config's behavior is unchanged", () => {
+  assert.equal(DEFAULT_CONFIG.taskBranch, "feature/")
+  assert.equal(taskBranchFor(DEFAULT_CONFIG, "engineering", "add-foo"), "feature/add-foo")
+  assert.equal(worktreesDirFor(DEFAULT_CONFIG, "engineering"), ".workflow-worktrees")
+})
+
+test("taskBranch: false means no branch is cut, and forces worktrees off", () => {
+  const c = parseConfig({ taskBranch: false })
+  assert.equal(taskBranchFor(c, "engineering", "add-foo"), null)
+  assert.equal(taskBranchPrefix(c, "engineering"), null)
+  // git refuses `worktree add` for a branch already checked out in the main
+  // tree, so the branch policy has to win over the (defaulted) worktreesDir.
+  assert.equal(worktreesDirFor(c, "engineering"), false)
+})
+
+test("taskBranch is honored for engineering only; every other kind keeps feature/", () => {
+  // pr-sitter/main-sitter get their branch from the work source, and dep-sitter's
+  // publish stage pins `git push origin feature/*` in a read-only manifest.
+  const c = parseConfig({ taskBranch: false })
+  assert.equal(taskBranchFor(c, "dep-sitter", "bump-lodash"), "feature/bump-lodash")
+  assert.equal(worktreesDirFor(c, "pr-sitter"), ".workflow-worktrees")
+  assert.equal(taskBranchFor(parseConfig({ taskBranch: "wip-" }), "main-sitter", "abc123"), "feature/abc123")
+})
+
+test("parseConfig accepts a custom taskBranch prefix and rejects ref-invalid ones", () => {
+  assert.equal(parseConfig({ taskBranch: "wip/" }).taskBranch, "wip/")
+  // Enforced here rather than surfacing as an opaque `git checkout` failure
+  // three stages into a run.
+  for (const bad of ["", "-lead", "a..b", "a//b", "x.lock", "has space", "semi;colon"]) {
+    assert.throws(() => parseConfig({ taskBranch: bad }), /Invalid .*taskBranch/, `expected ${JSON.stringify(bad)} to be rejected`)
+  }
 })
 
 test("the backlog is untracked by git by default; ignoreBacklog: false opts back into committing it", () => {

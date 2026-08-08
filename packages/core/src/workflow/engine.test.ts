@@ -29,11 +29,20 @@ const config: Config = {
   stageTimeoutMinutes: 60,
   ignoreBacklog: true,
   worktreesDir: false,
+  taskBranch: "feature/",
   reviewLenses: [],
   workflows: {},
 }
 
 // --- the frozen oracle (verbatim from the pre-manifest state.ts) ---
+
+/**
+ * How the diff boundary NAMES its base. A branch-cutting run says the branch;
+ * a current-branch run (`taskBranch: false`) says "commit <sha>", because there
+ * `base` is a sha and calling it a branch would send the agent looking for a ref
+ * that doesn't exist.
+ */
+const sinceRef = (git: NonNullable<WorkflowState["git"]>): string => (git.onCurrentBranch ? `commit ${git.base}` : git.base)
 
 const oracleComposeArgs = (state: WorkflowState, target: string): string => {
   const a = state.artifacts
@@ -109,8 +118,12 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
         ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
         : `git diff ${state.git.base}...${state.git.branch}`
       parts.push(
-        `Change scope: this loop's work is the commits on branch ${state.git.branch} since ${state.git.base} — ` +
-          `\`${diffCmd}\` shows exactly what changed. Verify that work; a failure that pre-dates it is not this task's regression.`,
+        `Change scope: this loop's work is the commits on branch ${state.git.branch} since ${sinceRef(state.git)} — ` +
+          `\`${diffCmd}\` shows exactly what changed. Verify that work; a failure that pre-dates it is not this task's regression.` +
+          (state.git.onCurrentBranch
+            ? ` That commit is where this run started: ${state.git.branch} is the human's own working branch and carries unrelated history before it. ` +
+              `Never \`git checkout\`, \`git switch\`, \`git stash\`, or \`git reset\` — the loop's driver owns commits on this tree.`
+            : ""),
       )
     }
   } else if (target === "review") {
@@ -154,8 +167,12 @@ const oracleComposeArgs = (state: WorkflowState, target: string): string => {
         ? `git -C ${wt} diff ${state.git.base}...${state.git.branch}`
         : `git diff ${state.git.base}...${state.git.branch}`
       parts.push(
-        `Diff boundary: this loop's work is the commits on branch ${state.git.branch} since ${state.git.base} — ` +
-          `review exactly \`${diffCmd}\`, nothing outside it.`,
+        `Diff boundary: this loop's work is the commits on branch ${state.git.branch} since ${sinceRef(state.git)} — ` +
+          `review exactly \`${diffCmd}\`, nothing outside it.` +
+          (state.git.onCurrentBranch
+            ? ` That commit is where this run started: ${state.git.branch} is the human's own working branch and everything before that commit is pre-existing work, not this task's. ` +
+              `Never \`git checkout\`, \`git switch\`, \`git stash\`, or \`git reset\` — the loop's driver owns commits on this tree.`
+            : ""),
       )
     }
   }

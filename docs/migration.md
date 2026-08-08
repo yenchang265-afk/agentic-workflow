@@ -2,6 +2,22 @@ English | [繁體中文](migration.zh-TW.md)
 
 # Migrating between layouts
 
+## `taskBranch` — nothing to do
+
+A new top-level config key names the branch the engineering loop works on. Its
+default, `"feature/"`, reproduces the old hard-coded `feature/<id>` exactly, so
+**an existing config needs no change** and every run behaves as before.
+
+Set it if you want either of two new things:
+
+- `"taskBranch": "wip/"` — the same per-task branch under a different prefix.
+- `"taskBranch": false` — cut no branch at all and build on the branch you
+  already have checked out. See the hardening notes in
+  [configuration.md](configuration.md#optional-hardening); it forces worktrees
+  off, refuses to start on your default branch, and allows one run per tree.
+
+Only the `engineering` kind reads it; the sitters keep `feature/<id>`.
+
 ## To opt-in sitters — every sitter kind is now experimental
 
 - **`pr-sitter` and `review-sitter` no longer run by default.** All four

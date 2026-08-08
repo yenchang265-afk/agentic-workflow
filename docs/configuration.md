@@ -136,6 +136,7 @@ hand-edited afterward.
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
 | `worktreeSetup` | unset | Shell command run inside a freshly created worktree (e.g. `"npm ci"`). **Shell-bearing — user scope only**, see below. |
+| `taskBranch` | `"feature/"` | Branch-name prefix the engineering loop cuts its work branch with (`<prefix><id>`). Set to `false` to build on the branch you already have checked out — see hardening below. |
 | `reviewLenses` | `[]` | See hardening below. Max 5 lenses. |
 
 All three plugins read the same file: the schema lives in the shared core
@@ -723,6 +724,37 @@ Impact on the commands:
   installed deps**: pair it with `worktreeSetup` (e.g. `"npm ci"`), or VERIFY
   will fail in a bare checkout. Audit notes and task moves stay in the main
   tree, subject to `ignoreBacklog` below.
+- **`taskBranch`** — what the engineering loop calls the branch it works on.
+  The default `"feature/"` cuts `feature/<task-id>`. Set it to another prefix
+  (`"wip/"`) to rename that, or to **`false`** to cut nothing at all: BUILD,
+  VERIFY and REVIEW then run in your main working tree on **the branch you
+  already have checked out** — for when you are mid-PR on a branch and want the
+  loop's work to land there rather than on one of its own.
+
+  `taskBranch: false` changes four things, and each is worth knowing before you
+  set it:
+
+  - **Worktrees are forced off** for that loop, whatever `worktreesDir` says
+    (git will not check one branch out twice). The loop logs once when it drops
+    a configured value.
+  - **It refuses to start on your default branch.** This mode's checkpoints are
+    `git add -A && git commit` in your own tree, so a run started from `main`
+    would commit loop work straight onto it. Check out a working branch first.
+  - **Your uncommitted changes ride into the loop's commits**, for the same
+    reason — the checkpoint stages everything. Commit or stash first if you want
+    them kept separate. (Shared-tree mode has always behaved this way; here it
+    is the normal case rather than the exception.)
+  - **One run per working tree.** Two loops sharing a branch would land inside
+    each other's diff boundary and REVIEW would grade work nobody planned, so a
+    second run on the same tree is refused while the first holds it — across
+    processes, not just within one editor.
+
+  Shipping is unchanged in shape: `approve` on an `in-review/` task pushes the
+  branch the run actually built on and opens the same draft PR against your
+  default branch. Only the **engineering** kind honors this key; the sitters keep
+  `feature/<id>`, because their branch either comes from the work source
+  (`pr-sitter`, `main-sitter`) or is pinned by their own push allowlist
+  (`dep-sitter`).
 - **`ignoreBacklog`** — keep `tasksDir` out of git entirely: instead of
   committing every task move (approve, plan, ship, park, done, stop) as an
   audit trail, the loop registers it in `<git-common-dir>/info/exclude` — a

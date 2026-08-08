@@ -44,8 +44,10 @@ import {
   unknownStageConcurrencyKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
+  taskBranchPrefix,
   unknownStageModelKeys,
   unreviewedAxes,
+  worktreesDirFor,
 } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
@@ -2544,11 +2546,15 @@ async function main() {
   // auto-delete). A worktree whose task is still in-progress or in-review is the
   // NORMAL post-run state (kept until the ship gate releases it) — only one with
   // no such task is genuinely leftover.
-  if (config.worktreesDir) {
+  // `taskBranchPrefix` is null in current-branch mode, where the loop cuts no
+  // branch — there is nothing here to reconcile, and a `startsWith(null)` sweep
+  // would match every branch in the repo.
+  const branchPrefix = taskBranchPrefix(config, "engineering")
+  if (worktreesDirFor(config, "engineering") && branchPrefix) {
     await pruneWorktrees(sh, directory)
-    const worktrees = (await listWorktrees(sh, directory)).filter((w) => w.branch?.startsWith("feature/"))
+    const worktrees = (await listWorktrees(sh, directory)).filter((w) => w.branch?.startsWith(branchPrefix))
     for (const w of worktrees) {
-      const id = w.branch!.slice("feature/".length)
+      const id = w.branch!.slice(branchPrefix.length)
       const active =
         (await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)) ??
         (await findByIdIn(sh, directory, config.tasksDir, "in-review", id))
