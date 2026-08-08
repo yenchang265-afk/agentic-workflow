@@ -9,9 +9,12 @@ import {
   chainedGitPushViolation,
   isAdoMcpToolOutOfStageScope,
   isAdoMcpWriteViolation,
+  commandAllowed,
+  isBareCd,
   isFindMutation,
   isGithubPrMutation,
   isGitPushViolation,
+  matchesAny,
   splitSegments,
 } from "./write-backstop.js"
 
@@ -20,12 +23,34 @@ const findVectors: { mutating: string[]; readOnly: string[] } = JSON.parse(
   readFileSync(path.join(here, "..", "__fixtures__", "find-abuse-vectors.json"), "utf8"),
 )
 
+const admission: { globs: string[]; allowed: string[]; denied: string[] } = JSON.parse(
+  readFileSync(path.join(here, "..", "__fixtures__", "allowlist-admission-vectors.json"), "utf8"),
+)
+
 /**
  * Vectors shared with the twin `plugins/claude/hooks/src/allowlist.mjs`
  * (tested in plugins/claude/hooks/check-stage-guard.test.mjs) — keep the two
  * suites in sync so the classifiers can't drift between hosts.
  */
 
+
+test("commandAllowed agrees with its hook twin on every shared vector", () => {
+  // core needs this to admit a plan-discovered check command
+  // (`workflow/discovered-checks.ts`), the hook needs it to guard a stage
+  // agent's bash. Same table both sides, or the twins drift silently.
+  for (const cmd of admission.allowed) assert.equal(commandAllowed(cmd, admission.globs), true, `must allow: ${cmd}`)
+  for (const cmd of admission.denied) assert.equal(commandAllowed(cmd, admission.globs), false, `must deny: ${cmd}`)
+})
+
+test("matchesAny anchors the whole segment and isBareCd rejects a cd with metacharacters", () => {
+  // The globs compile with dotAll, so a trailing `*` already swallows anything
+  // after it; the anchoring is what stops a PREFIX from matching.
+  assert.equal(matchesAny("npm test", ["npm test*"]), true)
+  assert.equal(matchesAny("xnpm test", ["npm test*"]), false)
+  assert.equal(isBareCd("cd packages/web"), true)
+  assert.equal(isBareCd("cd $(pwd)"), false)
+  assert.equal(isBareCd("cd a && rm -rf /"), false)
+})
 
 test("splitSegments splits on unquoted operators only", () => {
   assert.deepEqual(splitSegments("git status && git diff"), ["git status", "git diff"])
