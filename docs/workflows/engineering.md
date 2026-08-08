@@ -70,7 +70,7 @@ flowchart TB
         claim["<b>/agentic-workflow:engineering plan &lt;id&gt;</b> — plan one now, no tick needed<br/><b>/agentic-workflow:engineering claim</b> — one-shot pull<br/><b>/agentic-workflow:engineering watch [trigger]</b> — worker session,<br/>claims via atomic mkdir lock<br/>(build-ready in-progress/ first, then queued/ to plan)"]
         planstage["<b>PLAN</b><br/>agent: workflow-plan-author · task file only, main tree<br/>skill: planning-and-task-breakdown<br/>(+ api-and-interface-design, deprecation-and-migration,<br/>documentation-and-adrs when relevant)<br/><i>writes ## Implementation Plan in place,<br/>then parks — the loop exits</i>"]
         build["<b>BUILD</b><br/>agent: workflow-build · edit ✅ bash ✅<br/>skills: incremental-implementation,<br/>test-driven-development<br/>(+ frontend-ui-engineering, observability-and-instrumentation,<br/>code-simplification when relevant)<br/><i>TDD on feature/&lt;id&gt; branch or worktree,<br/>commit checkpoint per iteration</i>"]
-        verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>runs tests + acceptance criteria,<br/>verdict via workflow_verdict tool only</i>"]
+        verify["<b>VERIFY</b><br/>agent: workflow-verify · edit ❌ bash: test allowlist<br/>skill on FAIL: debugging-and-error-recovery<br/><i>loop runs the plan's agentic-checks first (exit codes bind),<br/>then acceptance criteria — verdict via workflow_verdict only</i>"]
         review["<b>REVIEW</b><br/>agent: workflow-review · edit ❌ bash: read-only<br/>skills: code-review-and-quality<br/>(+ security-and-hardening, performance-optimization)<br/><i>5-axis diff review; optionally once per axis<br/>(stageFanout) or per reviewLens — worst verdict wins</i>"]
     end
 
@@ -175,6 +175,25 @@ Verdicts are only trusted through the `workflow_verdict` plugin tool — a stage
 agent claiming "PASS" in prose is ignored. Stage agents can't approve tasks,
 move backlog folders, or ship; the plugin and the human own every transition
 between statuses.
+
+VERIFY additionally declares `discoverChecks`: before the stage fires, the loop
+runs the commands the approved plan declared in its `### Verification`
+`agentic-checks` block, in the work tree, and their exit codes bind the verdict
+(0 adds nothing, 124/126/127 ⇒ ERROR, anything else ⇒ FAIL). The agent is told
+they are established fact and must cite rather than re-run them.
+
+Two properties matter more than the convenience. The commands are **frozen at
+plan time** — the block is text in the task file, re-read on every iteration —
+so BUILD→VERIFY→BUILD checks the same way each time; a stage that picked its own
+commands per run would move the verdict without the code moving. And what may
+run is capped by **VERIFY's own bash allowlist**: a discovered command is
+admitted only if the agent could have run it unprompted. That allowlist is the
+boundary rather than your approval of the plan, because task files live under
+`tasksDir` — repo content a clone can ship. Every failure mode degrades to fewer
+checks plus a warning: no block, malformed JSON, a refused command, or a binary
+that is not installed all leave the loop checking exactly as it did before.
+Pin your own commands with `workflows.engineering.stageChecks` (a present-but-
+empty list disables both), or turn the channel off with `"discoverChecks": false`.
 
 VERIFY and REVIEW additionally declare `requireEvidence`, so a **PASS** from
 either must cite the commands it ran and the files it read (`evidence:
