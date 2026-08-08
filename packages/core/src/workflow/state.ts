@@ -351,6 +351,13 @@ export interface WorkflowKindConfig {
   readonly stageConcurrency?: Readonly<Record<string, number>>
   /** Stage name → check commands the driver runs before that stage; replaces the manifest stage's `checks`. SHELL-BEARING (user-scope only). */
   readonly stageChecks?: Readonly<Record<string, readonly CheckDef[]>>
+  /**
+   * Whether a check stage with no configured and no manifest checks may take
+   * them from the approved plan; wins over the manifest stage's
+   * `discoverChecks`. Declared rather than left to the index signature below,
+   * which types every undeclared key `unknown`.
+   */
+  readonly discoverChecks?: boolean
   /** Changed-diff-line ceiling a reviewer-role kind declines above; unset ⇒ `DEFAULT_MAX_DIFF_LINES`. */
   readonly maxDiffLines?: number
   /** Whether the kind's plan-writing stage is prompted to include mermaid diagrams when the change shape warrants; wins over the manifest stage's `planVisualization`. */
@@ -367,6 +374,8 @@ export interface Config {
   readonly ignoreBacklog: boolean
   /** Wall-clock cap on a single stage before the loop gives up on it. */
   readonly stageTimeoutMinutes: number
+  /** Wall-clock cap on ONE driver-run check command; checks run outside the stage cap on both hosts. */
+  readonly checkTimeoutMinutes: number
   /** Per-task worktree root; `false` ⇒ shared-tree branch switching (opt-out). */
   readonly worktreesDir: string | false
   /** Shell command run in a fresh worktree after creation. */

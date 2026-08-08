@@ -389,6 +389,7 @@ const testConfig: Config = {
   tasksDir: "docs/tasks",
   ignoreBacklog: true,
   stageTimeoutMinutes: 10,
+  checkTimeoutMinutes: 10,
   watchIntervalMinutes: 5,
   worktreesDir: false,
   taskBranch: "feature/",
