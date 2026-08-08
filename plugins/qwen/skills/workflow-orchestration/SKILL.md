@@ -29,7 +29,8 @@ authoring + gates (interactive /agentic-workflow:engineering verbs, BEFORE the l
                                          draft/ → queued/            ← the task gate
                                          plan-review/ → in-progress/ ← the plan gate
                                          in-review/ → completed/     ← ship
-  /agentic-workflow:engineering replan [id] [why] ─▶ workflow_replan: back to queued/ (audited rejection)
+  /agentic-workflow:engineering replan [id] [why] ─▶ workflow_replan: back to queued/ plan-next (audited
+                                         rejection), then ONE chained PLAN pass re-parks a revised plan
 
 the loop (/agentic-workflow:engineering plan <id> or /agentic-workflow:engineering claim — this skill):
   queued task (planless — `plan <id>`/workflow_start now, or a claim with no build work left):
@@ -117,8 +118,10 @@ before you advance — and never pass or invent a `model`. Changing
      - **No** → stop here; `/agentic-workflow:engineering claim` builds it
        whenever the user is ready — the task is already build-ready, no
        further approve needed.
-   - **Replan** (with the user's reason) → `workflow_replan({id, reason})`; the
-     next PLAN pass addresses it.
+   - **Replan** (with the user's reason) → `workflow_replan({id, reason})`,
+     then immediately re-plan: `workflow_start({id})` → spawn
+     `workflow-plan-author` → `workflow_advance` — the revised plan re-parks
+     in `plan-review/` and this gate goes live again.
    - **Park for later** → stop here; `/agentic-workflow:engineering approve <id>`
      (or just `/agentic-workflow:engineering approve`) resumes it whenever the user is ready.
    Never call `workflow_plan_approve` without an explicit user answer, and never
@@ -174,8 +177,8 @@ before you advance — and never pass or invent a `model`. Changing
      ships it later.
    On `{stop}` the task stays in `in-progress/` with an audit note — report
    why. When the iteration cap tripped, the plan itself is suspect: the fix is
-   `/agentic-workflow:engineering replan <id> <why>` — the next
-   PLAN pass addresses the failure and parks a fresh plan for review.
+   `/agentic-workflow:engineering replan <id> <why>` — it immediately re-runs
+   PLAN with the failure threaded in and parks a fresh plan for review.
 
 ## The verdict contract
 

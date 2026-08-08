@@ -18,11 +18,12 @@ test("bare approve routes to approve-any with no id (auto-resolve)", () => {
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve"), { argv: ["gate", "approve-any"] })
 })
 
-test("replan carries the optional id and reason words through", () => {
+test("replan carries the optional id and reason words through, and continues the turn for the chained re-plan", () => {
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering replan my-task the plan misses the cache layer"), {
     argv: ["gate", "reject-any", "my-task", "the", "plan", "misses", "the", "cache", "layer"],
+    continueTurn: true,
   })
-  assert.deepEqual(gateArgsFor("/engineering replan"), { argv: ["gate", "reject-any"] })
+  assert.deepEqual(gateArgsFor("/engineering replan"), { argv: ["gate", "reject-any"], continueTurn: true })
 })
 
 test("the retired GATE-DISPATCH sentinel never dispatches — from any position", () => {
@@ -237,7 +238,7 @@ test("gate ids arrive unquoted — a quoted id must not fail isSafeTaskId and bl
   })
   assert.deepEqual(gateArgsFor('/agentic-workflow:engineering remove "f7k3" --force'), { argv: ["gate", "remove", "f7k3", "--force"] })
   const replan = gateArgsFor('/agentic-workflow:engineering replan "f7k3" plan misses the cache layer')
-  assert.deepEqual(replan, { argv: ["gate", "reject-any", "f7k3", "plan", "misses", "the", "cache", "layer"] })
+  assert.deepEqual(replan, { argv: ["gate", "reject-any", "f7k3", "plan", "misses", "the", "cache", "layer"], continueTurn: true })
 })
 
 /**

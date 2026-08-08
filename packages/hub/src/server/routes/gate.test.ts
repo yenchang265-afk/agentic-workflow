@@ -135,6 +135,9 @@ test("replan sends a parked plan back to queued, carrying the reason into the au
   assert.equal((res.body as GateResult).ok, true)
   assert.ok(at(dir, "queued", "ccc3-thing"))
   assert.match(fs.readFileSync(path.join(dir, "docs", "tasks", "queued", "ccc3-thing.md"), "utf8"), /misses the cache path/)
+  // The requeued task is stamped plan-next, so the next claim/watch re-plans it
+  // before the rest of the queued pool — the hub cannot chain a PLAN pass itself.
+  assert.ok(fs.existsSync(path.join(dir, "docs", "tasks", "queued", ".requests", "ccc3-thing")), "the plan-next marker lands")
   cleanup(dir)
 })
 
@@ -294,6 +297,7 @@ test("replan also accepts a cap-tripped in-progress task — its second valid or
   assert.equal(res.status, 200)
   assert.equal((res.body as GateResult).ok, true)
   assert.ok(at(dir, "queued", "iii9-thing"))
+  assert.ok(fs.existsSync(path.join(dir, "docs", "tasks", "queued", ".requests", "iii9-thing")), "plan-next from this origin too")
   cleanup(dir)
 })
 

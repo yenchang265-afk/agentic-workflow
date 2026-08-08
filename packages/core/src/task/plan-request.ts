@@ -22,8 +22,10 @@ import type { Task } from "./schema.js"
  * It is also never committed. The backlog is git-ignored by default
  * (`ignoreBacklog`), and even where it isn't, a request is ephemeral
  * coordination state like a claim marker rather than a lifecycle fact worth a
- * commit. The hub's route writes one and commits nothing; that is the whole
- * reason it can write one without being a driver.
+ * commit. Two writers exist: the hub's route (which commits nothing; that is
+ * the whole reason it can write one without being a driver) and `replanTask`,
+ * which stamps the rejected task plan-next so the next worker re-plans it
+ * before the rest of the queued pool — the write itself still commits nothing.
  */
 
 /** The pool a plan request is read from. Only engineering's planless pool has one today. */
@@ -54,7 +56,7 @@ export const requestPlan = async (
   directory: string,
   tasksDir: string,
   id: string,
-  opts: { readonly by?: string | null; readonly now?: Date } = {},
+  opts: { readonly by?: string | null; readonly now?: Date; readonly source?: string } = {},
 ): Promise<boolean> => {
   if (!isSafeTaskId(id)) return false
   const dir = requestsDir(directory, tasksDir)
@@ -62,7 +64,7 @@ export const requestPlan = async (
   const stamp = JSON.stringify({
     requestedAt: (opts.now ?? new Date()).toISOString(),
     ...(opts.by ? { by: opts.by } : {}),
-    source: "hub",
+    source: opts.source ?? "hub",
   })
   const wrote = await writeFileAtomic($, path.join(dir, id), stamp)
   return wrote.exitCode === 0

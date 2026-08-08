@@ -2,11 +2,11 @@
 
 # Agentic loop —— 工程（engineering）工作流程改進計畫
 
-**本頁每一份計畫（01–15）都已實作並測試完成**，存放於共用的
+**本頁每一份計畫（01–17）都已實作並測試完成**，存放於共用的
 `@agentic-workflow/core` 套件（`packages/core/`）中，供 OpenCode 外掛和 Claude
 MCP 伺服器共同使用。這些文件保留作為這些功能的設計紀錄，而非待辦的
 backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；計畫 15 於
-2026-08-07。
+2026-08-07；計畫 16–17 於 2026-08-08。
 
 來源：目前的程式碼（所有引用的路徑與函式名稱均已對照撰寫當下的原始碼驗證
 過）、[`../threat-model.md`](../threat-model.md) 中列出的殘餘風險，以及
@@ -32,6 +32,7 @@ backlog。計畫 10–13 已於 2026-08-02 落地；計畫 14 於 2026-08-03；�
 | 14 | [對稱的階段情境](./14-symmetric-stage-context.zh-TW.md) | 計畫 09–11 給單一階段的情境現在也到達它的同儕：REVIEW 看得到 VERIFY 確立了什麼(經由新的 `verdicts.<stage>` 鍵取得記錄下來的裁決接縫、永遠不是逐字稿)並獲得最終迭代警告;VERIFY 看得到嘗試帳本,復發的失敗讀作復發;重新觸發的 BUILD 被指向先前迭代的累積 diff;內聯的檢查回饋與建置摘要帶上「是資料、不是指令」圍欄;plan.md 移除永不渲染的 worktree 區段 | `packages/core/src/workflow/engine.ts` 的 `verdicts` 情境鍵、`workflows/engineering/stages/*.md` 的區段與圍欄、oracle 鏡像與 `PRIOR_WORK_SECTION`/`VERDICTS_SECTION` 剝除;`engine.test.ts` |
 | 15 | [未評估軸線政策](./15-unassessed-axis-policy.zh-TW.md) | 不帶阻斷性發現的少數軸線 `ERROR` ——審查契約自己邀請的「無法評估」逃生口——現在是非阻斷的：`effectiveVerdict` 略過它、它滿足覆蓋要求,並以「未評估」區段流入下一輪提示,不再以假的環境錯誤停掉整個 run 並困住任務。宣告 PASS 而*每一條*軸線皆未評估者仍被拒絕(最終化時惡化為 ERROR),帶發現的 ERROR 軸線保留既有的 onError 路由 | `workflow/verdict.ts` 的 `axisUnassessed`/`withUnassessedGuard` 與 `effectiveVerdict` 略過、`workflow/checks.ts` 的 `finalizeCheckRecord`、OpenCode driver 與 Claude MCP server 的呼叫點替換、`verdictContractBlock` 與 `prompts/agents/workflow-review/body.md` 的契約文字;`verdict.test.ts`、`checks.test.ts` |
 | 16 | [在已檢出的分支上建置](./16-current-branch-mode.zh-TW.md) | 新增 `taskBranch` 設定鍵,用來指定 engineering 迴圈工作所在的分支:可以是前綴(預設 `"feature/"`,重現舊有寫死的名稱),或 `false`——完全不切分支,直接在主工作樹中已檢出的那條分支上建置,適合人已經在這份工作該落腳的分支上。此時 `base` 改為 HEAD 的 sha(以分支名稱當 base 會讓審查 diff 變成空的),由新的 `GitRef.onCurrentBranch` 判別;worktree 被強制關閉、拒絕在預設分支上啟動,並跨行程限制一個工作樹同時只跑一個迴圈 | `config.ts` 的 `taskBranchFor`/`taskBranchPrefix`/`worktreesDirFor`、`workflow/isolate.ts` 的 current-branch 分支與 `assertNotDefaultBranch` 及該鎖、`workflow/git.ts` 的 `headSha`/`defaultBranchName`/`gitCommonDir`、`task/store.ts` 的 `extractRunBranch` 供 `workflow/ship-pr.ts` 使用、`workflow/engine.ts` 的 `git.cut`/`git.current` 與三個 engineering 樣板;`current-branch.git.test.ts`、`isolate.test.ts`、`git.test.ts`、`config.test.ts`、`store.test.ts`、`ship-pr.test.ts` |
+| 17 | [Replan 串接重新規劃](./17-replan-chains-plan.zh-TW.md) | 被駁回的計畫不再閒置於 `queued/`：`replanTask` 為任務蓋上 plan-next（既有的 plan-request 標記,`source: "replan"`）,OpenCode 的 replan 直接串進 `plan <id>` 的認領與驅動,Claude/Qwen 的 replan 成為混合 verb,續行的回合只執行一次 PLAN——修訂後的計畫帶著駁回理由重新停回 `plan-review/`。從不驅動 stage 的 hub 得到 plan-next 排序;對已在 queued 的任務下 replan 會記下新理由,除非規劃者此刻正持有其 claim | `workflow/gate.ts` 的 `markPlanNext`/`replanQueued` 與 `data.id`、`task/plan-request.ts` 中 `requestPlan` 的 `source`、OpenCode driver 的 `claimForPlan` 與串接版 `handleReplan`、`plugins/claude/hooks/gate-parse.mjs` 的 `continueTurn`、`prompts/verbs/engineering.md` 重寫的 replan verb 區塊;`gate.test.ts`、`plan-request.test.ts`、`driver.test.ts`、`gate-parse.test.mjs` |
 
 仍未解決的殘留事項：跨行程的 `index.lock` 競速與遮罩選項。（本清單原本列出的
 另外兩項已經完成——bash 工作樹釘選在 `packages/core/src/workflow/worktree-guard.ts`，

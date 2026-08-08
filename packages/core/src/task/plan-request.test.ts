@@ -127,6 +127,12 @@ test("requestPlan records who asked when the caller knows", async () => {
   assert.equal((JSON.parse(files.get(at("t1")) as string) as { by?: string }).by, "Ada <ada@example.com>")
 })
 
+test("requestPlan stamps the caller's source — replan's marker reads as replan, not as a hub click", async () => {
+  const { $, files } = makeFs()
+  await requestPlan($, DIR, TASKS, "t1", { source: "replan" })
+  assert.equal((JSON.parse(files.get(at("t1")) as string) as { source?: string }).source, "replan")
+})
+
 test("a second request restamps rather than adding a second marker — requesting twice is one request", async () => {
   const { $ } = makeFs()
   await requestPlan($, DIR, TASKS, "t1", { now: new Date("2026-07-30T10:00:00.000Z") })

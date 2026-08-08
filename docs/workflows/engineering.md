@@ -85,7 +85,7 @@ flowchart TB
     planstage -->|"parks (audited, committed)"| planreview
     planreview --> approveplan
     approveplan -->|"parks (audited, committed)"| inprogress
-    approveplan -.->|"replan &lt;id&gt; → re-queued<br/>(audited rejection)"| queued
+    approveplan -.->|"replan &lt;id&gt; → re-queued plan-next<br/>(audited rejection, re-plan chained)"| queued
     inprogress --> claim
     claim --> build
     build --> verify
@@ -163,7 +163,7 @@ step doesn't.
 | `/agentic-workflow:engineering new <idea>` | plugin → agent | `workflow-task-author` | task files only (bash ❌) | `interview-me`, `task-backlog-management` | planless draft in `draft/` |
 | `/agentic-workflow:engineering retask <id> [note]` | plugin (places the task) → agent (reshapes) | `workflow-task-author` (retask mode) | task files only (bash ❌) | `interview-me`, `task-backlog-management` | rewritten **in place** in `draft/` (same id); a `queued/` task is moved back to `draft/` first, withdrawing its approval; refused from `plan-review/` on (use `replan`) |
 | `/agentic-workflow:engineering approve [id]` | plugin only (agent writes nothing) | — | — | — | the folder-driven gate: draft → `queued/`, plan-review → `in-progress/`, in-review → `completed/` |
-| `/agentic-workflow:engineering replan [id] [why]` | plugin only (agent writes nothing) | — | — | — | task re-queued in `queued/`, rejection audited; the reason is threaded into the next PLAN pass's prompt as a structured section |
+| `/agentic-workflow:engineering replan [id] [why]` | plugin (rejects, then chains the re-plan) | `workflow-plan-author` (the chained PLAN pass) | — | — | task re-queued marked plan-next, rejection audited, and a PLAN pass fires immediately (a busy session or claim race leaves it plan-next for the next `claim`/`watch`); the reason is threaded into that pass's prompt as a structured section and the revised plan re-parks in `plan-review/` |
 | PLAN (in the loop, on a `queued/` task) | driver → agent | `workflow-plan-author` | task files only | `planning-and-task-breakdown` (+ `api-and-interface-design`, `deprecation-and-migration`, `documentation-and-adrs` when relevant) | `## Implementation Plan` in place → task parked in `plan-review/` |
 | `/agentic-workflow:engineering plan\|claim\|watch\|recover\|stop\|status` | plugin driver (`plugins/opencode/src/workflow/driver.ts`) | spawns the three stage agents below | — | `workflow-orchestration` protocol | stage sequencing, claims, snapshots, run log |
 | BUILD (also `/build`) | driver → agent | `workflow-build` | edit ✅ bash ✅ | `incremental-implementation`, `test-driven-development` (+ `frontend-ui-engineering`, `observability-and-instrumentation`, `code-simplification` when relevant) | code + one commit checkpoint per iteration |
