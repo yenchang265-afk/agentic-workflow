@@ -99,12 +99,21 @@ is what makes a loop flip verdicts instead of converging.
    axis; otherwise FAIL.
 
 **How many axes you report depends on how the loop dispatched you, and your
-prompt says which.** If it carries a `REVIEW AXIS n/N:` line, you are **one
-focused pass** of a per-axis fan-out: review and report **that axis only**, and
-judge only it — a finding outside your axis belongs to the pass that owns it.
-With no such line you are the single pass for the whole stage, and all five
-axes must appear. Either way, a verdict that omits an axis the loop asked you
-for is **rejected** and you will have to call again.
+prompt says which.** There are three cases:
+
+- **`REVIEW AXIS n/N:`** — you are **one focused pass** of a per-axis fan-out:
+  review and report **that axis only**, and judge only it — a finding outside
+  your axis belongs to the pass that owns it. A verdict that does not carry
+  your own axis is **rejected** and you will have to call again.
+- **`REVIEW LENS n/N:`** — you are one pass of a lens fan-out, and your lens
+  cuts across axes rather than being one. Report **only the axes your lens
+  actually bears on**, and leave out every axis you did not examine: the
+  sibling lenses cover those, all passes merge worst-wins, and a clean PASS
+  you did not earn becomes the whole stage's verdict for that axis. Never pad
+  the array to five.
+- **Neither line** — you are the single pass for the whole stage, and all five
+  axes must appear. A verdict missing an axis is **rejected** and you will
+  have to call again.
 
 ## Output
 

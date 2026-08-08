@@ -30,6 +30,7 @@ on and who does the work; it is deliberately not a procedure.
 - **`retask <id> [note]`** — reshape a planless draft. The move is the hook's; the interview is **yours**.
 - **`approve [id]`** — THE gate verb, unified and folder-driven. **The hook's, before your turn.**
 - **`replan [id] [reason]`** — the sole rejection verb, back to `queued/`. **The hook's, before your turn.**
+- **`abandon <id> [reason]`** — cancel a task into `abandoned/` (reversible; the file is kept). **The hook's, before your turn.**
 - **`remove <id>`** — hard-delete a task from the backlog. **The hook's, before your turn.** Destructive.
 - **`plan <id>`** — run PLAN on one approved task and park the plan for the gate. **Yours.**
 - **`claim`** — drive the next task: build-ready work through BUILD → VERIFY → REVIEW, else one to plan. **Yours.**

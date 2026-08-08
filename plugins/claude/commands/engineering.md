@@ -26,9 +26,10 @@ That block is authoritative — follow it, and ignore any other verb's
 description. The index below exists only so you can tell which verb you are
 on and who does the work; it is deliberately not a procedure.
 
-- **`approve [id]`** / **`replan [id] [reason]`** / **`remove <id>`** — the gate
-  verbs: forward gate, reject back to `queued/`, hard-delete (destructive).
-  **All three are the hook's, done before your turn.**
+- **`approve [id]`** / **`replan [id] [reason]`** / **`abandon <id> [reason]`** /
+  **`remove <id>`** — the gate verbs: forward gate, reject back to `queued/`,
+  cancel into `abandoned/` (reversible), hard-delete (destructive).
+  **All four are the hook's, done before your turn.**
 - **`retask <id> [note]`** — reshape a planless draft. The move is the hook's;
   the interview is **yours**.
 - **`new <idea>`** — interview into planless draft(s); **`plan <id>`** — run
@@ -55,8 +56,9 @@ above) and never claim the approval happened.
 Do not invent your own control flow — the `workflow-orchestration` skill defines
 the exact sequence of tool calls and Task spawns. The MCP tools own the state
 machine, git isolation, verdicts, backlog moves, snapshots, and metrics; you
-own spawning the stage subagents — always with the Task tool, and always passing
-the response's `model` field as the Task tool's `model` when present.
+own spawning the stage subagents — always with the Task tool. A response's
+`model` field is already bound for you by a `PreToolUse` hook, so you never
+have to pass it.
 
 Never touch `docs/tasks/**` directly — no Bash `mv`/`mkdir`/`rm`/redirects
 into it, no Write/Edit of files in status folders (a PreToolUse hook blocks

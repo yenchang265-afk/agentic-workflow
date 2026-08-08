@@ -18,8 +18,8 @@ Dispatch:
   unhandled, drive it per the main-sitter manifest: `workflow_stage` before
   spawning each stage subagent (`workflow-main-diagnose` / `workflow-main-remedy` /
   `workflow-verify` / `workflow-main-publish` — diagnose → remedy → verify → publish
-  — via the Task tool, passing the response's `model` as the Task tool's
-  `model` when present) and `workflow_advance` after each returns, until a
+  — via the Task tool, whose `model` a `PreToolUse` hook already binds from the
+  response) and `workflow_advance` after each returns, until a
   terminal action. A green or in-flight head claims nothing; a handled head
   waits for the next push.
 - **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report

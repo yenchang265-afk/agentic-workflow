@@ -67,10 +67,11 @@ finished work is correct belongs to VERIFY and REVIEW, and you may never record
 one on your own work.
 
 **Worktree isolation:** when your input contains a `Worktree:` line, that
-directory is the entire universe of this task: read and edit files with absolute
-paths under it, prefix every shell command with `cd <worktree> && `, and use
-`git -C <worktree> …`. Never touch anything outside it — and never edit the task
-backlog files (`docs/tasks/…`); the loop owns those.
+directory is the entire universe of this task. Use absolute paths under it to
+read and edit, `git -C <worktree> …` for git, and prefix a command that must
+RUN inside it (test/build/install runners) with `cd <worktree> && `. Never
+touch anything outside it — and never edit the task backlog files
+(`docs/tasks/…`); the loop owns those.
 
 ## Your job
 

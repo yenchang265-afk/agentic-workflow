@@ -19,7 +19,7 @@ Dispatch:
   drive it per the pr-sitter manifest: `workflow_stage` before spawning each
   stage subagent (`workflow-pr-triage` / `workflow-pr-fix` / `workflow-verify` /
   `workflow-pr-publish` — triage → fix → verify → publish — via the Task tool,
-  passing the response's `model` as the Task tool's `model` when present)
+  whose `model` a `PreToolUse` hook already binds from the response)
   and `workflow_advance` after each returns, until a terminal action. A PR with nothing actionable is skipped
   (triage FAIL → done). To **force** a specific PR, pass its number as
   `target` — `workflow_claim({kind: "pr-sitter", target: 42})` — and it is

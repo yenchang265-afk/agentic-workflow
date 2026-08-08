@@ -19,8 +19,8 @@ Dispatch:
   per the dep-sitter manifest: `workflow_stage` before spawning each stage
   subagent (`workflow-dep-scan` / `workflow-dep-upgrade` / `workflow-verify` /
   `workflow-dep-publish` — scan → upgrade → verify → publish — via the Task
-  tool, passing the response's `model` as the Task tool's `model` when
-  present) and `workflow_advance` after each returns, until a terminal action.
+  tool, whose `model` a `PreToolUse` hook already binds from the response)
+  and `workflow_advance` after each returns, until a terminal action.
   Major bumps are never claimed — they are logged and left for a human.
 - **`status`** (or bare) — call `mcp__agentic-workflow__workflow_status` and report
   the active loop state.

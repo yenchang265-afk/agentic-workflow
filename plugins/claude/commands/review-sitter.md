@@ -17,8 +17,8 @@ Dispatch:
   to poll for the next PR whose review is wanted and drive it per the
   review-sitter manifest: `workflow_stage` before spawning each stage subagent
   (`workflow-review-fetch` / `workflow-review-assess` / `workflow-review-publish` —
-  fetch → assess → publish — via the Task tool, passing the response's
-  `model` as the Task tool's `model` when present) and `workflow_advance` after
+  fetch → assess → publish — via the Task tool, whose `model` a `PreToolUse`
+  hook already binds from the response) and `workflow_advance` after
   each returns, until a terminal action. A head already reviewed is skipped until
   a human pushes a new one. To **force** a fresh review pass on a specific PR,
   pass its number as `target` — `workflow_claim({kind: "review-sitter", target: 42})` —
