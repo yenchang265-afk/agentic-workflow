@@ -168,7 +168,7 @@ const makeLeaseFs = (opts?: { failCmd?: (cmd: string) => boolean; onCmd?: (cmd: 
   const armTakeoverBeforeWrite = (ownerJson: string) => {
     onBeforeWrite = () => replaceLeaseWith(ownerJson)
   }
-  return { $, dirs, files, log, seedLease, armTakeoverBeforeWrite, wasExposedBare: () => exposedBare }
+  return { $, dirs, files, log, seedLease, replaceLeaseWith, armTakeoverBeforeWrite, wasExposedBare: () => exposedBare }
 }
 
 const now = new Date("2026-07-06T12:00:00.000Z")
@@ -248,6 +248,33 @@ test("acquireLease that loses the takeover rename backs off and reports the winn
   const res = await acquireLease($, "/r", "docs/tasks", me, now)
   assert.equal(res.ok, false)
   assert.equal(!res.ok && res.owner?.pid, 200)
+})
+
+test("acquireLease re-judges what it renamed aside and restores a rival's fresh lease (T3)", async () => {
+  // Winning the rename does not prove the thing renamed was the stale lease we
+  // judged. A rival whose stagedAcquire completed between our judgement and our
+  // `mv` owns a FRESH lease at that path — and the unconditional `rm -rf` that
+  // followed destroyed it while we acquired our own, leaving two watchers each
+  // believing they held the clone (the exact T3 breach the lease prevents, and
+  // the re-judge claim-marker.ts already applies to the same idiom).
+  const rival = JSON.stringify({ ...liveOwner("2026-07-06T11:59:45.000Z"), pid: 300, host: "gamma" })
+  const fs = makeLeaseFs({
+    onCmd: (cmd) => {
+      // Fires BEFORE the handler runs, so the rival owns the path at the very
+      // moment our takeover renames it aside.
+      if (cmd.startsWith("mv ") && /\.dead-/.test(cmd)) fs.replaceLeaseWith(rival)
+    },
+  })
+  fs.seedLease(JSON.stringify(liveOwner("2026-07-06T10:00:00.000Z")))
+
+  const res = await acquireLease(fs.$, "/r", "docs/tasks", me, now)
+
+  assert.equal(res.ok, false, "must stand down — the lease it moved aside was alive")
+  assert.equal(!res.ok && res.owner?.pid, 300, "reports the rival that really holds it")
+  const owner = await readLeaseOwner(fs.$, "/r", "docs/tasks")
+  assert.equal(owner?.pid, 300, "the rival's fresh lease is restored, not destroyed")
+  const debris = [...fs.dirs, ...fs.files.keys()].filter((p) => p.includes(".dead-") || p.includes(".new-"))
+  assert.deepEqual(debris, [], "no graveyard or staging debris left behind")
 })
 
 test("acquireLease treats a garbled owner record as stale and takes over", async () => {
