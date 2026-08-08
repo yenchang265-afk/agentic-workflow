@@ -27,6 +27,7 @@ const config: Config = {
   maxIterations: 3,
   tasksDir: "docs/tasks",
   stageTimeoutMinutes: 60,
+  checkTimeoutMinutes: 10,
   ignoreBacklog: true,
   worktreesDir: false,
   reviewLenses: [],

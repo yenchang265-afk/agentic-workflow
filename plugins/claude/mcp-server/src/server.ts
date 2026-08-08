@@ -27,8 +27,8 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
+import { resolveStageChecks } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
-  checksFor,
   concurrentStages,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
@@ -1044,9 +1044,23 @@ const claimWarnings = async (): Promise<string[]> => {
  * one review must not cost N test suites.
  */
 const runStageChecks = async (state: WorkflowState, stage: string): Promise<WorkflowState> => {
-  const defs = checksFor(config, activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
+  const dir = state.git?.worktree ?? directory
+  const { defs, warnings } = await resolveStageChecks({
+    $: sh,
+    config,
+    kind: activeManifest().manifest.kind,
+    def: stageDef(activeManifest().manifest, stage),
+    // The plan the loop is running against — re-extracted from the task file at
+    // claim time, so it is the same text on every iteration of this task.
+    plan: state.artifacts.plan,
+    dir,
+  })
+  // Warn, never fail: a dropped or refused discovered check must leave the loop
+  // exactly as it was before discovery existed, or a bad plan block becomes a
+  // stalled run.
+  for (const w of warnings) await log("warn", `${stage}: ${w}`)
   if (!defs.length) return state
-  const results = await runChecks(sh, defs, state.git?.worktree ?? directory)
+  const results = await runChecks(sh, defs, dir, config.checkTimeoutMinutes * 60_000)
   for (const r of results) {
     if (r.outcome === "pass") continue
     await log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)
