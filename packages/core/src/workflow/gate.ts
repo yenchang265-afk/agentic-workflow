@@ -4,6 +4,7 @@ import type { Config } from "./state.js"
 import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
 import { appendNote, auditNote, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
+import { requestPlan } from "../task/plan-request.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
 import type { AdoGateway } from "../source/ado-gateway.js"
@@ -497,9 +498,57 @@ export const oneLineReason = (reason?: string): string | undefined => {
 }
 
 /**
- * replan: a rejected plan-review/ or cap-tripped in-progress/ task → queued/.
- * `liveTaskId` is the id of the task a live loop is currently driving (refused so
- * we never re-queue a task mid-build).
+ * Stamp `id` plan-next so the next claim/watch walk re-plans it before the rest
+ * of the queued pool. Best-effort — a missing marker only costs the scheduling
+ * hint (the ordinary queue walk still re-plans the task), so a failed write
+ * warns rather than failing the gate. Written AFTER the gate's commit so the
+ * ephemeral marker never rides into a tracked backlog's replan commit.
+ */
+const markPlanNext = async (ctx: GateCtx, id: string, actor: string | null): Promise<void> => {
+  const marked = await requestPlan(ctx.$, ctx.directory, ctx.config.tasksDir, id, { by: actor, source: "replan" })
+  if (!marked) await ctx.log("warn", `loop(${id}): could not write the plan-next request marker — the task is queued but not prioritized`)
+}
+
+/**
+ * replan aimed at a task already sitting in queued/ — the retry arm. A fresh
+ * reason still matters: record it (the same note shape `extractReplanReason`
+ * parses) and restamp the plan-next marker — unless a claim marker says a
+ * planner holds the file RIGHT NOW: appending to a file the plan author is
+ * rewriting is a lost update, and the run holding the claim is already doing
+ * what this verb asks for.
+ */
+const replanQueued = async (ctx: GateCtx, task: Task, reason?: string): Promise<GateResult> => {
+  const { $, directory, config, log } = ctx
+  const id = task.id
+  const held = await listClaimIds($, directory, config.tasksDir, "queued")
+  if (held.includes(id)) {
+    return {
+      ok: false,
+      message: `Task "${id}" is being planned right now — its revised plan will park in ${config.tasksDir}/plan-review/; replan that plan when it lands.`,
+      variant: "info",
+    }
+  }
+  const actor = await gitActor($, directory)
+  const flat = oneLineReason(reason)
+  if (flat) {
+    await appendNote($, task, auditNote(planRejectedNote(flat), new Date(), actor), log)
+    await commitBacklog($, directory, config, `loop(${id}): rejection reason recorded — marked plan-next`)
+  }
+  await markPlanNext(ctx, id, actor)
+  return {
+    ok: true,
+    message: `"${task.title}" (${id}) is already queued in ${config.tasksDir}/queued/ — marked plan-next; the next PLAN pass re-plans it${flat ? " and addresses the new reason" : ""}.`,
+    path: task.path,
+    data: { requeued: true, alreadyDone: true, id, path: task.path, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it now` },
+  }
+}
+
+/**
+ * replan: a rejected plan-review/ or cap-tripped in-progress/ task → queued/,
+ * stamped plan-next so the very next PLAN pass — a host chaining one
+ * immediately, or the next claim/watch walk — picks it up first and parks a
+ * revised plan back in plan-review/. `isDriving` refuses a task a live loop is
+ * currently driving (so we never re-queue a task mid-build).
  */
 export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
   const { $, directory, config } = ctx
@@ -513,14 +562,7 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   if (!task) {
     const elsewhere = await findAnyStatus(ctx, id)
     const where = elsewhere ? statusFolder(elsewhere) : null
-    if (where === "queued") {
-      return {
-        ok: true,
-        message: `"${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
-        path: elsewhere!.path,
-        data: { requeued: true, alreadyDone: true, path: elsewhere!.path, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it` },
-      }
-    }
+    if (where === "queued") return replanQueued(ctx, elsewhere!, reason)
     return {
       ok: false,
       message: where
@@ -545,11 +587,15 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)
+  await markPlanNext(ctx, id, actor)
   return {
     ok: true,
-    message: `"${task.title}" sent back to ${config.tasksDir}/queued/ — the next PLAN pass will address the rejection.`,
+    // The id rides in the MESSAGE, not just `data` — on the Claude host the
+    // model chains the next PLAN pass from this text alone (gate-command.mjs
+    // surfaces only the message), and `workflow_start` needs a copyable id.
+    message: `Plan rejected for "${task.title}" (${id}) — re-queued in ${config.tasksDir}/queued/ as plan-next; the next PLAN pass addresses the rejection and parks a revised plan in plan-review/.`,
     path: newPath,
-    data: { requeued: true, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it` },
+    data: { requeued: true, id, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) re-plans it now` },
   }
 }
 

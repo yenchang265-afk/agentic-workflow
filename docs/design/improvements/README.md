@@ -2,11 +2,12 @@ English | [繁體中文](README.zh-TW.md)
 
 # Agentic loop — engineering workflow improvement plans
 
-**Every plan here — 01–15 — is implemented and tested**, living in the shared
+**Every plan here — 01–16 — is implemented and tested**, living in the shared
 `@agentic-workflow/core` package (`packages/core/`) consumed by both the
 OpenCode plugin and the Claude MCP server. They are kept as the design record
 for those features, not as a pending backlog. Plans 10–13 shipped on
-2026-08-02; plan 14 on 2026-08-03; plan 15 on 2026-08-07.
+2026-08-02; plan 14 on 2026-08-03; plan 15 on 2026-08-07; plan 16 on
+2026-08-08.
 
 Sourced from: the current code (all cited paths and function names verified
 against source at time of writing), the residual risks in
@@ -32,6 +33,7 @@ against source at time of writing), the residual risks in
 | 13 | [Opt-in plan visualization](./13-plan-visualization.md) | With `workflows.<kind>.planVisualization: true`, PLAN's prompt asks for mermaid diagram(s) in the plan when the change's shape warrants it (state/lifecycle, cross-package flow, concurrency, data-shape) — agent-judged, never gate-enforced — and the hub's plan-review view renders the fence as a diagram in a sandboxed iframe, still commentable per block | `planVisualization` on `StageDefSchema` (`manifest/schema.ts`), `planVisualizationBlock` in `workflow/verdict.ts`, `planVisualizationFor` + config knob in `config.ts`, compose tail in `workflow/engine.ts`, `MermaidBlock.tsx`/`mermaid-embed.ts` in `packages/hub`; `schema.test.ts`, `config.test.ts`, `verdict.test.ts`, `engine.test.ts`, `mermaid-embed.test.ts` |
 | 14 | [Symmetric stage context](./14-symmetric-stage-context.md) | The context plans 09–11 gave one stage now reaches its siblings: REVIEW sees what VERIFY established (the recorded verdict seam via the new `verdicts.<stage>` key, never the transcript) and gets the final-iteration warning; VERIFY sees the attempts ledger so a recurring failure reads as recurrence; a re-fired BUILD is pointed at its prior iterations' cumulative diff; the inlined check feedback and build summary carry data-not-instructions fences; plan.md drops its unrenderable worktree section | The `verdicts` context key in `packages/core/src/workflow/engine.ts`, sections + fences in `workflows/engineering/stages/*.md`, oracle mirrors + `PRIOR_WORK_SECTION`/`VERDICTS_SECTION` strips; `engine.test.ts` |
 | 15 | [The unassessed-axis policy](./15-unassessed-axis-policy.md) | A minority axis `ERROR` with no blocking finding — the "could not assess" escape hatch the review contract itself invites — is now non-blocking: `effectiveVerdict` skips it, it satisfies coverage, and it rides into the next prompt as an "unassessed" section instead of stopping the run as a fake environment error that stranded the task. A declared PASS whose *every* axis is unassessed is still refused (worsened to ERROR at finalization), and an ERROR axis carrying findings keeps today's onError routing | `axisUnassessed`/`withUnassessedGuard` + the `effectiveVerdict` skip in `workflow/verdict.ts`, `finalizeCheckRecord` in `workflow/checks.ts`, host swaps in the OpenCode driver + Claude MCP server, contract text in `verdictContractBlock` + `prompts/agents/workflow-review/body.md`; `verdict.test.ts`, `checks.test.ts` |
+| 16 | [Replan chains the re-plan](./16-replan-chains-plan.md) | A rejected plan no longer idles in `queued/`: `replanTask` stamps the task plan-next (the existing plan-request marker, `source: "replan"`), OpenCode's replan chains straight into the `plan <id>` claim + drive, and Claude/Qwen's replan becomes a hybrid verb whose continued turn runs exactly one PLAN pass — the revised plan re-parks in `plan-review/` with the rejection reason threaded in. The hub, which never drives a stage, gets the plan-next ordering; a replan aimed at an already-queued task records the fresh reason unless a planner holds its claim right now | `markPlanNext`/`replanQueued` + `data.id` in `workflow/gate.ts`, `source` on `requestPlan` in `task/plan-request.ts`, `claimForPlan` + chained `handleReplan` in the OpenCode driver, `continueTurn` in `plugins/claude/hooks/gate-parse.mjs`, the rewritten replan verb block in `prompts/verbs/engineering.md`; `gate.test.ts`, `plan-request.test.ts`, `driver.test.ts`, `gate-parse.test.mjs` |
 
 Residuals still open: cross-process `index.lock` races and redaction knobs. (Two
 entries this list used to carry have since shipped — bash worktree pinning in

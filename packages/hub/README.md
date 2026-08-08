@@ -162,7 +162,9 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   against — so the drawer **reviews** it instead: body and plan rendered as
   Markdown (raw source one click away), where hovering any line offers a
   comment. Sending the comments performs the same `replan` the card's button
-  does, with them composed into its reason. Replan always took a reason, but it
+  does, with them composed into its reason; the task returns to `queued/`
+  marked plan-next, so the next `claim`/`watch` re-plans it before the rest of
+  the pool (the hub itself never drives a stage). Replan always took a reason, but it
   was typed into a textarea with none of the plan in front of it, so it came out
   vague and the next PLAN pass repeated the mistake; each comment quotes the
   block it hangs off, so the audit note still says *which step*:

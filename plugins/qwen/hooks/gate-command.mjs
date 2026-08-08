@@ -33,7 +33,7 @@ var gateArgsFor = (prompt) => {
   if (replan) {
     const words = (replan[1] || "").trim().split(/\s+/).filter(Boolean);
     if (words.length) words[0] = unquote(words[0]);
-    return { argv: ["gate", "reject-any", ...words] };
+    return { argv: ["gate", "reject-any", ...words], continueTurn: true };
   }
   const retask = prompt.match(RETASK);
   if (retask) {

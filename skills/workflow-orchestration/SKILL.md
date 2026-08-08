@@ -59,7 +59,11 @@ finished review → `completed/` (ship). Id-less, it resolves the single task
 waiting at a loop wait-gate, falling back to a lone draft only when no loop
 gate is waiting, so a pile of drafts never shadows a parked plan and
 never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole
-rejection verb, always back to `queued/`. The reason is audited on the task
+rejection verb — back to `queued/` marked plan-next, and the plugin
+immediately chains a PLAN pass in the same session so a revised plan parks
+straight back in `plan-review/` (a busy session or a claim race leaves the
+task plan-next instead, which the next `claim`/`watch` honours first). The
+reason is audited on the task
 file and threaded into the next PLAN pass's prompt as a structured
 "Rejection reason from the plan gate" section (`extractReplanReason` parses it
 back off the audit note) — on the explicit `plan <id>` path AND the
@@ -243,9 +247,9 @@ that already failed. It is absent on the first iteration.
   verify-FAIL re-build drops stale review feedback and vice versa: old feedback
   judged an older build.
 - **FAIL** at the cap → stop and report. The cap tripping means the plan itself
-  is suspect, so the move is `replan <id> <why>`, and the next plan parks for
-  review again. Default `maxIterations` is 3, shared across both feedback
-  loops.
+  is suspect, so the move is `replan <id> <why>`, which immediately re-plans
+  and parks a fresh plan for review. Default `maxIterations` is 3, shared
+  across both feedback loops.
 - **ERROR** → stop immediately for a human; fix the environment, then
   `recover <id>`.
 - A stage exceeding `stageTimeoutMinutes` fails the loop, with partial work

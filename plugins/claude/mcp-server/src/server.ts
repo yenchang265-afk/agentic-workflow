@@ -2230,7 +2230,7 @@ server.registerTool(
   "workflow_replan",
   {
     description:
-      "Deterministic /agentic-workflow:engineering replan <id> [reason] — the sole rejection verb: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, so the next PLAN pass addresses why the old plan failed. Refuses tasks a live loop is driving.",
+      "Deterministic /agentic-workflow:engineering replan <id> [reason] — the sole rejection verb: reject a parked plan (plan-review/) or send a cap-tripped in-progress/ task back to queued/ with an audited note, marked plan-next so the very next PLAN pass — chain one now with workflow_start({id}) — addresses why the old plan failed and re-parks a revised plan. Refuses tasks a live loop is driving.",
     inputSchema: { id: z.string().min(1), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {
@@ -2300,7 +2300,7 @@ server.registerTool(
   "workflow_reject",
   {
     description:
-      "/agentic-workflow:engineering replan [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ for re-planning (the counterpart of workflow_approve at the plan gate). Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
+      "/agentic-workflow:engineering replan [id] [reason] — the folder-driven rejection shortcut. Sends a parked plan back to queued/ marked plan-next (the counterpart of workflow_approve at the plan gate) — chain the re-plan now with workflow_start({id}) so a revised plan re-parks in plan-review/. Auto-targets the single plan-review/ task when no id is given; an explicit id may also name a cap-tripped in-progress/ task. The reason is recorded in the audit note. Refuses a task a live loop is driving.",
     inputSchema: { id: z.string().optional(), reason: z.string().max(500).optional() },
   },
   async ({ id, reason }) => {

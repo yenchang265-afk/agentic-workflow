@@ -31,10 +31,11 @@ import { staleBoard, withGateLock } from "./gate.js"
  *
  * A queued task that already carries a plan is requestable, not refused: that is
  * the ordinary post-`replan` state (`replanTask` moves the file without clearing
- * the plan), the claim walk re-plans such a task anyway, and the PLAN stage
- * REPLACES the existing `## Implementation Plan` rather than stacking a second
- * one. Refusing it here made the hub and the driver disagree, and named two
- * verbs — approve and replan — that both no-op from `queued/`.
+ * the plan — and since it stamps the marker itself, a request here is usually a
+ * harmless restamp), the claim walk re-plans such a task anyway, and the PLAN
+ * stage REPLACES the existing `## Implementation Plan` rather than stacking a
+ * second one. Refusing it here made the hub and the driver disagree, and named
+ * two verbs — approve and replan — that both no-op from `queued/`.
  */
 
 /** The only column a plan request can be made from — the planless pool. */

@@ -56,7 +56,9 @@ sections below cover each.
 A task moves through exactly one folder at a time under `docs/tasks/`. The
 same `approve` verb drives every forward move (which one depends on which
 folder the task is currently in); `replan` is the sole rejection verb, always
-back to `queued/`. Full protocol: `workflow-orchestration` skill.
+back to `queued/` — marked plan-next, with the hosts chaining an immediate
+PLAN pass where they can, so the revised plan re-parks in `plan-review/`
+without idling. Full protocol: `workflow-orchestration` skill.
 
 ```mermaid
 stateDiagram-v2

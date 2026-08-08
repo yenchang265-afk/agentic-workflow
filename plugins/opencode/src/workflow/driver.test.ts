@@ -570,7 +570,7 @@ test("approve <id> moves a planned plan-review task to in-progress/", async () =
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")))
 })
 
-test("replan sends a plan-review task back to queued/ with the reason noted", async () => {
+test("replan sends a plan-review task back with the reason noted, then chains the re-plan", async () => {
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
   const { client, toasts } = makeClient()
   const log: string[] = []
@@ -581,17 +581,22 @@ test("replan sends a plan-review task back to queued/ with the reason noted", as
     log: () => {},
   }
 
-  const outcome = await handleCommand(deps, "sess", "replan my-task misses the cache layer", testConfig)
+  const outcome = await handleCommand(deps, "sess-replan-chain", "replan my-task misses the cache layer", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /re-planning now/, `unexpected toast: ${toasts[0]?.message}`)
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
   assert.ok(log.some((cmd) => cmd.includes("misses the cache layer")))
+  assert.ok(
+    log.some((cmd) => cmd.startsWith("mkdir /repo/docs/tasks/queued/.claims/my-task")),
+    "the chain claims the requeued task for this session's PLAN drive",
+  )
   // Report-and-stop: the outcome rides back to the command hook so it can
   // replace the rendered markdown — a toast alone is invisible to the model.
   assert.equal(outcome, toasts[0]?.message, "replan returns exactly what it toasted")
 })
 
-test("replan also accepts a cap-tripped in-progress task", async () => {
+test("replan also accepts a cap-tripped in-progress task and chains its re-plan", async () => {
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
   const { client, toasts } = makeClient()
   const log: string[] = []
@@ -602,10 +607,57 @@ test("replan also accepts a cap-tripped in-progress task", async () => {
     log: () => {},
   }
 
-  await handleCommand(deps, "sess", "replan my-task", testConfig)
+  await handleCommand(deps, "sess-replan-cap", "replan my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /re-planning now/)
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+})
+
+test("replan while this session is driving falls back to plan-next — rejection lands, no chain", async () => {
+  const sessionID = "sess-replan-busy"
+  const busy: WorkflowState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
+  setWorkflow(sessionID, busy)
+  try {
+    const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+    const { client, toasts } = makeClient()
+    const log: string[] = []
+    const deps: Deps = { client, $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log), directory: "/repo", log: () => {} }
+
+    await handleReplan(deps, sessionID, "my-task wrong approach", testConfig)
+
+    assert.equal(toasts[0]?.variant, "success")
+    assert.match(toasts[0]?.message ?? "", /plan-next/, "core's message already promises the next PLAN pass")
+    assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the rejection move still lands")
+    assert.ok(
+      !log.some((cmd) => cmd.startsWith("mkdir /repo/docs/tasks/queued/.claims/my-task")),
+      "no chain claim under a busy session",
+    )
+  } finally {
+    clearWorkflow(sessionID)
+  }
+})
+
+test("replan falls back to plan-next when another watcher wins the requeued task's claim", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    // The chain's `mkdir <queued>/.claims/my-task` loses the race — modelled as
+    // the marker mkdir failing, exactly how a rival's earlier mkdir surfaces.
+    $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log, [
+      { cmd: "mkdir /repo/docs/tasks/queued/.claims/my-task", result: { exitCode: 1 } },
+    ]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleReplan(deps, "sess-replan-race", "my-task wrong approach", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
-  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
+  assert.match(toasts[0]?.message ?? "", /plan-next/, "the raced chain reports core's outcome — the winner re-plans it")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the rejection move still lands")
 })
 
 /**
@@ -863,9 +915,10 @@ test("/reject with no id sends the single plan-review task back, whole arg as re
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleReplan(deps, "sess", "the migration order is unsafe", testConfig)
+  await handleReplan(deps, "sess-reject-noid", "the migration order is unsafe", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
+  assert.equal(toasts[0]?.variant, "info")
+  assert.match(toasts[0]?.message ?? "", /re-planning now/)
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
   assert.ok(log.some((cmd) => cmd.includes("the migration order is unsafe")))
 })
@@ -876,9 +929,9 @@ test("/reject <id> [reason] captures the id and the trailing reason", async () =
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleReplan(deps, "sess", "my-task misses the cache layer", testConfig)
+  await handleReplan(deps, "sess-reject-id", "my-task misses the cache layer", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
+  assert.equal(toasts[0]?.variant, "info")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
   assert.ok(log.some((cmd) => cmd.includes("misses the cache layer")))
 })
@@ -988,9 +1041,9 @@ test("replan <why> routes the rejection, reason noted", async () => {
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleCommand(deps, "sess", "replan the migration order is unsafe", testConfig)
+  await handleCommand(deps, "sess-replan-why", "replan the migration order is unsafe", testConfig)
 
-  assert.equal(toasts[0]?.variant, "success")
+  assert.equal(toasts[0]?.variant, "info")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")))
   assert.ok(log.some((cmd) => cmd.includes("the migration order is unsafe")))
 })
