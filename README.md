@@ -48,7 +48,7 @@ tick, so plans don't rot while tasks sit parked:
 |-------|------|---------|
 | PLAN | Writes the `## Implementation Plan` onto the claimed queued task, then **parks it in `plan-review/` and exits** | parks — `approve` / `replan` is the gate, the loop never blocks |
 | BUILD | Implements the approved plan test-first, on its own `feature/<id>` branch | no |
-| VERIFY | Runs tests; FAIL re-builds with the failure. Commands declared in `workflows.<kind>.stageChecks` are run by the loop itself, and their exit codes bind the verdict rather than being self-reported | no |
+| VERIFY | Runs tests; FAIL re-builds with the failure. The check commands — taken from the approved plan's `agentic-checks` block, or pinned in `workflows.<kind>.stageChecks` — are run by the loop itself, and their exit codes bind the verdict rather than being self-reported | no |
 | REVIEW | Checks the branch diff; FAIL re-builds with feedback | no |
 
 A re-build leads with the structured failure — verdict reason, failed criteria,

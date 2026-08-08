@@ -116,6 +116,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `tasksDir` | `"docs/tasks"` | 任務待辦的儲存庫相對根目錄；它的子資料夾就是各個任務狀態。也承載暫存的 `runs/` 機器狀態（快照、指標、階段標記、PR-sitter 帳本）。 |
 | `ignoreBacklog` | `true` | 見下方強化項。設成 `false` 可將每次任務移動都提交為稽核紀錄（舊有行為）。 |
 | `stageTimeoutMinutes` | `60` | 單一階段的牆鐘時間上限；超過此時限的階段會讓迴圈失敗，而不是卡住不動。 |
+| `checkTimeoutMinutes` | `10` | 單一 driver 執行的檢查指令（`stageChecks` ／計畫發現的檢查）的牆鐘時間上限。與 `stageTimeoutMinutes` 分開，因為後者不涵蓋檢查：兩個 host 上檢查都跑在階段上限之外。超時的檢查會被殺掉並回報結束碼 `124` ⇒ 階段 ERROR。 |
 | `watchIntervalMinutes` | `5` | `/agentic-workflow:engineering watch` 的預設輪詢週期；可透過 `/agentic-workflow:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
 | `workflows` | `{}` | 各工作流程類型的區段——見下方。 |
 | `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——透過 Azure DevOps MCP 伺服器 + 一個 PAT）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
@@ -328,11 +329,13 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 - **`workflows.<kind>.stageChecks`**——以檢查類階段名稱為鍵，值是**驅動程式**
   在該階段 fire 之前、於其工作樹中執行的指令。它們的結束碼對該階段而言是既定
   事實：會渲染進提示詞、計為已觀察到的證據，並折進該階段的裁決。未設定 ⇒
-  不執行任何檢查，也就是今天的行為。
+  該階段改用已核准計畫所宣告的指令（下方的 `discoverChecks`）；若計畫也沒宣告，
+  就不執行任何檢查。
 
-  這就是設定檔一直缺席的測試／型別檢查／lint 旋鈕。沒有它，VERIFY 每次執行都得
-  自己去找指令——於是同一個 repo、同一個 commit，這次疊代用 `npm test` 檢查，
-  下次變成 `npm test` 加 `npx tsc`，程式碼沒動，裁決卻動了。
+  這是給「想手動釘選專案指令」用的測試／型別檢查／lint 旋鈕。這個鍵與
+  `discoverChecks` 共同解決的問題是：放著不管，VERIFY 每次執行都自己挑指令——
+  於是同一個 repo、同一個 commit，這次疊代用 `npm test` 檢查，下次變成
+  `npm test` 加 `npx tsc`，程式碼沒動，裁決卻動了。
 
   ```jsonc
   {
@@ -360,23 +363,69 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   | 結束碼 | 意義 | 效果 |
   |------|---------|--------|
   | `0` | 通過 | 什麼都不加；裁決就是代理人記錄的那一個 |
-  | `126`／`127` | 檢查跑不起來（找不到／不可執行） | 階段 **ERROR** → 迴圈停下來等人，且不消耗疊代 |
+  | `124`／`126`／`127` | 檢查逾時或跑不起來（找不到／不可執行） | 階段 **ERROR** → 迴圈停下來等人，且不消耗疊代 |
   | 其他 | 檢查跑了，而且說不行 | 階段 **FAIL** → 重新 build，消耗一次疊代 |
 
   紅燈的檢查無法被辯掉：不論該階段回報什麼，它都不可能 PASS。如果是檢查本身
-  壞了，逃生口是把它從這份清單移除——而不是在轉錄稿裡跟它爭辯。目前還沒有
-  逐一檢查的逾時；`stageTimeoutMinutes` 限制的是整個階段，不是單一指令，這點
-  與 `worktreeSetup` 相同。
+  壞了，逃生口是把它從這份清單移除——而不是在轉錄稿裡跟它爭辯。每一條指令都受
+  `checkTimeoutMinutes`（預設 10）限制；超過就會被殺掉並回報結束碼 `124`，依上表
+  讀作 ERROR。`stageTimeoutMinutes` **不**涵蓋檢查——兩個 host 上檢查都跑在階段
+  上限之外。
 
-  每個階段的優先順序：這個鍵 → manifest 階段的 `checks` 欄位 → 沒有檢查。
-  和 `stageModels` 一樣，這個鍵會**整份取代** manifest 的清單，而不是合併
-  進去。鍵必須是檢查類階段的名稱；指向不存在階段的鍵會被接受、忽略，並在
-  迴圈啟動時發出警告——那個階段於是完全不執行檢查，所以這個警告值得一看。
+  每個階段的優先順序：這個鍵 → manifest 階段的 `checks` 欄位 → 計畫發現的指令
+  → 沒有檢查。和 `stageModels` 一樣，這個鍵會**整份取代** manifest 的清單，而不是
+  合併進去。**存在但為空**的清單（`"verify": []`）是明確的退出開關：它的意思是
+  「這就是我專案的檢查，而且一個都沒有」，所以也會一併關閉發現機制。鍵必須是檢查
+  類階段的名稱；指向不存在階段的鍵會被接受、忽略，並在迴圈啟動時發出警告——那個
+  階段於是退回發現機制或完全不執行檢查，所以這個警告值得一看。
 
   **只在使用者層級生效**（`SHELL_BEARING_WORKFLOW_KEYS`），與 `worktreeSetup`、
   `scannerCommand` 相同：它是驅動程式會執行的 shell，被複製的 repo 不能提供
   它。在 repo 的 `.agentic-workflow.json` 設定它會被捨棄並發出指名該 kind 的
   警告；同段落的其他鍵與使用者層級的同名值都會保留。
+
+- **`workflows.<kind>.discoverChecks`**——當一個檢查類階段既沒有 `stageChecks`
+  項目、manifest 也沒有 `checks` 時，是否從**已核准的計畫**取得指令。未設定 ⇒
+  依 manifest 階段的宣告；engineering 的 VERIFY 宣告為開，其餘出貨階段皆為關。
+
+  PLAN 階段本來就必須把每一條驗收標準對應到「證明它的確切指令或可觀察檢查」。
+  打開這個開關後，它的提示詞會額外要求把那些指令寫成機器可讀的形式——放在
+  `### Verification` 末尾的一個 fenced 區塊：
+
+  ~~~markdown
+  ### Verification
+  - AC1「超過限制回傳 429」→ `npm run test:all`（root package.json 定義了
+    `test:all`；沒有裸的 `test` script）
+
+  ```agentic-checks
+  [
+    { "name": "tests", "command": "npm run test:all" },
+    { "name": "types", "command": "npm run typecheck:all" }
+  ]
+  ```
+  ~~~
+
+  為什麼掛在計畫而不是檢查階段自己：**指令必須被凍結**。區塊是任務檔裡的文字，
+  每次疊代都重新讀取，所以 BUILD→VERIFY→BUILD 每輪的檢查方式相同。一個每次執行
+  都重新推導指令的階段，會把上面描述的飄移原封不動地帶回來。唯一會改變這組指令
+  的途徑是 `replan`——它重跑 PLAN，並重新停在你的把關點。
+
+  能執行什麼，由**該階段自己的 bash 白名單**封頂：被發現的指令只有在該階段的
+  agent 本來就能主動執行時才會被接受。邊界是白名單，而不是你對計畫的核准，因為
+  任務檔位於 `tasksDir`，那是 repo 內容，被 clone 的 repo 可以夾帶。指令另有上限
+  5 條、`cwd` 必須是工作樹內的單純相對路徑，而二進位檔在本機沒安裝的指令會被
+  丟棄並發出警告，而不是讓整趟執行 127。
+
+  所有出錯情況都退化成**少跑幾個檢查加一則警告**——絕不會拒絕計畫、也絕不會停掉
+  迴圈。沒有區塊、JSON 壞掉、指令被拒、二進位檔缺失：迴圈的檢查方式與這個功能
+  出現之前完全相同。
+
+  與 `stageChecks` 不同，這個鍵**不是** shell 承載鍵，會從 repo 的
+  `.agentic-workflow.json` 生效：它的值域只有一個布林，而且打開它並不會給 repo
+  任何它沒有的能力——把關的白名單，就是它的 VERIFY agent 本來就在遵守的那一份。
+
+  要關閉可用 `"discoverChecks": false`，或直接釘選自己的指令——
+  `"stageChecks": { "verify": [] }` 會同時關掉兩者。
 
 - **`agentModels`**（頂層，不在 `workflows` 之內）——代理名稱 → 該代理
   執行時使用的模型，適用於**不是階段執行**、因此沒有 `stageModels`
