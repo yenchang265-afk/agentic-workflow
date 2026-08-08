@@ -5,11 +5,22 @@ import path from "node:path"
 import { loadManifest } from "../manifest/load.js"
 import { ADO_TOOLS } from "../source/ado-tools.js"
 import { effectiveAllowlist, effectivePlatformTools, stageDef } from "../manifest/schema.js"
-import { advance, composePrompt, composeStagePrompt, EXEMPT_MAX, firstStep, promptContext, promptContextWithStats, withCheckResults } from "./engine.js"
+import {
+  advance,
+  composePrompt,
+  composeStagePrompt,
+  discoveringStage,
+  EXEMPT_MAX,
+  firstStep,
+  promptContext,
+  promptContextWithStats,
+  withCheckResults,
+} from "./engine.js"
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { checkDiscoveryBlock } from "./discovered-checks.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -210,7 +221,12 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
   const def = stageDef(eng.manifest, stage)
   return def.kind === "check"
     ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence)}`
-    : `${base}\n\n${workScopeBlock(stage)}${def.planContract ? `\n\n${planContractBlock(stage)}` : ""}`
+    : `${base}\n\n${workScopeBlock(stage)}${def.planContract ? `\n\n${planContractBlock(stage)}` : ""}${
+        // "verify" spelled out, not read from the manifest: this oracle is a
+        // hand-written twin, and deriving it would make it agree with the code
+        // by construction instead of by review.
+        def.planContract ? `\n\n${checkDiscoveryBlock(stage, "verify")}` : ""
+      }`
 }
 
 const oracleFire = (state: WorkflowState, stage: string): { state: WorkflowState; action: Action } => ({
@@ -338,7 +354,7 @@ test("composeStagePrompt matches composePrompt byte-for-byte on hook-less stages
   for (const [label, state] of Object.entries(PROMPT_STATES)) {
     for (const stage of ["plan", "build", "verify", "review"]) {
       const def = stageDef(eng.manifest, stage)
-      const lenient = composeStagePrompt(def, eng.prompts[stage] ?? "", promptContext({ ...state, stage }))
+      const lenient = composeStagePrompt(def, eng.prompts[stage] ?? "", promptContext({ ...state, stage }), undefined, undefined, discoveringStage(eng.manifest))
       assert.equal(lenient, composePrompt(eng, { ...state, stage }, stage), `${label} → ${stage}`)
     }
   }
@@ -367,7 +383,7 @@ test("composePrompt appends the verdict contract to check stages only", () => {
 test("composePrompt appends the plan contract to the flagged PLAN stage only", () => {
   const state = startAtPlan("add foo", task)
   const plan = composePrompt(eng, state, "plan")
-  assert.ok(plan.endsWith(planContractBlock("plan")), "plan carries the contract after the scope fence")
+  assert.ok(plan.includes(`${workScopeBlock("plan")}\n\n${planContractBlock("plan")}`), "plan carries the contract after the scope fence")
   assert.match(plan, /### Verification/)
   // BUILD is a work stage too, but does not opt in — no contract, no drift.
   assert.doesNotMatch(composePrompt(eng, { ...resumeAtBuild("g", task, "P"), stage: "build" }, "build"), /PLAN CONTRACT/)
@@ -382,8 +398,10 @@ test("composePrompt appends the visualization block only when config opts the ki
   const visual: Config = { ...config, workflows: { engineering: { planVisualization: true } } }
   const plan = composePrompt(eng, state, "plan", visual)
   assert.ok(
-    plan.endsWith(`${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}`),
-    "plan's tail is fence → contract → visualization, in order",
+    plan.endsWith(
+      `${workScopeBlock("plan")}\n\n${planContractBlock("plan")}\n\n${planVisualizationBlock("plan")}\n\n${checkDiscoveryBlock("plan", "verify")}`,
+    ),
+    "plan's tail is fence → contract → visualization → check discovery, in order",
   )
   assert.match(plan, /```mermaid/)
   // BUILD is a work stage with no planContract — the kind-level knob must stay
@@ -475,7 +493,10 @@ test("composePrompt fences work stages to their own stage", () => {
     // The flagged PLAN stage appends its plan contract AFTER the fence; the
     // fence itself must still be present and in order for both.
     assert.match(prompt, /STAGE SCOPE/, `${stage} carries the scope fence`)
-    const tail = stage === "plan" ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}` : workScopeBlock(stage)
+    const tail =
+      stage === "plan"
+        ? `${workScopeBlock(stage)}\n\n${planContractBlock(stage)}\n\n${checkDiscoveryBlock(stage, "verify")}`
+        : workScopeBlock(stage)
     assert.ok(prompt.endsWith(tail), `${stage} ends with its contract tail`)
   }
   // A check stage's own contract is the verdict one — never both.

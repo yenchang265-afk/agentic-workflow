@@ -1,7 +1,7 @@
 import fsp from "node:fs/promises"
 import path from "node:path"
 import { BUILTIN_WORKFLOW_KINDS } from "@agentic-workflow/core/config"
-import { composeStagePrompt, promptContext } from "@agentic-workflow/core/workflow/engine"
+import { composeStagePrompt, discoveringStage, promptContext } from "@agentic-workflow/core/workflow/engine"
 import type { WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { listWorkflowKinds, loadManifest } from "@agentic-workflow/core/manifest/load"
 import { WorkflowManifestSchema, type WorkflowManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
@@ -153,7 +153,17 @@ export const previewKind = async (_deps: HubDeps, req: ParsedRequest): Promise<J
   if (typeof tpl !== "string") return badRequest(`no prompt source provided for stage "${def.name}"`)
 
   const sample: PreviewSample = { ...DEFAULT_SAMPLE, ...body.sample }
-  const full = composeStagePrompt(def, tpl, promptContext(sampleState(manifest, def.name, sample)))
+  // `discoveringStage` is a manifest-level question the lenient primitive cannot
+  // answer from `def` alone, so the preview has to ask it — otherwise a plan
+  // stage previews without the check-discovery block the loop actually sends.
+  const full = composeStagePrompt(
+    def,
+    tpl,
+    promptContext(sampleState(manifest, def.name, sample)),
+    undefined,
+    undefined,
+    discoveringStage(manifest),
+  )
 
   const hookRef = manifest.hooks.compose?.[def.name]
   const response: PreviewResponse = {

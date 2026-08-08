@@ -307,6 +307,22 @@ export const promptContext = (
 const passMode = (passes: readonly StagePass[]): "single" | "axis" | "lens" =>
   passes.some((p) => p.mode === "axis") ? "axis" : passes.some((p) => p.mode === "lens") ? "lens" : "single"
 
+/**
+ * The check stage that consumes a discovered `agentic-checks` block, if any —
+ * which is also what tells the plan-writing stage to emit one.
+ *
+ * A manifest-level question, not a stage-level one: the flag sits on the
+ * CONSUMER (verify) while the block has to be written by the PLAN stage, so
+ * `composeStagePrompt` cannot derive it from its `def` the way it derives
+ * `mode` and `visualize`. Exported so the hub's creator preview asks the same
+ * question of its unsaved manifest — a preview that skipped it would render a
+ * plan prompt the loop does not send. `config` optional, and consulted only
+ * when given, so a config with nothing set composes byte-identically to none.
+ * Pure.
+ */
+export const discoveringStage = (manifest: WorkflowManifest, config?: Config): string | undefined =>
+  manifest.stages.find((s) => s.kind === "check" && (config ? discoverChecksFor(config, manifest.kind, s) : s.discoverChecks))?.name
+
 export const composeStagePrompt = (
   def: StageDef,
   tpl: string,
@@ -369,13 +385,7 @@ export const composePromptWithStats = (
   // shipped manifests are user-uneditable, so the config override is the only
   // way the opt-in is reachable at all.
   const visualize = config ? planVisualizationFor(config, loaded.manifest.kind, def) : undefined
-  // Which stage will consume a discovered `agentic-checks` block, if any. Asked
-  // of the whole manifest rather than of `def`, because the flag sits on the
-  // CONSUMER (verify) while the block has to be written by the PLAN stage.
-  const discover = config
-    ? loaded.manifest.stages.find((s) => s.kind === "check" && discoverChecksFor(config, loaded.manifest.kind, s))?.name
-    : undefined
-  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize, discover), elided }
+  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize, discoveringStage(loaded.manifest, config)), elided }
 }
 
 /** Render the prompt threaded into `target`'s stage command. */
