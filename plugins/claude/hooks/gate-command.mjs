@@ -19,6 +19,13 @@
  * an interview. It dispatches like a gate verb and then, on success, hands the
  * turn back with the outcome as context (`continueTurn`); a refusal still blocks.
  *
+ * `approve` is the CONDITIONAL hybrid (`continueOnGate`). It is folder-driven, so
+ * only the result says which gate it crossed: after the TASK gate the turn is
+ * handed back with an injected follow-up (gate-ask.mjs) so the model can ask
+ * whether to plan the task now — a blocked turn can never ask anything, which is
+ * why that question simply did not exist on this path. The terminal ship gate and
+ * every refusal still block.
+ *
  * Failure handling (decideGateOutcome in gate-result.mjs, pure + unit-tested):
  * - dist/server.js missing → BLOCK with the "not built — run the installer"
  *   diagnosis. Failing open would be pointless: the MCP fallback launches the
@@ -33,6 +40,7 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { gateAsk } from "./gate-ask.mjs"
 import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
 import { dialectFor, hostFor } from "./src/dialect.mjs"
@@ -139,8 +147,27 @@ const main = async () => {
   // letting it proceed is exactly how a second copy of a live task's id gets
   // authored into draft/.
   if (dispatch.continueTurn && outcome.ok) {
-    const context = verbContext(pluginRoot, verbFor(prompt), cwd)
+    const context = verbContext(pluginRoot, verbFor(prompt))
     return augment(context ? `${message}\n\n${context}` : message)
+  }
+
+  // The CONDITIONAL hybrid (approve). Which gate a folder-driven verb crossed is
+  // only knowable from the result, so the continue decision is made here rather
+  // than in the parser: a task gate hands the turn back so the model can ask
+  // "plan it now?" — a question a blocked turn could never reach — while the
+  // terminal ship gate and every refusal still block, exactly as before.
+  //
+  // Every uncertainty falls through to the block below: an unrecognized gate, a
+  // missing id, an older mcp-server/dist that emits no `data` at all. That is
+  // deliberate — a false block only restores the previous behaviour, whereas
+  // handing the turn back on a gate nobody armed invites the double-move the
+  // block exists to prevent.
+  const ask = outcome.ok && dispatch.continueOnGate?.includes(outcome.data?.gate) ? gateAsk(outcome.data.gate, outcome.data.id, dialectFor(hostFor())?.askTool) : null
+  if (ask) {
+    const context = verbContext(pluginRoot, verbFor(prompt))
+    // The ask goes LAST: it is the instruction for this turn, and the verb block
+    // it follows still describes `approve` as a verb the model normally never sees.
+    return augment([message, context, ask].filter(Boolean).join("\n\n"))
   }
 
   // Either the move already happened deterministically (block with its

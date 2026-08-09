@@ -381,6 +381,17 @@ interface HostDialect {
    * regression is invisible again.
    */
   readonly spawnModelNote: string
+  /**
+   * The host's structured question tool, named by every gate `next:` string.
+   *
+   * This was the literal `AskUserQuestion` for as long as Claude Code was the
+   * only host reading these strings — and the same binary serves Qwen, so its
+   * plan and ship gates were pointing the orchestrator at a tool that does not
+   * exist there while the Qwen verb prose correctly said `ask_user_question`.
+   * A gate ask does not fail loudly when it names the wrong tool; it just never
+   * opens a window. Same split, same reason, as gen-prompts.mjs's {{askTool}}.
+   */
+  readonly askTool: string
 }
 
 // A stage agent is a subagent, not a skill. Name the tool explicitly at the
@@ -397,6 +408,7 @@ const HOST_DIALECT: Record<HostName, HostDialect> = {
       " (spawn it with the Task tool — a stage agent is a Task subagent, never a skill; do not route it through the skill tool)",
     spawnModelNote:
       ", whose `model` the harness has already pinned to this response's `model` field when present (you do not need to pass it)",
+    askTool: "AskUserQuestion",
   },
   qwen: {
     // Qwen Code loads subagents from its own agents/ directory with no namespace,
@@ -411,6 +423,7 @@ const HOST_DIALECT: Record<HostName, HostDialect> = {
     spawnToolNote:
       " (spawn it with the `agent` tool, passing the name as `subagent_type` and `run_in_background: false` — a stage agent is an `agent` subagent, never a skill; do not route it through the skill tool)",
     spawnModelNote: "",
+    askTool: "ask_user_question",
   },
 }
 const dialect = HOST_DIALECT[HOST]
@@ -1929,7 +1942,7 @@ server.registerTool(
             taskId,
             gate: { kind: "ship", id: taskId },
             next:
-              `ship gate: show the user the loop branch's diff summary, then ask with AskUserQuestion — ` +
+              `ship gate: show the user the loop branch's diff summary, then ask with ${dialect.askTool} — ` +
               `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
               `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later).`,
           }
@@ -1983,7 +1996,7 @@ const runPark = async (
     path: report.path,
     gate: { kind: "plan", id },
     next:
-      `plan gate: show the user the plan summary, then ask with AskUserQuestion — ` +
+      `plan gate: show the user the plan summary, then ask with ${dialect.askTool} — ` +
       `Approve (workflow_plan_approve("${id}") then workflow_start("${id}") continues into BUILD now), ` +
       `Replan with a reason (workflow_replan("${id}", reason)), ` +
       `or Park for later (stop here; /agentic-workflow:engineering approve ${id} resumes it).`,
@@ -2211,6 +2224,43 @@ const removeTask = (id: string, liveTaskId: string | null, force = false): Promi
 const abandonTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreAbandonTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 
+/**
+ * The gate ask, for the path where the model called the tool instead of typing
+ * the verb.
+ *
+ * The typed verb is intercepted by the `UserPromptSubmit` gate hook, which
+ * appends its own follow-up (hooks/gate-ask.mjs) after a task gate. Nothing
+ * intercepts a tool call, so without this the same move asks the same question
+ * on one path and stays silent on the other — and which path a run takes is not
+ * something a human chose. Same wording, same tool name, same host dialect as
+ * `runPark`'s plan gate emits.
+ *
+ * Returns undefined for the terminal ship gate (nothing follows) and for a
+ * result that named no gate, so the caller keeps whatever `next` core wrote.
+ */
+const gateNext = (data: Record<string, unknown>): string | undefined => {
+  const id = typeof data.id === "string" ? data.id : null
+  if (!id) return undefined
+  if (data.gate === "task")
+    return (
+      `task gate: the task is queued. Ask the user with ${dialect.askTool} — "Plan \`${id}\` now?" — and on yes run the PLAN pass ` +
+      `(workflow_start("${id}"), spawn workflow-plan-author with the prompt it returns, then workflow_advance); on no, stop and report it queued.`
+    )
+  if (data.gate === "plan")
+    return (
+      `plan gate: the plan is approved and the task is build-ready. Ask the user with ${dialect.askTool} — "Build \`${id}\` now?" — ` +
+      `and on yes run workflow_start("${id}"); on no, stop (/agentic-workflow:engineering claim builds it later).`
+    )
+  return undefined
+}
+
+/** Fold the gate ask into a successful gate result, leaving refusals untouched. */
+const okGate = (r: GateResult) => {
+  if (!r.ok) return fail(r.message)
+  const next = gateNext(r.data)
+  return ok(next ? { ...r.data, next } : r.data)
+}
+
 /** approve-plan: a plan-review/ task with an Implementation Plan → in-progress/. */
 server.registerTool(
   "workflow_task_approve",
@@ -2222,7 +2272,7 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     const r = await approveTask(id)
-    return r.ok ? ok(r.data) : fail(r.message)
+    return okGate(r)
   },
 )
 
@@ -2236,7 +2286,7 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     const r = await approvePlan(id)
-    return r.ok ? ok(r.data) : fail(r.message)
+    return okGate(r)
   },
 )
 
@@ -2306,7 +2356,7 @@ server.registerTool(
   async ({ id }) => {
     await loadCfg()
     const r = await approveAny((id ?? "").trim())
-    return r.ok ? ok(r.data) : fail(r.message)
+    return okGate(r)
   },
 )
 

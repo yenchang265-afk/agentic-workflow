@@ -203,6 +203,22 @@ test("every verb's block opens with that verb's own bullet, not mid-sentence", (
   }
 })
 
+/**
+ * `approve` is the one gate verb that can hand the turn back: after a TASK gate
+ * the hook appends a follow-up asking whether to plan the task now, and the yes
+ * branch runs a PLAN pass. A slice only ever contains its own blocks, so the
+ * PLAN procedure has to be reachable from `approve` — hence the shared
+ * `approve|plan` marker. Retag it back to `plan` alone and nothing errors: the
+ * follow-up simply arrives next to a verb block that never says how to plan.
+ */
+test("the approve slice carries the PLAN procedure its follow-up sends the model to", () => {
+  const slice = sliceForVerb(verbs(), "approve")
+  assert.match(slice, /workflow_start/, "the yes branch's entry point")
+  assert.match(slice, /workflow-plan-author/, "the planner it spawns")
+  assert.match(slice, /workflow_advance/, "what parks the plan for the gate")
+  assert.match(slice, /workflow-orchestration/, "the gate protocol pointer the shared block carries")
+})
+
 test("the router carries no verb procedure, so nothing is said twice", () => {
   const body = router()
   assert.doesNotMatch(body, /aw:verb/, "the router is never sliced")

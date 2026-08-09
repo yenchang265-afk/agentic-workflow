@@ -57,6 +57,11 @@ const DIALECTS = {
     // against the agents this plugin ships.
     agentPrefixes: ["agentic-workflow:", "mcp__plugin_agentic-workflow_agentic-workflow__"],
     installer: "plugins/claude/install.sh",
+    // The host's structured question tool, named by the gate follow-up the hook
+    // injects (hooks/gate-ask.mjs). Same per-host split as gen-prompts.mjs's
+    // {{askTool}} token, and it exists for the same reason: a follow-up naming
+    // the other host's tool does not fail loudly, it just never opens a window.
+    askTool: "AskUserQuestion",
   },
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
@@ -76,6 +81,7 @@ const DIALECTS = {
     spawn: ["agent"],
     agentPrefixes: [],
     installer: "./install.sh qwen",
+    askTool: "ask_user_question",
   },
 }
 

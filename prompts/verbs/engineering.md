@@ -67,7 +67,7 @@
        (task gate: `draft/` → `queued/`) — the user does not need to type
        `/agentic-workflow:engineering approve <id>`. Then ask a second
        **{{askTool}}**: "Plan it now?"
-       - **Yes** → follow the `plan <id>` procedure below: `workflow_start({id})`,
+       - **Yes** → run the PLAN pass now — `workflow_start({id})`,
          spawn `workflow-plan-author` ({{spawnTool}}) with the
          returned prompt{{modelClause}}, then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
@@ -108,14 +108,18 @@
      with the id and the confirmed title/priority/acceptance/body (carry
      forward the `tracker` block if the draft had one) to rewrite
      `docs/tasks/draft/<id>.md` **in place** — the id/filename never changes.
-     Still no plan. The next step is the same task-gate ask as `new` step 5
-     above (approve inline, then ask to plan immediately).
+     Still no plan. Then run the task gate inline, exactly as `new` does — ask
+     with **{{askTool}}** "Approve `<id>` now?"; on approve call
+     `mcp__agentic-workflow__workflow_approve({id})` yourself and ask a second
+     **{{askTool}}** "Plan it now?", running `workflow_start({id})` → spawn
+     `workflow-plan-author` ({{spawnTool}}){{modelClause}} → `workflow_advance`
+     on yes. Never make the user type the command for a gate you are sitting at.
 <!-- /aw:verb retask -->
 <!-- aw:verb approve -->
 - **`approve [id]`** — THE gate verb, unified and folder-driven. **Handled
   deterministically by the plugin's `UserPromptSubmit` hook before this turn**
-  — it advances the task by the gate its folder implies and blocks the turn,
-  so you normally never see it. With an explicit `<id>`: a reviewed `draft/`
+  — it advances the task by the gate its folder implies. With an explicit
+  `<id>`: a reviewed `draft/`
   → `queued/` (task gate), a parked `plan-review/` plan → `in-progress/`
   (plan gate, `## Implementation Plan` required), or a finished `in-review/`
   task → `completed/` (ship — only after the human reviewed the branch
@@ -123,9 +127,20 @@
   Without an id it advances the single task at a loop wait-gate
   (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only
   when neither has anything waiting (tracking epics are never candidates).
-  **Spawn nothing** — report the outcome. (Fallback:
-  `mcp__agentic-workflow__workflow_approve({id})`, id optional.) Within an
-  interactive `new`/`retask` turn, call `mcp__agentic-workflow__workflow_approve({id})`
+  **The move is already done by the time you read this — never re-run it.**
+  What happens next depends on which gate fired:
+  - **Task gate** (the task is now in `queued/`) — the hook hands the turn back
+    with a **`GATE FOLLOW-UP`** block appended. That block is the plugin
+    speaking, not prose to weigh: obey it. It has you ask, with **{{askTool}}**,
+    whether to plan the task now, and run the PLAN pass below if the answer is
+    yes. A blocked turn could never ask that, which is why this one is handed
+    back.
+  - **Plan gate, ship gate, or any refusal** — the hook blocks the turn and
+    reports the outcome itself, so you never see this verb at all.
+  **Spawn nothing of your own** beyond what the follow-up asks for. (Fallback,
+  when no hook ran: `mcp__agentic-workflow__workflow_approve({id})`, id
+  optional — then ask the same question yourself.) Within an interactive
+  `new`/`retask` turn, call `mcp__agentic-workflow__workflow_approve({id})`
   directly instead of routing through this hook — see `new` step 5, which
   asks inline and follows up with a "plan it now?" question.
 <!-- /aw:verb approve -->
@@ -183,7 +198,7 @@
     git entirely). Prefer `abandon` unless the user has said they want the file
     gone.
 <!-- /aw:verb remove -->
-<!-- aw:verb plan -->
+<!-- aw:verb approve|plan -->
 - **`plan <id>`** — plan one approved task now. Call
   `mcp__agentic-workflow__workflow_start({id})` on the `queued/` task — it starts at
   PLAN (no git isolation): spawn `workflow-plan-author` ({{spawnTool}})
@@ -193,7 +208,7 @@
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
   only telling them which command to run. If the id is already build-ready
   (`in-progress/`), don't start it here — `claim` builds it.
-<!-- /aw:verb plan -->
+<!-- /aw:verb approve|plan -->
 <!-- aw:verb claim -->
 - **`claim`** — call `mcp__agentic-workflow__workflow_claim` to pick up the next
   engineering item and drive it: build-ready `in-progress/` tasks first, then a
@@ -242,7 +257,7 @@
 - **anything else** (including a free-text goal) — do not run it. Show this
   usage instead.
 <!-- /aw:verb unknown -->
-<!-- aw:verb new|retask|plan|claim|recover|replan -->
+<!-- aw:verb approve|new|retask|plan|claim|recover|replan -->
 Read the `workflow-orchestration` skill now — it is the authoritative protocol
 for how you (the main agent) drive the stages and how verdicts terminate the
 loop. It is scoped to these verbs on purpose: `status`, `kinds`, `doctor`,
@@ -256,18 +271,18 @@ breath, or `plan <id>` later) and parks the plan in `plan-review/` →
 human reviews the plan → approve (asked inline, or `replan <why>`) → build it
 (asked inline as a separate question, or `claim` later) → `in-review/` →
 `approve` ships it.
-<!-- /aw:verb new|retask|plan|claim|recover|replan -->
+<!-- /aw:verb approve|new|retask|plan|claim|recover|replan -->
 <!-- aw:verb plan|claim|replan -->
 On a VERIFY or REVIEW FAIL the loop re-**builds** with the feedback threaded
 in, within the iteration cap; when the cap trips, the plan itself is suspect
 — a human sends it back with `/agentic-workflow:engineering replan <id> <why>`,
 which immediately re-runs PLAN with the failure threaded in.
 <!-- /aw:verb plan|claim|replan -->
-<!-- aw:verb new|retask|plan|claim -->
+<!-- aw:verb approve|new|retask|plan|claim -->
 When a loop you are driving hits a gate live (a draft just written, a plan
 just parked, or a build just finished), offer the gate choices inline via
 {{askTool}} instead of making the user type a command — see `new` step 5
 above for the task gate, and the `workflow-orchestration` skill for the plan and
 ship gates. The command verbs above are the deferred path for gates hit
 while you were away.
-<!-- /aw:verb new|retask|plan|claim -->
+<!-- /aw:verb approve|new|retask|plan|claim -->

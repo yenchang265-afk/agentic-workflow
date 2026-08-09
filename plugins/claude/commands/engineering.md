@@ -28,7 +28,9 @@ on and who does the work; it is deliberately not a procedure.
 
 - **`approve [id]`** / **`replan [id] [reason]`** / **`remove <id>`** — the gate
   verbs: forward gate, reject back to `queued/`, hard-delete (destructive).
-  **All three are the hook's, done before your turn.**
+  **All three move before your turn.** `approve` then hands the turn back after
+  a **task** gate, with a `GATE FOLLOW-UP` block asking what to do next — the
+  move itself is already done and is never yours to repeat.
 - **`retask <id> [note]`** — reshape a planless draft. The move is the hook's;
   the interview is **yours**.
 - **`new <idea>`** — interview into planless draft(s); **`plan <id>`** — run

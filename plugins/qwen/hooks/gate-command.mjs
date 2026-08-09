@@ -7,6 +7,31 @@ import fs2 from "node:fs";
 import path2 from "node:path";
 import { fileURLToPath } from "node:url";
 
+// plugins/claude/hooks/gate-ask.mjs
+var ASK_GATES = ["task"];
+var taskGateAsk = (id, askTool) => `GATE FOLLOW-UP \u2014 emitted by the agentic-workflow plugin, not by the model. Where this
+disagrees with any description of \`approve\` above, this wins.
+
+The task gate has ALREADY fired for \`${id}\`: the file is in docs/tasks/queued/ and the
+move is committed. Do not call workflow_approve, workflow_task_approve, or any other
+gate tool for it \u2014 that work is done. Do exactly this, and nothing else:
+
+1. Ask the user with ${askTool} \u2014 header "Plan now", question "Plan \`${id}\` now?",
+   options "Yes \u2014 plan it now" and "Not yet". One question, this turn.
+2. **Yes** \u2192 run the PLAN pass for \`${id}\` now: \`workflow_start({id: "${id}"})\`, spawn
+   \`workflow-plan-author\` with the prompt it returns, then \`workflow_advance\`. The plan
+   parks in plan-review/ and the PLAN GATE goes live \u2014 ask again with ${askTool}:
+   Approve / Replan (with the user's reason) / Park for later.
+3. **Not yet** \u2192 report that the task is queued, and stop.
+
+Plan, approve or build no OTHER task in this turn.`;
+var gateAsk = (gate, id, askTool) => {
+  if (!ASK_GATES.includes(gate)) return null;
+  if (typeof id !== "string" || !id) return null;
+  if (typeof askTool !== "string" || !askTool) return null;
+  return taskGateAsk(id, askTool);
+};
+
 // plugins/claude/hooks/gate-parse.mjs
 var CMD = "\\/(?:agentic-workflow:)?engineering(?=\\s|$)";
 var AT_START = "^\\s*";
@@ -27,7 +52,7 @@ var gateArgsFor = (prompt) => {
   const approve = prompt.match(APPROVE);
   if (approve) {
     const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
-    return { argv: ["gate", "approve-any", ...id ? [id] : []] };
+    return { argv: ["gate", "approve-any", ...id ? [id] : []], continueOnGate: ASK_GATES };
   }
   const replan = prompt.match(REPLAN);
   if (replan) {
@@ -72,7 +97,9 @@ var decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, inst
     parsed = null;
   }
   if (parsed && typeof parsed.message === "string") {
-    return { action: "block", message: parsed.message, ok: parsed.ok === true };
+    const { data } = parsed;
+    const usable = !!data && typeof data === "object" && !Array.isArray(data);
+    return { action: "block", message: parsed.message, ok: parsed.ok === true, ...usable ? { data } : {} };
   }
   if (status !== 0) return { action: "pass" };
   return { action: "block", message: `Gate ${label} done.`, ok: true };
@@ -109,7 +136,12 @@ var DIALECTS = {
     // (`agentic-workflow:workflow-build`). Stripped before the name is checked
     // against the agents this plugin ships.
     agentPrefixes: ["agentic-workflow:", "mcp__plugin_agentic-workflow_agentic-workflow__"],
-    installer: "plugins/claude/install.sh"
+    installer: "plugins/claude/install.sh",
+    // The host's structured question tool, named by the gate follow-up the hook
+    // injects (hooks/gate-ask.mjs). Same per-host split as gen-prompts.mjs's
+    // {{askTool}} token, and it exists for the same reason: a follow-up naming
+    // the other host's tool does not fail loudly, it just never opens a window.
+    askTool: "AskUserQuestion"
   },
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
@@ -128,7 +160,8 @@ var DIALECTS = {
     // guard on this host.
     spawn: ["agent"],
     agentPrefixes: [],
-    installer: "./install.sh qwen"
+    installer: "./install.sh qwen",
+    askTool: "ask_user_question"
   }
 };
 var KNOWN_HOSTS = Object.keys(DIALECTS);
@@ -263,10 +296,15 @@ var main = async () => {
   if (outcome.action === "pass") return injectVerb();
   const message = outcome.message || `Gate ${label} ${outcome.ok ? "done" : "failed \u2014 see the backlog"}.`;
   if (dispatch.continueTurn && outcome.ok) {
-    const context = verbContext(pluginRoot, verbFor(prompt), cwd);
+    const context = verbContext(pluginRoot, verbFor(prompt));
     return augment(context ? `${message}
 
 ${context}` : message);
+  }
+  const ask = outcome.ok && dispatch.continueOnGate?.includes(outcome.data?.gate) ? gateAsk(outcome.data.gate, outcome.data.id, dialectFor(hostFor())?.askTool) : null;
+  if (ask) {
+    const context = verbContext(pluginRoot, verbFor(prompt));
+    return augment([message, context, ask].filter(Boolean).join("\n\n"));
   }
   return block(message);
 };

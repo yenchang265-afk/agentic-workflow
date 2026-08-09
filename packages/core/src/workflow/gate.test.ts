@@ -364,6 +364,55 @@ test("approvePlan on an already-in-progress task is idempotent", async () => {
   assert.ok(r.ok && r.data.alreadyDone === true)
 })
 
+/**
+ * `data.gate` is the machine-readable discriminator for WHICH gate a move
+ * crossed, and `data.id` names the task it crossed for. Hosts branch on these:
+ * the Claude/Qwen gate hook hands the turn back — instead of blocking it — only
+ * on a task gate, so it can ask "plan it now?", and it names the task in that
+ * question. Both halves are required, and both must survive the `alreadyDone`
+ * retry arms: a retry re-asking is harmless, a retry that goes silent is not.
+ *
+ * They must never be re-derived from `message` text: the messages are prose
+ * that changes, and a host guessing from them is a host that guesses wrong.
+ */
+const GATE_DISCRIMINATOR: ReadonlyArray<[string, Record<string, string>, (ctx: GateCtx) => Promise<GateResult>, string]> = [
+  ["approveTask", { "draft/t.md": task("Do it") }, (ctx) => approveTask(ctx, "t"), "task"],
+  ["approveTask (already queued)", { "queued/t.md": task("Do it") }, (ctx) => approveTask(ctx, "t"), "task"],
+  ["approvePlan", { "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) }, (ctx) => approvePlan(ctx, "t"), "plan"],
+  ["approvePlan (already in-progress)", { "in-progress/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) }, (ctx) => approvePlan(ctx, "t"), "plan"],
+  ["shipTask", { "in-review/t.md": task("Do it") }, (ctx) => shipTask(ctx, "t"), "ship"],
+  ["shipTask (already completed)", { "completed/t.md": task("Do it") }, (ctx) => shipTask(ctx, "t"), "ship"],
+]
+
+for (const [label, files, run, gate] of GATE_DISCRIMINATOR) {
+  test(`${label} reports gate "${gate}" and the task id in its result data`, async () => {
+    const { ctx } = makeCtx(files)
+    const r = await run(ctx)
+    assert.equal(r.ok, true)
+    assert.equal(r.ok && r.data.gate, gate)
+    assert.equal(r.ok && r.data.id, "t")
+  })
+}
+
+// approveAny is a pure dispatcher, so the gate it reports is decided entirely by
+// the folder the task sits in. This is the assertion the whole follow-up-question
+// feature rests on: the hook reads `data.gate` off THIS call.
+const APPROVE_ANY_DISPATCH: ReadonlyArray<[string, Record<string, string>, string]> = [
+  ["draft", { "draft/t.md": task("Do it") }, "task"],
+  ["plan-review", { "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) }, "plan"],
+  ["in-review", { "in-review/t.md": task("Do it") }, "ship"],
+]
+
+for (const [folder, files, gate] of APPROVE_ANY_DISPATCH) {
+  test(`approveAny on a ${folder}/ task reports gate "${gate}"`, async () => {
+    const { ctx } = makeCtx(files)
+    const r = await approveAny(ctx, "t")
+    assert.equal(r.ok, true)
+    assert.equal(r.ok && r.data.gate, gate)
+    assert.equal(r.ok && r.data.id, "t")
+  })
+}
+
 test("replanTask refuses a task a live loop is driving", async () => {
   const { ctx, log } = makeCtx({ "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) }, { driving: "t" })
   const r = await replanTask(ctx, "t", "changed my mind")
