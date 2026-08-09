@@ -334,6 +334,22 @@ test("checkDiscoveryBlock names the fence, the consuming stage, and the read-it-
   assert.match(block, /package\.json/)
 })
 
+test("checkDiscoveryBlock points at the repo's own declarations, CI first, and fences off CI-only steps", () => {
+  // The alternative to a guess is a SOURCE, not a better guess. A repo's CI
+  // workflow is the command set it already enforces on every push, so a plan
+  // copied from it needs almost no judgement at the human gate.
+  const block = checkDiscoveryBlock("plan", "verify")
+  const ci = block.indexOf(".github/workflows")
+  const agents = block.indexOf("AGENTS.md")
+  const manifest = block.indexOf("package manifest")
+  assert.ok(ci > -1 && agents > -1 && manifest > -1, "all three sources are named")
+  assert.ok(ci < agents && agents < manifest, "and in order of authority — CI first")
+  // A CI file also carries steps that are not this task's proof; naming them is
+  // what stops the plan copying a deploy job into the check set.
+  assert.match(block, /deploy/)
+  assert.match(block, /install/)
+})
+
 test("checkDiscoveryBlock never shows the info string with a stray backtick beside it", () => {
   // It shipped as ```` ```agentic-checks` ```` once. A model copying that writes an
   // info string FENCE_RE does not match, so parseDiscoveredChecks reports the

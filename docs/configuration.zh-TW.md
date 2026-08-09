@@ -391,7 +391,11 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 
   PLAN 階段本來就必須把每一條驗收標準對應到「證明它的確切指令或可觀察檢查」。
   打開這個開關後，它的提示詞會額外要求把那些指令寫成機器可讀的形式——放在
-  `### Verification` 末尾的一個 fenced 區塊：
+  `### Verification` 末尾的一個 fenced 區塊——並告訴它該從哪裡取得，依權威性排序：
+  先看 repo 的 **CI workflow 定義**（那是這個專案每次 push 都已經在強制執行的指令），
+  再看 `AGENTS.md`／`CLAUDE.md` 中有指名檢查指令的地方，最後才是套件 manifest 宣告的
+  script。只取 test／型別檢查／lint／build 這些步驟——CI job 的 checkout、安裝相依、
+  部署或發布步驟不是這個任務的證明：
 
   ~~~markdown
   ### Verification

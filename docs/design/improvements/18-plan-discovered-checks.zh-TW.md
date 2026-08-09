@@ -60,6 +60,15 @@ repo 上，而框架**沒有任何工具鏈偵測**（唯一的 repo 檢視是
 JSON 由 `CheckDefSchema` 自己解析——與 manifest、config 兩層完全相同的形狀，所以三者
 不可能漂移。
 
+這個區塊同時告訴 PLAN **該從哪裡取得指令**，依權威性排序：repo 的 CI workflow 定義、
+其次是 `AGENTS.md`／`CLAUDE.md` 中有指名檢查指令的地方，最後才是套件 manifest 宣告的
+script——而且只取 test／型別檢查／lint／build，絕不取 CI job 的 checkout、安裝、部署或
+發布。這個排序是整個功能失敗模式上最便宜的槓桿：猜測的替代品不是更好的猜測，而是一個
+**來源**，而 CI workflow 正是這個專案每次 push 都已經在強制執行的指令集。從它抄來的
+計畫在人工把關點幾乎不需要判斷，而下面那條昂貴的殘留——在沒有 `test` script 的 repo 上
+寫出看起來很正常的 `npm test`——不可能從一條「讀來的」而非「假設的」指令中產生。只排序：
+per-ecosystem 的指令表正是這個設計否決掉的東西，而指出該去哪裡看並不是指令表。
+
 `resolveStageChecks` 是兩個 host 共用的唯一接縫，而且每個分支都經由 `checksFor`
 回傳，所以優先序只活在一個地方：config（**存在**即算，即使是 `[]`）→ manifest
 `checks` → 發現的指令 → 沒有。

@@ -98,7 +98,16 @@ const FENCE_RE = /^[ \t]*```[ \t]*agentic-checks[ \t]*\r?\n([\s\S]*?)^[ \t]*```[
  * reason `planContractBlock` states: a contract stated only in a template or a
  * persona file is skippable, one appended mechanically at composition survives
  * every dispatch path. Kept beside `parseDiscoveredChecks` so the grammar and
- * its parser cannot drift. Pure.
+ * its parser cannot drift.
+ *
+ * It names WHERE to look, CI config first, because the alternative to a guess is
+ * not a better guess — it is a source. A repo's CI workflow is the command set
+ * the project already enforces on every push, so a plan that copies from it
+ * needs almost no human judgement at the gate, and the expensive failure mode
+ * (a conventional-looking `npm test` on a repo with no such script, which exits
+ * 1 and reads as a real test failure) cannot arise from a command that was read
+ * rather than assumed. Ordering only — never a table of commands per ecosystem,
+ * which would be wrong for every repo it did not anticipate. Pure.
  */
 export const checkDiscoveryBlock = (planStage: string, consumer: string): string =>
   [
@@ -115,8 +124,15 @@ export const checkDiscoveryBlock = (planStage: string, consumer: string): string
     `The loop runs these ITSELF before the ${consumer.toUpperCase()} stage, in the work tree, and their exit codes`,
     `become established fact that the ${consumer.toUpperCase()} agent cannot argue down — which is the whole point:`,
     "it replaces a self-reported \"tests are green\" with a number.",
-    "Only list a command whose definition you have READ — name the `package.json` script, `Makefile` target, or",
-    "config file that defines it, in the prose above the block. Do not guess a conventional command:",
+    "Take them from what this repo ALREADY declares, in this order of authority:",
+    "(1) its CI workflow definition (`.github/workflows/*.yml`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `.circleci/config.yml`) —",
+    "the strongest source, because those are the commands the project already enforces on every push;",
+    "(2) its agent instructions (`AGENTS.md`, `CLAUDE.md`) where they name the check commands;",
+    "(3) the scripts or targets its package manifest declares.",
+    "Take only the test/typecheck/lint/build steps — a CI job's checkout, dependency install, deploy, publish,",
+    "or release steps are not this task's proof, and its matrix may run one command many ways where you want it once.",
+    "Only list a command whose definition you have READ — name the file and the script, target, or job that defines it,",
+    "in the prose above the block. Do not guess a conventional command:",
     "`npm test` on a repo whose package.json defines no `test` script exits 1 and reads as a genuine test failure,",
     "which sends the loop back to BUILD to fix work that was never broken.",
     `At most ${MAX_DISCOVERED_CHECKS} commands, each on the ${consumer.toUpperCase()} stage's own bash allowlist —`,

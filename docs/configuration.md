@@ -424,7 +424,12 @@ it. The warnings are advisory: they annotate a save, never block it. See
   The PLAN stage already has to map each acceptance criterion to "the exact
   command or observable check that proves it". With this on, its prompt also
   asks for those commands in machine-readable form — a fenced block at the end
-  of `### Verification`:
+  of `### Verification` — and tells it where to take them from, in order of
+  authority: the repo's **CI workflow definition** first (those are the commands
+  the project already enforces on every push), then `AGENTS.md`/`CLAUDE.md`
+  where they name the check commands, then the package manifest's declared
+  scripts. Only the test/typecheck/lint/build steps — a CI job's checkout,
+  install, deploy or release steps are not the task's proof:
 
   ~~~markdown
   ### Verification

@@ -65,6 +65,19 @@ template — `planContractBlock`'s rule) asks for a fenced block:
 JSON parsed by `CheckDefSchema` itself — the same shape the manifest and config
 layers use, so the three cannot drift.
 
+The block also tells PLAN **where to take the commands from**, in order of
+authority: the repo's CI workflow definition, then `AGENTS.md`/`CLAUDE.md` where
+they name the check commands, then the package manifest's declared scripts —
+test/typecheck/lint/build steps only, never a CI job's checkout, install, deploy
+or release. That ordering is the cheapest lever on the whole feature's failure
+mode: the alternative to a guess is not a better guess but a SOURCE, and a CI
+workflow is the command set the project already enforces on every push. A plan
+that copies from it needs almost no judgement at the human gate, and the
+expensive residual below — a conventional-looking `npm test` on a repo with no
+such script — cannot arise from a command that was read rather than assumed.
+Ordering only: a table of commands per ecosystem is the thing this design
+rejected, and naming where to look is not one.
+
 `resolveStageChecks` is the single seam both hosts call, and every branch returns
 through `checksFor`, so precedence lives in one place: config (**present**, even
 `[]`) → manifest `checks` → discovered → none.
