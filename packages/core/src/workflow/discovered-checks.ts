@@ -52,10 +52,18 @@ export const CHECKS_FENCE = "agentic-checks"
 
 /**
  * Most discovered checks honored. A cap, not a preference: every check costs the
- * loop a full command run on every check-stage firing, and a plan that lists ten
- * is a plan that guessed.
+ * loop a full command run on every check-stage firing, and a plan that lists a
+ * dozen is a plan that guessed.
+ *
+ * 8, not 5. Five was picked against a single-ecosystem repo and is exactly what
+ * a polyglot one needs before it starts losing checks silently: a front end's
+ * test / typecheck / lint beside a service's build and test is five already, and
+ * an e2e suite makes six. 8 matches `FANOUT_MAX`, which bounds the other
+ * per-stage cost multiplier for the same reason, and still catches the runaway
+ * shape this exists for. Raising it further would want a real cost budget, not a
+ * bigger number.
  */
-export const MAX_DISCOVERED_CHECKS = 5
+export const MAX_DISCOVERED_CHECKS = 8
 
 /** Longest discovered command honored. */
 export const MAX_DISCOVERED_COMMAND = 300
@@ -137,6 +145,8 @@ export const checkDiscoveryBlock = (planStage: string, consumer: string): string
     "which sends the loop back to BUILD to fix work that was never broken.",
     `At most ${MAX_DISCOVERED_CHECKS} commands, each on the ${consumer.toUpperCase()} stage's own bash allowlist —`,
     "anything else is dropped with a warning, and a command whose binary is not installed here is dropped too.",
+    'Add "timeoutMinutes" to a command the project runs long (an integration or e2e suite): the default cap fits a',
+    "unit-test run, and one slow command in the list must not force every fast one to share its budget.",
     "Omit the block when you cannot name a command you have verified; the loop then checks as it does today.",
   ].join(" ")
 
@@ -196,12 +206,20 @@ export const parseDiscoveredChecks = (planText: string): { defs: CheckDef[]; iss
  * could not.
  *
  * This is the trust boundary, not the human plan gate — see the module note.
- * Four independent rules, each with its own rejection reason so a warning names
- * the actual problem. Pure.
+ * Five independent rules, each with its own rejection reason so a warning names
+ * the actual problem.
+ *
+ * `maxTimeoutMinutes` bounds a discovered `timeoutMinutes`: the field is what
+ * lets a long integration suite outlive the default cap, which also makes it the
+ * one field a hostile block could use to park the driver on a command for a day.
+ * A check may not outlive the stage it belongs to, so the stage's own wall-clock
+ * cap is the ceiling. Rejected rather than clamped: clamping would run something
+ * other than what the plan says, and the plan is the record. Pure.
  */
 export const admissibleChecks = (
   defs: readonly CheckDef[],
   globs: readonly string[],
+  maxTimeoutMinutes: number,
 ): { accepted: CheckDef[]; rejected: RejectedCheck[] } => {
   const accepted: CheckDef[] = []
   const rejected: RejectedCheck[] = []
@@ -220,6 +238,15 @@ export const admissibleChecks = (
     }
     if (!commandAllowed(def.command, globs)) {
       rejected.push({ name: def.name, reason: `"${def.command}" is not on this stage's bash allowlist` })
+      continue
+    }
+    if (def.timeoutMinutes !== undefined && def.timeoutMinutes > maxTimeoutMinutes) {
+      rejected.push({
+        name: def.name,
+        reason:
+          `timeoutMinutes ${def.timeoutMinutes} exceeds this stage's own cap of ${maxTimeoutMinutes} — ` +
+          "raise stageTimeoutMinutes, or pin the command in stageChecks where the cap does not apply",
+      })
       continue
     }
     accepted.push(def)
@@ -331,7 +358,11 @@ export const resolveStageChecks = async (args: {
   try {
     const { defs, issues } = parseDiscoveredChecks(plan)
     if (!defs.length) return { ...NO_CHECKS, warnings: issues }
-    const { accepted, rejected } = admissibleChecks(defs, effectiveAllowlist(def, platformFor(config, kind)))
+    const { accepted, rejected } = admissibleChecks(
+      defs,
+      effectiveAllowlist(def, platformFor(config, kind)),
+      def.timeoutMinutes ?? config.stageTimeoutMinutes,
+    )
     const { runnable, missing } = await resolvableChecks($, accepted, dir)
     const warnings = [
       ...issues,

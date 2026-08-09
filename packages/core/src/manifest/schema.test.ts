@@ -180,6 +180,18 @@ test("discoverChecks with an empty bashAllowlist is refused — the allowlist IS
   )
 })
 
+test("a check's timeoutMinutes round-trips and is optional", () => {
+  const m = parseManifest({
+    ...base,
+    stages: [base.stages[0], { ...base.stages[1], checks: [{ name: "it", command: "mvn verify", timeoutMinutes: 25 }] }],
+  })
+  assert.equal(m.stages[1]?.checks[0]?.timeoutMinutes, 25)
+  assert.throws(
+    () => parseManifest({ ...base, stages: [base.stages[0], { ...base.stages[1], checks: [{ name: "it", command: "x", timeoutMinutes: 0 }] }] }),
+    /timeoutMinutes/i,
+  )
+})
+
 test("a check stage's checks round-trip, with cwd optional", () => {
   const m = parseManifest({
     ...base,

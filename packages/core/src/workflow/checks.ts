@@ -143,7 +143,10 @@ export const runChecks = async (
   const results: CheckResult[] = []
   for (const def of defs) {
     const cwd = def.cwd ? `${dir.replace(/\/$/, "")}/${def.cwd}` : dir
-    const out = await awaitCheck($`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow(), timeoutMs)
+    // A check's own cap wins over the stage-wide one. Without it the stage cap is
+    // set by the slowest check, and every faster one is effectively unbounded.
+    const cap = def.timeoutMinutes ? def.timeoutMinutes * 60_000 : timeoutMs
+    const out = await awaitCheck($`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow(), cap)
     const text = `${out.stdout.toString()}${out.stderr.toString()}`.trim()
     results.push({
       name: def.name,

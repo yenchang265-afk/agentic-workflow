@@ -75,6 +75,16 @@ export const CheckDefSchema = z.object({
   command: z.string().min(1),
   /** Work-tree-relative subdirectory; defaults to the work tree root. */
   cwd: z.string().min(1).optional(),
+  /**
+   * Wall-clock cap for THIS command; unset ⇒ config `checkTimeoutMinutes`.
+   *
+   * Exists because one cap across a stage's checks is set by the slowest one,
+   * which leaves every faster check effectively unbounded: a repo running a
+   * 20-second lint beside a 25-minute integration suite has to raise the global
+   * cap to 25, and a lint that then hangs burns 25 minutes instead of failing
+   * fast. Per check, each keeps a bound that fits it.
+   */
+  timeoutMinutes: z.number().int().positive().optional(),
 })
 export type CheckDef = z.infer<typeof CheckDefSchema>
 

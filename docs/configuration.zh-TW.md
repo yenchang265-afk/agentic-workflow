@@ -346,7 +346,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
           "verify": [
             { "name": "tests", "command": "npm test" },
             { "name": "types", "command": "npx tsc --noEmit" },
-            { "name": "web-tests", "command": "npm test", "cwd": "packages/web" }
+            { "name": "web-tests", "command": "npm test", "cwd": "packages/web" },
+            { "name": "integration", "command": "./mvnw -B verify", "timeoutMinutes": 30 }
           ]
         }
       }
@@ -355,7 +356,10 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   ```
 
   `name` 是結果的標籤（同一階段內不可重複），`command` 是原樣執行的 shell，
-  `cwd` 是工作樹底下的選填子目錄。它們會依序執行，時機在 isolation 之後、
+  `cwd` 是工作樹底下的選填子目錄，而 `timeoutMinutes` 是覆寫 `checkTimeoutMinutes`
+  的逐指令上限。當某一條檢查遠比其他的慢時就該用它：單一的階段層級上限只能由最慢的
+  那條決定，於是所有比較快的等於沒有保護——20 秒的 lint 和 25 分鐘的整合測試共用同
+  一份預算，掛住時要等 25 分鐘才會被發現。它們會依序執行，時機在 isolation 之後、
   每次階段 fire 執行一次——所以五軸 REVIEW 或多視角 REVIEW 只花一次測試套件的
   成本，不是五次。
 
@@ -369,7 +373,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 
   紅燈的檢查無法被辯掉：不論該階段回報什麼，它都不可能 PASS。如果是檢查本身
   壞了，逃生口是把它從這份清單移除——而不是在轉錄稿裡跟它爭辯。每一條指令都受
-  `checkTimeoutMinutes`（預設 10）限制；超過就會被殺掉並回報結束碼 `124`，依上表
+  `checkTimeoutMinutes`（預設 10）限制，除非它自己設了 `timeoutMinutes`；超過自己
+  上限的檢查會被殺掉並回報結束碼 `124`，依上表
   讀作 ERROR。`stageTimeoutMinutes` **不**涵蓋檢查——兩個 host 上檢查都跑在階段
   上限之外。
 
@@ -418,7 +423,9 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   能執行什麼，由**該階段自己的 bash 白名單**封頂：被發現的指令只有在該階段的
   agent 本來就能主動執行時才會被接受。邊界是白名單，而不是你對計畫的核准，因為
   任務檔位於 `tasksDir`，那是 repo 內容，被 clone 的 repo 可以夾帶。指令另有上限
-  5 條、`cwd` 必須是工作樹內的單純相對路徑，而二進位檔在本機沒安裝的指令會被
+  8 條——足夠容納多語言 repo 的前端 test／型別檢查／lint 加上服務端的 build、test
+  與 e2e，又少到仍然攔得住「亂猜的計畫」——`cwd` 必須是工作樹內的單純相對路徑，
+  `timeoutMinutes` 不得超過該階段自己的牆鐘上限，而二進位檔在本機沒安裝的指令會被
   丟棄並發出警告，而不是讓整趟執行 127。
 
   所有出錯情況都退化成**少跑幾個檢查加一則警告**——絕不會拒絕計畫、也絕不會停掉
@@ -733,6 +740,21 @@ issue 的 key/id 複製進任務裡。
   使用（例如 `"npm ci"`），否則 VERIFY 會在一個空的檢出上失敗。
   稽核記錄和任務移動仍然留在主工作樹中，是否在那裡提交則取決於
   下方的 `ignoreBacklog`。
+
+  在你跑多於一個 watch session 之前，有兩件事值得先在**專案側**設定好，因為它們
+  失敗的樣子都很難從轉錄稿讀回來：
+
+  - **讓檢查綁動態 port，不要綁固定的。** 並行的 session 意味著並行的 worktree，
+    所以兩個任務可能同時跑同一套整合測試或 dev server。一個釘在 8080 的服務、或
+    一套 server 釘在 3000 的瀏覽器測試，會在後啟動的那一邊失敗——而那個紅燈會被
+    記成真實的測試失敗，害 BUILD 去修一個不存在的 bug。任何檢查會跑到的東西，都
+    請用 `server.port=0`、Testcontainers，或從環境變數取得 port。迴圈幫不了你：
+    它從不看進它所執行的指令內部。
+  - **讓 `worktreeSetup` 便宜。** 它在每個全新 worktree 各跑一次，所以大型的相依
+    安裝是**按任務**付費而不是按 repo。有共用 global store 的套件管理器（pnpm）或
+    暖的快取，在這裡遠比裸的 `npm ci` 划算；而快取本來就是全域的工具鏈——Maven 的
+    `~/.m2`、Gradle 的 `~/.gradle`——則完全不額外付費。多語言 repo 可以用 `&&` 把
+    兩個 stack 串在同一個字串裡。
 - **`taskBranch`**——engineering 迴圈如何稱呼它工作所在的分支。
   預設 `"feature/"` 會切出 `feature/<task-id>`。改成別的前綴
   （`"wip/"`）可以換個名字，或設成 **`false`** 表示完全不切分支：
