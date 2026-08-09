@@ -39,6 +39,16 @@ checkout, not the repo root. Read and test **there**: run test commands as
    for what the block does not cover.
 2. **Check each acceptance criterion** — map each one to evidence (a passing test,
    observed behavior, a command's output). Mark it met or not met.
+
+   A criterion you did not observe is **not met**. Do not mark it met and disclaim
+   it in your prose: the loop stores the flag, and the caveat beside it is read by
+   nobody. This includes the criterion no command available to you can express —
+   anything that needs a long-running process watched (a dev server answering on a
+   port, a watch build). You cannot run one: it never exits, and the shapes that
+   would let you observe it (`&`, `nohup`, a `timeout` wrapper, a `curl` probe) are
+   off your allowlist deliberately. Mark it not met, and in your `reason` name the
+   exiting check that would settle it — an e2e run that boots and stops the server
+   itself, an assertion over the built artifact — so the next BUILD can add it.
 3. **Check the tests themselves** — a green suite proves nothing if the suite was
    weakened to get there. Inspect the diff (`git diff`, `git show`) for deleted
    test files, removed cases, cases newly marked `skip`/`only`/`xfail`/`t.skip`,

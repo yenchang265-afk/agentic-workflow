@@ -452,6 +452,14 @@ it. The warnings are advisory: they annotate a save, never block it. See
   tree, and a command whose binary is not installed here is dropped with a
   warning rather than 127-ing the run.
 
+  One rule the allowlist cannot carry: a discovered command must **exit**. A dev
+  server or a `--watch` runner is admissible (`npm run dev` matches `npm run *`)
+  and its binary resolves, so nothing downstream drops it — it runs until
+  `checkTimeoutMinutes`, reports exit `124`, and that is an ERROR, which stops
+  the run for you. The PLAN prompt states the rule; to prove runtime behaviour,
+  name the command that boots and stops the server itself (an e2e or integration
+  run), never the serve command.
+
   Everything that can go wrong degrades to **fewer checks plus a warning** —
   never a refused plan and never a stopped loop. No block, malformed JSON, a
   refused command, a missing binary: the loop checks exactly as it did before
