@@ -372,7 +372,8 @@ it. The warnings are advisory: they annotate a save, never block it. See
           "verify": [
             { "name": "tests", "command": "npm test" },
             { "name": "types", "command": "npx tsc --noEmit" },
-            { "name": "web-tests", "command": "npm test", "cwd": "packages/web" }
+            { "name": "web-tests", "command": "npm test", "cwd": "packages/web" },
+            { "name": "integration", "command": "./mvnw -B verify", "timeoutMinutes": 30 }
           ]
         }
       }
@@ -381,7 +382,12 @@ it. The warnings are advisory: they annotate a save, never block it. See
   ```
 
   `name` labels the result (unique per stage), `command` is shell run verbatim,
-  and `cwd` is an optional subdirectory of the work tree. They run sequentially,
+  `cwd` is an optional subdirectory of the work tree, and `timeoutMinutes` is an
+  optional per-command cap that overrides `checkTimeoutMinutes`. Reach for it
+  when one check is far slower than the rest: a single stage-wide cap has to be
+  set by the slowest command, which leaves every faster one effectively
+  unbounded — a 20-second lint beside a 25-minute integration suite would share
+  the suite's budget and take 25 minutes to notice it had hung. They run sequentially,
   after isolation, once per stage firing — a five-axis REVIEW or a multi-lens
   one costs one run of the suite, not five.
 
@@ -396,8 +402,9 @@ it. The warnings are advisory: they annotate a save, never block it. See
   A red check cannot be argued down: the stage can no longer PASS, whatever it
   reports. If a check is itself broken, the escape hatch is removing it from
   this list — not disputing it in the transcript. Each command is bounded by
-  `checkTimeoutMinutes` (10 by default); a check that exceeds it is killed and
-  reported as exit `124`, which reads as ERROR for the reason above.
+  `checkTimeoutMinutes` (10 by default) unless it sets its own `timeoutMinutes`;
+  a check that exceeds its cap is killed and reported as exit `124`, which reads
+  as ERROR for the reason above.
   `stageTimeoutMinutes` does **not** cover checks — they run outside it on both
   hosts.
 
@@ -454,9 +461,12 @@ it. The warnings are advisory: they annotate a save, never block it. See
   command is admitted only if the stage's agent could have run it unprompted.
   That is the boundary, not your approval of the plan: task files live in
   `tasksDir`, which is repo content, so a cloned repo could ship one. Commands
-  are also capped at 5, `cwd` must be a plain relative path inside the work
-  tree, and a command whose binary is not installed here is dropped with a
-  warning rather than 127-ing the run.
+  are also capped at 8 — enough for a polyglot repo's front-end test, typecheck
+  and lint beside a service's build, test and e2e, and few enough to still catch
+  a plan that guessed — `cwd` must be a plain relative path inside the work tree,
+  a `timeoutMinutes` may not exceed the stage's own wall-clock cap, and a command
+  whose binary is not installed here is dropped with a warning rather than
+  127-ing the run.
 
   Everything that can go wrong degrades to **fewer checks plus a warning** —
   never a refused plan and never a stopped loop. No block, malformed JSON, a
@@ -787,6 +797,25 @@ Impact on the commands:
   installed deps**: pair it with `worktreeSetup` (e.g. `"npm ci"`), or VERIFY
   will fail in a bare checkout. Audit notes and task moves stay in the main
   tree, subject to `ignoreBacklog` below.
+
+  Two things are worth setting up on the **project** side before you run more
+  than one watch session, because both fail in a way that is hard to read back
+  from a transcript:
+
+  - **Let checks bind ephemeral ports, never fixed ones.** Concurrent sessions
+    mean concurrent worktrees, so two tasks can run the same integration suite
+    or dev server at the same time. A service pinned to 8080, or a browser suite
+    whose server is pinned to 3000, then fails on whichever started second — and
+    that red is recorded as a genuine test failure, sending BUILD to fix a bug
+    that does not exist. Use `server.port=0`, Testcontainers, or a port taken
+    from the environment for anything a check runs. The loop cannot do this for
+    you: it never sees inside the command it runs.
+  - **Keep `worktreeSetup` cheap.** It runs once per fresh worktree, so a large
+    dependency install is paid per task rather than per repo. A package manager
+    with a shared global store (pnpm) or a warm cache costs far less here than a
+    plain `npm ci`; toolchains whose cache is already global — Maven's `~/.m2`,
+    Gradle's `~/.gradle` — cost nothing extra. A polyglot repo can chain both
+    stacks in the one string with `&&`.
 - **`taskBranch`** — what the engineering loop calls the branch it works on.
   The default `"feature/"` cuts `feature/<task-id>`. Set it to another prefix
   (`"wip/"`) to rename that, or to **`false`** to cut nothing at all: BUILD,

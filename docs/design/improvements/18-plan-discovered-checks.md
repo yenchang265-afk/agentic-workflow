@@ -127,6 +127,21 @@ a refused command, a missing binary, or a bug in the module itself. Never a park
 refusal, never a stop. `runPark`'s tolerant `hasVerificationSection` is untouched
 for the reason it documents — the failure mode of strictness there is a livelock.
 
+Two bounds are per-check rather than per-stage. `CheckDef.timeoutMinutes`
+overrides the global cap, because one cap across a stage is set by its slowest
+command and leaves every faster one effectively unbounded — a 20-second lint
+beside a 25-minute integration suite would share the suite's budget. A
+DISCOVERED `timeoutMinutes` may not exceed the stage's own wall-clock cap: it is
+the one field a hostile block could use to park the driver on a command for a
+day, and a check has no business outliving the stage it belongs to. Rejected
+rather than clamped — clamping would run something other than what the plan
+says, and the plan is the record. And `MAX_DISCOVERED_CHECKS` is 8, not the 5
+first shipped: five was picked against a single-ecosystem repo and is exactly
+what a polyglot one needs before it silently loses checks (a front end's test,
+typecheck and lint beside a service's build and test is five already). 8 matches
+`FANOUT_MAX`, which bounds the other per-stage cost multiplier for the same
+reason.
+
 ## The prerequisite this forced
 
 `runChecks` had **no timeout on either host**, and nothing covered it:

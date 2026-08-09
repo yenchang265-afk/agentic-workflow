@@ -171,6 +171,38 @@ test("runChecks prefers the host's own timeout when it has one — only the host
   assert.equal(r!.outcome, "error", "the host's 124 classifies the same as the fallback's")
 })
 
+test("a check's own timeoutMinutes wins over the stage-wide cap", async () => {
+  // One cap across a stage is set by its slowest check, which leaves every
+  // faster one effectively unbounded — a 20s lint beside a 25min integration
+  // suite would otherwise have to share the suite's budget.
+  const asked: number[] = []
+  const shell = (() => {
+    const chain = {
+      quiet: () => chain,
+      nothrow: () => chain,
+      cwd: () => chain,
+      timeout: (ms: number) => {
+        asked.push(ms)
+        return Promise.resolve({ exitCode: 0, stdout: { toString: () => "" }, stderr: { toString: () => "" } })
+      },
+      then: (resolve: (v: unknown) => unknown) =>
+        Promise.resolve({ exitCode: 0, stdout: { toString: () => "" }, stderr: { toString: () => "" } }).then(resolve),
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (() => chain) as any
+  })()
+  await runChecks(
+    shell,
+    [
+      { name: "lint", command: "npm run lint" },
+      { name: "it", command: "mvn verify", timeoutMinutes: 25 },
+    ],
+    "/repo",
+    60_000,
+  )
+  assert.deepEqual(asked, [60_000, 25 * 60_000])
+})
+
 test("checkAxis is null when every check passed — nothing is merged into the verdict", () => {
   assert.equal(checkAxis([]), null)
   assert.equal(checkAxis([result(), result({ name: "types" })]), null)
