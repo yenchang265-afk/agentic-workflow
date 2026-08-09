@@ -2402,10 +2402,93 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
   try {
     const r = await approveAny(gateCtx(deps, config), id)
-    return report(client, r.message, gateVariant(r))
+    // A task gate leaves an obvious next question, and this host DOES get a
+    // model turn after a handled verb (impl.ts overrides the command prompt with
+    // this outcome). So the outcome carries the ask: nothing else can open a
+    // question window — the plugin can only observe and answer pending
+    // questions, never originate one.
+    return report(client, r.ok ? `${r.message}${gateNextStep(r.data)}` : r.message, gateVariant(r))
   } catch (err) {
     return report(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
+}
+
+/**
+ * The follow-up appended to a gate outcome, or "" when a gate leaves nothing to
+ * ask (the terminal ship gate, or a core dist too old to report `data.gate`).
+ *
+ * `NEXT STEP` is the label impl.ts's command-prompt override exempts from its
+ * "report the result and stop" rule — the rule is there to stop the model
+ * re-doing the plugin's deterministic work, not to forbid the one thing only the
+ * model can do.
+ */
+const gateNextStep = (data: Record<string, unknown>): string => {
+  const id = typeof data.id === "string" ? data.id : null
+  if (!id || data.gate !== "task") return ""
+  return (
+    `\n\nNEXT STEP — ask the user with the \`question\` tool: "Plan \`${id}\` now?" (options: yes / not yet). ` +
+    `On yes, call the \`workflow_plan\` tool with id "${id}" — do NOT type or suggest a command, and do NOT approve anything else. ` +
+    `On no, stop: the task waits in queued/.`
+  )
+}
+
+/**
+ * Refuse a model-callable gate tool that is being called from inside a running
+ * loop, and say why.
+ *
+ * A tool registered in the plugin's `tool:` map is offered to EVERY session,
+ * stage subagents included — so without this a BUILD or REVIEW agent could
+ * approve the very task it is driving, the self-grading hole `workflow_verdict`'s
+ * stage check exists to close. `findDrivingWorkflow` walks the parent chain, so a
+ * stage that runs as a subtask is caught by its driving ancestor.
+ *
+ * Fails CLOSED: the walk throws on a session-API failure, and "can't tell who is
+ * calling" must refuse a gate move, not wave it through. That asymmetry is the
+ * opposite of the Claude spawn guard's, and deliberately so — a false refusal
+ * here costs one command the human can type, a false allow ships unreviewed work.
+ */
+const refuseIfDriven = async (deps: Deps, sessionID: string): Promise<string | null> => {
+  try {
+    const live = await findDrivingWorkflow(deps.client, sessionID)
+    if (!live) return null
+    return "A loop is driving in this session — a stage agent may not move the human's gates. Report your stage's outcome instead."
+  } catch {
+    return "Could not establish which session is calling — refusing the gate move. Ask the human to run the verb."
+  }
+}
+
+/**
+ * `workflow_gate` — the model-callable half of `approve`, for the interactive
+ * `new`/`retask` turn: the agent asks "approve this draft?" with the `question`
+ * tool and, on yes, moves the task here. Without it the ask is theatre — this
+ * host has no MCP tools and writes under `docs/tasks/` are guarded, so the model
+ * could not act on the answer it just collected.
+ */
+export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string> => {
+  const refusal = await refuseIfDriven(deps, sessionID)
+  if (refusal) return refusal
+  try {
+    const r = await approveAny(gateCtx(deps, config), id.trim())
+    await toast(deps.client, r.message, gateVariant(r))
+    return r.ok ? `${r.message}${gateNextStep(r.data)}` : r.message
+  } catch (err) {
+    return `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`
+  }
+}
+
+/**
+ * `workflow_plan` — the model-callable half of `plan <id>`, so the "plan it now?"
+ * answer can be acted on in the same turn it was given. Delegates to the verb's
+ * own handler, which owns the busy/liveness/claim-race guards.
+ */
+export const planFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string> => {
+  const refusal = await refuseIfDriven(deps, sessionID)
+  if (refusal) return refusal
+  const target = id.trim()
+  if (!target) return "workflow_plan needs the task id."
+  // startPlanById reports through the toast and can return undefined; a tool must
+  // answer the model in words, or it reads as an empty success.
+  return (await startPlanById(deps, sessionID, target, config)) ?? `Planning "${target}" — it will park in plan-review/ for the human's gate.`
 }
 
 /**

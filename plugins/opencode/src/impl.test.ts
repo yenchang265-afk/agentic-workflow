@@ -248,7 +248,7 @@ test("command hook overrides the rendered template with the outcome for a report
   // and returns its outcome; the hook must feed that back into the prompt.
   await runCommand("unwatch", output)
   assert.notEqual(output.parts[0]!.text, TEMPLATE, "the descriptive template must be replaced")
-  assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user/)
 })
 
 test("command hook passes an unmarked template through untouched", async () => {
@@ -312,7 +312,7 @@ test("the gate verbs and a refused retask are report-and-stop: the outcome repla
   for (const args of ["replan my-task too vague", "approve my-task", "remove my-task", "abandon my-task superseded", "retask ghost-task"]) {
     const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
     await runCommand(args, output)
-    assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/, args)
+    assert.match(output.parts[0]!.text!, /Report exactly that result to the user/, args)
     assert.doesNotMatch(output.parts[0]!.text!, /interview the user/, "the descriptive template must be gone")
   }
 })
@@ -320,8 +320,23 @@ test("the gate verbs and a refused retask are report-and-stop: the outcome repla
 test("the outcome override still wins over the slice for a report-and-stop verb", async () => {
   const output = { parts: [{ type: "text", text: MARKED_TEMPLATE }] }
   await runCommand("unwatch", output)
-  assert.match(output.parts[0]!.text!, /Report exactly that result to the user and stop/)
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user/)
   assert.doesNotMatch(output.parts[0]!.text!, /aw:verb/)
+})
+
+/**
+ * The override forbids re-doing the plugin's work, which is why it says "do NOT
+ * perform any work described in this command's BODY". It must NOT forbid the one
+ * thing only the model can do: after a task gate the outcome carries a NEXT STEP
+ * line asking it to put "plan it now?" to the user, and an unqualified
+ * "report and stop" is exactly what would suppress that question.
+ */
+test("the override exempts a NEXT STEP carried in the plugin's own outcome", async () => {
+  const output = { parts: [{ type: "text", text: TEMPLATE }] }
+  await runCommand("unwatch", output)
+  const text = output.parts[0]!.text!
+  assert.match(text, /NEXT STEP/, "the exemption must be stated, or the model suppresses the gate question")
+  assert.match(text, /command's BODY/i, "what stays forbidden must stay named")
 })
 
 test("command hook slices a template split across text parts", async () => {

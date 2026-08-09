@@ -35,6 +35,12 @@
 // diff of this file, a question about it), and a gate move is destructive AND
 // blocks the turn. Never reintroduce a position-independent trigger.
 
+// One source of truth for which gates ask a follow-up: the parser declares them
+// and gate-ask.mjs writes them. Splitting the two lists is how a gate ends up
+// continuing the turn with nothing to say — the hook would hand back a turn whose
+// only instruction is the outcome message.
+import { ASK_GATES } from "./gate-ask.mjs"
+
 // The gate verbs of /agentic-workflow:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
 // on approve/replan: a bare `approve` auto-resolves the single awaiting task
@@ -114,6 +120,9 @@ const unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "")
  *
  * `continueTurn` marks a dispatch whose success must NOT block the model: the
  * CLI did the deterministic part, and the model still has work to do.
+ * `continueOnGate` is its conditional form, for a verb whose success only
+ * SOMETIMES leaves work: it lists the `data.gate` values that hand the turn
+ * back, and the CLI's result decides which one actually fired.
  * `usage` marks an id-less form of a verb that requires one: deterministic
  * refusal — the hook blocks the turn with that message, no spawn, no model.
  */
@@ -125,7 +134,13 @@ export const gateArgsFor = (prompt) => {
     // the raw quoted form failed `isSafeTaskId` in the CLI — which BLOCKED the
     // turn with a refusal that never hinted quoting was the problem.
     const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "")
-    return { argv: ["gate", "approve-any", ...(id ? [id] : [])] }
+    // approve is folder-driven: which of the three gates it crosses is only
+    // knowable once the CLI has moved the task, so the continue decision cannot
+    // be made here. Declaring the ASKING gates instead keeps the policy in the
+    // pure parser while the CLI's `data.gate` supplies the evidence. A blanket
+    // `continueTurn: true` would be wrong — it hands the turn back on refusals
+    // and on the terminal ship gate, where there is nothing left to ask.
+    return { argv: ["gate", "approve-any", ...(id ? [id] : [])], continueOnGate: ASK_GATES }
   }
   const replan = prompt.match(REPLAN)
   if (replan) {

@@ -28,7 +28,7 @@ on and who does the work; it is deliberately not a procedure.
 
 - **`new <idea>`** — interview the user into one or more planless drafts. **Yours.**
 - **`retask <id> [note]`** — reshape a planless draft. The move is the hook's; the interview is **yours**.
-- **`approve [id]`** — THE gate verb, unified and folder-driven. **The hook's, before your turn.**
+- **`approve [id]`** — THE gate verb, unified and folder-driven. **The hook's, before your turn** — after a **task** gate it hands the turn back with a `GATE FOLLOW-UP` block asking what to do next; the move itself is done and is never yours to repeat.
 - **`replan [id] [reason]`** — the sole rejection verb, back to `queued/`. **The hook's, before your turn.**
 - **`abandon <id> [reason]`** — cancel a task into `abandoned/` (reversible; the file is kept). **The hook's, before your turn.**
 - **`remove <id>`** — hard-delete a task from the backlog. **The hook's, before your turn.** Destructive.

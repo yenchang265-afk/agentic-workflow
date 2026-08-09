@@ -378,6 +378,47 @@ rather than asked for. For the same reason the SubagentStop nag names the marker
 stage: it must tell a subagent that is not that stage to record NOTHING, or a
 drifted REVIEW files its findings as the VERIFY verdict.
 
+### A blocked turn cannot ask anything
+
+The gate hook runs `approve`'s move before the model and then blocks — which is
+right for a move nothing follows, and was wrong for the task gate: the obvious
+next question ("plan it now?") had nowhere to come from, so it fired in the
+interactive `new` flow and silently never on the command path. `approve` is now
+a CONDITIONAL hybrid: `gate-parse.mjs` declares the ASKING gates
+(`continueOnGate`, sourced from `gate-ask.mjs`'s `ASK_GATES` so the two cannot
+drift), and `gate-command.mjs` hands the turn back only when the CLI's
+`data.gate` agrees. Three things must not be "simplified":
+
+- **Never widen it to a blanket `continueTurn: true`.** That continues on
+  refusals and on the terminal ship gate — the double-move the block exists to
+  prevent.
+- **The continue path requires `ok` + a known `data.gate` + a string
+  `data.id`.** Every uncertainty (an older `mcp-server/dist` emitting no `data`)
+  falls through to the block, i.e. to the old behaviour. A false block costs one
+  typed command; a false continue re-opens the double-move.
+- **The follow-up is emitted by the harness, never asked for in prose** — same
+  reason `stageModels` is bound by a hook. Prose may describe the ask; the
+  imperative with the id and the host's `askTool` already substituted is what
+  carries it. For the same reason the ask also rides on the approve tools'
+  `next` (`okGate`): nothing intercepts a tool CALL, and a gate that asks on the
+  typed path and stays silent on the tool path is a coin flip the human never
+  made.
+
+Which gate a folder-driven verb crossed is only knowable from `GateResult.data`
+(`gate`, `id` — set on every success arm, `alreadyDone` retries included). Never
+re-derive it from `message`: that is prose, and it gets reworded.
+
+**OpenCode's plugin cannot originate a question** — `@opencode-ai/plugin`
+exposes Question as list/reply/reject plus a read-only `tui.question`. Only the
+model's own `question` tool opens a window, so an ask there only exists where a
+model turn does: the command-prompt override after a handled verb, not the
+background `session.idle` drive where PLAN parks. And an ask whose answer the
+model cannot execute is worse than no ask — that host has no MCP tools and
+guards `docs/tasks/**`, which is why `workflow_gate`/`workflow_plan` exist.
+Both refuse a call from a session a loop is driving (`findDrivingWorkflow`,
+failing CLOSED): a plugin tool is offered to EVERY session, stage subagents
+included, and without that a BUILD agent can approve its own task.
+
 ### A rejected verdict is not a missing one
 
 `admitVerdict` refusing a call means the channel WORKED and the shape was wrong.
