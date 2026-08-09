@@ -22,7 +22,8 @@ export const missingDistMessage = (label, installer = "plugins/claude/install.sh
 
 /**
  * Decide the hook's action from the spawn result. Returns
- * `{ action: "pass" }` or `{ action: "block", message, ok }`.
+ * `{ action: "pass" }` or `{ action: "block", message, ok, data? }` — `data` is
+ * the GateResult's machine-readable half, present only when the CLI sent one.
  * `label` is the human-readable gate ("approve-any f7k3") for fallback text.
  */
 export const decideGateOutcome = ({ distExists, spawnError, status, stdout }, label, installer) => {
@@ -37,7 +38,15 @@ export const decideGateOutcome = ({ distExists, spawnError, status, stdout }, la
     parsed = null
   }
   if (parsed && typeof parsed.message === "string") {
-    return { action: "block", message: parsed.message, ok: parsed.ok === true }
+    // `data` (the GateResult's machine-readable half: `{gate, id, …}`) is what
+    // the caller branches on to hand the turn back for a follow-up question.
+    // Attach it ONLY when the CLI really sent an object — a plain-object check,
+    // so null and arrays are dropped rather than passed on for `.gate` to be
+    // read off — and omit the key entirely otherwise, which is what keeps this
+    // additive for every caller that compares whole outcomes.
+    const { data } = parsed
+    const usable = !!data && typeof data === "object" && !Array.isArray(data)
+    return { action: "block", message: parsed.message, ok: parsed.ok === true, ...(usable ? { data } : {}) }
   }
   // The CLI ran but produced no GateResult. Non-zero ⇒ it crashed before the
   // gate logic could speak (stale dist, dependency error) — fail open so the

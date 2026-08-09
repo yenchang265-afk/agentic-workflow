@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import { ASK_GATES } from "./gate-ask.mjs"
 import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 
 /**
@@ -10,12 +11,36 @@ import { gateArgsFor, verbFor } from "./gate-parse.mjs"
  */
 
 test("approve with an id routes to approve-any (namespaced and bare command forms)", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"] })
-  assert.deepEqual(gateArgsFor("/engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"] })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"], continueOnGate: ASK_GATES })
+  assert.deepEqual(gateArgsFor("/engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"], continueOnGate: ASK_GATES })
 })
 
 test("bare approve routes to approve-any with no id (auto-resolve)", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve"), { argv: ["gate", "approve-any"] })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve"), { argv: ["gate", "approve-any"], continueOnGate: ASK_GATES })
+})
+
+/**
+ * `approve` is folder-driven, so WHICH gate it crosses is only knowable after the
+ * CLI has moved the task. `continueOnGate` is therefore a conditional: policy
+ * (which gates deserve a follow-up question) stays here in the pure parser, and
+ * the evidence (which gate actually fired) comes back on the GateResult's `data`.
+ *
+ * It must never become a blanket `continueTurn: true`: that would hand the turn
+ * back on a REFUSAL and on the terminal ship gate too, which is precisely the
+ * "model runs the gate verb after the CLI already moved the task" double-move the
+ * block exists to prevent.
+ */
+test("approve continues the turn conditionally, never unconditionally", () => {
+  const d = gateArgsFor("/agentic-workflow:engineering approve my-task")
+  assert.ok(!d.continueTurn, "approve must not continue on every outcome — only on an asking gate")
+  assert.deepEqual(d.continueOnGate, ASK_GATES)
+})
+
+test("the verbs that finish deterministically carry neither continue flag", () => {
+  for (const prompt of ["/agentic-workflow:engineering abandon f7k3", "/agentic-workflow:engineering remove f7k3 --force"]) {
+    const d = gateArgsFor(prompt)
+    assert.ok(!d.continueTurn && !d.continueOnGate, `${prompt} has nothing left for the model to do`)
+  }
 })
 
 test("replan carries the optional id and reason words through, and continues the turn for the chained re-plan", () => {
@@ -176,6 +201,7 @@ test("the typed command still dispatches when a payload follows on later lines",
   // of its own line, and anything below is context the model would have seen.
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task\nthanks!"), {
     argv: ["gate", "approve-any", "my-task"],
+    continueOnGate: ASK_GATES,
   })
   assert.deepEqual(gateArgsFor("  /engineering remove my-task --force\n\ncleaning up"), {
     argv: ["gate", "remove", "my-task", "--force"],
@@ -231,7 +257,10 @@ test("wrapping quotes and trailing punctuation never change which verb runs", ()
 })
 
 test("gate ids arrive unquoted — a quoted id must not fail isSafeTaskId and block the turn", () => {
-  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering approve "my-task"'), { argv: ["gate", "approve-any", "my-task"] })
+  assert.deepEqual(gateArgsFor('/agentic-workflow:engineering approve "my-task"'), {
+    argv: ["gate", "approve-any", "my-task"],
+    continueOnGate: ASK_GATES,
+  })
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering retask 'f7k3'"), { argv: ["gate", "retask", "f7k3"], continueTurn: true })
   assert.deepEqual(gateArgsFor('/agentic-workflow:engineering abandon "f7k3" wrong scope'), {
     argv: ["gate", "abandon", "f7k3", "wrong", "scope"],

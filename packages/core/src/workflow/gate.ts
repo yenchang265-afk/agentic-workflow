@@ -55,6 +55,22 @@ export interface GateCtx {
  */
 export type GateVariant = "info" | "warning"
 
+/**
+ * A gate move's machine-readable half.
+ *
+ * `data.gate` (`"task" | "plan" | "ship"`) and `data.id` are the contract the
+ * hosts branch on, and the approve family sets both on EVERY success arm — the
+ * `alreadyDone` retries included. The unified `approve` verb is folder-driven,
+ * so which gate it crossed is only knowable after the move; a host that needs to
+ * act on it (the Claude/Qwen gate hook hands the turn back after a TASK gate,
+ * instead of blocking it, so it can ask whether to plan now) must read it here.
+ *
+ * Never re-derive either from `message`: those strings are human prose that is
+ * reworded freely, and matching on them is how a host silently starts guessing.
+ * `data` is deliberately open (`Record<string, unknown>`) so verbs can add their
+ * own keys — but these two are the shared vocabulary, matching the `gate: {kind,
+ * id}` descriptor the MCP server already emits at its plan and ship gates.
+ */
 export type GateResult =
   | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown>; readonly variant?: GateVariant }
   | { readonly ok: false; readonly message: string; readonly variant?: GateVariant }
@@ -187,7 +203,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
         ok: true,
         message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
         path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
+        data: { approved: true, alreadyDone: true, gate: "task", id, path: elsewhere!.path, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
       }
     }
     return {
@@ -215,7 +231,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
     ok: true,
     message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
     path: newPath,
-    data: { approved: true, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
+    data: { approved: true, gate: "task", id, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
   }
 }
 
@@ -452,7 +468,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
         ok: true,
         message: `Plan for "${elsewhere!.title}" is already approved — parked in ${config.tasksDir}/in-progress/. Nothing to do.`,
         path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, path: elsewhere!.path, next: `workflow_start with id "${id}", or workflow_claim` },
+        data: { approved: true, alreadyDone: true, gate: "plan", id, path: elsewhere!.path, next: `workflow_start with id "${id}", or workflow_claim` },
       }
     }
     return {
@@ -480,7 +496,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
     ok: true,
     message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.`,
     path: newPath,
-    data: { approved: true, path: newPath, next: `workflow_start with id "${id}", or workflow_claim` },
+    data: { approved: true, gate: "plan", id, path: newPath, next: `workflow_start with id "${id}", or workflow_claim` },
   }
 }
 
@@ -642,7 +658,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
       // existing PR is reused), so re-attempt it unless the task file already
       // records an opened/linked PR; then release the orphaned worktree.
       const done = elsewhere!
-      const data: Record<string, unknown> = { completed: done.path, alreadyDone: true }
+      const data: Record<string, unknown> = { completed: done.path, alreadyDone: true, gate: "ship", id }
       let tail = " Nothing to do."
       // Hoisted: `pr` is scoped to the re-attempt below, but the variant is
       // decided on the return. A retry that STILL can't open the PR warns for
@@ -676,7 +692,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
   const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, extractRunBranch(t))
-  const data: Record<string, unknown> = { completed: newPath }
+  const data: Record<string, unknown> = { completed: newPath, gate: "ship", id }
   if (pr.url) {
     data.pr = { url: pr.url }
     await appendNote($, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)

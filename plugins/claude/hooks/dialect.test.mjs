@@ -33,7 +33,17 @@ test("every known host resolves to a dialect", () => {
     assert.ok(d.write.length > 0, `${host} names no write tool`)
     assert.match(d.stageMarkerFile, /^\.stage.*\.json$/, `${host}'s marker file looks wrong`)
     assert.equal(typeof d.conveysSpawnModel, "boolean", `${host} must declare conveysSpawnModel explicitly`)
+    assert.ok(d.askTool, `${host} names no question tool`)
   }
+})
+
+// A gate follow-up that names the wrong question tool is worse than none: the
+// model tries to call a tool that does not exist on its host and the gate ask
+// silently degrades to chat prose — the exact failure gen-prompts.mjs's
+// {{askTool}} token was introduced to end.
+test("each host names its own question tool", () => {
+  assert.equal(dialectFor("claude").askTool, "AskUserQuestion")
+  assert.equal(dialectFor("qwen").askTool, "ask_user_question")
 })
 
 // Defaulting a typo'd host to Claude would leave every Qwen tool name matching

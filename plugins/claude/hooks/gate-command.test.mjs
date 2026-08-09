@@ -8,14 +8,18 @@ import { fileURLToPath } from "node:url"
 
 /**
  * End-to-end over the hook process itself. The pure halves (gate-parse,
- * gate-result, verb-slice) are unit-tested; this covers the GLUE that composes
- * them, which unit tests cannot see. It earned its place: `verbFor` returning
- * null for a non-engineering prompt was silently coerced to `status` by
+ * gate-result, gate-ask, verb-slice) are unit-tested; this covers the GLUE that
+ * composes them, which unit tests cannot see. It earned its place: `verbFor`
+ * returning null for a non-engineering prompt was silently coerced to `status` by
  * `verbContext`, so every unrelated prompt in the session was answered with
  * engineering's status procedure. Both halves passed their own tests.
  *
- * Only prompts that need no MCP server are exercised — a gate verb would shell
- * to mcp-server/dist and its behaviour is decideGateOutcome's contract.
+ * The gate verbs shell to mcp-server/dist, so they used to be out of reach here.
+ * They are not: the hook resolves the server from CLAUDE_PLUGIN_ROOT, so a
+ * throwaway plugin root holding a canned `gate` CLI exercises the whole
+ * dispatch → decide → continue-or-block chain. That chain is now conditional
+ * (a task gate hands the turn back so the model can ask "plan it now?"), and
+ * "which outcomes still block" is exactly the property no unit test can pin.
  */
 
 const HOOK = path.join(path.dirname(fileURLToPath(import.meta.url)), "gate-command.mjs")
@@ -29,6 +33,33 @@ const run = (prompt, env = {}) => {
   })
   assert.equal(res.status, 0, `the hook must never fail the turn: ${res.stderr}`)
   return res.stdout ? JSON.parse(res.stdout) : null
+}
+
+/**
+ * A plugin root whose `gate` CLI prints one canned GateResult. The verbs/ dir is
+ * symlinked (copied on failure) from the real plugin so the injected context is
+ * the SHIPPED approve procedure, not a fixture — that is what makes the "the
+ * follow-up's Yes branch reached the model" assertion meaningful.
+ */
+const fakeRoot = (result) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aw-gate-"))
+  fs.mkdirSync(path.join(root, "mcp-server", "dist"), { recursive: true })
+  fs.writeFileSync(path.join(root, "mcp-server", "dist", "server.js"), `process.stdout.write(${JSON.stringify(`${JSON.stringify(result)}\n`)})\n`)
+  try {
+    fs.symlinkSync(path.join(PLUGIN_ROOT, "verbs"), path.join(root, "verbs"), "dir")
+  } catch {
+    fs.cpSync(path.join(PLUGIN_ROOT, "verbs"), path.join(root, "verbs"), { recursive: true })
+  }
+  return root
+}
+
+const approve = (result) => {
+  const root = fakeRoot(result)
+  return run("/agentic-workflow:engineering approve f7k3", {
+    CLAUDE_PLUGIN_ROOT: root,
+    AGENTIC_WORKFLOW_PLUGIN_ROOT: root,
+    AGENTIC_WORKFLOW_SERVER_JS: path.join(root, "mcp-server", "dist", "server.js"),
+  })
 }
 
 const injected = (out) => out?.hookSpecificOutput?.additionalContext ?? ""
@@ -104,6 +135,51 @@ test("a plugin root with no server still reports not-built when nothing else nam
     assert.match(out?.reason ?? "", /not built/i)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * The task gate is the one gate with an obvious next question. It used to block
+ * the turn like every other gate, so `/agentic-workflow:engineering approve <id>`
+ * could never ask whether to plan the task now — the model was never given a turn
+ * in which to ask. These four cases pin both halves of the fix: the one gate that
+ * continues, and the ones that must keep blocking.
+ */
+test("a task gate hands the turn back with the plan-it-now follow-up", () => {
+  const out = approve({ ok: true, message: 'Task approved — "Do it" queued for planning.', data: { gate: "task", id: "f7k3" } })
+  assert.notEqual(out?.decision, "block", "a blocked turn can never ask anything")
+  const ctx = injected(out)
+  assert.match(ctx, /Task approved/, "the deterministic outcome must ride along")
+  assert.match(ctx, /GATE FOLLOW-UP/)
+  assert.match(ctx, /AskUserQuestion/)
+  assert.match(ctx, /f7k3/)
+  // All three parts, in order: the outcome, then the verb's own procedure, then
+  // the follow-up last — it is the instruction for THIS turn, and the approve
+  // block it follows still describes a verb the model normally never sees.
+  assert.match(ctx, /VERB INSTRUCTIONS — \/agentic-workflow:engineering approve/)
+  assert.ok(ctx.indexOf("VERB INSTRUCTIONS") < ctx.indexOf("GATE FOLLOW-UP"), "the follow-up must come last")
+})
+
+test("the terminal ship gate still blocks — nothing follows a completed task", () => {
+  const out = approve({ ok: true, message: '"Do it" shipped.', data: { gate: "ship", id: "f7k3" } })
+  assert.equal(out?.decision, "block")
+})
+
+test("a refusal still blocks, whatever gate it names", () => {
+  const out = approve({ ok: false, message: "Nothing awaiting approval.", data: { gate: "task", id: "f7k3" } })
+  assert.equal(out?.decision, "block")
+})
+
+// Fail-safe: an mcp-server/dist older than the `data.gate` discriminator, or one
+// that names a gate without a task id, must degrade to exactly the old behaviour
+// rather than hand back a turn with a follow-up naming `undefined`.
+test("a success the CLI could not describe blocks, as it always did", () => {
+  for (const result of [
+    { ok: true, message: "Task approved — queued." },
+    { ok: true, message: "Task approved — queued.", data: { gate: "task" } },
+    { ok: true, message: "Task approved — queued.", data: { gate: "nonsense", id: "f7k3" } },
+  ]) {
+    assert.equal(approve(result)?.decision, "block", JSON.stringify(result))
   }
 })
 

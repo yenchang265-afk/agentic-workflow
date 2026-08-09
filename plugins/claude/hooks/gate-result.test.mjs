@@ -52,6 +52,39 @@ test("a parsed GateResult blocks with its verdict — success and refusal alike"
   })
 })
 
+/**
+ * `data` carries the gate discriminator (`{gate, id}`) the hook branches on to
+ * decide whether a successful move hands the turn back for a follow-up question.
+ * It is surfaced ONLY when the CLI actually sent an object — the tests above
+ * deepEqual whole outcomes, and an always-present `data: undefined` key would
+ * break them, which is the shape check that keeps this addition additive.
+ */
+test("a GateResult's data rides along on the outcome when the CLI sent one", () => {
+  const line = JSON.stringify({ ok: true, message: "Task approved — queued.", data: { gate: "task", id: "f7k3" } })
+  assert.deepEqual(decideGateOutcome({ distExists: true, status: 0, stdout: line }, LABEL), {
+    action: "block",
+    message: "Task approved — queued.",
+    ok: true,
+    data: { gate: "task", id: "f7k3" },
+  })
+})
+
+test("a GateResult without data yields no data key at all", () => {
+  const o = decideGateOutcome({ distExists: true, status: 0, stdout: JSON.stringify({ ok: true, message: "done" }) }, LABEL)
+  assert.ok(!("data" in o), "an absent data must not become an undefined key")
+})
+
+// A stale or hand-rolled dist could send anything here. A non-object (or null,
+// which typeof calls "object") must be dropped, not passed on for the hook to
+// read `.gate` off — that is how a follow-up gets injected on a gate that never
+// declared one.
+test("a non-object data is ignored", () => {
+  for (const data of ["task", 7, null, ["task"]]) {
+    const o = decideGateOutcome({ distExists: true, status: 0, stdout: JSON.stringify({ ok: true, message: "done", data }) }, LABEL)
+    assert.ok(!("data" in o), `${JSON.stringify(data)} must not survive as data`)
+  }
+})
+
 test("a silent clean exit blocks with the generic done message", () => {
   assert.deepEqual(decideGateOutcome({ distExists: true, status: 0, stdout: "" }, LABEL), {
     action: "block",
