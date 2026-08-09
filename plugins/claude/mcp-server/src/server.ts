@@ -8,7 +8,7 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
-import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
+import { DEFAULT_CONFIG, bashAllowlistExtras, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
@@ -826,7 +826,12 @@ const writeStageMarker = (stage: string | null, deadline?: number): string | nul
       // that declares none (engineering plan/build, pr-sitter fix) writes no list
       // and stays unrestricted — those stages must write code freely.
       const platform = active?.platform ?? platformFor(config, m.manifest.kind)
-      const allowlist = effectiveAllowlist(def, platform)
+      // `bashAllowlistExtra` extends only stages that DECLARE an allowlist: an
+      // empty base means the stage is unrestricted, and appending extras there
+      // would restrict it to just the extras. No `cd * && ` twins here — this
+      // host's guard matches per segment, not the whole command string.
+      const base = effectiveAllowlist(def, platform)
+      const allowlist = base.length ? [...base, ...bashAllowlistExtras(config).filter((glob) => !base.includes(glob))] : []
       const stageAgentModelMap = stageAgentModels(m)
       writeMarkerAtomic(
         stageMarkerPath(),

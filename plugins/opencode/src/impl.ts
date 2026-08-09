@@ -3,12 +3,15 @@ import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
 import {
+  CD_TWIN_PREFIX,
   agentModel,
+  bashAllowlistExtras,
   enabledWorkflowKinds,
   ignoredUserConfigPaths,
   readRawConfigLayers,
   resolveUserConfigPath,
   unknownAgentModelKeys,
+  withCdTwins,
   worktreesDirFor,
 } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
@@ -119,19 +122,21 @@ const knownAgentNames = (config: Config): string[] => {
 
 /** The slice of opencode's Config this plugin ever touches. */
 interface AgentModelConfig {
-  agent?: Record<string, { model?: string } | undefined>
+  agent?: Record<string, { model?: string; permission?: { bash?: unknown } } | undefined>
 }
 
 /**
  * Apply the patch to a resolved opencode config IN PLACE, returning the agents
  * actually bound. `Hooks.config` returns void, so mutation is the only channel.
  *
- * The ONLY key ever written is `agent.<name>.model`. A user's own
- * `opencode.json` entry for an agent we do not name survives untouched — and
- * one we DO name loses, because naming it in `agentModels` is the more specific,
- * more recent instruction. Whole `AgentConfig` objects are never replaced, so a
- * user's `permission`/`tools`/`temperature` for that agent are preserved. Pure
- * apart from the mutation.
+ * The only keys ever written are `agent.<name>.model` (here) and
+ * `agent.<name>.permission.bash.<glob>` (`applyBashAllowlistExtras` below) — a
+ * new write anywhere else in the config needs the same one-key surgical shape.
+ * A user's own `opencode.json` entry for an agent we do not name survives
+ * untouched — and one we DO name loses, because naming it in `agentModels` is
+ * the more specific, more recent instruction. Whole `AgentConfig` objects are
+ * never replaced, so a user's `permission`/`tools`/`temperature` for that
+ * agent are preserved. Pure apart from the mutation.
  */
 export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Record<string, string>>): string[] => {
   const names = Object.keys(patch)
@@ -146,6 +151,54 @@ export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Recor
     bound.push(name)
   }
   return bound
+}
+
+/**
+ * Append `bashAllowlistExtra` globs to every sentinel-guarded agent's bash
+ * permission map IN PLACE, returning the agents extended.
+ *
+ * OpenCode evaluates permissions LAST-match-wins over the map in key order, so
+ * where a rule lands is what it means: the generated frontmatter puts the
+ * `"*": deny` sentinel first and the manifest allows after it, and a key added
+ * to the merged config here appends at the END of that map — after the
+ * sentinel, which is the only position where an extra glob actually wins.
+ * (Verified against the live host: a hand-written `opencode.json` agent entry
+ * also lands after the frontmatter's rules; this hook's write lands last of
+ * all.) Why extras exist at all: a command-rewriting proxy (rtk-style) mutates
+ * the command in `tool.execute.before` BEFORE the host evaluates permissions,
+ * so every allowlisted command reaches the matcher in a shape (`rtk <cmd>`) no
+ * shipped glob matches and the stage starves into ERROR.
+ *
+ * Scope is by SHAPE, not by roster: only a map-shaped bash permission whose
+ * first-listed rule is the `"*": deny` sentinel is touched. That reaches every
+ * sentinel-guarded stage agent of every kind (hub-scaffolded checkers
+ * included) without a bootstrap manifest read, and deliberately skips
+ * `bash: allow` (build — extras are a no-op) and `bash: deny` (plan — extras
+ * would widen a total denial that is the stage's contract). Worktree `cd * && `
+ * twins are derived exactly when the map already carries twins: their presence
+ * is the generated frontmatter's own record that the stage runs worktree-pinned.
+ * An extra whose key already exists is left alone — an explicit user value,
+ * even a deny, is not ours to flip.
+ */
+export const applyBashAllowlistExtras = (config: AgentModelConfig, extras: readonly string[]): string[] => {
+  if (extras.length === 0) return []
+  const extended: string[] = []
+  for (const [name, agent] of Object.entries(config.agent ?? {})) {
+    const bash = agent?.permission?.bash
+    if (typeof bash !== "object" || bash === null || Array.isArray(bash)) continue
+    const map = bash as Record<string, unknown>
+    if (map["*"] !== "deny") continue
+    const wantsTwins = Object.keys(map).some((key) => key.startsWith(CD_TWIN_PREFIX))
+    const globs = wantsTwins ? withCdTwins(extras) : [...extras]
+    let touched = false
+    for (const glob of globs) {
+      if (glob in map) continue
+      map[glob] = "allow"
+      touched = true
+    }
+    if (touched) extended.push(name)
+  }
+  return extended.sort()
 }
 
 /**
@@ -223,12 +276,16 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   // no way to tell whether the binding took — the failure mode the whole change
   // exists to remove.
   let agentModelsBound: string[] = []
+  let allowlistExtrasBound: string[] = []
   let reportedAgentModels = false
   const reportAgentModelsOnce = async (config: Config): Promise<void> => {
     if (reportedAgentModels) return
     reportedAgentModels = true
     if (agentModelsBound.length) {
       await log("info", `agentic-workflow: agentModels bound ${agentModelsBound.join(", ")} (takes effect until opencode restarts)`)
+    }
+    if (allowlistExtrasBound.length) {
+      await log("info", `agentic-workflow: bashAllowlistExtra appended to ${allowlistExtrasBound.join(", ")} (takes effect until opencode restarts)`)
     }
     const unknown = unknownAgentModelKeys(config, knownAgentNames(config))
     if (unknown.length === 0) return
@@ -425,7 +482,13 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
      */
     config: async (input) => {
       try {
-        agentModelsBound = applyAgentModels(input as AgentModelConfig, agentModelPatch(readRawConfigLayers(directory)))
+        const raw = readRawConfigLayers(directory)
+        agentModelsBound = applyAgentModels(input as AgentModelConfig, agentModelPatch(raw))
+        // Same seam, same timing constraint: `bashAllowlistExtra` must land in
+        // the merged config's agent permission maps AFTER the frontmatter's
+        // rules (last-match-wins), and this hook is the only writer that
+        // appends there. See applyBashAllowlistExtras.
+        allowlistExtrasBound = applyBashAllowlistExtras(input as AgentModelConfig, bashAllowlistExtras(raw))
       } catch {
         /* a convenience binding must never break bootstrap */
       }

@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { parseConfig } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
-import { agentModelPatch, applyAgentModels, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { agentModelPatch, applyAgentModels, applyBashAllowlistExtras, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -485,4 +485,58 @@ test("unrelated config keys survive applyAgentModels verbatim", () => {
     theme: "dark",
     agent: { other: { model: "keep/me" }, "workflow-plan": { model: "ours/x" } },
   })
+})
+
+// A sentinel-guarded checker agent's merged config shape, as the `config` hook
+// sees it: `"*": deny` first (frontmatter order), allows after. The twin pair
+// marks a worktree-pinned stage.
+const sentinelBash = (): Record<string, string> => ({ "*": "deny", "git status*": "allow", "cd * && git status*": "allow" })
+
+test("applyBashAllowlistExtras appends extras AFTER the existing rules of sentinel maps only", () => {
+  const config = {
+    agent: {
+      "workflow-verify": { permission: { bash: sentinelBash() } },
+      "workflow-build": { permission: { bash: "allow" } },
+      "workflow-plan": { permission: { bash: "deny" } },
+    },
+  }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, ["rtk *"]), ["workflow-verify"])
+  const bash = (config.agent["workflow-verify"].permission as { bash: Record<string, string> }).bash
+  // Order is the semantics: OpenCode evaluates last-match-wins, so an extra
+  // landing BEFORE the sentinel would be dead. Object key order is the map's
+  // rule order.
+  assert.deepEqual(Object.keys(bash), ["*", "git status*", "cd * && git status*", "rtk *", "cd * && rtk *"])
+  assert.equal(bash["rtk *"], "allow")
+  assert.equal(config.agent["workflow-build"].permission.bash, "allow", "a string permission is never rewritten into a map")
+  assert.equal(config.agent["workflow-plan"].permission.bash, "deny", "extras must not widen a total denial")
+})
+
+test("applyBashAllowlistExtras derives cd twins only where the map already carries them", () => {
+  const config = {
+    agent: {
+      // No twin in the map → the stage is not worktree-pinned → no twin derived.
+      "workflow-review-fetch": { permission: { bash: { "*": "deny", "git fetch*": "allow" } } },
+    },
+  }
+  applyBashAllowlistExtras(config as never, ["rtk *"])
+  assert.deepEqual(Object.keys(config.agent["workflow-review-fetch"].permission.bash), ["*", "git fetch*", "rtk *"])
+})
+
+test("applyBashAllowlistExtras never flips a key the user already set", () => {
+  const config = { agent: { "workflow-verify": { permission: { bash: { "*": "deny", "rtk *": "deny" } } } } }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, ["rtk *"]), [])
+  assert.equal(config.agent["workflow-verify"].permission.bash["rtk *"], "deny")
+})
+
+test("applyBashAllowlistExtras with no extras touches nothing at all", () => {
+  const config = { agent: { "workflow-verify": { permission: { bash: sentinelBash() } } } }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, []), [])
+  assert.deepEqual(config.agent["workflow-verify"].permission.bash, sentinelBash())
+})
+
+test("applyBashAllowlistExtras skips agents without a bash map and an empty config", () => {
+  assert.deepEqual(applyBashAllowlistExtras({} as never, ["rtk *"]), [])
+  const config = { agent: { plain: {}, nested: { permission: {} } } }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, ["rtk *"]), [])
+  assert.deepEqual(config, { agent: { plain: {}, nested: { permission: {} } } })
 })

@@ -81,6 +81,35 @@ test("the generated OpenCode frontmatter carries both shapes for a worktree stag
   assert.ok(checked > 0, "no worktree-isolated stage with an allowlist found — wrong path?")
 })
 
+/**
+ * OpenCode evaluates permission maps LAST-match-wins over key order, which
+ * makes the sentinel's POSITION semantic, not stylistic: `"*": deny` must come
+ * before every allow. Allows written above it would all lose to the sentinel
+ * (a fully starved stage), and a sentinel written LAST is worse still —
+ * OpenCode's `disabled()` checks only the last rule matching the tool name, so
+ * a trailing `"*": deny` removes the bash tool from the agent entirely. Nothing
+ * in generation enforces this: the sentinel is hand-authored in
+ * `prompts/agents/<name>/opencode.yaml` and `expandAllowlist` only splices
+ * allows under it, so a reordered source yaml would regenerate "cleanly" into a
+ * broken agent.
+ */
+test("every generated bash permission map opens with the deny sentinel", () => {
+  let checked = 0
+  for (const file of fs.readdirSync(OPENCODE_AGENTS)) {
+    if (!file.endsWith(".md")) continue
+    const text = fs.readFileSync(path.join(OPENCODE_AGENTS, file), "utf8")
+    const rules = [...text.matchAll(/^ *"(.+)": (allow|deny|ask)$/gm)]
+    if (rules.length === 0) continue // bash: allow / bash: deny agents carry no map
+    assert.equal(rules[0][1], "*", `${file}: the first bash rule is "${rules[0][1]}", not the "*" sentinel`)
+    assert.equal(rules[0][2], "deny", `${file}: the "*" sentinel is "${rules[0][2]}", not deny`)
+    for (const rule of rules.slice(1)) {
+      assert.notEqual(rule[1], "*", `${file}: a second "*" rule after the sentinel would override it (last match wins)`)
+    }
+    checked++
+  }
+  assert.ok(checked > 0, "no generated agent with a bash permission map found — wrong path?")
+})
+
 test("no stage allowlist repeats a glob", () => {
   for (const { kind, manifest } of manifests) {
     for (const stage of manifest.stages ?? []) {

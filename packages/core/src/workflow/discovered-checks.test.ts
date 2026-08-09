@@ -310,6 +310,29 @@ test("resolveStageChecks discovers only when the stage opts in, and only with a 
   assert.deepEqual(found.warnings, [])
 })
 
+test("resolveStageChecks admits a discovered command reachable only through bashAllowlistExtra", async () => {
+  // The extras exist for exactly this project: its runner is not on any
+  // manifest allowlist, and without them the discovered check is refused.
+  const plan = fence('[{ "name": "proxied", "command": "rtk npm test" }]')
+  const withoutExtra = await resolveStageChecks({ $: makeShell(ALL_PRESENT), config: CONFIG, kind: "engineering", def: stage({ discoverChecks: true }), plan, dir: "/wt" })
+  assert.equal(withoutExtra.source, "none")
+  assert.match(withoutExtra.warnings.join("\n"), /not on this stage's bash allowlist/)
+
+  const withExtra = await resolveStageChecks({
+    $: makeShell(ALL_PRESENT),
+    config: parseConfig({ bashAllowlistExtra: ["rtk *"] }),
+    kind: "engineering",
+    def: stage({ discoverChecks: true }),
+    plan,
+    dir: "/wt",
+  })
+  assert.equal(withExtra.source, "discovered")
+  assert.deepEqual(
+    withExtra.defs.map((d) => d.command),
+    ["rtk npm test"],
+  )
+})
+
 test("resolveStageChecks honors the kind-level config override of the manifest flag", async () => {
   const off = parseConfig({ workflows: { engineering: { discoverChecks: false } } })
   const resolved = await resolveStageChecks({

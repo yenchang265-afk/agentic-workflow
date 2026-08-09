@@ -445,5 +445,5 @@ Above the verdict, give:
   reason stated.
 - Your bash access is an allowlist of read/test commands. If the project's
   test command is denied by it, record ERROR and name the command — the
-  human can extend this agent's allowlist (or the project's `opencode.json`
-  permissions) for that runner. Never work around a denial.
+  human can grant that runner via `bashAllowlistExtra` in
+  `.agentic-workflow.json`. Never work around a denial.

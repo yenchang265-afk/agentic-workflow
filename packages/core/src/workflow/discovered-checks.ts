@@ -43,7 +43,7 @@
 
 import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef } from "../manifest/schema.js"
 import { commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isBareCd, splitSegments } from "../task/write-backstop.js"
-import { checksFor, configuredChecks, discoverChecksFor, platformFor } from "../config.js"
+import { bashAllowlistExtras, checksFor, configuredChecks, discoverChecksFor, platformFor } from "../config.js"
 import type { Config } from "./state.js"
 import type { Shell } from "../host.js"
 
@@ -417,9 +417,11 @@ export const resolveStageChecks = async (args: {
   try {
     const { defs, issues } = parseDiscoveredChecks(plan)
     if (!defs.length) return { ...NO_CHECKS, warnings: issues }
+    // `bashAllowlistExtra` counts here too: a project whose runner is only
+    // reachable through an extra glob must be able to discover checks for it.
     const { accepted, rejected } = admissibleChecks(
       defs,
-      effectiveAllowlist(def, platformFor(config, kind)),
+      [...effectiveAllowlist(def, platformFor(config, kind)), ...bashAllowlistExtras(config)],
       def.timeoutMinutes ?? config.stageTimeoutMinutes,
     )
     const { runnable, missing } = await resolvableChecks($, accepted, dir)
