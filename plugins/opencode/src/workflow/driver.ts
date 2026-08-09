@@ -2456,12 +2456,31 @@ const refuseIfDriven = async (deps: Deps, sessionID: string): Promise<string | n
  * tool and, on yes, moves the task here. Without it the ask is theatre — this
  * host has no MCP tools and writes under `docs/tasks/` are guarded, so the model
  * could not act on the answer it just collected.
+ *
+ * It covers the task and plan gates ONLY. `approveAny` is folder-driven and its
+ * in-review arm is the terminal SHIP gate — completed/, PR opened — which
+ * CLAUDE.md reserves for the human "after you review the diff". A model holding
+ * a wrong or stale id must not be able to cross it, so that arm is refused
+ * here before anything moves and stays with the typed verb. (The Claude host
+ * gets this for free: it exposes one MCP tool per gate.)
  */
 export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string> => {
   const refusal = await refuseIfDriven(deps, sessionID)
   if (refusal) return refusal
+  const target = id.trim()
+  // No id-less form, deliberately: bare `approveAny("")` auto-resolves the
+  // single awaiting task across plan-review/ AND in-review/ — an id-less model
+  // call could ship whatever happens to be parked there.
+  if (!target) return "workflow_gate needs the task id the user approved — never call it without one."
   try {
-    const r = await approveAny(gateCtx(deps, config), id.trim())
+    if (await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-review", target)) {
+      return (
+        `Refusing: "${target}" is in in-review/, so approving it is the SHIP gate — completed/ plus the PR — ` +
+        `which only the human may cross, after reviewing the diff. Report that the task awaits their ` +
+        `/agentic-workflow:engineering approve ${target}; do not attempt it another way.`
+      )
+    }
+    const r = await approveAny(gateCtx(deps, config), target)
     await toast(deps.client, r.message, gateVariant(r))
     return r.ok ? `${r.message}${gateNextStep(r.data)}` : r.message
   } catch (err) {

@@ -773,6 +773,34 @@ test("a gate tool refuses when it cannot tell which session is calling", async (
   assert.ok(!log.some((cmd) => cmd.includes("mv")))
 })
 
+test("workflow_gate refuses the ship arm — an in-review id stays with the human's typed approve", async () => {
+  // approveAny is folder-driven: handed an in-review id it would ship the task
+  // (completed/ + PR) — the one gate CLAUDE.md reserves for the human after
+  // they review the diff. A model holding a wrong or stale id must hit a
+  // refusal, not the terminal gate.
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed diff" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await gateFromAgent(deps, "sess-agent", "my-task", testConfig)
+
+  assert.match(out, /SHIP gate/)
+  assert.match(out, /approve my-task/)
+  assert.ok(!log.some((cmd) => cmd.includes("mv")), "nothing may move — the ship gate is human-only")
+  assert.equal(toasts.length, 0, "no toast for a move that did not happen")
+})
+
+test("workflow_gate refuses an empty id — id-less resolution could pick a parked in-review task", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed diff" }) }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  assert.match(await gateFromAgent(deps, "sess-agent", "  ", testConfig), /needs the task id/)
+  assert.ok(!log.some((cmd) => cmd.includes("mv")))
+})
+
 test("/approve with no id ships the single in-review task to completed/", async () => {
   const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Ship it", body: "reviewed diff" }) }
   const { client, toasts } = makeClientFS(files)
