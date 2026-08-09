@@ -434,3 +434,56 @@ test("a source-pre-set git that never isolated leaves the main tree untouched (B
   const touched = log.some((c) => c.startsWith("git ") && (c.includes(" add -A") || c.includes(" commit") || c.includes(" checkout")))
   assert.equal(touched, false, `main tree was mutated: ${log.filter((c) => c.startsWith("git ")).join(" | ")}`)
 })
+
+// --- current-branch mode at drive end: the lock decides who may touch the tree ---
+
+const OWNER_FILE = "runs/.current-branch/owner.json"
+
+const currentBranchState = (isolated: boolean): WorkflowState => ({
+  goal: "Do it",
+  stage: "build",
+  iteration: 0,
+  artifacts: {},
+  task: taskRef("t", "in-progress"),
+  git: { base: "abc123", branch: "work", onCurrentBranch: true },
+  ...(isolated ? { isolated: true } : {}),
+})
+
+test("current-branch stop: a rival now holding the lock means no checkpoint and no release", async () => {
+  // This run's lock went stale mid-phase, was swept, and "zz" re-acquired it.
+  // Checkpointing would `git add -A` the rival's in-flight work as ours, and a
+  // blind release would free the rival's live lock — skip both.
+  const { ctx, log, checkpoints } = makeCtx(
+    { "in-progress/t.md": body(true), [OWNER_FILE]: JSON.stringify({ id: "zz", branch: "work" }) },
+    currentBranchState(true),
+  )
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.equal(checkpoints.length, 0, "the rival's tree must not be checkpointed")
+  const released = log.some((c) => c.startsWith("rm ") && c.includes(".current-branch/owner.json"))
+  assert.equal(released, false, "the rival's lock must not be released")
+})
+
+test("current-branch stop: a degraded run (isolated false) still returns its own lock", async () => {
+  // The tree moved mid-run, isolation degraded — no checkpoint. But the lock
+  // from the last good boundary is still this run's, and leaving it wedges the
+  // tree for every later run until the stale sweep.
+  const { ctx, log, checkpoints } = makeCtx({ "in-progress/t.md": body(true) }, currentBranchState(false))
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.equal(checkpoints.length, 0, "a degraded run must not checkpoint the tree it lost")
+  const released = log.some((c) => c.startsWith("rm ") && c.includes(".current-branch/owner.json"))
+  assert.equal(released, true, "the still-owned lock must be returned at drive end")
+})
+
+test("current-branch stop: the rightful owner checkpoints and releases as before", async () => {
+  const { ctx, log, checkpoints } = makeCtx(
+    { "in-progress/t.md": body(true), [OWNER_FILE]: JSON.stringify({ id: "t", branch: "work" }) },
+    currentBranchState(true),
+  )
+  const report = await runTerminal(ctx, stop)
+  assert.equal(report.kind, "stop")
+  assert.equal(checkpoints.length, 1)
+  const released = log.some((c) => c.startsWith("rm ") && c.includes(".current-branch/owner.json"))
+  assert.equal(released, true)
+})

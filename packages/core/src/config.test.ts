@@ -17,6 +17,7 @@ import {
   DEFAULT_ENABLED_KINDS,
   defaultTrackerSystem,
   enabledWorkflowKinds,
+  unenabledConfiguredKinds,
   EXPERIMENTAL_KINDS,
   ignoredUserConfigPaths,
   loadConfig,
@@ -138,6 +139,21 @@ test("engineering alone is on with an empty config; every sitter is experimental
   assert.deepEqual(DEFAULT_CONFIG.workflows, {})
   assert.deepEqual(enabledWorkflowKinds(DEFAULT_CONFIG), ["engineering"])
   for (const kind of EXPERIMENTAL_KINDS) assert.ok(!enabledWorkflowKinds(DEFAULT_CONFIG).includes(kind))
+})
+
+test("unenabledConfiguredKinds names the opt-in sections that can never take effect", () => {
+  // The classic trap: `"enable": true` — the loose kind schema keeps the typo'd
+  // knob, `enabledWorkflowKinds` reads only `enabled`, and the sitter silently
+  // never runs while the config file claims otherwise.
+  assert.deepEqual(unenabledConfiguredKinds(parseConfig({ workflows: { "pr-sitter": { enable: true } } })), ["pr-sitter"])
+  // A knob-only section is the same shape of dead config.
+  assert.deepEqual(unenabledConfiguredKinds(parseConfig({ workflows: { "dep-sitter": { severityFloor: "critical" } } })), ["dep-sitter"])
+  // Deciding `enabled` either way silences it: true runs, false is a parked section.
+  assert.deepEqual(unenabledConfiguredKinds(parseConfig({ workflows: { "pr-sitter": { enabled: true } } })), [])
+  assert.deepEqual(unenabledConfiguredKinds(parseConfig({ workflows: { "pr-sitter": { enabled: false } } })), [])
+  // Default-on kinds are exempt: engineering runs without any section at all.
+  assert.deepEqual(unenabledConfiguredKinds(parseConfig({ workflows: { engineering: { stageModels: { plan: "x" } } } })), [])
+  assert.deepEqual(unenabledConfiguredKinds(DEFAULT_CONFIG), [])
 })
 
 test("every sitter kind is listed as experimental", () => {

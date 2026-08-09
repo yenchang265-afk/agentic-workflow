@@ -446,7 +446,14 @@ export const listByStatus = async (
     if (node.type !== "file" || !isMarkdown(node.name)) continue
     const read = await client.file.read({ query: { path: node.path, directory } })
     const content = read.data?.content
-    if (!content) continue
+    if (!content) {
+      // Never a SILENT skip: an empty task file is otherwise a perfect ghost —
+      // present in the folder, invisible to every listing, claim walk, and gate
+      // verb, squatting on its id. Doctor reports it too (auditBacklog
+      // `emptyFiles`); this line is the trace for a caller that passed a log.
+      log?.("warn", `skipping ${node.path}: empty or unreadable task file`)
+      continue
+    }
     try {
       tasks.push(parseTask(node.name, content, node.absolute))
     } catch (err) {
@@ -661,11 +668,19 @@ export const listClaimIds = async (
   const dir = path.join(directory, tasksDir, status, ".claims")
   const out = await $`ls -1 ${dir}`.quiet().nothrow()
   if (out.exitCode !== 0) return []
-  return out.stdout
-    .toString()
-    .split("\n")
-    .map((s) => s.trim())
-    .filter(Boolean)
+  return (
+    out.stdout
+      .toString()
+      .split("\n")
+      .map((s) => s.trim())
+      // Screened on the way out, like `listPlanRequestIds`: `.claims/` is a plain
+      // directory anything can drop an entry into. The `.dead-` exclusion is not
+      // covered by `isSafeTaskId` (dots are legal past the first character): it is
+      // `acquireOrSweepMarker`'s rename-aside graveyard suffix, stranded forever by
+      // a SIGKILL between the rename and the rm — listed, it reads as a held claim
+      // no verb can ever release.
+      .filter((s) => s.length > 0 && isSafeTaskId(s) && !s.includes(".dead-"))
+  )
 }
 
 /**

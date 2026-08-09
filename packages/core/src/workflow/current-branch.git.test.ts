@@ -142,6 +142,33 @@ test("starting on the default branch is refused, with nothing committed and noth
   }
 })
 
+test("a loser's teardown never releases the rival's lock — owner-aware release", async () => {
+  const repo = await seedRepo()
+  try {
+    const first = await ensureIsolation(sh, noopLog, repo, config, entryState("t1"))
+    // Simulate the sweep-and-retake: t2 now owns the lock (the marker t1 holds
+    // went stale mid-run and a rival re-acquired it).
+    const ownerFile = path.join(repo, ".git", "agentic-workflow", "current-branch", "owner.json")
+    fs.writeFileSync(ownerFile, JSON.stringify({ id: "t2", branch: "work" }))
+
+    // t1's drive ends (error path) — its teardown must NOT free t2's live lock:
+    // a blind release here lets a third run in beside t2, the exact
+    // two-runs-in-one-diff corruption the lock exists to prevent.
+    await teardownIsolation(sh, noopLog, repo, config, first)
+    assert.ok(fs.existsSync(ownerFile), "the rival's lock must survive the loser's teardown")
+    await assert.rejects(() => ensureIsolation(sh, noopLog, repo, config, entryState("t3")), /t2/)
+
+    // The rightful owner's teardown still releases.
+    const second = { ...first, task: { ...first.task!, id: "t2" } }
+    await teardownIsolation(sh, noopLog, repo, config, second)
+    assert.ok(!fs.existsSync(ownerFile))
+    const third = await ensureIsolation(sh, noopLog, repo, config, entryState("t3"))
+    assert.equal(third.isolated, true)
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true })
+  }
+})
+
 test("a second workflow on the same tree is refused while the first holds it", async () => {
   const repo = await seedRepo()
   try {

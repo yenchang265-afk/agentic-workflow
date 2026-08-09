@@ -11,7 +11,7 @@ import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/c
 import { DEFAULT_CONFIG, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
-import { checkCommands, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
+import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
@@ -75,7 +75,7 @@ import { renderRunSummary, type Outcome, type StageSample, verdictStructure } fr
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
-import { ensureIsolation, releaseWorktree, workflowId } from "@agentic-workflow/core/workflow/isolate"
+import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
   approvePlan as coreApprovePlan,
@@ -791,8 +791,14 @@ const stampVerdictRecorded = () => {
  * — no marker means "no loop stage", which the guard treats as an ordinary
  * session, and that is strictly safer than an armed marker describing a stage
  * that is not the one about to run.
+ *
+ * `deadline` (absolute ms) overrides the computed stage deadline for the one
+ * caller that knows better: `runStageChecks` advertises the CHECK-PHASE budget
+ * before the first check runs, so `taskDrivenByStageMarker` never reads a live
+ * run's expired previous-stage deadline as crash evidence mid-phase. The
+ * ordinary per-pass arming passes nothing and keeps today's math.
  */
-const writeStageMarker = (stage: string | null): string | null => {
+const writeStageMarker = (stage: string | null, deadline?: number): string | null => {
   const dir = path.join(directory, config.tasksDir, "runs")
   try {
     fs.mkdirSync(dir, { recursive: true })
@@ -808,7 +814,7 @@ const writeStageMarker = (stage: string | null): string | null => {
     } else {
       const m = activeManifest()
       const def = stageDef(m.manifest, stage)
-      stageDeadline = Date.now() + (def.timeoutMinutes ?? config.stageTimeoutMinutes) * 60_000
+      stageDeadline = deadline ?? Date.now() + (def.timeoutMinutes ?? config.stageTimeoutMinutes) * 60_000
       // The platform stamped into the state at claim time wins over the live
       // config: prompt guidance renders from the same stamp, and a config flip
       // mid-loop must not strand a claimed PR with an allowlist that contradicts
@@ -1076,7 +1082,20 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
   // stalled run.
   for (const w of warnings) await log("warn", `${stage}: ${w}`)
   if (!defs.length) return state
-  const results = await runChecks(sh, defs, dir, config.checkTimeoutMinutes * 60_000)
+  // The phase below runs BEFORE this call's own marker arming and claim restamp
+  // (both follow in workflow_stage), on a claim stamp as old as the previous
+  // stage's whole runtime — and sequential checks legally compound past the
+  // stale window. Mid-phase, both liveness oracles then read this LIVE run as
+  // dead: the stale claim is swept by any rival walk, and the previous stage's
+  // expired marker deadline is "crash evidence" to recover. So arm the marker
+  // early with a deadline covering the whole check budget, restamp the claim
+  // now, and restamp again before every check — the gap another process can
+  // observe never exceeds one check's own cap. The per-pass arming that follows
+  // re-writes the marker with the ordinary stage deadline.
+  const markerError = writeStageMarker(stage, Date.now() + checksBudgetMs(defs, config.checkTimeoutMinutes * 60_000))
+  if (markerError) await log("warn", `${stage}: could not advertise the check-phase deadline — ${markerError}`)
+  await refreshWorkClaim(sh, state)
+  const results = await runChecks(sh, defs, dir, config.checkTimeoutMinutes * 60_000, () => refreshWorkClaim(sh, state))
   for (const r of results) {
     if (r.outcome === "pass") continue
     await log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)
@@ -1857,12 +1876,20 @@ server.registerTool(
       await appendNote(sh, active.task, auditNote(`BUILD finished (iteration ${active.iteration + 1})`, new Date(), actor), log)
       // Lockfiles excluded (CHECKPOINT_LOCKFILE_EXCLUDES): VERIFY's npm install
       // churn must not ride the checkpoint into REVIEW's diff boundary.
-      await commitAll(
-        sh,
-        workTree(),
-        `loop(${workflowId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
-        active.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES],
-      )
+      // In current-branch mode the tree is shared: after this run's lock went
+      // stale and a rival re-took it, `git add -A` here would commit the rival's
+      // in-flight work as this run's checkpoint. Free outside that mode — the
+      // predicate short-circuits unless the state is on the current branch.
+      if (await rivalHoldsCurrentBranchLock(sh, directory, config, active)) {
+        await log("warn", "loop: this tree's current-branch lock is held by another run now — skipping the build checkpoint")
+      } else {
+        await commitAll(
+          sh,
+          workTree(),
+          `loop(${workflowId(active)}): build checkpoint (iteration ${active.iteration + 1})`,
+          active.git?.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES],
+        )
+      }
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
       const failed = pending?.criteria?.filter((c) => !c.pass).length ?? 0
@@ -2063,6 +2090,11 @@ server.registerTool(
   { description: "Commit the current build state as a checkpoint on the loop branch/worktree.", inputSchema: { message: z.string() } },
   async ({ message }) => {
     if (!active?.git) return ok({ committed: false, note: "no isolation active" })
+    // Same shared-tree rule as the build checkpoint: never `git add -A` a tree
+    // whose current-branch lock a rival run holds now.
+    if (await rivalHoldsCurrentBranchLock(sh, directory, config, active)) {
+      return ok({ committed: false, note: "the current-branch lock is held by another run — checkpoint skipped" })
+    }
     const done = await commitAll(sh, workTree(), message, active.git.worktree ? [config.tasksDir, ...CHECKPOINT_LOCKFILE_EXCLUDES] : [...CHECKPOINT_LOCKFILE_EXCLUDES])
     return ok({ committed: done })
   },

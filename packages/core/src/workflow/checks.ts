@@ -133,12 +133,23 @@ const awaitCheck = async (started: ShellPromise, timeoutMs: number): Promise<She
  * `timeoutMs` is DEFAULTED rather than required so a host that forgets to thread
  * the config knob still runs bounded — the failure mode of an unbounded check is
  * a wedged loop, which no caller should be able to opt into by omission.
+ *
+ * `onCheck` fires before each check starts, with the check and its effective
+ * cap. It is the LIVENESS seam: the check phase runs before the fire's own
+ * stage-marker write and claim restamp, on a stamp as old as the previous
+ * stage's whole runtime, and sequential checks legally compound past the stale
+ * window — so the hosts restamp their claim there, bounding the gap another
+ * process can observe to one check's cap instead of the phase's total. Not
+ * wrapped in a catch: the hosts' restamps are internally best-effort already,
+ * and a callback that genuinely throws has lost the very guarantee it exists
+ * for — that must surface, not be paved over into a silent unstamped phase.
  */
 export const runChecks = async (
   $: Shell,
   defs: readonly CheckDef[],
   dir: string,
   timeoutMs: number = DEFAULT_CHECK_TIMEOUT_MS,
+  onCheck?: (def: CheckDef, capMs: number) => Promise<void> | void,
 ): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
   for (const def of defs) {
@@ -146,6 +157,7 @@ export const runChecks = async (
     // A check's own cap wins over the stage-wide one. Without it the stage cap is
     // set by the slowest check, and every faster one is effectively unbounded.
     const cap = def.timeoutMinutes ? def.timeoutMinutes * 60_000 : timeoutMs
+    await onCheck?.(def, cap)
     const out = await awaitCheck($`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow(), cap)
     const text = `${out.stdout.toString()}${out.stderr.toString()}`.trim()
     results.push({
@@ -158,6 +170,17 @@ export const runChecks = async (
   }
   return results
 }
+
+/**
+ * Total wall-clock budget of a check list: each check's own cap, else the
+ * stage-wide default — the most `runChecks` can legally spend. Hosts advertise
+ * `now + this` as the stage-marker deadline before the first check runs;
+ * without it the PREVIOUS stage's expired deadline stands for the whole phase,
+ * which `taskDrivenByStageMarker` reads as a dead run and recover's
+ * crash-evidence arm treats as safe to take over. Pure.
+ */
+export const checksBudgetMs = (defs: readonly CheckDef[], timeoutMs: number = DEFAULT_CHECK_TIMEOUT_MS): number =>
+  defs.reduce((sum, def) => sum + (def.timeoutMinutes ? def.timeoutMinutes * 60_000 : timeoutMs), 0)
 
 /** Whether any check came back non-green. Pure. */
 export const anyFailed = (results: readonly CheckResult[]): boolean => results.some((r) => r.outcome !== "pass")
