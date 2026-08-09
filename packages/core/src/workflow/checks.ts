@@ -103,9 +103,13 @@ const awaitCheck = async (started: ShellPromise, timeoutMs: number): Promise<She
   try {
     return await Promise.race([
       started,
+      // NOT unref'd, deliberately. An unref'd timer does not hold the event loop
+      // open — and in the case this exists for, a check that never settles, the
+      // pending shell promise holds nothing open either, so the loop drains and
+      // the timeout never fires. `finally` clears the timer on the normal path,
+      // which is what unref would otherwise have bought.
       new Promise<ShellOutput>((resolve) => {
         timer = setTimeout(() => resolve(timedOutResult(timeoutMs)), timeoutMs)
-        timer.unref?.()
       }),
     ])
   } finally {

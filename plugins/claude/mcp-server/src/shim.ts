@@ -78,6 +78,11 @@ class ShellPromise implements PromiseLike<ShellOutput> {
       child.stderr.on("data", (d) => (err = append(err, d)))
       let timedOut = false
       let killTimer: ReturnType<typeof setTimeout> | undefined
+      // Neither timer is unref'd: an unref'd timer does not hold the event loop
+      // open, so it only fires if something ELSE happens to. Here the child
+      // holds it — but that is an assumption about a handle we do not own, and
+      // the same reasoning silently disabled core's race fallback. Both are
+      // cleared on every settle path, which is all unref would have bought.
       const deadline =
         this.#timeoutMs === undefined
           ? undefined
@@ -85,9 +90,7 @@ class ShellPromise implements PromiseLike<ShellOutput> {
               timedOut = true
               child.kill("SIGTERM")
               killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS)
-              killTimer.unref?.()
             }, this.#timeoutMs)
-      deadline?.unref?.()
       const settle = (o: ShellOutput) => {
         clearTimeout(deadline)
         clearTimeout(killTimer)
