@@ -210,7 +210,7 @@ export const parseDiscoveredChecks = (planText: string): { defs: CheckDef[]; iss
  * could not.
  *
  * This is the trust boundary, not the human plan gate — see the module note.
- * Six independent rules, each with its own rejection reason so a warning names
+ * Seven independent rules, each with its own rejection reason so a warning names
  * the actual problem.
  *
  * `maxTimeoutMinutes` bounds a discovered `timeoutMinutes`: the field is what
@@ -238,6 +238,14 @@ export const admissibleChecks = (
     }
     if (backgroundsItself(def.command)) {
       rejected.push({ name: def.name, reason: "the command backgrounds itself with `&` — a check must run in the foreground and exit, or the loop records the shell's exit 0 as a pass" })
+      continue
+    }
+    if (splitSegments(def.command).every(isBareCd)) {
+      // `commandAllowed` counts a bare `cd` as an allowed segment (it must, for
+      // the `cd <dir> && <runner>` compound) and `commandBinaries` probes
+      // nothing for it — so a cd-only command would pass every later gate, run,
+      // exit 0, and fabricate a green "established fact" out of nothing.
+      rejected.push({ name: def.name, reason: "the command runs nothing — every segment is a bare `cd`, so the shell exits 0 and the check records a pass it never earned" })
       continue
     }
     if (chainedGithubPrMutation(def.command) || chainedGitPushViolation(def.command)) {

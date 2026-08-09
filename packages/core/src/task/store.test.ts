@@ -992,6 +992,18 @@ test("listClaimIds parses ls output and returns [] when the folder is absent", a
   assert.deepEqual(await listClaimIds(none, "/r", "docs/tasks"), [])
 })
 
+test("listClaimIds screens out sweep graveyard debris and other non-id entries", async () => {
+  // A SIGKILL between acquireOrSweepMarker's rename-aside and its rm strands a
+  // `<id>.dead-<pid>-<ts>` sibling inside .claims/ forever (nothing sweeps it).
+  // Listing it as a held claim puts a garbage row in doctor/hub that no verb can
+  // ever release. Same screened-on-the-way-out rule as listPlanRequestIds: the
+  // folder is a plain directory anything can drop a file into.
+  const $ = makeShell((cmd) =>
+    cmd.startsWith("ls -1") ? { exitCode: 0, stdout: "a\nb.dead-1234-99\n.DS_Store\nok-task\n" } : { exitCode: 0 },
+  )
+  assert.deepEqual(await listClaimIds($, "/r", "docs/tasks"), ["a", "ok-task"])
+})
+
 /**
  * Shell for claim walks: per-id mkdir failures (held markers), per-id find
  * staleness, and stateful release — after an `rmdir` of a marker, the next

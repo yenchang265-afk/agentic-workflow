@@ -19,7 +19,7 @@ var STATUSES = [
 
 // packages/core/dist/task/audit.js
 var KNOWN_NON_STATUS_DIRS = ["runs"];
-var hasAnomalies = (a) => a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0;
+var hasAnomalies = (a) => a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0 || a.emptyFiles.length > 0;
 var printable = (name) => {
   const clean = name.replace(/[\u0000-\u001f\u007f]/g, "\uFFFD");
   return clean.length > 80 ? `${clean.slice(0, 79)}\u2026` : clean;
@@ -27,7 +27,8 @@ var printable = (name) => {
 var formatAnomalies = (a, tasksDir) => [
   ...a.unknownDirs.map((d) => `unknown folder ${printable(tasksDir)}/${printable(d)}/ \u2014 not a status folder; a confused agent likely created it`),
   ...a.strayFiles.map((f) => `stray task file ${printable(f)} \u2014 outside every status folder, invisible to the loop`),
-  ...a.duplicates.map((d) => `duplicate task "${printable(d.id)}" in ${d.statuses.map(printable).join(", ")} \u2014 resolve manually (keep one, abandon the rest)`)
+  ...a.duplicates.map((d) => `duplicate task "${printable(d.id)}" in ${d.statuses.map(printable).join(", ")} \u2014 resolve manually (keep one, abandon the rest)`),
+  ...a.emptyFiles.map((fp) => `empty task file ${printable(fp)} \u2014 invisible to every listing and claim walk while squatting on its id; restore its content (e.g. from git) or remove the file`)
 ];
 var isMarkdown = (name) => name.toLowerCase().endsWith(".md");
 var listDir = async (client, directory, rel) => {
@@ -50,6 +51,7 @@ var auditBacklog = async (client, directory, tasksDir, statuses = STATUSES) => {
     }
   }
   const seen = /* @__PURE__ */ new Map();
+  const emptyFiles = [];
   for (const status of statuses) {
     const nodes = await listDir(client, directory, `${tasksDir}/${status}`);
     for (const n of nodes) {
@@ -57,10 +59,17 @@ var auditBacklog = async (client, directory, tasksDir, statuses = STATUSES) => {
         continue;
       const id = n.name.replace(/\.md$/i, "");
       seen.set(id, [...seen.get(id) ?? [], status]);
+      try {
+        const read2 = await client.file.read({ query: { path: n.path, directory } });
+        const content = read2.data?.content;
+        if (typeof content === "string" && content.trim() === "")
+          emptyFiles.push(n.path);
+      } catch {
+      }
     }
   }
   const duplicates = [...seen.entries()].filter(([, statuses2]) => statuses2.length > 1).map(([id, statuses2]) => ({ id, statuses: statuses2 })).sort((a, b) => a.id.localeCompare(b.id));
-  return { unknownDirs, strayFiles, duplicates };
+  return { unknownDirs, strayFiles, duplicates, emptyFiles };
 };
 
 // plugins/claude/hooks/src/dialect.mjs

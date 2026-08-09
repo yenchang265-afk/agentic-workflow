@@ -110,9 +110,47 @@ const holdCurrentBranchLock = async (
   )
 }
 
-/** Drop this tree's current-branch lock. Best-effort; the owner file goes first so `rmdir` can succeed. */
-const releaseCurrentBranchLock = async ($: Shell, log: Log, directory: string, config: Config): Promise<void> => {
+/**
+ * Whether ANOTHER workflow now owns this tree's current-branch lock — false
+ * outside current-branch mode, and false when the marker is absent or ownerless
+ * (debris from a crashed acquire; nothing live to protect).
+ *
+ * This is the terminal paths' guard: a stage boundary re-runs
+ * `holdCurrentBranchLock`, which throws on a rival — but the DRIVE-END paths
+ * (runStop/runDone, a host's error arm) run with no re-hold in front of them,
+ * so after this run's lock was swept and re-taken they would otherwise
+ * `git add -A` the rival's in-flight work into a checkpoint of their own.
+ */
+export const rivalHoldsCurrentBranchLock = async (
+  $: Shell,
+  directory: string,
+  config: Config,
+  state: WorkflowState,
+): Promise<boolean> => {
+  if (!state.git?.onCurrentBranch) return false
   const markerDir = await currentBranchLockDir($, directory, config.tasksDir)
+  const owner = await readLockOwner($, markerDir)
+  return Boolean(owner?.id && owner.id !== workflowId(state))
+}
+
+/**
+ * Drop this tree's current-branch lock — but ONLY when `id` still owns it.
+ * Best-effort; the owner file goes first so `rmdir` can succeed.
+ *
+ * The owner check is load-bearing, not hygiene: this run's lock can go stale
+ * (a long stage plus the check phase can outlive the sweep window) and be
+ * re-taken by a rival; a blind release here then frees the RIVAL's live lock,
+ * letting a third run in beside it — the two-runs-in-one-diff corruption the
+ * lock exists to prevent. An absent or unreadable owner file still releases:
+ * healthy owners are written atomically, so that is crashed-acquire debris.
+ */
+export const releaseCurrentBranchLock = async ($: Shell, log: Log, directory: string, config: Config, id: string): Promise<void> => {
+  const markerDir = await currentBranchLockDir($, directory, config.tasksDir)
+  const owner = await readLockOwner($, markerDir)
+  if (owner?.id && owner.id !== id) {
+    await log("warn", `loop: not releasing this tree's current-branch lock — "${owner.id}" holds it now (this run's hold was swept and re-taken)`)
+    return
+  }
   await $`rm -f ${lockOwnerPath(markerDir)}`.quiet().nothrow()
   await releaseMarker($, markerDir, log)
 }
@@ -348,6 +386,10 @@ export const ensureIsolation = async (
     // every checkpoint that follows, so the `...` form equals a plain two-dot diff.
     const base = await headSha($, directory)
     if (!base) {
+      // The lock above is already held; leaving it wedges the tree for every
+      // later run until the stale sweep, with a refusal naming a run that never
+      // started. Same rule as the claim markers: every way out releases.
+      await releaseCurrentBranchLock($, log, directory, config, workflowId(state))
       throw new Error(
         `could not read HEAD in ${directory} — taskBranch: false needs at least one commit to measure this run's work against`,
       )
@@ -441,7 +483,7 @@ export const teardownIsolation = async (
     return
   }
   if (state.git.onCurrentBranch) {
-    await releaseCurrentBranchLock($, log, directory, config)
+    await releaseCurrentBranchLock($, log, directory, config, workflowId(state))
     await log("info", `loop: stayed on ${state.git.branch} — this run's commits are on it, since ${state.git.base.slice(0, 8)}`)
     return
   }

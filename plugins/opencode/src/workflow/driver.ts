@@ -28,6 +28,7 @@ import {
 import type { TerminalOutcome, WorkSource } from "@agentic-workflow/core/source/types"
 import {
   ensureIsolation as coreEnsureIsolation,
+  rivalHoldsCurrentBranchLock,
   workflowId,
   teardownIsolation as coreTeardownIsolation,
 } from "@agentic-workflow/core/workflow/isolate"
@@ -109,7 +110,7 @@ import {
   worstOf,
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
-import { checkCommands, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
+import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { resolveStageChecks } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   EXPERIMENTAL_KINDS,
@@ -753,7 +754,13 @@ const teardownIsolation = (deps: Deps, config: Config, state: WorkflowState): Pr
   // Gate on `isolated`, not `git`: a PR source pre-sets `git` to name the branch to
   // isolate onto, so a stage that never isolated (pr-sitter `triage` → done) must NOT
   // reach `coreTeardownIsolation`, which would checkout the base branch on the main tree.
-  state.isolated ? coreTeardownIsolation(deps.$, deps.log, deps.directory, config, state) : Promise.resolve()
+  // Current-branch mode is the exception: a DEGRADED run (`isolated: false` after the
+  // tree moved) still holds the one-run-per-tree lock from its last good boundary, and
+  // core's teardown releases it owner-aware without touching the tree — skipping it
+  // here is what used to wedge the tree until the stale sweep.
+  state.isolated || state.git?.onCurrentBranch
+    ? coreTeardownIsolation(deps.$, deps.log, deps.directory, config, state)
+    : Promise.resolve()
 
 /** The working directory a loop's stages operate in: its worktree, else the main tree. */
 const workTree = (deps: Deps, state: WorkflowState): string => workflowWorkTree(deps.directory, state)
@@ -794,7 +801,23 @@ const runStageChecks = async (
   // stalled run.
   for (const w of warnings) await deps.log("warn", `${stage}: ${w}`)
   if (!defs.length) return state
-  const results = await runChecks(deps.$, defs, dir, config.checkTimeoutMinutes * 60_000)
+  // The phase below runs BEFORE this stage's marker write and claim restamp
+  // (both sit between this call and the fire), on a claim stamp as old as the
+  // previous stage's whole runtime — and sequential checks legally compound
+  // past the stale window (`staleClaimMinutes` covers one stage, not caps × 8).
+  // Mid-phase, both liveness oracles then read this LIVE run as dead: the stale
+  // claim is swept by any rival walk, and the previous stage's expired marker
+  // deadline is "crash evidence" to recover. So advertise a deadline covering
+  // the whole check budget, restamp now, and restamp again before every check —
+  // the gap another process can observe never exceeds one check's own cap.
+  await writeOpencodeStageMarker(
+    deps.$,
+    deps.directory,
+    config.tasksDir,
+    opencodeStageMarker(state, Date.now() + checksBudgetMs(defs, config.checkTimeoutMinutes * 60_000)),
+  )
+  await refreshWorkClaim(deps.$, state)
+  const results = await runChecks(deps.$, defs, dir, config.checkTimeoutMinutes * 60_000, () => refreshWorkClaim(deps.$, state))
   for (const r of results) {
     if (r.outcome === "pass") continue
     await deps.log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)
@@ -868,6 +891,15 @@ const checkpoint = async (deps: Deps, config: Config, state: WorkflowState, mess
   // loop whose pre-set `git` never became real isolation — that would sweep their WIP
   // into a bogus loop commit (pr-sitter `triage` → done on a dirty tree).
   if (!state.isolated) return
+  // Current-branch mode shares the tree. After this run's lock went stale and a
+  // rival re-took it, `git add -A` here would commit the RIVAL's in-flight work
+  // as this run's checkpoint — the stop/error paths reach here with no stage
+  // boundary's re-hold in front of them. Free in the default modes: the
+  // predicate short-circuits unless the state is on the current branch.
+  if (await rivalHoldsCurrentBranchLock(deps.$, deps.directory, config, state)) {
+    await deps.log("warn", "loop: this tree's current-branch lock is held by another run now — skipping this checkpoint")
+    return
+  }
   const tree = workTree(deps, state)
   // Worktree checkpoints exclude the backlog dir: the worktree carries a frozen
   // checkout-time copy of `<tasksDir>` whose sweep onto feature/<id> resurrects

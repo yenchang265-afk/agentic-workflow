@@ -6,7 +6,7 @@ import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
-import { workflowId, releaseWorktreeAt, teardownIsolation } from "./isolate.js"
+import { workflowId, releaseCurrentBranchLock, releaseWorktreeAt, rivalHoldsCurrentBranchLock, teardownIsolation } from "./isolate.js"
 import type { Action, Config, WorkflowState } from "./state.js"
 import type { Outcome } from "./metrics.js"
 
@@ -98,6 +98,29 @@ export type TerminalReport =
  */
 const closeIsolation = async (ctx: TerminalCtx, checkpointMessage: string): Promise<void> => {
   const { $, directory, config, state, log } = ctx
+  // Current-branch mode shares the human's tree, so the ordinary gate is not
+  // enough at a drive's END — no stage boundary's re-hold runs in front of this:
+  //  - a RIVAL may hold the lock now (this run's went stale mid-phase and was
+  //    swept): checkpointing would `git add -A` the rival's in-flight work into
+  //    this run's commit, and the release would free the rival's live lock. Skip
+  //    both — the rival's own end owns the tree's cleanup now.
+  //  - a run that DEGRADED (`isolated: false` — the tree moved) still holds the
+  //    lock from its last good boundary. It must not checkpoint, but the lock
+  //    must not outlive the drive either, or the tree refuses every later run
+  //    until the stale sweep, with a refusal naming a run that already ended.
+  if (state.git?.onCurrentBranch) {
+    if (await rivalHoldsCurrentBranchLock($, directory, config, state)) {
+      await log("warn", "loop: this tree's current-branch lock is held by another run now — skipping the end-of-run checkpoint; this run's uncommitted work stays in the tree")
+      return
+    }
+    if (!state.isolated) {
+      await releaseCurrentBranchLock($, log, directory, config, workflowId(state))
+      return
+    }
+    await ctx.checkpoint(checkpointMessage)
+    await teardownIsolation($, log, directory, config, state)
+    return
+  }
   if (!state.isolated) return
   await ctx.checkpoint(checkpointMessage)
   await teardownIsolation($, log, directory, config, state)

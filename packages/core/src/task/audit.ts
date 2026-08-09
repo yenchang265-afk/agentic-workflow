@@ -23,10 +23,15 @@ export interface BacklogAnomalies {
   /** Task ids present in more than one status folder, with where they were seen.
    *  Statuses are strings, not `TaskStatus`: a custom kind's folders count too. */
   readonly duplicates: readonly { readonly id: string; readonly statuses: readonly string[] }[]
+  /** Repo-relative paths of EMPTY `.md` files inside status folders. An empty
+   *  task file is a fully silent ghost: `listByStatus` has nothing to parse, so
+   *  it is invisible to every listing, claim walk, and gate verb while still
+   *  squatting on its id — the backlog looks clean while a task has vanished. */
+  readonly emptyFiles: readonly string[]
 }
 
 export const hasAnomalies = (a: BacklogAnomalies): boolean =>
-  a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0
+  a.unknownDirs.length > 0 || a.strayFiles.length > 0 || a.duplicates.length > 0 || a.emptyFiles.length > 0
 
 /**
  * Display-sanitize an on-disk name for a one-line report. Every value here is a
@@ -48,6 +53,9 @@ export const formatAnomalies = (a: BacklogAnomalies, tasksDir: string): string[]
   ...a.strayFiles.map((f) => `stray task file ${printable(f)} — outside every status folder, invisible to the loop`),
   ...a.duplicates.map(
     (d) => `duplicate task "${printable(d.id)}" in ${d.statuses.map(printable).join(", ")} — resolve manually (keep one, abandon the rest)`,
+  ),
+  ...a.emptyFiles.map(
+    (fp) => `empty task file ${printable(fp)} — invisible to every listing and claim walk while squatting on its id; restore its content (e.g. from git) or remove the file`,
   ),
 ]
 
@@ -94,12 +102,24 @@ export const auditBacklog = async (
   }
 
   const seen = new Map<string, string[]>()
+  const emptyFiles: string[] = []
   for (const status of statuses) {
     const nodes = await listDir(client, directory, `${tasksDir}/${status}`)
     for (const n of nodes) {
       if (n.type !== "file" || !isMarkdown(n.name)) continue
       const id = n.name.replace(/\.md$/i, "")
       seen.set(id, [...(seen.get(id) ?? []), status])
+      // Flag only VERIFIED emptiness: a read that fails or returns nothing is no
+      // evidence (this also keeps the sweep read-tolerant on flaky mounts), and
+      // these lines are injected into a session's context by the reconcile hook,
+      // so a false accusation costs more than a missed one.
+      try {
+        const read = await client.file.read({ query: { path: n.path, directory } })
+        const content = read.data?.content
+        if (typeof content === "string" && content.trim() === "") emptyFiles.push(n.path)
+      } catch {
+        /* unreadable ≠ empty */
+      }
     }
   }
   const duplicates = [...seen.entries()]
@@ -107,5 +127,5 @@ export const auditBacklog = async (
     .map(([id, statuses]) => ({ id, statuses }))
     .sort((a, b) => a.id.localeCompare(b.id))
 
-  return { unknownDirs, strayFiles, duplicates }
+  return { unknownDirs, strayFiles, duplicates, emptyFiles }
 }

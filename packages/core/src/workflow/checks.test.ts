@@ -4,10 +4,12 @@ import {
   CHECKS_AXIS,
   CHECK_OUTPUT_MAX,
   CHECK_TIMEOUT_EXIT,
+  DEFAULT_CHECK_TIMEOUT_MS,
   anyFailed,
   checkAxis,
   checkCommands,
   checksBlock,
+  checksBudgetMs,
   classifyExit,
   finalizeCheckRecord,
   runChecks,
@@ -201,6 +203,47 @@ test("a check's own timeoutMinutes wins over the stage-wide cap", async () => {
     60_000,
   )
   assert.deepEqual(asked, [60_000, 25 * 60_000])
+})
+
+test("checksBudgetMs sums each check's own cap, defaulting the cap-less ones", () => {
+  assert.equal(checksBudgetMs([], 10_000), 0)
+  assert.equal(
+    checksBudgetMs(
+      [
+        { name: "tests", command: "npm test" },
+        { name: "e2e", command: "npm run e2e", timeoutMinutes: 3 },
+      ],
+      60_000,
+    ),
+    60_000 + 3 * 60_000,
+  )
+  // A host that forgets the knob still gets a bounded budget — the same
+  // omission-safety rule runChecks applies to its own timeout parameter.
+  assert.equal(checksBudgetMs([{ name: "tests", command: "npm test" }]), DEFAULT_CHECK_TIMEOUT_MS)
+})
+
+test("runChecks fires onCheck before each check with its effective cap — the liveness restamp seam", async () => {
+  const events: string[] = []
+  const $ = makeShell((cmd) => {
+    events.push(`run:${cmd}`)
+    return { exitCode: 0 }
+  })
+  await runChecks(
+    $,
+    [
+      { name: "lint", command: "one" },
+      { name: "it", command: "two", timeoutMinutes: 2 },
+    ],
+    "/repo",
+    60_000,
+    (def, capMs) => {
+      events.push(`stamp:${def.name}:${capMs}`)
+    },
+  )
+  // Before EACH check, not once up front: the whole point is that the gap
+  // between restamps another process can observe is one check's cap, never the
+  // phase's compounded budget.
+  assert.deepEqual(events, ["stamp:lint:60000", "run:one", "stamp:it:120000", "run:two"])
 })
 
 test("checkAxis is null when every check passed — nothing is merged into the verdict", () => {

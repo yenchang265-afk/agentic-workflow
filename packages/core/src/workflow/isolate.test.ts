@@ -330,6 +330,24 @@ test("taskBranch:false refuses when another workflow holds the tree's lock", asy
   await assert.rejects(() => ensureIsolation($, noopLog, "/repo", currentBranchConfig, state), /other-task/)
 })
 
+test("current-branch: a HEAD read failure after the lock was taken releases it on the way out", async () => {
+  // `currentBranch` resolved (so the mode proceeded and took the lock) but
+  // `headSha` then failed. The refusal must not leave the lock behind: a leaked
+  // one wedges the tree for every later run until the stale sweep, refusing
+  // with a message naming a run that never started.
+  const log: string[] = []
+  const $ = makeShell(
+    currentBranchGit("work", (cmd) => (cmd.endsWith("rev-parse HEAD") ? { exitCode: 1 } : undefined)),
+    log,
+  )
+  await assert.rejects(() => ensureIsolation($, noopLog, "/repo", currentBranchConfig, state), /HEAD/)
+  assert.ok(
+    log.some((c) => c.startsWith("rm -f /repo/.git/agentic-workflow/current-branch/owner.json")),
+    log.join(" | "),
+  )
+  assert.ok(log.some((c) => c === "rmdir /repo/.git/agentic-workflow/current-branch"), log.join(" | "))
+})
+
 test("a current-branch reconcile verifies HEAD and refuses to move it back", async () => {
   const log: string[] = []
   const $ = makeShell(currentBranchGit("somewhere-else"), log)

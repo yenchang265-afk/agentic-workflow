@@ -468,6 +468,25 @@ export const enabledWorkflowKinds = (config: Config): string[] => {
   return kinds
 }
 
+/**
+ * Opt-in kinds the config writes a section for WITHOUT deciding `enabled` —
+ * config that can never take effect, and the one shape of it a diagnostic can
+ * name without false positives.
+ *
+ * The kind sections are deliberately loose objects ("knobs ride along and are
+ * validated by the kind itself"), so a blanket unknown-key warner would flag
+ * every custom kind's own knobs. But `enabled` is core's, and its absence on an
+ * opt-in kind is never what the author meant: they typed a section — knobs, or
+ * a typo like `"enable": true` — for a kind that will silently never run, and
+ * nothing anywhere said so. An explicit `enabled: false` is a parked section
+ * and stays silent. Pure.
+ */
+export const unenabledConfiguredKinds = (config: { readonly workflows: Readonly<Record<string, { readonly enabled?: boolean }>> }): string[] =>
+  Object.entries(config.workflows)
+    .filter(([kind, section]) => !DEFAULT_ENABLED_KINDS.includes(kind) && section.enabled === undefined)
+    .map(([kind]) => kind)
+    .sort()
+
 /** The code platform a workflow kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config: Config, kind: string): CodePlatform =>
   config.workflows[kind]?.codePlatform ?? config.codePlatform ?? "github"
@@ -1098,7 +1117,30 @@ export const loadConfigWith = async <T>(
 
   if (userRaw === undefined && repoRaw === undefined) return schema.parse({}) // both absent/empty → defaults
   const label = userRaw === undefined ? CONFIG_FILE : `${CONFIG_FILE} (merged with ${userPath})`
-  return parseConfigWith(schema, mergeConfigLayers(userRaw ?? {}, repoRaw ?? {}), label)
+  const parsed = parseConfigWith(schema, mergeConfigLayers(userRaw ?? {}, repoRaw ?? {}), label)
+  // Config that can never take effect gets its diagnostic at load: an opt-in
+  // kind's section without `enabled` — a typo'd `"enable": true` included —
+  // otherwise leaves the sitter off with the config file claiming otherwise
+  // and no surface anywhere saying so.
+  const sections = (parsed as { workflows?: Record<string, { enabled?: boolean }> }).workflows
+  if (sections) {
+    for (const kind of unenabledConfiguredKinds({ workflows: sections })) {
+      await client.app
+        .log({
+          body: {
+            service: "agentic-workflow",
+            level: "warn",
+            message:
+              `${label} configures "workflows.${kind}" without "enabled" — that kind is opt-in, so its section takes no effect. ` +
+              `Add "enabled": true to run it (or "enabled": false to park the section and silence this).`,
+          },
+        })
+        .catch(() => {
+          /* the load matters, the warning is best-effort */
+        })
+    }
+  }
+  return parsed
 }
 
 /** Load config (user layer under repo layer), falling back to defaults when both files are absent. */

@@ -164,6 +164,21 @@ test("admissibleChecks refuses the escapes a glob alone cannot exclude", () => {
   }
 })
 
+test("admissibleChecks refuses a command with no runnable segment — a bare cd exits 0 and fabricates a pass", () => {
+  // `commandAllowed` counts a bare `cd` as allowed (it has to, for the
+  // `cd <dir> && <runner>` compound), and `commandBinaries` probes nothing for
+  // it — so without this rule a planted `"command": "cd ."` sails through every
+  // gate, runs, exits 0, and the stage prompt presents a green "tests" as an
+  // established fact the agent is told not to re-run or argue with.
+  for (const command of ["cd .", "cd a && cd b"]) {
+    const { accepted, rejected } = admissibleChecks([{ name: "ghost", command }], VERIFY_GLOBS, CAP)
+    assert.deepEqual(accepted, [], `${command} must not be admitted`)
+    assert.match(rejected[0]?.reason ?? "", /runs nothing/)
+  }
+  // The compound form this rule must NOT catch: a cd plus a real runner.
+  assert.equal(admissibleChecks([{ name: "web", command: "cd packages/web && npm test" }], VERIFY_GLOBS, CAP).accepted.length, 1)
+})
+
 test("admissibleChecks refuses a cwd that escapes the work tree — runChecks joins it naively", () => {
   // `..` is the whole point: `.` is legal in a directory name, so a character
   // class alone matches `..` and the naive join walks out of the work tree.

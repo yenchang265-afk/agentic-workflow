@@ -450,7 +450,10 @@ test("writeStageMarker reports its failures instead of swallowing them", () => {
   const src = source()
   assert.match(
     code(src),
-    /const writeStageMarker = \(stage: string \| null\): string \| null =>/,
+    // `deadline` is the check-phase override (runStageChecks advertises the
+    // check budget before the first check); the pinned part is the RETURN type —
+    // a failure reason, not void.
+    /const writeStageMarker = \(stage: string \| null, deadline\?: number\): string \| null =>/,
     "it must return a failure reason, not void",
   )
   const body = code(src).slice(code(src).indexOf("const writeStageMarker"))
