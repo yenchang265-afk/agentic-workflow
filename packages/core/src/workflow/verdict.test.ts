@@ -17,6 +17,7 @@ import {
   mergeRejected,
   parseVerdict,
   passFocusBlock,
+  planContractBlock,
   planVisualizationBlock,
   stageDriftAdvice,
   stageDriftNote,
@@ -870,4 +871,19 @@ test("noAdmissibleVerdictReason carries the host's pass tag and the untrusted pr
   const reason = noAdmissibleVerdictReason({ detail: " (axes: security)", prose: "PASS" })
   assert.match(reason, /retry \(axes: security\) —/)
   assert.match(reason, /prose claimed PASS, ignored/)
+})
+
+test("planContractBlock demands checks that terminate, and forbids a criterion only a running server proves", () => {
+  const block = planContractBlock("plan")
+  assert.match(block, /### Verification/)
+  // A check that never exits is the one shape the loop cannot grade: as a
+  // driver-run check it times out to ERROR and stops the run, and as an agent
+  // command it eats the host's tool deadline. PLAN is where that is prevented.
+  assert.match(block, /TERMINATES with an exit code/)
+  assert.match(block, /dev server/)
+  assert.match(block, /cannot mark it met/)
+  // …and the plan is told what to write instead, so the clause is actionable
+  // rather than a refusal the planner has to route around on its own.
+  assert.match(block, /e2e run that boots/)
+  assert.match(block, /### Out of Scope/)
 })

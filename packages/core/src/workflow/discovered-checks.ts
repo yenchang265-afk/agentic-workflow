@@ -143,6 +143,10 @@ export const checkDiscoveryBlock = (planStage: string, consumer: string): string
     "in the prose above the block. Do not guess a conventional command:",
     "`npm test` on a repo whose package.json defines no `test` script exits 1 and reads as a genuine test failure,",
     "which sends the loop back to BUILD to fix work that was never broken.",
+    "Every command must TERMINATE on its own. A dev server, a `--watch` runner, or anything that waits for input",
+    "never returns: the loop waits out its timeout and records exit 124, which is an ERROR that stops the run for a human.",
+    "To prove runtime behaviour, list the command that exercises it and exits — an e2e or integration run that starts",
+    "and stops the server itself — never the serve command.",
     `At most ${MAX_DISCOVERED_CHECKS} commands, each on the ${consumer.toUpperCase()} stage's own bash allowlist —`,
     "anything else is dropped with a warning, and a command whose binary is not installed here is dropped too.",
     'Add "timeoutMinutes" to a command the project runs long (an integration or e2e suite): the default cap fits a',
@@ -206,7 +210,7 @@ export const parseDiscoveredChecks = (planText: string): { defs: CheckDef[]; iss
  * could not.
  *
  * This is the trust boundary, not the human plan gate — see the module note.
- * Five independent rules, each with its own rejection reason so a warning names
+ * Six independent rules, each with its own rejection reason so a warning names
  * the actual problem.
  *
  * `maxTimeoutMinutes` bounds a discovered `timeoutMinutes`: the field is what
@@ -232,6 +236,10 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: `cwd "${def.cwd}" is not a plain relative path inside the work tree` })
       continue
     }
+    if (backgroundsItself(def.command)) {
+      rejected.push({ name: def.name, reason: "the command backgrounds itself with `&` — a check must run in the foreground and exit, or the loop records the shell's exit 0 as a pass" })
+      continue
+    }
     if (chainedGithubPrMutation(def.command) || chainedGitPushViolation(def.command)) {
       rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
       continue
@@ -252,6 +260,49 @@ export const admissibleChecks = (
     accepted.push(def)
   }
   return { accepted, rejected }
+}
+
+/**
+ * Whether any part of the command is BACKGROUNDED with a lone `&`.
+ *
+ * The one shape that defeats "a check must terminate" by satisfying it. A
+ * driver-run `npm run dev &` returns immediately with the SHELL's exit 0, so
+ * `classifyExit` reads PASS and the stage prompt renders it as an established
+ * fact the agent is told not to re-run or argue with — a manufactured "the
+ * server serves" with more authority than the self-report this whole feature
+ * replaced, plus one orphaned process per iteration. `commandAllowed` cannot
+ * catch it: `splitSegments` treats the lone `&` as an operator, so the segment
+ * it matches is a plain `npm run dev`.
+ *
+ * Applied to DISCOVERED commands only, and deliberately not mirrored into
+ * `commandAllowed` or its hook twin: an AGENT that backgrounds something loses
+ * the output and gains no verdict, while a driver-run one becomes the verdict.
+ *
+ * Quote-aware like `hasShellExpansion`, and `&&` is skipped as the chain
+ * operator it is. Residual: `|&` reads as backgrounding and is refused —
+ * fail-safe, and no check needs it. Pure.
+ */
+export const backgroundsItself = (command: string): boolean => {
+  let quote: string | null = null
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (quote) {
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if (c === "&") {
+      if (command[i + 1] === "&") {
+        i++
+        continue
+      }
+      return true
+    }
+  }
+  return false
 }
 
 /**

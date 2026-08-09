@@ -133,6 +133,33 @@ lint 加上服務端的 build 與 test 就已經是五條）。8 與 `FANOUT_MAX
 結束碼 124 在 `classifyExit` 裡被**明確**列出，而不是落到 FAIL：FAIL 會重新開火一個
 VERIFY 會再卡一次的 BUILD，把每次疊代都燒在一個從未產出結果的階段上。
 
+這道上限有一個接受規則表達不了的推論：不會結束的指令不是「跑得慢的檢查」，而是
+**停機**。`npm run dev` 是可接受的（`npm run *` 就在 VERIFY 的白名單上）、二進位
+檔找得到，下游也沒有任何一條規則會丟掉它——於是它跑滿十分鐘、回報 124，也就是
+ERROR，也就是 `verify.onError`。沒有任何靜態規則分得出伺服器與測試套件，而一份
+名稱黑名單正是本設計已經否決掉的「逐生態系指令表」，所以這條規則放在指令被選出
+來的地方：`checkDiscoveryBlock` 要求 PLAN 只列會結束的指令，並且要用「自己啟動
+再關閉伺服器」的那條指令來證明執行期行為。
+
+有一種形狀是靠「符合這條規則」來擊敗它的，所以它由程式碼拒絕、而不是由散文勸阻：
+`npm run dev &` 會把伺服器丟到背景，並交回 **shell** 的 exit 0——`classifyExit`
+把它讀成 PASS，階段提示再把它渲染成 agent 被告知不得爭辯的既成事實，於是製造出一
+份比 checks 所取代的自我回報更有權威的保證，外加每次疊代留下一個孤兒行程。
+`commandAllowed` 看不見它（`splitSegments` 會丟掉那個單獨的 `&`，剩下的
+`npm run dev` 正好命中 `npm run *`），因此 `admissibleChecks` 多了第五條規則
+`backgroundsItself`。這條規則**不會**鏡射進 `commandAllowed` 或 hook 孿生檔：agent
+把東西丟到背景只是丟失輸出、得不到任何判定，而 driver 跑的那一份卻會**變成**判定。
+
+`planContractBlock` 把同一條規則往上搬一層，套在指令所源出的驗收標準上——因為問
+題是在標準那裡誕生的。「在 `localhost:5173` 提供服務」沒有任何檢查階段評得了：
+serve 指令會卡住，而所有能讓它變成可觀察的形狀（`&` 加轉向、`nohup`、`timeout`
+包裝、`curl` 探測）都不在白名單上，而且必須維持不在——包裝式 glob 會是個洞，因為
+`timeout * npm run *` 同時也命中 `timeout 5 bash -c "rm -rf x && npm run dev"`。
+實際觀察到的失效模式是最省事的那種：VERIFY 把該標準標成已達成，然後在迴圈根本不
+會儲存的散文裡加上免責聲明。所以 `workflow-verify` 的第 2 步現在明講：沒有觀察到
+的標準就是**未達成**，並要求指名該向下一次 BUILD 要什麼；而 PLAN 一開始就被告知
+不要寫出這種標準。
+
 ## 刻意沒做的事
 
 - **任何 manifest 裡都沒有指令表。** `schema.test.ts` 的「沒有任何出貨 manifest

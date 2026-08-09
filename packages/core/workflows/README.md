@@ -193,6 +193,14 @@ which is repo content. `discoverChecks` is a manifest error on a `work` stage
 discovered command would be refused, so the flag would read as on while the
 feature is dead).
 
+A discovered command must also **terminate**, and nothing but the prompt can
+enforce that: a dev server or a `--watch` runner passes `commandAllowed` and
+resolves its binary, then runs to the per-check timeout and reports exit 124 —
+which `classifyExit` calls ERROR, i.e. a stop rather than a re-build.
+`checkDiscoveryBlock` says so where the commands are chosen, and
+`planContractBlock` carries the same rule one level up, for the acceptance
+criteria the commands are derived from.
+
 Because the driver runs them, they bypass `bashAllowlist` entirely — the agent
 never issues them. That makes this a **trusted authoring surface**, at the same
 level as `bashAllowlist` itself: manifests resolve from the core package's
