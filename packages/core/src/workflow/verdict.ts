@@ -739,6 +739,19 @@ export const workScopeBlock = (stage: string): string =>
  * and the one a regex can check without judging prose quality. The ordered
  * steps and Out of Scope clauses are held by this contract and the human plan
  * gate. Pure.
+ *
+ * The observability clause is there because a criterion no check stage can
+ * observe has exactly one cheap outcome, and it is a fabricated PASS. Nothing on
+ * a check stage's allowlist can watch a server: `npm run dev` is admitted (it
+ * matches `npm run *`) but never exits, so as a driver-run check it times out to
+ * exit 124 ⇒ ERROR ⇒ `verify.onError` stops the run, and as an agent command it
+ * eats the host's tool deadline. Every form that WOULD make it observable — a
+ * backgrounded `&` with a redirect, `nohup`, a `timeout` wrapper, a `curl` probe
+ * — is off the allowlist and must stay off: a wrapper glob is a hole, since
+ * `timeout * npm run *` also matches `timeout 5 bash -c "rm -rf x && npm run dev"`
+ * (quotes stop `splitSegments` from splitting). So the criterion has to be born
+ * checkable, here in PLAN; VERIFY refusing to mark an unobserved criterion met
+ * (see `workflow-verify`'s step 2) is the backstop, not the fix.
  */
 export const planContractBlock = (stage: string): string =>
   [
@@ -746,6 +759,12 @@ export const planContractBlock = (stage: string): string =>
     "(1) numbered, ordered steps, each naming the file path(s) it touches;",
     "(2) a `### Verification` subsection mapping each acceptance criterion to the exact command or observable check that proves it;",
     "(3) a `### Out of Scope` subsection naming what the plan deliberately does not do.",
+    "Each check named there must be one a later stage can actually run: a command that TERMINATES with an exit code,",
+    "within what that stage's own bash allowlist grants. A criterion whose only proof is watching a long-running process —",
+    "a dev server answering on a port, a watch build — is unobservable to the loop, and a stage that cannot observe it",
+    "cannot mark it met. Restate such a criterion as the exiting check that proves the same thing (an e2e run that boots",
+    "and stops the server itself, an assertion over the built artifact or config), or put it in `### Out of Scope` for the",
+    "human to judge at the ship gate.",
     "The `### Verification` subsection is enforced: a plan without that heading is refused by the loop before it reaches the human gate, and the task stays queued.",
   ].join(" ")
 

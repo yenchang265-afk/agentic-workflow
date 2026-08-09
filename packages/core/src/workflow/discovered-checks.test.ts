@@ -383,3 +383,15 @@ test("checkDiscoveryBlock never shows the info string with a stray backtick besi
     ["tests"],
   )
 })
+
+test("checkDiscoveryBlock rules out a command that never exits", () => {
+  const block = checkDiscoveryBlock("plan", "verify")
+  // `npm run dev` is ADMISSIBLE (`npm run *` is on VERIFY's allowlist) and its
+  // binary resolves, so nothing downstream drops it: it runs, hangs, times out
+  // at 124, and `classifyExit` calls that ERROR — which stops the run. The
+  // prompt is the only place this is caught, so it must name the shape.
+  assert.match(block, /TERMINATE on its own/)
+  assert.match(block, /watch/)
+  assert.match(block, /124/)
+  assert.match(block, /never the serve command/)
+})

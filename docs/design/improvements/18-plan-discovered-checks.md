@@ -157,6 +157,28 @@ cannot. Exit 124 is listed **explicitly** in `classifyExit` rather than falling
 through to FAIL: a FAIL re-fires a BUILD whose VERIFY hangs again, burning every
 iteration to the cap on a stage that never produced a result.
 
+That cap has a corollary the admission rules cannot express: a command that
+never exits is not a slow check, it is a **stop**. `npm run dev` is admissible
+(`npm run *` is on VERIFY's allowlist), its binary resolves, and no rule
+downstream drops it — so it runs the full ten minutes and reports 124, i.e.
+ERROR, i.e. `verify.onError`. Nothing static can tell a server from a suite, and
+a denylist of names would be the per-ecosystem table this design already ruled
+out, so the rule lives where the commands are chosen: `checkDiscoveryBlock`
+tells PLAN to list only commands that terminate, and to prove runtime behaviour
+with the run that boots and stops the server itself.
+
+`planContractBlock` carries the same rule one level up, over the acceptance
+criteria the commands are derived from — because the criterion is where the
+problem is born. "Serves at `localhost:5173`" cannot be graded by any check
+stage: the serve command hangs, and every shape that would make it observable
+(`&` with a redirect, `nohup`, a `timeout` wrapper, a `curl` probe) is off the
+allowlist and stays off — a wrapper glob would be a hole, since
+`timeout * npm run *` also matches `timeout 5 bash -c "rm -rf x && npm run dev"`.
+The observed failure mode was the cheap one: VERIFY marked the criterion met and
+disclaimed it in prose the loop does not store. So `workflow-verify`'s step 2 now
+says an unobserved criterion is **not met**, and names what to ask the next BUILD
+for; PLAN is told not to write such a criterion in the first place.
+
 ## What was deliberately not done
 
 - **No command table in any manifest.** `schema.test.ts`'s "no shipped manifest
