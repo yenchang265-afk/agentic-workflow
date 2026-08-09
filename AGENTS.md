@@ -332,6 +332,20 @@ names are a scope boundary against a confused agent (T2), never a sandbox. When
 adding a runner, check where its argv puts the subcommand before copying the
 `npm test*` shape.
 
+The JS package managers are the same trap one ecosystem over, and it bit
+because `npm test*` looked like proof they were covered: the WORKSPACE selector
+precedes the script (`npm -w apps/web test`, `pnpm -r test`, `pnpm --filter web
+test`, `yarn workspace web test`), and berry moves the subcommand outright
+(`yarn workspaces foreach run test`). None of those matched, so on a monorepo —
+which is what a two-stack shop has — every CI command fell to the deny sentinel.
+That matters more now that VERIFY's checks are DISCOVERED: the plan names the
+right command, admission refuses it, and the stage runs no checks at all behind
+one warning line. The flags there are ENUMERATED (`npm -w *`, `pnpm --filter*`)
+rather than tolerated generically, and that is load-bearing: `npm -* test*`
+would also match `npm --tag test publish`, because the glob only needs a literal
+" test" somewhere after the flag. Maven got away with `mvn * test*` only because
+`-Dtest=Foo` never produces a space-delimited " test"; npm's option syntax does.
+
 ### On the model-driven hosts, the spawn is the protocol's weakest link
 
 OpenCode has a driver, so its loop cannot get out of step with itself. Claude Code
