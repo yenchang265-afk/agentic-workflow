@@ -52,6 +52,40 @@ permission:
     "cd * && yarn test*": allow
     "yarn run *": allow
     "cd * && yarn run *": allow
+    "npm -w * test*": allow
+    "cd * && npm -w * test*": allow
+    "npm -w * run *": allow
+    "cd * && npm -w * run *": allow
+    "npm --workspace* test*": allow
+    "cd * && npm --workspace* test*": allow
+    "npm --workspace* run *": allow
+    "cd * && npm --workspace* run *": allow
+    "npm --workspaces test*": allow
+    "cd * && npm --workspaces test*": allow
+    "npm --workspaces run *": allow
+    "cd * && npm --workspaces run *": allow
+    "pnpm -r test*": allow
+    "cd * && pnpm -r test*": allow
+    "pnpm -r run *": allow
+    "cd * && pnpm -r run *": allow
+    "pnpm --recursive test*": allow
+    "cd * && pnpm --recursive test*": allow
+    "pnpm --recursive run *": allow
+    "cd * && pnpm --recursive run *": allow
+    "pnpm -F * test*": allow
+    "cd * && pnpm -F * test*": allow
+    "pnpm -F * run *": allow
+    "cd * && pnpm -F * run *": allow
+    "pnpm --filter* test*": allow
+    "cd * && pnpm --filter* test*": allow
+    "pnpm --filter* run *": allow
+    "cd * && pnpm --filter* run *": allow
+    "yarn workspace * test*": allow
+    "cd * && yarn workspace * test*": allow
+    "yarn workspace * run *": allow
+    "cd * && yarn workspace * run *": allow
+    "yarn workspaces foreach*": allow
+    "cd * && yarn workspaces foreach*": allow
     "bun test*": allow
     "cd * && bun test*": allow
     "node --test*": allow
@@ -70,6 +104,28 @@ permission:
     "cd * && npx biome*": allow
     "npx playwright test*": allow
     "cd * && npx playwright test*": allow
+    "pnpm exec tsc*": allow
+    "cd * && pnpm exec tsc*": allow
+    "pnpm exec vitest*": allow
+    "cd * && pnpm exec vitest*": allow
+    "pnpm exec jest*": allow
+    "cd * && pnpm exec jest*": allow
+    "pnpm exec eslint*": allow
+    "cd * && pnpm exec eslint*": allow
+    "pnpm exec prettier*": allow
+    "cd * && pnpm exec prettier*": allow
+    "pnpm exec biome*": allow
+    "cd * && pnpm exec biome*": allow
+    "pnpm exec playwright test*": allow
+    "cd * && pnpm exec playwright test*": allow
+    "pnpm exec next*": allow
+    "cd * && pnpm exec next*": allow
+    "npx next*": allow
+    "cd * && npx next*": allow
+    "npx turbo run*": allow
+    "cd * && npx turbo run*": allow
+    "turbo run*": allow
+    "cd * && turbo run*": allow
     "deno check*": allow
     "cd * && deno check*": allow
     "deno lint*": allow

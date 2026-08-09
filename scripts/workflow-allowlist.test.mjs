@@ -193,6 +193,84 @@ test("the VERIFY allowlist accepts idiomatic Maven and Gradle invocations", asyn
 })
 
 /**
+ * The same position-anchoring lesson, one ecosystem over. A JS package manager
+ * puts its WORKSPACE selector before the script name — `npm -w apps/web test`,
+ * `pnpm -r test`, `pnpm --filter web test`, `yarn workspace web test` — and
+ * berry moves the subcommand entirely (`yarn workspaces foreach run test`). So
+ * `npm test*` / `npm run *`, the shapes that serve a single-package repo,
+ * matched none of them, and a monorepo's CI commands all fell through to the
+ * deny sentinel. That is the failure mode that matters most now that VERIFY's
+ * checks are DISCOVERED from what the repo already declares: the plan names the
+ * right command, admission refuses it, and the stage quietly runs no checks at
+ * all behind one warning line.
+ *
+ * The flags are ENUMERATED (`npm -w *`, `pnpm --filter*`) rather than tolerated
+ * generically (`npm -* test*`). A generic leading-flag form would also match
+ * `npm --tag test publish`, since the glob only needs the literal " test"
+ * somewhere after the flag — quietly putting publish on a check stage's list.
+ * The JVM widening got away with `mvn * test*` because Maven's option syntax
+ * (`-Dtest=Foo`) never produces a space-delimited " test"; npm's does.
+ *
+ * Also here: the local-binary invocations CI uses directly rather than through a
+ * script — `pnpm exec <tool>` (the twin of the `npx <tool>` entries), `npx next`,
+ * and Turborepo, which is scoped to `turbo run*` so that `turbo login` / `turbo
+ * link` — network and auth, not checks — stay off the list.
+ */
+const JS_WORKSPACE_ACCEPTED = [
+  "npm -w apps/web test",
+  "npm -w apps/web run build",
+  "npm --workspace=apps/web run test",
+  "npm --workspaces test",
+  "pnpm -r test",
+  "pnpm --recursive run lint",
+  "pnpm --filter web test",
+  "pnpm -F @acme/web run build",
+  "yarn workspace web test",
+  "yarn workspaces foreach run test",
+  "pnpm exec tsc --noEmit",
+  "pnpm exec playwright test",
+  "pnpm exec next build",
+  "npx next build",
+  "npx next lint",
+  "npx turbo run test",
+  "turbo run build",
+]
+
+test("the VERIFY allowlist accepts idiomatic workspace-scoped JS invocations", async () => {
+  const { commandAllowed } = await import("../plugins/claude/hooks/src/allowlist.mjs")
+  const globs = verifyGlobs()
+  const frontmatter = new Set(
+    [...fs.readFileSync(path.join(OPENCODE_AGENTS, "workflow-verify.md"), "utf8").matchAll(/^ *"(.+)": allow$/gm)].map((m) => m[1]),
+  )
+  for (const cmd of JS_WORKSPACE_ACCEPTED) {
+    assert.ok(commandAllowed(cmd, globs), `Claude/Qwen guard denies "${cmd}" — the manifest glob is subcommand-position-anchored`)
+    assert.ok(openCodeAllows(cmd, [...frontmatter]), `OpenCode denies "${cmd}" — run \`npm run gen:prompts\``)
+    assert.ok(openCodeAllows(`cd /wt/x && ${cmd}`, [...frontmatter]), `OpenCode denies "${cmd}" inside a worktree`)
+  }
+})
+
+test("the VERIFY allowlist still refuses to publish a JS package or drive Turborepo's account", async () => {
+  const { commandAllowed } = await import("../plugins/claude/hooks/src/allowlist.mjs")
+  const globs = verifyGlobs()
+  const refused = [
+    "npm publish",
+    "npm -w apps/web publish",
+    // The vector that rules out a generic `npm -* test*`: it carries a literal
+    // " test" after a leading flag, so the loose form would have allowed it.
+    "npm --tag test publish",
+    "pnpm publish -r",
+    "pnpm -r publish",
+    "yarn npm publish",
+    "turbo login",
+    "turbo link",
+    "npx turbo login",
+  ]
+  for (const cmd of refused) {
+    assert.equal(commandAllowed(cmd, globs), false, `VERIFY allows "${cmd}" — a check stage must never publish or authenticate`)
+  }
+})
+
+/**
  * The widening must not reach the publish half of either tool's lifecycle: a
  * check stage builds and tests, it never releases. `mvn deploy` / `gradle publish`
  * stay off the list, and (unlike `install`, which writes only to the local `~/.m2`
