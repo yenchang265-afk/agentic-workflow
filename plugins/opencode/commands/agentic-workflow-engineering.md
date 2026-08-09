@@ -61,12 +61,28 @@ Dispatch:
      write the draft file(s) — one draft, or N child drafts plus one epic
      tracking file. No plan is written now — the loop's PLAN stage plans each
      task right before execution, so plans don't rot while it sits parked. The
-     next step is `/agentic-workflow:engineering approve <id>` per child.
+     next step is the task gate (step 5 below), asked inline per child.
      - **The epic file is a tracking draft only** (frontmatter `type: epic`,
        body listing the children in order). **Never approve it** — an
        un-approved draft is inert, so the loop never claims it. Close it by
        hand once every child has shipped: `abandon <id>` retires the tracking
        draft.
+  5. **Task gate — ask, don't require a command.** For each non-epic drafted
+     child (skip the epic tracking file — never approve it), ask with the
+     **`question`** tool: "Approve `<id>` now?"
+     - **Approve** → call the **`workflow_gate`** tool with that id (task gate:
+       `draft/` → `queued/`) — the user does not need to type
+       `/agentic-workflow:engineering approve <id>`. Then ask a second
+       **`question`**: "Plan it now?"
+       - **Yes** → call the **`workflow_plan`** tool with that id. The PLAN
+         stage runs and parks the plan in `plan-review/` for the human's gate.
+       - **No** → stop; `/agentic-workflow:engineering plan <id>` plans it
+         later, as does the next `claim` with no build-ready work left.
+     - **Not yet** → leave it in `draft/`; `/agentic-workflow:engineering
+       approve <id>` (or `retask <id>`) resumes it later.
+     These two tools are the ONLY backlog moves you may make, and only on an
+     answer the user just gave you — everything else under `docs/tasks/` stays
+     the plugin's.
 <!-- /aw:verb new -->
 <!-- aw:verb retask -->
 - **`retask <id> [note]`** — reshape a planless task when the drafted goal or
@@ -94,9 +110,12 @@ Dispatch:
   4. Invoke the **`workflow-task-author`** subagent in **`retask` mode** with the
      id and the confirmed title/priority/acceptance/body (carry forward the
      `tracker` block if the draft had one) to rewrite `docs/tasks/draft/<id>.md`
-     **in place** — the id/filename never changes. Still no plan. The next step
-     is unchanged: `/agentic-workflow:engineering approve <id>` (required again if
-     the task came back from `queued/`).
+     **in place** — the id/filename never changes. Still no plan. Then run the
+     task gate inline, exactly as `new` step 5 does: ask with **`question`**
+     "Approve `<id>` now?" (approval is required again when the task came back
+     from `queued/`), call **`workflow_gate`** on yes, then ask "Plan it now?"
+     and call **`workflow_plan`** on yes. Never make the user type the command
+     for a gate you are sitting at.
 <!-- /aw:verb retask -->
 
 ## Human gates (deterministic — the plugin moves the file before your turn)
@@ -111,7 +130,10 @@ Dispatch:
   - a finished `in-review/` task → `completed/` (ship — do this only after
     reviewing the branch diff).
   A task lives in exactly one folder, so the gate is never ambiguous; the
-  toast names which move happened. Without an id it advances the single task
+  toast names which move happened. After a TASK gate the plugin's result
+  carries a **`NEXT STEP`** line asking you to put the "plan it now?" question
+  to the user — follow it (`question`, then `workflow_plan` on yes) and stop.
+  The move itself is already done and is never yours to repeat. Without an id it advances the single task
   at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
   `draft/` task only when neither has anything waiting — loop gates outrank the
   authoring gate, and never-approved epic tracking drafts are skipped, so the
@@ -180,7 +202,10 @@ Dispatch:
 - **`plan <id>`** — plan one approved task now: claims the `queued/` task and
   runs the PLAN stage (writes the `## Implementation Plan` onto the task
   file, parks it in `plan-review/` for your gate, exits). Building is not
-  reachable from here — `claim`/`watch` drive builds.
+  reachable from here — `claim`/`watch` drive builds. The plan gate itself is
+  announced by a toast, not by a question: the PLAN pass finishes in the
+  background driver, after your turn has ended, and this host's plugin can
+  only answer questions the model asked — it cannot open one of its own.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next task (lowest priority number

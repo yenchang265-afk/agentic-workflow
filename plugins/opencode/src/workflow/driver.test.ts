@@ -22,9 +22,11 @@ import {
   noteEvidence,
   onInterrupt,
   parsePrTarget,
+  planFromAgent,
   parseWatchArgs,
   recordVerdict,
   findDrivingWorkflow,
+  gateFromAgent,
   resolveDrivingSession,
   runStagePasses,
   type Deps,
@@ -694,6 +696,10 @@ const makeClientFS = (files: Record<string, string>) => {
         return { data: key in files ? { content: files[key] } : undefined }
       },
     },
+    // A root session with no parent. The model-callable gate tools walk this
+    // chain to refuse a call coming from inside a running loop, and they fail
+    // CLOSED — so a client without it would refuse everything.
+    session: { get: async () => ({ data: { parentID: undefined } }) },
   } as unknown as Deps["client"]
   return { client, toasts }
 }
@@ -708,6 +714,63 @@ test("/approve with no id advances the single plan-review task to in-progress/",
 
   assert.equal(toasts[0]?.variant, "success")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("in-progress")))
+})
+
+/**
+ * The model-callable gate tools. They exist because this host has no MCP server
+ * and guards every write under `docs/tasks/` — so a `new`/`retask` turn that
+ * asks "approve this draft?" with the `question` tool had no way to honour a
+ * yes, which made the ask theatre.
+ *
+ * The danger they introduce is the reason for the guard: a tool in the plugin's
+ * `tool:` map is offered to EVERY session, stage subagents included, so an
+ * unguarded one lets a BUILD or REVIEW agent approve the task it is driving.
+ */
+test("workflow_gate moves the draft the user just approved, and asks what is next", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await gateFromAgent(deps, "sess-agent", "my-task", testConfig)
+
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the task gate must actually move the file")
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(out, /NEXT STEP/, "the answer to 'approve?' is worthless without the 'plan it now?' follow-up")
+  assert.match(out, /workflow_plan/)
+  assert.match(out, /my-task/)
+})
+
+test("a gate tool called from inside a running loop is refused, and moves nothing", async () => {
+  const sessionID = "sess-stage-agent"
+  const busy: WorkflowState = { goal: "task A", stage: "build", iteration: 1, artifacts: {} }
+  setWorkflow(sessionID, busy)
+  try {
+    const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+    const { client } = makeClientFS(files)
+    const log: string[] = []
+    const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+    for (const out of [await gateFromAgent(deps, sessionID, "my-task", testConfig), await planFromAgent(deps, sessionID, "my-task", testConfig)]) {
+      assert.match(out, /may not move the human's gates|already driving/, `unexpected: ${out}`)
+    }
+    assert.ok(!log.some((cmd) => cmd.includes("mv")), "a stage agent must never move a task through a gate")
+  } finally {
+    clearWorkflow(sessionID)
+  }
+})
+
+// Fail CLOSED, unlike the Claude spawn guard: a false refusal costs one command
+// the human can type, a false allow lets an unidentified caller ship work.
+test("a gate tool refuses when it cannot tell which session is calling", async () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const blind = { ...client, session: { get: async () => { throw new Error("session api down") } } } as unknown as Deps["client"]
+  const deps: Deps = { client: blind, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  assert.match(await gateFromAgent(deps, "sess-unknown", "my-task", testConfig), /refusing the gate move/)
+  assert.ok(!log.some((cmd) => cmd.includes("mv")))
 })
 
 test("/approve with no id ships the single in-review task to completed/", async () => {

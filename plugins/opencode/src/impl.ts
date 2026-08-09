@@ -549,7 +549,9 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         overrideCommandPrompt(
           output,
           `The agentic-workflow plugin already ran /agentic-workflow:${kind} "${verb}" for you. Result:\n\n${outcome}\n\n` +
-            `Report exactly that result to the user and stop. Do NOT perform any work described in this command's body — the plugin already did it.`,
+            `Report exactly that result to the user. Do NOT perform any work described in this command's BODY — the plugin already did it. ` +
+            `The one exception is a \`NEXT STEP\` line inside the result above: that is the plugin talking, and it asks for the one thing ` +
+            `only you can do (put a question to the user). Follow it if present, then stop.`,
         )
       }
     },
@@ -860,6 +862,39 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           if (!result.accepted) throw new Error(result.message)
           return result.message
         },
+      }),
+
+      /**
+       * The two gate moves an INTERACTIVE authoring turn needs to act on the
+       * answer it just collected.
+       *
+       * This host has no MCP server and guards every write under `docs/tasks/`,
+       * so a `new`/`retask` turn that asks "approve this draft?" with the
+       * `question` tool had no way to honour a yes — it could only tell the user
+       * to type the command, which is the ask made pointless. Both refuse when a
+       * loop is driving the calling session (a stage agent must never move the
+       * human's gates), and both fail closed when that cannot be determined.
+       */
+      workflow_gate: tool({
+        description:
+          "Move a task through the human gate the user just approved in a question you asked (draft → queued, or a parked plan → build-ready). " +
+          "Call this ONLY to act on an explicit answer the user gave you this turn — never to advance work on your own initiative. " +
+          "Stage agents may not call it: a loop driving your session refuses the move.",
+        args: {
+          id: tool.schema.string().describe("The task id the user approved. Required — never guess one."),
+        },
+        execute: async (args, ctx) => driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig()),
+      }),
+
+      workflow_plan: tool({
+        description:
+          "Run the PLAN stage on an approved (queued/) task now, parking the plan in plan-review/ for the human's gate. " +
+          "Call this ONLY to act on an explicit 'plan it now' answer the user gave you this turn. " +
+          "Stage agents may not call it: a loop driving your session refuses it.",
+        args: {
+          id: tool.schema.string().describe("The queued task id to plan. Required — never guess one."),
+        },
+        execute: async (args, ctx) => driver.planFromAgent(deps, ctx.sessionID, args.id, await getConfig()),
       }),
     },
   }
