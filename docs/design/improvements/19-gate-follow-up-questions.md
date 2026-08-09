@@ -1,6 +1,6 @@
-English | [繁體中文](18-gate-follow-up-questions.zh-TW.md)
+English | [繁體中文](19-gate-follow-up-questions.zh-TW.md)
 
-# 18 — The gate asks what comes next
+# 19 — The gate asks what comes next
 
 **Status: implemented.** `data.gate`/`data.id` on the approve family in
 `packages/core/src/workflow/gate.ts`, `askTool` on both dialect tables

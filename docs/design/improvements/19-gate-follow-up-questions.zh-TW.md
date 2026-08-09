@@ -1,6 +1,6 @@
-[English](18-gate-follow-up-questions.md) | 繁體中文
+[English](19-gate-follow-up-questions.md) | 繁體中文
 
-# 18 — 閘門會主動問下一步
+# 19 — 閘門會主動問下一步
 
 **狀態：已實作。** `packages/core/src/workflow/gate.ts` 的 approve 家族加上
 `data.gate`/`data.id`；兩張 dialect 表（`plugins/claude/mcp-server/src/server.ts`、
