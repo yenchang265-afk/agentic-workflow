@@ -167,6 +167,18 @@ out, so the rule lives where the commands are chosen: `checkDiscoveryBlock`
 tells PLAN to list only commands that terminate, and to prove runtime behaviour
 with the run that boots and stops the server itself.
 
+One shape satisfies that rule by defeating it, so it is refused in code rather
+than in prose: `npm run dev &` backgrounds the server and hands back the
+SHELL's exit 0, which `classifyExit` reads as a PASS and the stage prompt
+renders as established fact the agent is told not to dispute — a manufactured
+guarantee with more authority than the self-report checks replaced, plus an
+orphaned process per iteration. `commandAllowed` cannot see it (`splitSegments`
+drops the lone `&`, leaving a plain `npm run dev` to match `npm run *`), so
+`admissibleChecks` gets a fifth rule, `backgroundsItself`. It is NOT mirrored
+into `commandAllowed` or the hook twin: an agent that backgrounds something
+loses the output and gains no verdict, while a driver-run one becomes the
+verdict.
+
 `planContractBlock` carries the same rule one level up, over the acceptance
 criteria the commands are derived from — because the criterion is where the
 problem is born. "Serves at `localhost:5173`" cannot be graded by any check

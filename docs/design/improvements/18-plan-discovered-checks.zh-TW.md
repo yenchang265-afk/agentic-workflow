@@ -141,6 +141,15 @@ ERROR，也就是 `verify.onError`。沒有任何靜態規則分得出伺服器�
 來的地方：`checkDiscoveryBlock` 要求 PLAN 只列會結束的指令，並且要用「自己啟動
 再關閉伺服器」的那條指令來證明執行期行為。
 
+有一種形狀是靠「符合這條規則」來擊敗它的，所以它由程式碼拒絕、而不是由散文勸阻：
+`npm run dev &` 會把伺服器丟到背景，並交回 **shell** 的 exit 0——`classifyExit`
+把它讀成 PASS，階段提示再把它渲染成 agent 被告知不得爭辯的既成事實，於是製造出一
+份比 checks 所取代的自我回報更有權威的保證，外加每次疊代留下一個孤兒行程。
+`commandAllowed` 看不見它（`splitSegments` 會丟掉那個單獨的 `&`，剩下的
+`npm run dev` 正好命中 `npm run *`），因此 `admissibleChecks` 多了第五條規則
+`backgroundsItself`。這條規則**不會**鏡射進 `commandAllowed` 或 hook 孿生檔：agent
+把東西丟到背景只是丟失輸出、得不到任何判定，而 driver 跑的那一份卻會**變成**判定。
+
 `planContractBlock` 把同一條規則往上搬一層，套在指令所源出的驗收標準上——因為問
 題是在標準那裡誕生的。「在 `localhost:5173` 提供服務」沒有任何檢查階段評得了：
 serve 指令會卡住，而所有能讓它變成可觀察的形狀（`&` 加轉向、`nohup`、`timeout`
