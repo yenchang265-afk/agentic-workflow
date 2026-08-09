@@ -103,7 +103,14 @@ const FENCE_RE = /^[ \t]*```[ \t]*agentic-checks[ \t]*\r?\n([\s\S]*?)^[ \t]*```[
 export const checkDiscoveryBlock = (planStage: string, consumer: string): string =>
   [
     `CHECK DISCOVERY: inside the \`### Verification\` subsection, the ${planStage} stage's plan SHOULD end with a`,
-    `\`\`\`${CHECKS_FENCE}\` fenced block holding a JSON array of the commands that prove this task's work —`,
+    // The info string is SPELLED OUT rather than shown as a literal fence. A
+    // rendered ```` ```agentic-checks ```` inside a one-line instruction cannot be
+    // written without either opening a fence in the prompt or leaving a stray
+    // backtick beside the name — and a model that copies the stray one produces an
+    // info string `FENCE_RE` does not match, so the block parses as absent: zero
+    // checks with NO warning, the one silent degradation this module forbids.
+    `fenced code block whose info string is exactly ${CHECKS_FENCE} (three backticks, then that word, nothing else on the line),`,
+    "holding a JSON array of the commands that prove this task's work —",
     'shape: [{ "name": "tests", "command": "npm run test:all", "cwd": "packages/web" }] ("cwd" optional, work-tree-relative).',
     `The loop runs these ITSELF before the ${consumer.toUpperCase()} stage, in the work tree, and their exit codes`,
     `become established fact that the ${consumer.toUpperCase()} agent cannot argue down — which is the whole point:`,

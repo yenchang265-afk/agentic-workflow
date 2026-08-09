@@ -333,3 +333,20 @@ test("checkDiscoveryBlock names the fence, the consuming stage, and the read-it-
   // such script exits 1 and reads as a real test failure.
   assert.match(block, /package\.json/)
 })
+
+test("checkDiscoveryBlock never shows the info string with a stray backtick beside it", () => {
+  // It shipped as ```` ```agentic-checks` ```` once. A model copying that writes an
+  // info string FENCE_RE does not match, so parseDiscoveredChecks reports the
+  // block as ABSENT — zero checks and, because absence is the normal state for a
+  // legacy task, no warning either. Silent no-op is the one degradation this
+  // module forbids, so the spec is prose and this pins it.
+  const block = checkDiscoveryBlock("plan", "verify")
+  assert.doesNotMatch(block, new RegExp("`\\s*" + CHECKS_FENCE), "no backtick immediately before the info string")
+  assert.doesNotMatch(block, new RegExp(CHECKS_FENCE + "\\s*`"), "no backtick immediately after the info string")
+  // And what it says instead must survive being followed literally.
+  const asWritten = ["### Verification", "", "```" + CHECKS_FENCE, '[{ "name": "tests", "command": "npm test" }]', "```"].join("\n")
+  assert.deepEqual(
+    parseDiscoveredChecks(asWritten).defs.map((d) => d.name),
+    ["tests"],
+  )
+})
