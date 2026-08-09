@@ -5,11 +5,13 @@ import path from "node:path"
 import { test } from "node:test"
 import {
   bareModel,
+  bashAllowlistExtras,
   rawAgentModel,
   readRawConfigLayers,
   resolveAgentModels,
   spawnAlias,
   SPAWN_ALIASES,
+  withCdTwins,
 } from "./config-layers.js"
 
 /**
@@ -119,6 +121,22 @@ test("rawAgentModel returns null for anything that is not a non-blank string", (
   assert.equal(rawAgentModel({}, "a"), null)
   assert.equal(rawAgentModel(null, "a"), null)
   assert.equal(rawAgentModel("nope", "a"), null)
+})
+
+test("bashAllowlistExtras keeps trimmed unique strings and degrades everything else to none", () => {
+  assert.deepEqual(bashAllowlistExtras({ bashAllowlistExtra: ["rtk *", "  mise run *  ", "rtk *", "", 42, null] }), ["rtk *", "mise run *"])
+  assert.deepEqual(bashAllowlistExtras({ bashAllowlistExtra: "rtk *" }), [])
+  assert.deepEqual(bashAllowlistExtras({ bashAllowlistExtra: {} }), [])
+  assert.deepEqual(bashAllowlistExtras({}), [])
+  assert.deepEqual(bashAllowlistExtras(null), [])
+  assert.deepEqual(bashAllowlistExtras("nope"), [])
+})
+
+test("withCdTwins pairs each glob with its cd twin, never doubling one already prefixed", () => {
+  assert.deepEqual(withCdTwins(["rtk *"]), ["rtk *", "cd * && rtk *"])
+  assert.deepEqual(withCdTwins(["cd * && rtk *"]), ["cd * && rtk *"])
+  assert.deepEqual(withCdTwins(["rtk *", "cd * && rtk *"]), ["rtk *", "cd * && rtk *"])
+  assert.deepEqual(withCdTwins([]), [])
 })
 
 test("rawAgentModel strips the provider prefix only when asked", () => {

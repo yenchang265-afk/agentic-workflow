@@ -463,6 +463,21 @@ test("writeStageMarker reports its failures instead of swallowing them", () => {
   assert.doesNotMatch(fn, /catch \{\s*\/\* best-effort \*\/\s*\}\s*\}$/, "no silent best-effort swallow")
 })
 
+// `bashAllowlistExtra` is the per-project escape hatch for a runner (or a
+// command-rewriting proxy) the manifests cannot know. The base-length guard is
+// the load-bearing half: an empty base means the stage is UNRESTRICTED, and
+// appending extras there would restrict it to just the extras.
+test("the stage marker's allowlist appends bashAllowlistExtra only when the stage declares a base", () => {
+  const body = code(source()).slice(code(source()).indexOf("const writeStageMarker"))
+  const fn = flat(body.slice(0, body.indexOf("\n}\n") + 3))
+  assert.match(fn, /const base = effectiveAllowlist\(def, platform\)/, "extras extend the effective allowlist, they never replace it")
+  assert.match(
+    fn,
+    /base\.length \? \[\.\.\.base, \.\.\.bashAllowlistExtras\(config\)/,
+    "extras must be gated on a non-empty base — an unrestricted stage stays unrestricted",
+  )
+})
+
 test("workflow_stage refuses a stage whose marker it could not arm", () => {
   const body = flat(toolBody(source(), "workflow_stage"))
   assert.match(

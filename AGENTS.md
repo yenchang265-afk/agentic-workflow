@@ -346,6 +346,20 @@ would also match `npm --tag test publish`, because the glob only needs a literal
 " test" somewhere after the flag. Maven got away with `mvn * test*` only because
 `-Dtest=Foo` never produces a space-delimited " test"; npm's option syntax does.
 
+A command-REWRITING plugin is the same starvation with no manifest fix: an
+rtk-style token proxy mutates the command in `tool.execute.before` BEFORE
+OpenCode evaluates permissions, so every allowlisted command reaches the
+matcher as `rtk <cmd>` — a shape no shipped glob matches — and the whole stage
+starves. The remedy is config, never the proxy: `bashAllowlistExtra` globs
+(e.g. `"rtk *"`) are appended AFTER the sentinel by the plugin's `config` hook,
+the only position that wins under OpenCode's **last-match-wins** evaluation —
+which is also why the generated maps' `"*": deny`-first ordering is semantic,
+not stylistic (`workflow-allowlist.test.mjs` pins it; a trailing `"*": deny`
+would remove the bash tool from the agent outright). Diagnostic to know:
+OpenCode's DeniedError dumps EVERY bash rule, pattern-unfiltered, so a stage
+transcript claiming "the deny-all rule wins over the specific allows" means "no
+glob matched the final command string" — check for a rewritten prefix first.
+
 ### On the model-driven hosts, the spawn is the protocol's weakest link
 
 OpenCode has a driver, so its loop cannot get out of step with itself. Claude Code

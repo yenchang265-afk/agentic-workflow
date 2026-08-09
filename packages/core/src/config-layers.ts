@@ -241,6 +241,54 @@ export const readRawConfigLayers = (cwd: string): Record<string, unknown> => {
 }
 
 /**
+ * The `cd <worktree> && ` prefix a worktree-pinned stage command arrives with.
+ * OpenCode matches permission globs against the WHOLE command string, so every
+ * allowlist glob for a worktree-isolated stage needs a twin carrying this
+ * prefix — see `scripts/gen-prompts.mjs` (`allowlistFor`), which derives the
+ * same twins at generation time.
+ */
+export const CD_TWIN_PREFIX = "cd * && "
+
+/**
+ * Each glob plus its `cd * && ` twin, deduplicated, original order kept. A glob
+ * already carrying the prefix gets no double twin. Pure.
+ */
+export const withCdTwins = (globs: readonly string[]): string[] => {
+  const out: string[] = []
+  for (const glob of globs) {
+    if (!out.includes(glob)) out.push(glob)
+    const twin = CD_TWIN_PREFIX + glob
+    if (!glob.startsWith(CD_TWIN_PREFIX) && !out.includes(twin)) out.push(twin)
+  }
+  return out
+}
+
+/**
+ * `bashAllowlistExtra` off a raw or already-parsed config: user/project bash
+ * globs appended to every allowlisted stage's grants, on top of the manifest's
+ * `bashAllowlist`. The escape hatch for an environment the manifests cannot
+ * know — a project-specific test runner, or a command-rewriting proxy (an rtk
+ *-style token saver) whose output shape (`rtk <cmd>`) matches no shipped glob
+ * and would otherwise starve every check stage into ERROR.
+ *
+ * Non-string, blank, and duplicate entries are dropped; a malformed value
+ * degrades to no extras, never to junk travelling onward — same policy as
+ * `rawAgentModel`. Pure.
+ */
+export const bashAllowlistExtras = (config: unknown): string[] => {
+  if (!isPlainObject(config)) return []
+  const raw = config.bashAllowlistExtra
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const value of raw) {
+    if (typeof value !== "string") continue
+    const glob = value.trim()
+    if (glob && !out.includes(glob)) out.push(glob)
+  }
+  return out
+}
+
+/**
  * `agentModels.<agent>` off a raw or already-parsed config; anything that is not
  * a non-blank string reads as unset, so a malformed value degrades to the host
  * default instead of travelling onward as junk.

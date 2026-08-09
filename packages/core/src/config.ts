@@ -24,10 +24,12 @@ import {
  * Re-exported here so every existing import site keeps working unchanged.
  */
 export {
+  CD_TWIN_PREFIX,
   CONFIG_FILE,
   SPAWN_ALIASES,
   USER_CONFIG_ENV,
   bareModel,
+  bashAllowlistExtras,
   ignoredUserConfigPaths,
   isPlainObject,
   mergeConfigLayers,
@@ -37,6 +39,7 @@ export {
   resolveAgentModels,
   resolveUserConfigPath,
   spawnAlias,
+  withCdTwins,
 } from "./config-layers.js"
 export type { KindStages, SpawnAlias } from "./config-layers.js"
 
@@ -309,6 +312,26 @@ const BaseConfigSchema = z.object({
    * and `workflow-plan` belongs to no kind at all.
    */
   agentModels: z.record(z.string(), z.string().min(1)).optional(),
+  /**
+   * Extra bash globs appended to every allowlisted stage's grants, after the
+   * manifest's `bashAllowlist`. The per-project/per-user escape hatch the
+   * manifests cannot carry: a project-specific test runner, or a
+   * command-rewriting proxy (an rtk-style token saver) whose rewritten shape
+   * (`rtk <cmd>`) matches no shipped glob and would otherwise starve every
+   * check stage into ERROR.
+   *
+   * Bare globs only — worktree `cd * && ` twins are derived where a host needs
+   * them (`withCdTwins`), the same rule the manifests follow. Applies to every
+   * stage that declares an allowlist (check stages and allowlisted work stages
+   * like pr-sitter publish); a stage declaring none stays unrestricted and gets
+   * nothing. Top-level rather than per-kind for the same reason as
+   * `agentModels`: the environment it describes is host-wide, not per-kind.
+   *
+   * These globs widen the T2 scope boundary — that is their entire purpose —
+   * so breadth is the operator's call: `"rtk *"` accepts anything the proxy
+   * emits, finer globs chase its rewrite registry.
+   */
+  bashAllowlistExtra: z.array(z.string().min(1)).default([]),
   /**
    * Which platform PR-shaped work sources talk to: `github` (the `gh` CLI, the
    * default) or `ado` (Azure DevOps via its REST API). GitHub auth is delegated

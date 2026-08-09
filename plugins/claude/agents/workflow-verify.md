@@ -115,5 +115,6 @@ Above the verdict, give:
   failed are a FAIL; tests that could not run at all are an ERROR with the
   reason stated.
 - Your Bash is restricted to read/test commands by a PreToolUse allowlist. If a
-  needed test command is blocked, record `ERROR` naming the command — never try
-  to work around the denial.
+  needed test command is blocked, record `ERROR` naming the command — the human
+  can grant that runner via `bashAllowlistExtra` in `.agentic-workflow.json`.
+  Never try to work around the denial.
