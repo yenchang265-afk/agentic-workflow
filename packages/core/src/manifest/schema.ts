@@ -143,6 +143,18 @@ export const StageDefSchema = z.object({
    */
   requireEvidence: z.boolean().default(false),
   /**
+   * Whether this `check` stage's commands are DISCOVERED from the approved plan
+   * when neither config `stageChecks` nor `checks` supplies any
+   * (`workflow/discovered-checks.ts`).
+   *
+   * Opt-in per stage, the pattern `requireEvidence` set. It carries no predicate
+   * and no command on purpose: a per-ecosystem command table baked in here would
+   * be wrong for every repo it did not anticipate, and a wrong default here is
+   * not inert — a missing runner exits 127 ⇒ ERROR ⇒ the stage's `onError` arm.
+   * What it turns on is a channel, capped by this stage's own `bashAllowlist`.
+   */
+  discoverChecks: z.boolean().default(false),
+  /**
    * Whether this `work` stage's prompt carries the plan-structure contract
    * (`planContractBlock`): ordered steps naming file paths, a `### Verification`
    * subsection mapping each acceptance criterion to its proof, and an explicit
@@ -429,6 +441,17 @@ export const WorkflowManifestSchema = z
         // The name keys both the prompt line and the synthetic axis finding, so
         // a duplicate silently collapses two results into one.
         ctx.addIssue({ code: "custom", message: `stage "${stage.name}" has duplicate check names` })
+      }
+      if (stage.kind === "work" && stage.discoverChecks) {
+        // Same rule as `checks`: discovery only produces checks, and a work
+        // stage has no verdict for them to floor.
+        ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set discoverChecks (no verdict to floor)` })
+      }
+      if (stage.discoverChecks && !stage.bashAllowlist.length) {
+        // The allowlist IS the admission gate for a discovered command, so an
+        // empty one silently refuses every one of them — the flag would read as
+        // on while the feature is dead.
+        ctx.addIssue({ code: "custom", message: `stage "${stage.name}" sets discoverChecks with an empty bashAllowlist (every discovered command would be refused)` })
       }
       if (stage.kind === "work" && stage.requireEvidence) {
         // Only a verdict carries evidence, and only check stages record one.

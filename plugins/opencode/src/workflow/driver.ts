@@ -110,9 +110,9 @@ import {
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { checkCommands, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
+import { resolveStageChecks } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   EXPERIMENTAL_KINDS,
-  checksFor,
   concurrencyFor,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
@@ -778,9 +778,23 @@ const runStageChecks = async (
   state: WorkflowState,
   stage: Stage,
 ): Promise<WorkflowState> => {
-  const defs = checksFor(config, loaded.manifest.kind, stageDef(loaded.manifest, stage))
+  const dir = workTree(deps, state)
+  const { defs, warnings } = await resolveStageChecks({
+    $: deps.$,
+    config,
+    kind: loaded.manifest.kind,
+    def: stageDef(loaded.manifest, stage),
+    // The plan the loop is running against — re-extracted from the task file at
+    // claim time, so it is the same text on every iteration of this task.
+    plan: state.artifacts.plan,
+    dir,
+  })
+  // Warn, never fail: a dropped or refused discovered check must leave the loop
+  // exactly as it was before discovery existed, or a bad plan block becomes a
+  // stalled run.
+  for (const w of warnings) await deps.log("warn", `${stage}: ${w}`)
   if (!defs.length) return state
-  const results = await runChecks(deps.$, defs, workTree(deps, state))
+  const results = await runChecks(deps.$, defs, dir, config.checkTimeoutMinutes * 60_000)
   for (const r of results) {
     if (r.outcome === "pass") continue
     await deps.log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)

@@ -6,7 +6,8 @@ import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
-import { contextFor, planVisualizationFor, stagePasses } from "../config.js"
+import { contextFor, discoverChecksFor, planVisualizationFor, stagePasses } from "../config.js"
+import { checkDiscoveryBlock } from "./discovered-checks.js"
 import {
   planContractBlock,
   planVisualizationBlock,
@@ -306,6 +307,22 @@ export const promptContext = (
 const passMode = (passes: readonly StagePass[]): "single" | "axis" | "lens" =>
   passes.some((p) => p.mode === "axis") ? "axis" : passes.some((p) => p.mode === "lens") ? "lens" : "single"
 
+/**
+ * The check stage that consumes a discovered `agentic-checks` block, if any —
+ * which is also what tells the plan-writing stage to emit one.
+ *
+ * A manifest-level question, not a stage-level one: the flag sits on the
+ * CONSUMER (verify) while the block has to be written by the PLAN stage, so
+ * `composeStagePrompt` cannot derive it from its `def` the way it derives
+ * `mode` and `visualize`. Exported so the hub's creator preview asks the same
+ * question of its unsaved manifest — a preview that skipped it would render a
+ * plan prompt the loop does not send. `config` optional, and consulted only
+ * when given, so a config with nothing set composes byte-identically to none.
+ * Pure.
+ */
+export const discoveringStage = (manifest: WorkflowManifest, config?: Config): string | undefined =>
+  manifest.stages.find((s) => s.kind === "check" && (config ? discoverChecksFor(config, manifest.kind, s) : s.discoverChecks))?.name
+
 export const composeStagePrompt = (
   def: StageDef,
   tpl: string,
@@ -319,13 +336,19 @@ export const composeStagePrompt = (
   // (`planVisualizationFor`) from `composePromptWithStats`, because config can
   // turn the block on for a shipped manifest the user cannot edit.
   visualize: boolean = def.planContract && def.planVisualization,
+  // The stage that CONSUMES discovered checks, when the kind has one. Unlike
+  // `mode`/`visualize` this cannot be defaulted from `def`: the flag lives on
+  // the consuming check stage, and the block is appended to the PLAN stage that
+  // has to write the block. Undefined ⇒ the block is omitted entirely, which is
+  // what a config-less caller (the hub's creator preview) should see.
+  discover?: string,
 ): string => {
   const rendered = renderPrompt(tpl, ctx)
   return def.kind === "check"
     ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}${
         visualize ? `\n\n${planVisualizationBlock(def.name)}` : ""
-      }`
+      }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover)}` : ""}`
 }
 
 /**
@@ -362,7 +385,7 @@ export const composePromptWithStats = (
   // shipped manifests are user-uneditable, so the config override is the only
   // way the opt-in is reachable at all.
   const visualize = config ? planVisualizationFor(config, loaded.manifest.kind, def) : undefined
-  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize), elided }
+  return { prompt: composeStagePrompt(def, tpl, ctx, mode, visualize, discoveringStage(loaded.manifest, config)), elided }
 }
 
 /** Render the prompt threaded into `target`'s stage command. */

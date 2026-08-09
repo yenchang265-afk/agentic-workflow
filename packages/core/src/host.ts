@@ -22,6 +22,16 @@ export interface ShellPromise extends PromiseLike<ShellOutput> {
   quiet(): ShellPromise
   nothrow(): ShellPromise
   cwd(dir: string): ShellPromise
+  /**
+   * OPTIONAL: kill the child after `ms` and resolve `CHECK_TIMEOUT_EXIT` (124).
+   *
+   * Optional because Bun's `$` — the interface these shapes are modelled on —
+   * exposes no timeout, so a host that cannot reap the child omits it and
+   * `runChecks` falls back to racing a timer. That fallback bounds the DRIVE
+   * LOOP, which is the failure that matters (a hanging check blocks the loop
+   * forever), but leaves the child running; a host that can kill should.
+   */
+  timeout?(ms: number): ShellPromise
 }
 
 /**

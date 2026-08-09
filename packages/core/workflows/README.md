@@ -165,13 +165,33 @@ a regex would be all false-refusal. `planContract` on a `check` stage is a
 manifest error (it writes no plan).
 
 A check stage may also declare `checks` — `{ name, command, cwd? }` entries the
-**driver** runs in the stage's work tree, sequentially, before the stage fires
-(none of the shipped kinds declares any today). Their results are rendered into
-the stage's prompt, seeded as observed evidence, and folded into its verdict as a
-synthetic `checks` axis: exit 0 adds nothing, 126/127 resolves the stage to
-**ERROR** (the check could not run — stop for a human, spend no iteration), and
-any other exit code resolves it to **FAIL**. The stage cannot argue a red check
+**driver** runs in the stage's work tree, sequentially, before the stage fires.
+No shipped kind declares any, and that is a design rule rather than an accident:
+a per-ecosystem command table baked into a manifest is wrong for every repo it
+did not anticipate, and wrong here is not inert (a missing runner exits 127,
+which routes to the stage's `onError` arm). Engineering's VERIFY instead sets
+`discoverChecks`, below.
+
+Their results are rendered into the stage's prompt, seeded as observed evidence,
+and folded into its verdict as a synthetic `checks` axis: exit 0 adds nothing,
+124/126/127 resolves the stage to **ERROR** (the check timed out or could not run
+— stop for a human, spend no iteration), and any other exit code resolves it to
+**FAIL**. Each command is bounded by config `checkTimeoutMinutes`;
+`stageTimeoutMinutes` does not cover them. The stage cannot argue a red check
 down; the escape hatch is removing the check, not disputing it.
+
+`discoverChecks` on a check stage says: when neither config `stageChecks` nor
+this stage's `checks` supplies any, take them from the approved plan's
+`agentic-checks` fenced block (`workflow/discovered-checks.ts`). Setting it also
+makes the kind's `planContract` stage ask for that block. The commands are
+frozen at plan time — the block is text in the task file, so every iteration
+checks the same way — and each one is admitted only if `commandAllowed` says
+this stage's own `bashAllowlist` would have let its agent run it. That allowlist
+is the boundary, not the human plan gate: task files live under `tasksDir`,
+which is repo content. `discoverChecks` is a manifest error on a `work` stage
+(no verdict to floor) and on a stage with an empty `bashAllowlist` (every
+discovered command would be refused, so the flag would read as on while the
+feature is dead).
 
 Because the driver runs them, they bypass `bashAllowlist` entirely — the agent
 never issues them. That makes this a **trusted authoring surface**, at the same

@@ -136,6 +136,43 @@ export const isFindMutation = (seg: string): boolean => {
   return tokens.some((t) => FIND_MUTATING_FLAGS.has(t))
 }
 
+/** A stage allowlist glob as a whole-segment regex. `*` → `.*`, dotAll. Pure. */
+const toRe = (glob: string): RegExp =>
+  new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`, "s")
+
+/** Whether a command segment matches any of the stage's globs. Pure. */
+export const matchesAny = (cmd: string, globs: readonly string[]): boolean => globs.some((g) => toRe(g).test(cmd.trim()))
+
+/**
+ * A bare directory change executes nothing on its own. The allowlists permit
+ * exactly one compound form — `cd <dir> && <runner>` — and `splitSegments` yields
+ * the `cd <dir>` as its own segment, so it must be recognized as safe for that
+ * form to pass. Reject any shell metacharacter in the argument so a `cd`-prefixed
+ * command substitution or further chaining can't ride through.
+ */
+export const isBareCd = (seg: string): boolean => /^cd\s+[^;&|<>()`$]+$/.test(seg)
+
+/**
+ * Whether EVERY chained/piped segment of `cmd` is on `globs` (a bare `cd` counts
+ * as allowed). A command with no runnable segment is rejected.
+ *
+ * TWIN: `plugins/claude/hooks/src/allowlist.mjs` runs this as the Claude host's
+ * PreToolUse check-stage guard. Ported here — not imported — because that file
+ * must stay dependency-free; the shared test vectors keep the two honest.
+ *
+ * Core's own caller is `workflow/discovered-checks.ts`, which admits a
+ * model-discovered check command only when the consuming stage's own allowlist
+ * would have let its agent run it. That is what caps discovery: a check the
+ * driver runs bypasses the allowlist entirely (`manifest/schema.ts`), so without
+ * this the plan document — repo content — would be an unfiltered shell channel.
+ */
+export const commandAllowed = (cmd: string, globs: readonly string[]): boolean => {
+  const segments = splitSegments(cmd)
+  if (segments.some(hasShellExpansion)) return false
+  if (segments.some(isFindMutation)) return false
+  return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny(s, globs))
+}
+
 /**
  * A `gh` command that mutates a pull request. The loop must NEVER merge, close,
  * approve, or otherwise change PR state:

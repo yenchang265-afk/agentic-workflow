@@ -16,11 +16,20 @@
  */
 
 import type { CheckDef } from "../manifest/schema.js"
-import type { Shell } from "../host.js"
+import type { Shell, ShellOutput, ShellPromise } from "../host.js"
 import { withUnassessedGuard, type AxisResult, type VerdictRecord } from "./verdict.js"
 
 /** How much of a check's combined output rides along into the prompt. */
 export const CHECK_OUTPUT_MAX = 2_000
+
+/**
+ * The exit code a timed-out check reports — the `timeout(1)` convention, so a
+ * host that shells out to `timeout` and one that kills the child itself agree.
+ */
+export const CHECK_TIMEOUT_EXIT = 124
+
+/** Wall-clock cap per check when the caller names none. */
+export const DEFAULT_CHECK_TIMEOUT_MS = 10 * 60_000
 
 /** The axis a stage's check results contribute to its verdict. */
 export const CHECKS_AXIS = "checks"
@@ -46,23 +55,67 @@ export interface CheckResult {
 }
 
 /**
- * 0 ⇒ pass; 126/127 ⇒ error; anything else ⇒ fail. Pure.
+ * 0 ⇒ pass; 124/126/127 ⇒ error; anything else ⇒ fail. Pure.
  *
  * A shell returns 127 for "command not found" and 126 for "found but not
  * executable" — precisely "the check itself could not run", which is what ERROR
  * means (`verdict.ts`): it routes to `onError` and stops for a human instead of
  * burning a re-build iteration. `npm test` exiting 1 is a genuine FAIL.
  *
+ * 124 (`CHECK_TIMEOUT_EXIT`) is listed EXPLICITLY rather than left to fall
+ * through to FAIL. A FAIL sends the loop back to BUILD, which re-fires the same
+ * check, which hangs again — burning every iteration to the cap on a stage that
+ * never produced a result. ERROR stops once, with the check named.
+ *
  * The residual, deliberately un-guessed: a runner that exits 1 *because* it is
  * misconfigured reads as FAIL. That is the same ambiguity a human reading CI
  * has, and a heuristic for it would be worse than the ambiguity.
  */
 export const classifyExit = (exitCode: number): CheckOutcome =>
-  exitCode === 0 ? "pass" : exitCode === 126 || exitCode === 127 ? "error" : "fail"
+  exitCode === 0 ? "pass" : exitCode === CHECK_TIMEOUT_EXIT || exitCode === 126 || exitCode === 127 ? "error" : "fail"
 
 /** Keep the last `max` characters, marking what was dropped. Pure. */
 const tail = (text: string, max: number): string =>
   text.length <= max ? text : `…[${text.length - max} chars elided]\n${text.slice(-max)}`
+
+/** A synthetic `ShellOutput` for a check the loop gave up waiting on. Pure. */
+const timedOutResult = (timeoutMs: number): ShellOutput => ({
+  exitCode: CHECK_TIMEOUT_EXIT,
+  stdout: { toString: () => "" },
+  stderr: { toString: () => `timed out after ${Math.round(timeoutMs / 1000)}s — the loop stopped waiting` },
+})
+
+/**
+ * Await one check under a wall-clock cap.
+ *
+ * Prefers the host's own `timeout` when it has one, because only the host can
+ * KILL the child; the race is the fallback for a host whose shell cannot
+ * (Bun's `$`). The fallback's residual is explicit: the drive loop is unblocked,
+ * the child may still be running. Bounding the loop is the point — a hanging
+ * check with no cap wedges the whole run with no way out, since neither host's
+ * stage deadline covers the check phase (OpenCode's stage timer races the model
+ * session only; the Claude host tests its deadline in `workflow_advance`, and
+ * checks run back in `workflow_stage`).
+ */
+const awaitCheck = async (started: ShellPromise, timeoutMs: number): Promise<ShellOutput> => {
+  if (typeof started.timeout === "function") return started.timeout(timeoutMs)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      started,
+      // NOT unref'd, deliberately. An unref'd timer does not hold the event loop
+      // open — and in the case this exists for, a check that never settles, the
+      // pending shell promise holds nothing open either, so the loop drains and
+      // the timeout never fires. `finally` clears the timer on the normal path,
+      // which is what unref would otherwise have bought.
+      new Promise<ShellOutput>((resolve) => {
+        timer = setTimeout(() => resolve(timedOutResult(timeoutMs)), timeoutMs)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /**
  * Run a stage's checks in `dir`, in declaration order. Impure over `Shell`.
@@ -76,12 +129,21 @@ const tail = (text: string, max: number): string =>
  * Sequential rather than concurrent: two suites in one work tree share a build
  * directory and a port, and a check that fails only when run beside another is
  * the exact non-determinism this module exists to remove.
+ *
+ * `timeoutMs` is DEFAULTED rather than required so a host that forgets to thread
+ * the config knob still runs bounded — the failure mode of an unbounded check is
+ * a wedged loop, which no caller should be able to opt into by omission.
  */
-export const runChecks = async ($: Shell, defs: readonly CheckDef[], dir: string): Promise<CheckResult[]> => {
+export const runChecks = async (
+  $: Shell,
+  defs: readonly CheckDef[],
+  dir: string,
+  timeoutMs: number = DEFAULT_CHECK_TIMEOUT_MS,
+): Promise<CheckResult[]> => {
   const results: CheckResult[] = []
   for (const def of defs) {
     const cwd = def.cwd ? `${dir.replace(/\/$/, "")}/${def.cwd}` : dir
-    const out = await $`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow()
+    const out = await awaitCheck($`${{ raw: def.command }}`.cwd(cwd).quiet().nothrow(), timeoutMs)
     const text = `${out.stdout.toString()}${out.stderr.toString()}`.trim()
     results.push({
       name: def.name,

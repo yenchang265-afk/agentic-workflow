@@ -35,9 +35,13 @@ const render = (strings: TemplateStringsArray, exprs: unknown[]): string => {
   return cmd
 }
 
+/** Grace between SIGTERM and SIGKILL for a timed-out command. */
+const KILL_GRACE_MS = 5_000
+
 class ShellPromise implements PromiseLike<ShellOutput> {
   #cmd: string
   #cwd: string | undefined
+  #timeoutMs: number | undefined
   #run: Promise<ShellOutput> | undefined
   constructor(cmd: string) {
     this.#cmd = cmd
@@ -52,6 +56,15 @@ class ShellPromise implements PromiseLike<ShellOutput> {
     this.#cwd = dir
     return this
   }
+  /**
+   * Kill the child after `ms` and resolve exit 124, the `timeout(1)` convention
+   * core's `classifyExit` reads as "the check could not run". This host owns its
+   * `spawn`, so unlike core's race fallback it actually reaps the process.
+   */
+  timeout(ms: number): this {
+    this.#timeoutMs = ms
+    return this
+  }
   #exec(): Promise<ShellOutput> {
     return (this.#run ??= new Promise<ShellOutput>((resolve) => {
       const child = spawn("bash", ["-c", this.#cmd], { cwd: this.#cwd })
@@ -63,11 +76,41 @@ class ShellPromise implements PromiseLike<ShellOutput> {
         buf.length >= MAX_CAPTURE ? buf : (buf + String(d)).slice(0, MAX_CAPTURE)
       child.stdout.on("data", (d) => (out = append(out, d)))
       child.stderr.on("data", (d) => (err = append(err, d)))
+      let timedOut = false
+      let killTimer: ReturnType<typeof setTimeout> | undefined
+      // Neither timer is unref'd: an unref'd timer does not hold the event loop
+      // open, so it only fires if something ELSE happens to. Here the child
+      // holds it — but that is an assumption about a handle we do not own, and
+      // the same reasoning silently disabled core's race fallback. Both are
+      // cleared on every settle path, which is all unref would have bought.
+      const deadline =
+        this.#timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => {
+              timedOut = true
+              child.kill("SIGTERM")
+              killTimer = setTimeout(() => child.kill("SIGKILL"), KILL_GRACE_MS)
+            }, this.#timeoutMs)
+      const settle = (o: ShellOutput) => {
+        clearTimeout(deadline)
+        clearTimeout(killTimer)
+        resolve(o)
+      }
       // A spawn failure (bash missing, EPERM) is NOT command-not-found: keep the
       // 127 contract for callers, but name the real cause in stderr so the two
       // are distinguishable in logs.
-      child.on("error", (e) => resolve({ exitCode: 127, stdout: strOut(out), stderr: strOut(`spawn failed (not a command error): ${e.message}`) }))
-      child.on("close", (code) => resolve({ exitCode: code ?? 0, stdout: strOut(out), stderr: strOut(err) }))
+      child.on("error", (e) => settle({ exitCode: 127, stdout: strOut(out), stderr: strOut(`spawn failed (not a command error): ${e.message}`) }))
+      child.on("close", (code) =>
+        // A kill lands as a SIGNAL exit, so `code` is null and the plain `?? 0`
+        // would report SUCCESS for a command we just killed.
+        timedOut
+          ? settle({
+              exitCode: 124,
+              stdout: strOut(out),
+              stderr: strOut(`${err}\ntimed out after ${Math.round((this.#timeoutMs ?? 0) / 1000)}s — killed`),
+            })
+          : settle({ exitCode: code ?? 0, stdout: strOut(out), stderr: strOut(err) }),
+      )
     }))
   }
   then<T1 = ShellOutput, T2 = never>(
