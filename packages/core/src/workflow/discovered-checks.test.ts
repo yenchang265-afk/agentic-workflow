@@ -5,6 +5,7 @@ import {
   MAX_DISCOVERED_CHECKS,
   MAX_DISCOVERED_COMMAND,
   admissibleChecks,
+  backgroundsItself,
   checkDiscoveryBlock,
   commandBinaries,
   parseDiscoveredChecks,
@@ -12,6 +13,7 @@ import {
   resolveStageChecks,
 } from "./discovered-checks.js"
 import { parseConfig } from "../config.js"
+import { commandAllowed } from "../task/write-backstop.js"
 import { StageDefSchema, type StageDef } from "../manifest/schema.js"
 
 /**
@@ -332,6 +334,39 @@ test("checkDiscoveryBlock names the fence, the consuming stage, and the read-it-
   // The single highest-value instruction: a guessed `npm test` on a repo with no
   // such script exits 1 and reads as a real test failure.
   assert.match(block, /package\.json/)
+})
+
+test("admissibleChecks refuses a command that backgrounds itself", () => {
+  // `npm run dev &` is the one shape that satisfies "must terminate" by
+  // defeating it: the shell returns 0 immediately, `classifyExit` reads PASS,
+  // and the stage prompt renders that as fact the agent may not dispute.
+  // `commandAllowed` waves it through — `splitSegments` drops the lone `&`, so
+  // it matches the plain `npm run *` glob.
+  const globs = ["npm run *", "npm test*", "grep *"]
+  assert.equal(commandAllowed("npm run dev &", globs), true, "the allowlist alone cannot catch it")
+  const { accepted, rejected } = admissibleChecks(
+    [
+      { name: "serve", command: "npm run dev &" },
+      { name: "tests", command: "npm test" },
+    ],
+    globs,
+  )
+  assert.deepEqual(
+    accepted.map((d) => d.name),
+    ["tests"],
+  )
+  assert.match(rejected[0]?.reason ?? "", /backgrounds itself/)
+})
+
+test("backgroundsItself splits a lone & from the chain operator and from quoted data", () => {
+  assert.equal(backgroundsItself("npm run dev &"), true)
+  assert.equal(backgroundsItself("npm run dev & npm test"), true)
+  // `&&` is a chain, not a background — the whole allowlist depends on it.
+  assert.equal(backgroundsItself("cd web && npm test"), false)
+  assert.equal(backgroundsItself("npm test && npm run lint && npm run types"), false)
+  // A `&` inside quotes is an argument, not an operator.
+  assert.equal(backgroundsItself(`grep -r "a & b" src`), false)
+  assert.equal(backgroundsItself("npm test"), false)
 })
 
 test("checkDiscoveryBlock rules out a command that never exits", () => {

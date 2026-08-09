@@ -177,7 +177,7 @@ export const parseDiscoveredChecks = (planText: string): { defs: CheckDef[]; iss
  * could not.
  *
  * This is the trust boundary, not the human plan gate — see the module note.
- * Four independent rules, each with its own rejection reason so a warning names
+ * Five independent rules, each with its own rejection reason so a warning names
  * the actual problem. Pure.
  */
 export const admissibleChecks = (
@@ -195,6 +195,10 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: `cwd "${def.cwd}" is not a plain relative path inside the work tree` })
       continue
     }
+    if (backgroundsItself(def.command)) {
+      rejected.push({ name: def.name, reason: "the command backgrounds itself with `&` — a check must run in the foreground and exit, or the loop records the shell's exit 0 as a pass" })
+      continue
+    }
     if (chainedGithubPrMutation(def.command) || chainedGitPushViolation(def.command)) {
       rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
       continue
@@ -206,6 +210,49 @@ export const admissibleChecks = (
     accepted.push(def)
   }
   return { accepted, rejected }
+}
+
+/**
+ * Whether any part of the command is BACKGROUNDED with a lone `&`.
+ *
+ * The one shape that defeats "a check must terminate" by satisfying it. A
+ * driver-run `npm run dev &` returns immediately with the SHELL's exit 0, so
+ * `classifyExit` reads PASS and the stage prompt renders it as an established
+ * fact the agent is told not to re-run or argue with — a manufactured "the
+ * server serves" with more authority than the self-report this whole feature
+ * replaced, plus one orphaned process per iteration. `commandAllowed` cannot
+ * catch it: `splitSegments` treats the lone `&` as an operator, so the segment
+ * it matches is a plain `npm run dev`.
+ *
+ * Applied to DISCOVERED commands only, and deliberately not mirrored into
+ * `commandAllowed` or its hook twin: an AGENT that backgrounds something loses
+ * the output and gains no verdict, while a driver-run one becomes the verdict.
+ *
+ * Quote-aware like `hasShellExpansion`, and `&&` is skipped as the chain
+ * operator it is. Residual: `|&` reads as backgrounding and is refused —
+ * fail-safe, and no check needs it. Pure.
+ */
+export const backgroundsItself = (command: string): boolean => {
+  let quote: string | null = null
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i]
+    if (quote) {
+      if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"') {
+      quote = c
+      continue
+    }
+    if (c === "&") {
+      if (command[i + 1] === "&") {
+        i++
+        continue
+      }
+      return true
+    }
+  }
+  return false
 }
 
 /**

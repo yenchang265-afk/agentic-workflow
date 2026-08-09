@@ -307,8 +307,9 @@ unavailable.
    nobody. This includes the criterion no command available to you can express —
    anything that needs a long-running process watched (a dev server answering on a
    port, a watch build). You cannot run one: it never exits, and the shapes that
-   would let you observe it (`&`, `nohup`, a `timeout` wrapper, a `curl` probe) are
-   off your allowlist deliberately. Mark it not met, and in your `reason` name the
+   look like a way around that are not one — backgrounding it with `&` returns
+   instantly and observes nothing, and a `nohup`, a `timeout` wrapper or a `curl`
+   probe is off your allowlist deliberately. Mark it not met, and in your `reason` name the
    exiting check that would settle it — an e2e run that boots and stops the server
    itself, an assertion over the built artifact — so the next BUILD can add it.
 3. **Check the tests themselves** — a green suite proves nothing if the suite was
