@@ -35,6 +35,15 @@ channel, so a parked plan or a finished loop always waits for
 a plan back) — see [`plugins/claude/README.md`](../plugins/claude/README.md)
 for the Claude Code variant, which offers the same choices inline instead.
 
+Between those gates the drive is **unattended by construction**: a stage
+subagent cannot open OpenCode's `question` dialog. Every shipped agent denies
+the tool in its frontmatter (`tools: question: false` plus
+`permission: question: deny`), and the plugin refuses a `question` from any
+session a loop is driving — including a custom kind's stage agent. A stage that
+cannot resolve something on its own records it where the loop can act on it: a
+FAIL/ERROR verdict from a check stage, `workflow_blocked` from a work stage.
+Both surface to you at the next gate.
+
 All of the above (and the isolation/hardening knobs: worktrees — on by
 default, review lenses, secret redaction, run summaries) is configured in `.agentic-workflow.json`,
 layered over an optional user-scope `~/.config/agentic-workflow/agentic-workflow.json`

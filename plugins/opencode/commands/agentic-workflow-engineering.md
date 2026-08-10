@@ -76,6 +76,9 @@ Dispatch:
        **`question`**: "Plan it now?"
        - **Yes** → call the **`workflow_plan`** tool with that id. The PLAN
          stage runs and parks the plan in `plan-review/` for the human's gate.
+         Never call it without asking first — it refuses until the question has
+         been put, because planning hands this session to the PLAN stage and
+         nothing can ask the user anything until that finishes.
        - **No** → stop; `/agentic-workflow:engineering plan <id>` plans it
          later, as does the next `claim` with no build-ready work left.
      - **Not yet** → leave it in `draft/`; `/agentic-workflow:engineering
@@ -133,6 +136,8 @@ Dispatch:
   toast names which move happened. After a TASK gate the plugin's result
   carries a **`NEXT STEP`** line asking you to put the "plan it now?" question
   to the user — follow it (`question`, then `workflow_plan` on yes) and stop.
+  Skipping the question is not an option: `workflow_plan` refuses a task whose
+  gate asked for one until the `question` tool has actually been called.
   The move itself is already done and is never yours to repeat. Without an id it advances the single task
   at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
   `draft/` task only when neither has anything waiting — loop gates outrank the
@@ -205,7 +210,7 @@ Dispatch:
   reachable from here — `claim`/`watch` drive builds. The plan gate itself is
   announced by a toast, not by a question: the PLAN pass finishes in the
   background driver, after your turn has ended, and this host's plugin can
-  only answer questions the model asked — it cannot open one of its own.
+  only observe the questions you ask — it cannot open one of its own.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next task (lowest priority number
@@ -230,8 +235,8 @@ Dispatch:
   nothing always logs why (empty queue, tasks awaiting a plan, tasks already
   started, claim marker held); actionable reasons are toasted once. An
   `in-progress/` claim marker orphaned by a crashed run auto-releases after 15
-  minutes; a stale `queued/` marker (a crashed `plan <id>`) is released by
-  `doctor fix`.
+  minutes — or immediately, once the process that took it is provably gone; a
+  stale `queued/` marker (a crashed `plan <id>`) is released by `doctor fix`.
   **One watcher process per clone:** watch takes an on-disk lease
   (`<tasksDir>/runs/.watch-lease/`, heartbeat every tick); a second opencode
   process watching the same clone is refused — run it in its own
@@ -250,6 +255,11 @@ Dispatch:
   valid snapshot, re-enters at BUILD from the persisted plan). ESC is a pause
   — it halts after the in-flight stage settles and keeps the snapshot; `stop`
   ends the run and drops it. Check `git status`/`git diff` first.
+  Resumes **immediately** whenever the dead run left evidence: a stage marker
+  naming the task, or a claim stamp naming a process that is gone on this
+  machine. It waits only when the holder may still be alive — a live local pid,
+  or a claim taken on another machine/container, where the 15-minute window is
+  the only safe rule. `doctor fix` clears the same wedged markers.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — abort the loop and exit watch mode (timer

@@ -3,12 +3,15 @@ import path from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts"
 import {
+  CD_TWIN_PREFIX,
   agentModel,
+  bashAllowlistExtras,
   enabledWorkflowKinds,
   ignoredUserConfigPaths,
   readRawConfigLayers,
   resolveUserConfigPath,
   unknownAgentModelKeys,
+  withCdTwins,
   worktreesDirFor,
 } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
@@ -35,6 +38,14 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  * write tool's path is not evidence of having *looked* at anything.
  */
 const READ_TOOLS = new Set(["read", "grep", "glob", "list"])
+/**
+ * OpenCode's structured ask (the TUI question dialog). Two things key off it and
+ * must never disagree about what a question is: the refusal for any session a
+ * loop is driving, and the record of a window opening/closing that the gate's
+ * "plan it now?" enforcement runs on — hence one predicate rather than two
+ * comparisons. See `tool.execute.before` / `tool.execute.after`.
+ */
+const isQuestionTool = (tool: string): boolean => tool === "question"
 /**
  * Where a read tool carries its path, in probe order. Paths only — grep's
  * `pattern` is deliberately absent: a regex is not a path, and admitting one
@@ -119,19 +130,21 @@ const knownAgentNames = (config: Config): string[] => {
 
 /** The slice of opencode's Config this plugin ever touches. */
 interface AgentModelConfig {
-  agent?: Record<string, { model?: string } | undefined>
+  agent?: Record<string, { model?: string; permission?: { bash?: unknown } } | undefined>
 }
 
 /**
  * Apply the patch to a resolved opencode config IN PLACE, returning the agents
  * actually bound. `Hooks.config` returns void, so mutation is the only channel.
  *
- * The ONLY key ever written is `agent.<name>.model`. A user's own
- * `opencode.json` entry for an agent we do not name survives untouched — and
- * one we DO name loses, because naming it in `agentModels` is the more specific,
- * more recent instruction. Whole `AgentConfig` objects are never replaced, so a
- * user's `permission`/`tools`/`temperature` for that agent are preserved. Pure
- * apart from the mutation.
+ * The only keys ever written are `agent.<name>.model` (here) and
+ * `agent.<name>.permission.bash.<glob>` (`applyBashAllowlistExtras` below) — a
+ * new write anywhere else in the config needs the same one-key surgical shape.
+ * A user's own `opencode.json` entry for an agent we do not name survives
+ * untouched — and one we DO name loses, because naming it in `agentModels` is
+ * the more specific, more recent instruction. Whole `AgentConfig` objects are
+ * never replaced, so a user's `permission`/`tools`/`temperature` for that
+ * agent are preserved. Pure apart from the mutation.
  */
 export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Record<string, string>>): string[] => {
   const names = Object.keys(patch)
@@ -146,6 +159,54 @@ export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Recor
     bound.push(name)
   }
   return bound
+}
+
+/**
+ * Append `bashAllowlistExtra` globs to every sentinel-guarded agent's bash
+ * permission map IN PLACE, returning the agents extended.
+ *
+ * OpenCode evaluates permissions LAST-match-wins over the map in key order, so
+ * where a rule lands is what it means: the generated frontmatter puts the
+ * `"*": deny` sentinel first and the manifest allows after it, and a key added
+ * to the merged config here appends at the END of that map — after the
+ * sentinel, which is the only position where an extra glob actually wins.
+ * (Verified against the live host: a hand-written `opencode.json` agent entry
+ * also lands after the frontmatter's rules; this hook's write lands last of
+ * all.) Why extras exist at all: a command-rewriting proxy (rtk-style) mutates
+ * the command in `tool.execute.before` BEFORE the host evaluates permissions,
+ * so every allowlisted command reaches the matcher in a shape (`rtk <cmd>`) no
+ * shipped glob matches and the stage starves into ERROR.
+ *
+ * Scope is by SHAPE, not by roster: only a map-shaped bash permission whose
+ * first-listed rule is the `"*": deny` sentinel is touched. That reaches every
+ * sentinel-guarded stage agent of every kind (hub-scaffolded checkers
+ * included) without a bootstrap manifest read, and deliberately skips
+ * `bash: allow` (build — extras are a no-op) and `bash: deny` (plan — extras
+ * would widen a total denial that is the stage's contract). Worktree `cd * && `
+ * twins are derived exactly when the map already carries twins: their presence
+ * is the generated frontmatter's own record that the stage runs worktree-pinned.
+ * An extra whose key already exists is left alone — an explicit user value,
+ * even a deny, is not ours to flip.
+ */
+export const applyBashAllowlistExtras = (config: AgentModelConfig, extras: readonly string[]): string[] => {
+  if (extras.length === 0) return []
+  const extended: string[] = []
+  for (const [name, agent] of Object.entries(config.agent ?? {})) {
+    const bash = agent?.permission?.bash
+    if (typeof bash !== "object" || bash === null || Array.isArray(bash)) continue
+    const map = bash as Record<string, unknown>
+    if (map["*"] !== "deny") continue
+    const wantsTwins = Object.keys(map).some((key) => key.startsWith(CD_TWIN_PREFIX))
+    const globs = wantsTwins ? withCdTwins(extras) : [...extras]
+    let touched = false
+    for (const glob of globs) {
+      if (glob in map) continue
+      map[glob] = "allow"
+      touched = true
+    }
+    if (touched) extended.push(name)
+  }
+  return extended.sort()
 }
 
 /**
@@ -269,12 +330,16 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   // no way to tell whether the binding took — the failure mode the whole change
   // exists to remove.
   let agentModelsBound: string[] = []
+  let allowlistExtrasBound: string[] = []
   let reportedAgentModels = false
   const reportAgentModelsOnce = async (config: Config): Promise<void> => {
     if (reportedAgentModels) return
     reportedAgentModels = true
     if (agentModelsBound.length) {
       await log("info", `agentic-workflow: agentModels bound ${agentModelsBound.join(", ")} (takes effect until opencode restarts)`)
+    }
+    if (allowlistExtrasBound.length) {
+      await log("info", `agentic-workflow: bashAllowlistExtra appended to ${allowlistExtrasBound.join(", ")} (takes effect until opencode restarts)`)
     }
     const unknown = unknownAgentModelKeys(config, knownAgentNames(config))
     if (unknown.length === 0) return
@@ -493,7 +558,13 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
      */
     config: async (input) => {
       try {
-        agentModelsBound = applyAgentModels(input as AgentModelConfig, agentModelPatch(readRawConfigLayers(directory)))
+        const raw = readRawConfigLayers(directory)
+        agentModelsBound = applyAgentModels(input as AgentModelConfig, agentModelPatch(raw))
+        // Same seam, same timing constraint: `bashAllowlistExtra` must land in
+        // the merged config's agent permission maps AFTER the frontmatter's
+        // rules (last-match-wins), and this hook is the only writer that
+        // appends there. See applyBashAllowlistExtras.
+        allowlistExtrasBound = applyBashAllowlistExtras(input as AgentModelConfig, bashAllowlistExtras(raw))
       } catch {
         /* a convenience binding must never break bootstrap */
       }
@@ -516,10 +587,28 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         // it's pointless here and would delay the critical synchronous unwatch.
         const interruptedSid = driver.abortedSessionID(event)
         if (interruptedSid) return void (await driver.onInterrupt(deps, interruptedSid))
+        // A question opening or settling. The plugin cannot ORIGINATE one, but
+        // these events are how it learns the model put a gate follow-up to the
+        // human — and how it knows not to hand the session to a drive while a
+        // window is up. Recorded before the idle handling below, never instead of
+        // it: the two event kinds are disjoint.
+        if (driver.noteQuestionEvent(event)) return
         if (event.type !== "session.idle") return
-        await reconcileOnce()
+        await reconcileTimely()
         const { sessionID } = event.properties
-        await driver.onIdle(deps, sessionID, await getConfig())
+        const config = await getConfig()
+        // Do NOT await the drive. `onIdle` is the entry to the whole
+        // build → verify → review chain (stageTimeoutMinutes defaults to 60,
+        // maxIterations to 3), so awaiting it here parks this event handler for
+        // hours — and the ESC path above lives in the same handler, i.e. the one
+        // event that must get through while a loop runs was queued behind it.
+        //
+        // Safe against re-entrancy: `onIdle` reaches `driving.add(sessionID)` with
+        // no intervening await, so the idle events the drive's own stage commands
+        // generate still short-circuit on `driving.has`.
+        void driver.onIdle(deps, sessionID, config).catch(async (err: unknown) => {
+          await log("error", `idle drive failed for ${sessionID}: ${(err as Error).message}`)
+        })
       } catch (err) {
         await log("error", `event hook failed: ${err instanceof Error ? err.message : String(err)}`)
       }
@@ -673,7 +762,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       if (
         !loop &&
         anyWorkflowActive() &&
-        (input.tool === "bash" || EDIT_TOOLS.has(input.tool) || READ_TOOLS.has(input.tool) || isAdoMcpTool(input.tool))
+        (input.tool === "bash" ||
+          isQuestionTool(input.tool) ||
+          EDIT_TOOLS.has(input.tool) ||
+          READ_TOOLS.has(input.tool) ||
+          isAdoMcpTool(input.tool))
       ) {
         try {
           const found = await driver.findDrivingWorkflow(client, input.sessionID)
@@ -688,6 +781,44 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // scan only backstops sessions that could not be attributed to any loop.
       const planTaskId = loop ? (loop.stage === "plan" ? (loop.task?.id ?? null) : null) : planStageTaskId()
       const guardCtx = { tasksDir: config.tasksDir, planTaskId }
+      // No stage may ask the human. A drive is unattended between the plan gate
+      // and the ship gate — the question dialog opened by a stage subagent
+      // stalls it on someone who is not watching, and on a `watch` worker there
+      // is no one to watch at all. The shipped agents also deny `question` in
+      // their frontmatter (permission + tools), but this is the layer that does
+      // not depend on an OpenCode config key behaving as documented, and the
+      // only one that covers a user-added kind's stage agent. Scoped to driven
+      // sessions: an ad-hoc /plan subagent outside a loop still asks freely.
+      //
+      // The refusal names the alternative, which is why no stage prompt says
+      // this: a message the model reads at the moment it errs beats a line of
+      // prose carried in every stage's context forever.
+      //
+      // Fails OPEN when the session can't be attributed (the API is down): a
+      // shipped stage agent has no `question` tool to call in the first place,
+      // so the only thing a fail-closed arm would add here is refusing an
+      // ad-hoc /plan's legitimate ask because an unrelated loop is live.
+      if (loop && isQuestionTool(input.tool)) {
+        throw new Error(
+          `agentic-workflow: the ${loop.stage.toUpperCase()} stage cannot ask the user — the loop drives unattended ` +
+            `between the plan gate and the ship gate, so a question here stalls the run on someone who may not be at ` +
+            `the terminal. Resolve it from the code, or record the uncertainty where the loop can act on it: a FAIL/ERROR ` +
+            `verdict (check stages) or workflow_blocked (work stages). A human sees your reasoning at the next gate.`,
+        )
+      }
+      // A window opening — the PRIMARY signal behind the task gate's "plan it
+      // now?" enforcement, and this plugin's own seam rather than a host event
+      // name it has to keep guessing right. Strictly AFTER the deny above: a
+      // refused stage ask never reached the human, so it must leave no trace that
+      // could satisfy an armed ask or hold `onIdle` off the session. Recorded
+      // under the calling session, never a driving ancestor — see
+      // `noteQuestionToolCall`.
+      //
+      // Any OTHER tool starting is proof a window is DOWN, since a question
+      // blocks the turn until it is answered: the valve against a
+      // `tool.execute.after` that never fires — see `noteOtherToolCall`.
+      if (isQuestionTool(input.tool)) driver.noteQuestionToolCall(input.sessionID, input.callID)
+      else driver.noteOtherToolCall(input.sessionID)
       // Azure DevOps MCP guard. With ADO reached only through the MCP server,
       // OpenCode's bash allowlist says nothing about it — `tool.execute.before`
       // is the ONLY enforcement point this host has, so both checks live here.
@@ -817,6 +948,20 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         if (output.args.filePath !== undefined) output.args.filePath = pinned.value
         else output.args.path = pinned.value
       }
+    },
+
+    // The question tool returned, so its window is closed however it ended. This
+    // is the close half of the pair `tool.execute.before` opens, and it is the
+    // one an answered question travels on — the driver only needs to know the
+    // window is down, not what was answered.
+    //
+    // Deliberately does nothing else: this fires on EVERY tool completion, so no
+    // config read and no client call belong here. And it is not the only way a
+    // window can close — whether it fires when `execute` throws is not something
+    // the plugin can pin — which is why the `question.*` events remain a second
+    // source and why ESC/`stop` clear the session's windows outright.
+    "tool.execute.after": async (input) => {
+      if (isQuestionTool(input.tool)) driver.noteQuestionToolSettled(input.sessionID, input.callID)
     },
 
     tool: {

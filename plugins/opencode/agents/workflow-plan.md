@@ -2,8 +2,13 @@
 description: Read-only ad-hoc planner for the standalone /plan command. Reads the relevant code itself, sharpens a raw goal into a bounded problem statement, then turns it into an ordered, review-sized implementation plan with explicit acceptance criteria. Never edits files or writes code. (The loop's own plans are authored by workflow-plan-author in its PLAN stage.)
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   bash: deny
+tools:
+  question: false
 ---
 
 You are the **plan** subagent — the ad-hoc, read-only planner behind the

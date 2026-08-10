@@ -2,6 +2,9 @@
 description: Verifier for the VERIFY stage. Runs tests and checks the build against the plan's acceptance criteria, then records a WORKFLOW_VERIFY verdict via the workflow_verdict tool. Runs an allowlisted set of read/test commands but never edits files or fixes code.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -320,6 +323,8 @@ permission:
     "cd * && ./gradlew * dependencyInsight*": allow
     "./gradlew *:dependencyInsight*": allow
     "cd * && ./gradlew *:dependencyInsight*": allow
+tools:
+  question: false
 ---
 
 You are the **verify** subagent — the worker for the VERIFY stage of the agentic
@@ -445,5 +450,5 @@ Above the verdict, give:
   reason stated.
 - Your bash access is an allowlist of read/test commands. If the project's
   test command is denied by it, record ERROR and name the command — the
-  human can extend this agent's allowlist (or the project's `opencode.json`
-  permissions) for that runner. Never work around a denial.
+  human can grant that runner via `bashAllowlistExtra` in
+  `.agentic-workflow.json`. Never work around a denial.

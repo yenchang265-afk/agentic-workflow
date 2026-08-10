@@ -249,6 +249,41 @@ task. Cross-process liveness for `recover` is judged by
 `taskDrivenByStageMarker` (stage-marker deadline + writer pid), never by the
 in-memory per-process driving map alone.
 
+### A stale window is a proxy; the writer identity is the answer
+
+`STALE_CLAIM_MINUTES` (and the stage-timeout-derived window doctor uses) never
+measured anything about the claimer — they bound how long a HEALTHY stage may go
+without durable progress, and were then read as "the claimer must be dead by
+now". That is why a run which died before its first stage marker cost a human 15
+minutes behind advice no one could act on: `stop` only ever stops the loop in the
+CALLING process, so "stop it first" is unactionable against a process that is
+already gone. So the claim stamp records `pid` + machine identity, and
+`claimWriterLiveness` answers the question directly. Four things hold it up:
+
+- **It fails CLOSED — the opposite of the host hooks.** They fail open because a
+  false allow only restores older behaviour; here a false "dead" sweeps a live
+  claim and starts a SECOND drive on one `feature/<id>` branch. No stamp, no
+  pid, another machine, a garbled parse: all `"unknown"`, all keep the window.
+- **`kill -0` failing is not death.** EPERM (alive, another user) exits non-zero
+  exactly like ESRCH. `pidAlive` may not conclude death; `pidGone` must prove it
+  positively, and every probe is self-validating — it has to see our OWN pid, or
+  it proves nothing. This is why the two exist rather than one.
+- **A pid needs its namespace.** Hostname alone does not separate sibling
+  containers from one image, so the boot id joins it and any comparison missing
+  either side is refused.
+- **`releaseMarkerIfStale(…, 0)` is NOT the age-free release.** A zero window
+  degrades `markerOlderThan` to a bare existence test, so the rename-aside's
+  re-judge always says yes and a rival's brand-new claim is deleted — the exact
+  double-sweep the rename-aside exists to stop. The age-free path is judged by
+  writer IDENTITY (`releaseMarkerIfWriterDead` / `acquireOrSweepDeadWriter`),
+  which re-judges soundly: a rival stamped its own live pid.
+
+The stage marker stays the STRONGER witness and is checked first — it proves a
+stage is running, where the stamp only says who took the claim. Only the
+human-invoked verbs (`recover`, `doctor fix`) opt in; the unattended sweeps
+(`claimFirst`, the startup sweep) keep the wall-clock rule, because no one is
+waiting on them.
+
 ### `state.git.base` is a ref, not always a branch
 
 `taskBranch: false` runs the loop on the branch the tree already has checked
@@ -346,6 +381,20 @@ would also match `npm --tag test publish`, because the glob only needs a literal
 " test" somewhere after the flag. Maven got away with `mvn * test*` only because
 `-Dtest=Foo` never produces a space-delimited " test"; npm's option syntax does.
 
+A command-REWRITING plugin is the same starvation with no manifest fix: an
+rtk-style token proxy mutates the command in `tool.execute.before` BEFORE
+OpenCode evaluates permissions, so every allowlisted command reaches the
+matcher as `rtk <cmd>` — a shape no shipped glob matches — and the whole stage
+starves. The remedy is config, never the proxy: `bashAllowlistExtra` globs
+(e.g. `"rtk *"`) are appended AFTER the sentinel by the plugin's `config` hook,
+the only position that wins under OpenCode's **last-match-wins** evaluation —
+which is also why the generated maps' `"*": deny`-first ordering is semantic,
+not stylistic (`workflow-allowlist.test.mjs` pins it; a trailing `"*": deny`
+would remove the bash tool from the agent outright). Diagnostic to know:
+OpenCode's DeniedError dumps EVERY bash rule, pattern-unfiltered, so a stage
+transcript claiming "the deny-all rule wins over the specific allows" means "no
+glob matched the final command string" — check for a rewritten prefix first.
+
 ### On the model-driven hosts, the spawn is the protocol's weakest link
 
 OpenCode has a driver, so its loop cannot get out of step with itself. Claude Code
@@ -408,8 +457,12 @@ Which gate a folder-driven verb crossed is only knowable from `GateResult.data`
 (`gate`, `id` — set on every success arm, `alreadyDone` retries included). Never
 re-derive it from `message`: that is prose, and it gets reworded.
 
-**OpenCode's plugin cannot originate a question** — `@opencode-ai/plugin`
-exposes Question as list/reply/reject plus a read-only `tui.question`. Only the
+**OpenCode's plugin cannot originate a question.** The SDK's Question API
+(list/reply/reject) is not on `PluginInput["client"]`, and the read-only
+`tui.question(sessionID)` view belongs to the TUI plugin surface, which a normal
+plugin does not get (`tui?: never`) — so the `question` TOOL CALL and the
+`question.*` events are the only windows a plugin has onto one, and both only
+observe. Only the
 model's own `question` tool opens a window, so an ask there only exists where a
 model turn does: the command-prompt override after a handled verb, not the
 background `session.idle` drive where PLAN parks. And an ask whose answer the
@@ -418,6 +471,112 @@ guards `docs/tasks/**`, which is why `workflow_gate`/`workflow_plan` exist.
 Both refuse a call from a session a loop is driving (`findDrivingWorkflow`,
 failing CLOSED): a plugin tool is offered to EVERY session, stage subagents
 included, and without that a BUILD agent can approve its own task.
+
+That left the ask itself as the one thing on this host carried by prose — a
+`NEXT STEP` line in `workflow_gate`'s result — and prose is what the
+orchestrator does not follow. Skipping it is not cosmetic: `workflow_plan` is
+the point of no return, because the drive it queues runs its stages as
+`session.command` calls on the DRIVING session (concurrency 1), after which
+`refuseIfDriven` and the absence of a free model turn mean **nothing can ask
+the human anything** until the chain unwinds. Straight to `workflow_plan` and
+the window is gone for good. So the prose has a mechanism behind it, and both
+halves are load-bearing:
+
+- **`planFromAgent` refuses until the question was actually put** (`askUnanswered`,
+  against the one-shot `askArmed` a task gate sets).
+- **`onIdle` returns while a question is open**, before `pending.delete`, so the
+  work stays queued for the idle after the answer instead of the drive burying
+  the window.
+
+Both fail **OPEN**, gated on `questionsObservable` — a session where no question
+has ever been seen is never refused. Against a host that shows us no window at
+all the rules go inert rather than stranding an approved task no verb can plan.
+That is the opposite asymmetry to `refuseIfDriven` two paragraphs up, and
+deliberately so: there a false allow ships unreviewed work, here a false refusal
+wedges the backlog and a false allow only restores the old behaviour. Both exits
+now **log** — "the human said yes" and "we could not tell" produced the same
+outcome and the same empty transcript, which is how this shipped broken twice.
+
+**The signal is the `question` TOOL CALL, not the event name.** Both rules were
+fed only by the `question.asked`/`replied`/`rejected` events, and that is a
+host-named input the plugin has to keep guessing right: the SDK's event union
+carries the same window under two families (`question.*` and `question.v2.*`), so
+one wrong guess makes every rule above silently inert — fail-open, invisible,
+indistinguishable from working. So the PRIMARY source is
+`tool.execute.before`/`.after` (`noteQuestionToolCall`/`noteQuestionToolSettled`),
+a seam this plugin owns; `noteQuestionEvent` stays as an additive second source
+and now normalises `question.v2.*` down to the legacy names. The two converge
+rather than double-count because the asked event carries `tool.callID` — the same
+id the tool hooks carry — so windows are keyed by that token, never by a
+per-session flag. The flag also lost a real window: one message can open two, and
+the first settlement cleared it while the second was still up.
+
+The deny (next section) runs **before** the recorder. A refused stage ask never
+reached the human, so recording it would both satisfy an armed gate ask nobody
+saw and hold `onIdle` off a session with no window in it.
+
+**A token nobody removes is worse than no token at all**, because `onIdle`
+returns on it for the life of the process — stranding the session's queued drive
+*and* the on-disk claim it already placed, after which every gate verb refuses
+the task as "a loop is driving this NOW". There is deliberately **no timeout** (a
+window the human has not got to yet is legitimately open for hours); what bounds
+it is that every way a window dies without a settlement clears it: ESC
+(`onInterrupt`, for the interrupted id *and* the resolved driving one), the
+`stop`/`abort` verb, and any other tool starting in that session — a question
+blocks the turn, so a different tool call proves the window is down
+(`noteOtherToolCall`, the valve against a `tool.execute.after` that never fires).
+
+One more silent seam, and it is the one that cost the most: **`armTaskGateAsk`
+returning `""`**. `data.gate`/`data.id` live in core, which resolves to
+`packages/core/dist` — gitignored, rebuilt only by `npm install`, while the
+installed plugin points at the working tree. A new plugin against an old core
+dist lands there with `r.ok` true and no gate on it, and the result is BOTH halves
+of the bug at once: no `NEXT STEP` for the model to follow, and nothing armed for
+`askUnanswered` to enforce. It warns now, naming `npm install`.
+
+And **never `await` the drive inside the `event` hook.** `onIdle` is the entry to
+the whole build → verify → review chain, so awaiting it parks that handler for
+hours — including the ESC path, which lives in the same hook and is the one event
+that must get through while a loop runs. `void` it with an error sink. This is
+safe only because `onIdle` reaches `driving.add` with no intervening `await`;
+anything added to that prologue must keep it synchronous, or two idle events will
+both start a drive.
+
+### A stage subagent must not be able to ask
+
+The mirror of the section above: the plugin cannot originate a question, and no
+stage may either. A drive is unattended between the plan gate and the ship gate,
+so a question dialog opened mid-VERIFY stalls the run on someone who may not be
+at the terminal — on a `watch` worker, on nobody at all. A stage's uncertainty
+has channels that keep the loop's control flow: a FAIL/ERROR verdict, a
+criterion marked not met, `workflow_blocked`.
+
+The hole is a HOST ASYMMETRY, invisible from any single file. Claude Code and
+Qwen agents declare an explicit `tools:` enumeration, so they exclude the ask
+tool by construction; **OpenCode agents declare only `permission:`, and inherit
+every tool the host ships unless they say otherwise** — which is how `question`
+(`@opencode-ai/plugin` 1.18.5) reached all 18 stage agents at once, unannounced,
+with nothing failing. A new agent added under `prompts/agents/` inherits it the
+same way, so the guard is a test over the GENERATED files
+(`scripts/agent-ask-deny.test.mjs`), not a convention.
+
+Three layers, and each one exists because the layer above it can fail silently:
+`tools: {question: false}` removes the tool, `permission: {question: deny}`
+refuses it if that map is bypassed or the key renamed, and the plugin's
+`tool.execute.before` refuses any `question` from a session `findDrivingWorkflow`
+attributes to a loop — the only layer that does not depend on a host config key
+behaving as documented, and the only one covering a user-added kind's agent.
+Never write this as stage-prompt prose: the refusal message names the
+alternative at the moment the model errs, which is worth more than a line
+carried in every stage's context forever.
+
+This does not starve the gate mechanism above, and the reason is timing: every
+gate ask happens in a model turn where no loop owns the session — the task gate
+before any drive exists, the plan and ship gates after `clearWorkflow` ran on
+the park or the done. `askArmed`/`questionsObservable` therefore still see the
+question they are waiting on. A gate ask that ever needed to fire *during* a
+drive would be the thing to rethink, not this guard: mid-drive there is no free
+model turn to put it in.
 
 ### A rejected verdict is not a missing one
 

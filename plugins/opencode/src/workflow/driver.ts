@@ -38,7 +38,10 @@ import {
   auditNote,
   claimFirst,
   claimTask,
+  claimTaskSweepingDeadWriter,
   claimTaskSweepingStale,
+  claimWriterDead,
+  claimWriterState,
   confirmedStrayPlanRequestIds,
   findByIdIn,
   hasPlan,
@@ -323,6 +326,201 @@ const watchKindFilter = new Map<string, string>()
  * (`claim <pr>` on a PR-shaped kind), which forces that PR's claim.
  */
 const claimRequested = new Map<string, { kind?: string; target?: number }>()
+/**
+ * Sessions in which a question has EVER been seen, and the windows open in each
+ * right now. Two sources feed them, and the PRIMARY one is the model's own
+ * `question` TOOL CALL, seen in `tool.execute.before`/`.after`
+ * (`noteQuestionToolCall`/`noteQuestionToolSettled`): that is a seam this plugin
+ * owns, where the `question.*` bus events are named by the host and can be
+ * renamed by it. `noteQuestionEvent` stays as an additive second source, because
+ * it is the only view of a window this plugin did not see opened as a tool call.
+ * Neither can originate a question — both only watch one.
+ *
+ * `questionsObservable` is the bootstrap for every rule below: enforcement only
+ * applies to a session we have PROOF we can observe. Against a host that shows
+ * us neither signal, every guard here goes inert rather than wedging the loop — a
+ * false allow only restores the old behaviour, a false refusal strands a task no
+ * verb can free. The interactive `new`/`retask` flow always asks at least once
+ * before it reaches a gate, so the path this exists for is always covered.
+ *
+ * Open windows are keyed by TOKEN, not by a bare per-session flag. Two reasons,
+ * and both are bugs the flag had: the two sources must converge on ONE record
+ * rather than double-count (the asked event carries `tool.callID`, the same id
+ * the tool hooks carry, so they agree by construction), and one assistant message
+ * may open two windows — under a flag the first settlement would clear while the
+ * second was still up, handing the session to a drive underneath it.
+ */
+const questionsObservable = new Set<string>()
+const questionOpen = new Map<string, Set<string>>()
+/**
+ * `requestID` → the `callID` its window was opened under, so a settle event that
+ * names only the request still cancels the token the tool call filed. Dropped on
+ * settle; a request we never saw opened resolves to its own `req:` token.
+ */
+const questionRequestCall = new Map<string, string>()
+
+/**
+ * Record a window opening. Idempotent per token, which is what lets both sources
+ * report the same window without it counting twice.
+ *
+ * Opening also SATISFIES any ask a gate armed here: `askUnanswered` is a backstop
+ * against skipping the question, not a proof that the right one was asked (see
+ * `armTaskGateAsk`). `asked` deliberately survives the answer — whether the ask
+ * was PUT is the thing being tested, and that outlives the window.
+ */
+const openQuestion = (sessionID: string, token: string): void => {
+  questionsObservable.add(sessionID)
+  const open = questionOpen.get(sessionID)
+  if (open) open.add(token)
+  else questionOpen.set(sessionID, new Set([token]))
+  const armed = askArmed.get(sessionID)
+  if (armed) armed.asked = true
+}
+
+/**
+ * Record a window settling. A `null` token clears the session's whole set: a
+ * settlement we cannot attribute to one window must never leave a token behind,
+ * because nothing else in this process will ever remove it and `onIdle` refuses
+ * the session for as long as one is there.
+ */
+const settleQuestion = (sessionID: string, token: string | null): void => {
+  const open = questionOpen.get(sessionID)
+  if (!open) return
+  if (token === null) open.clear()
+  else open.delete(token)
+  if (open.size === 0) questionOpen.delete(sessionID)
+}
+/**
+ * The one-shot "plan it now?" ask a TASK gate armed on a session, and whether it
+ * has since been put to the human.
+ *
+ * The ask itself is prose (`gateNextStep`) because only the model can open a
+ * question window — but prose is exactly what the orchestrator does not reliably
+ * follow, and skipping it here is not a cosmetic loss: `workflow_plan` claims the
+ * task and hands the user's own session to a PLAN drive, after which
+ * `refuseIfDriven` and the absence of a free model turn mean nothing can ask the
+ * human anything until the chain unwinds. So the prose gets a mechanism behind
+ * it: `planFromAgent` refuses until a question was actually opened.
+ */
+const askArmed = new Map<string, { readonly id: string; asked: boolean }>()
+
+/**
+ * A window the model opened with the `question` tool, and the same window
+ * closing. THE primary signal: `tool.execute.before`/`.after` are this plugin's
+ * own seam, so unlike the bus event names they cannot be renamed out from under
+ * it — and the deny in `impl.ts` already keys off the same tool, so a stage's
+ * refused ask is never recorded (it is denied before this is reached).
+ *
+ * Recorded under the CALLING session, never its driving ancestor: a child's
+ * question must not satisfy an ask armed on the parent, and the session a window
+ * must hold back from `onIdle` is the one the window is up in.
+ */
+export const noteQuestionToolCall = (sessionID: string, callID: string): void => openQuestion(sessionID, callToken(callID))
+export const noteQuestionToolSettled = (sessionID: string, callID: string): void => settleQuestion(sessionID, callToken(callID))
+
+/**
+ * Any OTHER tool starting in this session, which closes its question windows.
+ *
+ * The safety valve on the whole scheme, and it exists because of what the failure
+ * it covers costs. A window is opened here on `tool.execute.before` and closed on
+ * `.after`; if that second hook ever does not fire — a host that skips it when
+ * `execute` throws, a version that drops it — the token is permanent, `onIdle`
+ * returns on it forever, and the session's queued drive plus the claim it already
+ * placed are stranded. That is precisely the bug this whole mechanism was written
+ * to fix, re-created by its own fix.
+ *
+ * Sound because a question BLOCKS the turn: the model cannot reach its next tool
+ * until the human has answered, so a different tool starting is proof the window
+ * is down. The known imprecision is a model that batches `question` with another
+ * call in one message, where this clears early — and that is the right way to be
+ * wrong here, the same asymmetry `askUnanswered` documents: clearing early only
+ * restores the pre-guard behaviour for one idle tick, while a token nobody
+ * removes wedges the backlog behind a task no verb can free.
+ */
+export const noteOtherToolCall = (sessionID: string): void => settleQuestion(sessionID, null)
+
+/**
+ * Drop every window a session has open, without touching what it PROVED. Called
+ * where a window dies with no settlement anyone will report — an ESC, a `stop` —
+ * since `onIdle` refuses the session for as long as a token is there and nothing
+ * else would ever remove it.
+ *
+ * Deliberately leaves `questionsObservable` and `askArmed.asked` alone: clearing
+ * the first would silently disarm the refusal, and the second is the record that
+ * the ask was PUT, which has to survive the window either way.
+ */
+export const clearQuestionState = (sessionID: string): void => {
+  questionOpen.delete(sessionID)
+}
+
+const callToken = (callID: string): string => `call:${callID}`
+/** The token an event-reported window is filed under. The tool's callID when the
+ *  host says which call opened it (so the two sources agree), else the request
+ *  id, else one shared token — an unkeyed pair still opens and closes cleanly. */
+const eventToken = (properties: Record<string, unknown> | undefined): string => {
+  const callID = (properties?.tool as Record<string, unknown> | undefined)?.callID
+  if (typeof callID === "string" && callID) return callToken(callID)
+  const id = properties?.id
+  return typeof id === "string" && id ? `req:${id}` : "req:*"
+}
+
+/**
+ * Record a question event, and report whether it WAS one — the caller uses that
+ * to stop, since a question event is never also an idle event.
+ *
+ * The SECOND source, additive to the tool-call signal above: it is the only view
+ * of a window this plugin did not see opened as a tool call, and both sources
+ * converge on one token. The `question.v2.*` family is normalised to the legacy
+ * names first — the SDK's event union carries both, and which one a given host
+ * build delivers is not something this plugin should have to be right about.
+ *
+ * `question.asked` both proves questions are observable here and satisfies any
+ * ask a gate armed on this session; the two settlement events only close the
+ * window, because whether the ask was PUT has to survive the answer — that is the
+ * whole thing `askUnanswered` tests. Typed as `any` for the same reason
+ * `abortedSessionID` is: the plugin's event union is host-versioned, and an
+ * unknown shape must read as "not a question event", not fail the hook.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const noteQuestionEvent = (event: any): boolean => {
+  const raw: unknown = event?.type
+  if (typeof raw !== "string" || !raw.startsWith("question.")) return false
+  const type = raw.replace(/^question\.v2\./, "question.")
+  if (type !== "question.asked" && type !== "question.replied" && type !== "question.rejected") return false
+  const properties = event?.properties as Record<string, unknown> | undefined
+  const sessionID: unknown = properties?.sessionID
+  if (typeof sessionID !== "string" || !sessionID) return true
+  if (type === "question.asked") {
+    const token = eventToken(properties)
+    // Link request → call so a settlement naming only the request still cancels
+    // the token the tool call filed, rather than leaving it open forever.
+    if (typeof properties?.id === "string" && properties.id && token.startsWith("call:")) questionRequestCall.set(properties.id, token)
+    openQuestion(sessionID, token)
+  } else {
+    const requestID = properties?.requestID
+    if (typeof requestID === "string" && requestID) {
+      const linked = questionRequestCall.get(requestID)
+      questionRequestCall.delete(requestID)
+      settleQuestion(sessionID, linked ?? `req:${requestID}`)
+    } else {
+      // Unattributable: clear the session rather than leave a token no one will.
+      settleQuestion(sessionID, null)
+    }
+  }
+  return true
+}
+
+/** Is a question waiting on the human in this session? Read-only seam — the
+ *  wiring from `impl.ts`'s hooks is what it exists to make testable. */
+export const isQuestionOpen = (sessionID: string): boolean => (questionOpen.get(sessionID)?.size ?? 0) > 0
+
+/** Test seam: drop every per-session question/ask record. */
+export const resetAskState = (): void => {
+  questionsObservable.clear()
+  questionOpen.clear()
+  questionRequestCall.clear()
+  askArmed.clear()
+}
 /**
  * The clone's watch lease, refcounted per working directory: watch sessions in
  * THIS process share one on-disk lease (in-process races are covered by the
@@ -2112,6 +2310,7 @@ const stopWatching = async (deps: Deps, sessionID: string): Promise<boolean> => 
  * harmless no-op.
  */
 export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> => {
+  const interruptedSessionID = sessionID // kept: `sessionID` is reassigned to the driving/pass id below
   let state = getWorkflow(sessionID) // still set on the interrupt (the flag path keeps it)
   // Mid-drive the aborted assistant message belongs to the CHILD subtask
   // session (stages run as `subtask: true` commands), so the direct lookup
@@ -2148,7 +2347,18 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
     if (Date.now() < driverAbortExpiry) return
     driverAborts.delete(id) // expired — a later real ESC must not be swallowed
   }
-  // A real interrupt: stop the passes the user cannot see. They run in their own
+  // A real interrupt: an ESC on an open question dismisses the window, and
+  // whether the host reports that as a settlement is its business, not something
+  // this can depend on. An open token nothing ever removes is not a stale flag —
+  // `onIdle` returns on it, so the session's queued drive AND the on-disk claim
+  // it already placed are stranded for the life of the process, with every gate
+  // verb then refusing the task as "a loop is driving this NOW". Both ids: the
+  // window is up in the session the human ESC'd, which is not the driving one
+  // mid-drive. Synchronous, ahead of every await below, for the same reason
+  // `pending.delete` is.
+  clearQuestionState(interruptedSessionID)
+  clearQuestionState(sessionID)
+  // Stop the passes the user cannot see. They run in their own
   // sessions, so ESC on the driving session never reached them — without this
   // the remaining lens/axis turns keep burning after the user asked to stop.
   for (const id of passSessions.get(sessionID) ?? []) {
@@ -2202,6 +2412,25 @@ export const abortedSessionID = (event: any): string | undefined => {
  */
 export const onIdle = async (deps: Deps, sessionID: string, config: Config): Promise<void> => {
   if (driving.has(sessionID)) return
+  // A question window is open in this session, and a drive would bury it: stages
+  // run as `session.command` calls on the DRIVING session (concurrency 1), so
+  // claiming here takes over the very session the human is being asked in, and
+  // `setWorkflow` then makes every gate tool refuse until the chain unwinds.
+  // Returning before `pending.delete` leaves the work queued for the idle that
+  // follows the answer — the same shape as the `executingDirs` bail below.
+  //
+  // There is deliberately NO timeout on this: a window the human has not got to
+  // yet is legitimately open for hours, and expiring it would re-create the very
+  // bug the guard exists to stop. What bounds it instead is that every way a
+  // window can die without a settlement — ESC, `stop` — clears the session's
+  // tokens itself. The log is the tell when it is still somehow held: a session
+  // that silently never drives is otherwise indistinguishable from an idle one.
+  if (isQuestionOpen(sessionID)) {
+    if (pending.has(sessionID) || claimRequested.has(sessionID) || watching.has(sessionID)) {
+      void deps.log("info", `idle: not driving ${sessionID} — a question window is open; the work stays queued for the idle after the answer`)
+    }
+    return
+  }
   const work = pending.get(sessionID)
   // Nothing to do unless there's real pending work, a one-shot claim request,
   // or this is an idle watch session with no loop of its own currently running.
@@ -2429,7 +2658,7 @@ const gateCtx = (deps: Deps, config: Config): GateCtx => ({
  * the markdown's approve block survives only when the plugin never ran, and
  * is written as that tripwire.
  */
-export const handleApprove = async (deps: Deps, _sessionID: string, args: string, config: Config): Promise<string> => {
+export const handleApprove = async (deps: Deps, sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
   try {
@@ -2437,30 +2666,106 @@ export const handleApprove = async (deps: Deps, _sessionID: string, args: string
     // A task gate leaves an obvious next question, and this host DOES get a
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
-    // question window — the plugin can only observe and answer pending
-    // questions, never originate one.
-    return report(client, r.ok ? `${r.message}${gateNextStep(r.data)}` : r.message, gateVariant(r))
+    // question window — the plugin can only observe one, never originate it.
+    return report(client, r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : r.message, gateVariant(r))
   } catch (err) {
     return report(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
 }
 
 /**
- * The follow-up appended to a gate outcome, or "" when a gate leaves nothing to
- * ask (the terminal ship gate, or a core dist too old to report `data.gate`).
+ * The task id a gate result crossed the TASK gate for, or null for every other
+ * gate (and for a core dist too old to report `data.gate`).
+ *
+ * The ONE place the gate is derived. Never re-derive it from `message` — that is
+ * prose, and it gets reworded; `data.gate`/`data.id` are the contract core
+ * promises on every success arm, `alreadyDone` retries included.
+ */
+const taskGateId = (data: Record<string, unknown>): string | null =>
+  data.gate === "task" && typeof data.id === "string" ? data.id : null
+
+/**
+ * The follow-up a task gate leaves behind — also reused verbatim by
+ * `askUnanswered`, so a refusal restates the same call in the same words rather
+ * than a paraphrase the model has to reconcile with the one it already read.
  *
  * `NEXT STEP` is the label impl.ts's command-prompt override exempts from its
  * "report the result and stop" rule — the rule is there to stop the model
  * re-doing the plugin's deterministic work, not to forbid the one thing only the
  * model can do.
  */
-const gateNextStep = (data: Record<string, unknown>): string => {
-  const id = typeof data.id === "string" ? data.id : null
-  if (!id || data.gate !== "task") return ""
+const gateNextStep = (id: string): string =>
+  `\n\nNEXT STEP — ask the user with the \`question\` tool: "Plan \`${id}\` now?" (options: yes / not yet). ` +
+  `On yes, call the \`workflow_plan\` tool with id "${id}" — do NOT type or suggest a command, and do NOT approve anything else. ` +
+  `On no, stop: the task waits in queued/.`
+
+/**
+ * Arm the one-shot ask a task gate leaves behind, and return the prose that asks
+ * the model to put it. Arming and asking are one call so the two can never
+ * disagree about which gates ask — the failure that would either strand a plan
+ * behind a question nobody wants, or leave the refusal below unreachable.
+ *
+ * One armed ask per session (the most recent task gate). A slice set re-arms per
+ * child, which is the order the command's prose walks them in; the narrow miss —
+ * gating A, gating B, then planning A — is left, because this is a backstop
+ * against a skipped question, not a proof that every child was asked about.
+ *
+ * The `data.gate`-less arm is the loud one, and it has to be: `data.gate`/`data.id`
+ * live in CORE, which resolves to `packages/core/dist` — gitignored and rebuilt
+ * only by `npm install`, while the installed plugin points at the working tree. So
+ * pulling a new plugin against an old core dist lands exactly here, with `r.ok`
+ * true and no gate on it, and the silent result is BOTH halves of a real bug: no
+ * `NEXT STEP` reaches the model, and nothing is armed for `askUnanswered` to
+ * enforce, so `workflow_plan` claims the human's session without ever asking.
+ */
+export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>, log: Log): string => {
+  const id = taskGateId(data)
+  if (!id) {
+    // The plan and ship gates legitimately do not ask; only a MISSING gate is a
+    // defect worth reporting.
+    if (data.gate === undefined) {
+      void log(
+        "warn",
+        "gate succeeded but reported no `gate`/`id` — the @agentic-workflow/core dist predates the gate contract, so the " +
+          "'plan it now?' ask was NOT armed and workflow_plan will not be held for it. Run `npm install` at the agentic-workflow " +
+          "repo root and restart opencode.",
+      )
+    }
+    return ""
+  }
+  askArmed.set(sessionID, { id, asked: false })
+  return gateNextStep(id)
+}
+
+/**
+ * Refuse a `workflow_plan` that skipped the question its own task gate asked for,
+ * naming the exact call that unblocks it — or null when there is nothing to
+ * enforce.
+ *
+ * Three ways to pass, all deliberate: no gate armed an ask here (a plain
+ * `workflow_plan` on some older queued task is none of this rule's business), the
+ * armed id is not the one being planned, or a question HAS been opened since.
+ * And one bootstrap: a session where no question has ever been seen is never
+ * refused, so against a host that shows us neither the tool call nor the
+ * `question.*` events this degrades to the old behaviour instead of wedging
+ * planning outright. That exit is logged — it is the difference between "the
+ * human said yes" and "we could not tell", and the two used to look identical.
+ */
+const askUnanswered = (sessionID: string, id: string, log: Log): string | null => {
+  const armed = askArmed.get(sessionID)
+  if (!armed || armed.asked || armed.id !== id) return null
+  if (!questionsObservable.has(sessionID)) {
+    void log(
+      "warn",
+      `allowing workflow_plan on "${id}" without the gate's question: no question has ever been observed in session ${sessionID}, ` +
+        "so the guard cannot tell a skipped ask from an answered one. The human may not have been asked before their session was claimed.",
+    )
+    return null
+  }
   return (
-    `\n\nNEXT STEP — ask the user with the \`question\` tool: "Plan \`${id}\` now?" (options: yes / not yet). ` +
-    `On yes, call the \`workflow_plan\` tool with id "${id}" — do NOT type or suggest a command, and do NOT approve anything else. ` +
-    `On no, stop: the task waits in queued/.`
+    `Not yet — you approved "${id}" but never asked the human whether to plan it. ` +
+    `Planning claims the task and hands THIS session to the PLAN stage, after which nothing can ask them anything until it finishes, ` +
+    `so the question has to come first.${gateNextStep(id)}`
   )
 }
 
@@ -2502,7 +2807,7 @@ export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, c
   try {
     const r = await approveAny(gateCtx(deps, config), id.trim())
     await toast(deps.client, r.message, gateVariant(r))
-    return r.ok ? `${r.message}${gateNextStep(r.data)}` : r.message
+    return r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : r.message
   } catch (err) {
     return `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`
   }
@@ -2512,12 +2817,22 @@ export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, c
  * `workflow_plan` — the model-callable half of `plan <id>`, so the "plan it now?"
  * answer can be acted on in the same turn it was given. Delegates to the verb's
  * own handler, which owns the busy/liveness/claim-race guards.
+ *
+ * Gated on the question actually having been asked (`askUnanswered`): this call
+ * is the point of no return for the human's session, so "the model skipped the
+ * ask" must not be indistinguishable from "the human said yes".
  */
 export const planFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string> => {
   const refusal = await refuseIfDriven(deps, sessionID)
   if (refusal) return refusal
   const target = id.trim()
   if (!target) return "workflow_plan needs the task id."
+  const unasked = askUnanswered(sessionID, target, deps.log)
+  if (unasked) return unasked
+  // Spend the ask whatever startPlanById makes of it: a refusal there (busy
+  // session, lost claim race) is reported to the model, and re-demanding the
+  // question on the retry would just teach it to ask twice.
+  askArmed.delete(sessionID)
   // startPlanById reports through the toast and can return undefined; a tool must
   // answer the model in words, or it reads as an empty success.
   return (await startPlanById(deps, sessionID, target, config)) ?? `Planning "${target}" — it will park in plan-review/ for the human's gate.`
@@ -2863,6 +3178,11 @@ export const handleCommand = async (
   if ((verb === "stop" || verb === "abort") && !rest) {
     const wasWatching = await stopWatching(deps, sessionID)
     claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
+    // A window whose settlement never arrived would otherwise keep `onIdle`
+    // returning here for the life of the process — and `stop` is the verb a user
+    // reaches for precisely when a session has gone quiet on them, so it must be
+    // able to clear it. Same reason as the ESC path in `onInterrupt`.
+    clearQuestionState(sessionID)
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
     // Stop the fanned-out passes the user cannot see, exactly as onInterrupt
     // does: they run in their own sessions, so clearing the workflow alone
@@ -2988,20 +3308,45 @@ export const handleCommand = async (
           "warning",
         )
       }
-      // A dead stage marker naming the task is crash evidence — take the claim
-      // over now. No marker at all is ambiguous: a just-claimed live run spends
-      // minutes in its setup window (isolation, stage checks) BEFORE its first
-      // marker write, and an unconditional sweep there started a second drive
-      // on the same feature/<id> branch. There, only a claim stamp older than
-      // the base stale window authorizes the takeover.
-      const crashed = await taskNamedByStageMarker(deps.$, deps.directory, config.tasksDir, id)
-      if (!(await claimTaskSweepingStale(deps.$, task, crashed ? 0 : STALE_CLAIM_MINUTES))) {
+      // Two independent forms of crash evidence, either of which authorizes an
+      // immediate (`minutes: 0`) takeover:
+      //
+      //  - a DEAD stage marker naming the task — a run reached a stage and its
+      //    writer died;
+      //  - a claim stamp naming a pid on this machine that no longer exists —
+      //    which is the only evidence available when the run died BEFORE its
+      //    first stage marker (isolation, worktreeSetup/npm ci, check
+      //    discovery), the case that used to cost a 15-minute wait behind
+      //    advice ("stop it first") no other process can act on.
+      //
+      // Without either, the marker is ambiguous: a just-claimed live run spends
+      // minutes in that same setup window, and an unconditional sweep there
+      // started a second drive on the same feature/<id> branch. Only a claim
+      // stamp older than the base stale window authorizes the takeover there.
+      const namedByMarker = await taskNamedByStageMarker(deps.$, deps.directory, config.tasksDir, id)
+      // Skipped when the marker already settled it — the probe costs subprocesses.
+      const writer = namedByMarker ? "unknown" : await claimWriterState(deps.$, task)
+      // The dead-writer arm takes the IDENTITY-judged sweep, not `…Stale(t, 0)`:
+      // a zero age window cannot re-judge what the rename caught (see
+      // `releaseMarkerIfWriterDead`). The stage-marker arm keeps its existing
+      // zero-window path — its evidence is the marker, not the stamp.
+      const took = namedByMarker
+        ? await claimTaskSweepingStale(deps.$, task, 0)
+        : writer === "dead"
+          ? await claimTaskSweepingDeadWriter(deps.$, task)
+          : await claimTaskSweepingStale(deps.$, task, STALE_CLAIM_MINUTES)
+      if (!took) {
         return report(
           client,
-          crashed
+          namedByMarker || writer === "dead"
             ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
-            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
-                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
+            : writer === "alive"
+              ? `Task "${id}"'s claim is held by a live process on this machine that has not written a stage marker yet — ` +
+                  `it is probably still setting up (isolation, dependency install). Stop that run, or retry once its claim goes stale ` +
+                  `(${STALE_CLAIM_MINUTES} minutes).`
+              : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old, no stage marker exists yet, and its holder ` +
+                  `cannot be identified on this machine — the claiming run may still be setting up before its first stage. ` +
+                  `If you know it is gone, run ${ECMD} doctor fix; otherwise retry once the claim goes stale.`,
           "warning",
         )
       }
@@ -3113,6 +3458,11 @@ export const handleCommand = async (
           ...(await releaseOrphanedClaims(deps.$, tasks, ids, path.join(deps.directory, config.tasksDir, status), {
             isDriving: (id) => findSessionDriving(id) !== undefined || liveDriven.has(id),
             staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
+            // The window above is a proxy for "the claimer died"; the stamp can
+            // often prove it. Without this, doctor — the fallback the gate verbs
+            // send users to — could not clear a wedged marker for 75 minutes
+            // even when its process was demonstrably gone.
+            writerDead: (ref) => claimWriterDead(deps.$, ref),
             // Doctor releases a stale, undriven marker whatever the body says
             // (`isOrphanedStartedClaim`) — the default rule's `isClaimable`
             // gate made doctor useless against exactly the wedged markers the

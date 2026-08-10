@@ -151,11 +151,12 @@ Above the verdict, give:
 {{#host opencode}}
 - Your bash access is an allowlist of read/test commands. If the project's
   test command is denied by it, record ERROR and name the command — the
-  human can extend this agent's allowlist (or the project's `opencode.json`
-  permissions) for that runner. Never work around a denial.
+  human can grant that runner via `bashAllowlistExtra` in
+  `.agentic-workflow.json`. Never work around a denial.
 {{/host}}
 {{#host claude|qwen}}
 - Your Bash is restricted to read/test commands by a PreToolUse allowlist. If a
-  needed test command is blocked, record `ERROR` naming the command — never try
-  to work around the denial.
+  needed test command is blocked, record `ERROR` naming the command — the human
+  can grant that runner via `bashAllowlistExtra` in `.agentic-workflow.json`.
+  Never try to work around the denial.
 {{/host}}

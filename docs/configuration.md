@@ -549,6 +549,45 @@ it. The warnings are advisory: they annotate a save, never block it. See
   retarget planning, or vice versa. Setting `agentModels` never affects a stage;
   setting `stageModels` never affects drafting.
 
+- **`bashAllowlistExtra`** — extra bash globs appended to **every stage that
+  declares an allowlist** (check stages, and allowlisted work stages like
+  pr-sitter's publish), after the manifest's own `bashAllowlist`. The
+  per-project/per-user escape hatch for an environment the shipped manifests
+  cannot know:
+
+  ```json
+  {
+    "bashAllowlistExtra": ["rtk *"]
+  }
+  ```
+
+  Two situations call for it:
+
+  - **A project-specific runner.** VERIFY records ERROR naming a denied test
+    command (`mise run test`, a bespoke script) — grant it here rather than
+    editing the workflow manifest. Discovered checks honor the extras too, so a
+    plan may name the granted runner.
+  - **A command-rewriting proxy.** An rtk-style token saver rewrites every bash
+    command (`git status` → `rtk git status`) *before* OpenCode evaluates
+    permissions, and OpenCode matches the **whole** command string — so every
+    allowlisted command reaches the matcher in a shape no shipped glob matches,
+    and every check stage starves into ERROR. `"rtk *"` accepts whatever the
+    proxy emits; the proxy itself needs no change.
+
+  Declare **bare globs only** — the worktree `cd * && ` twins are derived where
+  a host needs them, the same rule the manifests follow. A stage that declares
+  no allowlist (engineering BUILD) stays unrestricted and gets nothing.
+
+  These globs **widen the stage scope boundary** — that is their purpose — so
+  breadth is your call: `"rtk *"` accepts anything the proxy emits, finer globs
+  (`"rtk git *"`, `"rtk npm *"`) chase its rewrite registry. The allowlist is a
+  scope boundary against a confused agent, not a sandbox (see the threat
+  model), but grant what your environment needs, not more.
+
+  Takes effect like `agentModels`: next spawn on Claude Code, next **opencode
+  restart** on OpenCode (the plugin's `config` hook appends the grants to each
+  sentinel-guarded agent's permission map).
+
 ## Admin hub (`hub` — user scope only)
 
 The hub reads its settings from the `hub` section of the **user-scope**

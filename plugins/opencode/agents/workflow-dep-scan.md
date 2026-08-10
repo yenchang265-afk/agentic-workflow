@@ -2,6 +2,9 @@
 description: Scanner for the dep sitter's SCAN stage. Read-only confirmation that a dependency advisory/upgrade is still real (npm audit/outdated/view on npm; osv-scanner over pom.xml or the Gradle lockfile on the JVM), emitted as an upgrade work order plus a workflow_verdict (PASS = upgrade needed). Never edits, never installs.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -44,6 +47,8 @@ permission:
     "grep *": allow
     "find *": allow
     "wc *": allow
+tools:
+  question: false
 ---
 
 You are the **workflow-dep-scan** subagent — the SCAN stage of the dep-sitter loop

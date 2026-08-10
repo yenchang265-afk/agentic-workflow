@@ -2,6 +2,9 @@
 description: Reviewer for the REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against the build's diff and records a WORKFLOW_REVIEW verdict via the workflow_verdict tool. On FAIL, the loop re-builds (not re-plans) — the plan is assumed sound; the implementation isn't. Read-only; an allowlist restricts bash to inspection commands.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -40,6 +43,8 @@ permission:
     "cd * && find *": allow
     "wc *": allow
     "cd * && wc *": allow
+tools:
+  question: false
 ---
 
 You are the **review** subagent — the worker for the REVIEW stage of the

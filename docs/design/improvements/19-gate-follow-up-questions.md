@@ -9,7 +9,15 @@ the new `plugins/claude/hooks/gate-ask.mjs` with `continueOnGate` in
 `gate-parse.mjs` and the conditional arm in `gate-command.mjs`, `okGate` on the
 three approve tools, the rewritten `approve` block + `approve|plan` marker in
 `prompts/verbs/engineering.md`, and `workflow_gate`/`workflow_plan` +
-`refuseIfDriven` in `plugins/opencode/src/workflow/driver.ts`; `gate.test.ts`,
+`refuseIfDriven` in `plugins/opencode/src/workflow/driver.ts`, and — after the
+prose alone proved skippable — `armTaskGateAsk`/`askUnanswered`/`noteQuestionEvent`
+plus `onIdle`'s question guard there, with the question events and the detached
+drive wired in `plugins/opencode/src/impl.ts`; and — after that mechanism in turn
+proved able to go inert without saying so — the `question` tool call as its
+primary signal (`noteQuestionToolCall`/`noteQuestionToolSettled`/`noteOtherToolCall`
+over `tool.execute.before`/`.after`), per-window tokens, `question.v2.*`
+normalisation, `clearQuestionState` on ESC/`stop`, and a warning on each of the two
+silent fail-open exits; `gate.test.ts`,
 `gate-ask.test.mjs`, `gate-result.test.mjs`, `gate-parse.test.mjs`,
 `gate-command.test.mjs`, `dialect.test.mjs`, `verb-slice.test.mjs`,
 `driver.test.ts`, `impl.test.ts`.
@@ -100,13 +108,89 @@ its driving ancestor, and it fails **closed**: a false refusal costs one typed
 command, a false allow ships unreviewed work. That is the opposite asymmetry to
 the Claude spawn guard's, and deliberately so.
 
+### The ask needed a mechanism, not just prose asking for it
+
+Shipping the `NEXT STEP` line was not enough, and the gap showed up in use: the
+window never opened, and the TUI sat running something the user had not asked
+for. An orchestrator that reads the line and goes straight to `workflow_plan`
+loses the question **permanently** — that call claims the task, and the drive it
+queues runs its stages as `session.command` calls on the driving session, after
+which `refuseIfDriven` and the lack of a free model turn leave no channel to ask
+anything until the chain unwinds. Same class as `stageModels`: the orchestrator is
+exactly the thing that does not reliably follow prose, so the prose gets a
+mechanism behind it.
+
+- **`askArmed` / `askUnanswered` (`driver.ts`).** A task gate arms a one-shot ask
+  keyed to the id it moved; `planFromAgent` refuses that id until a question has
+  actually been opened, restating the exact call that unblocks it. Arming and the
+  `NEXT STEP` text are one function (`armTaskGateAsk`) so the two can never
+  disagree about which gates ask.
+- **The signal is the `question.asked` / `question.replied` / `question.rejected`
+  events** (`noteQuestionEvent`, wired into the plugin's `event` hook). The plugin
+  still cannot originate a question — it can only watch one open.
+- **`onIdle` returns while a question is open**, before `pending.delete`, so the
+  queued drive waits for the idle *after* the answer. Without it a `watch`/`claim`
+  session takes itself over on top of a window that is already up.
+- **Both fail OPEN**, gated on `questionsObservable`: a session where no question
+  has ever been seen is never refused, so against a host that does not emit those
+  events the rules go inert instead of stranding an approved task no verb can
+  plan. The opposite asymmetry to `refuseIfDriven`, for the opposite reason — a
+  false refusal there costs one typed command, here it wedges the backlog.
+- **The `event` hook no longer awaits the drive.** `onIdle` is the entry to the
+  whole build → verify → review chain, so awaiting it parked that handler — and
+  the ESC path shares it — for as long as the chain ran.
+
+### A mechanism that can go inert without saying so is still prose
+
+The report that reopened this: approve the draft, no "plan it now?" window, and a
+session that then sits busy with nothing running. Everything above was in place.
+It could all still evaporate, and three seams are why — each of them silent, which
+is what let one ship on top of another.
+
+- **The event names are the host's, not ours.** The SDK's event union carries the
+  same window under two families (`question.asked` and `question.v2.asked`, both
+  carrying `sessionID`). One wrong guess and `questionsObservable` never fills, so
+  `askUnanswered` waves every plan through and `onIdle`'s guard never engages — the
+  fail-open design working exactly as designed, on an input that was wrong. So the
+  **primary** signal is now the model's own `question` TOOL CALL, seen through
+  `tool.execute.before`/`.after`, a seam this plugin owns; `noteQuestionEvent`
+  stays as an additive second source and normalises `question.v2.*` down first.
+  Observability can no longer be false while the ask is possible, because the same
+  act proves both.
+- **The two sources must be one record.** The asked event carries `tool.callID` —
+  the same id the tool hooks carry — so windows are keyed by that TOKEN. The old
+  per-session flag both double-counted and lost a real case: one message can open
+  two windows, and the first settlement cleared the flag while the second was
+  still up, handing the session to a drive underneath it.
+- **A token nobody removes is worse than no token.** `onIdle` returns on it for
+  the life of the process, stranding the queued drive *and* the on-disk claim it
+  already placed, after which every gate verb refuses the task as "a loop is
+  driving this NOW". There is deliberately **no timeout** — a window the human has
+  not got to yet is legitimately open for hours — so what bounds it is that every
+  silent death clears it: ESC (`onInterrupt`, both the interrupted id and the
+  resolved driving one), the `stop` verb, and any other tool starting in that
+  session. That last one is the valve against a `tool.execute.after` that never
+  fires, and it is sound because a question blocks the turn: reaching another tool
+  proves the human already answered.
+- **The deny runs before the recorder.** A stage's refused ask never reached the
+  human, so recording it would satisfy an armed gate ask nobody saw.
+- **`armTaskGateAsk` returning `""` is the loudest failure and used to be mute.**
+  `data.gate`/`data.id` come from core, which resolves to `packages/core/dist` —
+  gitignored, rebuilt only by `npm install`, while the installed plugin points at
+  the working tree. A new plugin against an old core dist lands there with `r.ok`
+  true and no gate on it, which is both halves of the bug at once: no `NEXT STEP`
+  for the model, and nothing armed to enforce. It warns now, naming the fix. The
+  other fail-open exit (`askUnanswered`'s bootstrap) warns too — "the human said
+  yes" and "we could not tell" produced the same outcome and the same empty log.
+
 ## What is deliberately not done
 
 - **Ask #3 on OpenCode.** The PLAN pass finishes inside the background
   `session.idle` driver, after the turn has ended, so no model turn exists to
-  host a question — and `@opencode-ai/plugin` exposes Question as
-  list/reply/reject plus a read-only `tui.question`, i.e. a plugin can answer a
-  pending question but cannot originate one. `client.session.prompt` could fire
+  host a question — and a plugin cannot originate one: the SDK's Question API is
+  not on `PluginInput["client"]`, and the read-only `tui.question` view belongs
+  to the TUI plugin surface a normal plugin does not get. It can only *observe*
+  one, through the `question.*` events. `client.session.prompt` could fire
   a fresh turn from `onIdle`, but that re-enters the very event the watch/claim
   loop keys off — a recursion hazard in the driver's trigger. The plan gate
   stays a toast there, and the command now says why.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import os from "node:os"
 import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-workflow/core/task/store"
 import { serializeTask } from "@agentic-workflow/core/task/schema"
@@ -9,20 +10,27 @@ import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflo
 import type { Config } from "../config.ts"
 import {
   abortedSessionID,
+  armTaskGateAsk,
   claimSkipReason,
   configSources,
   deriveActivity,
   drive,
   handleApprove,
+  isQuestionOpen,
+  noteQuestionToolCall,
+  noteQuestionToolSettled,
   handleCommand,
   handleAbandon,
   handleRemove,
   handleReplan,
   manifestFor,
   noteEvidence,
+  noteQuestionEvent,
+  onIdle,
   onInterrupt,
   parsePrTarget,
   planFromAgent,
+  resetAskState,
   parseWatchArgs,
   recordVerdict,
   findDrivingWorkflow,
@@ -313,6 +321,11 @@ type ShellOverride = { cmd: string; result: { exitCode?: number; stdout?: string
 const makeShellFS = (files: Record<string, string>, log: string[], overrides: ShellOverride[] = []) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[k.startsWith("/") ? k : `/repo/${k}`] = v
+  // Directories created by a bare `mkdir` — the claim marker's atomicity is
+  // "mkdir fails on an existing dir", so a fake that always succeeds cannot
+  // model a claim takeover (release, then win the same path).
+  const mkdirs = new Set<string>()
+  const isDir = (p: string): boolean => mkdirs.has(p) || Object.keys(fs).some((k) => k.startsWith(`${p}/`))
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -342,6 +355,18 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
       out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]!, stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
     } else if (parts[0] === "test" && (parts[1] === "-f" || parts[1] === "-e")) {
       out = { exitCode: parts[2]! in fs ? 0 : 1, stdout: "", stderr: "" }
+    } else if (parts[0] === "mkdir") {
+      if (parts[1] === "-p") {
+        mkdirs.add(parts[2]!)
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      } else if (isDir(parts[1]!)) {
+        out = { exitCode: 1, stdout: "", stderr: "File exists" } // EEXIST — the atomic loser
+      } else {
+        mkdirs.add(parts[1]!)
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      }
+    } else if (parts[0] === "test" && parts[1] === "-d") {
+      out = { exitCode: isDir(parts[2]!) ? 0 : 1, stdout: "", stderr: "" }
     } else if (parts[0] === "mv") {
       // `-n` is modelled, not skipped: production relies on it to make the kernel
       // arbitrate a concurrent create.
@@ -353,12 +378,34 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
         fs[dest] = fs[src]!
         delete fs[src]
         out = { exitCode: 0, stdout: "", stderr: "" }
+      } else if (isDir(src)) {
+        // A directory move carries its contents — which is what lets the claim
+        // sweep's rename-aside re-judge the stamp it actually caught.
+        for (const k of Object.keys(fs)) {
+          if (!k.startsWith(`${src}/`)) continue
+          fs[dest + k.slice(src.length)] = fs[k]!
+          delete fs[k]
+        }
+        mkdirs.delete(src)
+        mkdirs.add(dest)
+        out = { exitCode: 0, stdout: "", stderr: "" }
       } else {
         out = { exitCode: 1, stdout: "", stderr: `mv: cannot stat '${src}'` }
       }
+    } else if (parts[0] === "rmdir") {
+      mkdirs.delete(parts[1]!)
+      out = { exitCode: 0, stdout: "", stderr: "" }
     } else if (parts[0] === "rm") {
-      // rm [-f] <path…> — drop any listed paths from the fake fs (missing is fine).
-      for (const p of parts.slice(1)) if (p !== "-f" && p in fs) delete fs[p]
+      // rm [-rf] <path…> — drop the listed paths (and, with -r, anything under
+      // them) from the fake fs; missing is fine.
+      const recursive = parts.some((p) => p.startsWith("-") && p.includes("r"))
+      for (const p of parts.slice(1)) {
+        if (p.startsWith("-")) continue
+        delete fs[p]
+        if (!recursive) continue
+        mkdirs.delete(p)
+        for (const k of Object.keys(fs)) if (k.startsWith(`${p}/`)) delete fs[k]
+      }
       out = { exitCode: 0, stdout: "", stderr: "" }
     } else if (parts[0] === "ls" && parts[1]) {
       // Short-id resolution lists a status folder — serve the fake fs's basenames.
@@ -524,6 +571,93 @@ test("recover <id> refuses a fresh claim with no stage marker (pre-marker setup 
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /still be setting up before its first stage/, toasts[0]?.message)
+})
+
+/** A pid no probe in these tests reports as running. */
+const DEAD_PID = 999_201
+
+/** The `recover` fixture: a started, planned task whose claim marker is held. */
+const heldClaimFixture = (stamp: Record<string, unknown>) => ({
+  "docs/tasks/in-progress/t.md": serializeTask({
+    title: "Maybe crashed",
+    body: `${PLAN_HEADING}\n\n1. Step.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]`,
+  }),
+  "docs/tasks/in-progress/.claims/t/claim.json": JSON.stringify(stamp),
+})
+
+/** Probe results that make DEAD_PID provably gone and this process provably live. */
+const deadPidProbes: ShellOverride[] = [
+  { cmd: `kill -0 ${String(DEAD_PID)}`, result: { exitCode: 1 } },
+  { cmd: `test -d /proc/${String(DEAD_PID)}`, result: { exitCode: 1 } },
+  { cmd: `test -d /proc/${String(process.pid)}`, result: { exitCode: 0 } },
+]
+
+test("recover <id> takes over immediately when the claim's writer is provably dead", async () => {
+  // The reported bug: a run that died BEFORE writing its first stage marker left
+  // no crash evidence, so recover made the human wait out the 15-minute window
+  // behind advice ("stop it first") that no other process can act on. The claim
+  // stamp's own writer pid is the evidence that exists in that window.
+  const fixture = heldClaimFixture({ claimedAt: new Date().toISOString(), pid: DEAD_PID, host: os.hostname() })
+  // No state snapshot on disk — the crash happened before the first stage, so
+  // recover re-enters at BUILD from the persisted plan.
+  const { client, toasts } = makeClientFS(fixture)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(fixture, log, deadPidProbes), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-recover-deadwriter", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /Recovering/, toasts[0]?.message)
+  // The takeover is the atomic rename-aside, never a blind rmdir + mkdir.
+  assert.ok(
+    log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ") && c.includes(".claims/t.dead-")),
+    "swept through the rename-aside",
+  )
+})
+
+test("recover <id> still refuses while the claim's writer is alive", async () => {
+  // A live claimer inside its setup window is exactly what the wall-clock window
+  // exists to protect; only the unactionable advice changes.
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(heldClaimFixture({ claimedAt: new Date().toISOString(), pid: process.pid, host: os.hostname() }), log, [
+      { cmd: `kill -0 ${String(process.pid)}`, result: { exitCode: 0 } },
+    ]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess-recover-livewriter", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  const msg = toasts[0]?.message ?? ""
+  assert.match(msg, /held by a live process on this machine/, msg)
+  assert.doesNotMatch(msg, /Stop it first/, "the advice a crashed claimer made unactionable is gone")
+  assert.ok(
+    !log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ")),
+    "a live claim is never swept",
+  )
+})
+
+test("recover <id> refuses a dead-pid claim stamped on ANOTHER machine", async () => {
+  // A repo shared across machines or sibling containers: a pid from over there
+  // says nothing here, and concluding death would start a second drive.
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(heldClaimFixture({ claimedAt: new Date().toISOString(), pid: DEAD_PID, host: "some-other-box" }), log, deadPidProbes),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess-recover-foreign", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /cannot be identified on this machine/, toasts[0]?.message)
+  assert.ok(!log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ")))
 })
 
 test("plan <id> on a plan-review task points at the gate verbs, no move", async () => {
@@ -772,6 +906,323 @@ test("a gate tool refuses when it cannot tell which session is calling", async (
 
   assert.match(await gateFromAgent(deps, "sess-unknown", "my-task", testConfig), /refusing the gate move/)
   assert.ok(!log.some((cmd) => cmd.includes("mv")))
+})
+
+/**
+ * The "plan it now?" ask, and why it is a MECHANISM rather than the prose that
+ * asks for it.
+ *
+ * `workflow_plan` is the point of no return for the human's session: it claims
+ * the task, and the drive that follows runs its stages as `session.command` calls
+ * on that same session, after which `refuseIfDriven` and the absence of a free
+ * model turn mean nothing can ask them anything until the chain unwinds. So an
+ * orchestrator that reads the `NEXT STEP` line and skips straight to
+ * `workflow_plan` produces exactly the reported symptom — no window, and a PLAN
+ * pass already running. The refusal below is what makes "the model skipped the
+ * ask" distinguishable from "the human said yes".
+ */
+const asked = (sessionID: string) => noteQuestionEvent({ type: "question.asked", properties: { sessionID } })
+const answered = (sessionID: string) => noteQuestionEvent({ type: "question.replied", properties: { sessionID } })
+
+const draftFixture = () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  return { files, client, toasts, log, deps }
+}
+
+test("workflow_plan refuses when the gate's question was never put to the human", async () => {
+  resetAskState()
+  const sessionID = "sess-skips-the-ask"
+  const { deps, log } = draftFixture()
+  // The `new` interview's own "Approve <id> now?" — this is what proves questions
+  // are observable in this session at all.
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  const before = log.length
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+
+  assert.match(out, /never asked the human/, `unexpected: ${out}`)
+  assert.match(out, /NEXT STEP/, "a refusal that does not say what to do instead just stalls the turn")
+  assert.deepEqual(log.slice(before), [], "a refused workflow_plan must not claim, resolve, or move anything")
+})
+
+test("workflow_plan proceeds once the question has actually been asked", async () => {
+  resetAskState()
+  const sessionID = "sess-asks-properly"
+  const { deps } = draftFixture()
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  asked(sessionID) // "Plan `my-task` now?"
+  answered(sessionID) // …yes
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+})
+
+/**
+ * The bootstrap that keeps this fail-OPEN. Enforcement applies only to a session
+ * where a question has been seen, so against a host that never emits the events
+ * the rule goes inert instead of stranding every task behind a question nothing
+ * can ask. A false allow only restores the old behaviour; a false refusal leaves
+ * an approved task no verb can plan.
+ */
+test("workflow_plan is never refused in a session where questions are not observable", async () => {
+  resetAskState()
+  const sessionID = "sess-no-questions-here"
+  const { deps } = draftFixture()
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+})
+
+test("the armed ask is one-shot — a second workflow_plan is not re-refused", async () => {
+  resetAskState()
+  const sessionID = "sess-one-shot"
+  const { deps } = draftFixture()
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(await planFromAgent(deps, sessionID, "my-task", testConfig), /never asked the human/)
+  asked(sessionID)
+  answered(sessionID)
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  // The ask is spent by the call that satisfied it: re-demanding it on a retry
+  // would teach the orchestrator to ask the same question twice.
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.doesNotMatch(out, /never asked the human/, `unexpected: ${out}`)
+})
+
+/**
+ * The other half of the same bug. Even a model that asks correctly loses the
+ * window if an idle tick hands the session to a drive while it is up — stages run
+ * on the DRIVING session, so claiming here takes over the very session the human
+ * is being asked in.
+ */
+test("onIdle drives nothing while a question is open, and leaves the work queued", async () => {
+  resetAskState()
+  const sessionID = "sess-mid-question"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client } = makeClientFS(files)
+  const commands: string[] = []
+  const log: string[] = []
+  const withCommand = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client: withCommand, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  // Queue a PLAN drive the way `workflow_plan` does, then open a question.
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  asked(sessionID)
+  await onIdle(deps, sessionID, testConfig)
+  assert.deepEqual(commands, [], "a drive must not take over a session the human is being asked in")
+
+  // The answer lands; the work was still queued, so the next idle drains it.
+  answered(sessionID)
+  await onIdle(deps, sessionID, testConfig)
+  assert.deepEqual(commands, ["plan-task"], "returning before pending.delete must leave the drive to the next idle, not drop it")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The bus events are named by the HOST, and the SDK's event union carries two
+ * families for one window (`question.asked` and `question.v2.asked`, both with a
+ * `sessionID`). Which one a given build delivers is not something this plugin can
+ * be relied on to have guessed right — and getting it wrong is invisible, because
+ * every rule downstream fails open. So both are accepted.
+ */
+test("the v2 question event names are the same window under another name", async () => {
+  resetAskState()
+  const sessionID = "sess-v2-events"
+  const { deps } = draftFixture()
+
+  assert.equal(noteQuestionEvent({ type: "question.v2.asked", properties: { sessionID } }), true, "a v2 event is still a question event, not an idle one")
+  assert.ok(isQuestionOpen(sessionID), "a v2 window is a window")
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  noteQuestionEvent({ type: "question.v2.asked", properties: { sessionID } }) // "Plan `my-task` now?"
+  noteQuestionEvent({ type: "question.v2.replied", properties: { sessionID } })
+  assert.ok(!isQuestionOpen(sessionID), "a v2 settlement must close what a v2 ask opened")
+
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The signal that does not depend on a host event name at all: the model's own
+ * `question` tool call, seen through the plugin's own `tool.execute.*` hooks. If
+ * the events go quiet — renamed, unbridged, not forwarded to plugins — this is
+ * what still tells the gate its question was put. Without it, `f71f5d2`'s whole
+ * mechanism degrades to nothing with no way to tell from a transcript.
+ */
+test("a question TOOL CALL alone satisfies the gate's ask, with no bus event at all", async () => {
+  resetAskState()
+  const sessionID = "sess-tool-only"
+  const { deps } = draftFixture()
+  noteQuestionToolCall(sessionID, "call-approve") // "Approve `my-task` now?"
+  noteQuestionToolSettled(sessionID, "call-approve")
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(await planFromAgent(deps, sessionID, "my-task", testConfig), /never asked the human/, "the tool-call source must enforce, not just observe")
+
+  noteQuestionToolCall(sessionID, "call-plan") // "Plan `my-task` now?"
+  assert.ok(isQuestionOpen(sessionID), "an open tool call is an open window — onIdle must hold off")
+  noteQuestionToolSettled(sessionID, "call-plan")
+  assert.ok(!isQuestionOpen(sessionID))
+
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+  clearWorkflow(sessionID)
+})
+
+/**
+ * Both sources report the SAME window in the normal case, and the asked event
+ * carries the tool's own `callID` — so they have to converge on one record. Under
+ * a per-session flag they did; under per-window tokens they only do if the token
+ * is derived from that callID, and getting it wrong leaves a token no settlement
+ * removes, which is a session `onIdle` never drives again.
+ */
+test("the tool call and its bus event are one window, not two", async () => {
+  resetAskState()
+  const sessionID = "sess-both-sources"
+  noteQuestionToolCall(sessionID, "c1")
+  noteQuestionEvent({ type: "question.asked", properties: { sessionID, id: "req-1", tool: { messageID: "m1", callID: "c1" } } })
+  // One settlement, naming only the request — the link back to the call is what
+  // makes it close the token the tool call filed.
+  noteQuestionEvent({ type: "question.replied", properties: { sessionID, requestID: "req-1" } })
+  assert.ok(!isQuestionOpen(sessionID), "two reports of one window must not need two settlements")
+})
+
+test("a settlement nobody can attribute clears the session rather than leaking a token", () => {
+  resetAskState()
+  const sessionID = "sess-unattributable"
+  noteQuestionToolCall(sessionID, "c1")
+  // No requestID to resolve: a token left behind here is permanent, and `onIdle`
+  // returns on it for the life of the process.
+  noteQuestionEvent({ type: "question.rejected", properties: { sessionID } })
+  assert.ok(!isQuestionOpen(sessionID))
+})
+
+/**
+ * One assistant message may open two windows. A per-session flag loses this: the
+ * first settlement clears it and a drive claims the session out from under the
+ * window still up — the exact bug the guard exists to stop.
+ */
+test("settling one of two open windows leaves the session non-claimable", () => {
+  resetAskState()
+  const sessionID = "sess-two-windows"
+  noteQuestionToolCall(sessionID, "c1")
+  noteQuestionToolCall(sessionID, "c2")
+  noteQuestionToolSettled(sessionID, "c1")
+  assert.ok(isQuestionOpen(sessionID), "the second window is still up")
+  noteQuestionToolSettled(sessionID, "c2")
+  assert.ok(!isQuestionOpen(sessionID))
+})
+
+/**
+ * The wedge this fix exists to close. `onIdle` returns while a window is open and
+ * does so BEFORE `pending.delete`, so a window that dies without a settlement
+ * strands the queued drive and the on-disk claim it already placed — for the life
+ * of the process, with every gate verb then refusing the task as "a loop is
+ * driving this NOW". ESC is the way a window dies silently, so ESC has to clear
+ * it; there is deliberately no timeout, because a window the human has not got to
+ * yet is legitimately open for hours.
+ */
+test("ESC on an open question un-wedges the session instead of stranding its drive", async () => {
+  resetAskState()
+  const sessionID = "sess-esc-mid-question"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client } = makeClientFS(files)
+  const commands: string[] = []
+  const log: string[] = []
+  const withCommand = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client: withCommand, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  noteQuestionToolCall(sessionID, "c1")
+  await onIdle(deps, sessionID, testConfig)
+  assert.ok(isQuestionOpen(sessionID))
+
+  await onInterrupt(deps, sessionID)
+  assert.ok(!isQuestionOpen(sessionID), "a dismissed window must not outlive the turn it was opened in")
+
+  // And the session works again: a fresh claim drives rather than silently returning.
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  await onIdle(deps, sessionID, testConfig)
+  assert.deepEqual(commands, ["plan-task"], "onIdle must be reachable again after the interrupt")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * `data.gate`/`data.id` come from CORE, which resolves to `packages/core/dist` —
+ * gitignored, rebuilt only by `npm install`, while the installed plugin points at
+ * the working tree. A new plugin against an old core dist therefore lands here
+ * with `r.ok` true and no gate on it, and used to do so in total silence: no
+ * `NEXT STEP` for the model to follow AND nothing armed for `askUnanswered` to
+ * enforce, so the human's session was claimed without ever being asked.
+ */
+test("a gate result with no gate says so, instead of dropping the ask silently", () => {
+  resetAskState()
+  const sessionID = "sess-stale-core"
+  const warnings: string[] = []
+  const log = (level: string, message: string) => void (level === "warn" && warnings.push(message))
+
+  // What a core dist predating the gate contract returns: the move landed, the
+  // data that says WHICH gate did not.
+  assert.equal(armTaskGateAsk(sessionID, { approved: true }, log), "", "there is no id to ask about")
+  assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`)
+  assert.match(warnings[0]!, /npm install/, "the warning has to name the fix, or it is just noise")
+
+  // The plan and ship gates legitimately do not ask — warning on those would
+  // train the operator to ignore the one that matters.
+  assert.equal(armTaskGateAsk(sessionID, { approved: true, gate: "plan", id: "my-task" }, log), "")
+  assert.equal(warnings.length, 1, "a gate that simply does not ask is not a defect")
+})
+
+/**
+ * The fail-OPEN exit, which must stay open (a false refusal strands an approved
+ * task no verb can plan) but must no longer be silent: "the human said yes" and
+ * "we could not tell" produced the same outcome and the same empty log.
+ */
+test("waving through a plan we could not check is logged", async () => {
+  resetAskState()
+  const sessionID = "sess-unobservable"
+  const warnings: string[] = []
+  const { deps } = draftFixture()
+  const noted: Deps = { ...deps, log: (level, message) => level === "warn" && warnings.push(message) }
+
+  await gateFromAgent(noted, sessionID, "my-task", testConfig)
+  const out = await planFromAgent(noted, sessionID, "my-task", testConfig)
+
+  assert.match(out, /Loop started on "Do the thing" — planning…/, "fail-open: never refuse what we cannot observe")
+  assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`)
+  assert.match(warnings[0]!, /no question has ever been observed/)
+  clearWorkflow(sessionID)
 })
 
 test("/approve with no id ships the single in-review task to completed/", async () => {
@@ -1856,7 +2307,15 @@ test("a fan-out stage refreshes the stage-marker deadline and claim stamp per pa
       },
     },
   } as unknown as Deps["client"]
-  const deps: Deps = { client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  // The claim marker must actually be HELD for a restamp to be observable —
+  // `restampMarker` no-ops on an absent marker so it can never resurrect a
+  // released claim, which is exactly what this test would otherwise measure.
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/in-progress/.claims/t/claim.json": JSON.stringify({ claimedAt: new Date().toISOString() }) }, shellLog),
+    directory: "/repo",
+    log: () => {},
+  }
   try {
     await runStagePasses(
       deps,

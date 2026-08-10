@@ -3,7 +3,8 @@ import { test } from "node:test"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { parseConfig } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
-import { agentModelPatch, applyAgentModels, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { agentModelPatch, applyAgentModels, applyBashAllowlistExtras, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { isQuestionOpen, resetAskState } from "./workflow/driver.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -13,7 +14,12 @@ import { agentModelPatch, applyAgentModels, draftModelNote, makeAgenticWorkflow 
  * every stage subagent (edits landed in the human's main tree).
  */
 
-type Hooks = { "tool.execute.before": (input: { sessionID: string; tool: string; callID: string }, output: { args: Record<string, unknown> }) => Promise<void> }
+type Hooks = {
+  "tool.execute.before": (input: { sessionID: string; tool: string; callID: string }, output: { args: Record<string, unknown> }) => Promise<void>
+  "tool.execute.after": (input: { sessionID: string; tool: string; callID: string }) => Promise<void>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  event: (input: { event: any }) => Promise<void>
+}
 
 const makeHooks = async (
   sessions: Record<string, string | undefined>,
@@ -99,11 +105,137 @@ test("worktree pinning fires for a stage subagent's child session (the dead-guar
   }
 })
 
+/**
+ * The plugin cannot ORIGINATE a question, so these events are its only view of
+ * one: they are what tells the driver a gate follow-up was actually put to the
+ * human, and what stops an idle tick handing the session to a drive while the
+ * window is up. The event NAMES are the risk this pins — get one wrong and both
+ * guards go silently inert (fail-open by design), which is exactly the failure
+ * mode that is invisible in a transcript.
+ */
+test("the event hook routes question events to the driver", async () => {
+  resetAskState()
+  const hooks = await makeHooks({ q: undefined })
+
+  await hooks.event({ event: { type: "question.asked", properties: { sessionID: "q" } } })
+  assert.ok(isQuestionOpen("q"), "a question window is up — onIdle must not claim this session")
+
+  await hooks.event({ event: { type: "question.replied", properties: { sessionID: "q" } } })
+  assert.ok(!isQuestionOpen("q"), "the answer landed — the session is claimable again")
+
+  await hooks.event({ event: { type: "question.asked", properties: { sessionID: "q" } } })
+  await hooks.event({ event: { type: "question.rejected", properties: { sessionID: "q" } } })
+  assert.ok(!isQuestionOpen("q"), "a dismissed question must not wedge the session either")
+
+  // The SDK's event union carries the same window under two name families, and
+  // which one a host build delivers is not this plugin's to guess.
+  await hooks.event({ event: { type: "question.v2.asked", properties: { sessionID: "q" } } })
+  assert.ok(isQuestionOpen("q"), "a v2 ask is an ask")
+  await hooks.event({ event: { type: "question.v2.replied", properties: { sessionID: "q" } } })
+  assert.ok(!isQuestionOpen("q"), "a v2 settlement is a settlement")
+  resetAskState()
+})
+
+/**
+ * The signal the plugin OWNS. Event names belong to the host and can be renamed
+ * or unbridged; `tool.execute.before`/`.after` cannot, so the gate's "plan it
+ * now?" enforcement is anchored here and the events are only a second source.
+ */
+test("the question tool's own call is what opens and closes the window", async () => {
+  resetAskState()
+  const hooks = await makeHooks({ asker: undefined })
+
+  await hooks["tool.execute.before"]({ sessionID: "asker", tool: "question", callID: "c1" }, { args: { question: "plan it now?" } })
+  assert.ok(isQuestionOpen("asker"), "a drive must not claim a session with a window up")
+
+  await hooks["tool.execute.after"]({ sessionID: "asker", tool: "question", callID: "c1" })
+  assert.ok(!isQuestionOpen("asker"), "the tool returned — the window is down however it ended")
+  resetAskState()
+})
+
+/**
+ * The valve. If `tool.execute.after` ever fails to fire, the token is permanent
+ * and `onIdle` returns on it forever — the same wedge this mechanism exists to
+ * prevent, re-created by it. A question blocks the turn, so any other tool
+ * starting proves the window is down.
+ */
+test("a window whose close is never reported is cleared by the next tool call", async () => {
+  resetAskState()
+  const hooks = await makeHooks({ asker: undefined })
+
+  await hooks["tool.execute.before"]({ sessionID: "asker", tool: "question", callID: "c1" }, { args: {} })
+  assert.ok(isQuestionOpen("asker"))
+
+  // No `tool.execute.after`, and no bus events either — the worst case.
+  await hooks["tool.execute.before"]({ sessionID: "asker", tool: "read", callID: "c2" }, { args: { filePath: "/repo/x.ts" } })
+  assert.ok(!isQuestionOpen("asker"), "the model reached another tool, so the human already answered")
+  resetAskState()
+})
+
+/**
+ * Ordering, and it is load-bearing: the deny runs FIRST, so a stage's refused ask
+ * leaves no trace. Recorded, it would both satisfy an armed gate ask the human
+ * never saw and hold `onIdle` off a session whose window was never opened.
+ */
+test("a denied stage question is not evidence that anything was asked", async () => {
+  resetAskState()
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    await assert.rejects(() => hooks["tool.execute.before"]({ sessionID: "child", tool: "question", callID: "c1" }, { args: {} }), /cannot ask the user/)
+    assert.ok(!isQuestionOpen("child"), "a question the human never saw must not open a window")
+    assert.ok(!isQuestionOpen("drv"))
+  } finally {
+    clearWorkflow("drv")
+    resetAskState()
+  }
+})
+
 test("a session with no loop ancestor is untouched while a worktree loop runs elsewhere", async () => {
   setWorkflow("drv", worktreeWorkflow())
   try {
     const hooks = await makeHooks({ stranger: undefined })
     await hooks["tool.execute.before"]({ sessionID: "stranger", tool: "write", callID: "c1" }, { args: { filePath: "/elsewhere/x.ts" } })
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
+/**
+ * No stage may ask the human. OpenCode agents declare only `permission:`, so
+ * unlike the Claude/Qwen `tools:` enumerations they inherited the `question`
+ * tool the moment the host shipped it — and a stage subagent that opens the
+ * dialog stalls an unattended BUILD → VERIFY → REVIEW drive on someone who is
+ * not watching. The shipped agents deny it in frontmatter too; this guard is the
+ * layer that does not depend on a host config key, and the only one that covers
+ * a user-added kind's stage agent.
+ */
+test("a question from a session a loop drives is refused, with the alternative named", async () => {
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    // The stage subagent's CHILD session — the shape every stage call arrives in.
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "question", callID: "c1" }, { args: { question: "which one?" } }),
+      /cannot ask the user[\s\S]*workflow_blocked/,
+    )
+    // And the driving session itself: mid-drive is mid-drive whoever asks. The
+    // gate questions are asked once the drive has ended and cleared the store.
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "drv", tool: "question", callID: "c2" }, { args: { question: "ship it?" } }),
+      /cannot ask the user/,
+    )
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
+test("a question outside any loop is untouched", async () => {
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ stranger: undefined })
+    // The ad-hoc /plan subagent and the `new` interview both live here.
+    await hooks["tool.execute.before"]({ sessionID: "stranger", tool: "question", callID: "c1" }, { args: { question: "which one?" } })
   } finally {
     clearWorkflow("drv")
   }
@@ -531,4 +663,58 @@ test("unrelated config keys survive applyAgentModels verbatim", () => {
     theme: "dark",
     agent: { other: { model: "keep/me" }, "workflow-plan": { model: "ours/x" } },
   })
+})
+
+// A sentinel-guarded checker agent's merged config shape, as the `config` hook
+// sees it: `"*": deny` first (frontmatter order), allows after. The twin pair
+// marks a worktree-pinned stage.
+const sentinelBash = (): Record<string, string> => ({ "*": "deny", "git status*": "allow", "cd * && git status*": "allow" })
+
+test("applyBashAllowlistExtras appends extras AFTER the existing rules of sentinel maps only", () => {
+  const config = {
+    agent: {
+      "workflow-verify": { permission: { bash: sentinelBash() } },
+      "workflow-build": { permission: { bash: "allow" } },
+      "workflow-plan": { permission: { bash: "deny" } },
+    },
+  }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, ["rtk *"]), ["workflow-verify"])
+  const bash = (config.agent["workflow-verify"].permission as { bash: Record<string, string> }).bash
+  // Order is the semantics: OpenCode evaluates last-match-wins, so an extra
+  // landing BEFORE the sentinel would be dead. Object key order is the map's
+  // rule order.
+  assert.deepEqual(Object.keys(bash), ["*", "git status*", "cd * && git status*", "rtk *", "cd * && rtk *"])
+  assert.equal(bash["rtk *"], "allow")
+  assert.equal(config.agent["workflow-build"].permission.bash, "allow", "a string permission is never rewritten into a map")
+  assert.equal(config.agent["workflow-plan"].permission.bash, "deny", "extras must not widen a total denial")
+})
+
+test("applyBashAllowlistExtras derives cd twins only where the map already carries them", () => {
+  const config = {
+    agent: {
+      // No twin in the map → the stage is not worktree-pinned → no twin derived.
+      "workflow-review-fetch": { permission: { bash: { "*": "deny", "git fetch*": "allow" } } },
+    },
+  }
+  applyBashAllowlistExtras(config as never, ["rtk *"])
+  assert.deepEqual(Object.keys(config.agent["workflow-review-fetch"].permission.bash), ["*", "git fetch*", "rtk *"])
+})
+
+test("applyBashAllowlistExtras never flips a key the user already set", () => {
+  const config = { agent: { "workflow-verify": { permission: { bash: { "*": "deny", "rtk *": "deny" } } } } }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, ["rtk *"]), [])
+  assert.equal(config.agent["workflow-verify"].permission.bash["rtk *"], "deny")
+})
+
+test("applyBashAllowlistExtras with no extras touches nothing at all", () => {
+  const config = { agent: { "workflow-verify": { permission: { bash: sentinelBash() } } } }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, []), [])
+  assert.deepEqual(config.agent["workflow-verify"].permission.bash, sentinelBash())
+})
+
+test("applyBashAllowlistExtras skips agents without a bash map and an empty config", () => {
+  assert.deepEqual(applyBashAllowlistExtras({} as never, ["rtk *"]), [])
+  const config = { agent: { plain: {}, nested: { permission: {} } } }
+  assert.deepEqual(applyBashAllowlistExtras(config as never, ["rtk *"]), [])
+  assert.deepEqual(config, { agent: { plain: {}, nested: { permission: {} } } })
 })

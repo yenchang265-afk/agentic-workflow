@@ -503,6 +503,42 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
   把草稿撰寫指向便宜模型不應連帶悄悄改動規劃階段，反之亦然。設定
   `agentModels` 永遠不影響階段；設定 `stageModels` 也永遠不影響草稿撰寫。
 
+- **`bashAllowlistExtra`**——附加在**每個宣告了允許清單的階段**（檢查階段，
+  以及 pr-sitter 的 publish 這類帶允許清單的工作階段）之後的額外 bash
+  glob，接在 manifest 自己的 `bashAllowlist` 後面。這是專案／使用者層級的
+  逃生口，用於內建 manifest 不可能預知的環境：
+
+  ```json
+  {
+    "bashAllowlistExtra": ["rtk *"]
+  }
+  ```
+
+  兩種情況需要它：
+
+  - **專案特有的執行器。** VERIFY 記錄 ERROR 並指名被拒的測試指令
+    （`mise run test`、自製腳本）——在這裡授權它，而不是去改 workflow
+    manifest。發現的檢查（discovered checks）同樣採納這些額外 glob，
+    所以計畫可以直接指名被授權的執行器。
+  - **改寫指令的代理程式。** rtk 這類省 token 代理會在 OpenCode 評估權限
+    **之前**改寫每一條 bash 指令（`git status` → `rtk git status`），而
+    OpenCode 是對**整條**指令字串做比對——於是每條在允許清單上的指令
+    到達比對器時都是內建 glob 比不中的形狀，所有檢查階段都因此餓死成
+    ERROR。`"rtk *"` 接受該代理輸出的任何形狀；代理本身完全不用改。
+
+  只宣告**裸形式** glob——工作樹的 `cd * && ` 雙生形式會在需要的主機上
+  自動衍生，規則與 manifest 相同。沒有宣告允許清單的階段（engineering
+  BUILD）維持不受限，也不會被加上任何東西。
+
+  這些 glob **拓寬了階段的範圍邊界**——這正是它們的目的——所以寬窄由你
+  決定：`"rtk *"` 接受代理輸出的一切，較細的 glob（`"rtk git *"`、
+  `"rtk npm *"`）則得追著它的改寫規則跑。允許清單是防止代理混淆的範圍
+  邊界，不是沙箱（見威脅模型），但只授權你的環境需要的，不要更多。
+
+  生效時機與 `agentModels` 相同：Claude Code 於下一次 spawn，OpenCode 於
+  下一次 **opencode 重啟**（外掛的 `config` hook 會把授權附加到每個帶
+  哨兵的代理權限表末尾）。
+
 ## 管理面板（`hub`——僅限使用者層級）
 
 管理面板只從**使用者層級**設定的 `hub` 區段讀取它的設定
