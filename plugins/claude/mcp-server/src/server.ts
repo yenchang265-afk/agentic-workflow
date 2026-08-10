@@ -8,7 +8,7 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
-import { DEFAULT_CONFIG, bashAllowlistExtras, loadConfig } from "@agentic-workflow/core/config"
+import { DEFAULT_CONFIG, bashAllowlistExtras, bashAllowlistPrefixes, withCommandPrefixes, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
@@ -833,8 +833,17 @@ const writeStageMarker = (stage: string | null, deadline?: number): string | nul
       // empty base means the stage is unrestricted, and appending extras there
       // would restrict it to just the extras. No `cd * && ` twins here — this
       // host's guard matches per segment, not the whole command string.
+      //
+      // `bashAllowlistPrefix` re-expresses that same list behind a rewriting
+      // proxy (`npm test*` → also `rtk npm test*`), so a stage keeps its own
+      // boundary instead of needing a blanket `"rtk *"` extra. The prefixes
+      // themselves ride the marker too: the guard strips them before the write
+      // backstops classify a segment, and a bundled hook can read neither the
+      // config nor a manifest.
+      const prefixes = bashAllowlistPrefixes(config)
       const base = effectiveAllowlist(def, platform)
-      const allowlist = base.length ? [...base, ...bashAllowlistExtras(config).filter((glob) => !base.includes(glob))] : []
+      // `withCommandPrefixes` dedupes, so an extra already in the base is not repeated.
+      const allowlist = base.length ? withCommandPrefixes([...base, ...bashAllowlistExtras(config)], prefixes) : []
       const stageAgentModelMap = stageAgentModels(m)
       writeMarkerAtomic(
         stageMarkerPath(),
@@ -883,6 +892,10 @@ const writeStageMarker = (stage: string | null, deadline?: number): string | nul
           // 1-indexed to match the "BUILD started (iteration N)" audit notes.
           iteration: active ? active.iteration + 1 : null,
           ...(allowlist.length ? { bashAllowlist: allowlist } : {}),
+          // The configured proxy prefixes, for the guard's write-backstop strip.
+          // Absent (unset key, older server) ⇒ no strip ⇒ exactly the previous
+          // behaviour, the fail-open direction every hook input here takes.
+          ...(prefixes.length ? { bashPrefix: prefixes } : {}),
           // Consumed by the PreToolUse spawn-model stamp; see stageAgentModels().
           ...(Object.keys(stageAgentModelMap).length ? { stageAgentModels: stageAgentModelMap } : {}),
         }),

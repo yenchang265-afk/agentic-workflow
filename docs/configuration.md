@@ -568,25 +568,77 @@ it. The warnings are advisory: they annotate a save, never block it. See
     editing the workflow manifest. Discovered checks honor the extras too, so a
     plan may name the granted runner.
   - **A command-rewriting proxy.** An rtk-style token saver rewrites every bash
-    command (`git status` → `rtk git status`) *before* OpenCode evaluates
-    permissions, and OpenCode matches the **whole** command string — so every
-    allowlisted command reaches the matcher in a shape no shipped glob matches,
-    and every check stage starves into ERROR. `"rtk *"` accepts whatever the
-    proxy emits; the proxy itself needs no change.
+    command (`git status` → `rtk git status`) *before* either host evaluates
+    permissions, so every allowlisted command reaches the matcher in a shape no
+    shipped glob matches and every check stage starves into ERROR. Reach for
+    `bashAllowlistPrefix` below first — it covers this without widening
+    anything. Extras remain the answer for what the proxy **renames**
+    (see the snippet there).
 
   Declare **bare globs only** — the worktree `cd * && ` twins are derived where
   a host needs them, the same rule the manifests follow. A stage that declares
   no allowlist (engineering BUILD) stays unrestricted and gets nothing.
 
   These globs **widen the stage scope boundary** — that is their purpose — so
-  breadth is your call: `"rtk *"` accepts anything the proxy emits, finer globs
-  (`"rtk git *"`, `"rtk npm *"`) chase its rewrite registry. The allowlist is a
-  scope boundary against a confused agent, not a sandbox (see the threat
-  model), but grant what your environment needs, not more.
+  breadth is your call. `"rtk *"` accepts anything the proxy emits, including
+  `rtk npm publish` and `rtk gh pr merge`; prefer `bashAllowlistPrefix`, or
+  finer globs, over that. The allowlist is a scope boundary against a confused
+  agent, not a sandbox (see the threat model), but grant what your environment
+  needs, not more.
 
   Takes effect like `agentModels`: next spawn on Claude Code, next **opencode
   restart** on OpenCode (the plugin's `config` hook appends the grants to each
   sentinel-guarded agent's permission map).
+
+- **`bashAllowlistPrefix`** — command prefixes a rewriting proxy puts in front
+  of the command a stage actually asked for. Each one re-expresses the globs the
+  stage **already declares**, so nothing new is granted:
+
+  ```json
+  {
+    "bashAllowlistPrefix": ["rtk"]
+  }
+  ```
+
+  With that set, a stage granted `npm test*` also accepts `rtk npm test` — and
+  still refuses `rtk npm publish`. That is the whole difference from a blanket
+  `"rtk *"` extra, which accepts both. Extras are prefixed too, so a
+  project-specific runner granted above is reachable through the proxy as well.
+
+  It also **restores the write backstops**. Those classifiers anchor on the bare
+  tool name (`git push …`, `gh pr merge`, `find … -delete`), so under any proxy
+  they see `rtk …` and report no violation — `rtk git push --force origin main`
+  included. The configured prefixes are stripped before each classifier runs, on
+  both hosts. Nothing narrows this on its own: with the prefix configured,
+  `rtk git push origin main` matches the derived `rtk git push origin *` glob
+  quite legitimately, and only the classifier knows `main` is protected.
+
+  Declare **bare command heads only** — no `*`, no shell metacharacters; an entry
+  that is neither is dropped. Multi-word prefixes are fine (`"rtk proxy"`).
+
+  **Residual: what the proxy renames.** Prefixing cannot predict a rewrite that
+  changes the verb. rtk 0.42.3, for instance, turns `cat x` into `rtk read x`,
+  `head -20 x` into `rtk read x --max-lines 20`, `npx tsc` into `rtk tsc`,
+  `npx eslint .` into `rtk lint .`, `./gradlew build` into `rtk gradlew build`
+  and `bundle exec rspec` into `rtk rspec`. Those need extras — still far
+  narrower than `"rtk *"`:
+
+  ```json
+  {
+    "bashAllowlistPrefix": ["rtk"],
+    "bashAllowlistExtra": [
+      "rtk read *", "rtk grep *", "rtk lint *", "rtk tsc*",
+      "rtk vitest*", "rtk pytest*", "rtk gradlew *", "rtk rspec*"
+    ]
+  }
+  ```
+
+  That list is versioned with the proxy, not with this project — check what
+  yours actually emits (`rtk rewrite "<cmd>"`) rather than trusting it. Many
+  commands are not rewritten at all (`npm test`, `mvn test`, `dotnet test`) and
+  need nothing.
+
+  Takes effect exactly like `bashAllowlistExtra` above.
 
 ## Admin hub (`hub` — user scope only)
 

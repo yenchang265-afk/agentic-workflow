@@ -12,6 +12,7 @@
  * share their vectors so the twins can't drift silently.
  */
 
+import { stripCommandPrefix } from "../config-layers.js"
 import { ADO_MCP_SERVER_NAME, ADO_READ_TOOLS, ADO_TOOLS, ADO_WRITE_TOOLS } from "../source/ado-tools.js"
 
 /**
@@ -312,7 +313,25 @@ export const isGitPushViolation = (cmd: string): boolean => {
  * The write backstops evaluated PER chain/pipe segment. The classifiers anchor on
  * a single command, so a whole-command scan lets a chained allowlisted read hide a
  * mutation (`gh pr view && gh api -X PUT …/merge`). Splitting first closes the bypass.
+ *
+ * `prefixes` (config `bashAllowlistPrefix`) closes the same bypass one layer up.
+ * Every classifier here anchors on the BARE tool name, so a command-rewriting
+ * proxy defeats all of them at once: `rtk git push --force origin main`,
+ * `rtk gh pr merge 3` and `rtk find . -delete` each read as no violation. The
+ * allowlist cannot cover for that — with the prefix configured, `rtk git push
+ * origin main` matches a derived `rtk git push origin *` glob quite legitimately,
+ * and only `isGitPushViolation` knows `main` is protected. So each segment is
+ * classified BOTH raw and stripped, and a hit either way is a violation: nothing
+ * that trips today can stop tripping.
+ *
+ * Unset prefixes reduce this to the previous behaviour exactly.
  */
-export const chainedGithubPrMutation = (cmd: string): boolean => splitSegments(cmd).some(isGithubPrMutation)
-export const chainedGitPushViolation = (cmd: string): boolean => splitSegments(cmd).some(isGitPushViolation)
-export const chainedFindMutation = (cmd: string): boolean => splitSegments(cmd).some(isFindMutation)
+const eitherForm = (cmd: string, prefixes: readonly string[], classify: (seg: string) => boolean): boolean =>
+  splitSegments(cmd).some((seg) => classify(seg) || (prefixes.length > 0 && classify(stripCommandPrefix(seg, prefixes))))
+
+export const chainedGithubPrMutation = (cmd: string, prefixes: readonly string[] = []): boolean =>
+  eitherForm(cmd, prefixes, isGithubPrMutation)
+export const chainedGitPushViolation = (cmd: string, prefixes: readonly string[] = []): boolean =>
+  eitherForm(cmd, prefixes, isGitPushViolation)
+export const chainedFindMutation = (cmd: string, prefixes: readonly string[] = []): boolean =>
+  eitherForm(cmd, prefixes, isFindMutation)

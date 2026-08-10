@@ -38,6 +38,40 @@ const matchesAny = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()))
 const isBareCd = (seg) => /^cd\s+[^;&|<>()`$]+$/.test(seg)
 
 /**
+ * A command segment with one leading configured prefix (`bashAllowlistPrefix`,
+ * carried on the stage marker as `bashPrefix`) removed.
+ *
+ * Every classifier below anchors on the BARE tool name, so a command-rewriting
+ * proxy defeats all of them at once: `rtk git push --force origin main`,
+ * `rtk gh pr merge 3` and `rtk find . -delete` each read as no violation. The
+ * allowlist cannot cover for it — the derived `rtk git push origin *` glob
+ * matches legitimately, and only `isGitPushViolation` knows `main` is protected.
+ * So each segment is classified BOTH raw and stripped.
+ *
+ * Exactly one hop, so `rtk rtk …` cannot launder a second layer past a
+ * classifier the first hop already defeated. No prefixes ⇒ unchanged behaviour.
+ *
+ * LONGEST prefix first, which matters whenever one prefix is a prefix of
+ * another (`["rtk", "rtk proxy"]`): taking `"rtk "` off
+ * `rtk proxy git push origin main` leaves `proxy git push …`, which no
+ * classifier recognizes, while the derived `rtk proxy git push origin *` glob
+ * admits the command.
+ *
+ * TWIN: `stripCommandPrefix` in `packages/core/src/config-layers.ts`.
+ */
+export const stripCommandPrefix = (segment, prefixes) => {
+  const seg = segment.trim()
+  for (const prefix of [...prefixes].sort((a, b) => b.length - a.length)) {
+    const head = `${prefix} `
+    if (seg.startsWith(head)) return seg.slice(head.length).trim()
+  }
+  return seg
+}
+
+/** A classifier applied to a segment both as written and with one prefix stripped. */
+const eitherForm = (classify, prefixes) => (seg) => classify(seg) || (prefixes.length > 0 && classify(stripCommandPrefix(seg, prefixes)))
+
+/**
  * Split a bash command into chain/pipe segments at shell operators that sit
  * OUTSIDE single/double quotes. Operators inside a quoted argument (a
  * `gh pr comment --body "fixed A && B"`) are NOT split points; unquoted
@@ -165,10 +199,10 @@ export const isFindMutation = (seg) => {
  * on rejecting substitution/redirection for the same reason. A `find` segment with
  * a mutating action flag is rejected regardless of the globs (`isFindMutation`).
  */
-export const commandAllowed = (cmd, globs) => {
+export const commandAllowed = (cmd, globs, prefixes = []) => {
   const segments = splitSegments(cmd)
   if (segments.some(hasShellExpansion)) return false
-  if (segments.some(isFindMutation)) return false
+  if (segments.some(eitherForm(isFindMutation, prefixes))) return false
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny(s, globs))
 }
 
@@ -331,6 +365,8 @@ export const isGitPushViolation = (cmd) => {
  * `curl -X GET … && curl -X PATCH …`). Splitting first is what actually closes the
  * bypass — the segment-aware allowlist already passes each real command, and now the
  * backstop inspects each real command too.
+ *
+ * `prefixes` closes the same bypass one layer up — see `stripCommandPrefix`.
  */
-export const chainedGithubPrMutation = (cmd) => splitSegments(cmd).some(isGithubPrMutation)
-export const chainedGitPushViolation = (cmd) => splitSegments(cmd).some(isGitPushViolation)
+export const chainedGithubPrMutation = (cmd, prefixes = []) => splitSegments(cmd).some(eitherForm(isGithubPrMutation, prefixes))
+export const chainedGitPushViolation = (cmd, prefixes = []) => splitSegments(cmd).some(eitherForm(isGitPushViolation, prefixes))

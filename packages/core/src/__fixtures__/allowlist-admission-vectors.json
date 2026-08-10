@@ -28,5 +28,16 @@
     "cd /etc; rm shadow",
     ""
   ],
-  "_not_denied_comment": "`cd /etc; cat shadow` is ALLOWED and belongs in neither list: `cat *` already reads any path, so the allowlist's scope is 'runs nothing that writes', not 'stays in the work tree'. A discovered check inherits exactly that boundary — no more, no less."
+  "_not_denied_comment": "`cd /etc; cat shadow` is ALLOWED and belongs in neither list: `cat *` already reads any path, so the allowlist's scope is 'runs nothing that writes', not 'stays in the work tree'. A discovered check inherits exactly that boundary — no more, no less.",
+  "_prefix_comment": "config `bashAllowlistPrefix` — a command-rewriting proxy puts its own name in front of what the stage asked for. Both suites run these against the globs above re-expressed behind each prefix, which is what the hosts stamp/append. The point of the denied list: the prefix re-expresses the boundary, it does not dissolve it, and a classifier that anchors on the bare tool name must still see through one hop.",
+  "prefixes": ["rtk"],
+  "prefixAllowed": ["rtk npm test", "rtk git status --short", "cd packages/web && rtk npm test", "npm test"],
+  "prefixDenied": [
+    "rtk npm publish",
+    "rtk rm -rf build",
+    "rtk find . -delete",
+    "rtk find . -exec rm {} +",
+    "rtk npm test && rtk git push origin main",
+    "rtk rtk find . -delete"
+  ]
 }
