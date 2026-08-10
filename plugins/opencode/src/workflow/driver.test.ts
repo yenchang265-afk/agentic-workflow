@@ -6,7 +6,7 @@ import { serializeTask } from "@agentic-workflow/core/task/schema"
 import { firstStep } from "@agentic-workflow/core/workflow/engine"
 import type { CheckResult } from "@agentic-workflow/core/workflow/checks"
 import type { VerdictRecord } from "@agentic-workflow/core/workflow/verdict"
-import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
+import { clearWorkflow, getWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import type { Config } from "../config.ts"
 import {
   abortedSessionID,
@@ -1282,11 +1282,18 @@ const PLANNED_BODY = [
   "- Everything else.",
 ].join("\n")
 
-/** A session whose stage commands are no-ops and whose prompts are recorded. */
-const makePlanClient = (files: Record<string, string>) => {
+/**
+ * A session whose stage commands are no-ops and whose prompts are recorded —
+ * along with whether a loop still owned the session when each prompt was sent,
+ * which is the one ordering constraint the ask depends on.
+ */
+const makePlanClient = (files: Record<string, string>, onPrompt?: () => void, shellLog?: string[]) => {
   const { client, toasts } = makeClientFS(files)
   const commands: string[] = []
   const prompts: string[] = []
+  const drivenAtPrompt: boolean[] = []
+  /** How much shell work had happened when each prompt was sent — see the ordering assert. */
+  const shellAtPrompt: number[] = []
   const withTurns = {
     ...client,
     session: {
@@ -1296,13 +1303,16 @@ const makePlanClient = (files: Record<string, string>) => {
         commands.push(body.command)
         return { data: { parts: [], info: undefined } }
       },
-      prompt: async ({ body }: { body: { parts: { text?: string }[] } }) => {
+      prompt: async ({ body, path }: { body: { parts: { text?: string }[] }; path: { id: string } }) => {
+        drivenAtPrompt.push(getWorkflow(path.id) !== undefined)
+        shellAtPrompt.push(shellLog?.length ?? 0)
         prompts.push(body.parts.map((p) => p.text ?? "").join(""))
+        onPrompt?.()
         return { data: undefined }
       },
     },
   } as unknown as Deps["client"]
-  return { client: withTurns, commands, prompts, toasts }
+  return { client: withTurns, commands, prompts, drivenAtPrompt, shellAtPrompt, toasts }
 }
 
 test("a plan the human asked for opens the approve/replan question when it parks", async () => {
@@ -1311,8 +1321,8 @@ test("a plan the human asked for opens the approve/replan question when it parks
   // The stage command is a no-op here, so the plan the PLAN stage would have
   // written is already on the file — what is under test is the park, not the author.
   const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: PLANNED_BODY }) }
-  const { client, commands, prompts } = makePlanClient(files)
   const log: string[] = []
+  const { client, commands, prompts, drivenAtPrompt, shellAtPrompt } = makePlanClient(files, undefined, log)
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
   await planFromAgent(deps, sessionID, "my-task", testConfig)
@@ -1320,6 +1330,16 @@ test("a plan the human asked for opens the approve/replan question when it parks
 
   assert.deepEqual(commands, ["plan-task"], "the PLAN stage must have run")
   assert.equal(prompts.length, 1, `expected exactly one gate turn, got ${JSON.stringify(prompts)}`)
+  // The ordering constraint the whole thing rests on: the session must be free of
+  // the drive, or the guards that stop a stage agent moving human gates refuse the
+  // plugin's own ask. Two witnesses, because the loop state is cleared earlier than
+  // the drive unwinds: no workflow registered, AND the drive's own teardown (the
+  // stage-marker removal in `drive`'s finally) already ran. Fired from the park arm
+  // — the tempting place — the second assert fails.
+  assert.deepEqual(drivenAtPrompt, [false], "the ask must be sent after the loop released the session")
+  const teardown = log.findIndex((cmd) => cmd.startsWith("rm -f") && cmd.includes(".stage"))
+  assert.ok(teardown >= 0, `expected the drive's stage-marker teardown in the shell log: ${JSON.stringify(log.slice(-8))}`)
+  assert.ok(teardown < shellAtPrompt[0]!, "the ask must be sent after the drive unwound, not from the park arm")
   assert.match(prompts[0]!, /Approve the plan for `my-task`/)
   assert.match(prompts[0]!, /question/, "only the model can open a window — the turn has to ask it to")
   // Every option must name the tool that executes it: this host has no MCP server
@@ -1369,6 +1389,40 @@ test("a PLAN pass that fails to park asks nothing", async () => {
   await onIdle(deps, sessionID, testConfig)
 
   assert.deepEqual(prompts, [], "a plan that never landed must not be offered for approval")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The ask is best-effort by construction: it runs after a drive that already
+ * SUCCEEDED, so a failure here costs the dialog, not the plan — which is parked
+ * with the same toast as always. Throwing instead would surface a park as a loop
+ * error and send the operator after a plan that is sitting exactly where it should.
+ */
+test("a gate turn that cannot be started is logged, never thrown", async () => {
+  resetAskState()
+  const sessionID = "sess-prompt-fails"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: PLANNED_BODY }) }
+  const { client } = makePlanClient(files, () => {
+    throw new Error("session is busy")
+  })
+  const warnings: string[] = []
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(files, log),
+    directory: "/repo",
+    log: (level, message) => void (level === "warn" && warnings.push(message)),
+  }
+
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  await onIdle(deps, sessionID, testConfig) // must resolve, not reject
+  // The prompt is fired unawaited, so let its rejection settle before asserting.
+  await new Promise((resolve) => setImmediate(resolve))
+
+  const gateWarning = warnings.find((w) => w.includes("plan gate question"))
+  assert.ok(gateWarning, `expected a warning naming the failure, got ${JSON.stringify(warnings)}`)
+  assert.match(gateWarning, /my-task/)
+  assert.match(gateWarning, /parked in plan-review/, "the operator has to be told the plan is fine")
   clearWorkflow(sessionID)
 })
 
