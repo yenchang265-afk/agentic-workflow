@@ -460,8 +460,9 @@ re-derive it from `message`: that is prose, and it gets reworded.
 **OpenCode's plugin cannot originate a question.** The SDK's Question API
 (list/reply/reject) is not on `PluginInput["client"]`, and the read-only
 `tui.question(sessionID)` view belongs to the TUI plugin surface, which a normal
-plugin does not get (`tui?: never`) — so the `question.*` EVENTS are the only
-window a plugin has onto one, and they only observe. Only the
+plugin does not get (`tui?: never`) — so the `question` TOOL CALL and the
+`question.*` events are the only windows a plugin has onto one, and both only
+observe. Only the
 model's own `question` tool opens a window, so an ask there only exists where a
 model turn does: the command-prompt override after a handled verb, not the
 background `session.idle` drive where PLAN parks. And an ask whose answer the
@@ -482,19 +483,56 @@ the window is gone for good. So the prose has a mechanism behind it, and both
 halves are load-bearing:
 
 - **`planFromAgent` refuses until the question was actually put** (`askUnanswered`,
-  against the one-shot `askArmed` a task gate sets). Fed by the
-  `question.asked`/`question.replied`/`question.rejected` events — the plugin
-  cannot originate a question, but it can watch one open.
+  against the one-shot `askArmed` a task gate sets).
 - **`onIdle` returns while a question is open**, before `pending.delete`, so the
   work stays queued for the idle after the answer instead of the drive burying
   the window.
 
 Both fail **OPEN**, gated on `questionsObservable` — a session where no question
-has ever been seen is never refused. Against a host that stops emitting those
-events the rules go inert rather than stranding an approved task no verb can
-plan. That is the opposite asymmetry to `refuseIfDriven` two paragraphs up, and
+has ever been seen is never refused. Against a host that shows us no window at
+all the rules go inert rather than stranding an approved task no verb can plan.
+That is the opposite asymmetry to `refuseIfDriven` two paragraphs up, and
 deliberately so: there a false allow ships unreviewed work, here a false refusal
-wedges the backlog and a false allow only restores the old behaviour.
+wedges the backlog and a false allow only restores the old behaviour. Both exits
+now **log** — "the human said yes" and "we could not tell" produced the same
+outcome and the same empty transcript, which is how this shipped broken twice.
+
+**The signal is the `question` TOOL CALL, not the event name.** Both rules were
+fed only by the `question.asked`/`replied`/`rejected` events, and that is a
+host-named input the plugin has to keep guessing right: the SDK's event union
+carries the same window under two families (`question.*` and `question.v2.*`), so
+one wrong guess makes every rule above silently inert — fail-open, invisible,
+indistinguishable from working. So the PRIMARY source is
+`tool.execute.before`/`.after` (`noteQuestionToolCall`/`noteQuestionToolSettled`),
+a seam this plugin owns; `noteQuestionEvent` stays as an additive second source
+and now normalises `question.v2.*` down to the legacy names. The two converge
+rather than double-count because the asked event carries `tool.callID` — the same
+id the tool hooks carry — so windows are keyed by that token, never by a
+per-session flag. The flag also lost a real window: one message can open two, and
+the first settlement cleared it while the second was still up.
+
+The deny (next section) runs **before** the recorder. A refused stage ask never
+reached the human, so recording it would both satisfy an armed gate ask nobody
+saw and hold `onIdle` off a session with no window in it.
+
+**A token nobody removes is worse than no token at all**, because `onIdle`
+returns on it for the life of the process — stranding the session's queued drive
+*and* the on-disk claim it already placed, after which every gate verb refuses
+the task as "a loop is driving this NOW". There is deliberately **no timeout** (a
+window the human has not got to yet is legitimately open for hours); what bounds
+it is that every way a window dies without a settlement clears it: ESC
+(`onInterrupt`, for the interrupted id *and* the resolved driving one), the
+`stop`/`abort` verb, and any other tool starting in that session — a question
+blocks the turn, so a different tool call proves the window is down
+(`noteOtherToolCall`, the valve against a `tool.execute.after` that never fires).
+
+One more silent seam, and it is the one that cost the most: **`armTaskGateAsk`
+returning `""`**. `data.gate`/`data.id` live in core, which resolves to
+`packages/core/dist` — gitignored, rebuilt only by `npm install`, while the
+installed plugin points at the working tree. A new plugin against an old core
+dist lands there with `r.ok` true and no gate on it, and the result is BOTH halves
+of the bug at once: no `NEXT STEP` for the model to follow, and nothing armed for
+`askUnanswered` to enforce. It warns now, naming `npm install`.
 
 And **never `await` the drive inside the `event` hook.** `onIdle` is the entry to
 the whole build → verify → review chain, so awaiting it parks that handler for

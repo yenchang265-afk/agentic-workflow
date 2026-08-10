@@ -12,7 +12,12 @@ three approve tools, the rewritten `approve` block + `approve|plan` marker in
 `refuseIfDriven` in `plugins/opencode/src/workflow/driver.ts`, and — after the
 prose alone proved skippable — `armTaskGateAsk`/`askUnanswered`/`noteQuestionEvent`
 plus `onIdle`'s question guard there, with the question events and the detached
-drive wired in `plugins/opencode/src/impl.ts`; `gate.test.ts`,
+drive wired in `plugins/opencode/src/impl.ts`; and — after that mechanism in turn
+proved able to go inert without saying so — the `question` tool call as its
+primary signal (`noteQuestionToolCall`/`noteQuestionToolSettled`/`noteOtherToolCall`
+over `tool.execute.before`/`.after`), per-window tokens, `question.v2.*`
+normalisation, `clearQuestionState` on ESC/`stop`, and a warning on each of the two
+silent fail-open exits; `gate.test.ts`,
 `gate-ask.test.mjs`, `gate-result.test.mjs`, `gate-parse.test.mjs`,
 `gate-command.test.mjs`, `dialect.test.mjs`, `verb-slice.test.mjs`,
 `driver.test.ts`, `impl.test.ts`.
@@ -134,6 +139,49 @@ mechanism behind it.
 - **The `event` hook no longer awaits the drive.** `onIdle` is the entry to the
   whole build → verify → review chain, so awaiting it parked that handler — and
   the ESC path shares it — for as long as the chain ran.
+
+### A mechanism that can go inert without saying so is still prose
+
+The report that reopened this: approve the draft, no "plan it now?" window, and a
+session that then sits busy with nothing running. Everything above was in place.
+It could all still evaporate, and three seams are why — each of them silent, which
+is what let one ship on top of another.
+
+- **The event names are the host's, not ours.** The SDK's event union carries the
+  same window under two families (`question.asked` and `question.v2.asked`, both
+  carrying `sessionID`). One wrong guess and `questionsObservable` never fills, so
+  `askUnanswered` waves every plan through and `onIdle`'s guard never engages — the
+  fail-open design working exactly as designed, on an input that was wrong. So the
+  **primary** signal is now the model's own `question` TOOL CALL, seen through
+  `tool.execute.before`/`.after`, a seam this plugin owns; `noteQuestionEvent`
+  stays as an additive second source and normalises `question.v2.*` down first.
+  Observability can no longer be false while the ask is possible, because the same
+  act proves both.
+- **The two sources must be one record.** The asked event carries `tool.callID` —
+  the same id the tool hooks carry — so windows are keyed by that TOKEN. The old
+  per-session flag both double-counted and lost a real case: one message can open
+  two windows, and the first settlement cleared the flag while the second was
+  still up, handing the session to a drive underneath it.
+- **A token nobody removes is worse than no token.** `onIdle` returns on it for
+  the life of the process, stranding the queued drive *and* the on-disk claim it
+  already placed, after which every gate verb refuses the task as "a loop is
+  driving this NOW". There is deliberately **no timeout** — a window the human has
+  not got to yet is legitimately open for hours — so what bounds it is that every
+  silent death clears it: ESC (`onInterrupt`, both the interrupted id and the
+  resolved driving one), the `stop` verb, and any other tool starting in that
+  session. That last one is the valve against a `tool.execute.after` that never
+  fires, and it is sound because a question blocks the turn: reaching another tool
+  proves the human already answered.
+- **The deny runs before the recorder.** A stage's refused ask never reached the
+  human, so recording it would satisfy an armed gate ask nobody saw.
+- **`armTaskGateAsk` returning `""` is the loudest failure and used to be mute.**
+  `data.gate`/`data.id` come from core, which resolves to `packages/core/dist` —
+  gitignored, rebuilt only by `npm install`, while the installed plugin points at
+  the working tree. A new plugin against an old core dist lands there with `r.ok`
+  true and no gate on it, which is both halves of the bug at once: no `NEXT STEP`
+  for the model, and nothing armed to enforce. It warns now, naming the fix. The
+  other fail-open exit (`askUnanswered`'s bootstrap) warns too — "the human said
+  yes" and "we could not tell" produced the same outcome and the same empty log.
 
 ## What is deliberately not done
 

@@ -39,10 +39,13 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  */
 const READ_TOOLS = new Set(["read", "grep", "glob", "list"])
 /**
- * OpenCode's structured ask (the TUI question dialog), refused for any session a
- * loop is driving — see the guard in `tool.execute.before`.
+ * OpenCode's structured ask (the TUI question dialog). Two things key off it and
+ * must never disagree about what a question is: the refusal for any session a
+ * loop is driving, and the record of a window opening/closing that the gate's
+ * "plan it now?" enforcement runs on — hence one predicate rather than two
+ * comparisons. See `tool.execute.before` / `tool.execute.after`.
  */
-const QUESTION_TOOL = "question"
+const isQuestionTool = (tool: string): boolean => tool === "question"
 /**
  * Where a read tool carries its path, in probe order. Paths only — grep's
  * `pattern` is deliberately absent: a regex is not a path, and admitting one
@@ -673,7 +676,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         !loop &&
         anyWorkflowActive() &&
         (input.tool === "bash" ||
-          input.tool === QUESTION_TOOL ||
+          isQuestionTool(input.tool) ||
           EDIT_TOOLS.has(input.tool) ||
           READ_TOOLS.has(input.tool) ||
           isAdoMcpTool(input.tool))
@@ -708,7 +711,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // shipped stage agent has no `question` tool to call in the first place,
       // so the only thing a fail-closed arm would add here is refusing an
       // ad-hoc /plan's legitimate ask because an unrelated loop is live.
-      if (loop && input.tool === QUESTION_TOOL) {
+      if (loop && isQuestionTool(input.tool)) {
         throw new Error(
           `agentic-workflow: the ${loop.stage.toUpperCase()} stage cannot ask the user — the loop drives unattended ` +
             `between the plan gate and the ship gate, so a question here stalls the run on someone who may not be at ` +
@@ -716,6 +719,19 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             `verdict (check stages) or workflow_blocked (work stages). A human sees your reasoning at the next gate.`,
         )
       }
+      // A window opening — the PRIMARY signal behind the task gate's "plan it
+      // now?" enforcement, and this plugin's own seam rather than a host event
+      // name it has to keep guessing right. Strictly AFTER the deny above: a
+      // refused stage ask never reached the human, so it must leave no trace that
+      // could satisfy an armed ask or hold `onIdle` off the session. Recorded
+      // under the calling session, never a driving ancestor — see
+      // `noteQuestionToolCall`.
+      //
+      // Any OTHER tool starting is proof a window is DOWN, since a question
+      // blocks the turn until it is answered: the valve against a
+      // `tool.execute.after` that never fires — see `noteOtherToolCall`.
+      if (isQuestionTool(input.tool)) driver.noteQuestionToolCall(input.sessionID, input.callID)
+      else driver.noteOtherToolCall(input.sessionID)
       // Azure DevOps MCP guard. With ADO reached only through the MCP server,
       // OpenCode's bash allowlist says nothing about it — `tool.execute.before`
       // is the ONLY enforcement point this host has, so both checks live here.
@@ -845,6 +861,20 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         if (output.args.filePath !== undefined) output.args.filePath = pinned.value
         else output.args.path = pinned.value
       }
+    },
+
+    // The question tool returned, so its window is closed however it ended. This
+    // is the close half of the pair `tool.execute.before` opens, and it is the
+    // one an answered question travels on — the driver only needs to know the
+    // window is down, not what was answered.
+    //
+    // Deliberately does nothing else: this fires on EVERY tool completion, so no
+    // config read and no client call belong here. And it is not the only way a
+    // window can close — whether it fires when `execute` throws is not something
+    // the plugin can pin — which is why the `question.*` events remain a second
+    // source and why ESC/`stop` clear the session's windows outright.
+    "tool.execute.after": async (input) => {
+      if (isQuestionTool(input.tool)) driver.noteQuestionToolSettled(input.sessionID, input.callID)
     },
 
     tool: {
