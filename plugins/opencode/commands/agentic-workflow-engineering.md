@@ -76,6 +76,9 @@ Dispatch:
        **`question`**: "Plan it now?"
        - **Yes** → call the **`workflow_plan`** tool with that id. The PLAN
          stage runs and parks the plan in `plan-review/` for the human's gate.
+         Never call it without asking first — it refuses until the question has
+         been put, because planning hands this session to the PLAN stage and
+         nothing can ask the user anything until that finishes.
        - **No** → stop; `/agentic-workflow:engineering plan <id>` plans it
          later, as does the next `claim` with no build-ready work left.
      - **Not yet** → leave it in `draft/`; `/agentic-workflow:engineering
@@ -133,6 +136,8 @@ Dispatch:
   toast names which move happened. After a TASK gate the plugin's result
   carries a **`NEXT STEP`** line asking you to put the "plan it now?" question
   to the user — follow it (`question`, then `workflow_plan` on yes) and stop.
+  Skipping the question is not an option: `workflow_plan` refuses a task whose
+  gate asked for one until it has actually been put.
   The move itself is already done and is never yours to repeat. Without an id it advances the single task
   at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
   `draft/` task only when neither has anything waiting — loop gates outrank the
@@ -205,7 +210,7 @@ Dispatch:
   reachable from here — `claim`/`watch` drive builds. The plan gate itself is
   announced by a toast, not by a question: the PLAN pass finishes in the
   background driver, after your turn has ended, and this host's plugin can
-  only answer questions the model asked — it cannot open one of its own.
+  only observe questions the model asked — it cannot open one of its own.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next task (lowest priority number

@@ -422,8 +422,11 @@ Which gate a folder-driven verb crossed is only knowable from `GateResult.data`
 (`gate`, `id` — set on every success arm, `alreadyDone` retries included). Never
 re-derive it from `message`: that is prose, and it gets reworded.
 
-**OpenCode's plugin cannot originate a question** — `@opencode-ai/plugin`
-exposes Question as list/reply/reject plus a read-only `tui.question`. Only the
+**OpenCode's plugin cannot originate a question.** The SDK's Question API
+(list/reply/reject) is not on `PluginInput["client"]`, and the read-only
+`tui.question(sessionID)` view belongs to the TUI plugin surface, which a normal
+plugin does not get (`tui?: never`) — so the `question.*` EVENTS are the only
+window a plugin has onto one, and they only observe. Only the
 model's own `question` tool opens a window, so an ask there only exists where a
 model turn does: the command-prompt override after a handled verb, not the
 background `session.idle` drive where PLAN parks. And an ask whose answer the
@@ -432,6 +435,39 @@ guards `docs/tasks/**`, which is why `workflow_gate`/`workflow_plan` exist.
 Both refuse a call from a session a loop is driving (`findDrivingWorkflow`,
 failing CLOSED): a plugin tool is offered to EVERY session, stage subagents
 included, and without that a BUILD agent can approve its own task.
+
+That left the ask itself as the one thing on this host carried by prose — a
+`NEXT STEP` line in `workflow_gate`'s result — and prose is what the
+orchestrator does not follow. Skipping it is not cosmetic: `workflow_plan` is
+the point of no return, because the drive it queues runs its stages as
+`session.command` calls on the DRIVING session (concurrency 1), after which
+`refuseIfDriven` and the absence of a free model turn mean **nothing can ask
+the human anything** until the chain unwinds. Straight to `workflow_plan` and
+the window is gone for good. So the prose has a mechanism behind it, and both
+halves are load-bearing:
+
+- **`planFromAgent` refuses until the question was actually put** (`askUnanswered`,
+  against the one-shot `askArmed` a task gate sets). Fed by the
+  `question.asked`/`question.replied`/`question.rejected` events — the plugin
+  cannot originate a question, but it can watch one open.
+- **`onIdle` returns while a question is open**, before `pending.delete`, so the
+  work stays queued for the idle after the answer instead of the drive burying
+  the window.
+
+Both fail **OPEN**, gated on `questionsObservable` — a session where no question
+has ever been seen is never refused. Against a host that stops emitting those
+events the rules go inert rather than stranding an approved task no verb can
+plan. That is the opposite asymmetry to `refuseIfDriven` two paragraphs up, and
+deliberately so: there a false allow ships unreviewed work, here a false refusal
+wedges the backlog and a false allow only restores the old behaviour.
+
+And **never `await` the drive inside the `event` hook.** `onIdle` is the entry to
+the whole build → verify → review chain, so awaiting it parks that handler for
+hours — including the ESC path, which lives in the same hook and is the one event
+that must get through while a loop runs. `void` it with an error sink. This is
+safe only because `onIdle` reaches `driving.add` with no intervening `await`;
+anything added to that prologue must keep it synchronous, or two idle events will
+both start a drive.
 
 ### A rejected verdict is not a missing one
 

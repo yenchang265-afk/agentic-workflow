@@ -9,7 +9,10 @@ the new `plugins/claude/hooks/gate-ask.mjs` with `continueOnGate` in
 `gate-parse.mjs` and the conditional arm in `gate-command.mjs`, `okGate` on the
 three approve tools, the rewritten `approve` block + `approve|plan` marker in
 `prompts/verbs/engineering.md`, and `workflow_gate`/`workflow_plan` +
-`refuseIfDriven` in `plugins/opencode/src/workflow/driver.ts`; `gate.test.ts`,
+`refuseIfDriven` in `plugins/opencode/src/workflow/driver.ts`, and — after the
+prose alone proved skippable — `armTaskGateAsk`/`askUnanswered`/`noteQuestionEvent`
+plus `onIdle`'s question guard there, with the question events and the detached
+drive wired in `plugins/opencode/src/impl.ts`; `gate.test.ts`,
 `gate-ask.test.mjs`, `gate-result.test.mjs`, `gate-parse.test.mjs`,
 `gate-command.test.mjs`, `dialect.test.mjs`, `verb-slice.test.mjs`,
 `driver.test.ts`, `impl.test.ts`.
@@ -100,13 +103,46 @@ its driving ancestor, and it fails **closed**: a false refusal costs one typed
 command, a false allow ships unreviewed work. That is the opposite asymmetry to
 the Claude spawn guard's, and deliberately so.
 
+### The ask needed a mechanism, not just prose asking for it
+
+Shipping the `NEXT STEP` line was not enough, and the gap showed up in use: the
+window never opened, and the TUI sat running something the user had not asked
+for. An orchestrator that reads the line and goes straight to `workflow_plan`
+loses the question **permanently** — that call claims the task, and the drive it
+queues runs its stages as `session.command` calls on the driving session, after
+which `refuseIfDriven` and the lack of a free model turn leave no channel to ask
+anything until the chain unwinds. Same class as `stageModels`: the orchestrator is
+exactly the thing that does not reliably follow prose, so the prose gets a
+mechanism behind it.
+
+- **`askArmed` / `askUnanswered` (`driver.ts`).** A task gate arms a one-shot ask
+  keyed to the id it moved; `planFromAgent` refuses that id until a question has
+  actually been opened, restating the exact call that unblocks it. Arming and the
+  `NEXT STEP` text are one function (`armTaskGateAsk`) so the two can never
+  disagree about which gates ask.
+- **The signal is the `question.asked` / `question.replied` / `question.rejected`
+  events** (`noteQuestionEvent`, wired into the plugin's `event` hook). The plugin
+  still cannot originate a question — it can only watch one open.
+- **`onIdle` returns while a question is open**, before `pending.delete`, so the
+  queued drive waits for the idle *after* the answer. Without it a `watch`/`claim`
+  session takes itself over on top of a window that is already up.
+- **Both fail OPEN**, gated on `questionsObservable`: a session where no question
+  has ever been seen is never refused, so against a host that does not emit those
+  events the rules go inert instead of stranding an approved task no verb can
+  plan. The opposite asymmetry to `refuseIfDriven`, for the opposite reason — a
+  false refusal there costs one typed command, here it wedges the backlog.
+- **The `event` hook no longer awaits the drive.** `onIdle` is the entry to the
+  whole build → verify → review chain, so awaiting it parked that handler — and
+  the ESC path shares it — for as long as the chain ran.
+
 ## What is deliberately not done
 
 - **Ask #3 on OpenCode.** The PLAN pass finishes inside the background
   `session.idle` driver, after the turn has ended, so no model turn exists to
-  host a question — and `@opencode-ai/plugin` exposes Question as
-  list/reply/reject plus a read-only `tui.question`, i.e. a plugin can answer a
-  pending question but cannot originate one. `client.session.prompt` could fire
+  host a question — and a plugin cannot originate one: the SDK's Question API is
+  not on `PluginInput["client"]`, and the read-only `tui.question` view belongs
+  to the TUI plugin surface a normal plugin does not get. It can only *observe*
+  one, through the `question.*` events. `client.session.prompt` could fire
   a fresh turn from `onIdle`, but that re-enters the very event the watch/claim
   loop keys off — a recursion hazard in the driver's trigger. The plan gate
   stays a toast there, and the command now says why.
