@@ -477,6 +477,30 @@ passes overlap: `appendRunLog` (append) and `flushMetrics` (read-modify-write)
 both go through `withLock(runLocks, …)`. Adding another per-run writer means
 adding it there too.
 
+### An OpenCode hook that rejects or hangs kills the turn silently
+
+opencode's `Plugin.trigger` awaits `command.execute.before` / `event` hooks
+with NO try/catch of its own, and the SDK's fetch back into the server sets
+`req.timeout = false` — so an await that rejects or never settles kills the
+command BEFORE `Session.prompt`, with zero log output. The user's command just
+vanishes and the retry "works", because the one-shot guards it died inside
+(`reconciled`, `reportedAgentModels`) are now set. This class shipped twice:
+first as reconcile-before-gate-move (the `gateFirst` reordering), then as the
+unguarded ~60-line prologue before the dispatch try (plan 20). The closures in
+`plugins/opencode/src/impl.ts`, all load-bearing:
+
+- The ENTIRE hook body after the prefix match runs inside ONE try; the catch
+  writes `failurePrompt` into the prompt — the only channel a dead command
+  has — and never awaits a TUI call on the way out (the hook must still
+  RESOLVE for the override to matter).
+- `log` is total (never rejects, time-boxed) — it is also `deps.log`, so the
+  driver inherits the guarantee. Toasts are fire-and-forget everywhere:
+  `.catch()` guards a rejection, not a hang.
+- Client calls on a hook path are `withTimeout`-boxed (config read,
+  reconcile). NOT `handleCommand` — interrupting a real gate move is worse
+  than waiting.
+- A one-shot guard sets its flag FIRST and owns no unguarded await after it.
+
 ### Model selection is a mechanism, never prose
 
 Never express `stageModels` / `agentModels` as an instruction for a model to
