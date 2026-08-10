@@ -25,7 +25,7 @@
     "@types/react-dom": "^19.0.0",
     "@xyflow/react": "^12.8.0",
     "esbuild": "^0.28.1",
-    "mermaid": "^11.12.0",
+    "mermaid": "^11.16.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tsx": "^4.22.4",
