@@ -9,7 +9,9 @@
 與 `gate-command.mjs` 的條件分支；三個 approve 工具改用 `okGate`；
 `prompts/verbs/engineering.md` 改寫 `approve` 區塊並把 plan 區塊改標為
 `approve|plan`；`plugins/opencode/src/workflow/driver.ts` 新增
-`workflow_gate`/`workflow_plan` 與 `refuseIfDriven`。測試：`gate.test.ts`、
+`workflow_gate`/`workflow_plan` 與 `refuseIfDriven`；在散文本身被證實可被略過之後，
+同檔再加上 `armTaskGateAsk`／`askUnanswered`／`noteQuestionEvent` 與 `onIdle` 的提問
+守衛，問題事件與非等待式驅動則接在 `plugins/opencode/src/impl.ts`。測試：`gate.test.ts`、
 `gate-ask.test.mjs`、`gate-result.test.mjs`、`gate-parse.test.mjs`、
 `gate-command.test.mjs`、`dialect.test.mjs`、`verb-slice.test.mjs`、
 `driver.test.ts`、`impl.test.ts`。
@@ -81,12 +83,38 @@ session，包含階段子代理，所以沒有守衛就等於讓 BUILD 或 REVIE
 **安全失效為拒絕**：誤拒的代價是人多打一個指令，誤放行則是把未經審查的成果送出去。
 這與 Claude spawn 守衛的不對稱方向相反，且是刻意的。
 
+### 這個提問需要機制，而不是只用散文請求
+
+只送出 `NEXT STEP` 那一行並不夠，實際使用時破綻就出現了：問題視窗從未打開，TUI 卻
+在跑使用者沒有要求的東西。編排模型讀完那行後直接呼叫 `workflow_plan`，就會**永久**
+失去這個提問——該呼叫會 claim 任務，而它排入的驅動會以 `session.command` 在驅動
+session 上跑各階段，之後 `refuseIfDriven` 與「沒有空閒模型回合」兩者，讓整條鏈跑完
+之前沒有任何管道能詢問人類。這與 `stageModels` 同一類：編排模型正是那個不會可靠遵循
+散文的東西，所以散文背後要有機制。
+
+- **`askArmed` / `askUnanswered`（`driver.ts`）。** task 閘門會就它搬移的 id 佈下
+  一次性的提問；`planFromAgent` 在問題真的被打開之前拒絕該 id，並重述解鎖所需的確切
+  呼叫。佈下提問與 `NEXT STEP` 文字是同一個函式（`armTaskGateAsk`），兩者不可能對
+  「哪些閘門會提問」產生分歧。
+- **訊號來自 `question.asked` / `question.replied` / `question.rejected` 事件**
+  （`noteQuestionEvent`，接在插件的 `event` hook 上）。插件依然無法主動發起提問——
+  它只能看著提問被打開。
+- **`onIdle` 在有問題開著時直接返回**，且在 `pending.delete` 之前，因此排隊中的驅動
+  會等到答覆之後的那次 idle。沒有這一條，`watch`／`claim` session 會在視窗已經開著時
+  把自己接管掉。
+- **兩者都是安全失效為放行**，以 `questionsObservable` 把關：從未看過任何提問的
+  session 永遠不會被拒絕，所以面對不發這些事件的 host，規則會失去作用，而不是讓一個
+  已核可的任務卡在沒有任何動詞能規劃的狀態。這與 `refuseIfDriven` 的不對稱方向相反，
+  理由也相反——那裡誤拒只是人多打一個指令，這裡誤拒會卡住待辦。
+- **`event` hook 不再等待驅動完成。** `onIdle` 是整條 build → verify → review 鏈的
+  入口，等待它會讓那個 handler（以及共用同一個 hook 的 ESC 路徑）被綁住整條鏈的時間。
+
 ## 刻意不做的事
 
 - **OpenCode 上的問題 #3。** PLAN 回合是在背景 `session.idle` driver 裡、於回合
-  結束之後才完成的，因此沒有任何模型回合可以承載提問——而
-  `@opencode-ai/plugin` 對 Question 只提供 list/reply/reject 加上唯讀的
-  `tui.question`，也就是說插件能回答待答問題，卻無法主動發起一個。
+  結束之後才完成的，因此沒有任何模型回合可以承載提問——而插件無法主動發起提問：
+  SDK 的 Question API 不在 `PluginInput["client"]` 上，唯讀的 `tui.question` 檢視
+  屬於一般插件拿不到的 TUI 插件介面。插件只能透過 `question.*` 事件*觀察*提問。
   `client.session.prompt` 雖可從 `onIdle` 觸發新回合，但那會重新進入 watch/claim
   迴圈所依賴的同一個事件——在 driver 的觸發器裡埋下遞迴風險。該處的計畫閘門維持
   toast，指令檔現在也寫明原因。

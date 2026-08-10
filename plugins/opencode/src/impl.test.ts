@@ -4,6 +4,7 @@ import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflo
 import { parseConfig } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
 import { agentModelPatch, applyAgentModels, applyBashAllowlistExtras, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { isQuestionOpen, resetAskState } from "./workflow/driver.ts"
 
 /**
  * The worktree-pinning guard in `tool.execute.before`, driven end-to-end through
@@ -13,7 +14,11 @@ import { agentModelPatch, applyAgentModels, applyBashAllowlistExtras, draftModel
  * every stage subagent (edits landed in the human's main tree).
  */
 
-type Hooks = { "tool.execute.before": (input: { sessionID: string; tool: string; callID: string }, output: { args: Record<string, unknown> }) => Promise<void> }
+type Hooks = {
+  "tool.execute.before": (input: { sessionID: string; tool: string; callID: string }, output: { args: Record<string, unknown> }) => Promise<void>
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  event: (input: { event: any }) => Promise<void>
+}
 
 const makeHooks = async (
   sessions: Record<string, string | undefined>,
@@ -91,6 +96,30 @@ test("worktree pinning fires for a stage subagent's child session (the dead-guar
   } finally {
     clearWorkflow("drv")
   }
+})
+
+/**
+ * The plugin cannot ORIGINATE a question, so these events are its only view of
+ * one: they are what tells the driver a gate follow-up was actually put to the
+ * human, and what stops an idle tick handing the session to a drive while the
+ * window is up. The event NAMES are the risk this pins — get one wrong and both
+ * guards go silently inert (fail-open by design), which is exactly the failure
+ * mode that is invisible in a transcript.
+ */
+test("the event hook routes question events to the driver", async () => {
+  resetAskState()
+  const hooks = await makeHooks({ q: undefined })
+
+  await hooks.event({ event: { type: "question.asked", properties: { sessionID: "q" } } })
+  assert.ok(isQuestionOpen("q"), "a question window is up — onIdle must not claim this session")
+
+  await hooks.event({ event: { type: "question.replied", properties: { sessionID: "q" } } })
+  assert.ok(!isQuestionOpen("q"), "the answer landed — the session is claimable again")
+
+  await hooks.event({ event: { type: "question.asked", properties: { sessionID: "q" } } })
+  await hooks.event({ event: { type: "question.rejected", properties: { sessionID: "q" } } })
+  assert.ok(!isQuestionOpen("q"), "a dismissed question must not wedge the session either")
+  resetAskState()
 })
 
 test("a session with no loop ancestor is untouched while a worktree loop runs elsewhere", async () => {
