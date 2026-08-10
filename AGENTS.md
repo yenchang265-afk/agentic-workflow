@@ -559,6 +559,43 @@ safe only because `onIdle` reaches `driving.add` with no intervening `await`;
 anything added to that prologue must keep it synchronous, or two idle events will
 both start a drive.
 
+### The plan gate asks in a turn of its own
+
+The park is the gate with no turn to ask in. On OpenCode `plan <id>` returns
+*before* its drive starts (the stage runs on a later `session.idle`), so when the
+plan finally lands in `plan-review/` the turn that asked for it is long over — the
+host announced it with a toast and left the human to type `approve`. The plugin
+still cannot originate a QUESTION, but it can originate the TURN a model asks one
+in: `onIdle` fires `promptPlanGateAsk` (a bare `session.prompt`) after a park.
+Three constraints hold it up, and none is cosmetic:
+
+- **It fires AFTER the `finally`, not from the park arm.** The session has to be
+  free of the drive first (`clearWorkflow` at the terminal, `driving` released in
+  the `finally`), or `refuseIfDriven` and the stage-agent `question` deny refuse
+  the plugin's own ask. And it is never `await`ed — the turn contains a question
+  that blocks for as long as the human takes, and `onIdle` runs from the event
+  hook (previous section).
+- **Only a human-requested plan asks**, and the flag rides the `start-plan`
+  `Pending` (`askOnPark`, set in `claimForPlan`) rather than a module map: a map
+  would need clearing on every path a drive can die on — ESC, stop, error, a
+  dropped pending — and the one forgotten would open a dialog in a `watch` worker
+  session with nobody at the terminal. `drive()`'s own outcome answers "did it
+  park?", so no bookkeeping is needed at all.
+- **Every option names a tool that exists here.** `workflow_gate` crossed the
+  gate; Replan had nothing, which is why `workflow_replan` was added — an ask
+  whose answer the model cannot execute is worse than no ask, and this host has no
+  MCP server and guards `docs/tasks/**`.
+
+Claude Code and Qwen park inside a `workflow_advance` result that already carries
+the same ask as its `next` string — prose inside DATA, which is the thing the
+orchestrator skips. So `plan-gate-ask.mjs` (PostToolUse, matched on
+`workflow_advance`) re-emits it as harness context, sharing one writer with the
+task gate's follow-up (`gate-ask.mjs`). It fails OPEN on every uncertainty and
+adds only context — never a `decision` — because a false silence costs the
+reminder while a false reminder gates a task that never parked. **Never reach it
+by adding `"plan"` to `ASK_GATES`**: that list is `continueOnGate`, i.e. which
+gate VERB crossings hand the turn back, and the park is not a verb.
+
 ### A stage subagent must not be able to ask
 
 The mirror of the section above: the plugin cannot originate a question, and no

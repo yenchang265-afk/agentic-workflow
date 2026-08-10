@@ -4,7 +4,7 @@
     "$QWEN_CONFIG_DIR/settings.json. Qwen extensions cannot carry hooks, so unlike",
     "the Claude plugin's hooks.json this file is not loaded by the host directly —",
     "the installer copies it in, rewriting AGENTIC_WORKFLOW_PLUGIN_ROOT to an",
-    "absolute path. The four events mirror the Claude plugin exactly; only the",
+    "absolute path. The five events mirror the Claude plugin exactly; only the",
     "PreToolUse matchers differ, because the tool ids do.",
     "ONE INTENTIONAL ASYMMETRY: build-hooks.mjs also emits stamp-spawn-model.mjs",
     "into this directory, and it is deliberately NOT registered here. Qwen's",
@@ -75,6 +75,20 @@
             "type": "command",
             "name": "agentic-workflow-spawn-guard",
             "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/check-spawn-stage.mjs\"",
+            "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "_comment": "The PLAN GATE follow-up — the Qwen mirror of the Claude plugin's. workflow_advance's park arm returns a `next` line asking for the Approve/Replan/Park question, and prose inside a tool result is what the orchestrator skips; this re-emits it as context beside the result. Qwen registers ONE MCP alias where Claude has two, but the matcher covers both. It only ever adds context, and every uncertainty exits silently.",
+        "matcher": "mcp__.*__workflow_advance$",
+        "hooks": [
+          {
+            "type": "command",
+            "name": "agentic-workflow-plan-gate-ask",
+            "command": "node \"${AGENTIC_WORKFLOW_PLUGIN_ROOT}/hooks/plan-gate-ask.mjs\"",
             "env": { "AGENTIC_WORKFLOW_HOST": "qwen" }
           }
         ]

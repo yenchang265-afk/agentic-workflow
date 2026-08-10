@@ -240,7 +240,15 @@ const adoGatewayDep = (deps: Deps, config: Config): { adoGateway?: AdoGateway } 
 
 type Pending =
   | { readonly kind: "start-task"; readonly task: Task; readonly goal: string }
-  | { readonly kind: "start-plan"; readonly task: Task; readonly goal: string }
+  /**
+   * `askOnPark` marks a PLAN drive a HUMAN asked for (`plan <id>`, the
+   * `workflow_plan` tool, the `replan` chain) — the only ones whose park ends with
+   * a question rather than a toast. It rides the work item rather than a module
+   * map on purpose: a map would have to be cleared on every path a drive can die
+   * on (ESC, stop, error, a dropped pending), and the one that got forgotten would
+   * fire a dialog in a `watch` worker session with nobody at the terminal.
+   */
+  | { readonly kind: "start-plan"; readonly task: Task; readonly goal: string; readonly askOnPark?: true }
   | { readonly kind: "recover"; readonly task: Task }
   | { readonly kind: "recover-state"; readonly state: WorkflowState }
 
@@ -2460,6 +2468,11 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   if (work) pending.delete(sessionID)
   driving.add(sessionID)
   if (serialize) executingDirs.add(deps.directory)
+  // The PLAN drive's outcome, kept so a park a human asked for can be followed by
+  // the gate question below. Every other exit — ESC, stop, a thrown stage — yields
+  // a non-park outcome (or none), which is exactly why no cleanup bookkeeping is
+  // needed for the arming flag.
+  let planOutcome: TerminalOutcome | null = null
   try {
     if (work?.kind === "start-task" || work?.kind === "recover") {
       // `start-task`: a `plan <id>` / a claim claim entering execution at build.
@@ -2472,7 +2485,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     } else if (work?.kind === "start-plan") {
       // A `plan <id>` / a claim claim on a queued (planless) task: run the PLAN
       // stage, which writes the plan and parks the task in plan-review/.
-      await drive(deps, sessionID, config, firstStep(eng, planEntryState(work.task), config))
+      planOutcome = await drive(deps, sessionID, config, firstStep(eng, planEntryState(work.task), config))
     } else if (work?.kind === "recover-state") {
       // A snapshot-based resume: re-enter at the exact stage the crash caught,
       // with artifacts intact, re-firing that stage from its own inputs.
@@ -2524,6 +2537,40 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     driving.delete(sessionID)
     interrupted.delete(sessionID) // consumed by this drive; a fresh drive re-arms via onInterrupt
     if (serialize) executingDirs.delete(deps.directory)
+  }
+  // The plan gate. A parked plan is the one loop outcome with an obvious next
+  // question, and until now this host could not put it: `plan <id>` returns before
+  // the drive even starts, so by the time the plan exists there is no model turn
+  // left to ask in. So the plugin starts one — the only thing it can do, since it
+  // can never originate a question itself, only a turn in which the model does.
+  //
+  // AFTER the finally, deliberately: the session must be free of this drive
+  // (`clearWorkflow` ran at the terminal, `driving` released here) or the plugin's
+  // own ask is refused by the guards that stop a stage agent moving human gates.
+  // And NEVER awaited — the turn it starts contains a question that blocks for as
+  // long as the human takes, while `onIdle` is called from the event hook.
+  if (work?.kind === "start-plan" && work.askOnPark && planOutcome?.kind === "park") {
+    void promptPlanGateAsk(deps, sessionID, work.task.id)
+  }
+}
+
+/**
+ * Start one fresh model turn on the session that just planned, asking it to put
+ * the plan gate's question to the human.
+ *
+ * Best-effort by construction: a failure here costs the dialog, not the plan —
+ * which is parked in plan-review/ with the same toast as before, and
+ * `/agentic-workflow:engineering approve` still crosses the gate by hand. So it
+ * logs and swallows rather than propagating into a drive that already succeeded.
+ */
+const promptPlanGateAsk = async (deps: Deps, sessionID: string, id: string): Promise<void> => {
+  try {
+    await deps.client.session.prompt({
+      path: { id: sessionID },
+      body: { parts: [{ type: "text", text: planParkNextStep(id) }] },
+    })
+  } catch (err) {
+    void deps.log("warn", `could not open the plan gate question for "${id}": ${(err as Error).message} — the plan is parked in plan-review/ regardless`)
   }
 }
 
@@ -2722,6 +2769,26 @@ const gateNextStep = (id: string): string =>
   `On no, stop: the task waits in queued/.`
 
 /**
+ * The plan gate's question, sent as its own turn after a human-requested PLAN
+ * drive parks (`promptPlanGateAsk`).
+ *
+ * Every option names the TOOL that executes it, because an ask whose answer the
+ * model cannot act on is worse than no ask: this host has no MCP server and
+ * guards writes under `docs/tasks/`, so "tell the user to type the verb" is the
+ * ask made pointless. `workflow_gate` crosses the plan gate (it is folder-driven);
+ * `workflow_replan` rejects it and chains the revised plan, which parks and asks
+ * again.
+ */
+const planParkNextStep = (id: string): string =>
+  `NEXT STEP — the PLAN stage just finished: the plan for \`${id}\` is parked in plan-review/ and the loop has ended. ` +
+  `Read the task file's Implementation Plan, summarize it for the user in a few lines, then ask them with the \`question\` tool: ` +
+  `"Approve the plan for \`${id}\`?" (options: approve / replan / not now). ` +
+  `On approve, call the \`workflow_gate\` tool with id "${id}" — the task becomes build-ready. ` +
+  `On replan, ask what is wrong and call the \`workflow_replan\` tool with id "${id}" and that reason. ` +
+  `On not now, stop: the plan waits in plan-review/. ` +
+  `Do NOT type or suggest a command, do NOT run the plan yourself, and touch no OTHER task.`
+
+/**
  * Arm the one-shot ask a task gate leaves behind, and return the prose that asks
  * the model to put it. Arming and asking are one call so the two can never
  * disagree about which gates ask — the failure that would either strand a plan
@@ -2906,6 +2973,12 @@ export const handleRetask = async (deps: Deps, _sessionID: string, args: string,
  * re-plan). False = lost the claim race to another watcher, which then plans
  * it there. Callers own the busy/liveness guards; this owns the atomic claim,
  * spending any plan-request marker, and deferring the drive to the next idle.
+ *
+ * `askOnPark` is set unconditionally here, and that is the whole boundary between
+ * a park that asks and a park that only toasts: every caller of THIS function is a
+ * human saying "plan it now" in a session they are sitting in, while the watcher's
+ * claim walk (`tryClaim`) never comes through here. A `watch` worker is unattended
+ * by definition — a question there stalls the loop on nobody.
  */
 const claimForPlan = async (deps: Deps, sessionID: string, task: Task, config: Config): Promise<boolean> => {
   if (!(await claimTask(deps.$, task))) return false
@@ -2914,7 +2987,7 @@ const claimForPlan = async (deps: Deps, sessionID: string, task: Task, config: C
   // showing "plan requested" for a task that is being planned right now.
   await consumePlanRequest(deps.$, deps.directory, config.tasksDir, task.id, "queued")
   clearWorkflow(sessionID)
-  await setPending(deps, sessionID, { kind: "start-plan", task, goal: taskGoal(task) })
+  await setPending(deps, sessionID, { kind: "start-plan", task, goal: taskGoal(task), askOnPark: true })
   return true
 }
 
@@ -2941,21 +3014,68 @@ const claimForPlan = async (deps: Deps, sessionID: string, task: Task, config: C
 export const handleReplan = async (deps: Deps, sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
   try {
-    const r = await rejectAny(gateCtx(deps, config), args.trim())
-    const id = r.ok && r.data.requeued && typeof r.data.id === "string" ? r.data.id : null
-    if (!id) return report(client, r.message, gateVariant(r))
-    // Chain the re-plan unless this session is mid-loop or the task is taken —
-    // the same guards `plan <id>` runs, minus the resolution core already did.
-    if (driving.has(sessionID) || getWorkflow(sessionID) || findSessionDriving(id)) {
-      return report(client, r.message, gateVariant(r))
-    }
-    const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
-    if (!queued || !(await claimForPlan(deps, sessionID, queued, config))) {
-      return report(client, r.message, gateVariant(r)) // raced by a watcher — it re-plans the task there
-    }
-    return report(client, `Plan rejected for "${queued.title}" — re-planning now… (a revised plan will park in plan-review/ for your gate)`, "info")
+    const outcome = await replanAndChain(deps, sessionID, args, config)
+    return report(client, outcome.message, outcome.variant)
   } catch (err) {
     return report(client, `Replan failed: ${(err as Error).message}`, "error")
+  }
+}
+
+/**
+ * The rejection + chained re-plan itself, shared by the `replan` VERB and the
+ * `workflow_replan` tool so the two can never drift about what a rejection does.
+ * Presentation is the caller's (the verb replaces the rendered markdown; the tool
+ * answers the model and toasts).
+ */
+const replanAndChain = async (
+  deps: Deps,
+  sessionID: string,
+  args: string,
+  config: Config,
+): Promise<{ readonly message: string; readonly variant: "info" | "success" | "warning" | "error" }> => {
+  const r = await rejectAny(gateCtx(deps, config), args.trim())
+  const id = r.ok && r.data.requeued && typeof r.data.id === "string" ? r.data.id : null
+  if (!id) return { message: r.message, variant: gateVariant(r) }
+  // Chain the re-plan unless this session is mid-loop or the task is taken —
+  // the same guards `plan <id>` runs, minus the resolution core already did.
+  if (driving.has(sessionID) || getWorkflow(sessionID) || findSessionDriving(id)) {
+    return { message: r.message, variant: gateVariant(r) }
+  }
+  const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
+  if (!queued || !(await claimForPlan(deps, sessionID, queued, config))) {
+    return { message: r.message, variant: gateVariant(r) } // raced by a watcher — it re-plans the task there
+  }
+  return {
+    message: `Plan rejected for "${queued.title}" — re-planning now… (a revised plan will park in plan-review/ for your gate)`,
+    variant: "info",
+  }
+}
+
+/**
+ * `workflow_replan` — the model-callable half of `replan`, so the plan gate's
+ * "replan, because…" answer can be acted on in the turn it was given.
+ *
+ * Without it the plan-gate question (`planParkNextStep`) would offer an option
+ * only the human could execute, by typing the verb — which is the ask made
+ * pointless, the same reason `workflow_gate` exists for the draft question.
+ *
+ * `refuseIfDriven` first, failing closed: this tool is offered to every session,
+ * stage subagents included, and a BUILD agent must never reject the plan it is
+ * building against.
+ */
+export const replanFromAgent = async (deps: Deps, sessionID: string, id: string, reason: string, config: Config): Promise<string> => {
+  const refusal = await refuseIfDriven(deps, sessionID)
+  if (refusal) return refusal
+  const target = id.trim()
+  if (!target) return "workflow_replan needs the task id."
+  try {
+    // Core's `reject-any` parses "<id> <reason…>" as one argument string, the same
+    // shape the verb passes — a rejection with no reason is legal and stays legal.
+    const outcome = await replanAndChain(deps, sessionID, `${target} ${reason.trim()}`.trim(), config)
+    void toast(deps.client, outcome.message, outcome.variant)
+    return outcome.message
+  } catch (err) {
+    return `Replan failed for "${target}": ${(err as Error).message}`
   }
 }
 

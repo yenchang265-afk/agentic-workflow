@@ -62,6 +62,18 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "_comment": "The PLAN GATE follow-up. workflow_advance's park arm already returns a `next` line asking for the Approve/Replan/Park question, but that is prose inside data — the same thing gate-ask.mjs exists to stop being the only carrier. This re-emits it as a system reminder beside the tool result. Matches both tool ids Claude Code surfaces (the plain and the plugin-bundled alias). It only ever adds context: no decision, no block, and every uncertainty exits silently.",
+        "matcher": "mcp__.*__workflow_advance$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-gate-ask.mjs\""
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

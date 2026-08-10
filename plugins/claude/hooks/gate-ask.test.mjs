@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { ASK_GATES, gateAsk } from "./gate-ask.mjs"
+import { ASK_GATES, gateAsk, planParkAsk } from "./gate-ask.mjs"
 import { dialectFor } from "./src/dialect.mjs"
 
 /**
@@ -58,4 +58,33 @@ test("a follow-up without a usable id or tool is refused", () => {
   assert.equal(gateAsk("task", "", "AskUserQuestion"), null)
   assert.equal(gateAsk("task", undefined, "AskUserQuestion"), null)
   assert.equal(gateAsk("task", "t", ""), null)
+})
+
+/**
+ * The plan-park follow-up (plan-gate-ask.mjs). Same contract as the task gate's,
+ * one trigger later: the loop has ENDED and the human owns the next move, so the
+ * block has to name the tool behind every option AND stop the model driving on.
+ */
+test("a parked plan asks for approval, naming the task and every option's tool", () => {
+  const ask = planParkAsk("f7k3-rate-limit", dialectFor("claude").askTool)
+  assert.ok(ask)
+  assert.match(ask, /f7k3-rate-limit/)
+  assert.match(ask, /AskUserQuestion/)
+  assert.match(ask, /workflow_plan_approve/, "Approve must name the tool that crosses the gate")
+  assert.match(ask, /workflow_replan/, "Replan without a tool is theatre — the model could only suggest a command")
+  assert.match(ask, /plan-review/)
+  assert.match(ask, /already/i, "it must say the park already happened, or the model re-runs the stage")
+})
+
+test("a Qwen plan-park follow-up names Qwen's tool and never Claude's", () => {
+  const ask = planParkAsk("t", dialectFor("qwen").askTool)
+  assert.match(ask, /ask_user_question/)
+  assert.doesNotMatch(ask, /AskUserQuestion/)
+})
+
+test("a plan-park follow-up without a usable id or tool is refused", () => {
+  assert.equal(planParkAsk("", "AskUserQuestion"), null)
+  assert.equal(planParkAsk(undefined, "AskUserQuestion"), null)
+  assert.equal(planParkAsk("t", ""), null)
+  assert.equal(planParkAsk("t", undefined), null)
 })
