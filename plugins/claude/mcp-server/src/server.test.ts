@@ -519,8 +519,15 @@ test("workflow_waive refuses everything refusable BEFORE it claims the task", ()
   // A refusal that has already taken the marker wedges the task: a held claim
   // makes every gate verb (replan/abandon/remove) refuse in turn.
   const body = flat(toolBody(source(), "workflow_waive"))
-  const claimAt = body.indexOf("claimTask(")
-  assert.ok(claimAt > 0, "the waiver re-claims the task it is about to drive")
+  // `claimForTakeover` is the claim — the shared fail-closed judgement `recover`
+  // also uses, rather than a hand-rolled sweep in this tool.
+  const claimAt = body.indexOf("claimForTakeover(")
+  assert.ok(claimAt > 0, "the waiver re-claims through the shared takeover judgement")
+  assert.doesNotMatch(
+    body,
+    /claimTaskSweepingStale\(/,
+    "never a hand-rolled sweep here: a zero-window one would delete the brand-new claim of a run still in its pre-marker setup window",
+  )
   for (const [what, pattern] of [
     ["a live loop", /if \(active\)/],
     ["an empty reason", /if \(!why\)/],

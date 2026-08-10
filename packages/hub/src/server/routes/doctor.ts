@@ -5,6 +5,7 @@ import { auditBacklog, formatAnomalies } from "@agentic-workflow/core/task/audit
 import {
   appendNote,
   auditNote,
+  claimWriterDead,
   confirmedStrayPlanRequestIds,
   isOrphanedPlanClaim,
   isOrphanedStartedClaim,
@@ -154,6 +155,10 @@ const doctorFix = async (deps: HubDeps): Promise<JsonResponse> => {
           // A live stage can hold its marker for a whole stage timeout without
           // writing anything durable — never judge one dead before then.
           staleMinutes: staleClaimMinutes(deps.config.stageTimeoutMinutes),
+          // …unless the stamp PROVES the claimer is gone. The window is only a
+          // proxy for that; where the pid answers it directly, a human clicking
+          // doctor should not wait 75 minutes for a dead process.
+          writerDead: (ref) => claimWriterDead(deps.sh, ref),
           // A queued task is planless by design, so it needs the plan-claim
           // orphan rule; started pools get the doctor rule
           // (`isOrphanedStartedClaim`): stale + undriven is dead whatever the

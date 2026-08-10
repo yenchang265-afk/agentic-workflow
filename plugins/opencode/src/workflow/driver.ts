@@ -9,7 +9,6 @@ import {
   clearOpencodeStageMarker,
   opencodeStageMarker,
   taskDrivenByStageMarker,
-  taskNamedByStageMarker,
   writeOpencodeStageMarker,
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
@@ -38,7 +37,7 @@ import {
   auditNote,
   claimFirst,
   claimTask,
-  claimTaskSweepingStale,
+  claimWriterDead,
   confirmedStrayPlanRequestIds,
   findByIdIn,
   hasPlan,
@@ -58,7 +57,6 @@ import {
   rescueStray,
   resolveTaskIdAnywhere,
   selectOrder,
-  STALE_CLAIM_MINUTES,
   STATUSES,
   summarizeBacklog,
   type TaskStatus,
@@ -84,6 +82,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { loadState, saveState } from "@agentic-workflow/core/workflow/persist"
+import { claimForTakeover } from "@agentic-workflow/core/workflow/takeover"
 import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
@@ -3108,38 +3107,15 @@ export const handleCommand = async (
     if (!isRecoverable(task)) {
       return report(client, `Task "${id}" has no persisted plan — send it back with ${ECMD} replan ${id}.`, "warning")
     }
-    // Re-claim. A held marker no longer means "leftover from the dead run" —
-    // graceful stops/interrupts release it — so a failed claim means either a
-    // live loop in another process (fresh stage marker: refuse, or two loops
-    // build the same feature/<id> branch) or a hard-crashed run whose writer
-    // pid is gone (take the marker over atomically).
-    if (!(await claimTask(deps.$, task))) {
-      const liveHost = await taskDrivenByStageMarker(deps.$, deps.directory, config.tasksDir, id)
-      if (liveHost) {
-        return report(
-          client,
-          `Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`,
-          "warning",
-        )
-      }
-      // A dead stage marker naming the task is crash evidence — take the claim
-      // over now. No marker at all is ambiguous: a just-claimed live run spends
-      // minutes in its setup window (isolation, stage checks) BEFORE its first
-      // marker write, and an unconditional sweep there started a second drive
-      // on the same feature/<id> branch. There, only a claim stamp older than
-      // the base stale window authorizes the takeover.
-      const crashed = await taskNamedByStageMarker(deps.$, deps.directory, config.tasksDir, id)
-      if (!(await claimTaskSweepingStale(deps.$, task, crashed ? 0 : STALE_CLAIM_MINUTES))) {
-        return report(
-          client,
-          crashed
-            ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
-            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
-                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
-          "warning",
-        )
-      }
-    }
+    // Re-claim. The whole fail-closed judgement — live marker, dead marker, dead
+    // claim writer, wall-clock fallback — is `claimForTakeover`; it is shared with
+    // `waive` and with the Claude host's twin, so no caller can paraphrase it into
+    // a bare zero-window sweep.
+    const took = await claimForTakeover(deps.$, deps.directory, config.tasksDir, task, {
+      verb: "recover",
+      doctorHint: `run ${ECMD} doctor fix`,
+    })
+    if (!took.ok) return report(client, took.message, "warning")
     // Prefer an exact-stage resume from the state snapshot; fall back to
     // re-entering at BUILD from the persisted plan when there's no valid one.
     const snap = await loadState(client, deps.directory, config.tasksDir, id)
@@ -3211,9 +3187,15 @@ export const handleCommand = async (
     const actor = await gitActor(deps.$, deps.directory)
     const waived = waiveCheck(eng, { ...snap, task: { ...snap.task, path: task.path } }, config, why, actor)
     if ("error" in waived) return report(client, waived.error, "warning")
-    if (!(await claimTask(deps.$, task)) && !(await claimTaskSweepingStale(deps.$, task, 0))) {
-      return report(client, `Task "${id}"'s claim marker was just taken by another process — nothing to waive.`, "warning")
-    }
+    // The SAME fail-closed judgement `recover` uses. This once did
+    // `claimTaskSweepingStale(task, 0)` on no evidence at all, which would delete
+    // the brand-new claim of a run still inside its pre-marker setup window and
+    // start a second drive on one feature/<id> branch.
+    const tookForWaive = await claimForTakeover(deps.$, deps.directory, config.tasksDir, task, {
+      verb: "waive",
+      doctorHint: `run ${ECMD} doctor fix`,
+    })
+    if (!tookForWaive.ok) return report(client, tookForWaive.message, "warning")
     await appendNote(deps.$, task, auditNote(`${snap.stage.toUpperCase()} waived by a human — ${why}`, new Date(), actor), deps.log)
     // `waived.state` already names the stage the waiver fires, so the ordinary
     // snapshot resume re-composes exactly that stage's prompt — a waiver needs no
@@ -3298,6 +3280,11 @@ export const handleCommand = async (
           ...(await releaseOrphanedClaims(deps.$, tasks, ids, path.join(deps.directory, config.tasksDir, status), {
             isDriving: (id) => findSessionDriving(id) !== undefined || liveDriven.has(id),
             staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
+            // The window above is a proxy for "the claimer died"; the stamp can
+            // often prove it. Without this, doctor — the fallback the gate verbs
+            // send users to — could not clear a wedged marker for 75 minutes
+            // even when its process was demonstrably gone.
+            writerDead: (ref) => claimWriterDead(deps.$, ref),
             // Doctor releases a stale, undriven marker whatever the body says
             // (`isOrphanedStartedClaim`) — the default rule's `isClaimable`
             // gate made doctor useless against exactly the wedged markers the

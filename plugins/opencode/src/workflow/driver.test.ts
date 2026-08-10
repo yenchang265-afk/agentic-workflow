@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import os from "node:os"
 import { test } from "node:test"
 import { PLAN_HEADING } from "@agentic-workflow/core/task/store"
 import { serializeTask } from "@agentic-workflow/core/task/schema"
@@ -316,6 +317,11 @@ type ShellOverride = { cmd: string; result: { exitCode?: number; stdout?: string
 const makeShellFS = (files: Record<string, string>, log: string[], overrides: ShellOverride[] = []) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[k.startsWith("/") ? k : `/repo/${k}`] = v
+  // Directories created by a bare `mkdir` — the claim marker's atomicity is
+  // "mkdir fails on an existing dir", so a fake that always succeeds cannot
+  // model a claim takeover (release, then win the same path).
+  const mkdirs = new Set<string>()
+  const isDir = (p: string): boolean => mkdirs.has(p) || Object.keys(fs).some((k) => k.startsWith(`${p}/`))
   const build = (strings: TemplateStringsArray, exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -345,6 +351,18 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
       out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]!, stderr: "" } : { exitCode: 1, stdout: "", stderr: "" }
     } else if (parts[0] === "test" && (parts[1] === "-f" || parts[1] === "-e")) {
       out = { exitCode: parts[2]! in fs ? 0 : 1, stdout: "", stderr: "" }
+    } else if (parts[0] === "mkdir") {
+      if (parts[1] === "-p") {
+        mkdirs.add(parts[2]!)
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      } else if (isDir(parts[1]!)) {
+        out = { exitCode: 1, stdout: "", stderr: "File exists" } // EEXIST — the atomic loser
+      } else {
+        mkdirs.add(parts[1]!)
+        out = { exitCode: 0, stdout: "", stderr: "" }
+      }
+    } else if (parts[0] === "test" && parts[1] === "-d") {
+      out = { exitCode: isDir(parts[2]!) ? 0 : 1, stdout: "", stderr: "" }
     } else if (parts[0] === "mv") {
       // `-n` is modelled, not skipped: production relies on it to make the kernel
       // arbitrate a concurrent create.
@@ -356,12 +374,34 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
         fs[dest] = fs[src]!
         delete fs[src]
         out = { exitCode: 0, stdout: "", stderr: "" }
+      } else if (isDir(src)) {
+        // A directory move carries its contents — which is what lets the claim
+        // sweep's rename-aside re-judge the stamp it actually caught.
+        for (const k of Object.keys(fs)) {
+          if (!k.startsWith(`${src}/`)) continue
+          fs[dest + k.slice(src.length)] = fs[k]!
+          delete fs[k]
+        }
+        mkdirs.delete(src)
+        mkdirs.add(dest)
+        out = { exitCode: 0, stdout: "", stderr: "" }
       } else {
         out = { exitCode: 1, stdout: "", stderr: `mv: cannot stat '${src}'` }
       }
+    } else if (parts[0] === "rmdir") {
+      mkdirs.delete(parts[1]!)
+      out = { exitCode: 0, stdout: "", stderr: "" }
     } else if (parts[0] === "rm") {
-      // rm [-f] <path…> — drop any listed paths from the fake fs (missing is fine).
-      for (const p of parts.slice(1)) if (p !== "-f" && p in fs) delete fs[p]
+      // rm [-rf] <path…> — drop the listed paths (and, with -r, anything under
+      // them) from the fake fs; missing is fine.
+      const recursive = parts.some((p) => p.startsWith("-") && p.includes("r"))
+      for (const p of parts.slice(1)) {
+        if (p.startsWith("-")) continue
+        delete fs[p]
+        if (!recursive) continue
+        mkdirs.delete(p)
+        for (const k of Object.keys(fs)) if (k.startsWith(`${p}/`)) delete fs[k]
+      }
       out = { exitCode: 0, stdout: "", stderr: "" }
     } else if (parts[0] === "ls" && parts[1]) {
       // Short-id resolution lists a status folder — serve the fake fs's basenames.
@@ -527,6 +567,93 @@ test("recover <id> refuses a fresh claim with no stage marker (pre-marker setup 
 
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /still be setting up before its first stage/, toasts[0]?.message)
+})
+
+/** A pid no probe in these tests reports as running. */
+const DEAD_PID = 999_201
+
+/** The `recover` fixture: a started, planned task whose claim marker is held. */
+const heldClaimFixture = (stamp: Record<string, unknown>) => ({
+  "docs/tasks/in-progress/t.md": serializeTask({
+    title: "Maybe crashed",
+    body: `${PLAN_HEADING}\n\n1. Step.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]`,
+  }),
+  "docs/tasks/in-progress/.claims/t/claim.json": JSON.stringify(stamp),
+})
+
+/** Probe results that make DEAD_PID provably gone and this process provably live. */
+const deadPidProbes: ShellOverride[] = [
+  { cmd: `kill -0 ${String(DEAD_PID)}`, result: { exitCode: 1 } },
+  { cmd: `test -d /proc/${String(DEAD_PID)}`, result: { exitCode: 1 } },
+  { cmd: `test -d /proc/${String(process.pid)}`, result: { exitCode: 0 } },
+]
+
+test("recover <id> takes over immediately when the claim's writer is provably dead", async () => {
+  // The reported bug: a run that died BEFORE writing its first stage marker left
+  // no crash evidence, so recover made the human wait out the 15-minute window
+  // behind advice ("stop it first") that no other process can act on. The claim
+  // stamp's own writer pid is the evidence that exists in that window.
+  const fixture = heldClaimFixture({ claimedAt: new Date().toISOString(), pid: DEAD_PID, host: os.hostname() })
+  // No state snapshot on disk — the crash happened before the first stage, so
+  // recover re-enters at BUILD from the persisted plan.
+  const { client, toasts } = makeClientFS(fixture)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(fixture, log, deadPidProbes), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-recover-deadwriter", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /Recovering/, toasts[0]?.message)
+  // The takeover is the atomic rename-aside, never a blind rmdir + mkdir.
+  assert.ok(
+    log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ") && c.includes(".claims/t.dead-")),
+    "swept through the rename-aside",
+  )
+})
+
+test("recover <id> still refuses while the claim's writer is alive", async () => {
+  // A live claimer inside its setup window is exactly what the wall-clock window
+  // exists to protect; only the unactionable advice changes.
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(heldClaimFixture({ claimedAt: new Date().toISOString(), pid: process.pid, host: os.hostname() }), log, [
+      { cmd: `kill -0 ${String(process.pid)}`, result: { exitCode: 0 } },
+    ]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess-recover-livewriter", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  const msg = toasts[0]?.message ?? ""
+  assert.match(msg, /held by a live process on this machine/, msg)
+  assert.doesNotMatch(msg, /Stop it first/, "the advice a crashed claimer made unactionable is gone")
+  assert.ok(
+    !log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ")),
+    "a live claim is never swept",
+  )
+})
+
+test("recover <id> refuses a dead-pid claim stamped on ANOTHER machine", async () => {
+  // A repo shared across machines or sibling containers: a pid from over there
+  // says nothing here, and concluding death would start a second drive.
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(heldClaimFixture({ claimedAt: new Date().toISOString(), pid: DEAD_PID, host: "some-other-box" }), log, deadPidProbes),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess-recover-foreign", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.match(toasts[0]?.message ?? "", /cannot be identified on this machine/, toasts[0]?.message)
+  assert.ok(!log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ")))
 })
 
 test("plan <id> on a plan-review task points at the gate verbs, no move", async () => {
@@ -1990,7 +2117,15 @@ test("a fan-out stage refreshes the stage-marker deadline and claim stamp per pa
       },
     },
   } as unknown as Deps["client"]
-  const deps: Deps = { client, $: makeShellFS({}, shellLog), directory: "/repo", log: () => {} }
+  // The claim marker must actually be HELD for a restamp to be observable —
+  // `restampMarker` no-ops on an absent marker so it can never resurrect a
+  // released claim, which is exactly what this test would otherwise measure.
+  const deps: Deps = {
+    client,
+    $: makeShellFS({ "docs/tasks/in-progress/.claims/t/claim.json": JSON.stringify({ claimedAt: new Date().toISOString() }) }, shellLog),
+    directory: "/repo",
+    log: () => {},
+  }
   try {
     await runStagePasses(
       deps,

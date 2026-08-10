@@ -7,7 +7,7 @@ import { z } from "zod"
 import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
-import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
+import { staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, bashAllowlistExtras, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, waiveCheck, withCheckResults } from "@agentic-workflow/core/workflow/engine"
@@ -73,7 +73,7 @@ import {
 import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -92,13 +92,14 @@ import {
 } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal as coreRunTerminal, type TerminalCtx, type TerminalReport } from "@agentic-workflow/core/workflow/terminal"
 import { loadState, saveState } from "@agentic-workflow/core/workflow/persist"
+import { claimForTakeover } from "@agentic-workflow/core/workflow/takeover"
 import { type Task } from "@agentic-workflow/core/task/schema"
 import {
   appendNote,
   appendRunLog,
   auditNote,
   claimTask,
-  claimTaskSweepingStale,
+  claimWriterDead,
   confirmedStrayPlanRequestIds,
   findByIdIn,
   isClaimable,
@@ -2251,6 +2252,11 @@ server.registerTool(
       const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
         isDriving: (id) => active?.task?.id === id || liveDriven.has(id),
         staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
+        // The window above is a proxy for "the claimer died"; the stamp can
+        // often prove it. Without this, doctor — the fallback the gate verbs
+        // send users to — could not clear a wedged marker for 75 minutes even
+        // when its process was demonstrably gone.
+        writerDead: (ref) => claimWriterDead(sh, ref),
         // Doctor releases a stale, undriven marker whatever the body says
         // (`isOrphanedStartedClaim`) — the default rule's `isClaimable` gate
         // made doctor useless against exactly the wedged markers the gate
@@ -2525,33 +2531,15 @@ server.registerTool(
     if (!t) return fail(`No in-progress task "${id}".`)
     if (isClaimable(t)) return fail(`Task "${id}" never started — start it with workflow_start or workflow_claim.`)
     if (!isRecoverable(t)) return fail(`Task "${id}" has no Implementation Plan — send it back to planning with workflow_replan.`)
-    // Re-claim. A held marker no longer means "leftover from the dead run" —
-    // graceful stops release it — so a failed claim means either a live loop in
-    // another process (its stage marker is fresh: refuse, or two loops build
-    // the same branch) or a hard-crashed run (take the marker over atomically).
-    let tookClaim = await claimTask(sh, t)
-    if (!tookClaim) {
-      const liveHost = await taskDrivenByStageMarker(sh, directory, config.tasksDir, id)
-      if (liveHost) {
-        return fail(`Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`)
-      }
-      // A dead stage marker naming the task is crash evidence — take the claim
-      // over now. No marker at all is ambiguous: a just-claimed live run spends
-      // minutes in its setup window (isolation, stage checks) BEFORE its first
-      // marker write, and an unconditional sweep there started a second drive
-      // on the same feature/<id> branch. There, only a claim stamp older than
-      // the base stale window authorizes the takeover.
-      const crashed = await taskNamedByStageMarker(sh, directory, config.tasksDir, id)
-      tookClaim = await claimTaskSweepingStale(sh, t, crashed ? 0 : STALE_CLAIM_MINUTES)
-      if (!tookClaim) {
-        return fail(
-          crashed
-            ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
-            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
-                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
-        )
-      }
-    }
+    // Re-claim. The whole fail-closed judgement — live marker, dead marker, dead
+    // claim writer, wall-clock fallback — is `claimForTakeover`; it is shared with
+    // `workflow_waive` so the two human resume verbs cannot drift, and so no
+    // caller can paraphrase it into a bare zero-window sweep.
+    const took = await claimForTakeover(sh, directory, config.tasksDir, t, {
+      verb: "recover",
+      doctorHint: "run workflow_doctor with fix:true",
+    })
+    if (!took.ok) return fail(took.message)
     const snap = await loadState(fsClient, directory, config.tasksDir, id)
     resetLoopScratch()
     const actor = await gitActor(sh, directory)
@@ -2561,7 +2549,7 @@ server.registerTool(
         active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
       } catch (err) {
         active = null
-        if (tookClaim) await releaseClaim(sh, t)
+        await releaseClaim(sh, t)
         return fail((err as Error).message)
       }
       await appendNote(sh, active.task as TaskRef, auditNote(`Recovered from snapshot at ${active.stage}`, new Date(), actor), log)
@@ -2586,7 +2574,7 @@ server.registerTool(
       active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
     } catch (err) {
       active = null
-      if (tookClaim) await releaseClaim(sh, t)
+      await releaseClaim(sh, t)
       return fail((err as Error).message)
     }
     await appendNote(sh, active.task as TaskRef, auditNote("Recovered from persisted plan — re-entering at BUILD", new Date(), actor), log)
@@ -2649,9 +2637,15 @@ server.registerTool(
     const actor = await gitActor(sh, directory)
     const waived = waiveCheck(eng, { ...snap, task: { ...snap.task, path: t.path } }, config, why, actor)
     if ("error" in waived) return fail(waived.error)
-    if (!(await claimTask(sh, t)) && !(await claimTaskSweepingStale(sh, t, 0))) {
-      return fail(`Task "${id}"'s claim marker was just taken by another process — nothing to waive.`)
-    }
+    // The SAME fail-closed judgement `recover` uses. This once did
+    // `claimTaskSweepingStale(t, 0)` on no evidence at all, which would delete the
+    // brand-new claim of a run still inside its pre-marker setup window and start a
+    // second drive on one feature/<id> branch.
+    const took = await claimForTakeover(sh, directory, config.tasksDir, t, {
+      verb: "waive",
+      doctorHint: "run workflow_doctor with fix:true",
+    })
+    if (!took.ok) return fail(took.message)
     resetLoopScratch()
     active = waived.state
     try {

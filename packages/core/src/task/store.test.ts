@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import os from "node:os"
 import { test } from "node:test"
 import { parseTask, serializeTask, taskToInput, unknownFrontmatterKeys, type Task } from "./schema.js"
 import {
@@ -10,6 +11,7 @@ import {
   claimFirst,
   claimOlderThan,
   claimTask,
+  claimWriterDead,
   releaseClaim,
   extractPlan,
   extractRunBranch,
@@ -19,6 +21,7 @@ import {
   hasPlan,
   isClaimable,
   isOrphanedClaim,
+  isOrphanedStartedClaim,
   isRecoverable,
   joinTaskBody,
   listClaimIds,
@@ -1009,9 +1012,23 @@ test("listClaimIds screens out sweep graveyard debris and other non-id entries",
  * staleness, and stateful release — after an `rmdir` of a marker, the next
  * `mkdir` of it succeeds, like the real filesystem.
  */
-const claimShell = (held: Set<string>, stale: Set<string>, log?: string[]) =>
+/** A pid this fake never reports as running — the crashed claimer's. */
+const DEAD_PID = 999_101
+
+const claimShell = (held: Set<string>, stale: Set<string>, log?: string[], deadWriters: Set<string> = new Set()) =>
   makeShell((cmd) => {
     const id = cmd.split("/").pop() ?? ""
+    // Writer-liveness probes. Only markers named in `deadWriters` carry a stamp
+    // at all; every other marker reads "unknown" and keeps the wall-clock rule,
+    // which is what pins the default behaviour as unchanged.
+    if (cmd.startsWith("cat ") && cmd.endsWith("/claim.json")) {
+      const markerId = cmd.split("/").slice(-2)[0] ?? ""
+      return deadWriters.has(markerId)
+        ? { exitCode: 0, stdout: JSON.stringify({ claimedAt: new Date().toISOString(), pid: DEAD_PID, host: os.hostname() }) }
+        : { exitCode: 1 }
+    }
+    if (cmd.startsWith("kill -0 ")) return { exitCode: Number(cmd.split(" ")[2]) === process.pid ? 0 : 1 }
+    if (cmd.startsWith("test -d /proc/")) return { exitCode: cmd.endsWith(`/proc/${String(process.pid)}`) ? 0 : 1 }
     if (cmd.startsWith("mkdir -p")) return { exitCode: 0 }
     if (cmd.startsWith("mkdir ")) return { exitCode: held.has(id) ? 1 : 0 }
     if (cmd.startsWith("rmdir ")) {
@@ -1032,11 +1049,19 @@ const claimShell = (held: Set<string>, stale: Set<string>, log?: string[]) =>
         stale.delete(srcId)
         stale.add(destId)
       }
+      // The stamp travels INSIDE the marker directory, so the moved-aside copy
+      // still names its writer — which is exactly what lets the dead-writer
+      // release re-judge what it caught instead of deleting a rival's claim.
+      if (deadWriters.has(srcId)) {
+        deadWriters.delete(srcId)
+        deadWriters.add(destId)
+      }
       return { exitCode: 0 }
     }
     if (cmd.startsWith("rm -rf ")) {
       held.delete(id)
       stale.delete(id)
+      deadWriters.delete(id)
       return { exitCode: 0 }
     }
     if (cmd.startsWith("find ")) {
@@ -1166,6 +1191,63 @@ test("releaseOrphanedClaims releases stale orphans and taskless markers, keeps t
   // Releases are the atomic rename-aside, exactly one per released marker.
   const sweeps = log.filter((cmd) => cmd.startsWith("mv ") && (cmd.includes("/orphan ") || cmd.includes("/ghost ")))
   assert.equal(sweeps.length, 2)
+})
+
+test("releaseOrphanedClaims frees a FRESH claim whose writer is provably dead", async () => {
+  // The user-visible fix: doctor's window is stage-timeout-derived (75 minutes by
+  // default), so a wedged marker used to survive that long even when the process
+  // that took it was demonstrably gone. Nothing here is stale by age.
+  const log: string[] = []
+  const $ = claimShell(new Set(["crashed"]), new Set(), log, new Set(["crashed"]))
+  const released = await releaseOrphanedClaims($, [started("crashed")], ["crashed"], "/r/docs/tasks/in-progress", {
+    isDriving: () => false,
+    staleMinutes: 75,
+    isOrphaned: isOrphanedStartedClaim,
+    writerDead: (ref) => claimWriterDead($, ref),
+  })
+  assert.deepEqual(released, ["crashed"])
+  // Still the atomic rename-aside, never a blind rmdir.
+  assert.ok(
+    log.some((cmd) => cmd.startsWith("mv ") && cmd.includes("/crashed ")),
+    "released through the rename-aside",
+  )
+})
+
+test("releaseOrphanedClaims keeps a fresh claim whose writer is alive or unprovable", async () => {
+  // `deadWriters` empty ⇒ no stamp ⇒ "unknown". Uncertainty must never release.
+  const $ = claimShell(new Set(["setting-up"]), new Set(), undefined, new Set())
+  const released = await releaseOrphanedClaims($, [started("setting-up")], ["setting-up"], "/r/docs/tasks/in-progress", {
+    isDriving: () => false,
+    staleMinutes: 75,
+    isOrphaned: isOrphanedStartedClaim,
+    writerDead: (ref) => claimWriterDead($, ref),
+  })
+  assert.deepEqual(released, [], "an unidentifiable holder keeps the wall-clock rule")
+})
+
+test("releaseOrphanedClaims never releases a dead writer's claim that a live loop drives", async () => {
+  // The stage-marker witness outranks the stamp: a dead pid can coexist with a
+  // live drive (a restamp not yet due, a pid recycled), and a running stage wins.
+  const $ = claimShell(new Set(["driven"]), new Set(["driven"]), undefined, new Set(["driven"]))
+  const released = await releaseOrphanedClaims($, [started("driven")], ["driven"], "/r/docs/tasks/in-progress", {
+    isDriving: () => true,
+    staleMinutes: 75,
+    isOrphaned: isOrphanedStartedClaim,
+    writerDead: (ref) => claimWriterDead($, ref),
+  })
+  assert.deepEqual(released, [])
+})
+
+test("releaseOrphanedClaims without the opt is exactly today's age-only behaviour", async () => {
+  // Pins that the unattended sweeps (claimFirst, the startup sweep) are untouched
+  // — they never pass `writerDead`, so a dead writer alone releases nothing.
+  const $ = claimShell(new Set(["crashed"]), new Set(), undefined, new Set(["crashed"]))
+  const released = await releaseOrphanedClaims($, [started("crashed")], ["crashed"], "/r/docs/tasks/in-progress", {
+    isDriving: () => false,
+    staleMinutes: 75,
+    isOrphaned: isOrphanedStartedClaim,
+  })
+  assert.deepEqual(released, [])
 })
 
 test("summarizeBacklog splits body-claimable tasks into ready vs claim-held", () => {
