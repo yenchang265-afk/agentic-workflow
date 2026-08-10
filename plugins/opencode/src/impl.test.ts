@@ -23,13 +23,19 @@ type Hooks = {
 
 const makeHooks = async (
   sessions: Record<string, string | undefined>,
-  opts: { failSessionApi?: boolean; failShell?: boolean; configJson?: string } = {},
+  opts: { failSessionApi?: boolean; failShell?: boolean; configJson?: string; failLog?: boolean; hangConfig?: boolean } = {},
 ): Promise<Hooks> => {
   const client = {
-    app: { log: async () => {} },
+    app: {
+      log: async () => {
+        if (opts.failLog) throw new Error("log channel down")
+      },
+    },
     file: {
-      read: async () =>
-        opts.configJson === undefined ? Promise.reject(new Error("no config file")) : { data: { content: opts.configJson } },
+      read: async (): Promise<unknown> => {
+        if (opts.hangConfig) return new Promise(() => {})
+        return opts.configJson === undefined ? Promise.reject(new Error("no config file")) : { data: { content: opts.configJson } }
+      },
     },
     session: {
       get: async ({ path: { id } }: { path: { id: string } }) => {
@@ -520,6 +526,46 @@ test("a throw in the deterministic half overrides the body instead of leaving it
   assert.doesNotMatch(text, /resume from its state snapshot/, "the verb's description of plugin work must not survive as instructions")
   assert.doesNotMatch(text, /aw:verb/, "markers must not reach the model")
   assert.doesNotMatch(text, /already ran/, "the success override must not claim the work landed")
+})
+
+/**
+ * The silent-swallow class. opencode's Plugin.trigger awaits every hook with no
+ * try/catch of its own, so a `command.execute.before` that rejects — or never
+ * settles — kills the command BEFORE Session.prompt with zero log output: the
+ * user's command just vanishes, and the retry "works" because the one-shot
+ * guards it died in are now set. These tests pin the two closures: every client
+ * call a hook awaits is either total or time-boxed.
+ */
+test("a hanging config read cannot swallow the command (the run-it-twice bug)", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] })
+  const output = { parts: [{ type: "text", text: TEMPLATE }] }
+  const hooks = (await makeHooks({}, { hangConfig: true })) as unknown as CmdHooks
+  const done = hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_h", arguments: "unwatch" }, output)
+  // Let the hook reach the config read, then fire its timeout (and any later
+  // time-boxed await it degrades into). Extra ticks are no-ops.
+  for (const ms of [11_000, 31_000, 11_000]) {
+    await new Promise((r) => setImmediate(r))
+    t.mock.timers.tick(ms)
+  }
+  await done
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user/, "the verb must complete on degraded config, not vanish")
+})
+
+test("a rejecting logger cannot swallow the command", async () => {
+  // The default harness config read rejects, so this drives the exact pairing
+  // that killed first invocations: the error path's own `await log(...)`
+  // rejecting over the same broken channel it was reporting.
+  const output = { parts: [{ type: "text", text: TEMPLATE }] }
+  const hooks = (await makeHooks({}, { failLog: true })) as unknown as CmdHooks
+  await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_i", arguments: "unwatch" }, output)
+  assert.match(output.parts[0]!.text!, /Report exactly that result to the user/)
+})
+
+test("the event hook contains its own failures (an escaped rejection is unhandled in opencode)", async () => {
+  const hooks = (await makeHooks({}, { failLog: true })) as unknown as { event: (input: { event: unknown }) => Promise<void> }
+  // Malformed properties throw at the destructure; the guard must eat it —
+  // resolving IS the assertion.
+  await hooks.event({ event: { type: "session.idle", properties: undefined } })
 })
 
 test("the failure override is inert when the deterministic half succeeds", async () => {

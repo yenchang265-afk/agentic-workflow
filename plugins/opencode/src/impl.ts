@@ -234,11 +234,51 @@ export const applyBashAllowlistExtras = (config: AgentModelConfig, extras: reado
  * missing core build must surface as the entry's fail-loud fallback, not
  * kill the whole plugin silently at import time.
  */
+// How long a client call on a hook path may run before the hook gives up on
+// it. opencode's Plugin.trigger awaits every hook with NO try/catch, and the
+// SDK's fetch disables its own timeout (`req.timeout = false`) — so an await
+// that rejects OR never settles kills the whole command BEFORE Session.prompt,
+// silently: no turn, no error, no log line. The user's command just vanishes
+// and a retry "works". Every await a hook performs must therefore be guarded
+// and, where it can hang (any client call), time-boxed.
+const CONFIG_READ_TIMEOUT_MS = 10_000
+const LOG_TIMEOUT_MS = 5_000
+const RECONCILE_TIMEOUT_MS = 30_000
+
+/**
+ * Reject with a timeout error when `promise` takes longer than `ms`; settle
+ * with it otherwise. Never cancels: the abandoned promise finishes in the
+ * background (its handlers are attached here, so a late rejection is not an
+ * unhandled one) — safe for the callers in this module, which each tolerate
+ * late completion (see call sites).
+ */
+const withTimeout = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
+
 export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   const service = "agentic-workflow"
 
-  const log = (level: "info" | "warn" | "error", message: string) =>
-    client.app.log({ body: { service, level, message } })
+  // Total: never rejects, never hangs. This is also `deps.log`, so every await
+  // on it across the driver inherits the guarantee — a logger that can take
+  // its awaiter down turns every error handler into a second failure point
+  // (the handler reports over the same broken channel that just failed).
+  const log = (level: "info" | "warn" | "error", message: string): Promise<void> =>
+    withTimeout(Promise.resolve(client.app.log({ body: { service, level, message } })), LOG_TIMEOUT_MS, "app.log").then(
+      () => undefined,
+      () => undefined,
+    )
 
   // Everything the driver needs from the host, bundled once. `$` (Bun shell) is
   // used to move task files between status folders.
@@ -256,16 +296,22 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   const readConfig = async (): Promise<Config> => {
     let config: Config
     try {
-      config = await loadConfig(client, directory)
+      // Time-boxed: this runs on every command's hook path, and a stalled
+      // server turns an untimed read into a silently killed command (see
+      // withTimeout). A timeout lands in the catch below — degraded config,
+      // working command. A late completion only resolves an abandoned promise.
+      config = await withTimeout(loadConfig(client, directory), CONFIG_READ_TIMEOUT_MS, ".agentic-workflow.json read")
       lastGood = config
     } catch (err) {
       // A rejected config silently downgrading to defaults surfaces later as
       // "the kind I enabled is unknown", with the only clue buried in
       // opencode's log file. Toast it: the cause is one bad key, and the human
-      // has no other way to connect the two.
+      // has no other way to connect the two. Fire-and-forget: a toast is a
+      // client call too, and awaiting one on this path re-opens the hang the
+      // timeout above just closed.
       const message = `agentic-workflow: ignoring .agentic-workflow.json — ${(err as Error).message}`
       await log("warn", message)
-      await client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
+      void client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
       config = lastGood ?? DEFAULT_CONFIG
     }
     await warnIgnoredUserConfigOnce()
@@ -297,7 +343,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     }
     const unknown = unknownAgentModelKeys(config, knownAgentNames(config))
     if (unknown.length === 0) return
-    await client.tui
+    void client.tui
       .showToast({
         body: {
           message:
@@ -313,11 +359,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   let warnedIgnoredUserConfig = false
   const warnIgnoredUserConfigOnce = async (): Promise<void> => {
     if (warnedIgnoredUserConfig) return
+    // Flag first, unconditionally: the check is a one-shot, not "retry until
+    // it warns" — leaving the flag unset when nothing is ignored re-ran the
+    // filesystem resolution on every command, on the hook path where any
+    // throw kills the command (see withTimeout).
+    warnedIgnoredUserConfig = true
     const inEffect = resolveUserConfigPath()
     const ignored = ignoredUserConfigPaths(inEffect)
     if (ignored.length === 0) return
-    warnedIgnoredUserConfig = true
-    await client.tui
+    void client.tui
       .showToast({
         body: {
           message: `agentic-workflow: ${ignored.join(" and ")} ${ignored.length > 1 ? "are" : "is"} NOT being read — the user-scope config in effect is ${inEffect}. Only one user-scope file loads; move your settings there.`,
@@ -443,6 +493,24 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     }
   }
 
+  // reconcileOnce for the command hook: time-boxed and contained. A hung sweep
+  // (git/fs over a slow mount) must not swallow the command, and a failed one
+  // must not discard a gate move that already succeeded — the sweep is
+  // maintenance, not part of the verb's work. On timeout the abandoned sweep
+  // finishes in the background; that overlap is safe: `reconciled` is already
+  // set (no second sweep), and releaseOrphanedClaims frees markers only after
+  // releaseMarkerIfStale re-judges staleness atomically, so a claim the verb
+  // places while the sweep drains survives it.
+  const reconcileTimely = async (): Promise<void> => {
+    try {
+      await withTimeout(reconcileOnce(), RECONCILE_TIMEOUT_MS, "startup reconciliation")
+    } catch (err) {
+      const message = `agentic-workflow: startup reconciliation failed — ${(err as Error).message}; run "doctor" to audit the backlog`
+      await log("warn", message)
+      void client.tui.showToast({ body: { message, variant: "warning" } }).catch(() => {})
+    }
+  }
+
   /**
    * The Azure DevOps MCP tools the loop's CURRENT stage may call, from its
    * manifest. Resolved per call rather than cached: a loop advances stages
@@ -509,34 +577,41 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
     },
 
     event: async ({ event }) => {
-      // A user interrupt (ESC) surfaces as a MessageAbortedError, not a dedicated
-      // event — route it to onInterrupt so watch mode stops and the loop halts
-      // instead of the trailing session.idle re-claiming work. No reconcileOnce:
-      // it's pointless here and would delay the critical synchronous unwatch.
-      const interruptedSid = driver.abortedSessionID(event)
-      if (interruptedSid) return void (await driver.onInterrupt(deps, interruptedSid))
-      // A question opening or settling. The plugin cannot ORIGINATE one, but
-      // these events are how it learns the model put a gate follow-up to the
-      // human — and how it knows not to hand the session to a drive while a
-      // window is up. Recorded before the idle handling below, never instead of
-      // it: the two event kinds are disjoint.
-      if (driver.noteQuestionEvent(event)) return
-      if (event.type !== "session.idle") return
-      await reconcileOnce()
-      const { sessionID } = event.properties
-      const config = await getConfig()
-      // Do NOT await the drive. `onIdle` is the entry to the whole
-      // build → verify → review chain (stageTimeoutMinutes defaults to 60,
-      // maxIterations to 3), so awaiting it here parks this event handler for
-      // hours — and the ESC path above lives in the same handler, i.e. the one
-      // event that must get through while a loop runs was queued behind it.
-      //
-      // Safe against re-entrancy: `onIdle` reaches `driving.add(sessionID)` with
-      // no intervening await, so the idle events the drive's own stage commands
-      // generate still short-circuit on `driving.has`.
-      void driver.onIdle(deps, sessionID, config).catch(async (err: unknown) => {
-        await log("error", `idle drive failed for ${sessionID}: ${(err as Error).message}`)
-      })
+      // Contained: opencode awaits event hooks the same unguarded way it does
+      // command hooks (see withTimeout), so a rejection escaping here is an
+      // unhandled one with zero log output. Nothing on this path may reject.
+      try {
+        // A user interrupt (ESC) surfaces as a MessageAbortedError, not a dedicated
+        // event — route it to onInterrupt so watch mode stops and the loop halts
+        // instead of the trailing session.idle re-claiming work. No reconcileOnce:
+        // it's pointless here and would delay the critical synchronous unwatch.
+        const interruptedSid = driver.abortedSessionID(event)
+        if (interruptedSid) return void (await driver.onInterrupt(deps, interruptedSid))
+        // A question opening or settling. The plugin cannot ORIGINATE one, but
+        // these events are how it learns the model put a gate follow-up to the
+        // human — and how it knows not to hand the session to a drive while a
+        // window is up. Recorded before the idle handling below, never instead of
+        // it: the two event kinds are disjoint.
+        if (driver.noteQuestionEvent(event)) return
+        if (event.type !== "session.idle") return
+        await reconcileTimely()
+        const { sessionID } = event.properties
+        const config = await getConfig()
+        // Do NOT await the drive. `onIdle` is the entry to the whole
+        // build → verify → review chain (stageTimeoutMinutes defaults to 60,
+        // maxIterations to 3), so awaiting it here parks this event handler for
+        // hours — and the ESC path above lives in the same handler, i.e. the one
+        // event that must get through while a loop runs was queued behind it.
+        //
+        // Safe against re-entrancy: `onIdle` reaches `driving.add(sessionID)` with
+        // no intervening await, so the idle events the drive's own stage commands
+        // generate still short-circuit on `driving.has`.
+        void driver.onIdle(deps, sessionID, config).catch(async (err: unknown) => {
+          await log("error", `idle drive failed for ${sessionID}: ${(err as Error).message}`)
+        })
+      } catch (err) {
+        await log("error", `event hook failed: ${err instanceof Error ? err.message : String(err)}`)
+      }
     },
 
     "command.execute.before": async (input, output) => {
@@ -544,106 +619,118 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       const match = /^agentic-workflow:(.+)$/.exec(input.command)
       if (!match) return
       const kind = match[1]!
-      // Re-read rather than trust the instance-lifetime cache: a kind enabled
-      // in .agentic-workflow.json must work on the next command, not after the
-      // next opencode restart.
-      const config = await refreshConfig()
-      if (!enabledWorkflowKinds(config).includes(kind)) {
-        const enabled = enabledWorkflowKinds(config)
-        const remedy = `Workflow kind "${kind}" is not enabled — enabled kinds: ${enabled.join(", ")}. Add {"workflows":{"${kind}":{"enabled":true}}} to .agentic-workflow.json in the project root, then re-run this command.`
-        await client.tui.showToast({ body: { message: remedy, variant: "warning" } }).catch(() => {})
-        // The command markdown renders whether or not the plugin handles it.
-        // Left alone, the model reads a full description of the sitter's work
-        // and improvises it — `gh` calls, manifest reads, guesses at what
-        // `watch` means. Replace the template with the refusal.
-        overrideCommandPrompt(output, refusalPrompt(`the workflow kind "${kind}" is not enabled.`, remedy))
-        return
-      }
-      // The engineering gate verbs (approve / replan) put their task-file move
-      // first, with no dependency on reconciliation — run the move, THEN
-      // reconcile. On the first-ever command reconcileOnce() does heavy git/fs
-      // work (claim sweeps, worktree prune, backlog audit); doing it before the
-      // move delayed the move past opencode's command-hook window, so the model
-      // read the task as "still in draft" until a retry (reconcile is guarded
-      // to run once, so later attempts were fast — the "works after a few
-      // tries" symptom). Move first keeps the gate deterministic on attempt 1.
-      // (replan additionally chains a re-plan claim after its move — cheap fs
-      // ops, and the fresh claim survives the sweep, which frees stale markers
-      // only.)
-      const { verb } = splitVerb(input.arguments)
-      // Trim the rendered body to the invoked verb BEFORE dispatching. The
-      // template describes every verb, but the ones whose template survives
-      // (new, and retask when its placement succeeded — handleCommand returns
-      // undefined so the model does the work) are exactly the ones that pay for the other
-      // ~190 lines, and those lines describe deterministic plugin work in the
-      // imperative. Slicing first means the trim holds even if reconcile or
-      // handleCommand throws; the `if (outcome)` override below still wins for
-      // the report-and-stop verbs, which is the right precedence. Markers
-      // missing or verb unknown -> keep the full body, never a partial one.
-      // Defuse marker-shaped lines the ARGUMENT substituted into the body
-      // first — without this, a pasted spec quoting the marker syntax denied
-      // the whole slice and the model got all ~230 lines (command-slice.ts).
-      const renderedRaw = readCommandPrompt(output)
-      const rendered = renderedRaw === undefined ? undefined : neutralizeArgumentMarkers(renderedRaw, input.arguments)
-      const sliced = rendered === undefined ? undefined : sliceCommandPrompt(rendered, verb)
-      // The drafting invocation has no stage behind it, so `agentModels` reaches it
-      // only by riding the body the model reads. Appended after the slice so it
-      // survives whichever half was kept, and emitted even when slicing was a
-      // no-op (markers missing) — otherwise a broken template silently drops it.
-      const draftNote = draftModelNote(config, kind, verb)
-      // `??` here treated an EMPTY slice as a usable one: a verb block that
-      // tidies to nothing, plus a configured drafting model, replaced the entire
-      // command body with the model sentence — no task, no prohibitions, no
-      // usage. An empty slice is not a slice; fall back like a missing one.
-      const base = sliced || rendered
-      if (base !== undefined && (sliced || draftNote)) {
-        overrideCommandPrompt(output, draftNote ? `${base}\n\n${draftNote}` : base)
-      }
-      const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
-      let outcome: string | undefined
+      // ONE try around everything after the prefix match. opencode's
+      // Plugin.trigger awaits this hook with no try/catch of its own (see
+      // withTimeout), so any rejection that escapes — the config refresh, the
+      // kind check, the slice, the dispatch — kills the command before
+      // Session.prompt with zero log output: the user's command vanishes and
+      // the retry "works" (the one-shot guards it tripped over are now set).
+      // That was the live bug: every first invocation swallowed. The catch is
+      // the only visible channel a dead command has, so it must see everything.
+      let verb = ""
       try {
-        if (!gateFirst) await reconcileOnce()
-        outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
-        if (gateFirst) await reconcileOnce()
+        // Re-read rather than trust the instance-lifetime cache: a kind enabled
+        // in .agentic-workflow.json must work on the next command, not after the
+        // next opencode restart.
+        const config = await refreshConfig()
+        if (!enabledWorkflowKinds(config).includes(kind)) {
+          const enabled = enabledWorkflowKinds(config)
+          const remedy = `Workflow kind "${kind}" is not enabled — enabled kinds: ${enabled.join(", ")}. Add {"workflows":{"${kind}":{"enabled":true}}} to .agentic-workflow.json in the project root, then re-run this command.`
+          void client.tui.showToast({ body: { message: remedy, variant: "warning" } }).catch(() => {})
+          // The command markdown renders whether or not the plugin handles it.
+          // Left alone, the model reads a full description of the sitter's work
+          // and improvises it — `gh` calls, manifest reads, guesses at what
+          // `watch` means. Replace the template with the refusal.
+          overrideCommandPrompt(output, refusalPrompt(`the workflow kind "${kind}" is not enabled.`, remedy))
+          return
+        }
+        // The engineering gate verbs (approve / replan) put their task-file move
+        // first, with no dependency on reconciliation — run the move, THEN
+        // reconcile. On the first-ever command reconcileOnce() does heavy git/fs
+        // work (claim sweeps, worktree prune, backlog audit); doing it before the
+        // move delayed the move past opencode's command-hook window, so the model
+        // read the task as "still in draft" until a retry (reconcile is guarded
+        // to run once, so later attempts were fast — the "works after a few
+        // tries" symptom). Move first keeps the gate deterministic on attempt 1.
+        // (replan additionally chains a re-plan claim after its move — cheap fs
+        // ops, and the fresh claim survives the sweep, which frees stale markers
+        // only.)
+        verb = splitVerb(input.arguments).verb
+        // Trim the rendered body to the invoked verb BEFORE dispatching. The
+        // template describes every verb, but the ones whose template survives
+        // (new, and retask when its placement succeeded — handleCommand returns
+        // undefined so the model does the work) are exactly the ones that pay for the other
+        // ~190 lines, and those lines describe deterministic plugin work in the
+        // imperative. Slicing first means the trim holds even if reconcile or
+        // handleCommand throws; the `if (outcome)` override below still wins for
+        // the report-and-stop verbs, which is the right precedence. Markers
+        // missing or verb unknown -> keep the full body, never a partial one.
+        // Defuse marker-shaped lines the ARGUMENT substituted into the body
+        // first — without this, a pasted spec quoting the marker syntax denied
+        // the whole slice and the model got all ~230 lines (command-slice.ts).
+        const renderedRaw = readCommandPrompt(output)
+        const rendered = renderedRaw === undefined ? undefined : neutralizeArgumentMarkers(renderedRaw, input.arguments)
+        const sliced = rendered === undefined ? undefined : sliceCommandPrompt(rendered, verb)
+        // The drafting invocation has no stage behind it, so `agentModels` reaches it
+        // only by riding the body the model reads. Appended after the slice so it
+        // survives whichever half was kept, and emitted even when slicing was a
+        // no-op (markers missing) — otherwise a broken template silently drops it.
+        const draftNote = draftModelNote(config, kind, verb)
+        // `??` here treated an EMPTY slice as a usable one: a verb block that
+        // tidies to nothing, plus a configured drafting model, replaced the entire
+        // command body with the model sentence — no task, no prohibitions, no
+        // usage. An empty slice is not a slice; fall back like a missing one.
+        const base = sliced || rendered
+        if (base !== undefined && (sliced || draftNote)) {
+          overrideCommandPrompt(output, draftNote ? `${base}\n\n${draftNote}` : base)
+        }
+        // reconcileTimely, not reconcileOnce: the sweep is maintenance, so a
+        // hung or failed sweep degrades to a toast instead of reaching the
+        // catch — which would discard a gate move that already succeeded and
+        // report the verb as failed.
+        const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
+        if (!gateFirst) await reconcileTimely()
+        const outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
+        if (gateFirst) await reconcileTimely()
+        // The command markdown renders to the model whether or not the plugin
+        // handled the verb. For the report-and-stop verbs (claim/watch/status/…)
+        // handleCommand did all the work and only toasted — but toasts are
+        // invisible to the model, and the rendered template is a DESCRIPTION of
+        // the loop, so the model reads it as information and never reports the
+        // action. Feed the real outcome back in (same mechanism as the refusal
+        // paths). Pass-through verbs (new, and retask on successful placement)
+        // return undefined here, so their markdown reaches the model untouched.
+        if (outcome) {
+          overrideCommandPrompt(
+            output,
+            `The agentic-workflow plugin already ran /agentic-workflow:${kind} "${verb}" for you. Result:\n\n${outcome}\n\n` +
+              `Report exactly that result to the user. Do NOT perform any work described in this command's BODY — the plugin already did it. ` +
+              `The one exception is a \`NEXT STEP\` line inside the result above: that is the plugin talking, and it asks for the one thing ` +
+              `only you can do (put a question to the user). Follow it if present, then stop.`,
+          )
+        }
       } catch (err) {
-        // A crash here is the ONE path on which a report-and-stop verb's body
-        // reaches the model. The slice above already wrote it to `output`, and
-        // for those verbs that prose describes the plugin's deterministic work
-        // in the imperative — take the watch lease, release orphaned claim
-        // markers, audit and repair the backlog, read the manifests. The
-        // `if (outcome)` override below is what normally replaces it, and a
-        // throw skips straight past it, so the model is handed the plugin's job
-        // as its instructions and improvises the loop by hand. That is exactly
-        // the failure mode the not-enabled branch above already overrides for;
-        // this is the same guard for the failure path. Wraps reconcileOnce too:
-        // it is awaited on the same unguarded path, either side of the dispatch.
+        // A crash is the ONE path on which a report-and-stop verb's body
+        // reaches the model. The slice above (when it ran) wrote it to
+        // `output`, and for those verbs that prose describes the plugin's
+        // deterministic work in the imperative — take the watch lease, release
+        // orphaned claim markers, audit and repair the backlog, read the
+        // manifests. The `if (outcome)` override above is what normally
+        // replaces it, and a throw skips straight past it, so the model is
+        // handed the plugin's job as its instructions and improvises the loop
+        // by hand. That is exactly the failure mode the not-enabled branch
+        // above already overrides for; this is the same guard for the failure
+        // path.
         const message = err instanceof Error ? err.message : String(err)
-        // Override FIRST, then report. The prompt is the part that must not be
-        // lost: a logger or TUI call that throws on its way out would take the
-        // whole hook down and leave the sliced body standing.
+        // Override FIRST, then report — and never await a TUI call on the way
+        // out. The prompt is the part that must not be lost, and the hook must
+        // still RESOLVE for it to matter: a hanging toast here would swallow
+        // the command with the failure prompt already written.
         overrideCommandPrompt(output, failurePrompt(input.command, verb, message))
-        await log("error", `command /${input.command} "${verb}" failed: ${message}`).catch(() => {})
-        await client.tui
+        await log("error", `command /${input.command} "${verb}" failed: ${message}`)
+        void client.tui
           .showToast({ body: { message: `agentic-workflow: /${input.command} ${verb} failed — ${message}`, variant: "error" } })
           .catch(() => {})
-        return
-      }
-      // The command markdown renders to the model whether or not the plugin
-      // handled the verb. For the report-and-stop verbs (claim/watch/status/…)
-      // handleCommand did all the work and only toasted — but toasts are
-      // invisible to the model, and the rendered template is a DESCRIPTION of
-      // the loop, so the model reads it as information and never reports the
-      // action. Feed the real outcome back in (same mechanism as the refusal
-      // paths). Pass-through verbs (new, and retask on successful placement)
-      // return undefined here, so their markdown reaches the model untouched.
-      if (outcome) {
-        overrideCommandPrompt(
-          output,
-          `The agentic-workflow plugin already ran /agentic-workflow:${kind} "${verb}" for you. Result:\n\n${outcome}\n\n` +
-            `Report exactly that result to the user. Do NOT perform any work described in this command's BODY — the plugin already did it. ` +
-            `The one exception is a \`NEXT STEP\` line inside the result above: that is the plugin talking, and it asks for the one thing ` +
-            `only you can do (put a question to the user). Follow it if present, then stop.`,
-        )
       }
     },
 
