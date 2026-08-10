@@ -85,9 +85,17 @@ and a 5 GB session database; the next one names itself.
 - **Nothing is cancelled.** Bun's `$` hands back no way to kill the child, the
   same residual `runChecks`' fallback documents. A timed-out command may still
   be running; the warning says so.
-- **The hub's gate context is untouched.** `packages/hub/src/server/gatectx.ts`
-  passes its own `sh`, and a stalled request there fails an HTTP call rather
-  than wedging a session. Worth the same treatment, not on this change.
+- **The hub's gate context is untouched**, and so are the Claude/Qwen MCP
+  server's tools. `packages/hub/src/server/gatectx.ts` passes its own `sh`, and
+  a stalled request there fails an HTTP call rather than wedging a session; the
+  MCP tools are the same unbounded class as OpenCode's were, but that host's
+  shim does implement `ShellPromise.timeout`, so the fix there is a wiring
+  decision of its own. Both get the de-globbed `releaseMarker` regardless.
+- **Twelve `await toast(...)` calls remain in the driver** (`runPark`,
+  `watchTick`, `onIdle`'s error path). They sit on the DRIVE path, not the
+  command-hook path, so a hang there stalls a loop rather than silently killing
+  a turn — but "toasts are fire-and-forget everywhere" is now aspirational in
+  two places rather than one. A sweep, not a bug fix.
 - **The exact stalling command is still unproven.** The glob is the only
   unbounded candidate on the path, but `revokePlanRequestAt`'s `rm` and
   `ensureExcluded`'s `git rev-parse`/`grep`/`mkdir`/`printf` were not excluded

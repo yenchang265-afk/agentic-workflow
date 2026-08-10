@@ -68,8 +68,15 @@ settle 的 await 會無聲地殺掉整個回合），以及 `gateFromAgent` 在 
   自己的時限機制；用為檔案搬移挑的上限一刀切下去只會誤砍。
 - **不取消任何東西。** Bun 的 `$` 不交出殺掉子行程的handle，與 `runChecks` fallback 記錄
   的殘留相同。逾時的指令可能仍在跑；警告會這麼說。
-- **hub 的閘門情境未動。** `packages/hub/src/server/gatectx.ts` 傳的是自己的 `sh`，那裡
-  懸置只會拖垮一個 HTTP 請求，不會卡死 session。值得比照辦理，但不在本次變更。
+- **hub 的閘門情境未動**，Claude/Qwen MCP server 的工具也一樣。
+  `packages/hub/src/server/gatectx.ts` 傳的是自己的 `sh`，那裡懸置只會拖垮一個 HTTP
+  請求，不會卡死 session；MCP 工具則與 OpenCode 先前屬於同一個無界類別，但那個 host 的
+  shim 確實有實作 `ShellPromise.timeout`，所以那邊的修法是另一個接線決策。兩者都照樣拿到
+  去 glob 化的 `releaseMarker`。
+- **driver 裡還有十二個 `await toast(...)`**（`runPark`、`watchTick`、`onIdle` 的錯誤
+  分支）。它們位於「驅動」路徑而非 command hook 路徑，因此在那裡懸置只會卡住迴圈，不會
+  無聲殺掉一個回合——但「toast 一律射後不理」現在是兩處而非一處的理想值。那是一次清掃，
+  不是缺陷修復。
 - **確切懸置的指令仍未證實。** glob 是這條路徑上唯一無界的候選，但
   `revokePlanRequestAt` 的 `rm` 與 `ensureExcluded` 的
   `git rev-parse`/`grep`/`mkdir`/`printf` 並未被證據排除。這正是 124 警告存在的理由：
