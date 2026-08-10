@@ -1,6 +1,7 @@
 import path from "node:path"
 import { writeFileAtomic } from "../fsatomic.js"
 import type { Shell } from "../host.js"
+import { pidAlive } from "../liveness.js"
 import type { WorkflowState } from "./state.js"
 
 /**
@@ -174,12 +175,10 @@ export const taskDrivenByStageMarker = async (
       const m = JSON.parse(out.stdout.toString()) as { taskId?: unknown; deadline?: unknown; pid?: unknown }
       if (m.taskId !== taskId) continue
       if (typeof m.deadline !== "number" || m.deadline <= now) continue // stage window over — dead either way
+      // Shared with the claim stamp's writer probe (`liveness.ts`) so the two
+      // oracles cannot drift; see there for the EPERM caveat.
       if (typeof m.pid === "number" && Number.isInteger(m.pid) && m.pid > 0) {
-        // `kill -0` probes existence without signalling. An EPERM (alive but
-        // other-user) also exits non-zero and would read as dead — acceptable:
-        // markers are same-repo, same-user in practice.
-        const alive = await $`kill -0 ${String(m.pid)}`.quiet().nothrow()
-        if (alive.exitCode !== 0) continue
+        if (!(await pidAlive($, m.pid))) continue
       }
       return host
     } catch {

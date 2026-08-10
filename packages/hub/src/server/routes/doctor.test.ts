@@ -63,6 +63,31 @@ const claim = (dir: string, status: string, id: string, ageMin = 0): void => {
   }
 }
 
+/**
+ * A claim marker carrying a real `claim.json` stamp — the writer-identity form.
+ * The boot id is read from the same place core reads it, or the fixture would
+ * look like another container's and the test would prove nothing.
+ */
+const claimStamped = (dir: string, status: string, id: string, opts: { pid: number; ageMin?: number; host?: string }): void => {
+  const marker = path.join(dir, "docs", "tasks", status, ".claims", id)
+  fs.mkdirSync(marker, { recursive: true })
+  let boot: string | undefined
+  try {
+    boot = fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() || undefined
+  } catch {
+    boot = undefined
+  }
+  const claimedAt = new Date(Date.now() - (opts.ageMin ?? 0) * 60_000).toISOString()
+  fs.writeFileSync(path.join(marker, "claim.json"), JSON.stringify({ claimedAt, pid: opts.pid, host: opts.host ?? os.hostname(), ...(boot ? { boot } : {}) }))
+}
+
+/** A pid that is certainly not running: spawned and reaped before we look. */
+const reapedPid = (): number => {
+  const out = execFileSync("sh", ["-c", "sh -c 'echo $$' & wait"], { encoding: "utf8" })
+  const pid = Number(out.trim().split(/\s+/).pop())
+  return Number.isInteger(pid) && pid > 0 ? pid : 999_999
+}
+
 /** A stage marker — LIVE by default (open deadline, this process's pid). */
 const stageMarker = (dir: string, taskId: string, opts: { host?: "claude" | "opencode"; deadline?: number; pid?: number } = {}): void => {
   const file = opts.host === "opencode" ? ".stage-opencode.json" : ".stage.json"
@@ -184,6 +209,60 @@ test("a DEAD stage marker pins nothing — the wedged claim it names is still re
   const body = (await fix(dir)).body as DoctorFixResponse
   assert.deepEqual(body.releasedClaims, ["crashed"], "a dead marker must not pin the claim")
   assert.deepEqual(claimIds(dir, "in-progress"), [])
+  cleanup(dir)
+})
+
+test("a FRESH claim whose stamped writer is dead is released — no 75-minute wait", async () => {
+  // The reported block, at the doctor end: the stale window is a bound on how
+  // long a healthy stage may go without durable progress, not evidence about
+  // the claimer. When the stamp names a pid that is gone on this machine, the
+  // wedged marker the gate verbs send users here for clears immediately.
+  const dir = makeRepo()
+  place(dir, "in-progress", "crashed")
+  claimStamped(dir, "in-progress", "crashed", { pid: reapedPid(), ageMin: 5 })
+
+  const body = (await fix(dir)).body as DoctorFixResponse
+  assert.deepEqual(body.releasedClaims, ["crashed"])
+  assert.deepEqual(claimIds(dir, "in-progress"), [])
+  cleanup(dir)
+})
+
+test("a fresh claim whose stamped writer is ALIVE survives", async () => {
+  const dir = makeRepo()
+  place(dir, "in-progress", "setting-up")
+  claimStamped(dir, "in-progress", "setting-up", { pid: process.pid, ageMin: 5 })
+
+  const body = (await fix(dir)).body as DoctorFixResponse
+  assert.deepEqual(body.releasedClaims, [])
+  assert.deepEqual(claimIds(dir, "in-progress"), ["setting-up"])
+  cleanup(dir)
+})
+
+test("a dead-pid claim stamped on another machine survives — the shared-mount fail-safe", async () => {
+  // An NFS/bind-mounted repo, or a sibling container: that pid means nothing
+  // here, and sweeping on it would start a second drive on one branch.
+  const dir = makeRepo()
+  place(dir, "in-progress", "elsewhere")
+  claimStamped(dir, "in-progress", "elsewhere", { pid: reapedPid(), ageMin: 5, host: "some-other-box" })
+
+  const body = (await fix(dir)).body as DoctorFixResponse
+  assert.deepEqual(body.releasedClaims, [])
+  assert.deepEqual(claimIds(dir, "in-progress"), ["elsewhere"])
+  cleanup(dir)
+})
+
+test("a LIVE stage marker outranks a dead claim stamp", async () => {
+  // A dead pid can coexist with a running stage (a pid recycled, a restamp not
+  // yet due). The stage marker proves a stage is RUNNING; the stamp only
+  // describes who took the claim. The stronger witness wins.
+  const dir = makeRepo()
+  place(dir, "in-progress", "driven")
+  claimStamped(dir, "in-progress", "driven", { pid: reapedPid(), ageMin: 5 })
+  stageMarker(dir, "driven")
+
+  const body = (await fix(dir)).body as DoctorFixResponse
+  assert.deepEqual(body.releasedClaims, [])
+  assert.deepEqual(claimIds(dir, "in-progress"), ["driven"])
   cleanup(dir)
 })
 
