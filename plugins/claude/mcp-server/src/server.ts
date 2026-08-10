@@ -98,7 +98,10 @@ import {
   appendRunLog,
   auditNote,
   claimTask,
+  claimTaskSweepingDeadWriter,
   claimTaskSweepingStale,
+  claimWriterDead,
+  claimWriterState,
   confirmedStrayPlanRequestIds,
   findByIdIn,
   isClaimable,
@@ -2230,6 +2233,11 @@ server.registerTool(
       const released = await releaseOrphanedClaims(sh, tasks, ids, path.join(directory, config.tasksDir, status), {
         isDriving: (id) => active?.task?.id === id || liveDriven.has(id),
         staleMinutes: staleClaimMinutes(config.stageTimeoutMinutes),
+        // The window above is a proxy for "the claimer died"; the stamp can
+        // often prove it. Without this, doctor — the fallback the gate verbs
+        // send users to — could not clear a wedged marker for 75 minutes even
+        // when its process was demonstrably gone.
+        writerDead: (ref) => claimWriterDead(sh, ref),
         // Doctor releases a stale, undriven marker whatever the body says
         // (`isOrphanedStartedClaim`) — the default rule's `isClaimable` gate
         // made doctor useless against exactly the wedged markers the gate
@@ -2514,20 +2522,44 @@ server.registerTool(
       if (liveHost) {
         return fail(`Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`)
       }
-      // A dead stage marker naming the task is crash evidence — take the claim
-      // over now. No marker at all is ambiguous: a just-claimed live run spends
-      // minutes in its setup window (isolation, stage checks) BEFORE its first
-      // marker write, and an unconditional sweep there started a second drive
-      // on the same feature/<id> branch. There, only a claim stamp older than
-      // the base stale window authorizes the takeover.
-      const crashed = await taskNamedByStageMarker(sh, directory, config.tasksDir, id)
-      tookClaim = await claimTaskSweepingStale(sh, t, crashed ? 0 : STALE_CLAIM_MINUTES)
+      // Two independent forms of crash evidence, either of which authorizes an
+      // immediate (`minutes: 0`) takeover:
+      //
+      //  - a DEAD stage marker naming the task — a run reached a stage and its
+      //    writer died;
+      //  - a claim stamp naming a pid on this machine that no longer exists —
+      //    which is the only evidence available when the run died BEFORE its
+      //    first stage marker (isolation, worktreeSetup/npm ci, check
+      //    discovery), the case that used to cost a 15-minute wait behind
+      //    advice ("stop it first") no other process can act on.
+      //
+      // Without either, the marker is ambiguous: a just-claimed live run spends
+      // minutes in that same setup window, and an unconditional sweep there
+      // started a second drive on the same feature/<id> branch. Only a claim
+      // stamp older than the base stale window authorizes the takeover there.
+      const namedByMarker = await taskNamedByStageMarker(sh, directory, config.tasksDir, id)
+      // Skipped when the marker already settled it — the probe costs subprocesses.
+      const writer = namedByMarker ? "unknown" : await claimWriterState(sh, t)
+      // The dead-writer arm takes the IDENTITY-judged sweep, not `…Stale(t, 0)`:
+      // a zero age window cannot re-judge what the rename caught (see
+      // `releaseMarkerIfWriterDead`). The stage-marker arm keeps its existing
+      // zero-window path — its evidence is the marker, not the stamp.
+      tookClaim = namedByMarker
+        ? await claimTaskSweepingStale(sh, t, 0)
+        : writer === "dead"
+          ? await claimTaskSweepingDeadWriter(sh, t)
+          : await claimTaskSweepingStale(sh, t, STALE_CLAIM_MINUTES)
       if (!tookClaim) {
         return fail(
-          crashed
+          namedByMarker || writer === "dead"
             ? `Task "${id}"'s claim marker was just re-taken by another process — nothing to recover.`
-            : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old and no stage marker exists yet — ` +
-                `the claiming run may still be setting up before its first stage. Stop it first, or retry once the claim goes stale.`,
+            : writer === "alive"
+              ? `Task "${id}"'s claim is held by a live process on this machine that has not written a stage marker yet — ` +
+                `it is probably still setting up (isolation, dependency install). Stop that run, or retry once its claim goes stale ` +
+                `(${STALE_CLAIM_MINUTES} minutes).`
+              : `Task "${id}"'s claim is less than ${STALE_CLAIM_MINUTES} minutes old, no stage marker exists yet, and its holder ` +
+                `cannot be identified on this machine — the claiming run may still be setting up before its first stage. ` +
+                `If you know it is gone, run workflow_doctor with fix:true; otherwise retry once the claim goes stale.`,
         )
       }
     }

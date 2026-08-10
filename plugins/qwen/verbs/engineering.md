@@ -228,7 +228,10 @@
 <!-- aw:verb recover -->
 - **`recover <id>`** — call `mcp__agentic-workflow__workflow_recover({id})` and
   resume driving from the action it returns: `workflow_stage`, then spawn the
-  subagent it names with the `agent` tool.
+  subagent it names with the `agent` tool. If it refuses because
+  the claim's holder may still be alive, report its reason as given — the wait
+  is deliberate, and a second loop on one branch is what it prevents. Never
+  delete a claim marker by hand; `workflow_doctor({fix: true})` is the repair.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort

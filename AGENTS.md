@@ -249,6 +249,41 @@ task. Cross-process liveness for `recover` is judged by
 `taskDrivenByStageMarker` (stage-marker deadline + writer pid), never by the
 in-memory per-process driving map alone.
 
+### A stale window is a proxy; the writer identity is the answer
+
+`STALE_CLAIM_MINUTES` (and the stage-timeout-derived window doctor uses) never
+measured anything about the claimer — they bound how long a HEALTHY stage may go
+without durable progress, and were then read as "the claimer must be dead by
+now". That is why a run which died before its first stage marker cost a human 15
+minutes behind advice no one could act on: `stop` only ever stops the loop in the
+CALLING process, so "stop it first" is unactionable against a process that is
+already gone. So the claim stamp records `pid` + machine identity, and
+`claimWriterLiveness` answers the question directly. Four things hold it up:
+
+- **It fails CLOSED — the opposite of the host hooks.** They fail open because a
+  false allow only restores older behaviour; here a false "dead" sweeps a live
+  claim and starts a SECOND drive on one `feature/<id>` branch. No stamp, no
+  pid, another machine, a garbled parse: all `"unknown"`, all keep the window.
+- **`kill -0` failing is not death.** EPERM (alive, another user) exits non-zero
+  exactly like ESRCH. `pidAlive` may not conclude death; `pidGone` must prove it
+  positively, and every probe is self-validating — it has to see our OWN pid, or
+  it proves nothing. This is why the two exist rather than one.
+- **A pid needs its namespace.** Hostname alone does not separate sibling
+  containers from one image, so the boot id joins it and any comparison missing
+  either side is refused.
+- **`releaseMarkerIfStale(…, 0)` is NOT the age-free release.** A zero window
+  degrades `markerOlderThan` to a bare existence test, so the rename-aside's
+  re-judge always says yes and a rival's brand-new claim is deleted — the exact
+  double-sweep the rename-aside exists to stop. The age-free path is judged by
+  writer IDENTITY (`releaseMarkerIfWriterDead` / `acquireOrSweepDeadWriter`),
+  which re-judges soundly: a rival stamped its own live pid.
+
+The stage marker stays the STRONGER witness and is checked first — it proves a
+stage is running, where the stamp only says who took the claim. Only the
+human-invoked verbs (`recover`, `doctor fix`) opt in; the unattended sweeps
+(`claimFirst`, the startup sweep) keep the wall-clock rule, because no one is
+waiting on them.
+
 ### `state.git.base` is a ref, not always a branch
 
 `taskBranch: false` runs the loop on the branch the tree already has checked

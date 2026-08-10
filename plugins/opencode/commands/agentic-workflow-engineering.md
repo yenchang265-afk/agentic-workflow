@@ -235,8 +235,8 @@ Dispatch:
   nothing always logs why (empty queue, tasks awaiting a plan, tasks already
   started, claim marker held); actionable reasons are toasted once. An
   `in-progress/` claim marker orphaned by a crashed run auto-releases after 15
-  minutes; a stale `queued/` marker (a crashed `plan <id>`) is released by
-  `doctor fix`.
+  minutes — or immediately, once the process that took it is provably gone; a
+  stale `queued/` marker (a crashed `plan <id>`) is released by `doctor fix`.
   **One watcher process per clone:** watch takes an on-disk lease
   (`<tasksDir>/runs/.watch-lease/`, heartbeat every tick); a second opencode
   process watching the same clone is refused — run it in its own
@@ -255,6 +255,11 @@ Dispatch:
   valid snapshot, re-enters at BUILD from the persisted plan). ESC is a pause
   — it halts after the in-flight stage settles and keeps the snapshot; `stop`
   ends the run and drops it. Check `git status`/`git diff` first.
+  Resumes **immediately** whenever the dead run left evidence: a stage marker
+  naming the task, or a claim stamp naming a process that is gone on this
+  machine. It waits only when the holder may still be alive — a live local pid,
+  or a claim taken on another machine/container, where the 15-minute window is
+  the only safe rule. `doctor fix` clears the same wedged markers.
 <!-- /aw:verb recover -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — abort the loop and exit watch mode (timer

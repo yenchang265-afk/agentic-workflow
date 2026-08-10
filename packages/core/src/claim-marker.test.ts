@@ -2,15 +2,19 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
   acquireMarker,
+  acquireOrSweepDeadWriter,
   acquireOrSweepMarker,
+  claimWriterLiveness,
   markerOlderThan,
   releaseMarker,
   releaseMarkerIfStale,
+  releaseMarkerIfWriterDead,
   restampMarker,
   STALE_CLAIM_MINUTES,
   stampPath,
 } from "./claim-marker.js"
 import type { Shell } from "./host.js"
+import { resetMachineIdCache } from "./liveness.js"
 
 /**
  * The mkdir claim marker — the primitive every PR/CI-shaped work source trusts
@@ -19,10 +23,15 @@ import type { Shell } from "./host.js"
  * the whole atomicity argument) and lets a rival be interleaved at an exact
  * command, so the sweep race is reproducible rather than theoretical.
  */
-const makeFs = () => {
+const makeFs = (livePids: ReadonlySet<number> = new Set([process.pid])) => {
   const dirs = new Set<string>()
   const files = new Map<string, string>()
   const cmds: string[] = []
+  // The writer-liveness probes ride the same fake. `/proc/<pid>` entries are
+  // ordinary dirs here, so the existing `test -d` arm answers them — and seeding
+  // them from `livePids` keeps the two probes (`kill -0`, `/proc`) consistent,
+  // which is what `pidGone` demands before it will conclude anything.
+  for (const pid of livePids) dirs.add(`/proc/${String(pid)}`)
   /** Runs before the matching command executes — the rival's window. */
   let hook: { match: string; run: () => Promise<void>; once: boolean } | null = null
 
@@ -125,6 +134,8 @@ const makeFs = () => {
           if (!dirs.has(target) && !files.has(target) && !noCreate) files.set(target, "")
           return { exitCode: 0, stdout: "" }
         }
+        case "kill":
+          return { exitCode: livePids.has(Number(parts[2])) ? 0 : 1, stdout: "" }
         case "find":
           return { exitCode: 1, stdout: "" } // no mtime fallback in these tests — every marker is stamped
         default:
@@ -161,6 +172,169 @@ test("acquireMarker is exclusive and stamps the winner", async () => {
   assert.equal(await acquireMarker($, MARKER, T0), true)
   assert.equal(await acquireMarker($, MARKER, T0), false, "a held marker cannot be won twice")
   assert.equal(JSON.parse(files.get(stampPath(MARKER))!).claimedAt, T0.toISOString())
+})
+
+test("acquireMarker stamps the WRITER, not only the time", async () => {
+  // The age is a proxy for "did the claimer die"; the writer identity answers it
+  // outright, which is what lets recover skip the wall-clock wait.
+  resetMachineIdCache()
+  const { $, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  const stamp = JSON.parse(files.get(stampPath(MARKER))!)
+  assert.equal(stamp.pid, process.pid)
+  assert.equal(typeof stamp.host, "string")
+  assert.equal(stamp.claimedAt, T0.toISOString(), "the original field is untouched — older readers keep working")
+  resetMachineIdCache()
+})
+
+test("restampMarker rewrites the writer identity, not just the timestamp", async () => {
+  // A marker handed over by a takeover must stop naming the dead claimer, or the
+  // new owner's own live claim would keep reading "writer dead" to the next recover.
+  resetMachineIdCache()
+  const { $, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  files.set(stampPath(MARKER), JSON.stringify({ claimedAt: T0.toISOString(), pid: 999_001, host: "someone-else" }))
+  await restampMarker($, MARKER, later(1))
+  const stamp = JSON.parse(files.get(stampPath(MARKER))!)
+  assert.equal(stamp.pid, process.pid)
+  assert.equal(stamp.claimedAt, later(1).toISOString())
+  resetMachineIdCache()
+})
+
+test("claimWriterLiveness: alive when the stamped writer still exists", async () => {
+  resetMachineIdCache()
+  const { $ } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  assert.equal(await claimWriterLiveness($, MARKER), "alive")
+  resetMachineIdCache()
+})
+
+test("claimWriterLiveness: dead when the stamped writer is provably gone", async () => {
+  // The whole point: a crashed claimer is recoverable NOW, whatever the clock says.
+  resetMachineIdCache()
+  const { $, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  const stamp = JSON.parse(files.get(stampPath(MARKER))!)
+  files.set(stampPath(MARKER), JSON.stringify({ ...stamp, pid: 999_002 }))
+  assert.equal(await claimWriterLiveness($, MARKER), "dead")
+  resetMachineIdCache()
+})
+
+test("claimWriterLiveness fails CLOSED on every unprovable stamp", async () => {
+  // Each of these is a case where concluding "dead" would sweep a claim that may
+  // be live — a second drive on one branch, the exact bug the window prevents.
+  resetMachineIdCache()
+  const self = await (async () => {
+    const { $, files } = makeFs()
+    await acquireMarker($, MARKER, T0)
+    return JSON.parse(files.get(stampPath(MARKER))!) as { host: string; boot?: string }
+  })()
+
+  const cases: ReadonlyArray<readonly [string, string | null]> = [
+    ["no stamp at all", null],
+    ["a garbled stamp (a torn restamp)", "{not json"],
+    ["an older stamp naming no writer", JSON.stringify({ claimedAt: T0.toISOString() })],
+    ["a non-integer pid", JSON.stringify({ claimedAt: T0.toISOString(), pid: "1234", host: self.host })],
+    ["a dead pid claimed on ANOTHER host", JSON.stringify({ claimedAt: T0.toISOString(), pid: 999_003, host: "other-box" })],
+    [
+      "a dead pid from a sibling container (same host, own boot id)",
+      JSON.stringify({ claimedAt: T0.toISOString(), pid: 999_004, host: self.host, boot: "some-other-boot-id" }),
+    ],
+  ]
+
+  for (const [why, stamp] of cases) {
+    const { $, files } = makeFs()
+    await acquireMarker($, MARKER, T0)
+    if (stamp === null) files.delete(stampPath(MARKER))
+    else files.set(stampPath(MARKER), stamp)
+    assert.equal(await claimWriterLiveness($, MARKER), "unknown", why)
+  }
+  resetMachineIdCache()
+})
+
+test("claimWriterLiveness refuses an EPERM writer — unsignalable but present", async () => {
+  // `kill -0` fails on another user's LIVE process exactly as it does on a dead
+  // one, so "unsignalable" must never mean "gone". Reading it that way is how a
+  // sudo-launched or other-user loop would lose its claim mid-run.
+  resetMachineIdCache()
+  const eperm = 999_005
+
+  const gone = makeFs() // unsignalable AND absent from /proc
+  await acquireMarker(gone.$, MARKER, T0)
+  const stamp = JSON.parse(gone.files.get(stampPath(MARKER))!)
+  gone.files.set(stampPath(MARKER), JSON.stringify({ ...stamp, pid: eperm }))
+  assert.equal(await claimWriterLiveness(gone.$, MARKER), "dead", "baseline: absent from /proc really is dead")
+
+  const denied = makeFs() // unsignalable, but /proc still lists it — EPERM
+  await acquireMarker(denied.$, MARKER, T0)
+  denied.files.set(stampPath(MARKER), JSON.stringify({ ...stamp, pid: eperm }))
+  denied.dirs.add(`/proc/${String(eperm)}`)
+  assert.equal(await claimWriterLiveness(denied.$, MARKER), "unknown", "a live process we cannot signal is not evidence of death")
+  resetMachineIdCache()
+})
+
+test("releaseMarkerIfWriterDead frees a BRAND-NEW marker whose writer is gone", async () => {
+  // Age is irrelevant here — that is the point. This marker is one minute old.
+  resetMachineIdCache()
+  const { $, dirs, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  const stamp = JSON.parse(files.get(stampPath(MARKER))!)
+  files.set(stampPath(MARKER), JSON.stringify({ ...stamp, pid: 999_006 }))
+  assert.equal(await releaseMarkerIfWriterDead($, MARKER, later(1)), true)
+  assert.ok(!dirs.has(MARKER), "the wedged marker is gone")
+  assert.equal([...dirs].filter((d) => d.includes(".dead-")).length, 0, "no graveyard debris")
+  resetMachineIdCache()
+})
+
+test("releaseMarkerIfWriterDead leaves a live or unprovable writer's marker alone", async () => {
+  resetMachineIdCache()
+  const live = makeFs()
+  await acquireMarker(live.$, MARKER, T0)
+  assert.equal(await releaseMarkerIfWriterDead(live.$, MARKER, later(600)), false, "alive — even ten hours on")
+  assert.ok(live.dirs.has(MARKER))
+
+  const legacy = makeFs()
+  await acquireMarker(legacy.$, MARKER, T0)
+  legacy.files.set(stampPath(MARKER), JSON.stringify({ claimedAt: T0.toISOString() }))
+  assert.equal(await releaseMarkerIfWriterDead(legacy.$, MARKER, later(600)), false, "unknown is not permission")
+  assert.ok(legacy.dirs.has(MARKER))
+  resetMachineIdCache()
+})
+
+test("a rival that re-claims mid-sweep keeps its claim — the dead-writer judge re-checks identity", async () => {
+  // The reason this release is identity-judged and not `releaseMarkerIfStale(…, 0)`:
+  // a zero age window degrades the re-judge to a bare existence test, so the
+  // rival's brand-new LIVE claim would be judged sweepable and deleted.
+  resetMachineIdCache()
+  const { $, dirs, files, interleave } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  const stamp = JSON.parse(files.get(stampPath(MARKER))!)
+  files.set(stampPath(MARKER), JSON.stringify({ ...stamp, pid: 999_007 }))
+
+  // Between our judgement and our rename, a rival sweeps and re-claims.
+  interleave(`mv ${MARKER} `, async () => {
+    dirs.delete(MARKER)
+    files.delete(stampPath(MARKER))
+    await acquireMarker($, MARKER, later(2)) // stamps the rival's own LIVE pid
+  })
+
+  assert.equal(await acquireOrSweepDeadWriter($, MARKER, later(2)), false, "we must stand down")
+  assert.ok(dirs.has(MARKER), "the rival's claim survives")
+  assert.equal(JSON.parse(files.get(stampPath(MARKER))!).pid, process.pid, "and it is the rival's stamp, not ours")
+  resetMachineIdCache()
+})
+
+test("acquireOrSweepDeadWriter takes over a dead writer's marker and re-stamps it", async () => {
+  resetMachineIdCache()
+  const { $, files } = makeFs()
+  await acquireMarker($, MARKER, T0)
+  const stamp = JSON.parse(files.get(stampPath(MARKER))!)
+  files.set(stampPath(MARKER), JSON.stringify({ ...stamp, pid: 999_008 }))
+  assert.equal(await acquireOrSweepDeadWriter($, MARKER, later(1)), true)
+  const fresh = JSON.parse(files.get(stampPath(MARKER))!)
+  assert.equal(fresh.pid, process.pid, "the new owner is stamped — the next recover must not read it dead")
+  assert.equal(fresh.claimedAt, later(1).toISOString())
+  resetMachineIdCache()
 })
 
 test("releaseMarker clears a stray restamp temporary and still removes the marker", async () => {

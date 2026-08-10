@@ -1,5 +1,17 @@
 import path from "node:path"
-import { acquireMarker, acquireOrSweepMarker, markerOlderThan, releaseMarker, releaseMarkerIfStale, restampMarker, STALE_CLAIM_MINUTES } from "../claim-marker.js"
+import {
+  acquireMarker,
+  acquireOrSweepDeadWriter,
+  acquireOrSweepMarker,
+  type ClaimWriterLiveness,
+  claimWriterLiveness,
+  markerOlderThan,
+  releaseMarker,
+  releaseMarkerIfStale,
+  releaseMarkerIfWriterDead,
+  restampMarker,
+  STALE_CLAIM_MINUTES,
+} from "../claim-marker.js"
 import { appendFileChunked, writeFileAtomic } from "../fsatomic.js"
 import type { Client, Log, Shell } from "../host.js"
 import { AUDIT_NOTE_LINE_RE, auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
@@ -625,6 +637,16 @@ export const claimTaskSweepingStale = ($: Shell, task: FileRef, minutes: number,
   acquireOrSweepMarker($, claimMarker(task), minutes, now)
 
 /**
+ * Claim a task by sweeping a marker whose stamped writer is PROVABLY dead — no
+ * age window, but identity-judged on both sides of the rename-aside, so a
+ * rival's fresh claim still wins. This is what lets `recover` take a crashed
+ * run's task back immediately instead of waiting out `STALE_CLAIM_MINUTES`.
+ * Prefer this over `claimTaskSweepingStale(task, 0)`, which cannot re-judge.
+ */
+export const claimTaskSweepingDeadWriter = ($: Shell, task: FileRef, now: Date = new Date()): Promise<boolean> =>
+  acquireOrSweepDeadWriter($, claimMarker(task), now)
+
+/**
  * Refresh a held claim's stamp. Drivers call this at every stage boundary so a
  * live multi-stage run — which can legitimately outlive `staleClaimMinutes` —
  * never reads as a stale claim to another process's sweep. No-op when released.
@@ -655,6 +677,18 @@ export const refreshWorkClaim = (
  */
 export const claimOlderThan = ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> =>
   markerOlderThan($, claimMarker(task), minutes, now)
+
+/**
+ * What the claim stamp says about the process holding this task's marker — the
+ * direct answer to "did the claimer die", where `claimOlderThan` is only a
+ * wall-clock proxy for it. `recover` and `doctor fix` use it to skip the wait
+ * when the holder is provably gone. See `claimWriterLiveness` for why only
+ * `"dead"` may act, and why every uncertainty reads `"unknown"`.
+ */
+export const claimWriterState = ($: Shell, task: FileRef): Promise<ClaimWriterLiveness> => claimWriterLiveness($, claimMarker(task))
+
+/** Convenience for the callers that only branch on the provably-dead arm. */
+export const claimWriterDead = async ($: Shell, task: FileRef): Promise<boolean> => (await claimWriterState($, task)) === "dead"
 
 export { STALE_CLAIM_MINUTES }
 
@@ -839,15 +873,27 @@ export const releaseOrphanedClaims = async (
     readonly staleMinutes?: number
     /** Orphan predicate — defaults to `isOrphanedClaim`; use `isOrphanedPlanClaim` when sweeping `queued/`. */
     readonly isOrphaned?: typeof isOrphanedClaim
+    /**
+     * Judge a marker dead on WRITER LIVENESS as well as age (`claimWriterDead`).
+     * The age window is only a proxy for "the claimer died"; when the stamp can
+     * prove it outright, doctor should not make a human wait out a
+     * stage-timeout-derived window (75 minutes by default) for a process that is
+     * already gone. Opt-in because the automatic watcher sweeps have no such
+     * user waiting on them and stay conservative.
+     */
+    readonly writerDead?: (ref: FileRef) => Promise<boolean>
   },
 ): Promise<string[]> => {
   const byId = new Map(inProgress.map((t) => [t.id, t]))
   const isOrphaned = opts.isOrphaned ?? isOrphanedClaim
+  const staleMinutes = opts.staleMinutes ?? STALE_CLAIM_MINUTES
   const released: string[] = []
   for (const id of claimIds) {
     const task = byId.get(id)
     const ref: FileRef = task ?? { id, path: path.join(inProgressDir, `${id}.md`) }
-    const markerStale = await claimOlderThan($, ref, opts.staleMinutes ?? STALE_CLAIM_MINUTES)
+    const aged = await claimOlderThan($, ref, staleMinutes)
+    const deadWriter = aged ? false : ((await opts.writerDead?.(ref)) ?? false)
+    const markerStale = aged || deadWriter
     const orphaned = task
       ? isOrphaned(task, { drivenByLiveWorkflow: opts.isDriving(id), markerStale })
       : markerStale && !opts.isDriving(id)
@@ -857,7 +903,16 @@ export const releaseOrphanedClaims = async (
     // its `rmdir` — the sweep deleted the live claim and a second claimer took
     // the task. `releaseMarkerIfStale` re-judges what it moved aside, so only a
     // marker that is STILL stale at removal time counts as released.
-    if (await releaseMarkerIfStale($, claimMarker(ref), opts.staleMinutes ?? STALE_CLAIM_MINUTES)) released.push(id)
+    //
+    // A marker admitted on writer-death alone is released by the IDENTITY judge,
+    // never by `releaseMarkerIfStale(…, 0)`: a zero window degrades that re-judge
+    // to a bare existence test, which would delete a rival's fresh claim created
+    // inside the rename window. Judged by identity the protection holds — a
+    // rival's stamp names its own live pid.
+    const gone = deadWriter
+      ? await releaseMarkerIfWriterDead($, claimMarker(ref))
+      : await releaseMarkerIfStale($, claimMarker(ref), staleMinutes)
+    if (gone) released.push(id)
   }
   return released
 }

@@ -1,5 +1,6 @@
 import path from "node:path"
 import type { Log, Shell } from "./host.js"
+import { isSameMachine, machineId, pidAlive, pidGone } from "./liveness.js"
 
 /**
  * The mkdir-marker claim primitive, shared by every work source.
@@ -52,6 +53,20 @@ export const staleClaimMinutes = (stageTimeoutMinutes: number): number =>
  */
 export const stampPath = (markerDir: string): string => path.join(markerDir, "claim.json")
 
+/**
+ * The stamp's contents. `claimedAt` alone answers "how old", which is only ever
+ * a PROXY for the question a recovering caller actually has — "is the claimer
+ * still alive". `pid` + the machine identity answer it directly, the same way
+ * the live-stage marker already does (`workflow/stage-marker.ts`), which is what
+ * lets `recover` take over a dead run's claim NOW instead of waiting out
+ * `STALE_CLAIM_MINUTES`. Every consumer reads defensively, so an older stamp
+ * carrying only `claimedAt` keeps working — it just cannot skip the wait.
+ */
+const stampBody = async ($: Shell, now: Date): Promise<string> => {
+  const { host, boot } = await machineId($)
+  return JSON.stringify({ claimedAt: now.toISOString(), pid: process.pid, host, ...(boot ? { boot } : {}) })
+}
+
 /** Win `markerDir` atomically and stamp it. False when someone already holds it. */
 export const acquireMarker = async ($: Shell, markerDir: string, now: Date = new Date()): Promise<boolean> => {
   await $`mkdir -p ${path.dirname(markerDir)}`.quiet().nothrow()
@@ -59,7 +74,7 @@ export const acquireMarker = async ($: Shell, markerDir: string, now: Date = new
   if (out.exitCode !== 0) return false
   // Best-effort, deliberately non-atomic: a torn or missing stamp only degrades
   // markerOlderThan to its mtime fallback, never to a wrong verdict from garbage.
-  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${stampPath(markerDir)}`.quiet().nothrow()
+  await $`printf '%s' ${await stampBody($, now)} > ${stampPath(markerDir)}`.quiet().nothrow()
   return true
 }
 
@@ -108,7 +123,10 @@ export const restampMarker = async ($: Shell, markerDir: string, now: Date = new
   // fine: a brand-new dir's mtime IS the claim time.) The trailing `touch`
   // keeps the mtime fallback honest for stamps a crash left garbled.
   const tmp = `${stampPath(markerDir)}.tmp-${process.pid}-${++stampSeq}`
-  await $`printf '%s' ${JSON.stringify({ claimedAt: now.toISOString() })} > ${tmp}`.quiet().nothrow()
+  // Rewrites the writer identity too, not just the time: a marker handed over by
+  // a takeover must stop naming the dead claimer, or the new owner's own live
+  // claim would keep reading "writer dead" to the next recover.
+  await $`printf '%s' ${await stampBody($, now)} > ${tmp}`.quiet().nothrow()
   await $`mv ${tmp} ${stampPath(markerDir)}`.quiet().nothrow()
   // `-c` (no-create) is load-bearing: the `test -d` above is three subprocess
   // round-trips stale by now, and a release/sweep landing in that window made a
@@ -119,20 +137,21 @@ export const restampMarker = async ($: Shell, markerDir: string, now: Date = new
 }
 
 /**
- * Atomically release `markerDir` iff it is stale. The non-atomic shape this
- * replaces (`judge stale` → `rm -f stamp` → `rmdir`) let two sweepers judge the
- * SAME stale marker and the slower one delete a rival's brand-new claim created
- * in between — so the release renames the marker ASIDE first (rename of one
- * source is atomic: exactly one mover wins), re-judges what it moved, and puts
- * a fresh claim straight back. True only when this caller removed a stale
- * marker; false when the marker was fresh, absent, or someone else won the move.
+ * "May this marker be removed?", asked of a marker DIRECTORY. Applied twice by
+ * `releaseMarkerIfJudged` — once to decide, once to whatever the rename
+ * actually caught — so it must be answerable from the marker's own contents.
+ * A judge that consults anything else (a clock the caller already read, an id
+ * from the path) cannot tell a rival's fresh claim from the one we meant to
+ * sweep, which is the whole point of the second call.
  */
-export const releaseMarkerIfStale = async ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> => {
-  if (!(await markerOlderThan($, markerDir, minutes, now))) return false
+type MarkerJudge = (markerDir: string) => Promise<boolean>
+
+const releaseMarkerIfJudged = async ($: Shell, markerDir: string, judge: MarkerJudge, now: Date): Promise<boolean> => {
+  if (!(await judge(markerDir))) return false
   const graveyard = `${markerDir}.dead-${process.pid}-${now.getTime()}`
   const moved = await $`mv ${markerDir} ${graveyard}`.quiet().nothrow()
   if (moved.exitCode !== 0) return false // lost the rename race — whoever moved it owns the sweep
-  if (!(await markerOlderThan($, graveyard, minutes, now))) {
+  if (!(await judge(graveyard))) {
     // What we moved aside was a live claim, created between our judgement and
     // our rename. Put it back; a claim that is still running must survive.
     const restored = await $`mv ${graveyard} ${markerDir}`.quiet().nothrow()
@@ -150,6 +169,87 @@ export const releaseMarkerIfStale = async ($: Shell, markerDir: string, minutes:
   }
   await $`rm -rf ${graveyard}`.quiet().nothrow()
   return true
+}
+
+/**
+ * Atomically release `markerDir` iff it is stale. The non-atomic shape this
+ * replaces (`judge stale` → `rm -f stamp` → `rmdir`) let two sweepers judge the
+ * SAME stale marker and the slower one delete a rival's brand-new claim created
+ * in between — so the release renames the marker ASIDE first (rename of one
+ * source is atomic: exactly one mover wins), re-judges what it moved, and puts
+ * a fresh claim straight back. True only when this caller removed a stale
+ * marker; false when the marker was fresh, absent, or someone else won the move.
+ */
+export const releaseMarkerIfStale = ($: Shell, markerDir: string, minutes: number, now: Date = new Date()): Promise<boolean> =>
+  releaseMarkerIfJudged($, markerDir, (dir) => markerOlderThan($, dir, minutes, now), now)
+
+/**
+ * Atomically release `markerDir` iff its stamped writer is PROVABLY dead, at any
+ * age. The age-free twin of `releaseMarkerIfStale`, for the callers that have
+ * better evidence than a clock.
+ *
+ * Passing `minutes: 0` to `releaseMarkerIfStale` is NOT the same thing and must
+ * not be used for this: `markerOlderThan` degrades a zero window to a bare
+ * existence test, so the moved-aside copy always re-judges removable — which
+ * disarms the rival protection above and deletes a fresh claim created inside
+ * the rename window. Judging by writer identity keeps that protection intact,
+ * because a rival that re-claimed stamped its OWN live pid ("alive") and a rival
+ * caught mid-acquire has not written a stamp yet ("unknown"); both restore.
+ */
+export const releaseMarkerIfWriterDead = ($: Shell, markerDir: string, now: Date = new Date()): Promise<boolean> =>
+  releaseMarkerIfJudged($, markerDir, async (dir) => (await claimWriterLiveness($, dir)) === "dead", now)
+
+/**
+ * Win `markerDir`, sweeping it first when its stamped writer is provably dead.
+ * The dead-writer twin of `acquireOrSweepMarker`, and the ONLY sanctioned
+ * age-free takeover.
+ */
+export const acquireOrSweepDeadWriter = async ($: Shell, markerDir: string, now: Date = new Date()): Promise<boolean> => {
+  if (await acquireMarker($, markerDir, now)) return true
+  if (!(await releaseMarkerIfWriterDead($, markerDir, now))) return false
+  return acquireMarker($, markerDir, now)
+}
+
+/**
+ * What the stamp says about the process that holds `markerDir`.
+ *
+ * - `"dead"` — the stamp names a pid on THIS machine and that process is gone.
+ *   The holder cannot still be setting up, so its claim is takeable NOW.
+ * - `"alive"` — that process still exists. Wait it out.
+ * - `"unknown"` — nothing can be proven: no stamp, no pid (a marker from before
+ *   this field existed), or a machine identity that is not ours.
+ *
+ * **Only `"dead"` may authorize a zero-window takeover**, and this is the one
+ * place in the workflow whose uncertainty must fail CLOSED — the opposite of the
+ * host hooks, which fail open because a false allow there only restores older
+ * behaviour. Here a false `"dead"` sweeps a LIVE claim and starts a second drive
+ * on the same `feature/<id>` branch, which is the entire reason the wall-clock
+ * window exists. A false `"unknown"` only costs the wait we already had.
+ */
+export type ClaimWriterLiveness = "dead" | "alive" | "unknown"
+
+export const claimWriterLiveness = async ($: Shell, markerDir: string): Promise<ClaimWriterLiveness> => {
+  const stamp = await $`cat ${stampPath(markerDir)}`.quiet().nothrow()
+  if (stamp.exitCode !== 0) return "unknown"
+  let parsed: { pid?: unknown; host?: unknown; boot?: unknown }
+  try {
+    parsed = JSON.parse(stamp.stdout.toString()) as { pid?: unknown; host?: unknown; boot?: unknown }
+  } catch {
+    return "unknown" // garbled — a torn restamp, not evidence of anything
+  }
+  const { pid } = parsed
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return "unknown"
+  // A pid only means something inside the namespace that produced it. Refusing
+  // every stamp we cannot place on this machine is what keeps a shared mount
+  // (NFS, a bind-mounted repo, sibling containers) from reading a live foreign
+  // claimer as dead.
+  if (!isSameMachine(parsed, await machineId($))) return "unknown"
+  if (await pidAlive($, pid)) return "alive"
+  // NOT `!alive ⇒ dead`. `kill -0` also fails with EPERM on a live process
+  // owned by another user, and treating that as death sweeps a running claim.
+  // `pidGone` demands positive, self-validating proof; anything short of it is
+  // "unknown", which costs the wall-clock wait we already had.
+  return (await pidGone($, pid)) ? "dead" : "unknown"
 }
 
 /**

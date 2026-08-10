@@ -118,7 +118,10 @@ ones spin up. Within the backlog it takes the lowest-`priority` claimable task
 the `> BUILD started` note is the human-readable audit record, the marker
 directory is the lock. Every gate verb refuses on a held marker for that
 reason. A queued claim orphaned by a crashed PLAN is always safe to release
-once stale — PLAN writes no code.
+once stale — PLAN writes no code. The marker also stamps the pid and machine
+that took it, so "the claimer died" can be answered outright instead of waited
+out; that judgement fails **closed**, because a wrong "dead" starts a second
+loop on one branch.
 
 In **worktree mode** (the default, `worktreesDir`) each loop owns its own
 worktree, so several `watch` sessions drive different tasks concurrently in one
@@ -138,8 +141,10 @@ not a branch.
 
 `recover <id>` resumes a run that died mid-build, from its **state snapshot** at
 the exact stage it reached or from the persisted plan when no valid snapshot
-exists; cross-process liveness is judged by the stage marker, not by any
-in-memory map. `stop` aborts and exits watch mode; `unwatch` leaves watch mode
+exists; cross-process liveness is judged by the stage marker and the claim
+stamp's own writer identity, never by any in-memory map. It resumes at once when
+either proves the run is dead, and waits out the stale window only when the
+holder might still be alive. `stop` aborts and exits watch mode; `unwatch` leaves watch mode
 alone, letting a claimed build finish. `status` reports the current loop plus a
 backlog roll-up.
 
