@@ -20,9 +20,12 @@ import {
   handleReplan,
   manifestFor,
   noteEvidence,
+  noteQuestionEvent,
+  onIdle,
   onInterrupt,
   parsePrTarget,
   planFromAgent,
+  resetAskState,
   parseWatchArgs,
   recordVerdict,
   findDrivingWorkflow,
@@ -772,6 +775,137 @@ test("a gate tool refuses when it cannot tell which session is calling", async (
 
   assert.match(await gateFromAgent(deps, "sess-unknown", "my-task", testConfig), /refusing the gate move/)
   assert.ok(!log.some((cmd) => cmd.includes("mv")))
+})
+
+/**
+ * The "plan it now?" ask, and why it is a MECHANISM rather than the prose that
+ * asks for it.
+ *
+ * `workflow_plan` is the point of no return for the human's session: it claims
+ * the task, and the drive that follows runs its stages as `session.command` calls
+ * on that same session, after which `refuseIfDriven` and the absence of a free
+ * model turn mean nothing can ask them anything until the chain unwinds. So an
+ * orchestrator that reads the `NEXT STEP` line and skips straight to
+ * `workflow_plan` produces exactly the reported symptom — no window, and a PLAN
+ * pass already running. The refusal below is what makes "the model skipped the
+ * ask" distinguishable from "the human said yes".
+ */
+const asked = (sessionID: string) => noteQuestionEvent({ type: "question.asked", properties: { sessionID } })
+const answered = (sessionID: string) => noteQuestionEvent({ type: "question.replied", properties: { sessionID } })
+
+const draftFixture = () => {
+  const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  return { files, client, toasts, log, deps }
+}
+
+test("workflow_plan refuses when the gate's question was never put to the human", async () => {
+  resetAskState()
+  const sessionID = "sess-skips-the-ask"
+  const { deps, log } = draftFixture()
+  // The `new` interview's own "Approve <id> now?" — this is what proves questions
+  // are observable in this session at all.
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  const before = log.length
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+
+  assert.match(out, /never asked the human/, `unexpected: ${out}`)
+  assert.match(out, /NEXT STEP/, "a refusal that does not say what to do instead just stalls the turn")
+  assert.deepEqual(log.slice(before), [], "a refused workflow_plan must not claim, resolve, or move anything")
+})
+
+test("workflow_plan proceeds once the question has actually been asked", async () => {
+  resetAskState()
+  const sessionID = "sess-asks-properly"
+  const { deps } = draftFixture()
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  asked(sessionID) // "Plan `my-task` now?"
+  answered(sessionID) // …yes
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+})
+
+/**
+ * The bootstrap that keeps this fail-OPEN. Enforcement applies only to a session
+ * where a question has been seen, so against a host that never emits the events
+ * the rule goes inert instead of stranding every task behind a question nothing
+ * can ask. A false allow only restores the old behaviour; a false refusal leaves
+ * an approved task no verb can plan.
+ */
+test("workflow_plan is never refused in a session where questions are not observable", async () => {
+  resetAskState()
+  const sessionID = "sess-no-questions-here"
+  const { deps } = draftFixture()
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+})
+
+test("the armed ask is one-shot — a second workflow_plan is not re-refused", async () => {
+  resetAskState()
+  const sessionID = "sess-one-shot"
+  const { deps } = draftFixture()
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(await planFromAgent(deps, sessionID, "my-task", testConfig), /never asked the human/)
+  asked(sessionID)
+  answered(sessionID)
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  // The ask is spent by the call that satisfied it: re-demanding it on a retry
+  // would teach the orchestrator to ask the same question twice.
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.doesNotMatch(out, /never asked the human/, `unexpected: ${out}`)
+})
+
+/**
+ * The other half of the same bug. Even a model that asks correctly loses the
+ * window if an idle tick hands the session to a drive while it is up — stages run
+ * on the DRIVING session, so claiming here takes over the very session the human
+ * is being asked in.
+ */
+test("onIdle drives nothing while a question is open, and leaves the work queued", async () => {
+  resetAskState()
+  const sessionID = "sess-mid-question"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client } = makeClientFS(files)
+  const commands: string[] = []
+  const log: string[] = []
+  const withCommand = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client: withCommand, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  // Queue a PLAN drive the way `workflow_plan` does, then open a question.
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  asked(sessionID)
+  await onIdle(deps, sessionID, testConfig)
+  assert.deepEqual(commands, [], "a drive must not take over a session the human is being asked in")
+
+  // The answer lands; the work was still queued, so the next idle drains it.
+  answered(sessionID)
+  await onIdle(deps, sessionID, testConfig)
+  assert.deepEqual(commands, ["plan-task"], "returning before pending.delete must leave the drive to the next idle, not drop it")
+  clearWorkflow(sessionID)
 })
 
 test("/approve with no id ships the single in-review task to completed/", async () => {

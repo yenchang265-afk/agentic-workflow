@@ -512,10 +512,28 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // it's pointless here and would delay the critical synchronous unwatch.
       const interruptedSid = driver.abortedSessionID(event)
       if (interruptedSid) return void (await driver.onInterrupt(deps, interruptedSid))
+      // A question opening or settling. The plugin cannot ORIGINATE one, but
+      // these events are how it learns the model put a gate follow-up to the
+      // human — and how it knows not to hand the session to a drive while a
+      // window is up. Recorded before the idle handling below, never instead of
+      // it: the two event kinds are disjoint.
+      if (driver.noteQuestionEvent(event)) return
       if (event.type !== "session.idle") return
       await reconcileOnce()
       const { sessionID } = event.properties
-      await driver.onIdle(deps, sessionID, await getConfig())
+      const config = await getConfig()
+      // Do NOT await the drive. `onIdle` is the entry to the whole
+      // build → verify → review chain (stageTimeoutMinutes defaults to 60,
+      // maxIterations to 3), so awaiting it here parks this event handler for
+      // hours — and the ESC path above lives in the same handler, i.e. the one
+      // event that must get through while a loop runs was queued behind it.
+      //
+      // Safe against re-entrancy: `onIdle` reaches `driving.add(sessionID)` with
+      // no intervening await, so the idle events the drive's own stage commands
+      // generate still short-circuit on `driving.has`.
+      void driver.onIdle(deps, sessionID, config).catch(async (err: unknown) => {
+        await log("error", `idle drive failed for ${sessionID}: ${(err as Error).message}`)
+      })
     },
 
     "command.execute.before": async (input, output) => {
