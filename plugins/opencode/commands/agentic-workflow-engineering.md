@@ -137,7 +137,7 @@ Dispatch:
   carries a **`NEXT STEP`** line asking you to put the "plan it now?" question
   to the user — follow it (`question`, then `workflow_plan` on yes) and stop.
   Skipping the question is not an option: `workflow_plan` refuses a task whose
-  gate asked for one until it has actually been put.
+  gate asked for one until the `question` tool has actually been called.
   The move itself is already done and is never yours to repeat. Without an id it advances the single task
   at a loop wait-gate (`plan-review/` or `in-review/`), falling back to a lone
   `draft/` task only when neither has anything waiting — loop gates outrank the
@@ -210,7 +210,7 @@ Dispatch:
   reachable from here — `claim`/`watch` drive builds. The plan gate itself is
   announced by a toast, not by a question: the PLAN pass finishes in the
   background driver, after your turn has ended, and this host's plugin can
-  only observe questions the model asked — it cannot open one of its own.
+  only observe the questions you ask — it cannot open one of its own.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next task (lowest priority number

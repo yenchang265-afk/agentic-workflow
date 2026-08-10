@@ -16,6 +16,7 @@ import { isQuestionOpen, resetAskState } from "./workflow/driver.ts"
 
 type Hooks = {
   "tool.execute.before": (input: { sessionID: string; tool: string; callID: string }, output: { args: Record<string, unknown> }) => Promise<void>
+  "tool.execute.after": (input: { sessionID: string; tool: string; callID: string }) => Promise<void>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   event: (input: { event: any }) => Promise<void>
 }
@@ -119,7 +120,69 @@ test("the event hook routes question events to the driver", async () => {
   await hooks.event({ event: { type: "question.asked", properties: { sessionID: "q" } } })
   await hooks.event({ event: { type: "question.rejected", properties: { sessionID: "q" } } })
   assert.ok(!isQuestionOpen("q"), "a dismissed question must not wedge the session either")
+
+  // The SDK's event union carries the same window under two name families, and
+  // which one a host build delivers is not this plugin's to guess.
+  await hooks.event({ event: { type: "question.v2.asked", properties: { sessionID: "q" } } })
+  assert.ok(isQuestionOpen("q"), "a v2 ask is an ask")
+  await hooks.event({ event: { type: "question.v2.replied", properties: { sessionID: "q" } } })
+  assert.ok(!isQuestionOpen("q"), "a v2 settlement is a settlement")
   resetAskState()
+})
+
+/**
+ * The signal the plugin OWNS. Event names belong to the host and can be renamed
+ * or unbridged; `tool.execute.before`/`.after` cannot, so the gate's "plan it
+ * now?" enforcement is anchored here and the events are only a second source.
+ */
+test("the question tool's own call is what opens and closes the window", async () => {
+  resetAskState()
+  const hooks = await makeHooks({ asker: undefined })
+
+  await hooks["tool.execute.before"]({ sessionID: "asker", tool: "question", callID: "c1" }, { args: { question: "plan it now?" } })
+  assert.ok(isQuestionOpen("asker"), "a drive must not claim a session with a window up")
+
+  await hooks["tool.execute.after"]({ sessionID: "asker", tool: "question", callID: "c1" })
+  assert.ok(!isQuestionOpen("asker"), "the tool returned — the window is down however it ended")
+  resetAskState()
+})
+
+/**
+ * The valve. If `tool.execute.after` ever fails to fire, the token is permanent
+ * and `onIdle` returns on it forever — the same wedge this mechanism exists to
+ * prevent, re-created by it. A question blocks the turn, so any other tool
+ * starting proves the window is down.
+ */
+test("a window whose close is never reported is cleared by the next tool call", async () => {
+  resetAskState()
+  const hooks = await makeHooks({ asker: undefined })
+
+  await hooks["tool.execute.before"]({ sessionID: "asker", tool: "question", callID: "c1" }, { args: {} })
+  assert.ok(isQuestionOpen("asker"))
+
+  // No `tool.execute.after`, and no bus events either — the worst case.
+  await hooks["tool.execute.before"]({ sessionID: "asker", tool: "read", callID: "c2" }, { args: { filePath: "/repo/x.ts" } })
+  assert.ok(!isQuestionOpen("asker"), "the model reached another tool, so the human already answered")
+  resetAskState()
+})
+
+/**
+ * Ordering, and it is load-bearing: the deny runs FIRST, so a stage's refused ask
+ * leaves no trace. Recorded, it would both satisfy an armed gate ask the human
+ * never saw and hold `onIdle` off a session whose window was never opened.
+ */
+test("a denied stage question is not evidence that anything was asked", async () => {
+  resetAskState()
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    await assert.rejects(() => hooks["tool.execute.before"]({ sessionID: "child", tool: "question", callID: "c1" }, { args: {} }), /cannot ask the user/)
+    assert.ok(!isQuestionOpen("child"), "a question the human never saw must not open a window")
+    assert.ok(!isQuestionOpen("drv"))
+  } finally {
+    clearWorkflow("drv")
+    resetAskState()
+  }
 })
 
 test("a session with no loop ancestor is untouched while a worktree loop runs elsewhere", async () => {

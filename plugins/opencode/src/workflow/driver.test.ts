@@ -10,11 +10,15 @@ import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflo
 import type { Config } from "../config.ts"
 import {
   abortedSessionID,
+  armTaskGateAsk,
   claimSkipReason,
   configSources,
   deriveActivity,
   drive,
   handleApprove,
+  isQuestionOpen,
+  noteQuestionToolCall,
+  noteQuestionToolSettled,
   handleCommand,
   handleAbandon,
   handleRemove,
@@ -1032,6 +1036,192 @@ test("onIdle drives nothing while a question is open, and leaves the work queued
   answered(sessionID)
   await onIdle(deps, sessionID, testConfig)
   assert.deepEqual(commands, ["plan-task"], "returning before pending.delete must leave the drive to the next idle, not drop it")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The bus events are named by the HOST, and the SDK's event union carries two
+ * families for one window (`question.asked` and `question.v2.asked`, both with a
+ * `sessionID`). Which one a given build delivers is not something this plugin can
+ * be relied on to have guessed right — and getting it wrong is invisible, because
+ * every rule downstream fails open. So both are accepted.
+ */
+test("the v2 question event names are the same window under another name", async () => {
+  resetAskState()
+  const sessionID = "sess-v2-events"
+  const { deps } = draftFixture()
+
+  assert.equal(noteQuestionEvent({ type: "question.v2.asked", properties: { sessionID } }), true, "a v2 event is still a question event, not an idle one")
+  assert.ok(isQuestionOpen(sessionID), "a v2 window is a window")
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  noteQuestionEvent({ type: "question.v2.asked", properties: { sessionID } }) // "Plan `my-task` now?"
+  noteQuestionEvent({ type: "question.v2.replied", properties: { sessionID } })
+  assert.ok(!isQuestionOpen(sessionID), "a v2 settlement must close what a v2 ask opened")
+
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The signal that does not depend on a host event name at all: the model's own
+ * `question` tool call, seen through the plugin's own `tool.execute.*` hooks. If
+ * the events go quiet — renamed, unbridged, not forwarded to plugins — this is
+ * what still tells the gate its question was put. Without it, `f71f5d2`'s whole
+ * mechanism degrades to nothing with no way to tell from a transcript.
+ */
+test("a question TOOL CALL alone satisfies the gate's ask, with no bus event at all", async () => {
+  resetAskState()
+  const sessionID = "sess-tool-only"
+  const { deps } = draftFixture()
+  noteQuestionToolCall(sessionID, "call-approve") // "Approve `my-task` now?"
+  noteQuestionToolSettled(sessionID, "call-approve")
+
+  await gateFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(await planFromAgent(deps, sessionID, "my-task", testConfig), /never asked the human/, "the tool-call source must enforce, not just observe")
+
+  noteQuestionToolCall(sessionID, "call-plan") // "Plan `my-task` now?"
+  assert.ok(isQuestionOpen(sessionID), "an open tool call is an open window — onIdle must hold off")
+  noteQuestionToolSettled(sessionID, "call-plan")
+  assert.ok(!isQuestionOpen(sessionID))
+
+  const out = await planFromAgent(deps, sessionID, "my-task", testConfig)
+  assert.match(out, /Loop started on "Do the thing" — planning…/, `unexpected: ${out}`)
+  clearWorkflow(sessionID)
+})
+
+/**
+ * Both sources report the SAME window in the normal case, and the asked event
+ * carries the tool's own `callID` — so they have to converge on one record. Under
+ * a per-session flag they did; under per-window tokens they only do if the token
+ * is derived from that callID, and getting it wrong leaves a token no settlement
+ * removes, which is a session `onIdle` never drives again.
+ */
+test("the tool call and its bus event are one window, not two", async () => {
+  resetAskState()
+  const sessionID = "sess-both-sources"
+  noteQuestionToolCall(sessionID, "c1")
+  noteQuestionEvent({ type: "question.asked", properties: { sessionID, id: "req-1", tool: { messageID: "m1", callID: "c1" } } })
+  // One settlement, naming only the request — the link back to the call is what
+  // makes it close the token the tool call filed.
+  noteQuestionEvent({ type: "question.replied", properties: { sessionID, requestID: "req-1" } })
+  assert.ok(!isQuestionOpen(sessionID), "two reports of one window must not need two settlements")
+})
+
+test("a settlement nobody can attribute clears the session rather than leaking a token", () => {
+  resetAskState()
+  const sessionID = "sess-unattributable"
+  noteQuestionToolCall(sessionID, "c1")
+  // No requestID to resolve: a token left behind here is permanent, and `onIdle`
+  // returns on it for the life of the process.
+  noteQuestionEvent({ type: "question.rejected", properties: { sessionID } })
+  assert.ok(!isQuestionOpen(sessionID))
+})
+
+/**
+ * One assistant message may open two windows. A per-session flag loses this: the
+ * first settlement clears it and a drive claims the session out from under the
+ * window still up — the exact bug the guard exists to stop.
+ */
+test("settling one of two open windows leaves the session non-claimable", () => {
+  resetAskState()
+  const sessionID = "sess-two-windows"
+  noteQuestionToolCall(sessionID, "c1")
+  noteQuestionToolCall(sessionID, "c2")
+  noteQuestionToolSettled(sessionID, "c1")
+  assert.ok(isQuestionOpen(sessionID), "the second window is still up")
+  noteQuestionToolSettled(sessionID, "c2")
+  assert.ok(!isQuestionOpen(sessionID))
+})
+
+/**
+ * The wedge this fix exists to close. `onIdle` returns while a window is open and
+ * does so BEFORE `pending.delete`, so a window that dies without a settlement
+ * strands the queued drive and the on-disk claim it already placed — for the life
+ * of the process, with every gate verb then refusing the task as "a loop is
+ * driving this NOW". ESC is the way a window dies silently, so ESC has to clear
+ * it; there is deliberately no timeout, because a window the human has not got to
+ * yet is legitimately open for hours.
+ */
+test("ESC on an open question un-wedges the session instead of stranding its drive", async () => {
+  resetAskState()
+  const sessionID = "sess-esc-mid-question"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client } = makeClientFS(files)
+  const commands: string[] = []
+  const log: string[] = []
+  const withCommand = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client: withCommand, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  noteQuestionToolCall(sessionID, "c1")
+  await onIdle(deps, sessionID, testConfig)
+  assert.ok(isQuestionOpen(sessionID))
+
+  await onInterrupt(deps, sessionID)
+  assert.ok(!isQuestionOpen(sessionID), "a dismissed window must not outlive the turn it was opened in")
+
+  // And the session works again: a fresh claim drives rather than silently returning.
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  await onIdle(deps, sessionID, testConfig)
+  assert.deepEqual(commands, ["plan-task"], "onIdle must be reachable again after the interrupt")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * `data.gate`/`data.id` come from CORE, which resolves to `packages/core/dist` —
+ * gitignored, rebuilt only by `npm install`, while the installed plugin points at
+ * the working tree. A new plugin against an old core dist therefore lands here
+ * with `r.ok` true and no gate on it, and used to do so in total silence: no
+ * `NEXT STEP` for the model to follow AND nothing armed for `askUnanswered` to
+ * enforce, so the human's session was claimed without ever being asked.
+ */
+test("a gate result with no gate says so, instead of dropping the ask silently", () => {
+  resetAskState()
+  const sessionID = "sess-stale-core"
+  const warnings: string[] = []
+  const log = (level: string, message: string) => void (level === "warn" && warnings.push(message))
+
+  // What a core dist predating the gate contract returns: the move landed, the
+  // data that says WHICH gate did not.
+  assert.equal(armTaskGateAsk(sessionID, { approved: true }, log), "", "there is no id to ask about")
+  assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`)
+  assert.match(warnings[0]!, /npm install/, "the warning has to name the fix, or it is just noise")
+
+  // The plan and ship gates legitimately do not ask — warning on those would
+  // train the operator to ignore the one that matters.
+  assert.equal(armTaskGateAsk(sessionID, { approved: true, gate: "plan", id: "my-task" }, log), "")
+  assert.equal(warnings.length, 1, "a gate that simply does not ask is not a defect")
+})
+
+/**
+ * The fail-OPEN exit, which must stay open (a false refusal strands an approved
+ * task no verb can plan) but must no longer be silent: "the human said yes" and
+ * "we could not tell" produced the same outcome and the same empty log.
+ */
+test("waving through a plan we could not check is logged", async () => {
+  resetAskState()
+  const sessionID = "sess-unobservable"
+  const warnings: string[] = []
+  const { deps } = draftFixture()
+  const noted: Deps = { ...deps, log: (level, message) => level === "warn" && warnings.push(message) }
+
+  await gateFromAgent(noted, sessionID, "my-task", testConfig)
+  const out = await planFromAgent(noted, sessionID, "my-task", testConfig)
+
+  assert.match(out, /Loop started on "Do the thing" — planning…/, "fail-open: never refuse what we cannot observe")
+  assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`)
+  assert.match(warnings[0]!, /no question has ever been observed/)
   clearWorkflow(sessionID)
 })
 
