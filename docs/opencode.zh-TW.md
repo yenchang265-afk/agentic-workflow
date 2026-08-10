@@ -36,6 +36,14 @@ OpenCode 版本如何執行、它完整的指令面，以及安裝細節。共�
 選項，但是就地互動式詢問，見
 [`plugins/claude/README.md`](../plugins/claude/README.md)。
 
+在這些把關點之間，迴圈**在設計上就是無人值守**的：階段子代理無法開啟
+OpenCode 的 `question` 對話框。每個內建代理都在 frontmatter 中停用該工具
+（`tools: question: false` 加上 `permission: question: deny`），而且外掛會拒絕
+任何由迴圈驅動之工作階段發出的 `question`——包含自訂 kind 的階段代理。階段
+自己無法解決的不確定性，要記錄在迴圈能據以行動的地方：檢查階段給出
+FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下一個把關點
+呈現給你。
+
 以上所有內容（以及可選的強化項：worktree、審查視角、密鑰遮蔽、執行
 摘要）都在 `.agentic-workflow.json` 中設定，並疊放在一個可選的使用者
 層級 `~/.config/agentic-workflow/agentic-workflow.json`（遵循 `$XDG_CONFIG_HOME`，

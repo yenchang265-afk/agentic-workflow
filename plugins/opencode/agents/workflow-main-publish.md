@@ -2,6 +2,9 @@
 description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR (gh on GitHub, the Azure DevOps MCP server on Azure DevOps). Never pushes the watched branch, never merges, never marks ready.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -56,6 +59,7 @@ permission:
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:
+  question: false
   mcp__azure-devops__repo_list_pull_requests_by_repo_or_project: true
   mcp__azure-devops__repo_create_pull_request: true
   mcp__azure-devops__repo_create_pull_request_thread: true

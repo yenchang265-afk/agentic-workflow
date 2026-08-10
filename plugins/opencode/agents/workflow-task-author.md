@@ -2,8 +2,13 @@
 description: Writes backlog task files into docs/tasks/draft/ — one planless draft or a slice set of N child drafts plus an epic tracking file (mode new), or a reshaped draft rewritten in place (mode retask). Never writes an ## Implementation Plan (that is the loop's PLAN stage, workflow-plan-author) and never touches source code.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: allow
   bash: deny
+tools:
+  question: false
 ---
 
 You are the **workflow-task-author** subagent. You write **confirmed, planless

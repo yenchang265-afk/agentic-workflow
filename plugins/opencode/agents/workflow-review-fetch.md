@@ -2,6 +2,9 @@
 description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a workflow_verdict (PASS = reviewable). Never edits, never comments, never votes.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -31,6 +34,7 @@ permission:
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:
+  question: false
   mcp__azure-devops__repo_get_pull_request_by_id: true
 ---
 

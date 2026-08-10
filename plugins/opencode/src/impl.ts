@@ -39,6 +39,11 @@ const EDIT_TOOLS = new Set(["edit", "write", "patch", "multiedit"])
  */
 const READ_TOOLS = new Set(["read", "grep", "glob", "list"])
 /**
+ * OpenCode's structured ask (the TUI question dialog), refused for any session a
+ * loop is driving — see the guard in `tool.execute.before`.
+ */
+const QUESTION_TOOL = "question"
+/**
  * Where a read tool carries its path, in probe order. Paths only — grep's
  * `pattern` is deliberately absent: a regex is not a path, and admitting one
  * would let an arbitrary search string corroborate a cited file by name.
@@ -667,7 +672,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       if (
         !loop &&
         anyWorkflowActive() &&
-        (input.tool === "bash" || EDIT_TOOLS.has(input.tool) || READ_TOOLS.has(input.tool) || isAdoMcpTool(input.tool))
+        (input.tool === "bash" ||
+          input.tool === QUESTION_TOOL ||
+          EDIT_TOOLS.has(input.tool) ||
+          READ_TOOLS.has(input.tool) ||
+          isAdoMcpTool(input.tool))
       ) {
         try {
           const found = await driver.findDrivingWorkflow(client, input.sessionID)
@@ -682,6 +691,31 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // scan only backstops sessions that could not be attributed to any loop.
       const planTaskId = loop ? (loop.stage === "plan" ? (loop.task?.id ?? null) : null) : planStageTaskId()
       const guardCtx = { tasksDir: config.tasksDir, planTaskId }
+      // No stage may ask the human. A drive is unattended between the plan gate
+      // and the ship gate — the question dialog opened by a stage subagent
+      // stalls it on someone who is not watching, and on a `watch` worker there
+      // is no one to watch at all. The shipped agents also deny `question` in
+      // their frontmatter (permission + tools), but this is the layer that does
+      // not depend on an OpenCode config key behaving as documented, and the
+      // only one that covers a user-added kind's stage agent. Scoped to driven
+      // sessions: an ad-hoc /plan subagent outside a loop still asks freely.
+      //
+      // The refusal names the alternative, which is why no stage prompt says
+      // this: a message the model reads at the moment it errs beats a line of
+      // prose carried in every stage's context forever.
+      //
+      // Fails OPEN when the session can't be attributed (the API is down): a
+      // shipped stage agent has no `question` tool to call in the first place,
+      // so the only thing a fail-closed arm would add here is refusing an
+      // ad-hoc /plan's legitimate ask because an unrelated loop is live.
+      if (loop && input.tool === QUESTION_TOOL) {
+        throw new Error(
+          `agentic-workflow: the ${loop.stage.toUpperCase()} stage cannot ask the user — the loop drives unattended ` +
+            `between the plan gate and the ship gate, so a question here stalls the run on someone who may not be at ` +
+            `the terminal. Resolve it from the code, or record the uncertainty where the loop can act on it: a FAIL/ERROR ` +
+            `verdict (check stages) or workflow_blocked (work stages). A human sees your reasoning at the next gate.`,
+        )
+      }
       // Azure DevOps MCP guard. With ADO reached only through the MCP server,
       // OpenCode's bash allowlist says nothing about it — `tool.execute.before`
       // is the ONLY enforcement point this host has, so both checks live here.
