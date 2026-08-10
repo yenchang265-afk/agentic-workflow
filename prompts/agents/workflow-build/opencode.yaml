@@ -1,5 +1,10 @@
 description: Implementer for the BUILD stage. Executes an approved plan test-first with surgical diffs, or applies a VERIFY/REVIEW stage's fix requests on a re-build. The only stage that writes code; in the automatic loop it runs only on a task whose plan was approved via /agentic-workflow:engineering approve.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: allow
   bash: allow
+tools:
+  question: false

@@ -21,19 +21,38 @@ engineering kind — which claims tasks on every idle tick plus a polling
 timer (default 5m, e.g. `/agentic-workflow:engineering watch 30s`) — build-ready
 `in-progress/` tasks first, then `queued/` tasks to plan.
 
-A run that stops early — a crash, or a user **interrupt (ESC)** mid-drive —
-is resumed with `/agentic-workflow:engineering recover <id>`: loop state is
-snapshotted after every stage, so recovery resumes at the exact stage it
-reached. ESC is a **pause** — it halts the loop after the in-flight stage
-settles and stops watch mode, but keeps the snapshot (recover picks up
-there); a deliberate `/agentic-workflow:engineering stop` **ends** the run and
-drops the snapshot, so there is nothing to recover.
+A run that stops early — a crash, a user **interrupt (ESC)** mid-drive, a
+deliberate `stop`, or a check stage that ended the run — is resumed with
+`/agentic-workflow:engineering recover <id>`: loop state is snapshotted after
+every stage and **survives every one of those**, so recovery resumes at the
+exact stage it reached rather than restarting at BUILD. The snapshot is dropped
+when a run completes, or when a gate move takes the task out of `in-progress/`
+(`replan`, `abandon`, `remove`) — `replan` above all, since a surviving snapshot
+there would resume against the plan you just rejected.
 
 Gates on this substrate are **park-only**: watch mode has no interactive
 channel, so a parked plan or a finished loop always waits for
 `/agentic-workflow:engineering approve [id]` (or `replan [id] [reason]` to send
 a plan back) — see [`plugins/claude/README.md`](../plugins/claude/README.md)
 for the Claude Code variant, which offers the same choices inline instead.
+
+Between those gates the drive is **unattended by construction**: a stage
+subagent cannot open OpenCode's `question` dialog. Every shipped agent denies
+the tool in its frontmatter (`tools: question: false` plus
+`permission: question: deny`), and the plugin refuses a `question` from any
+session a loop is driving — including a custom kind's stage agent. A stage that
+cannot resolve something on its own records it where the loop can act on it: a
+FAIL/ERROR verdict from a check stage, `workflow_blocked` from a work stage.
+Both surface to you at the next gate.
+
+The decision comes back to you at the **stop**, and there the stop's own message
+is the whole interface — so it names the moves that exist. For a check stage that
+cannot run in this environment at all, that includes
+`/agentic-workflow:engineering waive <id> <why>`: it continues at the next stage
+without recording a pass, putting the waiver and your reason where that stage's
+verdict would have gone. `recover <id>` re-runs the stage once the environment is
+fixed, and `replan <id> <why>` is right when the plan itself asked for something
+this environment cannot provide.
 
 All of the above (and the isolation/hardening knobs: worktrees — on by
 default, review lenses, secret redaction, run summaries) is configured in `.agentic-workflow.json`,

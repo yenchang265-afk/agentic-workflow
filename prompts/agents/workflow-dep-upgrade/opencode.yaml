@@ -1,5 +1,10 @@
 description: Implementer for the dep sitter's UPGRADE stage. Applies the ordered dependency bump (manifest + lockfile) and fixes exactly the fallout it causes, with test-first local commits. Never pushes (publish's job), never merges, never touches unrelated versions.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: allow
   bash: allow
+tools:
+  question: false

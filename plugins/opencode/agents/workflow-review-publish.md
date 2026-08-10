@@ -2,6 +2,9 @@
 description: Publisher for the review sitter's PUBLISH stage. Posts the drafted review as exactly one PR comment (gh on GitHub, a new ADO thread via curl+PAT on Azure DevOps), framed as an automated first pass. Comment-only — never approves, votes, pushes, or merges.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -28,6 +31,7 @@ permission:
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:
+  question: false
   mcp__azure-devops__repo_create_pull_request_thread: true
 ---
 

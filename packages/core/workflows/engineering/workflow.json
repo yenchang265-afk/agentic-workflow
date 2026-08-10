@@ -270,11 +270,11 @@
         "kind": "fire",
         "stage": "build",
         "countIteration": true,
-        "capMessage": "✗ Workflow stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>."
+        "capMessage": "✗ Workflow stopped — verify failed after {maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>. If verify can never pass in THIS environment, /agentic-workflow:engineering waive <id> <why> continues at REVIEW without recording a pass."
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ Workflow stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task."
+        "message": "✗ Workflow stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task — it resumes AT verify, not at BUILD. If the check can never run here (a browser suite with no display), /agentic-workflow:engineering waive <id> <why> continues at REVIEW without recording a pass; if the plan itself asked for it, /agentic-workflow:engineering replan <id> <why>."
       }
     },
     "review": {
@@ -294,7 +294,7 @@
       },
       "onError": {
         "kind": "stop",
-        "message": "✗ Workflow stopped — review could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task."
+        "message": "✗ Workflow stopped — review could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task — it resumes AT review, not at BUILD. Review is the last check, so it cannot be waived: passing it is what ends the run, and that decision is already yours at the ship gate."
       }
     }
   },

@@ -472,16 +472,57 @@ safe only because `onIdle` reaches `driving.add` with no intervening `await`;
 anything added to that prologue must keep it synchronous, or two idle events will
 both start a drive.
 
+### A stage subagent must not be able to ask
+
+The mirror of the section above: the plugin cannot originate a question, and no
+stage may either. A drive is unattended between the plan gate and the ship gate,
+so a question dialog opened mid-VERIFY stalls the run on someone who may not be
+at the terminal — on a `watch` worker, on nobody at all. A stage's uncertainty
+has channels that keep the loop's control flow: a FAIL/ERROR verdict, a
+criterion marked not met, `workflow_blocked`.
+
+The hole is a HOST ASYMMETRY, invisible from any single file. Claude Code and
+Qwen agents declare an explicit `tools:` enumeration, so they exclude the ask
+tool by construction; **OpenCode agents declare only `permission:`, and inherit
+every tool the host ships unless they say otherwise** — which is how `question`
+(`@opencode-ai/plugin` 1.18.5) reached all 18 stage agents at once, unannounced,
+with nothing failing. A new agent added under `prompts/agents/` inherits it the
+same way, so the guard is a test over the GENERATED files
+(`scripts/agent-ask-deny.test.mjs`), not a convention.
+
+Three layers, and each one exists because the layer above it can fail silently:
+`tools: {question: false}` removes the tool, `permission: {question: deny}`
+refuses it if that map is bypassed or the key renamed, and the plugin's
+`tool.execute.before` refuses any `question` from a session `findDrivingWorkflow`
+attributes to a loop — the only layer that does not depend on a host config key
+behaving as documented, and the only one covering a user-added kind's agent.
+Never write this as stage-prompt prose: the refusal message names the
+alternative at the moment the model errs, which is worth more than a line
+carried in every stage's context forever.
+
+This does not starve the gate mechanism above, and the reason is timing: every
+gate ask happens in a model turn where no loop owns the session — the task gate
+before any drive exists, the plan and ship gates after `clearWorkflow` ran on
+the park or the done. `askArmed`/`questionsObservable` therefore still see the
+question they are waiting on. A gate ask that ever needed to fire *during* a
+drive would be the thing to rethink, not this guard: mid-drive there is no free
+model turn to put it in.
+
 ### A stop is a pause with a follow-up move, so its state must survive
+
+The other half of the section above. Closing the mid-drive ask is only safe
+because the human gets the decision back AT the stop with moves that work — and
+that half was missing, in two places at once.
 
 `runStop` used to `clearState`, which silently broke every follow-up its own stop
 messages promise. "Fix the environment, then recover the task" resumes at the
 stopped stage only while the snapshot exists; without it `recover` degrades to
 re-entering at BUILD from the persisted plan — the whole build redone, artifacts
-and attempt ledger gone. The visible symptom is the worst kind: the human is
-asked how to handle a VERIFY whose environment can never be satisfied (a browser
-suite with no display), answers "carry on to REVIEW", and the loop restarts at
-BUILD. So the snapshot now survives a check-stage stop, and is invalidated where
+and attempt ledger gone. The visible symptom is the worst kind: a VERIFY whose
+environment can never be satisfied (a browser suite with no display) asks the
+human how to handle it, they answer "carry on to REVIEW", and the loop restarts
+at BUILD — the ask was theatre either way, because no call existed behind that
+answer. So the snapshot now survives a check-stage stop, and is invalidated where
 it actually goes stale — the gate moves that take the task OUT of `in-progress/`
 (`replan`, `abandon`, `remove` via `invalidateRunState`; `runDone` still clears on
 the way to `in-review/`). `replan` is the one that must never be dropped: a
@@ -518,6 +559,21 @@ to offer nothing else. Improvising it is how "proceed to the review stage" got
 offered with no tool behind it; the host then fell back to a resume, which
 re-enters at BUILD. Same rule as `stageModels`: an ask whose answer the model
 cannot execute is worse than no ask.
+
+It also obeys the guard above rather than working around it, and the timing is
+what makes that true: `next` rides the TERMINAL arm, after `runTerminal` has
+nulled `active` — so the turn that asks is one where no loop owns the session,
+exactly like the plan and ship gates. **Never move this ask earlier.** An ask
+emitted while the loop is still live would be a stage-adjacent question by
+another route, and mid-drive there is no free model turn to put it in.
+
+On OpenCode there is no ask at all — that host's plugin cannot originate one, and
+after the guard above its stages cannot either — so the stop's own message is the
+entire interface. That is why the waivable check's `onError`/`capMessage` in
+`workflows/engineering/workflow.json` name `waive` alongside `recover`/`replan`,
+and why REVIEW's must not: a message that offers an unwaivable stage's waiver
+sends the human to a verb that will refuse them
+(`workflow-stop-messages.test.mjs` pins both halves).
 
 ### A rejected verdict is not a missing one
 

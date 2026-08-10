@@ -560,6 +560,13 @@ const artifactProse = (state: WorkflowState, stage: string): string => {
  * both hosts on the one path they already drive (compose a prompt, spawn the
  * stage), instead of a terminal path reached from a state that never isolated.
  *
+ * Manifest-generic by construction — it reads whatever `onPass` the kind
+ * declares — but only BACKLOG kinds can currently be reached: both hosts' entry
+ * points resolve an id in `in-progress/`, so a sitter's PR- or
+ * dependency-shaped item has no waiver verb behind it whatever its arms look
+ * like. Giving a sitter one means adding that entry point, not relaxing anything
+ * here.
+ *
  * Pure: returns the state and the fire, or an error string for the host to surface.
  */
 export const waiveCheck = (

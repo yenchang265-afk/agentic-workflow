@@ -541,3 +541,25 @@ test("workflow_waive audits the waiver on the task file, naming the stage and th
   assert.match(body, /appendNote\([\s\S]{0,200}waived by a human/, "the task file must carry it")
   assert.match(body, /waiveCheck\(eng,/, "the transition itself stays core's — the manifest decides which arm a pass takes")
 })
+
+// The mid-drive ask is closed on every host ("A stage subagent must not be able
+// to ask"), and this ask must not re-open it by another route. What makes it
+// legitimate is TIMING, not intent: it rides the terminal arm, after runTerminal
+// has nulled `active`, so the turn that asks is one where no loop owns the
+// session — exactly like the plan and ship gates. Moving it earlier would make it
+// a stage-adjacent question, and mid-drive there is no free model turn for one.
+test("the check-stage stop's ask is emitted after the terminal, never while a loop is live", () => {
+  const body = flat(toolBody(source(), "workflow_advance"))
+  const stoppedCheckAt = body.indexOf("const stoppedCheck =")
+  // Anchored on the terminal block's own call — workflow_advance also runs a
+  // terminal on its stage-timeout path, so a bare `runTerminal(action)` search
+  // finds that one and proves nothing about this ask.
+  const terminalAt = body.indexOf("const report = await runTerminal(action)")
+  const offerAt = body.indexOf("stoppedCheck && taskId")
+  assert.ok(stoppedCheckAt > 0 && terminalAt > 0 && offerAt > 0, "the stop ask and the terminal call must both be here")
+  assert.ok(
+    stoppedCheckAt < terminalAt,
+    "the stage must be READ before runTerminal — it nulls `active`, so reading it after would silently disable the ask",
+  )
+  assert.ok(offerAt > terminalAt, "the ask itself must be emitted after the terminal ran, i.e. once no loop owns the session")
+})

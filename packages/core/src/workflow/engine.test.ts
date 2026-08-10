@@ -260,8 +260,13 @@ const oracleAdvance = (
           state: s,
           action: {
             kind: "stop",
+            // Deliberate post-freeze WORDING change: same transition, but the
+            // message now names every move that exists at this stop (recover
+            // resumes AT verify; waive continues past a check that can never run
+            // here). On OpenCode the stop message is the human's only channel, so
+            // an incomplete one is a dead end — see workflow-stop-messages.test.mjs.
             message:
-              "✗ Workflow stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task.",
+              "✗ Workflow stopped — verify could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task — it resumes AT verify, not at BUILD. If the check can never run here (a browser suite with no display), /agentic-workflow:engineering waive <id> <why> continues at REVIEW without recording a pass; if the plan itself asked for it, /agentic-workflow:engineering replan <id> <why>.",
           },
         }
       }
@@ -279,7 +284,8 @@ const oracleAdvance = (
         state: s,
         action: {
           kind: "stop",
-          message: `✗ Workflow stopped — verify failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>.`,
+          // Deliberate post-freeze WORDING change, as above.
+          message: `✗ Workflow stopped — verify failed after ${cfg.maxIterations} iterations. If the plan itself is wrong, send it back to the PLAN stage with /agentic-workflow:engineering replan <id>. If verify can never pass in THIS environment, /agentic-workflow:engineering waive <id> <why> continues at REVIEW without recording a pass.`,
         },
       }
     }
@@ -292,8 +298,11 @@ const oracleAdvance = (
           state: s,
           action: {
             kind: "stop",
+            // Deliberate post-freeze WORDING change, as above — and REVIEW's says
+            // why it is NOT waivable, so the message never sends the human to a
+            // verb that would refuse them.
             message:
-              "✗ Workflow stopped — review could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task.",
+              "✗ Workflow stopped — review could not run (environment/infrastructure error). Fix the environment, then /agentic-workflow:engineering recover the task — it resumes AT review, not at BUILD. Review is the last check, so it cannot be waived: passing it is what ends the run, and that decision is already yours at the ship gate.",
           },
         }
       }

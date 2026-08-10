@@ -21,13 +21,13 @@ OpenCode 版本如何執行、它完整的指令面，以及安裝細節。共�
 認領任務——先認領建置就緒的 `in-progress/` 任務，再認領 `queued/`
 任務去規劃。
 
-一次提早停止的執行——崩潰，或使用者**中斷（ESC）**於執行中途——可以
-用 `/agentic-workflow:engineering recover <id>` 恢復：迴圈狀態在每一個
-階段之後都會被快照，所以恢復會從它抵達的確切階段接續下去。ESC 是一
-個**暫停**——它會在執行中的階段收尾之後停止迴圈，並停止 watch 模式，
-但會保留快照（recover 會從那裡接續）；一次刻意的
-`/agentic-workflow:engineering stop` 則會**終結**這次執行並丟棄快照，
-因此沒有東西可以恢復。
+一次提早停止的執行——崩潰、使用者**中斷（ESC）**於執行中途、一次刻意的
+`stop`，或某個 CHECK 階段結束了這次執行——都可以用
+`/agentic-workflow:engineering recover <id>` 恢復：迴圈狀態在每一個階段之後
+都會被快照，並且**在上述每一種情況下都會保留**，所以恢復會從它抵達的確切
+階段接續下去，而不是回到 BUILD 重跑。快照只在執行完成時、或某個把關動作把
+任務移出 `in-progress/` 時（`replan`、`abandon`、`remove`）才會被丟棄——其中
+`replan` 最為關鍵：若快照留存，之後的 recover 會以你剛剛否決的那份計畫繼續。
 
 這個底層上的把關點都是**只 park**：watch 模式沒有互動通道，所以一個
 暫存的計畫或一個執行完畢的迴圈永遠都在等待
@@ -35,6 +35,21 @@ OpenCode 版本如何執行、它完整的指令面，以及安裝細節。共�
 `replan [id] [reason]` 把計畫送回去）——Claude Code 版本提供同樣的
 選項，但是就地互動式詢問，見
 [`plugins/claude/README.md`](../plugins/claude/README.md)。
+
+在這些把關點之間，迴圈**在設計上就是無人值守**的：階段子代理無法開啟
+OpenCode 的 `question` 對話框。每個內建代理都在 frontmatter 中停用該工具
+（`tools: question: false` 加上 `permission: question: deny`），而且外掛會拒絕
+任何由迴圈驅動之工作階段發出的 `question`——包含自訂 kind 的階段代理。階段
+自己無法解決的不確定性，要記錄在迴圈能據以行動的地方：檢查階段給出
+FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下一個把關點
+呈現給你。
+
+決定權會在**停止**時回到你手上，而那時停止訊息本身就是唯一的介面——所以它
+會列出真正存在的選項。若某個 CHECK 階段在此環境根本無法執行，其中就包含
+`/agentic-workflow:engineering waive <id> <why>`：它會繼續往下一個階段走，但
+**不記錄 PASS**，而是把豁免本身與你的理由放進該階段判定原本的位置。環境修好
+後用 `recover <id>` 重跑該階段；若是計畫本身要求了此環境無法提供的東西，
+則用 `replan <id> <why>`。
 
 以上所有內容（以及可選的強化項：worktree、審查視角、密鑰遮蔽、執行
 摘要）都在 `.agentic-workflow.json` 中設定，並疊放在一個可選的使用者
