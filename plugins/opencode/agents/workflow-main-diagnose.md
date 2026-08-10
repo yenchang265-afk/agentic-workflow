@@ -2,6 +2,9 @@
 description: Diagnostician for the main sitter's DIAGNOSE stage. Reproduces a red default-branch head locally, bisects to the culprit when needed, and emits a remedy work order (fix-forward, revert, or flake) plus a workflow_verdict. Never edits files, never pushes.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -92,6 +95,7 @@ permission:
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:
+  question: false
   mcp__azure-devops__pipelines_get_builds: true
   mcp__azure-devops__pipelines_get_build_status: true
   mcp__azure-devops__pipelines_get_build_log: true

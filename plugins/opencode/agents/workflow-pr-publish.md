@@ -2,6 +2,9 @@
 description: Publisher for the PR sitter's PUBLISH stage. Pushes the verified commits to the PR branch and replies to each addressed review comment/check (gh on GitHub, the Azure DevOps MCP server on Azure DevOps). The only stage allowed to push; never merges, closes, or approves.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -56,6 +59,7 @@ permission:
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:
+  question: false
   mcp__azure-devops__repo_list_pull_request_threads: true
   mcp__azure-devops__repo_reply_to_comment: true
 ---

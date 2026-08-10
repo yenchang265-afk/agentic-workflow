@@ -433,6 +433,34 @@ Both refuse a call from a session a loop is driving (`findDrivingWorkflow`,
 failing CLOSED): a plugin tool is offered to EVERY session, stage subagents
 included, and without that a BUILD agent can approve its own task.
 
+### A stage subagent must not be able to ask
+
+The mirror of the section above: the plugin cannot originate a question, and no
+stage may either. A drive is unattended between the plan gate and the ship gate,
+so a question dialog opened mid-VERIFY stalls the run on someone who may not be
+at the terminal — on a `watch` worker, on nobody at all. A stage's uncertainty
+has channels that keep the loop's control flow: a FAIL/ERROR verdict, a
+criterion marked not met, `workflow_blocked`.
+
+The hole is a HOST ASYMMETRY, invisible from any single file. Claude Code and
+Qwen agents declare an explicit `tools:` enumeration, so they exclude the ask
+tool by construction; **OpenCode agents declare only `permission:`, and inherit
+every tool the host ships unless they say otherwise** — which is how `question`
+(`@opencode-ai/plugin` 1.18.5) reached all 18 stage agents at once, unannounced,
+with nothing failing. A new agent added under `prompts/agents/` inherits it the
+same way, so the guard is a test over the GENERATED files
+(`scripts/agent-ask-deny.test.mjs`), not a convention.
+
+Three layers, and each one exists because the layer above it can fail silently:
+`tools: {question: false}` removes the tool, `permission: {question: deny}`
+refuses it if that map is bypassed or the key renamed, and the plugin's
+`tool.execute.before` refuses any `question` from a session `findDrivingWorkflow`
+attributes to a loop — the only layer that does not depend on a host config key
+behaving as documented, and the only one covering a user-added kind's agent.
+Never write this as stage-prompt prose: the refusal message names the
+alternative at the moment the model errs, which is worth more than a line
+carried in every stage's context forever.
+
 ### A rejected verdict is not a missing one
 
 `admitVerdict` refusing a call means the channel WORKED and the shape was wrong.

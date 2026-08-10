@@ -2,6 +2,9 @@
 description: Publisher for the dep sitter's PUBLISH stage. Pushes the verified upgrade branch (feature/* only) and opens a draft PR naming the advisory, impact, and verification result (gh on GitHub, the Azure DevOps MCP server on Azure DevOps). Never merges, never marks ready, never pushes the default branch.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -56,6 +59,7 @@ permission:
 # Azure DevOps MCP tools this stage may call — generated from platformTools
 # in workflows/*/workflow.json; edit the manifest, not here.
 tools:
+  question: false
   mcp__azure-devops__repo_list_pull_requests_by_repo_or_project: true
   mcp__azure-devops__repo_create_pull_request: true
   mcp__azure-devops__repo_create_pull_request_thread: true

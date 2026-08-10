@@ -103,6 +103,46 @@ test("a session with no loop ancestor is untouched while a worktree loop runs el
   }
 })
 
+/**
+ * No stage may ask the human. OpenCode agents declare only `permission:`, so
+ * unlike the Claude/Qwen `tools:` enumerations they inherited the `question`
+ * tool the moment the host shipped it — and a stage subagent that opens the
+ * dialog stalls an unattended BUILD → VERIFY → REVIEW drive on someone who is
+ * not watching. The shipped agents deny it in frontmatter too; this guard is the
+ * layer that does not depend on a host config key, and the only one that covers
+ * a user-added kind's stage agent.
+ */
+test("a question from a session a loop drives is refused, with the alternative named", async () => {
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ child: "drv" })
+    // The stage subagent's CHILD session — the shape every stage call arrives in.
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "child", tool: "question", callID: "c1" }, { args: { question: "which one?" } }),
+      /cannot ask the user[\s\S]*workflow_blocked/,
+    )
+    // And the driving session itself: mid-drive is mid-drive whoever asks. The
+    // gate questions are asked once the drive has ended and cleared the store.
+    await assert.rejects(
+      () => hooks["tool.execute.before"]({ sessionID: "drv", tool: "question", callID: "c2" }, { args: { question: "ship it?" } }),
+      /cannot ask the user/,
+    )
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
+test("a question outside any loop is untouched", async () => {
+  setWorkflow("drv", worktreeWorkflow())
+  try {
+    const hooks = await makeHooks({ stranger: undefined })
+    // The ad-hoc /plan subagent and the `new` interview both live here.
+    await hooks["tool.execute.before"]({ sessionID: "stranger", tool: "question", callID: "c1" }, { args: { question: "which one?" } })
+  } finally {
+    clearWorkflow("drv")
+  }
+})
+
 test("session-API failure while a worktree loop is live fails CLOSED for edit tools", async () => {
   setWorkflow("drv", worktreeWorkflow())
   try {

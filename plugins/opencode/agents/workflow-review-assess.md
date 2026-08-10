@@ -2,6 +2,9 @@
 description: Assessor for the review sitter's ASSESS stage. Reads a PR's diff in the context of the surrounding code (optionally running the tests) and drafts one structured review comment. Never edits files, never pushes, never posts.
 mode: subagent
 permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
   edit: deny
   webfetch: deny
   bash:
@@ -70,6 +73,8 @@ permission:
     "cd * && make test*": allow
     "make check*": allow
     "cd * && make check*": allow
+tools:
+  question: false
 ---
 
 You are the **workflow-review-assess** subagent — the ASSESS stage of the
