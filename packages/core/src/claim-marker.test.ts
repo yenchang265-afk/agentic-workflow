@@ -38,6 +38,11 @@ const makeFs = (livePids: ReadonlySet<number> = new Set([process.pid])) => {
   const $ = ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
+      // A `*` in the template's LITERAL text is a real shell glob on both hosts
+      // (interpolations are escaped, literals are not) — the unbounded walk that
+      // hung a gate move on a DrvFs tree. Caught here as well as in
+      // scripts/shell-glob.test.mjs, because this is the module it shipped in.
+      assert.ok(!s.includes("*"), `shell template carries a literal glob: ${strings.join("…")}`)
       cmd += s
       if (i < exprs.length) cmd += String(exprs[i])
     })
@@ -76,15 +81,28 @@ const makeFs = (livePids: ReadonlySet<number> = new Set([process.pid])) => {
           dirs.delete(dir)
           return { exitCode: 0, stdout: "" }
         }
-        case "rm": {
-          // Every non-flag argument is a target (releaseMarker passes the stamp
-          // AND its `.tmp-*` glob); a trailing `*` models bash glob expansion.
-          for (const target of parts.slice(1).filter((p) => !p.startsWith("-"))) {
-            if (target.endsWith("*")) {
-              const prefix = target.slice(0, -1)
-              for (const f of [...files.keys()]) if (f.startsWith(prefix)) files.delete(f)
-              continue
+        case "find": {
+          // `find <dir> -maxdepth 1 -name <pattern> -delete` — how the stamp
+          // temporaries are swept now. Deliberately models NO glob expansion of
+          // its own: the pattern arrives escaped, and `find` matches it against
+          // the basenames in ONE directory. A `-name` argument that reached a
+          // real shell unquoted is the bug this replaced (see sweepStampTemps).
+          const dir = parts[1]!
+          if (!dirs.has(dir)) return { exitCode: 1, stdout: "" }
+          const pattern = parts[parts.indexOf("-name") + 1]!
+          const re = new RegExp(`^${pattern.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`)
+          if (parts.includes("-delete")) {
+            for (const f of [...files.keys()]) {
+              if (f.startsWith(`${dir}/`) && re.test(f.slice(dir.length + 1)) && !f.slice(dir.length + 1).includes("/")) files.delete(f)
             }
+          }
+          return { exitCode: 0, stdout: "" }
+        }
+        case "rm": {
+          // Every non-flag argument is a target. No glob branch: a `*` may only
+          // ever reach this fake through an escaped interpolation (the assertion
+          // above enforces that), so nothing here should need to expand one.
+          for (const target of parts.slice(1).filter((p) => !p.startsWith("-"))) {
             files.delete(target)
             if (parts.includes("-rf")) {
               dirs.delete(target)

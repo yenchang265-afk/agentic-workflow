@@ -51,7 +51,31 @@ export const staleClaimMinutes = (stageTimeoutMinutes: number): number =>
  * DrvFS/WSL mtime is unreliable, the same rule `scheduler/lease.ts` applies to
  * watch-lease liveness.
  */
-export const stampPath = (markerDir: string): string => path.join(markerDir, "claim.json")
+const STAMP_NAME = "claim.json"
+
+export const stampPath = (markerDir: string): string => path.join(markerDir, STAMP_NAME)
+
+/**
+ * Delete the stray restamp temporaries (`claim.json.tmp-<pid>-<n>`) a crashed
+ * `restampMarker` can leave behind, so the `rmdir` in `releaseMarker` finds the
+ * marker empty.
+ *
+ * Matched by `find`, never by a shell GLOB. This was ``rm -f ${stamp}
+ * ${stamp}.tmp-*`` — the only literal `*` in any `$` template in this repo, and
+ * the only unbounded primitive one had. The interpolated prefix is escaped by
+ * the host shell while a literal `*` is not, so the token is half-quoted and
+ * its directory usually does not exist; expanding that on a WSL `/mnt/c`
+ * (DrvFs) tree is what made an `approve` hang after the task file had already
+ * moved — 105 seconds until the human pressed ESC one day, unbounded the next,
+ * with the `workflow_gate` tool call never returning. The pattern here rides in
+ * as an ESCAPED interpolation, so no shell expands it, and `-maxdepth 1` bounds
+ * the walk to the marker directory.
+ *
+ * Never reintroduce a literal `*` inside a `$` template — here or anywhere else.
+ */
+const sweepStampTemps = async ($: Shell, markerDir: string): Promise<void> => {
+  await $`find ${markerDir} -maxdepth 1 -name ${`${STAMP_NAME}.tmp-*`} -delete`.quiet().nothrow()
+}
 
 /**
  * The stamp's contents. `claimedAt` alone answers "how old", which is only ever
@@ -90,7 +114,8 @@ export const acquireMarker = async ($: Shell, markerDir: string, now: Date = new
  * passed.
  */
 export const releaseMarker = async ($: Shell, markerDir: string, log?: Log): Promise<void> => {
-  await $`rm -f ${stampPath(markerDir)} ${stampPath(markerDir)}.tmp-*`.quiet().nothrow()
+  await $`rm -f ${stampPath(markerDir)}`.quiet().nothrow()
+  await sweepStampTemps($, markerDir)
   const out = await $`rmdir ${markerDir}`.quiet().nothrow()
   if (out.exitCode === 0) return
   if ((await $`test -d ${markerDir}`.quiet().nothrow()).exitCode !== 0) return // already gone — released by someone else
