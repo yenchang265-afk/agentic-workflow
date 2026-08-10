@@ -660,6 +660,38 @@ unguarded ~60-line prologue before the dispatch try (plan 20). The closures in
   than waiting.
 - A one-shot guard sets its flag FIRST and owns no unguarded await after it.
 
+### A plugin TOOL that hangs is the same failure with no way out
+
+The rule above is about hooks; the tools are worse, because a hook at least dies
+with the turn. OpenCode imposes NO deadline on a tool's `execute`, so one that
+never settles leaves the call `running` forever with the model's turn behind it
+— the only exit is ESC or killing opencode. `workflow_gate` did exactly that on
+an approved draft: the task file had already moved, so the visible state was a
+spinner over work that was DONE. Hence three standing rules.
+
+- **Every model-callable tool answers.** The gate tools return a sentence the
+  model can act on (`withinDeadline` → a message); the verdict tools THROW,
+  because a string reads as success and an unrecorded verdict must retry. The
+  gate message may invite a retry only because `approveTask`'s `alreadyDone` arm
+  makes a repeat approve a no-op — never invite one where the call claims a task
+  (`workflow_plan` starts a drive on the human's own session).
+- **A gate verb's `$` is bounded** (`boundedShell`, wired in `gateCtx` only).
+  Exit 124 is the contract `host.ts` already specifies, and core reads it as an
+  ordinary failed command, so the move still reports and only its best-effort
+  bookkeeping is skipped — a timeout that THREW would turn a skipped `git add`
+  into a failed approval. Not `deps.$`: checkpoint commits, worktree setup and
+  `runChecks` legitimately run long and carry their own regime.
+- **A `$` template may never contain a literal `*`.** Interpolations are escaped
+  by both hosts (Bun's `$` by construction, the Claude shim via `esc()`), so a
+  `*` in the template's own text is the ONLY way a real glob — the only
+  unbounded primitive a shell call has — reaches a command. One shipped
+  (`rm -f <stamp> <stamp>.tmp-*`, `claim-marker.ts`) and it is what stalled the
+  gate above on a WSL `/mnt/c` tree. A pattern that genuinely needs one is passed
+  as an escaped interpolation and matched by the tool
+  (`find … -maxdepth 1 -name ${pat} -delete`).
+  `scripts/shell-glob.test.mjs` parses every shipped source and fails on a
+  literal one.
+
 ### Model selection is a mechanism, never prose
 
 Never express `stageModels` / `agentModels` as an instruction for a model to

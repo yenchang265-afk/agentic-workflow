@@ -34,6 +34,7 @@ import {
   parseWatchArgs,
   recordVerdict,
   findDrivingWorkflow,
+  gateCtx,
   gateFromAgent,
   resolveDrivingSession,
   runStagePasses,
@@ -897,6 +898,39 @@ test("a gate tool called from inside a running loop is refused, and moves nothin
 
 // Fail CLOSED, unlike the Claude spawn guard: a false refusal costs one command
 // the human can type, a false allow lets an unidentified caller ship work.
+/**
+ * A gate verb's shell is BOUNDED, unlike `deps.$` everywhere else.
+ *
+ * The reported failure was a `workflow_gate` that never returned: the task file
+ * had already moved, the model's turn sat behind a tool call stuck at `running`,
+ * and the only way out was killing opencode. Whatever the stalling command turns
+ * out to be, a gate move must degrade — core reads exit 124 as an ordinary
+ * failed command, so the move still reports and only its best-effort bookkeeping
+ * is skipped.
+ */
+test("the shell a gate verb runs is bounded, not deps.$", async () => {
+  const { client } = makeClientFS({})
+  const hangs = (() => ({
+    quiet() {
+      return this
+    },
+    nothrow() {
+      return this
+    },
+    cwd() {
+      return this
+    },
+    then: () => {},
+  })) as unknown as Deps["$"]
+  const deps: Deps = { client, $: hangs, directory: "/repo", log: () => {} }
+
+  // `.timeout()` narrows the wrapper's own cap, which is how this asserts in
+  // milliseconds what ships as a 60s ceiling.
+  const out = await gateCtx(deps, testConfig).$`git add -- ${"docs/tasks"}`.quiet().nothrow().timeout?.(20)
+
+  assert.equal(out?.exitCode, 124, "a gate command that never settles must resolve like a failed one")
+})
+
 test("a gate tool refuses when it cannot tell which session is calling", async () => {
   const files = { "docs/tasks/draft/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
   const { client } = makeClientFS(files)

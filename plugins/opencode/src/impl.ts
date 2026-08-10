@@ -252,6 +252,48 @@ const RECONCILE_TIMEOUT_MS = 30_000
  * unhandled one) — safe for the callers in this module, which each tolerate
  * late completion (see call sites).
  */
+/**
+ * Deadlines for the model-callable tools. OpenCode imposes NONE of its own: a
+ * tool whose `execute` never settles leaves the tool call `running` forever and
+ * the model's turn wedged behind it, which is exactly how a `workflow_gate` on
+ * an approved draft became an unrecoverable spinner. Every tool here must
+ * therefore answer — in words the model can act on, or with a throw it can
+ * retry on, but never with silence.
+ *
+ * The gate tools get the longer cap because they do the shell work; their `$` is
+ * separately capped lower (`GATE_SHELL_TIMEOUT_MS`), so in the failure this was
+ * built for the shell bound fires first and the gate still reports what it did.
+ * This is the backstop for everything else — above all the `client.session.get`
+ * walk `workflow_verdict`/`workflow_blocked` make, which is a fetch back into
+ * the server with no timeout of its own.
+ */
+const GATE_TOOL_TIMEOUT_MS = 90_000
+const VERDICT_TOOL_TIMEOUT_MS = 30_000
+
+/** Distinguishes "the deadline passed" from any value a tool could return. */
+const TIMED_OUT = Symbol("timed-out")
+
+/**
+ * Resolve `promise`, or `TIMED_OUT` once `ms` passes. Rejections propagate
+ * unchanged — a tool that deliberately throws (a rejected verdict) must keep
+ * throwing. Nothing is cancelled; the abandoned promise keeps a handler so a
+ * late rejection is never unhandled.
+ */
+const withinDeadline = <T>(promise: Promise<T>, ms: number): Promise<T | typeof TIMED_OUT> =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(TIMED_OUT), ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err: unknown) => {
+        clearTimeout(timer)
+        reject(err as Error)
+      },
+    )
+  })
+
 const withTimeout = <T>(promise: Promise<T>, ms: number, what: string): Promise<T> =>
   new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms}ms`)), ms)
@@ -1048,7 +1090,18 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // Check stages run as subtasks: the call carries the CHILD session's
           // id, so resolve the driving session up the parent chain first — a
           // verdict recorded under the child id would be invisible to the drive.
-          const drivingID = await driver.resolveDrivingSession(client, ctx.sessionID)
+          // Bounded: that walk is a `client.session.get` per hop, i.e. a fetch
+          // back into the server with no timeout of its own, and a stage whose
+          // verdict channel never returns burns the whole stage for nothing.
+          // Throwing (not returning) keeps the contract below — a string reads
+          // as success, and an unrecorded verdict must visibly fail so it retries.
+          const resolved = await withinDeadline(driver.resolveDrivingSession(client, ctx.sessionID), VERDICT_TOOL_TIMEOUT_MS)
+          if (resolved === TIMED_OUT) {
+            throw new Error(
+              `agentic-workflow: could not resolve the driving session within ${VERDICT_TOOL_TIMEOUT_MS / 1000}s — the verdict was NOT recorded. Call this tool again.`,
+            )
+          }
+          const drivingID = resolved
           const result = driver.recordVerdict(
             drivingID,
             args.stage,
@@ -1088,8 +1141,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         execute: async (args, ctx) => {
           // Same parent-chain walk as workflow_verdict: stage agents run as
           // subtasks, so the call arrives under the CHILD session id and a signal
-          // recorded there would be invisible to the drive.
-          const drivingID = await driver.resolveDrivingSession(client, ctx.sessionID)
+          // recorded there would be invisible to the drive. Bounded and thrown on
+          // for the same reasons.
+          const resolved = await withinDeadline(driver.resolveDrivingSession(client, ctx.sessionID), VERDICT_TOOL_TIMEOUT_MS)
+          if (resolved === TIMED_OUT) {
+            throw new Error(
+              `agentic-workflow: could not resolve the driving session within ${VERDICT_TOOL_TIMEOUT_MS / 1000}s — nothing was recorded. Call this tool again.`,
+            )
+          }
+          const drivingID = resolved
           const result = driver.recordBlocked(drivingID, args.stage, args.reason)
           // Throw on rejection for the same reason as the verdict tool: a plain
           // string reads as success to the model.
@@ -1117,7 +1177,18 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         args: {
           id: tool.schema.string().describe("The task id the user approved. Required — never guess one."),
         },
-        execute: async (args, ctx) => driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig()),
+        execute: async (args, ctx) => {
+          const done = await withinDeadline(driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig()), GATE_TOOL_TIMEOUT_MS)
+          if (done !== TIMED_OUT) return done
+          await log("warn", `workflow_gate on "${args.id}" exceeded ${GATE_TOOL_TIMEOUT_MS}ms — answering the model; the move may still complete`)
+          // Safe to invite a retry: approving a task that already moved takes the
+          // `alreadyDone` arm and reports "nothing to do" instead of moving twice.
+          return (
+            `The gate move for "${args.id}" is taking longer than ${GATE_TOOL_TIMEOUT_MS / 1000}s, so this call is answering without it. ` +
+            `It may well have landed. Call this tool once more with the same id — a repeat approve on a task that already moved is a no-op — ` +
+            `and if it is slow again, tell the user to run \`/agentic-workflow:engineering status\` and check the opencode log for a shell command that timed out.`
+          )
+        },
       }),
 
       workflow_plan: tool({
@@ -1128,7 +1199,18 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         args: {
           id: tool.schema.string().describe("The queued task id to plan. Required — never guess one."),
         },
-        execute: async (args, ctx) => driver.planFromAgent(deps, ctx.sessionID, args.id, await getConfig()),
+        execute: async (args, ctx) => {
+          const done = await withinDeadline(driver.planFromAgent(deps, ctx.sessionID, args.id, await getConfig()), GATE_TOOL_TIMEOUT_MS)
+          if (done !== TIMED_OUT) return done
+          await log("warn", `workflow_plan on "${args.id}" exceeded ${GATE_TOOL_TIMEOUT_MS}ms — answering the model; the claim may still be taken`)
+          // No retry invited here, unlike the gate: this call claims the task and
+          // queues a drive on the user's own session, and a second one racing the
+          // first is worse than a slow first.
+          return (
+            `Starting the PLAN pass on "${args.id}" is taking longer than ${GATE_TOOL_TIMEOUT_MS / 1000}s, so this call is answering without it. ` +
+            `Do NOT call this tool again. Tell the user to run \`/agentic-workflow:engineering status\` to see whether the plan pass started.`
+          )
+        },
       }),
     },
   }

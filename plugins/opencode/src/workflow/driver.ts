@@ -136,6 +136,7 @@ import {
   unreviewedAxes,
   worktreesDirFor,
 } from "@agentic-workflow/core/config"
+import { boundedShell } from "../bounded-shell.ts"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
@@ -939,7 +940,10 @@ const report = async (
   message: string,
   variant: "info" | "success" | "warning" | "error",
 ): Promise<string> => {
-  await toast(client, message, variant)
+  // Fired, never awaited. `toast`'s `.catch()` guards a rejection, not a HANG,
+  // and this runs on the command-hook path where an await that never settles
+  // kills the turn silently — for a notification whose result nothing reads.
+  void toast(client, message, variant)
   return message
 }
 
@@ -2624,13 +2628,31 @@ const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise
 /** The engineering command as the user types it — for toasts and usage text. */
 const ECMD = "/agentic-workflow:engineering"
 
+/**
+ * Per-command cap on the shell a gate verb runs (see `gateCtx`). Generous on
+ * purpose: the slowest legitimate gate command is the ship's `git push` /
+ * `gh pr create`, and cutting one of those short costs a caveated ship ("PR not
+ * opened") that a human can finish by hand — where NOT capping cost a run that
+ * never came back at all.
+ */
+const GATE_SHELL_TIMEOUT_MS = 60_000
+
 // --- Shared human-gate transitions -----------------------------------------
 /**
  * Build the shared gate context from this host's deps. `isDriving` answers from
  * the in-memory session map so replan refuses a task a live loop is building.
  */
-const gateCtx = (deps: Deps, config: Config): GateCtx => ({
-  $: deps.$,
+/** Exported for the wiring test only — every caller here is in this module. */
+export const gateCtx = (deps: Deps, config: Config): GateCtx => ({
+  // Bounded, unlike `deps.$` everywhere else. A gate verb's shell work is task
+  // files, claim markers and small git bookkeeping — nothing here has a reason
+  // to take a minute, and one that never returned wedged a `workflow_gate` call
+  // (and the model's turn behind it) with the task already moved. A timeout
+  // resolves exit 124, which core reads as an ordinary failed command, so the
+  // move still reports; only the bookkeeping is skipped, and the log names the
+  // command. Deliberately NOT applied to `deps.$`: checkpoint commits, worktree
+  // setup and `runChecks` legitimately run long.
+  $: boundedShell(deps.$, GATE_SHELL_TIMEOUT_MS, deps.log),
   client: deps.client,
   log: deps.log,
   directory: deps.directory,
@@ -2804,12 +2826,18 @@ const refuseIfDriven = async (deps: Deps, sessionID: string): Promise<string | n
 export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string> => {
   const refusal = await refuseIfDriven(deps, sessionID)
   if (refusal) return refusal
+  const target = id.trim()
   try {
-    const r = await approveAny(gateCtx(deps, config), id.trim())
-    await toast(deps.client, r.message, gateVariant(r))
+    // Bracketing log lines, because the frame this call stalls in is otherwise
+    // unknowable: a tool that never returns leaves no transcript, and the last
+    // time it happened the answer had to be reconstructed from file mtimes.
+    void deps.log("info", `workflow_gate: moving "${target}" through its gate`)
+    const r = await approveAny(gateCtx(deps, config), target)
+    void deps.log("info", `workflow_gate: "${target}" → ${r.ok ? "moved" : "refused"} (${r.message})`)
+    void toast(deps.client, r.message, gateVariant(r))
     return r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : r.message
   } catch (err) {
-    return `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`
+    return `Approve failed${target ? ` for "${target}"` : ""}: ${(err as Error).message}`
   }
 }
 
