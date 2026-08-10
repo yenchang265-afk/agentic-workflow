@@ -1212,6 +1212,32 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           )
         },
       }),
+
+      workflow_replan: tool({
+        description:
+          "Reject a parked plan and immediately re-plan the task with the user's reason (plan-review/ → queued/, then a fresh PLAN pass that parks a revised plan). " +
+          "Call this ONLY to act on an explicit 'replan it' answer the user gave you this turn, with the reason THEY gave. " +
+          "Stage agents may not call it: a loop driving your session refuses it.",
+        args: {
+          id: tool.schema.string().describe("The plan-review task id to send back to planning. Required — never guess one."),
+          reason: tool.schema.string().describe("The user's reason for rejecting the plan, in their words. It is threaded into the next PLAN pass."),
+        },
+        execute: async (args, ctx) => {
+          const done = await withinDeadline(
+            driver.replanFromAgent(deps, ctx.sessionID, args.id, args.reason, await getConfig()),
+            GATE_TOOL_TIMEOUT_MS,
+          )
+          if (done !== TIMED_OUT) return done
+          await log("warn", `workflow_replan on "${args.id}" exceeded ${GATE_TOOL_TIMEOUT_MS}ms — answering the model; the rejection may still land`)
+          // No retry invited, for workflow_plan's reason and one more: a repeat
+          // rejection of a task already back in queued/ is not a no-op — it would
+          // be refused, and the chained PLAN drive it queues claims this session.
+          return (
+            `Rejecting the plan for "${args.id}" is taking longer than ${GATE_TOOL_TIMEOUT_MS / 1000}s, so this call is answering without it. ` +
+            `Do NOT call this tool again. Tell the user to run \`/agentic-workflow:engineering status\` to see where the task sits.`
+          )
+        },
+      }),
     },
   }
 }

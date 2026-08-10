@@ -206,7 +206,10 @@
   `workflow_advance` — the task parks in `plan-review/` and
   the plan gate goes live: ask the user inline (`ask_user_question` — Approve /
   Replan / Park for later, per the `workflow-orchestration` skill) instead of
-  only telling them which command to run. If the id is already build-ready
+  only telling them which command to run. That ask is not left to this prose:
+  the park is followed by a **`PLAN GATE`** block the harness emits beside the
+  result, carrying the same question with the ids and tool names filled in —
+  obey it. If the id is already build-ready
   (`in-progress/`), don't start it here — `claim` builds it.
 <!-- /aw:verb approve|plan -->
 <!-- aw:verb claim -->

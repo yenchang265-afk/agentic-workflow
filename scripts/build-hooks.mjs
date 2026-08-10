@@ -39,7 +39,7 @@ const QWEN_OUT = path.join(ROOT, "plugins", "qwen", "hooks")
  * the hand-written entries are listed here too — an un-generated copy over there
  * would be a second place to forget.
  */
-const HAND_WRITTEN_ENTRIES = ["gate-command.mjs"]
+const HAND_WRITTEN_ENTRIES = ["gate-command.mjs", "plan-gate-ask.mjs"]
 
 const entries = fs.readdirSync(SRC).filter((f) => f.endsWith(".entry.mjs"))
 if (entries.length === 0) {

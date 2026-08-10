@@ -30,6 +30,7 @@ import {
   onInterrupt,
   parsePrTarget,
   planFromAgent,
+  replanFromAgent,
   resetAskState,
   parseWatchArgs,
   recordVerdict,
@@ -1257,6 +1258,153 @@ test("waving through a plan we could not check is logged", async () => {
   assert.equal(warnings.length, 1, `expected exactly one warning, got ${JSON.stringify(warnings)}`)
   assert.match(warnings[0]!, /no question has ever been observed/)
   clearWorkflow(sessionID)
+})
+
+/**
+ * The PLAN GATE ask. `plan <id>` returns before the drive even starts (the stage
+ * runs on a later idle), so when the plan finally parks there is no model turn
+ * left to ask in — which is why this host simply never asked and left the human
+ * to type the verb. The plugin cannot originate a QUESTION, but it can originate
+ * the TURN in which the model asks one, and that is what these pin: that it fires
+ * on a human-requested park, and on nothing else.
+ */
+const PLANNED_BODY = [
+  "## Implementation Plan",
+  "",
+  "1. Edit `src/a.ts` to do the thing.",
+  "",
+  "### Verification",
+  "",
+  "- The acceptance criterion is proved by `npm test`.",
+  "",
+  "### Out of Scope",
+  "",
+  "- Everything else.",
+].join("\n")
+
+/** A session whose stage commands are no-ops and whose prompts are recorded. */
+const makePlanClient = (files: Record<string, string>) => {
+  const { client, toasts } = makeClientFS(files)
+  const commands: string[] = []
+  const prompts: string[] = []
+  const withTurns = {
+    ...client,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+      prompt: async ({ body }: { body: { parts: { text?: string }[] } }) => {
+        prompts.push(body.parts.map((p) => p.text ?? "").join(""))
+        return { data: undefined }
+      },
+    },
+  } as unknown as Deps["client"]
+  return { client: withTurns, commands, prompts, toasts }
+}
+
+test("a plan the human asked for opens the approve/replan question when it parks", async () => {
+  resetAskState()
+  const sessionID = "sess-plan-parks"
+  // The stage command is a no-op here, so the plan the PLAN stage would have
+  // written is already on the file — what is under test is the park, not the author.
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: PLANNED_BODY }) }
+  const { client, commands, prompts } = makePlanClient(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  await onIdle(deps, sessionID, testConfig)
+
+  assert.deepEqual(commands, ["plan-task"], "the PLAN stage must have run")
+  assert.equal(prompts.length, 1, `expected exactly one gate turn, got ${JSON.stringify(prompts)}`)
+  assert.match(prompts[0]!, /Approve the plan for `my-task`/)
+  assert.match(prompts[0]!, /question/, "only the model can open a window — the turn has to ask it to")
+  // Every option must name the tool that executes it: this host has no MCP server
+  // and guards writes under docs/tasks/, so "tell them to type the verb" is the
+  // ask made pointless.
+  assert.match(prompts[0]!, /workflow_gate/)
+  assert.match(prompts[0]!, /workflow_replan/)
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The boundary the whole design turns on. `watch`/`claim` drives are unattended by
+ * definition — a dialog there stalls the loop on nobody — and they never come
+ * through `claimForPlan`, which is where the flag is set.
+ */
+test("a watcher's plan parks silently, with no question for nobody", async () => {
+  resetAskState()
+  const sessionID = "sess-watch-parks"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: PLANNED_BODY }) }
+  const { client, commands, prompts } = makePlanClient(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, sessionID, "claim", testConfig)
+  await onIdle(deps, sessionID, testConfig)
+
+  assert.deepEqual(commands, ["plan-task"], "the claim must still have driven a PLAN pass")
+  assert.deepEqual(prompts, [], "an unattended worker must not open a question")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * A drive that did not park has nothing to ask about, and that is exactly why the
+ * flag rides the work item instead of a module map: no cleanup path (ESC, stop,
+ * a vetoed park) has to remember to disarm it.
+ */
+test("a PLAN pass that fails to park asks nothing", async () => {
+  resetAskState()
+  const sessionID = "sess-plan-vetoed"
+  // No Implementation Plan on the file and a no-op stage: the park is refused.
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client, prompts } = makePlanClient(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  await onIdle(deps, sessionID, testConfig)
+
+  assert.deepEqual(prompts, [], "a plan that never landed must not be offered for approval")
+  clearWorkflow(sessionID)
+})
+
+/**
+ * `workflow_replan` exists because of the question above: an ask whose answer the
+ * model cannot execute is worse than no ask, and Replan had no tool behind it.
+ */
+test("workflow_replan rejects the parked plan and re-plans it in the same turn", async () => {
+  resetAskState()
+  const sessionID = "sess-replan-tool"
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: PLANNED_BODY }) }
+  const { client, prompts } = makePlanClient(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await replanFromAgent(deps, sessionID, "my-task", "the rollout step is hand-waved", testConfig)
+
+  assert.match(out, /re-planning now/, `unexpected: ${out}`)
+  assert.ok(
+    log.some((cmd) => cmd.includes("queued/my-task.md")),
+    "the rejection must move the task back to queued/",
+  )
+  assert.deepEqual(prompts, [], "the chained PLAN pass runs on the next idle, not from this call")
+  clearWorkflow(sessionID)
+})
+
+test("workflow_replan refuses a stage agent, and fails closed when it cannot tell", async () => {
+  resetAskState()
+  const files = { "docs/tasks/plan-review/my-task.md": serializeTask({ title: "Do the thing", body: PLANNED_BODY }) }
+  const { client } = makePlanClient(files)
+  const log: string[] = []
+  const blind = { ...client, session: { get: async () => { throw new Error("session lookup failed") } } } as unknown as Deps["client"]
+  const deps: Deps = { client: blind, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  assert.match(await replanFromAgent(deps, "sess-blind", "my-task", "why", testConfig), /refusing the gate move/)
+  assert.ok(!log.some((cmd) => cmd.includes("mv")), "a refused rejection must move nothing")
 })
 
 test("/approve with no id ships the single in-review task to completed/", async () => {

@@ -207,10 +207,14 @@ Dispatch:
 - **`plan <id>`** — plan one approved task now: claims the `queued/` task and
   runs the PLAN stage (writes the `## Implementation Plan` onto the task
   file, parks it in `plan-review/` for your gate, exits). Building is not
-  reachable from here — `claim`/`watch` drive builds. The plan gate itself is
-  announced by a toast, not by a question: the PLAN pass finishes in the
-  background driver, after your turn has ended, and this host's plugin can
-  only observe the questions you ask — it cannot open one of its own.
+  reachable from here — `claim`/`watch` drive builds. The PLAN pass finishes in
+  the background driver, after this turn has ended, so the plan gate arrives as
+  its OWN turn: once the plan parks, the plugin starts a fresh turn carrying a
+  **`NEXT STEP`** line that asks you to put the gate question to the user
+  (`question` — approve / replan / not now), and to call **`workflow_gate`** or
+  **`workflow_replan`** with their answer. Only a `plan <id>`, a `workflow_plan`
+  or a `replan` chain gets that turn; a `watch`/`claim` worker parks with a toast
+  alone, because nobody is sitting at it.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
 - **`claim`** — one-shot pull: claim the next task (lowest priority number
