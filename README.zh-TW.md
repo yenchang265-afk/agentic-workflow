@@ -188,7 +188,8 @@ npm install
   還原；預設會把 `docs/tasks/` 完全排除在 git 之外，所以除非你真的要讓檔案消失，
   否則請優先使用 `abandon`
 - `/agentic-workflow:engineering plan <id>` · `claim` · `watch [trigger]`（OpenCode）·
-  `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ——
+  `unwatch` · `recover <id>` · `waive <id> <why>` · `stop` · `status` ·
+  `doctor [fix]` · `kinds` ——
   `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存，不必等巡查；
   `claim` 拉取下一個項目——先取可建置的 `in-progress/` 工作，沒有時再取一個
   已核准的 `queued/` 任務來規劃；`watch` 是一個僅作用於 engineering 類型的常駐

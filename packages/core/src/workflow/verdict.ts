@@ -556,6 +556,35 @@ export const verdictFeedbackBlock = (record: VerdictRecord | null): string => {
   return lines.join("\n")
 }
 
+/** Longest a human waiver reason may render into a prompt block. */
+const WAIVER_REASON_MAX = 500
+
+/**
+ * The structured block a HUMAN's waiver of a check stage leaves behind, in place
+ * of the verdict that stage never earned.
+ *
+ * It lands in the same two slots `verdictFeedbackBlock` does — the waived stage's
+ * artifact head and its `verdicts.<stage>` seam — because that is where the NEXT
+ * stage reads what this one established. review.md renders the seam under "What
+ * VERIFY established (its recorded verdict — take it as given)", so a waiver that
+ * merely went silent there would be read as a pass: the reviewer would grade
+ * against a guarantee nobody made, which is worse than no coverage because it
+ * manufactures one. Hence the leading sentence says WAIVED, names the human, and
+ * states that the stage's guarantees are absent rather than satisfied.
+ *
+ * `reason` is flattened and clamped — it comes from a human typing into a verb
+ * argument, i.e. it is unbounded, and this block is exempt from the artifact
+ * budget. Pure.
+ */
+export const waiverBlock = (stage: string, reason: string, actor?: string | null): string => {
+  const flat = reason.replace(/\s+/g, " ").trim().slice(0, WAIVER_REASON_MAX)
+  return [
+    `${stage.toUpperCase()} was WAIVED by a human${actor ? ` (${actor})` : ""} — it recorded no verdict and established nothing.`,
+    `Waiver reason: ${flat || "(none given)"}`,
+    `Treat this stage's guarantees as ABSENT, not as satisfied. Nothing it would have checked was checked; if that gap matters for your own judgement, say so in your verdict rather than assuming it was covered.`,
+  ].join("\n")
+}
+
 /** The verdict tags emitted by the loop's check stages. */
 export const WORKFLOW_VERIFY_TAG = "WORKFLOW_VERIFY"
 export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"

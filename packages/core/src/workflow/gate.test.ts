@@ -798,3 +798,37 @@ test("a gate verb given a traversing id never reads outside the backlog", async 
     assert.deepEqual(escaped, [], `${verb} touched a path outside the backlog: ${escaped.join(", ")}`)
   }
 })
+
+// --- run-state invalidation: the snapshot survives a stop, so the gates own its end of life ---
+
+const SNAP = "runs/t.state.json"
+
+test("replanTask drops the run snapshot — the resumed plan would be the one just rejected", async () => {
+  // The sharpest of the three: a snapshot carries the plan its stages were
+  // composed against, so a surviving one would let a later `recover` resume
+  // mid-pipeline against the plan the human is rejecting right here.
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Do it", `${PLAN_HEADING}\n\n1. Step.`), [SNAP]: "{}" })
+  const r = await replanTask(ctx, "t", "the plan needs a browser we don't have")
+  assert.equal(r.ok, true)
+  assert.ok(!(`/repo/docs/tasks/${SNAP}` in fs), "the snapshot goes with the task")
+})
+
+test("abandonTask and removeTask drop the run snapshot too", async () => {
+  for (const [label, move] of [
+    ["abandon", (c: GateCtx) => abandonTask(c, "t")],
+    ["remove", (c: GateCtx) => removeTask(c, "t", true)],
+  ] as const) {
+    const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Do it", `${PLAN_HEADING}\n\n1. Step.`), [SNAP]: "{}" })
+    const r = await move(ctx)
+    assert.equal(r.ok, true, label)
+    assert.ok(!(`/repo/docs/tasks/${SNAP}` in fs), `${label} leaves no snapshot behind`)
+  }
+})
+
+test("a REFUSED gate move leaves the run snapshot alone", async () => {
+  // Invalidation follows the move, not the attempt: a task a live loop is
+  // driving stays exactly as it was, snapshot included.
+  const { ctx, fs } = makeCtx({ "in-progress/t.md": task("Do it", `${PLAN_HEADING}\n\n1. Step.`), [SNAP]: "{}" }, { driving: "t" })
+  assert.equal((await replanTask(ctx, "t", "why")).ok, false)
+  assert.ok(`/repo/docs/tasks/${SNAP}` in fs, "nothing moved, so nothing is stale")
+})

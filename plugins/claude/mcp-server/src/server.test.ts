@@ -498,3 +498,46 @@ test("workflow_move enforces the same liveness guards as every other move", () =
   assert.match(body, /listClaimIds\(/, "a held claim marker must be refused")
   assert.match(body, /catch \(err\) \{ return fail\(/, "a thrown move must not escape the ok/fail contract")
 })
+
+// A check stage that ends the run leaves the human a decision, and the tool
+// result is the only place they can be offered it. Improvising that ask is how
+// "proceed to the review stage" got offered with no tool behind it: the host fell
+// back to a resume, which re-enters at BUILD and re-runs the whole loop.
+test("the check-stage stop offers exactly the three moves that exist, each with its call", () => {
+  const src = flat(source())
+  const offer = /stoppedCheck && taskId[\s\S]{0,1600}?Offer nothing else/.exec(src)
+  assert.ok(offer, "a stop from a check stage must carry the executable options")
+  const next = offer[0]
+  for (const call of ["workflow_recover", "workflow_waive", "workflow_replan"]) {
+    assert.ok(next.includes(call), `the ask must name ${call} — an option whose call is missing cannot be executed`)
+  }
+  assert.match(next, /resumes at \$\{stoppedCheck\}, not at BUILD/, "recover's option must say where it resumes, since the old behaviour was a BUILD restart")
+  assert.match(next, /WITHOUT recording a pass/, "the waiver option must not read as a way to pass the stage")
+})
+
+test("workflow_waive refuses everything refusable BEFORE it claims the task", () => {
+  // A refusal that has already taken the marker wedges the task: a held claim
+  // makes every gate verb (replan/abandon/remove) refuse in turn.
+  const body = flat(toolBody(source(), "workflow_waive"))
+  const claimAt = body.indexOf("claimTask(")
+  assert.ok(claimAt > 0, "the waiver re-claims the task it is about to drive")
+  for (const [what, pattern] of [
+    ["a live loop", /if \(active\)/],
+    ["an empty reason", /if \(!why\)/],
+    ["a task that is not in-progress", /if \(!t\) return fail/],
+    ["a missing run snapshot", /No run snapshot for/],
+    ["a live cross-process drive", /taskDrivenByStageMarker\(/],
+    ["a stage the engine will not waive", /if \("error" in waived\) return fail/],
+  ] as const) {
+    const at = pattern.exec(body)?.index ?? -1
+    assert.ok(at > 0, `${what} must be refused`)
+    assert.ok(at < claimAt, `${what} must be refused before the claim, or a rejected waiver wedges the task`)
+  }
+})
+
+test("workflow_waive audits the waiver on the task file, naming the stage and the reason", () => {
+  // The waiver is a human overriding a check; the run log alone is not a record.
+  const body = flat(toolBody(source(), "workflow_waive"))
+  assert.match(body, /appendNote\([\s\S]{0,200}waived by a human/, "the task file must carry it")
+  assert.match(body, /waiveCheck\(eng,/, "the transition itself stays core's — the manifest decides which arm a pass takes")
+})

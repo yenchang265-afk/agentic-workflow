@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | waive <id> <why> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -256,10 +256,21 @@ Dispatch:
   — it halts after the in-flight stage settles and keeps the snapshot; `stop`
   ends the run and drops it. Check `git status`/`git diff` first.
 <!-- /aw:verb recover -->
+<!-- aw:verb waive -->
+- **`waive <id> <why>`** — carry on past a CHECK stage that cannot run in this
+  environment at all (a browser suite with no display, a service the sandbox
+  has no network for). Takes that stage's pass arm — VERIFY waived continues at
+  REVIEW — **without recording a pass**: the waiver and your reason replace the
+  stage's verdict in the next stage's prompt and are audited on the task file,
+  so the reviewer is told the checks are ABSENT rather than satisfied. Only for
+  a run that has already stopped, and not for a check that merely failed —
+  that is a rebuild, or `replan` if the plan itself asked for something this
+  environment cannot provide.
+<!-- /aw:verb waive -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — abort the loop and exit watch mode (timer
-  included), in this session. Drops the run's snapshot — a deliberate end,
-  nothing to recover (unlike an ESC pause).
+  included), in this session. Keeps the run's snapshot, so `recover <id>` picks
+  the run back up at the stage it stopped in rather than restarting at BUILD.
 <!-- /aw:verb stop|abort -->
 
 ## Introspection

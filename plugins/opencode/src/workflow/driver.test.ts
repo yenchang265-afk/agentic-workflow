@@ -3019,3 +3019,75 @@ test("driveChain publishes the advanced state before awaiting anything else", as
   assert.match(afterAdvance, /setWorkflow\(sessionID, step\.state\)/, "the transition must be published before the next await")
   assert.doesNotMatch(afterAdvance, /await /, "nothing may be awaited between the transition and publishing it")
 })
+
+// --- waive <id> <why>: carrying on past a check stage this environment can't run ---
+
+/** A stopped run's on-disk snapshot, parked at `stage`. */
+const snapshotAt = (stage: string) =>
+  JSON.stringify({
+    goal: "Do the thing",
+    stage,
+    iteration: 0,
+    artifacts: { plan: "1. Step.", build: "built it" },
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+  })
+
+const waivableFiles = (stage = "verify") => ({
+  "docs/tasks/in-progress/t.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.\n\n> BUILD started [2026-01-01T00:00:00.000Z]` }),
+  "docs/tasks/runs/t.state.json": snapshotAt(stage),
+})
+
+test("waive <id> <why> continues at REVIEW and records the waiver on the task file", async () => {
+  // The reported bug: asked how to handle a VERIFY whose environment can never
+  // be satisfied, the human answered "go to review" and the run restarted at
+  // BUILD — because taking the pass arm by human authority was not a move.
+  const files = waivableFiles()
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-waive-ok", "waive t the e2e suite needs a live browser", testConfig)
+
+  assert.match(toasts[0]?.message ?? "", /VERIFY waived/, toasts[0]?.message)
+  assert.match(toasts[0]?.message ?? "", /continuing at review/, "the waiver hands the run forward, it does not restart it")
+  assert.ok(
+    log.some((cmd) => cmd.includes("VERIFY waived by a human") && cmd.includes("live browser")),
+    `the waiver and its reason belong in the task file: ${log.join(" | ")}`,
+  )
+  assert.ok(log.some((cmd) => cmd.startsWith("mkdir ") && cmd.includes(".claims/t")), "the run it is about to drive is claimed")
+})
+
+test("waive refuses a task with no run snapshot — there is no stopped stage to waive", async () => {
+  const files = { "docs/tasks/in-progress/t.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-waive-nosnap", "waive t no browser here", testConfig)
+
+  assert.match(toasts[0]?.message ?? "", /No run snapshot/, toasts[0]?.message)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mkdir ") && cmd.includes(".claims/t")), "a refused waiver takes no claim marker")
+})
+
+test("waive refuses REVIEW — the last check's pass arm ends the run, so there is nothing to hand forward", async () => {
+  const files = waivableFiles("review")
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-waive-review", "waive t reviewer unavailable", testConfig)
+
+  assert.match(toasts[0]?.message ?? "", /last check/, toasts[0]?.message)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mkdir ") && cmd.includes(".claims/t")), "refused before the claim")
+})
+
+test("waive without a reason is a usage error — the reason is what the next stage reads", async () => {
+  const files = waivableFiles()
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-waive-noreason", "waive t", testConfig)
+
+  assert.match(toasts[0]?.message ?? "", /Usage: .* waive <id>/, toasts[0]?.message)
+})

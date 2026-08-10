@@ -10,7 +10,7 @@ import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
 import { DEFAULT_CONFIG, bashAllowlistExtras, loadConfig } from "@agentic-workflow/core/config"
 import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
-import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, composePromptWithStats, firstStep, waiveCheck, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
@@ -1959,6 +1959,10 @@ server.registerTool(
     }
     // terminal: done / stop
     const taskId = active.task?.id ?? null // runTerminal nulls `active`
+    // Whether this stop is one a human has real choices about — a CHECK stage that
+    // ended the run (its `onError` arm, or its counted `onFail` tripping the cap).
+    // Read BEFORE runTerminal, which nulls `active`.
+    const stoppedCheck = action.kind === "stop" && stageDef(activeManifest().manifest, stage).kind === "check" ? stage : null
     await snapshot()
     const report = await runTerminal(action)
     // A done whose park failed (core reports stop: the move to in-review/ was
@@ -1980,6 +1984,23 @@ server.registerTool(
               `ship gate: show the user the loop branch's diff summary, then ask with ${dialect.askTool} — ` +
               `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
               `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later).`,
+          }
+        : {}),
+      // A check stage that ended the run leaves the human a decision, and this is
+      // the only place they can be offered it. Spelling the three EXECUTABLE moves
+      // out is the point: without it a host improvises the ask, offers "proceed to
+      // the review stage", has no tool behind that answer, and falls back to a
+      // resume — which re-enters at BUILD and re-runs the whole loop. Every option
+      // below names the call that performs it.
+      ...(stoppedCheck && taskId
+        ? {
+            taskId,
+            next:
+              `${stoppedCheck.toUpperCase()} ended the run. Report why, then ask with ${dialect.askTool} — ` +
+              `Fix the environment and resume this stage (workflow_recover("${taskId}") — resumes at ${stoppedCheck}, not at BUILD), ` +
+              `Waive ${stoppedCheck.toUpperCase()} and continue without it (workflow_waive("${taskId}", "<why it cannot run here>") — takes the next stage WITHOUT recording a pass; use it when the check can never run in this environment), ` +
+              `or Send it back to planning (workflow_replan("${taskId}", reason) — the right answer when the plan asked for a check this environment cannot provide). ` +
+              `Offer nothing else: those three are the moves that exist.`,
           }
         : {}),
     }))
@@ -2041,7 +2062,7 @@ const runPark = async (
 server.registerTool(
   "workflow_stop",
   {
-    description: "Abort the active loop: checkpoint partial work, append an audited stop note, write the run summary, clear the snapshot, and tear down isolation. The loop branch keeps the committed work.",
+    description: "Abort the active loop: checkpoint partial work, append an audited stop note, write the run summary, and tear down isolation. The loop branch keeps the committed work, and the run snapshot survives so workflow_recover can resume at the stage it stopped in.",
     inputSchema: {},
   },
   async () => {
@@ -2579,6 +2600,94 @@ server.registerTool(
       agent: agentRef(buildDef.agent),
       ...(buildModel ? { model: buildModel } : {}),
       note: spawnNote("call workflow_stage before spawning the subagent named in the `agent` field"),
+    })
+  },
+)
+
+server.registerTool(
+  "workflow_waive",
+  {
+    description:
+      "Human waiver of a stopped run's CHECK stage that cannot run in this environment at all (a browser suite with no display, a service the sandbox has no network for): take that stage's onPass arm — VERIFY → REVIEW, REVIEW → in-review/ — WITHOUT recording a PASS. The waiver and its reason replace the stage's verdict in the next stage's prompt and are audited on the task file. Only for a run that has STOPPED; not a way to skip a check that merely failed (that is a rebuild or a replan), and never callable by a stage subagent.",
+    inputSchema: {
+      id: z.string(),
+      reason: z.string().describe("Why this stage cannot run here. Recorded on the task file and handed to the next stage in place of the verdict."),
+    },
+  },
+  async ({ id, reason }) => {
+    await loadCfg()
+    // A live loop is the one state a waiver must not touch: it is the human's
+    // move on a run that already stopped, and a stage subagent asking for one
+    // mid-run is exactly the agent-authored waiver this must never grant.
+    if (active) {
+      return fail(`A loop is already driving "${workflowId(active)}" — a waiver is a human move on a STOPPED run. Let it finish, or workflow_stop it first.`)
+    }
+    const why = reason.trim()
+    if (!why) {
+      return fail("A waiver needs a reason: it is written to the task file and handed to the next stage in place of the verdict that was never earned.")
+    }
+    const resolved = await resolveTaskIdAnywhere(sh, directory, config.tasksDir, id, log)
+    if (resolved && "ambiguous" in resolved) {
+      return fail(`Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`)
+    }
+    if (resolved) id = resolved.id
+    const t = await findByIdIn(sh, directory, config.tasksDir, "in-progress", id)
+    if (!t) return fail(`No in-progress task "${id}".`)
+    // Everything refusable is refused BEFORE the claim, so a rejected waiver
+    // never leaves a marker behind that then blocks every gate verb.
+    const snap = await loadState(fsClient, directory, config.tasksDir, id)
+    if (!snap || snap.task?.id !== id) {
+      return fail(
+        `No run snapshot for "${id}" — there is no stopped stage to waive (the run never reached one, or the task already left in-progress/ and back). ` +
+          `Drive it with workflow_start/workflow_claim, or send it back to planning with workflow_replan.`,
+      )
+    }
+    const liveHost = await taskDrivenByStageMarker(sh, directory, config.tasksDir, id)
+    if (liveHost) {
+      return fail(`Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`)
+    }
+    const actor = await gitActor(sh, directory)
+    const waived = waiveCheck(eng, { ...snap, task: { ...snap.task, path: t.path } }, config, why, actor)
+    if ("error" in waived) return fail(waived.error)
+    if (!(await claimTask(sh, t)) && !(await claimTaskSweepingStale(sh, t, 0))) {
+      return fail(`Task "${id}"'s claim marker was just taken by another process — nothing to waive.`)
+    }
+    resetLoopScratch()
+    active = waived.state
+    try {
+      active = await ensureIsolation(sh, log, directory, config, active, await resolveBase())
+    } catch (err) {
+      active = null
+      await releaseClaim(sh, t)
+      return fail((err as Error).message)
+    }
+    await appendNote(
+      sh,
+      active.task as TaskRef,
+      auditNote(`${snap.stage.toUpperCase()} waived by a human — ${why}`, new Date(), actor),
+      log,
+    )
+    await snapshot()
+    const nextDef = stageDef(eng.manifest, waived.action.stage)
+    const nextModel = stageModel(eng.manifest.kind, nextDef)
+    const nextPasses = passLabels(eng.manifest.kind, nextDef)
+    return ok({
+      waived: snap.stage,
+      action: { kind: "fire", stage: waived.action.stage },
+      agent: agentRef(nextDef.agent),
+      ...(nextModel ? { model: nextModel } : {}),
+      // Re-composed from the POST-isolation state, never `waived.action.arguments`:
+      // a snapshot's worktree path can be reconciled to a different one here, and
+      // firing the pre-isolation prompt is what renders `{{#worktree}}`/`{{#git}}`
+      // against a tree the stage is not in.
+      prompt: firePrompt(eng, active, waived.action.stage),
+      ...(nextPasses.length ? { passes: nextPasses } : {}),
+      note: spawnNote(
+        nextPasses.length
+          ? `call workflow_stage once per entry in \`passes\` (focus: ${nextPasses.join(", ")}), spawning the subagent named in the \`agent\` field for each`
+          : "call workflow_stage, then spawn the subagent named in the `agent` field",
+        nextDef.kind === "check" ? CHECK_VERDICT_TAIL : "",
+      ),
     })
   },
 )

@@ -351,6 +351,26 @@ test("stop annotates the task and leaves it in place (no move)", async () => {
   assert.deepEqual(metrics, [{ outcome: "stopped", detail: "Loop stopped at build." }])
 })
 
+test("stop KEEPS the run snapshot — every follow-up move the stop message names needs it", async () => {
+  // The regression this pins: a stop cleared the snapshot, so "fix the
+  // environment, then recover the task" resumed at BUILD from the persisted plan
+  // instead of at the stage that stopped — the whole build redone, the artifacts
+  // and attempt ledger gone — and a waiver had nothing at all to act on. A stop
+  // is the one terminal where resuming is the point; the snapshot is invalidated
+  // by the gate moves that take the task out of in-progress/ instead.
+  const state: WorkflowState = { goal: "Do it", stage: "verify", iteration: 0, artifacts: { build: "did it" }, task: taskRef("t", "in-progress") }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  assert.equal((await runTerminal(ctx, stop)).kind, "stop")
+  assert.ok(!log.some((c) => c.includes("t.state.json")), `snapshot must survive a stop: ${log.join(" | ")}`)
+})
+
+test("done still clears the snapshot — that run is finished, not resumable", async () => {
+  const state: WorkflowState = { goal: "Do it", stage: "review", iteration: 0, artifacts: {}, task: taskRef("t", "in-progress") }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  assert.equal((await runTerminal(ctx, done)).kind, "done")
+  assert.ok(log.some((c) => c.startsWith("rm -f") && c.includes("t.state.json")), `a completed run drops its snapshot: ${log.join(" | ")}`)
+})
+
 test("stop from a build/check stage releases the in-progress claim marker", async () => {
   // The wedge: a cap-tripped stop (verify/review FAILed maxIterations times)
   // kept the marker held, and every escape the cap message offers — replan,

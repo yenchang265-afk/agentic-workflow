@@ -116,8 +116,18 @@ The loop (`/agentic-workflow:engineering`):
   applies the unambiguous repairs (rescue strays to `draft/`, drop emptied
   folders, release stale claim markers, drop stray plan requests)
 - `/agentic-workflow:engineering recover <id>` — resume an in-progress task whose run stopped
-  early — a crash/restart, or a user **interrupt (ESC)** — from its state
-  snapshot (or its persisted plan), at the exact stage it reached
+  early — a crash/restart, a user **interrupt (ESC)**, or a check stage that
+  ended the run — from its state snapshot (or its persisted plan), at the exact
+  stage it reached
+- `/agentic-workflow:engineering waive <id> <why>` — carry a stopped run PAST a CHECK stage
+  that cannot run in this environment at all (a browser suite with no display, a
+  service the sandbox has no network for). It takes that stage's pass arm
+  **without recording a pass**: the waiver and `<why>` replace the stage's verdict
+  in the next stage's prompt — so REVIEW is told its checks are absent, not
+  satisfied — and both are audited on the task file. Only the pipeline's
+  non-final checks are waivable, and never a check that merely FAILED: a failure
+  with findings is a rebuild, or a `replan` when the plan itself asked for
+  something this environment cannot provide
 - `/agentic-workflow:engineering kinds` — list the workflow kinds this repo ships and their
   state: `(enabled)` / `(disabled)`, with `experimental` appended for every
   sitter kind.

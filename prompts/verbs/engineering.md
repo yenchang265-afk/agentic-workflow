@@ -230,6 +230,19 @@
   resume driving from the action it returns: `workflow_stage`, then spawn the
   subagent it names with the {{spawnTool}}{{modelClause}}.
 <!-- /aw:verb recover -->
+<!-- aw:verb waive -->
+- **`waive <id> <why>`** — call
+  `mcp__agentic-workflow__workflow_waive({id, reason})` for a stopped run whose
+  CHECK stage cannot run in this environment at all (a browser suite with no
+  display, a service the sandbox has no network for), then drive the stage it
+  returns exactly as `recover` does: `workflow_stage`, then spawn the subagent it
+  names with the {{spawnTool}}{{modelClause}}. It takes the waived stage's pass
+  arm **without recording a pass** — the waiver and `<why>` replace that stage's
+  verdict in the next stage's prompt, so the reviewer is told its checks are
+  ABSENT rather than satisfied — and audits both on the task file. Never reach
+  for it on a check that merely FAILED: that is a rebuild, or `replan` when the
+  plan itself asked for something this environment cannot provide.
+<!-- /aw:verb waive -->
 <!-- aw:verb stop|abort -->
 - **`stop`** (alias: `abort`) — call `mcp__agentic-workflow__workflow_stop` to abort
   the active loop (partial work stays committed on the loop branch).

@@ -107,6 +107,11 @@ skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要�
 - `/agentic-workflow:engineering kinds` —— 列出各工作流程類型及其啟用狀態。
 - `/agentic-workflow:engineering recover <id>` —— 從狀態快照恢復一個
   被中斷的迴圈。
+- `/agentic-workflow:engineering waive <id> <why>` —— 當某個 CHECK 階段在此環境
+  根本無法執行時（例如需要真實瀏覽器卻沒有顯示裝置），略過它繼續往下走。它會走該階段
+  的 pass 分支，但**不會記錄 PASS**：豁免本身與你給的理由會取代該階段的判定，出現在
+  下一階段的提示中，並寫入任務檔的稽核記錄。僅適用於已經停止的執行；單純 FAIL 的檢查
+  不該豁免——那應該重新 build，或改用 `replan`。
 - `/agentic-workflow:engineering doctor [fix]` —— 稽核待辦是否有結構性
   損壞（迷途的資料夾、位於所有狀態資料夾之外的任務檔案、重複的 id、
   被卡住的認領標記）；帶上 `fix` 時會套用沒有歧義的修復。

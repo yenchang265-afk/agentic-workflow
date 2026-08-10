@@ -139,7 +139,12 @@ not a branch.
 `recover <id>` resumes a run that died mid-build, from its **state snapshot** at
 the exact stage it reached or from the persisted plan when no valid snapshot
 exists; cross-process liveness is judged by the stage marker, not by any
-in-memory map. `stop` aborts and exits watch mode; `unwatch` leaves watch mode
+in-memory map. The snapshot survives every way a run ends early — a crash, an
+ESC pause, a deliberate `stop`, a check stage that ended the run — for exactly
+that reason. It is dropped when the run COMPLETES, or when a gate move takes the
+task out of `in-progress/` (`replan`, `abandon`, `remove`); `replan` is the one
+that must, since a surviving snapshot there would resume against the plan the
+human just rejected. `stop` aborts and exits watch mode; `unwatch` leaves watch mode
 alone, letting a claimed build finish. `status` reports the current loop plus a
 backlog roll-up.
 
@@ -268,6 +273,14 @@ that already failed. It is absent on the first iteration.
   across both feedback loops.
 - **ERROR** → stop immediately for a human; fix the environment, then
   `recover <id>`.
+- Either stop from a CHECK stage leaves the human exactly three moves, and
+  nothing else is a move: `recover <id>` (resumes at the stage that stopped, not
+  at BUILD), `waive <id> <why>` (for a check that can NEVER run here — a browser
+  suite with no display; takes that stage's pass arm without recording a pass,
+  putting the waiver and the reason where the next stage reads its verdict), or
+  `replan <id> <why>` (when the plan itself asked for a check this environment
+  cannot provide). Never waive a check that merely FAILED — a failure with
+  findings is a rebuild.
 - A stage exceeding `stageTimeoutMinutes` fails the loop, with partial work
   checkpointed on the branch, rather than wedging the driver.
 

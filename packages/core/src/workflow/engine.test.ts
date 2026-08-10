@@ -14,6 +14,7 @@ import {
   firstStep,
   promptContext,
   promptContextWithStats,
+  waiveCheck,
   withCheckResults,
 } from "./engine.js"
 import type { CheckResult } from "./checks.js"
@@ -1453,4 +1454,85 @@ test("every ADO stage prompt names exactly the tools its manifest grants — and
     }
   }
   assert.equal(checked, 7, "expected all seven ADO stages to be covered")
+})
+
+// --- waiveCheck: the human's move on a check stage this environment can't satisfy ---
+
+/** A state parked exactly where a stopped VERIFY leaves one: stage `verify`, its
+ *  FAIL fused into its own artifact by `advance`. */
+const stoppedAtVerify = (): WorkflowState =>
+  advance(eng, resumeAtBuild("add foo", task, "PLAN BODY"), config, "built it").state
+
+test("waiving VERIFY fires REVIEW without spending an iteration or logging an attempt", () => {
+  // The reported bug in one assertion: the human answered "carry on to REVIEW"
+  // and the run restarted at BUILD, because taking the onPass arm by human
+  // authority was not a move that existed.
+  const failed = advance(eng, stoppedAtVerify(), config, "cannot launch a browser", "FAIL", {
+    verdict: "FAIL",
+    reason: "the e2e suite needs a live browser; none available",
+  })
+  assert.equal(failed.action.kind, "fire")
+  assert.equal(failed.action.kind === "fire" ? failed.action.stage : "", "build", "unwaived, a FAIL rebuilds")
+
+  const waived = waiveCheck(eng, stoppedAtVerify(), config, "no display in this sandbox", "tester")
+  assert.ok(!("error" in waived), "verify is a check stage with a fire onPass arm")
+  if ("error" in waived) return
+  assert.equal(waived.action.stage, "review")
+  assert.equal(waived.state.iteration, 0, "a human decision is not an attempt against the cap")
+  assert.deepEqual(waived.state.attempts, undefined, "and it does not enter the attempt ledger")
+})
+
+test("a waiver reaches REVIEW as an absent verdict, never as a pass", () => {
+  // review.md renders the seam under "What VERIFY established … take it as
+  // given". A waiver that merely went silent there would be read as a pass, and
+  // the reviewer would grade against a guarantee nobody made.
+  const waived = waiveCheck(eng, stoppedAtVerify(), config, "no display in this sandbox", "tester")
+  assert.ok(!("error" in waived))
+  if ("error" in waived) return
+  const seam = waived.state.feedback?.["verify"] ?? ""
+  assert.match(seam, /WAIVED by a human \(tester\)/)
+  assert.match(seam, /no display in this sandbox/)
+  assert.match(seam, /ABSENT, not as satisfied/)
+  assert.doesNotMatch(seam, /\bPASS\b/, "nothing in the waiver may read as a recorded pass")
+  assert.ok(waived.state.artifacts["verify"]?.startsWith(seam), "the seam must head its own artifact or the budget can't exempt it")
+  assert.match(waived.action.arguments, /WAIVED by a human/, "and the composed REVIEW prompt must carry it")
+})
+
+test("a waiver replaces the waived stage's stale verdict seam instead of stacking on it", () => {
+  const failed = advance(eng, stoppedAtVerify(), config, "3 tests red", "FAIL", { verdict: "FAIL", reason: "browser missing" })
+  // Back at build; walk forward to verify again so the state carries verify's FAIL seam.
+  const atVerify = { ...failed.state, stage: "verify" }
+  const waived = waiveCheck(eng, atVerify, config, "no display", "tester")
+  assert.ok(!("error" in waived))
+  if ("error" in waived) return
+  const artifact = waived.state.artifacts["verify"] ?? ""
+  assert.doesNotMatch(artifact, /Verdict reason: browser missing/, "the superseded verdict block must not survive under the waiver")
+  assert.match(artifact, /3 tests red/, "the stage's own prose does survive — it says what actually happened")
+})
+
+test("waiveCheck refuses a work stage — an impossible plan is a replan, not a waiver", () => {
+  const atBuild = resumeAtBuild("add foo", task, "PLAN BODY")
+  const refused = waiveCheck(eng, atBuild, config, "cannot be done", "tester")
+  assert.ok("error" in refused)
+  if (!("error" in refused)) return
+  assert.match(refused.error, /work stage/)
+  assert.match(refused.error, /replan/)
+})
+
+test("waiveCheck refuses the pipeline's LAST check — passing it ends the run", () => {
+  // REVIEW's onPass is `done`. A waiver hands work forward; standing in for the
+  // run finishing is the ship gate's job, and the human already holds that.
+  const atReview = { ...stoppedAtVerify(), stage: "review" }
+  const refused = waiveCheck(eng, atReview, config, "reviewer unavailable", "tester")
+  assert.ok("error" in refused)
+  if (!("error" in refused)) return
+  assert.match(refused.error, /last check/)
+})
+
+test("waiveCheck refuses a stage the kind does not have", () => {
+  const bogus = { ...stoppedAtVerify(), stage: "smoke-test" }
+  const refused = waiveCheck(eng, bogus, config, "why", "tester")
+  assert.ok("error" in refused)
+  if (!("error" in refused)) return
+  assert.match(refused.error, /has no stage "smoke-test"/)
 })

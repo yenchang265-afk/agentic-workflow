@@ -13,6 +13,7 @@ import {
   planVisualizationBlock,
   verdictContractBlock,
   verdictFeedbackBlock,
+  waiverBlock,
   workScopeBlock,
   type StagePass,
   type Verdict,
@@ -397,7 +398,7 @@ const fireAt = (
   state: WorkflowState,
   target: string,
   config?: Config,
-): { state: WorkflowState; action: Action } => {
+): { state: WorkflowState; action: Extract<Action, { kind: "fire" }> } => {
   const next = { ...state, stage: target }
   const { prompt, elided } = composePromptWithStats(loaded, next, target, config)
   return {
@@ -513,4 +514,80 @@ export const advance = (
         },
       }
   }
+}
+
+/** A stage's artifact with the structured verdict seam `withArtifact` fused on
+ *  stripped back off, so a re-fuse replaces that head instead of stacking a
+ *  second block on top of a stale one. Pure. */
+const artifactProse = (state: WorkflowState, stage: string): string => {
+  const text = state.artifacts[stage] ?? ""
+  const seam = state.feedback?.[stage] ?? ""
+  return seam && text.startsWith(seam) ? text.slice(seam.length).trimStart() : text
+}
+
+/**
+ * A human's waiver of a CHECK stage this environment cannot satisfy at all — the
+ * canonical case being a browser suite with no display, where every re-BUILD is
+ * guaranteed to hit the same wall.
+ *
+ * It exists because the human had no executable move there. A check stage that
+ * cannot run ends the run (`onError` → stop) or burns the iteration cap
+ * (`onFail` → build, ×N), and the only resumes on offer — `recover`, the next
+ * claim — both re-enter and re-fail. Asked "how should I handle this?", a host
+ * would offer "proceed to REVIEW" and then have nothing to call, so it fell back
+ * to a resume and the run restarted at BUILD. An ask whose answer cannot be
+ * executed is worse than no ask; this is the mechanism behind that answer.
+ *
+ * Three things it is deliberately NOT:
+ *
+ * - **Not a PASS.** It takes the stage's `onPass` ARM (so the pipeline shape stays
+ *   the manifest's, for every kind) but records `waiverBlock`, not a verdict, into
+ *   the stage's artifact and seam. Laundering it into a PASS would tell REVIEW
+ *   that VERIFY established something, which is the one outcome worse than no
+ *   coverage. `admitVerdict` still refuses every agent-authored PASS it refused
+ *   before — nothing here relaxes that.
+ * - **Not an iteration.** A waiver is a human decision, not an attempt, so it
+ *   neither counts against the cap nor lands in the attempt ledger.
+ * - **Not available to an agent.** Callers gate it on a human actor (no live loop
+ *   driving the task); the engine only refuses what it can see — a stage that is
+ *   not a check stage, and an `onPass` arm that is not a `fire`.
+ *
+ * That last restriction is what keeps a waiver a *hand-off* rather than a
+ * verdict: it may only pass the run to a LATER stage, never take a terminal arm
+ * on the pipeline's behalf. Waiving the final check would substitute the waiver
+ * for the run's own completion — and it would buy nothing, because the human
+ * already owns that decision at the ship gate. Keeping it to `fire` also keeps
+ * both hosts on the one path they already drive (compose a prompt, spawn the
+ * stage), instead of a terminal path reached from a state that never isolated.
+ *
+ * Pure: returns the state and the fire, or an error string for the host to surface.
+ */
+export const waiveCheck = (
+  loaded: LoadedManifest,
+  state: WorkflowState,
+  config: Config,
+  reason: string,
+  actor?: string | null,
+): { state: WorkflowState; action: Extract<Action, { kind: "fire" }> } | { error: string } => {
+  const { manifest } = loaded
+  const def = manifest.stages.find((s) => s.name === state.stage)
+  if (!def) return { error: `Workflow kind "${manifest.kind}" has no stage "${state.stage}" — nothing to waive.` }
+  if (def.kind !== "check") {
+    return {
+      error:
+        `Stage "${state.stage}" is a ${def.kind} stage — only a check stage can be waived. ` +
+        `A work stage that cannot do its work reports that itself (workflow_blocked) and the answer is a replan, not a waiver.`,
+    }
+  }
+  const arm = manifest.transitions[state.stage]?.onPass
+  if (!arm) return { error: `Stage "${state.stage}" declares no onPass transition — there is nothing for a waiver to take.` }
+  if (arm.kind !== "fire") {
+    return {
+      error:
+        `"${state.stage}" is the last check of the ${manifest.kind} pipeline — passing it ends the run, so there is no later stage to waive it into. ` +
+        `A waiver hands work forward; it never stands in for the run finishing. Fix what stopped it and resume, or send the task back to planning.`,
+    }
+  }
+  const s = withArtifact(state, state.stage, artifactProse(state, state.stage), waiverBlock(state.stage, reason, actor))
+  return fireAt(loaded, withoutArtifacts(s, arm.dropArtifacts), arm.stage, config)
 }

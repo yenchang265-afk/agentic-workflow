@@ -128,6 +128,12 @@ The loop (`/agentic-workflow:engineering`):
   (bare `/agentic-workflow:engineering` does the same).
 - `/agentic-workflow:engineering kinds` — list the workflow kinds and their enabled state.
 - `/agentic-workflow:engineering recover <id>` — resume an interrupted loop from its state snapshot.
+- `/agentic-workflow:engineering waive <id> <why>` — carry on past a CHECK stage
+  that cannot run in this environment at all (a browser suite with no display).
+  Takes that stage's pass arm **without recording a pass**: the waiver and your
+  reason replace its verdict in the next stage's prompt and are audited on the
+  task file. Only for a run that has already stopped, and never for a check that
+  merely failed — that is a rebuild, or `replan`.
 - `/agentic-workflow:engineering doctor [fix]` — audit the backlog for structural damage (stray
   folders, task files outside every status folder, duplicate ids, held claim
   markers); with `fix` it applies the unambiguous repairs.

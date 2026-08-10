@@ -197,6 +197,26 @@ before you advance — and never pass or invent a `model`. Changing
    why. When the iteration cap tripped, the plan itself is suspect: the fix is
    `/agentic-workflow:engineering replan <id> <why>` — it immediately re-runs
    PLAN with the failure threaded in and parks a fresh plan for review.
+   A stop from a CHECK stage returns a `next` field naming the three moves that
+   exist there; **ask with {{askTool}} and offer only those three**, because they
+   are the only answers you can actually carry out:
+   - **Fix the environment and resume** → `workflow_recover({id})` — resumes at
+     the stage that stopped, with its artifacts and attempt ledger intact. Not a
+     BUILD restart.
+   - **Waive the stage and continue without it** →
+     `workflow_waive({id, reason})` — for a check that can never run here (a
+     browser suite with no display, a service the sandbox has no network for).
+     It takes the stage's pass arm **without recording a pass**: the waiver and
+     your reason replace its verdict in the next stage's prompt, so REVIEW is
+     told the checks are absent rather than satisfied. Then drive the stage it
+     returns exactly as after a `workflow_recover`.
+   - **Send it back to planning** → `workflow_replan({id, reason})` — the right
+     answer when the plan itself asked for a check this environment cannot
+     provide.
+   Never offer an option outside that set — "skip ahead to REVIEW" and "mark it
+   passed" have no call behind them, and an ask whose answer you cannot execute
+   is worse than no ask. And never waive a check that merely FAILED: a failure
+   with findings is a rebuild.
 
 ## The verdict contract
 
@@ -245,7 +265,9 @@ to phrase its verdict.
   unnecessary — the server checkpoints after each build and on terminal events).
 - `workflow_note({text})` to append an audit note; `workflow_status` for the backlog
   roll-up; `workflow_recover({id})` to resume an interrupted loop;
-  `workflow_stop()` to abort cleanly.
+  `workflow_waive({id, reason})` to carry a stopped run past a non-final check
+  stage that cannot run in this environment at all — it records the waiver, never
+  a pass; `workflow_stop()` to abort cleanly.
 
 ## Termination summary
 
@@ -253,7 +275,11 @@ to phrase its verdict.
   `/agentic-workflow:engineering approve <id>`.
 - **VERIFY or REVIEW FAIL** within `maxIterations` → re-build with the feedback.
 - **FAIL** at the cap, **ERROR**, or a stage past its deadline → stop; task
-  stays in `in-progress/` with a note.
+  stays in `in-progress/` with a note, and its run snapshot is KEPT so
+  `workflow_recover` resumes at that stage and `workflow_waive` can hand the run
+  forward past it. Every early end keeps it, `workflow_stop` included; it is
+  dropped when a run COMPLETES, or when a gate move takes the task out of
+  `in-progress/` (`workflow_replan`, `workflow_abandon`, `workflow_remove`).
 
 ## Workflow kinds
 

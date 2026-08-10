@@ -27,7 +27,10 @@ sections below cover each.
    drives BUILD→VERIFY→REVIEW unattended on plan-approved tasks, falling back
    to planning an approved `queued/` task; `plan <id>` plans one now — either
    way PLAN parks the plan in `plan-review/` for your gate and exits;
-   `recover <id>` resumes a run that stopped early (crash or ESC); `stop`/`abort`
+   `recover <id>` resumes a run that stopped early (crash, ESC, or a check stage
+   that ended it) at the exact stage it reached; `waive <id> <why>` carries such a
+   run PAST a non-final check stage this environment cannot run at all, recording
+   the waiver in place of the verdict rather than a PASS; `stop`/`abort`
    ends a run outright; `status`, `kinds`, and `doctor [fix]` report the loop +
    backlog, list enabled kinds, and audit/repair backlog damage. See the
    `workflow-orchestration` skill for the pipeline, gates, and verdict
@@ -468,6 +471,53 @@ that must get through while a loop runs. `void` it with an error sink. This is
 safe only because `onIdle` reaches `driving.add` with no intervening `await`;
 anything added to that prologue must keep it synchronous, or two idle events will
 both start a drive.
+
+### A stop is a pause with a follow-up move, so its state must survive
+
+`runStop` used to `clearState`, which silently broke every follow-up its own stop
+messages promise. "Fix the environment, then recover the task" resumes at the
+stopped stage only while the snapshot exists; without it `recover` degrades to
+re-entering at BUILD from the persisted plan — the whole build redone, artifacts
+and attempt ledger gone. The visible symptom is the worst kind: the human is
+asked how to handle a VERIFY whose environment can never be satisfied (a browser
+suite with no display), answers "carry on to REVIEW", and the loop restarts at
+BUILD. So the snapshot now survives a check-stage stop, and is invalidated where
+it actually goes stale — the gate moves that take the task OUT of `in-progress/`
+(`replan`, `abandon`, `remove` via `invalidateRunState`; `runDone` still clears on
+the way to `in-review/`). `replan` is the one that must never be dropped: a
+surviving snapshot there would let a later `recover` resume mid-pipeline against
+the plan the human just rejected. Every way a run ends EARLY keeps it — a crash,
+an ESC pause, a check-stage stop, and a human-typed `stop` too: OpenCode's stop
+guard used to clear it "so recover can't resurrect stale state", which is the
+same trade in miniature, and paying for staleness with a full BUILD restart was
+the worse half of it.
+
+Retention alone was not the fix, because "carry on to REVIEW" still had no call
+behind it. `waiveCheck` is that call, and three of its properties are
+load-bearing:
+
+- **It is not a PASS.** It takes the stage's `onPass` ARM (so the shape stays the
+  manifest's, for every kind) but writes `waiverBlock` into the waived stage's
+  artifact and `verdicts.<stage>` seam. review.md renders that seam under "What
+  VERIFY established — take it as given", so going silent there would read as a
+  pass and the reviewer would grade against a guarantee nobody made — the same
+  manufactured-coverage failure a fabricated axis verdict is. Never launder it
+  into a PASS to simplify the plumbing.
+- **It may only take a `fire` arm.** Waiving the LAST check would substitute the
+  waiver for the run's own completion, and it buys nothing — the human already
+  owns that at the ship gate. It also keeps both hosts on the path they already
+  drive, instead of a terminal reached from a state that never isolated.
+- **It is a human move on a STOPPED run.** Both hosts refuse it while a loop is
+  live (and refuse every refusable case BEFORE claiming, or a rejected waiver
+  leaves a marker that wedges every gate verb). A stage subagent asking for one
+  mid-run is precisely the agent-authored waiver this must never grant.
+
+And the ask that reaches it is emitted by the harness — the check-stage stop's
+`next` names the three executable moves (`recover` / `waive` / `replan`) and says
+to offer nothing else. Improvising it is how "proceed to the review stage" got
+offered with no tool behind it; the host then fell back to a resume, which
+re-enters at BUILD. Same rule as `stageModels`: an ask whose answer the model
+cannot execute is worse than no ask.
 
 ### A rejected verdict is not a missing one
 

@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { writeFileAtomic } from "@agentic-workflow/core/fsatomic"
 import { type Task } from "@agentic-workflow/core/task/schema"
-import { advance, composePrompt, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
+import { advance, composePrompt, firstStep, waiveCheck, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import {
   clearOpencodeStageMarker,
   opencodeStageMarker,
@@ -83,7 +83,7 @@ import {
 } from "@agentic-workflow/core/workflow/git"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
-import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
+import { loadState, saveState } from "@agentic-workflow/core/workflow/persist"
 import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
@@ -1907,12 +1907,14 @@ const driveChain = async (
       // means "a loop is driving"; an interrupted (paused) run isn't — recover
       // re-claims when it resumes, and the CLAIMED note keeps watchers away.
       if (step.state.task) await releaseClaim(deps.$, step.state.task)
-      // A deliberate stop ends the run — drop the snapshot so recover can't
-      // resurrect stale state. An ESC interrupt is a pause: KEEP the snapshot so
-      // recover <id> resumes at THIS stage (recover-state), not a BUILD
-      // restart. A reject-on-abort already keeps it (onIdle's catch never clears state),
-      // so both interrupt paths converge on exact-stage resume.
-      if (step.state.task && !wasInterrupted) await clearState(deps.$, deps.directory, config.tasksDir, step.state.task.id)
+      // The snapshot survives BOTH exits — an ESC pause and a deliberate stop —
+      // so `recover <id>` resumes at THIS stage rather than restarting at BUILD,
+      // and `waive <id>` has a stopped stage to hand forward. A stop used to drop
+      // it "so recover can't resurrect stale state"; staleness has an owner now
+      // (the gate moves that take the task out of in-progress/ invalidate it), and
+      // paying for it with a full BUILD restart was the worse half of that trade.
+      // A reject-on-abort already kept it (onIdle's catch never clears state), so
+      // all three paths now converge on exact-stage resume.
       clearWorkflow(sessionID) // self-contained — no-op no-harm when stop already cleared it
       // A mid-drive interrupt / human ESC (or an externally-cleared loop) is not a
       // genuine exhaustion — mark it retryable so the work source keeps the item
@@ -3169,6 +3171,57 @@ export const handleCommand = async (
     return report(
       client,
       `Recovering "${task.title}" — check git status/diff for leftovers from the interrupted run; building…`,
+      "info",
+    )
+  }
+
+  if (verb === "waive") {
+    // `waive <id> <why>` — the human's move on a run a CHECK stage ended because
+    // it cannot run here at all (a browser suite with no display). It takes that
+    // stage's onPass arm WITHOUT recording a pass; `waiveCheck` refuses anything
+    // else. Without it the only resumes on offer re-enter the same stage or
+    // restart at BUILD, so "carry on without VERIFY" was not a move that existed.
+    const [rawId, ...whyParts] = rest.split(/\s+/)
+    let id = rawId ?? ""
+    const why = whyParts.join(" ").trim()
+    if (!id || !why) return report(client, `Usage: ${ECMD} waive <id> <why it cannot run here>.`, "warning")
+    if (driving.has(sessionID) || getWorkflow(sessionID)) {
+      return report(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning")
+    }
+    const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
+    if (resolved && "ambiguous" in resolved) {
+      return report(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning")
+    }
+    if (resolved) id = resolved.id
+    const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+    if (!task) return report(client, `No in-progress task "${id}".`, "warning")
+    if (findSessionDriving(id)) {
+      return report(client, `Task "${id}" is being driven by a live loop — a waiver is a move on a STOPPED run; stop it first.`, "warning")
+    }
+    // Everything refusable is refused before the claim, so a rejected waiver
+    // never leaves a marker that then blocks every gate verb.
+    const snap = await loadState(client, deps.directory, config.tasksDir, id)
+    if (!snap || snap.task?.id !== id) {
+      return report(
+        client,
+        `No run snapshot for "${id}" — there is no stopped stage to waive. Drive it (${ECMD} claim), or send it back with ${ECMD} replan ${id}.`,
+        "warning",
+      )
+    }
+    const actor = await gitActor(deps.$, deps.directory)
+    const waived = waiveCheck(eng, { ...snap, task: { ...snap.task, path: task.path } }, config, why, actor)
+    if ("error" in waived) return report(client, waived.error, "warning")
+    if (!(await claimTask(deps.$, task)) && !(await claimTaskSweepingStale(deps.$, task, 0))) {
+      return report(client, `Task "${id}"'s claim marker was just taken by another process — nothing to waive.`, "warning")
+    }
+    await appendNote(deps.$, task, auditNote(`${snap.stage.toUpperCase()} waived by a human — ${why}`, new Date(), actor), deps.log)
+    // `waived.state` already names the stage the waiver fires, so the ordinary
+    // snapshot resume re-composes exactly that stage's prompt — a waiver needs no
+    // pending kind of its own, and re-uses the isolation reconciliation with it.
+    await setPending(deps, sessionID, { kind: "recover-state", state: waived.state })
+    return report(
+      client,
+      `${snap.stage.toUpperCase()} waived for "${task.title}" — continuing at ${waived.state.stage} with the waiver recorded in place of its verdict…`,
       "info",
     )
   }

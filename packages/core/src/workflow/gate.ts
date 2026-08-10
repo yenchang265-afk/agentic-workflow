@@ -7,6 +7,7 @@ import type { TaskStatus } from "../task/statuses.js"
 import { requestPlan } from "../task/plan-request.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
+import { clearState } from "./persist.js"
 import type { AdoGateway } from "../source/ado-gateway.js"
 import { shipPr, type ShipPrResult } from "./ship-pr.js"
 
@@ -101,6 +102,24 @@ export const findAnyStatus = async (ctx: GateCtx, id: string): Promise<Task | nu
 }
 
 const statusFolder = (t: Task): string => path.basename(path.dirname(t.path))
+
+/**
+ * Drop a task's run-state snapshot, because this move is where it goes stale.
+ *
+ * A snapshot describes a run of the task that is sitting in `in-progress/` — its
+ * stage, its artifacts (including the plan it was built against), its attempt
+ * ledger. It SURVIVES a stop on purpose (see `runStop`: that is the terminal a
+ * `recover`/`waive` is meant to resume from), so invalidating it is this layer's
+ * job: nothing outside `in-progress/` keeps one, so every gate move that takes the
+ * task elsewhere calls this. `replan` is the sharpest — it re-queues the task for a
+ * NEW plan, and a surviving snapshot would let a later `recover` resume
+ * mid-pipeline against the plan the human just rejected.
+ *
+ * Best-effort and idempotent (`rm -f`): a snapshot that cannot be removed leaves
+ * a stale resume hint, never a failed gate move.
+ */
+const invalidateRunState = async (ctx: GateCtx, id: string): Promise<void> =>
+  clearState(ctx.$, ctx.directory, ctx.config.tasksDir, id)
 
 /**
  * When every parse-based lookup missed, check whether an id-named FILE still
@@ -376,6 +395,7 @@ export const removeTask = async (ctx: GateCtx, id: string, force = false): Promi
   }
   const removed = await removeTaskFile($, { id, path: task.path })
   await commitBacklog($, directory, config, `loop(${id}): task removed from backlog`)
+  await invalidateRunState(ctx, id)
   // A parked in-progress/in-review task can own a worktree; free it so the
   // delete doesn't leave an orphan tree behind (best-effort, never throws).
   await releaseWorktree($, log, directory, config, id)
@@ -443,6 +463,7 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): abandoned${why ? ` — ${why}` : ""}`)
+  await invalidateRunState(ctx, id)
   // A parked task can own a worktree; free it the way remove/ship do.
   await releaseWorktree($, log, directory, config, id)
   return {
@@ -603,6 +624,7 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)
+  await invalidateRunState(ctx, id)
   await markPlanNext(ctx, id, actor)
   return {
     ok: true,
@@ -690,6 +712,10 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
+  // Normally already gone (`runDone` clears on the way to in-review/); this is the
+  // arm for a task that reached in-review/ some other way, so the rule holds
+  // without exception: nothing outside in-progress/ keeps a run snapshot.
+  await invalidateRunState(ctx, id)
 
   const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, extractRunBranch(t))
   const data: Record<string, unknown> = { completed: newPath, gate: "ship", id }

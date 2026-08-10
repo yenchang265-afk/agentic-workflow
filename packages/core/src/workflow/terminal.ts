@@ -393,7 +393,19 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
   // otherwise collapses to `outcome: "stopped"` and a dashboard can't tell a
   // flaky environment from cap exhaustion.
   await ctx.writeMetrics("stopped", action.message, action.retryable)
-  if (state.task) await clearState($, directory, config.tasksDir, state.task.id)
+  // The snapshot SURVIVES a stop — this used to clear it, which quietly broke
+  // every follow-up move the stop messages themselves promise. "Fix the
+  // environment, then recover the task" resumes at the exact stage only while the
+  // snapshot exists; without it `recover` silently degrades to re-entering at
+  // BUILD from the persisted plan, redoing the whole build and losing the
+  // artifacts and the attempt ledger. `waive` has nothing at all to act on.
+  // A stop is the one terminal where resuming is the POINT, and the worktree is
+  // already kept for exactly that reason (see closeIsolation above).
+  //
+  // What makes retaining it safe is the other half of this change: the snapshot
+  // is now invalidated where it actually goes stale — when the task LEAVES
+  // in-progress/ (replan, abandon, remove; `runDone` still clears on the way to
+  // in-review/), rather than on a stop that leaves it sitting right there.
   return { kind: "stop", message: action.message, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}), ...(action.retryable ? { retryable: true } : {}) }
 }
 
