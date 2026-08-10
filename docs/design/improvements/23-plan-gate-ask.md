@@ -1,6 +1,6 @@
-English | [繁體中文](22-plan-gate-ask.zh-TW.md)
+English | [繁體中文](23-plan-gate-ask.zh-TW.md)
 
-# 22 — The plan gate asks, on every host
+# 23 — The plan gate asks, on every host
 
 **Status: implemented.** `askOnPark` on the `start-plan` `Pending`,
 `planParkNextStep`/`promptPlanGateAsk`, and `replanAndChain`/`replanFromAgent` in

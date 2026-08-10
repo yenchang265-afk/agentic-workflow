@@ -1,6 +1,6 @@
-[English](22-plan-gate-ask.md) | 繁體中文
+[English](23-plan-gate-ask.md) | 繁體中文
 
-# 22 — 每一個 host 的計畫閘門都會發問
+# 23 — 每一個 host 的計畫閘門都會發問
 
 **狀態：已實作。** `plugins/opencode/src/workflow/driver.ts` 的
 `start-plan` `Pending` 上的 `askOnPark`、`planParkNextStep`/`promptPlanGateAsk`

@@ -6,12 +6,15 @@ import { test } from "node:test"
 import {
   bareModel,
   bashAllowlistExtras,
+  bashAllowlistPrefixes,
   rawAgentModel,
   readRawConfigLayers,
   resolveAgentModels,
   spawnAlias,
   SPAWN_ALIASES,
+  stripCommandPrefix,
   withCdTwins,
+  withCommandPrefixes,
 } from "./config-layers.js"
 
 /**
@@ -137,6 +140,45 @@ test("withCdTwins pairs each glob with its cd twin, never doubling one already p
   assert.deepEqual(withCdTwins(["cd * && rtk *"]), ["cd * && rtk *"])
   assert.deepEqual(withCdTwins(["rtk *", "cd * && rtk *"]), ["rtk *", "cd * && rtk *"])
   assert.deepEqual(withCdTwins([]), [])
+})
+
+test("bashAllowlistPrefixes drops anything that is not a bare command head", () => {
+  assert.deepEqual(bashAllowlistPrefixes({ bashAllowlistPrefix: ["rtk", "  rtk proxy  ", "rtk", "./bin/rtk"] }), ["rtk", "rtk proxy", "./bin/rtk"])
+  // A `*` would derive `rtk * npm test*`, re-admitting the arbitrary middle the
+  // derivation exists to remove; shell metacharacters are not command heads.
+  // Each is dropped individually — narrow, not "degrade the whole list".
+  assert.deepEqual(bashAllowlistPrefixes({ bashAllowlistPrefix: ["rtk *", "rtk;rm", "rtk|x", "rtk&&x", "$(x)", "`x`", "", 42, null, "rtk"] }), ["rtk"])
+  assert.deepEqual(bashAllowlistPrefixes({ bashAllowlistPrefix: "rtk" }), [])
+  assert.deepEqual(bashAllowlistPrefixes({}), [])
+  assert.deepEqual(bashAllowlistPrefixes(null), [])
+})
+
+test("withCommandPrefixes re-expresses each glob behind every prefix, without double-prefixing", () => {
+  assert.deepEqual(withCommandPrefixes(["npm test*", "ls*"], ["rtk"]), ["npm test*", "rtk npm test*", "ls*", "rtk ls*"])
+  assert.deepEqual(withCommandPrefixes(["npm test*"], ["rtk", "rtk proxy"]), ["npm test*", "rtk npm test*", "rtk proxy npm test*"])
+  // A glob already carrying a prefix is a source of nothing — otherwise a user's
+  // own `rtk *` extra would derive `rtk rtk *`.
+  assert.deepEqual(withCommandPrefixes(["rtk *"], ["rtk"]), ["rtk *"])
+  // A `cd * && ` twin is skipped as a source: the chained shape is produced by
+  // running withCdTwins over the RESULT, so the prefix stays inside the segment.
+  assert.deepEqual(withCommandPrefixes(["cd * && npm test*"], ["rtk"]), ["cd * && npm test*"])
+  assert.deepEqual(withCommandPrefixes(["npm test*", "npm test*"], ["rtk"]), ["npm test*", "rtk npm test*"])
+  assert.deepEqual(withCommandPrefixes(["npm test*"], []), ["npm test*"])
+  assert.deepEqual(withCommandPrefixes([], ["rtk"]), [])
+})
+
+test("stripCommandPrefix removes exactly one hop, so a doubled prefix cannot launder past a classifier", () => {
+  assert.equal(stripCommandPrefix("rtk git push --force origin main", ["rtk"]), "git push --force origin main")
+  assert.equal(stripCommandPrefix("rtk rtk find . -delete", ["rtk"]), "rtk find . -delete")
+  assert.equal(stripCommandPrefix("git status", ["rtk"]), "git status")
+  assert.equal(stripCommandPrefix("rtkfoo bar", ["rtk"]), "rtkfoo bar", "the prefix must be a whole word")
+  assert.equal(stripCommandPrefix("  rtk ls  ", ["rtk"]), "ls")
+  assert.equal(stripCommandPrefix("rtk ls", []), "rtk ls")
+  // Longest first, in either declared order: stripping the shorter `rtk` off
+  // `rtk proxy git push …` leaves `proxy git push …`, which no classifier
+  // recognizes — while the derived `rtk proxy git push origin *` glob admits it.
+  assert.equal(stripCommandPrefix("rtk proxy git push origin main", ["rtk", "rtk proxy"]), "git push origin main")
+  assert.equal(stripCommandPrefix("rtk proxy git push origin main", ["rtk proxy", "rtk"]), "git push origin main")
 })
 
 test("rawAgentModel strips the provider prefix only when asked", () => {

@@ -289,6 +289,102 @@ export const bashAllowlistExtras = (config: unknown): string[] => {
 }
 
 /**
+ * The shape a command prefix may take: whitespace-separated words of ordinary
+ * command/path characters. Everything else is dropped by `bashAllowlistPrefixes`.
+ *
+ * A prefix is spliced in front of a stage's OWN globs, so it is the one place a
+ * user string reaches the matcher ahead of the boundary rather than behind it.
+ * `*` is refused for that reason: `"rtk *"` as a prefix would derive
+ * `rtk * npm test*`, re-admitting the arbitrary middle the derivation exists to
+ * remove. Shell metacharacters are refused because a prefix is a command head,
+ * never a fragment of shell syntax. Multi-word prefixes are legal — `rtk proxy`
+ * is a real one.
+ */
+const PREFIX_SHAPE = /^[A-Za-z0-9_@./+-]+(?: [A-Za-z0-9_@./+-]+)*$/
+
+/**
+ * `bashAllowlistPrefix` off a raw or already-parsed config: command prefixes a
+ * rewriting proxy puts in front of the command a stage actually asked for.
+ *
+ * Malformed entries are dropped INDIVIDUALLY rather than degrading the whole
+ * list, and the failure direction is narrow: a dropped prefix starves the stage
+ * (visible, one config fix) where an admitted junk prefix widens the boundary
+ * silently. Pure.
+ */
+export const bashAllowlistPrefixes = (config: unknown): string[] => {
+  if (!isPlainObject(config)) return []
+  const raw = config.bashAllowlistPrefix
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const value of raw) {
+    if (typeof value !== "string") continue
+    const prefix = value.trim()
+    if (prefix && PREFIX_SHAPE.test(prefix) && !out.includes(prefix)) out.push(prefix)
+  }
+  return out
+}
+
+/**
+ * Each glob plus a `<prefix> <glob>` variant per configured prefix, deduplicated,
+ * original order kept. The narrow answer to a command-REWRITING proxy: instead of
+ * one blanket `"rtk *"` extra — which accepts `rtk npm publish` as readily as
+ * `rtk npm test` — every glob the stage ALREADY declares is re-expressed behind
+ * the proxy, and nothing else is.
+ *
+ * Two globs are skipped as sources. One already carrying a configured prefix
+ * (a user's own `rtk *` extra) would otherwise derive `rtk rtk *`. One carrying
+ * `CD_TWIN_PREFIX` is skipped because the chained shape is produced by running
+ * `withCdTwins` over the RESULT — the proxies rewrite per chain segment
+ * (`cd <wt> && git status` → `cd <wt> && rtk git status`), so the twin belongs
+ * outside the prefix, not inside it. Pure.
+ */
+export const withCommandPrefixes = (globs: readonly string[], prefixes: readonly string[]): string[] => {
+  const out: string[] = []
+  for (const glob of globs) {
+    if (!out.includes(glob)) out.push(glob)
+    if (glob.startsWith(CD_TWIN_PREFIX)) continue
+    if (prefixes.some((p) => glob.startsWith(`${p} `))) continue
+    for (const prefix of prefixes) {
+      const derived = `${prefix} ${glob}`
+      if (!out.includes(derived)) out.push(derived)
+    }
+  }
+  return out
+}
+
+/**
+ * A command segment with one leading configured prefix removed, or the segment
+ * unchanged when it carries none.
+ *
+ * The write backstops (`isGitPushViolation`, `isGithubPrMutation`,
+ * `isFindMutation`) all anchor on the bare tool name, so a rewritten segment —
+ * `rtk git push --force origin main`, `rtk gh pr merge 3`, `rtk find . -delete` —
+ * slips every one of them. The allowlist cannot stand in for those checks: a
+ * derived `rtk git push origin *` glob legitimately matches, and only
+ * `isGitPushViolation` knows `main` is protected. So each classifier is asked
+ * about the stripped form as well.
+ *
+ * Exactly ONE hop is stripped: that is what a proxy emits, and a loop would let
+ * `rtk rtk …` launder a second layer past a classifier the first hop already
+ * defeated.
+ *
+ * LONGEST prefix first, and that ordering is load-bearing whenever one prefix
+ * is a prefix of another — `["rtk", "rtk proxy"]` is the ordinary case, since a
+ * proxy's own escape hatch usually lives under its name. Taking `"rtk "` off
+ * `rtk proxy git push origin main` leaves `proxy git push …`, which no
+ * classifier recognizes, and the derived `rtk proxy git push origin *` glob
+ * admits the command — the exact laundering the strip exists to stop. Pure.
+ */
+export const stripCommandPrefix = (segment: string, prefixes: readonly string[]): string => {
+  const seg = segment.trim()
+  for (const prefix of [...prefixes].sort((a, b) => b.length - a.length)) {
+    const head = `${prefix} `
+    if (seg.startsWith(head)) return seg.slice(head.length).trim()
+  }
+  return seg
+}
+
+/**
  * `agentModels.<agent>` off a raw or already-parsed config; anything that is not
  * a non-blank string reads as unset, so a malformed value degrades to the host
  * default instead of travelling onward as junk.

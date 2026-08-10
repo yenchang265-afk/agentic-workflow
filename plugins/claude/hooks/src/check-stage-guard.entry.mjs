@@ -142,13 +142,21 @@ const main = async () => {
     }
   }
 
+  // The configured `bashAllowlistPrefix` values, stamped on the marker because a
+  // bundled hook can read neither the config nor a manifest. Every classifier
+  // below anchors on the bare tool name, so without stripping these a rewriting
+  // proxy walks a mutation straight past them (`rtk gh pr merge 3`). Anything but
+  // an array of strings reads as none — fail-open to the previous behaviour, the
+  // same direction every other marker input here takes.
+  const markerPrefixes = Array.isArray(marker.bashPrefix) && marker.bashPrefix.every((p) => typeof p === "string") ? marker.bashPrefix : []
+
   // (3b) GitHub PR-mutation backstop — on whenever a loop stage is live (the
   // mirror of the ADO write backstop above). No loop stage — publish, fix, or any
   // other — may merge, close, approve, or otherwise mutate a pull request; the
   // stage allowlist permits `gh api *` for reads/replies but can't exclude the
   // mutating REST route (`gh api -X PUT …/merge`), so this catches it. Gated on the
   // marker so a human's manual `gh pr merge` outside a loop is untouched.
-  if (isBash && chainedGithubPrMutation(String(ti.command ?? ""))) {
+  if (isBash && chainedGithubPrMutation(String(ti.command ?? ""), markerPrefixes)) {
     return block(
       `agentic-workflow: the loop must never mutate a pull request — this GitHub command is blocked. ` +
         `Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) ` +
@@ -160,7 +168,7 @@ const main = async () => {
   // only their own head fast-forward; a refspec (`x:main`), a force, or a delete
   // that the dotAll push allowlist glob can't exclude is blocked here. A human's
   // manual push outside a loop is untouched (gated on the marker, like 3b).
-  if (isBash && chainedGitPushViolation(String(ti.command ?? ""))) {
+  if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes)) {
     return block(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete — this git push is blocked. ` +
         `Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; ` +
@@ -230,7 +238,7 @@ const main = async () => {
       : null
   if (isBash && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW)
-    if (!commandAllowed(effectiveCommand, list)) {
+    if (!commandAllowed(effectiveCommand, list, markerPrefixes)) {
       return block(
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only — the command "${rawCommand}" is not on its allowlist. ` +
           `Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`,

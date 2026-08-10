@@ -333,6 +333,38 @@ test("resolveStageChecks admits a discovered command reachable only through bash
   )
 })
 
+test("bashAllowlistPrefix admits the rewritten form of a check the stage could run, and nothing more", async () => {
+  // The narrow half of the same escape hatch: `"rtk *"` above admits any command
+  // the proxy emits, a prefix admits only what this stage's own allowlist already
+  // grants. Under a rewriting proxy the plan names the prefixed form, so
+  // admission has to recognize it or discovery yields nothing.
+  const config = parseConfig({ bashAllowlistPrefix: ["rtk"] })
+  const admitted = await resolveStageChecks({
+    $: makeShell(ALL_PRESENT),
+    config,
+    kind: "engineering",
+    def: stage({ discoverChecks: true }),
+    plan: fence('[{ "name": "proxied", "command": "rtk npm test" }]'),
+    dir: "/wt",
+  })
+  assert.equal(admitted.source, "discovered")
+  assert.deepEqual(
+    admitted.defs.map((d) => d.command),
+    ["rtk npm test"],
+  )
+
+  const refused = await resolveStageChecks({
+    $: makeShell(ALL_PRESENT),
+    config,
+    kind: "engineering",
+    def: stage({ discoverChecks: true }),
+    plan: fence('[{ "name": "ships it", "command": "rtk npm publish" }]'),
+    dir: "/wt",
+  })
+  assert.equal(refused.source, "none", "the prefix re-expresses the boundary, it does not dissolve it")
+  assert.match(refused.warnings.join("\n"), /not on this stage's bash allowlist/)
+})
+
 test("resolveStageChecks honors the kind-level config override of the manifest flag", async () => {
   const off = parseConfig({ workflows: { engineering: { discoverChecks: false } } })
   const resolved = await resolveStageChecks({

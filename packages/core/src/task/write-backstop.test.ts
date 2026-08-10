@@ -17,13 +17,14 @@ import {
   matchesAny,
   splitSegments,
 } from "./write-backstop.js"
+import { withCommandPrefixes } from "../config-layers.js"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const findVectors: { mutating: string[]; readOnly: string[] } = JSON.parse(
   readFileSync(path.join(here, "..", "__fixtures__", "find-abuse-vectors.json"), "utf8"),
 )
 
-const admission: { globs: string[]; allowed: string[]; denied: string[] } = JSON.parse(
+const admission: { globs: string[]; allowed: string[]; denied: string[]; prefixes: string[]; prefixAllowed: string[]; prefixDenied: string[] } = JSON.parse(
   readFileSync(path.join(here, "..", "__fixtures__", "allowlist-admission-vectors.json"), "utf8"),
 )
 
@@ -40,6 +41,46 @@ test("commandAllowed agrees with its hook twin on every shared vector", () => {
   // agent's bash. Same table both sides, or the twins drift silently.
   for (const cmd of admission.allowed) assert.equal(commandAllowed(cmd, admission.globs), true, `must allow: ${cmd}`)
   for (const cmd of admission.denied) assert.equal(commandAllowed(cmd, admission.globs), false, `must deny: ${cmd}`)
+})
+
+test("a configured proxy prefix re-expresses the boundary without dissolving it", () => {
+  // The hosts stamp/append exactly this list, so the vectors run against it.
+  const globs = withCommandPrefixes(admission.globs, admission.prefixes)
+  for (const cmd of admission.prefixAllowed) assert.equal(commandAllowed(cmd, globs), true, `must allow: ${cmd}`)
+  for (const cmd of admission.prefixDenied) {
+    const denied = !commandAllowed(cmd, globs) || chainedFindMutation(cmd, admission.prefixes) || chainedGitPushViolation(cmd, admission.prefixes)
+    assert.equal(denied, true, `must deny: ${cmd}`)
+  }
+})
+
+test("the write backstops see through one proxy prefix — they anchor on the bare tool name", () => {
+  // Verified against rtk 0.42.3: `git push --force origin main` is rewritten to
+  // `rtk git push --force origin main` BEFORE either host evaluates anything, so
+  // without the strip every classifier here reads it as no violation. The
+  // allowlist cannot stand in — with the prefix configured, `rtk git push origin
+  // main` matches a derived `rtk git push origin *` glob quite legitimately.
+  const p = ["rtk"]
+  assert.equal(chainedGitPushViolation("rtk git push --force origin main", p), true)
+  assert.equal(chainedGitPushViolation("rtk git push origin main", p), true)
+  assert.equal(chainedGitPushViolation("rtk git -C /wt push origin main", p), true)
+  assert.equal(chainedGithubPrMutation("rtk gh pr merge 3", p), true)
+  assert.equal(chainedGithubPrMutation("rtk gh pr view 3 && rtk gh api -X PUT repos/o/r/pulls/3/merge", p), true)
+  assert.equal(chainedFindMutation("rtk find . -delete", p), true)
+  // Not violations: the stage's real work still passes.
+  assert.equal(chainedGitPushViolation("rtk git push origin feature/x", p), false)
+  assert.equal(chainedGithubPrMutation("rtk gh pr view 3", p), false)
+  assert.equal(chainedFindMutation("rtk find . -name '*.ts'", p), false)
+  // Unset prefixes leave every classifier exactly as it was.
+  assert.equal(chainedGitPushViolation("rtk git push --force origin main"), false)
+  assert.equal(chainedGitPushViolation("git push --force origin main"), true)
+  // One prefix being a prefix of another is the ordinary case (a proxy's escape
+  // hatch lives under its own name), and stripping the SHORTER one first would
+  // leave `proxy git push …` — unrecognizable to every classifier, while the
+  // derived `rtk proxy git push origin *` glob admits the command.
+  const both = ["rtk", "rtk proxy"]
+  assert.equal(chainedGitPushViolation("rtk proxy git push origin main", both), true)
+  assert.equal(chainedGithubPrMutation("rtk proxy gh pr merge 3", both), true)
+  assert.equal(chainedFindMutation("rtk proxy find . -delete", both), true)
 })
 
 test("matchesAny anchors the whole segment and isBareCd rejects a cd with metacharacters", () => {

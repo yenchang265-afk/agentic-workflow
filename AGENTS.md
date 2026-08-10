@@ -385,8 +385,10 @@ A command-REWRITING plugin is the same starvation with no manifest fix: an
 rtk-style token proxy mutates the command in `tool.execute.before` BEFORE
 OpenCode evaluates permissions, so every allowlisted command reaches the
 matcher as `rtk <cmd>` — a shape no shipped glob matches — and the whole stage
-starves. The remedy is config, never the proxy: `bashAllowlistExtra` globs
-(e.g. `"rtk *"`) are appended AFTER the sentinel by the plugin's `config` hook,
+starves. The remedy is config, never the proxy: `bashAllowlistPrefix` derives a
+`<prefix> <glob>` twin of everything the stage ALREADY grants
+(`withCommandPrefixes`), and those — like `bashAllowlistExtra` globs — are
+appended AFTER the sentinel by the plugin's `config` hook,
 the only position that wins under OpenCode's **last-match-wins** evaluation —
 which is also why the generated maps' `"*": deny`-first ordering is semantic,
 not stylistic (`workflow-allowlist.test.mjs` pins it; a trailing `"*": deny`
@@ -394,6 +396,21 @@ would remove the bash tool from the agent outright). Diagnostic to know:
 OpenCode's DeniedError dumps EVERY bash rule, pattern-unfiltered, so a stage
 transcript claiming "the deny-all rule wins over the specific allows" means "no
 glob matched the final command string" — check for a rewritten prefix first.
+
+Derived rather than blanket because a blanket `"rtk *"` accepts `rtk npm
+publish` as readily as `rtk npm test`, and because **the same rewrite blinds
+every write backstop**: `isGitPushViolation`, `isGithubPrMutation` and
+`isFindMutation` all anchor on the BARE tool name, so `rtk git push --force
+origin main` reads as no violation on either host. Narrowing the allowlist
+cannot fix that half — `rtk git push origin main` matches a derived
+`rtk git push origin *` glob quite legitimately, and only the classifier knows
+`main` is protected — so each segment is classified raw AND with one prefix hop
+stripped (`stripCommandPrefix`, twinned into `hooks/src/allowlist.mjs`). One hop
+only, or `rtk rtk …` launders a second. The prefixes ride the Claude/Qwen stage
+marker as `bashPrefix` for the same reason `kindAgents` does — a bundled hook
+reads neither config nor manifest — and an absent field means no strip, i.e.
+exactly the old behaviour. A rewrite that renames the verb (`cat x` →
+`rtk read x`) is beyond any derivation and stays an extras job.
 
 ### On the model-driven hosts, the spawn is the protocol's weakest link
 

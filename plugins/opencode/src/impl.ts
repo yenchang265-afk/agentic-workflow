@@ -6,12 +6,14 @@ import {
   CD_TWIN_PREFIX,
   agentModel,
   bashAllowlistExtras,
+  bashAllowlistPrefixes,
   enabledWorkflowKinds,
   ignoredUserConfigPaths,
   readRawConfigLayers,
   resolveUserConfigPath,
   unknownAgentModelKeys,
   withCdTwins,
+  withCommandPrefixes,
   worktreesDirFor,
 } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
@@ -138,7 +140,7 @@ interface AgentModelConfig {
  * actually bound. `Hooks.config` returns void, so mutation is the only channel.
  *
  * The only keys ever written are `agent.<name>.model` (here) and
- * `agent.<name>.permission.bash.<glob>` (`applyBashAllowlistExtras` below) — a
+ * `agent.<name>.permission.bash.<glob>` (`applyBashAllowlistConfig` below) — a
  * new write anywhere else in the config needs the same one-key surgical shape.
  * A user's own `opencode.json` entry for an agent we do not name survives
  * untouched — and one we DO name loses, because naming it in `agentModels` is
@@ -162,8 +164,9 @@ export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Recor
 }
 
 /**
- * Append `bashAllowlistExtra` globs to every sentinel-guarded agent's bash
- * permission map IN PLACE, returning the agents extended.
+ * Append the user's `bashAllowlistExtra` globs — and the `bashAllowlistPrefix`
+ * derivations of everything the agent already grants — to every sentinel-guarded
+ * agent's bash permission map IN PLACE, returning the agents extended.
  *
  * OpenCode evaluates permissions LAST-match-wins over the map in key order, so
  * where a rule lands is what it means: the generated frontmatter puts the
@@ -187,9 +190,22 @@ export const applyAgentModels = (config: AgentModelConfig, patch: Readonly<Recor
  * is the generated frontmatter's own record that the stage runs worktree-pinned.
  * An extra whose key already exists is left alone — an explicit user value,
  * even a deny, is not ours to flip.
+ *
+ * The PREFIX half needs no manifest either, for the same reason: the map's own
+ * `allow` keys ARE this stage's declared allowlist, so deriving from them gives
+ * per-stage precision for free — a user-added kind's agent included. `rtk npm
+ * test` is admitted for a stage granted `npm test*`, and `rtk npm publish` still
+ * is not, which is the whole difference from a blanket `"rtk *"` extra. The
+ * sentinel and existing `cd * && ` keys are skipped as sources (`withCommandPrefixes`),
+ * and extras are prefixed too — a project's own runner is as rewritten as a
+ * shipped one.
  */
-export const applyBashAllowlistExtras = (config: AgentModelConfig, extras: readonly string[]): string[] => {
-  if (extras.length === 0) return []
+export const applyBashAllowlistConfig = (
+  config: AgentModelConfig,
+  extras: readonly string[],
+  prefixes: readonly string[] = [],
+): string[] => {
+  if (extras.length === 0 && prefixes.length === 0) return []
   const extended: string[] = []
   for (const [name, agent] of Object.entries(config.agent ?? {})) {
     const bash = agent?.permission?.bash
@@ -197,7 +213,13 @@ export const applyBashAllowlistExtras = (config: AgentModelConfig, extras: reado
     const map = bash as Record<string, unknown>
     if (map["*"] !== "deny") continue
     const wantsTwins = Object.keys(map).some((key) => key.startsWith(CD_TWIN_PREFIX))
-    const globs = wantsTwins ? withCdTwins(extras) : [...extras]
+    const granted = Object.entries(map)
+      .filter(([key, value]) => key !== "*" && value === "allow")
+      .map(([key]) => key)
+    // Filtered against the map BEFORE twinning: a granted key is only a
+    // derivation source, so its own (already present) twin is never re-derived.
+    const additions = withCommandPrefixes([...granted, ...extras], prefixes).filter((glob) => !(glob in map))
+    const globs = wantsTwins ? withCdTwins(additions) : additions
     let touched = false
     for (const glob of globs) {
       if (glob in map) continue
@@ -373,6 +395,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
   // exists to remove.
   let agentModelsBound: string[] = []
   let allowlistExtrasBound: string[] = []
+  // `bashAllowlistPrefix`, parked by the same bootstrap hook. The bash guard
+  // needs it to strip a rewriting proxy's prefix before the write backstops
+  // classify a segment; empty (an unset key, or a `config` hook that threw)
+  // leaves those checks exactly as they were.
+  let commandPrefixes: readonly string[] = []
   let reportedAgentModels = false
   const reportAgentModelsOnce = async (config: Config): Promise<void> => {
     if (reportedAgentModels) return
@@ -381,7 +408,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       await log("info", `agentic-workflow: agentModels bound ${agentModelsBound.join(", ")} (takes effect until opencode restarts)`)
     }
     if (allowlistExtrasBound.length) {
-      await log("info", `agentic-workflow: bashAllowlistExtra appended to ${allowlistExtrasBound.join(", ")} (takes effect until opencode restarts)`)
+      await log(
+        "info",
+        `agentic-workflow: bash allowlist config (extras${commandPrefixes.length ? `, prefixes ${commandPrefixes.join(", ")}` : ""}) ` +
+          `appended to ${allowlistExtrasBound.join(", ")} (takes effect until opencode restarts)`,
+      )
     }
     const unknown = unknownAgentModelKeys(config, knownAgentNames(config))
     if (unknown.length === 0) return
@@ -602,11 +633,13 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       try {
         const raw = readRawConfigLayers(directory)
         agentModelsBound = applyAgentModels(input as AgentModelConfig, agentModelPatch(raw))
-        // Same seam, same timing constraint: `bashAllowlistExtra` must land in
-        // the merged config's agent permission maps AFTER the frontmatter's
-        // rules (last-match-wins), and this hook is the only writer that
-        // appends there. See applyBashAllowlistExtras.
-        allowlistExtrasBound = applyBashAllowlistExtras(input as AgentModelConfig, bashAllowlistExtras(raw))
+        // Same seam, same timing constraint: `bashAllowlistExtra` and the
+        // `bashAllowlistPrefix` derivations must land in the merged config's
+        // agent permission maps AFTER the frontmatter's rules (last-match-wins),
+        // and this hook is the only writer that appends there. See
+        // applyBashAllowlistConfig.
+        commandPrefixes = bashAllowlistPrefixes(raw)
+        allowlistExtrasBound = applyBashAllowlistConfig(input as AgentModelConfig, bashAllowlistExtras(raw), commandPrefixes)
       } catch {
         /* a convenience binding must never break bootstrap */
       }
@@ -896,7 +929,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // never make a write beyond thread replies / PR creation); the gh/push
           // rules apply only while a loop drives this session, so a human's
           // manual `gh pr merge` in a non-loop session is untouched.
-          if (loop && (chainedGithubPrMutation(cmd) || chainedGitPushViolation(cmd))) {
+          // The prefixes are passed so a rewriting proxy cannot launder a
+          // mutation past classifiers that anchor on the bare tool name — and,
+          // as a side effect, so this guard no longer depends on whether that
+          // proxy's plugin ran before or after ours in `tool.execute.before`.
+          if (loop && (chainedGithubPrMutation(cmd, commandPrefixes) || chainedGitPushViolation(cmd, commandPrefixes))) {
             throw new Error(
               "agentic-workflow: blocked a PR-state or protected-branch mutation — the loop never merges, closes, " +
                 "approves, force-pushes, or pushes the default branch; those stay a human call.",
@@ -908,7 +945,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           // substitution characters the guard rejects. The Claude host folds
           // this into its PreToolUse `commandAllowed`; OpenCode's frontmatter
           // allowlist can't express a flag exclusion, so the deny lives here.
-          if (loop && stageIsCheck(loop) && chainedFindMutation(cmd)) {
+          if (loop && stageIsCheck(loop) && chainedFindMutation(cmd, commandPrefixes)) {
             throw new Error(
               `agentic-workflow: blocked a mutating find (-exec/-execdir/-ok/-okdir/-delete/-fprint*/-fls) — ` +
                 `the ${loop.stage} stage is read-only; locate files with plain find and report instead of mutating.`,
