@@ -43,7 +43,7 @@
 
 import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef } from "../manifest/schema.js"
 import { commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isBareCd, splitSegments } from "../task/write-backstop.js"
-import { bashAllowlistExtras, checksFor, configuredChecks, discoverChecksFor, platformFor } from "../config.js"
+import { bashAllowlistExtras, bashAllowlistPrefixes, checksFor, configuredChecks, discoverChecksFor, platformFor, withCommandPrefixes } from "../config.js"
 import type { Config } from "./state.js"
 import type { Shell } from "../host.js"
 
@@ -224,6 +224,7 @@ export const admissibleChecks = (
   defs: readonly CheckDef[],
   globs: readonly string[],
   maxTimeoutMinutes: number,
+  prefixes: readonly string[] = [],
 ): { accepted: CheckDef[]; rejected: RejectedCheck[] } => {
   const accepted: CheckDef[] = []
   const rejected: RejectedCheck[] = []
@@ -248,7 +249,7 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: "the command runs nothing — every segment is a bare `cd`, so the shell exits 0 and the check records a pass it never earned" })
       continue
     }
-    if (chainedGithubPrMutation(def.command) || chainedGitPushViolation(def.command)) {
+    if (chainedGithubPrMutation(def.command, prefixes) || chainedGitPushViolation(def.command, prefixes)) {
       rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
       continue
     }
@@ -419,10 +420,17 @@ export const resolveStageChecks = async (args: {
     if (!defs.length) return { ...NO_CHECKS, warnings: issues }
     // `bashAllowlistExtra` counts here too: a project whose runner is only
     // reachable through an extra glob must be able to discover checks for it.
+    // So does `bashAllowlistPrefix` — under a rewriting proxy the plan names
+    // the prefixed form, and admission has to recognize the same command the
+    // stage's own agent would be allowed to run.
     const { accepted, rejected } = admissibleChecks(
       defs,
-      [...effectiveAllowlist(def, platformFor(config, kind)), ...bashAllowlistExtras(config)],
+      withCommandPrefixes(
+        [...effectiveAllowlist(def, platformFor(config, kind)), ...bashAllowlistExtras(config)],
+        bashAllowlistPrefixes(config),
+      ),
       def.timeoutMinutes ?? config.stageTimeoutMinutes,
+      bashAllowlistPrefixes(config),
     )
     const { runnable, missing } = await resolvableChecks($, accepted, dir)
     const warnings = [

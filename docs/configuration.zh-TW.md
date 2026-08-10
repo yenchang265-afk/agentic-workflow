@@ -520,24 +520,74 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
     （`mise run test`、自製腳本）——在這裡授權它，而不是去改 workflow
     manifest。發現的檢查（discovered checks）同樣採納這些額外 glob，
     所以計畫可以直接指名被授權的執行器。
-  - **改寫指令的代理程式。** rtk 這類省 token 代理會在 OpenCode 評估權限
-    **之前**改寫每一條 bash 指令（`git status` → `rtk git status`），而
-    OpenCode 是對**整條**指令字串做比對——於是每條在允許清單上的指令
-    到達比對器時都是內建 glob 比不中的形狀，所有檢查階段都因此餓死成
-    ERROR。`"rtk *"` 接受該代理輸出的任何形狀；代理本身完全不用改。
+  - **改寫指令的代理程式。** rtk 這類省 token 代理會在兩個主機評估權限
+    **之前**改寫每一條 bash 指令（`git status` → `rtk git status`）——於是
+    每條在允許清單上的指令到達比對器時都是內建 glob 比不中的形狀，所有
+    檢查階段都因此餓死成 ERROR。請優先使用下面的 `bashAllowlistPrefix`，
+    它完全不會拓寬邊界；額外 glob 只留給該代理**改名**的指令（見該段的
+    範例）。
 
   只宣告**裸形式** glob——工作樹的 `cd * && ` 雙生形式會在需要的主機上
   自動衍生，規則與 manifest 相同。沒有宣告允許清單的階段（engineering
   BUILD）維持不受限，也不會被加上任何東西。
 
   這些 glob **拓寬了階段的範圍邊界**——這正是它們的目的——所以寬窄由你
-  決定：`"rtk *"` 接受代理輸出的一切，較細的 glob（`"rtk git *"`、
-  `"rtk npm *"`）則得追著它的改寫規則跑。允許清單是防止代理混淆的範圍
-  邊界，不是沙箱（見威脅模型），但只授權你的環境需要的，不要更多。
+  決定。`"rtk *"` 接受代理輸出的一切，包含 `rtk npm publish` 與
+  `rtk gh pr merge`；請優先用 `bashAllowlistPrefix`，或更細的 glob。允許
+  清單是防止代理混淆的範圍邊界，不是沙箱（見威脅模型），但只授權你的
+  環境需要的，不要更多。
 
   生效時機與 `agentModels` 相同：Claude Code 於下一次 spawn，OpenCode 於
   下一次 **opencode 重啟**（外掛的 `config` hook 會把授權附加到每個帶
   哨兵的代理權限表末尾）。
+
+- **`bashAllowlistPrefix`**——改寫指令的代理程式加在階段真正要跑的指令
+  前面的那個前綴。每個前綴都只是把該階段**已經宣告**的 glob 重新表達
+  一次，因此不會授權任何新東西：
+
+  ```json
+  {
+    "bashAllowlistPrefix": ["rtk"]
+  }
+  ```
+
+  設定之後，一個被授權 `npm test*` 的階段同時接受 `rtk npm test`——但仍然
+  拒絕 `rtk npm publish`。這就是它與一整片 `"rtk *"` 的差別：後者兩者都
+  接受。額外 glob 也會一併加上前綴，所以上面授權的專案特有執行器同樣能
+  透過代理跑到。
+
+  它同時**修復了寫入防線**。那些分類器都錨定在裸指令名上（`git push …`、
+  `gh pr merge`、`find … -delete`），所以在任何代理之下它們看到的都是
+  `rtk …`，一律回報「沒有違規」——包括 `rtk git push --force origin main`。
+  設定的前綴會在兩個主機上、於每個分類器執行前被剝除。單靠收窄允許清單
+  是做不到的：設定前綴後，`rtk git push origin main` 本來就會命中衍生出的
+  `rtk git push origin *`，只有分類器知道 `main` 是受保護分支。
+
+  只宣告**裸指令頭**——不可含 `*` 或 shell 元字元；不符合的項目會被丟棄。
+  多個字的前綴是允許的（`"rtk proxy"`）。
+
+  **殘留問題：代理改名的指令。** 加前綴無法預測會換掉動詞的改寫。以
+  rtk 0.42.3 為例，`cat x` 變成 `rtk read x`、`head -20 x` 變成
+  `rtk read x --max-lines 20`、`npx tsc` 變成 `rtk tsc`、`npx eslint .`
+  變成 `rtk lint .`、`./gradlew build` 變成 `rtk gradlew build`、
+  `bundle exec rspec` 變成 `rtk rspec`。這些需要額外 glob——仍然比
+  `"rtk *"` 窄得多：
+
+  ```json
+  {
+    "bashAllowlistPrefix": ["rtk"],
+    "bashAllowlistExtra": [
+      "rtk read *", "rtk grep *", "rtk lint *", "rtk tsc*",
+      "rtk vitest*", "rtk pytest*", "rtk gradlew *", "rtk rspec*"
+    ]
+  }
+  ```
+
+  這份清單跟著代理的版本走，不跟著本專案走——請用 `rtk rewrite "<指令>"`
+  確認你這邊實際輸出什麼，不要直接照抄。很多指令根本不會被改寫
+  （`npm test`、`mvn test`、`dotnet test`），不需要任何設定。
+
+  生效時機與上面的 `bashAllowlistExtra` 完全相同。
 
 ## 管理面板（`hub`——僅限使用者層級）
 

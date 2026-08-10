@@ -473,8 +473,22 @@ test("the stage marker's allowlist appends bashAllowlistExtra only when the stag
   assert.match(fn, /const base = effectiveAllowlist\(def, platform\)/, "extras extend the effective allowlist, they never replace it")
   assert.match(
     fn,
-    /base\.length \? \[\.\.\.base, \.\.\.bashAllowlistExtras\(config\)/,
+    /base\.length \? withCommandPrefixes\(\[\.\.\.base, \.\.\.bashAllowlistExtras\(config\)\], prefixes\)/,
     "extras must be gated on a non-empty base — an unrestricted stage stays unrestricted",
+  )
+})
+
+// The prefixes ride the marker because a bundled hook can read neither the
+// config nor a manifest, and the guard needs them to strip a rewriting proxy's
+// prefix before classifiers that anchor on the bare tool name run.
+test("the stage marker carries bashPrefix, and omits the field when none is configured", () => {
+  const body = code(source()).slice(code(source()).indexOf("const writeStageMarker"))
+  const fn = flat(body.slice(0, body.indexOf("\n}\n") + 3))
+  assert.match(fn, /const prefixes = bashAllowlistPrefixes\(config\)/)
+  assert.match(
+    fn,
+    /\.\.\.\(prefixes\.length \? \{ bashPrefix: prefixes \} : \{\}\)/,
+    "an unset key must write no field at all — the guard reads its absence as the previous behaviour",
   )
 })
 

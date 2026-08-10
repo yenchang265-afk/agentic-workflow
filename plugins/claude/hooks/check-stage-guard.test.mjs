@@ -52,6 +52,27 @@ test("commandAllowed agrees with its core twin on every shared vector", () => {
   for (const cmd of admission.denied) assert.equal(commandAllowed(cmd, admission.globs), false, `must deny: ${cmd}`)
 })
 
+test("a configured proxy prefix agrees with its core twin, and the backstops see through one hop", () => {
+  // The MCP server stamps this shape into the marker: every glob the stage
+  // declares, re-expressed behind each `bashAllowlistPrefix`. No `cd * && `
+  // twins on this host — the guard matches per segment.
+  const globs = [...admission.globs, ...admission.globs.map((g) => `${admission.prefixes[0]} ${g}`)]
+  const p = admission.prefixes
+  for (const cmd of admission.prefixAllowed) assert.equal(commandAllowed(cmd, globs, p), true, `must allow: ${cmd}`)
+  for (const cmd of admission.prefixDenied) {
+    const denied = !commandAllowed(cmd, globs, p) || chainedGitPushViolation(cmd, p)
+    assert.equal(denied, true, `must deny: ${cmd}`)
+  }
+  // The classifiers anchor on the bare tool name, so the strip is what stops a
+  // rewritten mutation. Without prefixes they behave exactly as before.
+  assert.equal(chainedGitPushViolation("rtk git push --force origin main", p), true)
+  assert.equal(chainedGithubPrMutation("rtk gh pr merge 3", p), true)
+  assert.equal(commandAllowed("rtk find . -delete", globs, p), false)
+  assert.equal(chainedGitPushViolation("rtk git push --force origin main"), false)
+  assert.equal(chainedGitPushViolation("git push --force origin main"), true)
+  assert.equal(commandAllowed("rtk npm test", globs), true, "an unset prefix list still matches the stamped globs")
+})
+
 test("commandAllowed permits plain read/test commands", () => {
   assert.equal(commandAllowed("git status", VERIFY_ALLOW), true)
   assert.equal(commandAllowed("npm test", VERIFY_ALLOW), true)

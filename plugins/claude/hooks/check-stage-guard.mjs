@@ -463,6 +463,15 @@ var REVIEW_ALLOW = [...GIT_READ, "git blame*", "git -C * blame*", ...READ];
 var toRe3 = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s");
 var matchesAny3 = (cmd, globs) => globs.some((g) => toRe3(g).test(cmd.trim()));
 var isBareCd = (seg) => /^cd\s+[^;&|<>()`$]+$/.test(seg);
+var stripCommandPrefix2 = (segment, prefixes) => {
+  const seg = segment.trim();
+  for (const prefix of [...prefixes].sort((a, b) => b.length - a.length)) {
+    const head = `${prefix} `;
+    if (seg.startsWith(head)) return seg.slice(head.length).trim();
+  }
+  return seg;
+};
+var eitherForm = (classify, prefixes) => (seg) => classify(seg) || prefixes.length > 0 && classify(stripCommandPrefix2(seg, prefixes));
 var splitSegments2 = (cmd) => {
   const segments = [];
   let cur = "";
@@ -533,10 +542,10 @@ var isFindMutation = (seg) => {
   if (tokens[0] !== "find") return false;
   return tokens.some((t) => FIND_MUTATING_FLAGS.has(t));
 };
-var commandAllowed = (cmd, globs) => {
+var commandAllowed = (cmd, globs, prefixes = []) => {
   const segments = splitSegments2(cmd);
   if (segments.some(hasShellExpansion2)) return false;
-  if (segments.some(isFindMutation)) return false;
+  if (segments.some(eitherForm(isFindMutation, prefixes))) return false;
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny3(s, globs));
 };
 var isGithubPrMutation = (cmd) => {
@@ -615,8 +624,8 @@ var isGitPushViolation = (cmd) => {
   }
   return false;
 };
-var chainedGithubPrMutation = (cmd) => splitSegments2(cmd).some(isGithubPrMutation);
-var chainedGitPushViolation = (cmd) => splitSegments2(cmd).some(isGitPushViolation);
+var chainedGithubPrMutation = (cmd, prefixes = []) => splitSegments2(cmd).some(eitherForm(isGithubPrMutation, prefixes));
+var chainedGitPushViolation = (cmd, prefixes = []) => splitSegments2(cmd).some(eitherForm(isGitPushViolation, prefixes));
 
 // plugins/claude/hooks/src/emit.mjs
 var exitAfterWrite = (stream, payload, code) => {
@@ -753,12 +762,13 @@ var main = async () => {
       );
     }
   }
-  if (isBash && chainedGithubPrMutation(String(ti.command ?? ""))) {
+  const markerPrefixes = Array.isArray(marker.bashPrefix) && marker.bashPrefix.every((p) => typeof p === "string") ? marker.bashPrefix : [];
+  if (isBash && chainedGithubPrMutation(String(ti.command ?? ""), markerPrefixes)) {
     return block2(
       `agentic-workflow: the loop must never mutate a pull request \u2014 this GitHub command is blocked. Only reads and comment replies (gh pr comment, or gh api GET, or a POST to an issues/N/comments resource) are permitted; merging, closing, approving, requesting changes, reviewer changes, and edits stay a human call.`
     );
   }
-  if (isBash && chainedGitPushViolation(String(ti.command ?? ""))) {
+  if (isBash && chainedGitPushViolation(String(ti.command ?? ""), markerPrefixes)) {
     return block2(
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );
@@ -791,7 +801,7 @@ var main = async () => {
   const markerList = Array.isArray(marker.bashAllowlist) && marker.bashAllowlist.every((g) => typeof g === "string") && marker.bashAllowlist.length ? marker.bashAllowlist : null;
   if (isBash && (markerList || marker.stage === "verify" || marker.stage === "review")) {
     const list = markerList ?? (marker.stage === "verify" ? VERIFY_ALLOW : REVIEW_ALLOW);
-    if (!commandAllowed(effectiveCommand, list)) {
+    if (!commandAllowed(effectiveCommand, list, markerPrefixes)) {
       return block2(
         `agentic-workflow: the ${marker.stage.toUpperCase()} stage is read-only \u2014 the command "${rawCommand}" is not on its allowlist. Only inspection/test commands are permitted; if a test runner is genuinely needed, record an ERROR verdict naming it.`
       );

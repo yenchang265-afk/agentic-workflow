@@ -30,6 +30,7 @@ export {
   USER_CONFIG_ENV,
   bareModel,
   bashAllowlistExtras,
+  bashAllowlistPrefixes,
   ignoredUserConfigPaths,
   isPlainObject,
   mergeConfigLayers,
@@ -39,7 +40,9 @@ export {
   resolveAgentModels,
   resolveUserConfigPath,
   spawnAlias,
+  stripCommandPrefix,
   withCdTwins,
+  withCommandPrefixes,
 } from "./config-layers.js"
 export type { KindStages, SpawnAlias } from "./config-layers.js"
 
@@ -328,10 +331,33 @@ const BaseConfigSchema = z.object({
    * `agentModels`: the environment it describes is host-wide, not per-kind.
    *
    * These globs widen the T2 scope boundary — that is their entire purpose —
-   * so breadth is the operator's call: `"rtk *"` accepts anything the proxy
-   * emits, finer globs chase its rewrite registry.
+   * so breadth is the operator's call. For a rewriting proxy prefer
+   * `bashAllowlistPrefix` below, which widens nothing; reach for `"rtk *"` here
+   * only for what the proxy RENAMES (`cat x` → `rtk read x`), which no
+   * derivation can predict.
    */
   bashAllowlistExtra: z.array(z.string().min(1)).default([]),
+  /**
+   * Command prefixes a rewriting proxy puts in front of the command a stage
+   * asked for (an rtk-style token saver: `git status` → `rtk git status`),
+   * applied BEFORE either host evaluates its allowlist — so every shipped glob
+   * misses and the stage starves on the deny sentinel.
+   *
+   * Each prefix re-expresses the globs the stage ALREADY declares
+   * (`withCommandPrefixes`): with `["rtk"]`, a stage granted `npm test*` also
+   * accepts `rtk npm test`, and still refuses `rtk npm publish`. That is the
+   * difference from a `"rtk *"` extra, which accepts both. It grants no command
+   * a stage could not already run, so unlike `bashAllowlistExtra` it does not
+   * widen the T2 boundary at all.
+   *
+   * Prefixes are also stripped before the write backstops classify a segment
+   * (`stripCommandPrefix`): those anchor on the bare tool name, so without it
+   * `rtk git push --force origin main` reads as no violation.
+   *
+   * Bare command heads only — no `*`, no shell metacharacters; a malformed entry
+   * is dropped rather than admitted. Multi-word prefixes are fine (`rtk proxy`).
+   */
+  bashAllowlistPrefix: z.array(z.string().min(1)).default([]),
   /**
    * Which platform PR-shaped work sources talk to: `github` (the `gh` CLI, the
    * default) or `ado` (Azure DevOps via its REST API). GitHub auth is delegated
