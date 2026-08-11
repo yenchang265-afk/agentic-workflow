@@ -249,6 +249,19 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: "the command runs nothing — every segment is a bare `cd`, so the shell exits 0 and the check records a pass it never earned" })
       continue
     }
+    const climb = escapingCdTarget(def.command)
+    if (climb !== null) {
+      // The same escape `safeCwd` closes for the `cwd` FIELD, via the command
+      // instead: `commandAllowed` must accept a bare `cd` (the sanctioned
+      // `cd <dir> && <runner>` compound), so without this screen
+      // `cd ../.. && npm test` ran OUTSIDE the tree the consuming stage's own
+      // agent is pinned to (worktree-guard blocks exactly this walk) — the
+      // trust boundary this module claims. Conservative like the rest of this
+      // list: `..` anywhere is refused even where a preceding `cd` might make
+      // it safe — a check that needs a subdirectory names `cwd` instead.
+      rejected.push({ name: def.name, reason: `the command's \`cd ${climb}\` can leave the work tree — a check runs inside it; use a work-tree-relative directory (or the "cwd" field)` })
+      continue
+    }
     if (chainedGithubPrMutation(def.command, prefixes) || chainedGitPushViolation(def.command, prefixes)) {
       rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
       continue
@@ -269,6 +282,25 @@ export const admissibleChecks = (
     accepted.push(def)
   }
   return { accepted, rejected }
+}
+
+/**
+ * The first `cd` target in `command` that could climb out of the work tree, or
+ * null when every one stays inside. Absolute paths, `~`, and any `..` path
+ * segment are escapes; quotes are stripped so `cd "../x"` cannot smuggle one.
+ * Judged per target rather than by resolving the walk: a check that genuinely
+ * needs another directory has the `cwd` field, and a false refusal here costs
+ * one named warning where a false pass runs repo-authored commands outside the
+ * tree. Pure.
+ */
+export const escapingCdTarget = (command: string): string | null => {
+  for (const seg of splitSegments(command)) {
+    if (!isBareCd(seg)) continue
+    const target = seg.trim().replace(/^cd\s+/, "")
+    const bare = target.replace(/["']/g, "")
+    if (bare.startsWith("/") || bare.startsWith("~") || bare.split("/").some((s) => s === "..")) return target
+  }
+  return null
 }
 
 /**

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import type { HubEvent } from "../shared/api.js"
+import { bumpResourceGeneration } from "./resource.js"
 import { isForSelectedRepo } from "./selectedrepo.js"
 
 /**
@@ -73,7 +74,9 @@ export const EventsProvider = ({ children }: { children: ReactNode }) => {
       // was down is simply missing — and the UI went on rendering the last
       // pre-outage data as though it were live. Bumping every counter makes
       // each panel's existing dep list refetch, which is exactly the claim
-      // "reconnected" should imply.
+      // "reconnected" should imply. The resource generation first, so those
+      // refetches never join a request that started before the outage ended.
+      bumpResourceGeneration()
       setVersions(bumpAll)
     }
     source.onerror = () => {
@@ -92,6 +95,10 @@ export const EventsProvider = ({ children }: { children: ReactNode }) => {
       // board, run list and metrics of repo A, continuously. `repos` is exempt:
       // it announces a NEW repo, so it is about the set, not about a member.
       if (event.type === "repos" || isForSelectedRepo(event.repo)) {
+        // Generation before versions: the refetches this bump triggers must not
+        // join an in-flight request that started before the event arrived — its
+        // response may predate the change the event announces.
+        bumpResourceGeneration()
         setVersions((v) => ({ ...v, [event.type]: v[event.type] + 1 }))
       }
       // The notification is deliberately NOT repo-filtered: the bell is global,

@@ -72,7 +72,7 @@ export const ConfigEditor = () => {
   const [saved, setSaved] = useState<SaveConfigResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const { data, error: loadError } = useResource<ConfigLayerResponse>(
+  const { data, error: loadError, refetch } = useResource<ConfigLayerResponse>(
     repoPath(`/api/config?layer=${layer}`, repoId),
     [layer, repoId, versions.config],
   )
@@ -159,6 +159,11 @@ export const ConfigEditor = () => {
       setSaved(await postJson<SaveConfigResponse>(repoPath("/api/config", repoId), { layer, edits: Object.values(edits) }))
       setEdits({})
       setError(null)
+      // Refetch NOW rather than waiting on a `config` event: the user layer
+      // lives outside every watched tree, so no watcher bumps versions.config
+      // for it — without this the cleared form repainted from the resource's
+      // pre-save body and the edit looked like it vanished.
+      refetch()
     } catch (e) {
       setSaved(null)
       setError((e as Error).message)

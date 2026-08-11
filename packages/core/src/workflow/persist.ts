@@ -82,6 +82,27 @@ const WorkflowStateSchema = z.object({
       }),
     )
     .optional(),
+  /**
+   * Per-stage driver-run check results. Must be listed because zod STRIPS
+   * unknown keys: `state.ts` promises an idempotent re-compose can REUSE these
+   * instead of re-running a test suite to render a prompt, and a stripped map
+   * breaks exactly that on the first post-resume compose. Optional for the
+   * fail-closed reason `feedback` gives.
+   */
+  checks: z
+    .record(
+      z.string(),
+      z.array(
+        z.object({
+          name: z.string(),
+          command: z.string(),
+          exitCode: z.number().int(),
+          outcome: z.enum(["pass", "fail", "error"]),
+          output: z.string(),
+        }),
+      ),
+    )
+    .optional(),
   task: TaskRefSchema.optional(),
   /**
    * A task-less drive's claim-marker path, restamped at stage boundaries
@@ -91,8 +112,22 @@ const WorkflowStateSchema = z.object({
    */
   claimMarkerDir: z.string().optional(),
   git: GitRefSchema.optional(),
+  /**
+   * Isolation status + degrade reason. Same zod-strips trap: `state.ts` gates
+   * every main-tree write on `isolated` — never on `git` alone — and hosts
+   * surface `isolationWarning` in the audit trail; a snapshot that lost them
+   * would resume a run that re-derives isolation but forgets it had degraded.
+   */
+  isolated: z.boolean().optional(),
+  isolationWarning: z.string().optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */
   platform: z.enum(CODE_PLATFORMS).optional(),
+  /**
+   * ADO project/repository stamped at claim time. `platform: "ado"` survived
+   * the round-trip while this did not, so a resumed ADO run rendered
+   * `{{ado.project}}`/`{{ado.repository}}` empty in its stage prompts.
+   */
+  ado: z.object({ project: z.string(), repository: z.string() }).optional(),
 })
 
 /** Absolute path of a task's state snapshot. Pure. */

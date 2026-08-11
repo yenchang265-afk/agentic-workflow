@@ -517,6 +517,11 @@ export const Creator = () => {
         <div className="creator-panel">
           {selectedNode?.type === "stage" ? (
             <StageForm
+              // Remount per node: the scaffold subforms seed useState from props
+              // once, so without a key an open "new agent" form survives a node
+              // switch carrying the PREVIOUS stage's name/preset — and its
+              // Create button then binds that agent to the newly selected stage.
+              key={selectedNode.id}
               stage={(selectedNode.data as StageNodeData).stage}
               prompt={prompts[(selectedNode.data as StageNodeData).stage.name] ?? ""}
               manifest={currentManifest}

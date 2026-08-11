@@ -25,8 +25,10 @@ import { toCard } from "./backlog.js"
  * free.
  */
 
+import { isEpicType } from "@agentic-workflow/core/task/schema"
+
 /** Tracking epics order their child slices; core refuses to plan one, so it is not a decision. */
-const isDecidable = (type: string | undefined): boolean => type !== "epic"
+const isDecidable = (type: string | undefined): boolean => !isEpicType(type)
 
 export const getReview = async (deps: HubDeps): Promise<JsonResponse> => {
   const backlogKinds = deps.boards.filter((b) => b.sourceType === "backlog")

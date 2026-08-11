@@ -2308,17 +2308,29 @@ const formatBacklog = (s: Awaited<ReturnType<typeof backlogSummary>>): string =>
 }
 
 /**
- * The shared "stop watching" cleanup: drop the session from `watching`, kill its
- * poll timer, forget its last skip reason, and release the clone's watch lease
- * (only if it was actually watching — a double release would corrupt the shared
- * per-directory refcount). Returns whether the session was watching. Every mutation
- * except the lease release is synchronous, so callers racing an idle event win.
+ * The synchronous half of "stop watching": drop the session from `watching`,
+ * kill its poll timer, and forget its per-session watch state. Split from
+ * `stopWatching` so a caller racing an idle event (`onInterrupt`) can run every
+ * map mutation BEFORE its first await — the lease release is the only async
+ * part, and it must not gate the mutations that beat the racing idle. Returns
+ * whether the session was watching.
  */
-const stopWatching = async (deps: Deps, sessionID: string): Promise<boolean> => {
+const forgetWatching = (sessionID: string): boolean => {
   const was = watching.delete(sessionID)
   stopWatchTimer(sessionID)
   lastSkipReason.delete(sessionID)
   watchKindFilter.delete(sessionID)
+  return was
+}
+
+/**
+ * The shared "stop watching" cleanup: `forgetWatching` plus the clone's watch
+ * lease release (only if it was actually watching — a double release would
+ * corrupt the shared per-directory refcount). Returns whether the session was
+ * watching.
+ */
+const stopWatching = async (deps: Deps, sessionID: string): Promise<boolean> => {
+  const was = forgetWatching(sessionID)
   if (was) await releaseWatchLease(deps)
   return was
 }
@@ -2382,12 +2394,11 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   // `pending.delete` is.
   clearQuestionState(interruptedSessionID)
   clearQuestionState(sessionID)
-  // Stop the passes the user cannot see. They run in their own
-  // sessions, so ESC on the driving session never reached them — without this
-  // the remaining lens/axis turns keep burning after the user asked to stop.
-  for (const id of passSessions.get(sessionID) ?? []) {
-    await deps.client.session.abort({ path: { id } }).catch(() => {})
-  }
+  // EVERY map mutation ahead of EVERY await below — this is what the docstring's
+  // "mutations are synchronous before the first await" promises, and it used to
+  // be broken: the pass-abort loop awaited first, so a trailing `session.idle`
+  // dispatched in that window still saw `watching`/`pending` set and started a
+  // brand-new claim on the work the user had just ESC'd out of.
   const hadWorkflow = state !== undefined
   const priorPending = pending.get(sessionID)
   pending.delete(sessionID) // synchronous — beat the racing idle; marker released below
@@ -2397,16 +2408,25 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   // NEXT loop. A running stage always has getWorkflow set (drive's setWorkflow), so the
   // interruptable moment is covered.
   if (hadWorkflow) interrupted.add(sessionID)
+  const wasWatching = forgetWatching(sessionID) // synchronous half; lease released below
+  // Stop the passes the user cannot see. They run in their own
+  // sessions, so ESC on the driving session never reached them — without this
+  // the remaining lens/axis turns keep burning after the user asked to stop.
+  for (const id of passSessions.get(sessionID) ?? []) {
+    await deps.client.session.abort({ path: { id } }).catch(() => {})
+  }
   await releasePendingMarker(deps, priorPending) // dropped one-shot work must not leave a held claim
-  const wasWatching = await stopWatching(deps, sessionID)
+  if (wasWatching) await releaseWatchLease(deps)
   // The interrupt keeps the snapshot, so recover resumes at the interrupted stage —
-  // point the user straight at it.
+  // point the user straight at it. Toasts are fire-and-forget (report()'s rule):
+  // this handler is AWAITED by the event hook, so a TUI call that never settles
+  // here would park the ESC path — the one event that must always get through.
   if (hadWorkflow) {
     const id = state?.task?.id
     const msg = id ? `Loop interrupted — run /agentic-workflow:engineering recover ${id} to resume.` : "Loop interrupted."
-    await toast(deps.client, msg, "info")
+    void toast(deps.client, msg, "info")
   } else if (wasWatching) {
-    await toast(deps.client, "Stopped watching — interrupted.", "info")
+    void toast(deps.client, "Stopped watching — interrupted.", "info")
   }
 }
 
@@ -2824,15 +2844,28 @@ const gateCandidates = (value: unknown): GateCandidate[] => {
  * `NEXT STEP` is the label impl.ts's command-prompt override exempts from its
  * "report the result and stop" rule, which is what gets this past a refusal.
  */
+/**
+ * Ids the follow-up names inline before deferring to the message — the same cap
+ * the Claude/Qwen hooks apply (`MAX_LISTED` in gate-ask.mjs): the hosts must
+ * not disagree about how a candidate list renders, and this whole paragraph is
+ * also toasted, where an unbounded enumeration is unreadable.
+ */
+const MAX_LISTED_CANDIDATES = 6
+
 const gatePickNextStep = (data: Record<string, unknown> | undefined): string => {
   if (!data?.ambiguous) return ""
   const candidates = gateCandidates(data.candidates)
   if (candidates.length < 2) return ""
-  const options = candidates.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
+  const listed = candidates.slice(0, MAX_LISTED_CANDIDATES)
+  const rest = candidates.slice(MAX_LISTED_CANDIDATES)
+  const options = listed.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
+  const overflow = rest.length
+    ? ` …and name the remaining ${rest.length} in the question text so they can be picked by id: ${rest.map((c) => `\`${c.id}\``).join(", ")}.`
+    : ""
   return (
     `\n\nNEXT STEP — NOTHING has moved, and this plugin never guesses which task the human meant. ` +
     `Ask the user with the \`question\` tool: "Which task should \`approve\` advance?" — one option per candidate, in this order: ` +
-    `${options}; plus "none — leave them all". On a pick, call the \`workflow_gate\` tool with that exact id — do NOT type or ` +
+    `${options}; plus "none — leave them all".${overflow} On a pick, call the \`workflow_gate\` tool with that exact id — do NOT type or ` +
     `suggest a command, and approve nothing else. On "none", stop: everything stays where it is.`
   )
 }
@@ -2866,10 +2899,14 @@ const planParkNextStep = (id: string): string =>
  * One armed ask PER TASK, so a slice-set walk that gates several children in one
  * session arms one each instead of overwriting. It was one slot per session
  * once, and the shape a slice set makes normal — gate A, gate B, then plan A —
- * slipped straight through: arming B disarmed A, so A was planned with no
- * question ever put. It remains a backstop against a SKIPPED question, not proof
- * that the right one was asked; `openQuestion` cannot tell which task a window
- * was about.
+ * slipped straight through with ZERO questions: arming B disarmed A, so A was
+ * planned with no question ever put. What the re-key closes is exactly that
+ * zero-question case. It remains a backstop against a SKIPPED question, not
+ * proof that the right one was asked: `openQuestion` cannot tell which task a
+ * window was about, so ONE opened window still marks every armed sibling asked
+ * — gate A, gate B, one question, and both plan without a second ask — and a
+ * window the human answered "not yet" satisfies the guard the same as a yes
+ * (the plugin can observe a window, never read its reply).
  *
  * The `data.gate`-less arm is the loud one, and it has to be: `data.gate`/`data.id`
  * live in CORE, which resolves to `packages/core/dist` — gitignored and rebuilt
@@ -2973,6 +3010,13 @@ export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, c
   const refusal = await refuseIfDriven(deps, sessionID)
   if (refusal) return refusal
   const target = id.trim()
+  // Same guard as workflow_plan/workflow_replan. Without it an empty id falls
+  // through to core's FOLDER-DRIVEN approve, whose first tier is
+  // plan-review/in-review — so a degenerate call from an authoring turn could
+  // silently SHIP the one in-review task (push + PR + completed/). The id-less
+  // form buys nothing here: the ambiguity follow-up always names an exact id,
+  // and the human's typed `approve` is the sanctioned id-less path.
+  if (!target) return "workflow_gate needs the task id."
   try {
     // Bracketing log lines, because the frame this call stalls in is otherwise
     // unknowable: a tool that never returns leaves no transcript, and the last
@@ -3042,8 +3086,10 @@ export const handleRetask = async (deps: Deps, _sessionID: string, args: string,
     const r = await retaskTask(gateCtx(deps, config), id, note)
     if (!r.ok) return report(client, r.message, gateVariant(r))
     // Success is silent unless the plugin actually moved something — the agent's
-    // turn reports the reshape, and a toast per retask would double up.
-    if (!r.data?.alreadyDone) await toast(client, r.message, gateVariant(r))
+    // turn reports the reshape, and a toast per retask would double up. Fired,
+    // never awaited: this runs on the command-hook path, where an unsettled
+    // await kills the turn silently (report()'s rule).
+    if (!r.data?.alreadyDone) void toast(client, r.message, gateVariant(r))
     return
   } catch (err) {
     return report(client, `Retask failed for "${id}": ${(err as Error).message}`, "error")
@@ -3487,7 +3533,9 @@ export const handleCommand = async (
         ? ` (this session only — config default is ${configured.type})`
         : ""
     const message = `Watching for ${scope} (${handle.describe})${overrideNote}.`
-    await toast(client, message, "info")
+    // Fired, never awaited: command-hook path — an unsettled await here kills
+    // the turn silently (report()'s rule).
+    void toast(client, message, "info")
     // Immediate first pull — don't make the user wait for the next idle event
     // or timer tick. watchTick self-guards: it claims only when the session is
     // actually idle, and never throws. Cron kinds wait for their schedule.
@@ -3540,7 +3588,7 @@ export const handleCommand = async (
         )
       }
       // Two independent forms of crash evidence, either of which authorizes an
-      // immediate (`minutes: 0`) takeover:
+      // immediate takeover:
       //
       //  - a DEAD stage marker naming the task — a run reached a stage and its
       //    writer died;
@@ -3557,12 +3605,18 @@ export const handleCommand = async (
       const namedByMarker = await taskNamedByStageMarker(deps.$, deps.directory, config.tasksDir, id)
       // Skipped when the marker already settled it — the probe costs subprocesses.
       const writer = namedByMarker ? "unknown" : await claimWriterState(deps.$, task)
-      // The dead-writer arm takes the IDENTITY-judged sweep, not `…Stale(t, 0)`:
-      // a zero age window cannot re-judge what the rename caught (see
-      // `releaseMarkerIfWriterDead`). The stage-marker arm keeps its existing
-      // zero-window path — its evidence is the marker, not the stamp.
+      // Both crash arms take the IDENTITY-judged sweep, never `…Stale(t, 0)`: a
+      // zero age window cannot re-judge what the rename caught (see
+      // `releaseMarkerIfWriterDead`), so it deletes a rival's fresh claim
+      // created inside the rename window — the double-drive the rename-aside
+      // exists to stop. The stage-marker arm's evidence says the OLD run died;
+      // it says nothing about who holds the claim NOW, which is what the
+      // re-judge answers. When the identity judge cannot decide (an unstamped
+      // pre-stamp marker, another machine), fall back to the wall-clock window
+      // rather than an unconditional sweep — the safe direction is a wait, not
+      // a second drive on one feature/<id> branch.
       const took = namedByMarker
-        ? await claimTaskSweepingStale(deps.$, task, 0)
+        ? (await claimTaskSweepingDeadWriter(deps.$, task)) || (await claimTaskSweepingStale(deps.$, task, STALE_CLAIM_MINUTES))
         : writer === "dead"
           ? await claimTaskSweepingDeadWriter(deps.$, task)
           : await claimTaskSweepingStale(deps.$, task, STALE_CLAIM_MINUTES)

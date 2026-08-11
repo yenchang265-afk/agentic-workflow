@@ -643,6 +643,49 @@ test("recover <id> still refuses while the claim's writer is alive", async () =>
   )
 })
 
+test("recover <id> with a dead stage marker still restores a claim whose writer is ALIVE", async () => {
+  // The zero-window regression: a dead stage marker proves the OLD run died,
+  // not who holds the claim NOW. recover used to sweep that arm with
+  // `claimTaskSweepingStale(t, 0)`, whose re-judge degrades to a bare existence
+  // test — so a rival's fresh claim taken inside the rename window was deleted
+  // and a second drive started on the same feature/<id> branch. The sweep must
+  // be identity-judged: a stamp naming a live local pid is a claim to restore.
+  const fixture = {
+    ...heldClaimFixture({ claimedAt: new Date().toISOString(), pid: process.pid, host: os.hostname() }),
+    // A stage marker naming the task whose deadline passed and whose writer is
+    // gone — the crash evidence that makes this the `namedByMarker` arm.
+    "docs/tasks/runs/.stage-opencode.json": JSON.stringify({
+      host: "opencode",
+      kind: "engineering",
+      stage: "build",
+      taskId: "t",
+      worktree: null,
+      deadline: Date.now() - 60_000,
+      iteration: 1,
+      pid: DEAD_PID,
+    }),
+  }
+  const { client, toasts } = makeClientFS(fixture)
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(fixture, log, [...deadPidProbes, { cmd: `kill -0 ${String(process.pid)}`, result: { exitCode: 0 } }]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await handleCommand(deps, "sess-recover-marker-livewriter", "recover t", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.doesNotMatch(toasts[0]?.message ?? "", /Recovering/, toasts[0]?.message)
+  // The rename-aside may move the marker to judge it, but a live writer's claim
+  // must be restored, never deleted: no `rm -rf` of the moved-aside copy.
+  assert.ok(
+    !log.some((c) => c.startsWith("rm -rf /repo/docs/tasks/in-progress/.claims/t.dead-")),
+    `a live writer's claim must never be deleted: ${JSON.stringify(log.filter((c) => c.includes(".claims/t")))}`,
+  )
+})
+
 test("recover <id> refuses a dead-pid claim stamped on ANOTHER machine", async () => {
   // A repo shared across machines or sibling containers: a pid from over there
   // says nothing here, and concluding death would start a second drive.
@@ -876,6 +919,26 @@ test("workflow_gate moves the draft the user just approved, and asks what is nex
   assert.match(out, /NEXT STEP/, "the answer to 'approve?' is worthless without the 'plan it now?' follow-up")
   assert.match(out, /workflow_plan/)
   assert.match(out, /my-task/)
+})
+
+/**
+ * An empty id must refuse, not fall through to core's folder-driven approve:
+ * that path's first tier is plan-review/in-review, so a degenerate
+ * `workflow_gate({id: ""})` from an authoring turn would silently advance —
+ * or SHIP — whatever single task waits there. The id-less form buys nothing
+ * on this tool: the ambiguity follow-up always names an exact id.
+ */
+test("workflow_gate refuses an empty id instead of becoming the id-less gate", async () => {
+  const files = { "docs/tasks/in-review/done-task.md": serializeTask({ title: "Reviewed work", body: "goal" }) }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  for (const id of ["", "   "]) {
+    const out = await gateFromAgent(deps, "sess-agent", id, testConfig)
+    assert.match(out, /needs the task id/, `unexpected: ${out}`)
+  }
+  assert.ok(!log.some((cmd) => cmd.includes("mv")), "an empty id must move (and ship) nothing")
 })
 
 test("a gate tool called from inside a running loop is refused, and moves nothing", async () => {

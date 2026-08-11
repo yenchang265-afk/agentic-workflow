@@ -210,6 +210,16 @@ export const mintShortId = (rand: () => number = Math.random): string => {
 export const isPaired = (task: Pick<Task, "tracker">): boolean => task.tracker !== undefined
 
 /**
+ * Whether a `type` names a tracking epic, however it was spelled. Every epic
+ * guard must go through this rather than compare `=== "epic"`: the field is
+ * free-form, and this file's own pairing table maps it to Jira's Issue Type /
+ * ADO's Work Item Type — both of which spell it `Epic`. Five case-sensitive
+ * guards let a tracker-paired `type: Epic` tracking draft be approved and
+ * PLANNED, the exact outcome the guards exist to prevent. Pure.
+ */
+export const isEpicType = (type: string | undefined): boolean => type?.trim().toLowerCase() === "epic"
+
+/**
  * Double-quote the plain scalars in a frontmatter block that YAML's lexer
  * rejects outright. The colon-space footgun is survivable after parsing
  * (`coerceListItem` above), but a value STARTING with a reserved character —

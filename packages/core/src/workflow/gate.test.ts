@@ -346,6 +346,18 @@ test("approveTask refuses a tracking epic — it stays in draft/, untouched", as
   assert.ok(!log.some((c) => c.startsWith("mv ") || c.startsWith("printf")), "no move, no audit note on a refusal")
 })
 
+test("approveTask refuses a tracking epic however `type` was capitalized", async () => {
+  // `type` is free-form and the schema's own pairing table maps it to Jira's
+  // Issue Type / ADO's Work Item Type — both spelled `Epic`. A case-sensitive
+  // guard let a tracker-paired `type: Epic` tracking draft be approved and
+  // planned: the loop then builds the tracking document itself.
+  const { ctx, fs } = makeCtx({ "draft/epic.md": serializeTask({ title: "Big feature", type: "Epic", body: "children…" }) })
+  const r = await approveTask(ctx, "epic")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /tracking epic/)
+  assert.ok("/repo/docs/tasks/draft/epic.md" in fs, "the epic must stay in draft/")
+})
+
 test("approveAny with an explicit epic id still reaches the tracking-epic refusal", async () => {
   // The epic skip is scoped to id-less resolution: naming an epic outright must
   // reach approveTask and get its specific refusal, not a generic "not found".

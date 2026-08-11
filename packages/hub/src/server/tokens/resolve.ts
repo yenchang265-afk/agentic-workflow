@@ -56,10 +56,15 @@ const entryRows = async (deps: HubDeps, entry: RunEntry, notes: string[]): Promi
   const unobserved = entry.samples.filter((s) => !s.tokens)
   if (unobserved.length === 0) return rows
 
-  if (entry.host === "claude") {
+  // Everything that is not an opencode entry joins tokens from transcripts:
+  // the Claude AND Qwen hosts never call the LLM themselves (metrics-file.ts),
+  // so `=== "claude"` sent qwen runs down the opencode-db branch — where a
+  // missing sessionID earned them a factually wrong "opencode run predates
+  // token capture" note and no attribution at all.
+  if (entry.host !== "opencode") {
     const windows = windowsFromSamples(unobserved)
     if (windows.length === 0) {
-      notes.push("claude-host samples carry no startedAt — tokens for this run are not attributable")
+      notes.push(`${entry.host}-host samples carry no startedAt — tokens for this run are not attributable`)
       return rows
     }
     const joined = await attributedRows(deps, windows)
@@ -67,7 +72,15 @@ const entryRows = async (deps: HubDeps, entry: RunEntry, notes: string[]): Promi
     return [...rows, ...joined]
   }
 
-  // opencode entry whose samples predate token capture: session-total backfill
+  // opencode entry whose samples predate token capture: session-total backfill.
+  // Only when NO sample carried tokens: the db total covers the WHOLE session,
+  // so stacking it on top of observed per-stage rows double-counted every
+  // mixed run (one stage that errored before its first LLM turn beside four
+  // that recorded) — totals and cost read ~2×.
+  if (observed.length > 0) {
+    notes.push(`${unobserved.length} stage sample(s) recorded no tokens — totals cover the recorded stages only`)
+    return rows
+  }
   if (entry.sessionID) {
     const db = await readSessionUsage(deps.opencodeDbPath, entry.sessionID)
     if (db.available) {

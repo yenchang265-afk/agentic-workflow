@@ -142,6 +142,78 @@ test("runs without a sidecar reconstruct windows from the run-log summary", asyn
   fs.rmSync(projects, { recursive: true, force: true })
 })
 
+test("qwen-host sidecar entries join tokens from transcripts, never the opencode-db branch", async () => {
+  // `=== "claude"` sent qwen entries down the opencode-db path, where a missing
+  // sessionID earned them "opencode run predates token capture and recorded no
+  // sessionID" — a factually wrong note on a run that was never an opencode run
+  // — and zero attribution. Qwen never calls the LLM itself (metrics-file.ts),
+  // so its tokens join from transcripts exactly like claude's.
+  const repo = makeRepo()
+  const projects = fs.mkdtempSync(path.join(os.tmpdir(), "hub-projects-"))
+  writeTranscript(projects, repo, [10, 30])
+  fs.writeFileSync(
+    path.join(repo, "docs", "tasks", "runs", "qwen.metrics.json"),
+    JSON.stringify({
+      version: 1,
+      runs: [
+        {
+          endedAt: new Date(T0_MS + 60_000).toISOString(),
+          outcome: "done",
+          detail: "",
+          host: "qwen",
+          samples: [{ stage: "plan", iteration: 0, ms: 60_000, startedAt: T0 }],
+        },
+      ],
+    }),
+  )
+  const res = await resolveRunTokens(depsFor(repo, projects), "qwen")
+  assert.equal(res?.rows.length, 1)
+  assert.equal(res?.rows[0]?.source, "transcripts")
+  assert.ok(!res?.notes.some((n) => n.includes("opencode")), `no opencode note on a qwen run: ${JSON.stringify(res?.notes)}`)
+  fs.rmSync(repo, { recursive: true, force: true })
+  fs.rmSync(projects, { recursive: true, force: true })
+})
+
+test("a mixed opencode entry never stacks the session total on observed stage rows", async () => {
+  // The backfill was gated on `unobserved.length > 0` instead of "nothing
+  // observed": an entry with four token-bearing stages and one token-less one
+  // (a stage that errored before its first LLM turn) got per-stage rows PLUS a
+  // whole-session total — totals and cost read ~2× in /api/tokens and the
+  // metrics tab.
+  const repo = makeRepo()
+  fs.writeFileSync(
+    path.join(repo, "docs", "tasks", "runs", "mixed.metrics.json"),
+    JSON.stringify({
+      version: 1,
+      runs: [
+        {
+          endedAt: T0,
+          outcome: "done",
+          detail: "",
+          host: "opencode",
+          sessionID: "s3",
+          samples: [
+            {
+              stage: "build",
+              iteration: 0,
+              ms: 60_000,
+              tokens: { input: 10_000, output: 2_000, reasoning: 0, cacheRead: 0, cacheWrite: 0 },
+              cost: 0.5,
+            },
+            { stage: "verify", iteration: 0, ms: 1000 }, // no tokens — errored before its first LLM turn
+          ],
+        },
+      ],
+    }),
+  )
+  const res = await resolveRunTokens(depsFor(repo, "/nonexistent-projects"), "mixed")
+  assert.equal(res?.rows.length, 1, JSON.stringify(res?.rows))
+  assert.ok(!res?.rows.some((r) => r.stage === "(session total)"), "no session total beside observed rows")
+  assert.equal(res?.totals.input, 10_000)
+  assert.ok(res?.notes.some((n) => n.includes("recorded no tokens")), JSON.stringify(res?.notes))
+  fs.rmSync(repo, { recursive: true, force: true })
+})
+
 test("opencode legacy entries degrade with a note when node:sqlite or the db is unavailable", async () => {
   const repo = makeRepo()
   fs.writeFileSync(

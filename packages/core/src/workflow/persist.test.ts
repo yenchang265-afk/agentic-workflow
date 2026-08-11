@@ -91,6 +91,29 @@ test("claimMarkerDir round-trips — a resumed sitter drive keeps restamping its
   assert.equal(loaded?.claimMarkerDir, sitter.claimMarkerDir)
 })
 
+test("every load-bearing WorkflowState field survives the snapshot round-trip", async () => {
+  // zod strips unknown keys, so a field state.ts writes but the schema omits is
+  // silently DELETED on resume. That shipped: `platform: "ado"` survived while
+  // `ado` did not, so a resumed ADO run rendered {{ado.project}} empty; `checks`
+  // was re-run to compose a prompt state.ts promises is reusable; and a degraded
+  // run's `isolated`/`isolationWarning` were forgotten.
+  const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
+  const full: WorkflowState = {
+    ...sampleState,
+    kind: "engineering",
+    feedback: { verify: "Verdict reason: nope" },
+    attempts: [{ stage: "verify", iteration: 1, verdict: "FAIL", reason: "nope" }],
+    checks: { verify: [{ name: "tests", command: "npm test", exitCode: 1, outcome: "fail", output: "1 failing" }] },
+    isolated: true,
+    isolationWarning: "detached HEAD — running without isolation",
+    platform: "ado",
+    ado: { project: "proj", repository: "repo" },
+  }
+  await saveState(fakeShell(), dir, "docs/tasks", "add-rl", full)
+  const loaded = await loadState(fakeClient(dir), dir, "docs/tasks", "add-rl")
+  assert.deepEqual(loaded, full)
+})
+
 test("loadState returns null for an absent snapshot", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "agentic-workflow-persist-"))
   assert.equal(await loadState(fakeClient(dir), dir, "docs/tasks", "missing"), null)

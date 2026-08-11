@@ -65,6 +65,24 @@ test("verdictFlips tracks each lens as its own sequence", () => {
   assert.equal(flips.passesWithFlips, 1)
 })
 
+test("verdictFlips never counts a same-iteration verdict retry as a transition", () => {
+  // A rejected-then-retried verdict re-emits the same stage+lens+iteration.
+  // Two rows of iteration 1 are one verdict recorded twice — the LAST is the
+  // one the loop acted on — so the only real transition here is 1→2 (FAIL→PASS).
+  const passes = passesOf(
+    summary("done", [
+      row(1, "verify", 1, "FAIL", "10s"),
+      row(2, "verify", 1, "FAIL", "10s"), // retry of the same iteration
+      row(3, "verify", 2, "PASS", "10s"),
+    ]),
+  )
+  const flips = verdictFlips(passes)
+
+  assert.equal(flips.failToFail, 0, "the retry pair is not a transition")
+  assert.equal(flips.failToPass, 1)
+  assert.equal(flips.passesWithFlips, 1)
+})
+
 test("verdictFlips counts a check that a re-build failed to move", () => {
   const passes = passesOf(
     summary("stopped", [row(1, "verify", 1, "FAIL", "10s"), row(2, "verify", 2, "FAIL", "10s")], {

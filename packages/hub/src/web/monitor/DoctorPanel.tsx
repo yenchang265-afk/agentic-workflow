@@ -89,18 +89,28 @@ export const DoctorPanel = () => {
       )}
 
       <div className="doctor-actions">
-        <Confirm
-          title="Repair the backlog?"
-          detail={
-            <>
-              Rescues stray task files to <code>draft/</code>, removes emptied stray folders, and releases stale orphaned
-              claim markers — then commits. Duplicate ids are left untouched.
-            </>
-          }
-          confirmLabel="Repair"
-          onConfirm={runFix}
-          trigger={<Button variant="primary" disabled={fixable === 0}>{fixable > 0 ? `Repair ${fixable} item${fixable === 1 ? "" : "s"}` : "Nothing to auto-fix"}</Button>}
-        />
+        {/* No <Confirm> at all when there is nothing to fix: the trigger's click
+            handler lives on Confirm's wrapping span, so a `disabled` Button
+            inside it could still open the repair dialog where the click
+            dispatches past the control. */}
+        {fixable === 0 ? (
+          <Button variant="primary" disabled>
+            Nothing to auto-fix
+          </Button>
+        ) : (
+          <Confirm
+            title="Repair the backlog?"
+            detail={
+              <>
+                Rescues stray task files to <code>draft/</code>, removes emptied stray folders, and releases stale orphaned
+                claim markers — then commits. Duplicate ids are left untouched.
+              </>
+            }
+            confirmLabel="Repair"
+            onConfirm={runFix}
+            trigger={<Button variant="primary">{`Repair ${fixable} item${fixable === 1 ? "" : "s"}`}</Button>}
+          />
+        )}
         {result && (
           <span className="doctor-result">
             {[

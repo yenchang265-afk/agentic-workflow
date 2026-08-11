@@ -51,7 +51,12 @@ export const renderSection = (tpl: string, ctx: TemplateContext): string => {
     const m = BLOCK.exec(out)
     if (!m) break
     const [whole, path, body] = m
-    out = out.replace(whole, truthy(lookup(ctx, path ?? "")) ? (body ?? "") : "")
+    // Splice by index, never `String.replace(whole, body)`: a replacement
+    // STRING interprets `$&`/`$'`/`$1`, so a block body containing one (shell
+    // in a prompt: `awk '{print $1}'`) was rewritten — or made the replace a
+    // no-op whose unchanged markers then rode into the composed prompt.
+    const rendered = truthy(lookup(ctx, path ?? "")) ? (body ?? "") : ""
+    out = out.slice(0, m.index) + rendered + out.slice(m.index + whole.length)
   }
   return out.replace(/\{\{([\w.-]+)\}\}/g, (_, path: string) => asString(lookup(ctx, path)))
 }

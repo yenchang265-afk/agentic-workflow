@@ -62,6 +62,9 @@ export const stageVerdicts = (passes: readonly RunLogSummary[]): StageVerdicts[]
  *   iteration.
  * - **A pass is the boundary.** A plan pass ending FAIL followed by a build pass
  *   opening PASS is not a recovery — they are independent runs sharing a file.
+ * - **An iteration is one endpoint.** A verdict retry re-emits the same
+ *   stage+lens+iteration; two rows of one iteration are one verdict recorded
+ *   twice, never a transition.
  *
  * Only PASS and FAIL rows enter a stream. An `ERROR` (an infra failure, not a
  * judgement) between a FAIL and a later PASS must not consume that adjacency and
@@ -83,7 +86,13 @@ export const verdictFlips = (passes: readonly RunLogSummary[]): VerdictFlips => 
     }
     let flipsHere = 0
     for (const rows of streams.values()) {
-      const ordered = [...rows].sort((a, b) => a.iteration - b.iteration)
+      // One row per ITERATION before counting adjacencies: a verdict retry
+      // re-emits the same stage+lens+iteration (see metrics/fanout.ts), and an
+      // adjacent same-iteration pair read as a transition that never happened.
+      // The last row wins — it is the verdict the loop acted on.
+      const byIteration = new Map<number, RunSummaryRow>()
+      for (const row of [...rows].sort((a, b) => a.iteration - b.iteration)) byIteration.set(row.iteration, row)
+      const ordered = [...byIteration.values()]
       for (let i = 1; i < ordered.length; i++) {
         const from = ordered[i - 1]?.verdict
         const to = ordered[i]?.verdict

@@ -1,3 +1,4 @@
+import { isEpicType } from "@agentic-workflow/core/task/schema"
 import { useEffect, useRef, useState } from "react"
 import type { SaveTaskResponse, TaskDetailResponse, TaskStatus } from "../../shared/api.js"
 import { repoPath, useRepo } from "../repo.js"
@@ -135,7 +136,7 @@ export const TaskDrawer = ({ id, status, kind, claimed, planRequested, onClose }
       */}
       {/* An epic only orders its child slices — core refuses to plan one, so it
           gets no gate buttons here either, exactly as on the board. */}
-      {data && data.card.type !== "epic" && (
+      {data && !isEpicType(data.card.type) && (
         <div className="drawer__foot">
           <GateActions task={data.card} status={status} kind={kind} claimed={claimed} planRequested={planRequested} />
         </div>
