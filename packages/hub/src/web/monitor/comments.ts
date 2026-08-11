@@ -8,8 +8,9 @@
  * "this is wrong" is useless three stages later, which is why the anchor text is
  * quoted alongside it.
  *
- * One line, because core's `appendNote` writes a single `> …` blockquote (the
- * server flattens whitespace as a second guard, see routes/gate.ts `oneLine`).
+ * One line, because core's `appendNote` writes a single `> …` blockquote
+ * (core's `oneLineReason` in workflow/gate.ts flattens whitespace and bounds
+ * the length as a second guard on every writer's path).
  *
  * Pure — tested in comments.test.ts.
  */

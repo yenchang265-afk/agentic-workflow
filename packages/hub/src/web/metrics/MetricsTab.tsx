@@ -97,6 +97,36 @@ export const MetricsTab = () => {
         )}
       </div>
 
+      {data.plans.runsWithPlanPass > 0 && (
+        <div className="summary-chips">
+          <Chip
+            gate={data.plans.replanRate !== null && data.plans.replanRate > 0.5}
+            title="run files whose sidecar holds two or more plan-stage passes — the plan was rejected (or capped) and re-planned"
+          >
+            replan rate <strong>{pct(data.plans.replanRate)}</strong>
+            <span className="muted"> {data.plans.replannedRuns}/{data.plans.runsWithPlanPass}</span>
+          </Chip>
+          {data.plans.contractRefusals > 0 && (
+            <Chip gate title="PLAN parks the loop itself refused — no plan written, or no ### Verification subsection">
+              contract refusals <strong>{data.plans.contractRefusals}</strong>
+            </Chip>
+          )}
+          {data.discovery.checkStageFirings > 0 && (
+            <Chip title="check-stage firings by command provenance (discovered = from the plan's agentic-checks block)">
+              checks{" "}
+              {Object.entries(data.discovery.bySource)
+                .map(([source, n]) => `${source} ${n}`)
+                .join(" · ")}
+            </Chip>
+          )}
+          {data.discovery.refusedTotal > 0 && (
+            <Chip gate title="declared check commands the loop refused or dropped at fire time — the plan promised checks that did not run">
+              checks refused <strong>{data.discovery.refusedTotal}</strong>
+            </Chip>
+          )}
+        </div>
+      )}
+
       <h2 className="section-title">Iteration burn</h2>
       <BurnHistogram burn={burn} />
 

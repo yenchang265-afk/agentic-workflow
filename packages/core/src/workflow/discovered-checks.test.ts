@@ -8,10 +8,13 @@ import {
   backgroundsItself,
   checkDiscoveryBlock,
   commandBinaries,
+  hasChecksFence,
   parseDiscoveredChecks,
+  previewDiscoveredChecks,
   resolvableChecks,
   resolveStageChecks,
 } from "./discovered-checks.js"
+import type { WorkflowManifest } from "../manifest/schema.js"
 import { parseConfig } from "../config.js"
 import { commandAllowed } from "../task/write-backstop.js"
 import { StageDefSchema, type StageDef } from "../manifest/schema.js"
@@ -536,4 +539,46 @@ test("checkDiscoveryBlock rules out a command that never exits", () => {
   assert.match(block, /watch/)
   assert.match(block, /124/)
   assert.match(block, /never the serve command/)
+})
+
+// --- the park-time preview ---
+
+/** A minimal manifest around one verify stage — only what the preview reads. */
+const manifestWith = (verify: StageDef): WorkflowManifest => ({ kind: "engineering", stages: [verify] }) as unknown as WorkflowManifest
+
+test("hasChecksFence distinguishes an absent fence from a valid empty block", () => {
+  // parseDiscoveredChecks returns {defs: [], issues: []} identically for both,
+  // and a park note must not tell a human "the block admitted nothing" about a
+  // plan that never declared one.
+  assert.equal(hasChecksFence("## Implementation Plan\n\n1. step"), false)
+  assert.equal(hasChecksFence(fence("[]")), true)
+})
+
+test("previewDiscoveredChecks forecasts admitted and refused with the consumer's own allowlist", () => {
+  const plan = fence('[{ "name": "tests", "command": "npm test" }, { "name": "lint", "command": "make lint" }]')
+  const preview = previewDiscoveredChecks(manifestWith(stage({ discoverChecks: true })), CONFIG, plan)
+  assert.ok(preview)
+  assert.equal(preview.consumer, "verify")
+  assert.equal(preview.fencePresent, true)
+  assert.equal(preview.admitted, 1)
+  assert.equal(preview.issues.length, 1)
+  assert.match(preview.issues[0]!, /"lint" refused: .*bash allowlist/)
+})
+
+test("previewDiscoveredChecks reports a fence-less plan without inventing issues", () => {
+  const preview = previewDiscoveredChecks(manifestWith(stage({ discoverChecks: true })), CONFIG, "## Implementation Plan\n\n1. step")
+  assert.deepEqual(preview, { consumer: "verify", fencePresent: false, admitted: 0, issues: [] })
+})
+
+test("previewDiscoveredChecks is null when nothing will consume the fence", () => {
+  const plan = fence('[{ "name": "tests", "command": "npm test" }]')
+  // No discovering stage.
+  assert.equal(previewDiscoveredChecks(manifestWith(stage()), CONFIG, plan), null)
+  // Config checks preempt discovery — the fence is irrelevant, warning is noise.
+  const configured = parseConfig({ workflows: { engineering: { stageChecks: { verify: [{ name: "mine", command: "npm test" }] } } } })
+  assert.equal(previewDiscoveredChecks(manifestWith(stage({ discoverChecks: true })), configured, plan), null)
+  // Manifest checks preempt too.
+  assert.equal(previewDiscoveredChecks(manifestWith(stage({ discoverChecks: true, checks: [{ name: "shipped", command: "npm test" }] })), CONFIG, plan), null)
+  // A partial manifest (no stages array) must not crash a park.
+  assert.equal(previewDiscoveredChecks({} as unknown as WorkflowManifest, CONFIG, plan), null)
 })

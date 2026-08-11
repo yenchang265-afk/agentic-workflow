@@ -1,13 +1,14 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, extractPlan, findByIdIn, moveTask, planHeadingCount, planRejectedNote, releaseClaim, unaddressedRejectionCount } from "../task/store.js"
+import { appendNote, auditNote, extractPlan, findByIdIn, moveTask, planHeadingCount, planRejectedNote, releaseClaim, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
+import { previewDiscoveredChecks } from "./discovered-checks.js"
 import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
 import { clearState } from "./persist.js"
 import { workflowId, releaseCurrentBranchLock, releaseWorktreeAt, rivalHoldsCurrentBranchLock, teardownIsolation } from "./isolate.js"
-import type { Action, Config, WorkflowState } from "./state.js"
+import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import type { Outcome } from "./metrics.js"
 
 /**
@@ -147,6 +148,16 @@ const commitBacklog = async (ctx: TerminalCtx, message: string): Promise<void> =
  */
 const CONTRACT_REFUSAL_LIMIT = 3
 
+/**
+ * The park gate's two refusal reasons, exported as consts so the hub's metrics
+ * aggregate can count contract refusals by matching sidecar `detail` against
+ * the exact strings the writer used — a hand-copied string there is how the
+ * two drift and the count silently reads zero forever.
+ */
+export const PARK_NO_PLAN_WHY = "the PLAN stage wrote no ## Implementation Plan"
+export const PARK_NO_VERIFICATION_WHY =
+  "the plan has no ### Verification subsection — the plan contract requires one mapping each acceptance criterion to its proof"
+
 /** park: PLAN finished — validate the plan landed, move the task to plan-review/, or veto. */
 const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
@@ -190,11 +201,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   const wantsContract = ctx.manifest.manifest.stages?.find((s) => s.name === state.stage)?.planContract === true
   const missingVerification = Boolean(plan) && wantsContract && !hasVerificationSection(plan ?? "")
   if (!fresh || !plan || missingVerification) {
-    const why = !fresh
-      ? "the task left queued/ mid-plan"
-      : !plan
-        ? "the PLAN stage wrote no ## Implementation Plan"
-        : "the plan has no ### Verification subsection — the plan contract requires one mapping each acceptance criterion to its proof"
+    const why = !fresh ? "the task left queued/ mid-plan" : !plan ? PARK_NO_PLAN_WHY : PARK_NO_VERIFICATION_WHY
     await log("warn", `loop(${id}): not parking — ${why}`)
     if (fresh) {
       // The refusal is recorded as a CANONICAL rejection note (`planRejectedNote`
@@ -264,7 +271,28 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   if (headings > 1) {
     await log("warn", `loop(${id}): parking with ${headings} ## Implementation Plan headings — PLAN stacked instead of replacing; the superseded plan stays in the task's prose`)
   }
-  await appendNote($, fresh, auditNote("Plan written — parked for plan review", new Date(), actor), log)
+  // Preview what the consuming check stage will decide about the plan's
+  // agentic-checks fence AT THE GATE the human is about to read, instead of at
+  // fire time where the same refusals go to a log line nobody watches — a plan
+  // whose whole block is inadmissible used to park clean, get approved, and
+  // silently run a VERIFY with zero checks. Forecast only (no binary probe —
+  // see `previewDiscoveredChecks`), never a veto: design 18 makes the block
+  // optional and the allowlist, not this gate, the boundary. The suffix rides
+  // AFTER the `Plan written` marker prefix, so the retirement anchors that
+  // parse that line are untouched.
+  const preview = previewDiscoveredChecks(ctx.manifest.manifest, config, plan)
+  let checksLine = ""
+  if (preview) {
+    for (const issue of preview.issues) await log("warn", `loop(${id}): ${issue}`)
+    const clipped = ((s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s))(preview.issues.join("; "))
+    checksLine =
+      preview.admitted > 0
+        ? ` — discovered checks: ${preview.admitted} admitted for ${preview.consumer.toUpperCase()}${preview.issues.length ? `; ${preview.issues.length} dropped (${clipped})` : ""}`
+        : preview.fencePresent
+          ? ` — discovered checks: NONE admitted for ${preview.consumer.toUpperCase()} (${clipped || "the block admitted no commands"})`
+          : ` — no agentic-checks block: ${preview.consumer.toUpperCase()} will run no machine-run checks`
+  }
+  await appendNote($, fresh, auditNote(`Plan written — parked for plan review${checksLine}`, new Date(), actor), log)
   // moveTask THROWS on a duplicate destination or a failed `mv`. Unguarded, that
   // exception escapes runTerminal after the park note is already on disk claiming
   // a park that never happened, and the queued/ claim marker is never released —
@@ -283,7 +311,10 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   }
   await commitBacklog(ctx, `loop(${id}): plan written — parked for review`)
   await ctx.writeMetrics("done", "plan parked for review")
-  return { kind: "park", taskId: id, path: newPath, message: action.message }
+  // The checks forecast rides the report too: the park message is what the
+  // hosts surface (toast / tool result), and the human deciding approve-or-
+  // replan should not have to open the task file to learn no checks will run.
+  return { kind: "park", taskId: id, path: newPath, message: `${action.message}${checksLine}` }
 }
 
 /** done: the loop finished — park the task in in-review/ for human diff review. */
@@ -359,6 +390,25 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
   return { kind: "done", message: action.message, moved, ...(state.task ? { taskId: state.task.id } : {}), ...(state.git ? { branch: state.git.branch } : {}) }
 }
 
+/** The most a stop's attempts digest may carry onto its audit note. Bounded by
+ *  construction already (the engine keeps the last 5 attempts at ≤200 reason
+ *  chars each), but clamped anyway — the digest is one line in a file humans
+ *  read, and the engine's constants are not this module's to assume. */
+const STOP_DIGEST_MAX = 800
+
+/**
+ * One line per counted attempt — what the run tried and how each try ended.
+ * This is the machine-recorded context a cap-stopped task otherwise loses at
+ * `clearState`: `replanTask` fuses it into the rejection reason, so the next
+ * PLAN pass plans against what kept failing instead of re-planning blind. Pure.
+ */
+const attemptsDigest = (attempts: readonly AttemptRecord[]): string => {
+  const digest = attempts
+    .map((a) => `iteration ${a.iteration + 1} ${a.stage.toUpperCase()} ${a.verdict}${a.reason ? `: ${a.reason}` : ""}`)
+    .join("; ")
+  return digest.length > STOP_DIGEST_MAX ? `${digest.slice(0, STOP_DIGEST_MAX)}…` : digest
+}
+
 /** stop: the loop stopped incomplete — annotate the task and preserve partial work. */
 const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
@@ -372,6 +422,15 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
     const cur = await findByIdIn($, directory, config.tasksDir, status, state.task.id)
     if (cur) {
       await appendNote($, cur, auditNote(action.message, new Date(), actor), log)
+      // A non-transient stop with attempts on the ledger (the iteration cap
+      // above all) durably records WHAT each try failed on — the snapshot that
+      // holds `state.attempts` is cleared a few lines down, and the replan the
+      // cap message recommends reads only the task file. Gated on
+      // `!retryable`: a flaky-environment stop's ledger is noise the next run
+      // does not need. See `stopContextNote`/`extractStopContext` in store.ts.
+      if (!action.retryable && state.attempts?.length) {
+        await appendNote($, cur, auditNote(stopContextNote(attemptsDigest(state.attempts)), new Date(), actor), log)
+      }
       // The loop is over — release the claim marker for EVERY stage, not just
       // PLAN. A held marker means "a loop may be driving this", and every gate
       // verb (replan/abandon/remove) refuses on it; releasing only the PLAN

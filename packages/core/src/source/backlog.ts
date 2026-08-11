@@ -7,12 +7,12 @@ import {
   claimFirst,
   confirmedStrayPlanRequestIds,
   extractPlan,
-  extractReplanReason,
   findByIdIn,
   isRecoverable,
   isReleasableClaim,
   listByStatus,
   releaseClaim,
+  replanFor,
   selectOrder,
   STALE_CLAIM_MINUTES,
 } from "../task/store.js"
@@ -111,22 +111,24 @@ export const claimSkipReason = (
 /** The entry WorkflowState for a task claimed from a pool. Pure. */
 const entryState = (loaded: LoadedManifest, pool: Pool, task: Task): WorkflowState => {
   const plan = extractPlan(task)
-  // The pending rejection reason threads into the entry state exactly as
-  // `planEntryState` (orchestrate.ts) does for the explicit `plan <id>` path.
-  // This builder serves the claim/watch path — the one most runs take — and
-  // omitting it here meant plan.md's {{#replan}} section silently never
-  // rendered on that path: the next PLAN pass re-planned blind to why the
-  // human rejected the last plan. Not gated on the entry stage: a stage that
-  // has no {{#replan}} section simply renders nothing, and gating would
-  // hardcode engineering's shape into a generic work source.
-  const replanReason = extractReplanReason(task)
+  // The pending rejection threads into the entry state exactly as
+  // `planEntryState` (orchestrate.ts) does for the explicit `plan <id>` path —
+  // both go through `replanFor`, so a reasonless rejection renders the same
+  // fallback on either path. This builder serves the claim/watch path — the
+  // one most runs take — and omitting it here meant plan.md's {{#replan}}
+  // section silently never rendered on that path: the next PLAN pass
+  // re-planned blind to why the human rejected the last plan. Not gated on
+  // the entry stage: a stage that has no {{#replan}} section simply renders
+  // nothing, and gating would hardcode engineering's shape into a generic
+  // work source.
+  const replan = replanFor(task)
   return {
     kind: loaded.manifest.kind,
     goal: taskGoal(task),
     stage: pool.entryStage,
     iteration: 0,
     artifacts: plan ? { plan } : {},
-    ...(replanReason ? { replan: { reason: replanReason } } : {}),
+    ...(replan ? { replan } : {}),
     task: { id: task.id, path: task.path, acceptance: task.acceptance },
   }
 }

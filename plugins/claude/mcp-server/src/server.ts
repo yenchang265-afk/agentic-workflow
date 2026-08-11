@@ -27,7 +27,7 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { resolveStageChecks } from "@agentic-workflow/core/workflow/discovered-checks"
+import { hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   concurrentStages,
   enabledWorkflowKinds,
@@ -237,6 +237,7 @@ let fanoutStage: string | null = null
  */
 const resetLoopScratch = (): void => {
   samples = []
+  checksInfo.clear() // per-run like the samples it annotates
   pending = null
   verdictRetried = false
   verdictRejected = null
@@ -248,6 +249,10 @@ const resetLoopScratch = (): void => {
 }
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
 let samples: StageSample[] = [] // per-run metrics
+// Check-command provenance per stage (this host runs one loop at a time), for
+// the stage's verdict sample and the once-per-run degradation note. Twin of
+// the OpenCode driver's `stageChecksInfo`.
+const checksInfo = new Map<string, { source: ChecksSource; ran: number; refused: number; detail: string; noted: boolean }>()
 let lastFireAt = Date.now()
 /**
  * Size of the prompt this server last handed out for a REAL fire, and how much a
@@ -1088,7 +1093,7 @@ const claimWarnings = async (): Promise<string[]> => {
  */
 const runStageChecks = async (state: WorkflowState, stage: string): Promise<WorkflowState> => {
   const dir = state.git?.worktree ?? directory
-  const { defs, warnings } = await resolveStageChecks({
+  const { defs, source, warnings } = await resolveStageChecks({
     $: sh,
     config,
     kind: activeManifest().manifest.kind,
@@ -1100,8 +1105,34 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
   })
   // Warn, never fail: a dropped or refused discovered check must leave the loop
   // exactly as it was before discovery existed, or a bad plan block becomes a
-  // stalled run.
+  // stalled run. But record the provenance durably (sample fields + the note
+  // below): the log line alone made a fully-refused fence indistinguishable,
+  // on disk, from a plan that never declared one.
   for (const w of warnings) await log("warn", `${stage}: ${w}`)
+  const prior = checksInfo.get(stage)
+  const info = {
+    source,
+    ran: defs.length,
+    refused: warnings.length,
+    detail: ((s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s))(warnings.join("; ")),
+    noted: prior?.noted ?? false,
+  }
+  checksInfo.set(stage, info)
+  // Once per run, only when the outcome would otherwise be silent: the plan
+  // carries an agentic-checks fence but its commands are not what will run.
+  if (!info.noted && state.task && hasChecksFence(state.artifacts.plan ?? "") && (source !== "discovered" || warnings.length > 0)) {
+    info.noted = true
+    await appendNote(
+      sh,
+      state.task,
+      auditNote(
+        `Discovered checks at ${stage.toUpperCase()}: ${defs.length} ran${info.detail ? `; ${info.detail}` : ` (source: ${source})`}`,
+        new Date(),
+        await gitActor(sh, directory),
+      ),
+      log,
+    )
+  }
   if (!defs.length) return state
   // The phase below runs BEFORE this call's own marker arming and claim restamp
   // (both follow in workflow_stage), on a claim stamp as old as the previous
@@ -1720,6 +1751,12 @@ server.registerTool(
             // Structured verdict mirror (redacted) — the cross-run "top recurring
             // findings" join key; the prose stays in the run log.
             ...verdictStructure(pending),
+            // Check-command provenance — on the stage's verdict row only, so a
+            // roll-up sums refusals once per stage firing.
+            ...(() => {
+              const info = checksInfo.get(stage)
+              return info ? { checksSource: info.source, ...(info.refused ? { checksRefused: info.refused } : {}) } : {}
+            })(),
           }
         : {}),
     })

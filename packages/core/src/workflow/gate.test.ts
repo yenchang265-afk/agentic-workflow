@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, retaskTask, shipTask, type GateCtx, type GateResult } from "./gate.js"
+import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -641,6 +641,109 @@ test("oneLineReason flattens a multi-line reason to the single audit-note line s
   assert.equal(oneLineReason("  already flat  "), "already flat")
   assert.equal(oneLineReason("   "), undefined)
   assert.equal(oneLineReason(undefined), undefined)
+})
+
+test("oneLineReason clamps an unbounded reason at REPLAN_REASON_MAX", () => {
+  // No writer upstream bounds the reason (the hub joins per-line comments, the
+  // CLI takes free text); the audit note is one line in a file humans read.
+  const long = "x".repeat(REPLAN_REASON_MAX + 500)
+  const clamped = oneLineReason(long)!
+  assert.equal(clamped.length, REPLAN_REASON_MAX + 1, "max chars plus the ellipsis")
+  assert.ok(clamped.endsWith("…"))
+  assert.equal(oneLineReason("x".repeat(REPLAN_REASON_MAX)), "x".repeat(REPLAN_REASON_MAX), "at the bound, untouched")
+})
+
+test("replanTask on a claim-held queued task echoes the unrecorded reason back", async () => {
+  // The refusal cannot record the reason (lost update against the live plan
+  // author) — but silently dropping it means the human's one copy dies with
+  // the toast and the revised plan is rejected for the same unstated thing.
+  const { ctx } = makeCtx({ "queued/t.md": task("Do it"), "queued/.claims/t": "" })
+  const r = await replanTask(ctx, "t", "cache must be size-keyed")
+  assert.equal(r.ok, false)
+  assert.match(!r.ok ? r.message : "", /NOT recorded — re-send it then: cache must be size-keyed/)
+  // A reasonless refusal has nothing to echo, and must not imply it dropped one.
+  const bare = await replanTask(ctx, "t")
+  assert.ok(!bare.ok && !bare.message.includes("NOT recorded"))
+})
+
+test("replanTask on a cap-stopped in-progress task fuses the stop digest into the rejection reason", async () => {
+  // runStop recorded WHAT each attempt failed on; the fusion is how that
+  // reaches the next PLAN pass's {{#replan}} instead of dying with the
+  // cleared snapshot. A plan-review replan has no stopped run — nothing fuses.
+  const stopped =
+    task("Do it", `${PLAN_HEADING}\n\n1. step`).replace(/\n$/, "") +
+    `\n\n> Run stopped — attempts: iteration 3 VERIFY FAIL: flaky auth test [2026-01-02T00:00:00.000Z by dev]\n`
+  const { ctx, log } = makeCtx({ "in-progress/t.md": stopped })
+  const r = await replanTask(ctx, "t", "plan assumed the wrong auth layer")
+  assert.equal(r.ok, true)
+  assert.ok(
+    log.some((c) => c.includes("re-planning — plan assumed the wrong auth layer — prior run: iteration 3 VERIFY FAIL: flaky auth test")),
+    `the rejection note carries reason + digest: ${log.filter((c) => c.includes("Plan rejected")).join(" | ")}`,
+  )
+
+  // Reasonless cap replan: the digest alone still threads.
+  const { ctx: ctx2, log: log2 } = makeCtx({ "in-progress/t.md": stopped })
+  const r2 = await replanTask(ctx2, "t")
+  assert.equal(r2.ok, true)
+  assert.ok(log2.some((c) => c.includes("re-planning — prior run: iteration 3 VERIFY FAIL: flaky auth test")))
+
+  // plan-review origin: same note shape, no fusion.
+  const parked = task("Do it", `${PLAN_HEADING}\n\n1. step`)
+  const { ctx: ctx3, log: log3 } = makeCtx({ "plan-review/t.md": parked })
+  const r3 = await replanTask(ctx3, "t", "wrong layer")
+  assert.equal(r3.ok, true)
+  assert.ok(log3.some((c) => c.includes("re-planning — wrong layer") && !c.includes("prior run:")))
+})
+
+test("approveTask refuses a draft that scans as carrying a secret", async () => {
+  // Parity with the hub editor's save screen: the authoring subagent writes
+  // with the host's raw Write tool, so the task gate is the one choke point
+  // every draft passes before its body rides into prompts and commits.
+  const body = `context\n\nuse ghp_${"a".repeat(36)} to auth`
+  const { ctx, fs, log } = makeCtx({ "draft/t.md": task("Do it", body) })
+  const r = await approveTask(ctx, "t")
+  assert.equal(r.ok, false)
+  assert.ok(!r.ok && r.variant === "warning")
+  assert.match(r.message, /github-token/)
+  assert.match(r.message, /retask/)
+  assert.ok("/repo/docs/tasks/draft/t.md" in fs, "the draft stays put")
+  assert.ok(!log.some((c) => c.startsWith("mv ")), "no move on a refusal")
+})
+
+test("approveTask notes a criteria-less draft on approval, and stays silent when criteria exist", async () => {
+  const { ctx } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await approveTask(ctx, "t")
+  assert.ok(r.ok && r.data.acceptanceMissing === true)
+  assert.match(r.message, /no acceptance criteria/)
+
+  const withCriteria = serializeTask({ title: "Do it", body: "context", acceptance: ["exit code 0"] })
+  const { ctx: ctx2 } = makeCtx({ "draft/t.md": withCriteria })
+  const r2 = await approveTask(ctx2, "t")
+  assert.ok(r2.ok && r2.data.acceptanceMissing === undefined)
+  assert.ok(!r2.message.includes("no acceptance criteria"))
+})
+
+test("approvePlan warns on a plan with no ### Verification, and on stacked plan headings", async () => {
+  // The park gate is the contract's only enforcement point and it is
+  // bypassable (hand-edits in plan-review/, workflow_move). Warn-only: this
+  // gate is kind-agnostic and a refusal would strand the task.
+  const noVerification = task("Do it", `${PLAN_HEADING}\n\n1. step`)
+  const { ctx } = makeCtx({ "plan-review/t.md": noVerification })
+  const r = await approvePlan(ctx, "t")
+  assert.ok(r.ok && Array.isArray(r.data.caveats))
+  assert.match(r.message, /no ### Verification/)
+
+  const stacked = task("Do it", `${PLAN_HEADING}\n\nold\n\n${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n- test: npm test`)
+  const { ctx: ctx2 } = makeCtx({ "plan-review/t.md": stacked })
+  const r2 = await approvePlan(ctx2, "t")
+  assert.ok(r2.ok)
+  assert.match(r2.message, /more than one/)
+
+  const clean = task("Do it", `${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n- test: npm test`)
+  const { ctx: ctx3 } = makeCtx({ "plan-review/t.md": clean })
+  const r3 = await approvePlan(ctx3, "t")
+  assert.ok(r3.ok && r3.data.caveats === undefined)
+  assert.ok(!r3.message.includes("Note:"), "a contract-clean plan approves without caveats")
 })
 
 // `replan <id> <reason>` used to detect the leading id with an exact filename match,

@@ -17,6 +17,10 @@ import {
   extractPlan,
   extractRunBranch,
   extractReplanReason,
+  extractStopContext,
+  NO_REASON_FALLBACK,
+  pendingPlanRejection,
+  replanFor,
   unaddressedRejectionCount,
   findByIdIn,
   hasPlan,
@@ -254,6 +258,61 @@ test("extractReplanReason reads the reason off a pending rejection note", () => 
 test("extractReplanReason returns undefined when the rejection carried no reason", () => {
   const body = `${PLAN_HEADING}\n\nOld approach.\n` + rejectionNote()
   assert.equal(extractReplanReason(task("a", 0, body)), undefined)
+})
+
+test("pendingPlanRejection distinguishes no-rejection / reasonless / reasoned", () => {
+  // The three-state answer the entry builders need: a reasonless rejection is
+  // still PENDING (it must render {{#replan}} with a fallback), which the
+  // reason-only extractor cannot express.
+  const none = `${PLAN_HEADING}\n\nApproach.\n`
+  assert.equal(pendingPlanRejection(task("a", 0, none)), undefined)
+  const bare = `${PLAN_HEADING}\n\nApproach.\n` + rejectionNote()
+  assert.deepEqual(pendingPlanRejection(task("a", 0, bare)), {})
+  const reasoned = `${PLAN_HEADING}\n\nApproach.\n` + rejectionNote("wrong layer")
+  assert.deepEqual(pendingPlanRejection(task("a", 0, reasoned)), { reason: "wrong layer" })
+})
+
+test("pendingPlanRejection retires with the same anchors as the reason extractor", () => {
+  const retired = `${PLAN_HEADING}\n\nOld.\n` + rejectionNote() + `\n> Plan written — parked for plan review [2026-01-03T00:00:00.000Z by dev]\n`
+  assert.equal(pendingPlanRejection(task("a", 0, retired)), undefined)
+  // A quoted, stamp-less rejection line is not lifecycle state.
+  const unstamped = `${PLAN_HEADING}\n\nOld.\n> Plan rejected — sent back to queued for re-planning\n`
+  assert.equal(pendingPlanRejection(task("a", 0, unstamped)), undefined)
+})
+
+// The exact note shape `runStop` writes for a non-transient stop with attempts
+// (see `stopContextNote`) — the digest `replanTask` fuses into the rejection
+// reason so a cap-tripped replan does not re-plan blind.
+const stopNote = (digest: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string => `\n> Run stopped — attempts: ${digest} [${stamp}]\n`
+
+test("extractStopContext reads the last stopped run's attempts digest", () => {
+  const digest = "iteration 1 VERIFY FAIL: 2 criteria unmet; iteration 2 REVIEW FAIL: unhandled error path"
+  const body = `${PLAN_HEADING}\n\nApproach.\n` + stopNote(digest)
+  assert.equal(extractStopContext(task("a", 0, body)), digest)
+})
+
+test("extractStopContext retires the digest once a newer plan addressed it", () => {
+  // Same anchors as pendingPlanRejection: a new heading or a `Plan written`
+  // park after the stop means the digest was planned against already.
+  const replaced = `${PLAN_HEADING}\n\nNew approach.\n` + stopNote("iteration 1 VERIFY FAIL: x", "2026-01-01T00:00:00.000Z by dev") + `\n> Plan written — parked for plan review [2026-01-02T00:00:00.000Z by dev]\n`
+  assert.equal(extractStopContext(task("a", 0, replaced)), undefined)
+})
+
+test("extractStopContext ignores an unstamped or digestless stop line", () => {
+  const unstamped = `${PLAN_HEADING}\n\nOld.\n> Run stopped — attempts: iteration 1 VERIFY FAIL: fake\n`
+  assert.equal(extractStopContext(task("a", 0, unstamped)), undefined)
+  const digestless = `${PLAN_HEADING}\n\nOld.\n\n> Run stopped for another reason [2026-01-02T00:00:00.000Z by dev]\n`
+  assert.equal(extractStopContext(task("a", 0, digestless)), undefined)
+})
+
+test("replanFor threads the reason, and falls back on a reasonless rejection", () => {
+  const reasoned = `${PLAN_HEADING}\n\nOld.\n` + rejectionNote("wrong layer")
+  assert.deepEqual(replanFor(task("a", 0, reasoned)), { reason: "wrong layer" })
+  // A bare `replan <id>` must still render the {{#replan}} section — the
+  // template has no inverted section, so the fallback must be a value.
+  const bare = `${PLAN_HEADING}\n\nOld.\n` + rejectionNote()
+  assert.deepEqual(replanFor(task("a", 0, bare)), { reason: NO_REASON_FALLBACK })
+  assert.equal(replanFor(task("a", 0, `${PLAN_HEADING}\n\nOld.\n`)), undefined)
 })
 
 test("extractReplanReason retires a reason once a newer plan heading follows it", () => {
