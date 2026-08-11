@@ -62,6 +62,23 @@ test("per-stage tool/file activity round-trips through the sidecar", () => {
   assert.deepEqual(parsed?.runs[0]?.samples[0]?.files, withActivity.samples[0]?.files)
 })
 
+test("check-command provenance round-trips, and its absence still parses (older sidecars)", () => {
+  const withProvenance: RunEntry = {
+    ...entry,
+    samples: [{ stage: "verify", iteration: 0, ms: 5_000, verdict: "PASS", checksSource: "discovered", checksRefused: 2 }],
+  }
+  const parsed = parseRunMetrics(appendRunMetrics(null, withProvenance))
+  assert.equal(parsed?.runs[0]?.samples[0]?.checksSource, "discovered")
+  assert.equal(parsed?.runs[0]?.samples[0]?.checksRefused, 2)
+  // A sidecar written before the fields existed must keep parsing — the
+  // schema-evolution rule the docstring above the schema states.
+  const older = { version: 1, runs: [{ endedAt: "t", detail: "", host: "opencode", samples: [{ stage: "verify", iteration: 0, ms: 1 }] }] }
+  assert.notEqual(parseRunMetrics(JSON.stringify(older)), null)
+  // Negative refusal counts fail closed like every other count.
+  const bad = { version: 1, runs: [{ endedAt: "t", detail: "", host: "opencode", samples: [{ stage: "verify", iteration: 0, ms: 1, checksRefused: -1 }] }] }
+  assert.equal(parseRunMetrics(JSON.stringify(bad)), null)
+})
+
 test("negative tool/file counts fail the schema closed", () => {
   const bad = {
     version: 1,

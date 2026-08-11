@@ -12,7 +12,7 @@ import { makeDependencyScanSource } from "../source/dependency-scan.js"
 import { makeGithubPrSource } from "../source/github-pr.js"
 import type { WorkSource } from "../source/types.js"
 import type { Task } from "../task/schema.js"
-import { extractPlan, extractReplanReason } from "../task/store.js"
+import { extractPlan, replanFor } from "../task/store.js"
 import type { Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 
@@ -43,7 +43,7 @@ export const buildEntryState = (task: Task): WorkflowState => resumeAtBuild(task
 /** PLAN-entry state for a queued (planless) task; a rejected plan and the
  *  human's rejection reason ride along so the next pass addresses them. Pure. */
 export const planEntryState = (task: Task): WorkflowState =>
-  startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task), extractReplanReason(task))
+  startAtPlan(taskGoal(task), taskRef(task, task.path), extractPlan(task), replanFor(task)?.reason)
 
 /**
  * A lazily-loading manifest cache keyed by workflow kind. Eager kinds (usually

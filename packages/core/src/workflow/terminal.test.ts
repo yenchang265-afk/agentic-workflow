@@ -173,6 +173,67 @@ test("park refuses a contract-flagged plan with no ### Verification subsection, 
   assert.equal(metrics[0]?.outcome, "error")
 })
 
+// A manifest whose check stage discovers its commands (only the fields the
+// park-time preview reads); no planContract, so the preview is tested apart
+// from the contract veto.
+const discoveryManifest = (): LoadedManifest =>
+  ({
+    manifest: {
+      kind: "engineering",
+      hooks: { validateBeforeTransition: {} },
+      stages: [
+        {
+          name: "verify",
+          kind: "check",
+          discoverChecks: true,
+          checks: [],
+          bashAllowlist: ["npm test*"],
+          platformAllowlist: {},
+        },
+      ],
+    },
+  }) as unknown as LoadedManifest
+
+const planWithFence = (checks: string): string =>
+  serializeTask({ title: "Do it", body: `${PLAN_HEADING}\n\n1. step\n\n### Verification\n\n\`\`\`agentic-checks\n${checks}\n\`\`\`` })
+
+test("park forecasts the discovered checks on the park note and message", async () => {
+  // The refusals used to surface only at VERIFY fire time as a log line —
+  // one gate too late for the human who is about to approve the plan.
+  const files = { "queued/t.md": planWithFence('[{ "name": "tests", "command": "npm test" }]') }
+  const { ctx, log } = makeCtx(files, planState(), { manifest: discoveryManifest() })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  assert.ok(report.kind === "park" && report.message.includes("discovered checks: 1 admitted for VERIFY"), `message carries the forecast: ${report.kind === "park" ? report.message : ""}`)
+  assert.ok(log.some((c) => c.includes("Plan written — parked for plan review — discovered checks: 1 admitted for VERIFY")), "the note carries it durably")
+})
+
+test("park warns loudly when the whole fence is inadmissible — NONE will run", async () => {
+  const files = { "queued/t.md": planWithFence('[{ "name": "lint", "command": "make lint" }]') }
+  const { ctx } = makeCtx(files, planState(), { manifest: discoveryManifest() })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park", "forecast only — design 18 forbids a park-time veto")
+  assert.ok(report.kind === "park" && report.message.includes("NONE admitted for VERIFY"))
+  assert.ok(report.kind === "park" && report.message.includes("not on this stage's bash allowlist"), "the reason is named, not just the count")
+})
+
+test("park on a fence-less plan says the consumer will run no machine checks", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), { manifest: discoveryManifest() })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  assert.ok(report.kind === "park" && report.message.includes("no agentic-checks block: VERIFY will run no machine-run checks"))
+  assert.ok(log.some((c) => c.includes("no agentic-checks block")))
+})
+
+test("park under a non-discovering kind writes the note exactly as before — no forecast", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState())
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  assert.ok(report.kind === "park" && report.message === park.message, "message untouched")
+  assert.ok(log.some((c) => c.includes("Plan written — parked for plan review [")), "note untouched (stamp follows the marker directly)")
+  assert.ok(!log.some((c) => c.includes("agentic-checks") && c.includes(">>")), "no forecast text")
+})
+
 test("park accepts a contract-flagged plan whose Verification heading varies in case and suffix", async () => {
   const planned = serializeTask({ title: "Do it", body: `${PLAN_HEADING}\n\n1. step\n\n### verification & testing\n\n- npm test` })
   const { ctx, log } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
@@ -349,6 +410,28 @@ test("stop annotates the task and leaves it in place (no move)", async () => {
   assert.ok(!log.some((c) => c.startsWith("mv ")), "a stopped task stays where it is")
   assert.equal(commits.length, 1)
   assert.deepEqual(metrics, [{ outcome: "stopped", detail: "Loop stopped at build." }])
+})
+
+test("a non-transient stop with attempts records the digest note; a retryable one does not", async () => {
+  // The snapshot holding `state.attempts` is cleared by the stop itself, and
+  // the replan the cap message recommends reads only the task file — without
+  // this note the next PLAN pass re-plans blind to what every attempt failed on.
+  const attempts = [
+    { stage: "verify", iteration: 0, verdict: "FAIL" as const, reason: "2 criteria unmet" },
+    { stage: "review", iteration: 1, verdict: "FAIL" as const, reason: "unhandled error path" },
+  ]
+  const state: WorkflowState = { goal: "Do it", stage: "verify", iteration: 2, artifacts: {}, task: taskRef("t", "in-progress"), attempts }
+  const { ctx, log } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  await runTerminal(ctx, stop)
+  assert.ok(
+    log.some((c) => c.includes("Run stopped — attempts: iteration 1 VERIFY FAIL: 2 criteria unmet; iteration 2 REVIEW FAIL: unhandled error path")),
+    `the digest note lands in the exact stopContextNote shape: ${log.filter((c) => c.includes("Run stopped")).join(" | ")}`,
+  )
+
+  // A flaky-environment stop's ledger is noise the next run does not need.
+  const { ctx: ctx2, log: log2 } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  await runTerminal(ctx2, { kind: "stop", message: "Loop stopped at build.", retryable: true })
+  assert.ok(!log2.some((c) => c.includes("Run stopped — attempts:")), "no digest on a retryable stop")
 })
 
 test("stop from a build/check stage releases the in-progress claim marker", async () => {

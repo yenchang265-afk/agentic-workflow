@@ -82,6 +82,10 @@ const MetricsSampleSchema = z.object({
   // prose; these are what a "top recurring findings" roll-up joins on.
   criteria: z.array(SampleCriterionSchema).readonly().optional(),
   axes: z.array(SampleAxisSchema).readonly().optional(),
+  // Check-stage command provenance (`ChecksSource`) + refused/dropped count —
+  // what a check-discovery success-rate roll-up joins on.
+  checksSource: z.string().optional(),
+  checksRefused: z.number().int().min(0).optional(),
 })
 
 const RunEntrySchema = z.object({

@@ -2,11 +2,14 @@ import type { ParsedRunLog, RunLogSummary, RunSummaryRow } from "@agentic-workfl
 import type { RunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import type {
   BurnBucket,
+  DiscoveryStats,
   FirstPassYield,
   IterationBurn,
   MetricsResponse,
+  PlanQualityStats,
   StageDuration,
 } from "../../shared/api.js"
+import { PARK_NO_PLAN_WHY, PARK_NO_VERIFICATION_WHY } from "@agentic-workflow/core/workflow/terminal"
 import { cacheHit, countInProgress } from "./cache.js"
 import { fanoutStats } from "./fanout.js"
 import { findingsStats } from "./findings.js"
@@ -188,8 +191,62 @@ export const aggregateMetrics = (
     tools: toolStats(inputs),
     ...stoppedSplit(inputs),
     findings: findingsStats(inputs),
+    plans: planStats(inputs),
+    discovery: discoveryStats(inputs),
     skippedRuns,
   }
+}
+
+/**
+ * Plan-quality signals from the sidecars. A `runs/<id>` file accumulates one
+ * entry per pass, so a rejected-then-replanned task shows as ≥2 entries with
+ * plan-stage samples in one file; a contract refusal is an `error` entry whose
+ * detail is the park gate's own refusal string (imported, not copied — see
+ * `PARK_NO_PLAN_WHY`). `capTripRate` stays the cap-side proxy; these are the
+ * plan gate's own numbers.
+ */
+const planStats = (inputs: readonly RunMetricsInput[]): PlanQualityStats => {
+  let runsWithPlanPass = 0
+  let replannedRuns = 0
+  let contractRefusals = 0
+  for (const input of inputs) {
+    const entries = input.sidecar?.runs ?? []
+    const planEntries = entries.filter((entry) => entry.samples.some((s) => s.stage === "plan")).length
+    if (planEntries > 0) runsWithPlanPass++
+    if (planEntries > 1) replannedRuns++
+    for (const entry of entries) {
+      if (entry.outcome !== "error" || !entry.detail) continue
+      if (entry.detail.startsWith(PARK_NO_PLAN_WHY) || entry.detail.startsWith(PARK_NO_VERIFICATION_WHY)) contractRefusals++
+    }
+  }
+  return { runsWithPlanPass, replannedRuns, replanRate: rate(replannedRuns, runsWithPlanPass), contractRefusals }
+}
+
+/**
+ * Check-command provenance across check-stage FIRINGS. A firing is one
+ * (entry × stage × iteration): under fan-out the OpenCode host stamps every
+ * pass's sample with the same provenance, so the first sample of each group
+ * wins and a lens fan-out is not counted N times.
+ */
+const discoveryStats = (inputs: readonly RunMetricsInput[]): DiscoveryStats => {
+  let checkStageFirings = 0
+  const bySource: Record<string, number> = {}
+  let refusedTotal = 0
+  for (const input of inputs) {
+    for (const [entryIdx, entry] of (input.sidecar?.runs ?? []).entries()) {
+      const seen = new Set<string>()
+      for (const sample of entry.samples) {
+        if (sample.checksSource === undefined) continue
+        const key = `${entryIdx}:${sample.stage}:${sample.iteration}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        checkStageFirings++
+        bySource[sample.checksSource] = (bySource[sample.checksSource] ?? 0) + 1
+        refusedTotal += sample.checksRefused ?? 0
+      }
+    }
+  }
+  return { checkStageFirings, bySource, refusedTotal }
 }
 
 /**

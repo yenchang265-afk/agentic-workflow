@@ -233,7 +233,20 @@ export const extractRunBranch = (task: Task): string | undefined => {
  * `AUDIT_NOTE_LINE_RE`'s closing stamp, so a plan merely quoting a rejection
  * line cannot inject a reason.
  */
-export const extractReplanReason = (task: Task): string | undefined => {
+export const extractReplanReason = (task: Task): string | undefined => pendingPlanRejection(task)?.reason
+
+/**
+ * The PENDING plan rejection, whether or not it carries a reason. Pure.
+ *
+ * Same anchor/stamp rules as `extractReplanReason` (which is just this
+ * function's `reason`), but a reasonless rejection — a bare `replan <id>` —
+ * returns `{}` rather than `undefined`. The distinction matters to the entry
+ * builders: a pending rejection with no reason still has to render plan.md's
+ * `{{#replan}}` section (with a fallback), or the next PLAN pass receives the
+ * prior plan labeled "superseded" with zero indication that it was rejected
+ * at all — the template language has no inverted section to say so itself.
+ */
+export const pendingPlanRejection = (task: Task): { readonly reason?: string } | undefined => {
   const idx = lastMarkerIndex(task.body, PLAN_REJECTED_MARKER)
   const addressed = Math.max(lastMarkerIndex(task.body, PLAN_HEADING), lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER))
   if (idx === -1 || idx < addressed) return undefined
@@ -241,12 +254,76 @@ export const extractReplanReason = (task: Task): string | undefined => {
   const line = task.body.slice(idx, end === -1 ? task.body.length : end)
   if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
   const from = line.indexOf(PLAN_REJECTED_REASON_PREFIX)
-  if (from === -1) return undefined
+  if (from === -1) return {}
   const reason = line
     .slice(from + PLAN_REJECTED_REASON_PREFIX.length)
     .replace(/\s*\[[^\]\n]+\]\s*$/, "")
     .trim()
-  return reason || undefined
+  return reason ? { reason } : {}
+}
+
+/**
+ * What a reasonless rejection threads into the next PLAN pass. A bare
+ * `replan <id>` records a pending rejection with no reason, and rendering
+ * NOTHING there hands the planner its prior plan marked "superseded" with zero
+ * indication it was rejected — the most likely outcome of which is the same
+ * plan resubmitted. The fallback must be a VALUE: the stage template language
+ * has no inverted section, so "render something when the reason is absent"
+ * cannot be expressed in plan.md itself.
+ */
+export const NO_REASON_FALLBACK =
+  "the plan was rejected at the gate with no stated reason — re-read the task, the prior plan, and the audit notes critically, and produce a materially different plan rather than re-submitting the same one"
+
+/** The `{{#replan}}` payload for a task, or `undefined` when no rejection is
+ *  pending. A pending rejection ALWAYS yields a reason (fallback text when the
+ *  human typed none). Shared by both PLAN-entry builders — the explicit
+ *  `plan <id>` path (`workflow/orchestrate.ts`) and the claim/watch path
+ *  (`source/backlog.ts`) — so the two cannot disagree on what a reasonless
+ *  rejection renders. Pure. */
+export const replanFor = (task: Task): { readonly reason: string } | undefined => {
+  const pending = pendingPlanRejection(task)
+  return pending ? { reason: pending.reason ?? NO_REASON_FALLBACK } : undefined
+}
+
+/**
+ * The audited note `runStop` appends when a run stops for a non-transient
+ * reason with attempts on its ledger (the iteration cap above all). The digest
+ * rides the TASK FILE because nothing else survives to the replan: `runStop`
+ * clears the state snapshot, and the run log/sidecar are not what `replan`
+ * reads — the same design-10 argument that put the rejection reason on an
+ * audit note. `stopContextNote` is the one formatter and `extractStopContext`
+ * its parser, paired here so writer and reader cannot drift.
+ */
+export const RUN_STOPPED_MARKER = "> Run stopped"
+const STOP_ATTEMPTS_PREFIX = "— attempts: "
+
+/** Format the stop-context note (see `RUN_STOPPED_MARKER`). Pure. */
+export const stopContextNote = (digest: string): string => `Run stopped ${STOP_ATTEMPTS_PREFIX}${digest}`
+
+/**
+ * The last stopped run's attempts digest, or `undefined` — pending only while
+ * no newer plan has addressed it, under the same anchors as
+ * `pendingPlanRejection` (the later of the last plan heading and the last
+ * `Plan written` park note), and only off a line carrying the audit stamp, so
+ * a plan merely quoting a stop note cannot inject one. `replanTask` fuses this
+ * into the rejection reason when it re-queues a cap-stopped in-progress task,
+ * which is how the next PLAN pass learns what every attempt kept failing on
+ * instead of re-planning blind. Pure.
+ */
+export const extractStopContext = (task: Task): string | undefined => {
+  const idx = lastMarkerIndex(task.body, RUN_STOPPED_MARKER)
+  const addressed = Math.max(lastMarkerIndex(task.body, PLAN_HEADING), lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER))
+  if (idx === -1 || idx < addressed) return undefined
+  const end = task.body.indexOf("\n", idx)
+  const line = task.body.slice(idx, end === -1 ? task.body.length : end)
+  if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
+  const from = line.indexOf(STOP_ATTEMPTS_PREFIX)
+  if (from === -1) return undefined
+  const digest = line
+    .slice(from + STOP_ATTEMPTS_PREFIX.length)
+    .replace(/\s*\[[^\]\n]+\]\s*$/, "")
+    .trim()
+  return digest || undefined
 }
 
 /**
@@ -1263,7 +1340,7 @@ export interface WriteLocation {
  * future in-plugin sync adapter — see docs/design/explore-task-fetch-and-pr-gating.md).
  * Needs an opencode `client` and Bun `$`, so it can't run as a plain terminal
  * command. For creating a task today, use `/agentic-workflow:engineering new <idea>` — the
- * `workflow-plan-author` subagent, which runs inside OpenCode; see the
+ * `workflow-task-author` subagent, which runs inside the host; see the
  * `task-backlog-management` skill. Serializes + validates via `buildTaskFile`,
  * picks a non-colliding filename against what's already in the folder, and
  * writes it. Returns the new task's id and absolute path.

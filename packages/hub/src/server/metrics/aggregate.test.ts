@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
+import type { RunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
+import { PARK_NO_VERIFICATION_WHY } from "@agentic-workflow/core/workflow/terminal"
 import { aggregateMetrics } from "./aggregate.js"
-import { row, runInput, summary } from "./fixtures.js"
+import { row, runInput, sample, summary } from "./fixtures.js"
 
 /**
  * The unit-of-analysis test, and the reason it comes first: one `runs/<id>.md`
@@ -149,4 +151,62 @@ test("aggregateMetrics passes skipped run ids through verbatim", () => {
   const m = aggregateMetrics([], ["unreadable-run"])
   assert.deepEqual(m.skippedRuns, ["unreadable-run"])
   assert.equal(m.runsTotal, 0)
+})
+
+// --- plan quality -----------------------------------------------------------
+
+/** A sidecar entry (one pass) with the given samples/fields. */
+const entryOf = (
+  samples: readonly RunMetrics["runs"][number]["samples"][number][],
+  over: Partial<Omit<RunMetrics["runs"][number], "samples">> = {},
+): RunMetrics["runs"][number] => ({
+  endedAt: "2026-07-05T13:16:25.138Z",
+  outcome: "done",
+  detail: "",
+  host: "opencode",
+  samples: [...samples],
+  ...over,
+})
+
+test("planStats counts replanned runs (two plan passes in one file) and contract refusals", () => {
+  const log = summary("done", [row(1, "plan", 1, "—", "1m 00s")])
+  const once: RunMetrics = { version: 1, runs: [entryOf([sample("plan")])] }
+  const twice: RunMetrics = { version: 1, runs: [entryOf([sample("plan")]), entryOf([sample("plan")]), entryOf([sample("build")])] }
+  const refused: RunMetrics = {
+    version: 1,
+    runs: [entryOf([sample("plan")], { outcome: "error", detail: `${PARK_NO_VERIFICATION_WHY} — returned to draft after 3 refusals` })],
+  }
+  const m = aggregateMetrics([runInput("a", log, once), runInput("b", log, twice), runInput("c", log, refused)], [])
+
+  assert.equal(m.plans.runsWithPlanPass, 3)
+  assert.equal(m.plans.replannedRuns, 1)
+  assert.equal(m.plans.replanRate, 1 / 3)
+  assert.equal(m.plans.contractRefusals, 1)
+})
+
+test("planStats is unmeasured (null rate) with no plan passes recorded", () => {
+  const m = aggregateMetrics([runInput("a", summary("done", [row(1, "build", 1, "—", "5s")]))], [])
+  assert.deepEqual(m.plans, { runsWithPlanPass: 0, replannedRuns: 0, replanRate: null, contractRefusals: 0 })
+})
+
+test("discoveryStats counts one firing per stage×iteration and sums refusals once", () => {
+  const log = summary("done", [row(1, "verify", 1, "PASS", "10s")])
+  // Two lens passes of one VERIFY firing carry the same provenance (the
+  // OpenCode host stamps every pass) — the firing must count once.
+  const sidecar: RunMetrics = {
+    version: 1,
+    runs: [
+      entryOf([
+        sample("verify", { lens: "correctness", checksSource: "discovered", checksRefused: 2 }),
+        sample("verify", { lens: "security", checksSource: "discovered", checksRefused: 2 }),
+        sample("verify", { iteration: 1, checksSource: "discovered" }),
+        sample("review", { checksSource: "none" }),
+      ]),
+    ],
+  }
+  const m = aggregateMetrics([runInput("a", log, sidecar)], [])
+
+  assert.equal(m.discovery.checkStageFirings, 3)
+  assert.deepEqual(m.discovery.bySource, { discovered: 2, none: 1 })
+  assert.equal(m.discovery.refusedTotal, 2)
 })
