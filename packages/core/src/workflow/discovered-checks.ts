@@ -41,11 +41,29 @@
  * which composes it), impure over the `Shell` port only.
  */
 
-import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef } from "../manifest/schema.js"
+import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef, type WorkflowManifest } from "../manifest/schema.js"
 import { commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isBareCd, splitSegments } from "../task/write-backstop.js"
 import { bashAllowlistExtras, checksFor, configuredChecks, discoverChecksFor, platformFor } from "../config.js"
 import type { Config } from "./state.js"
 import type { Shell } from "../host.js"
+
+/**
+ * The check stage that consumes a discovered `agentic-checks` block, if any —
+ * which is also what tells the plan-writing stage to emit one.
+ *
+ * A manifest-level question, not a stage-level one: the flag sits on the
+ * CONSUMER (verify) while the block has to be written by the PLAN stage, so
+ * `composeStagePrompt` cannot derive it from its `def` the way it derives
+ * `mode` and `visualize`. Exported (and re-exported by `engine.ts`, where it
+ * used to live) so the hub's creator preview asks the same question of its
+ * unsaved manifest — a preview that skipped it would render a plan prompt the
+ * loop does not send. Lives here beside the grammar so the park-time preview
+ * below cannot import it from `engine.ts`, which imports this module. `config`
+ * optional, and consulted only when given, so a config with nothing set
+ * composes byte-identically to none. Pure.
+ */
+export const discoveringStage = (manifest: WorkflowManifest, config?: Config): string | undefined =>
+  manifest.stages.find((s) => s.kind === "check" && (config ? discoverChecksFor(config, manifest.kind, s) : s.discoverChecks))?.name
 
 /** The fenced-block info string PLAN writes its discovered commands under. */
 export const CHECKS_FENCE = "agentic-checks"
@@ -373,6 +391,67 @@ export const resolvableChecks = async (
     else missing.push({ name: def.name, reason: `"${absent}" is not installed here` })
   }
   return { runnable, missing }
+}
+
+/**
+ * Whether the plan carries an `agentic-checks` fence at all. Needed because
+ * `parseDiscoveredChecks` returns `{defs: [], issues: []}` identically for "no
+ * fence" and for a valid empty block — and the two mean opposite things to a
+ * human reading a park note: "the plan declares no checks" versus "the block
+ * admitted nothing". Pure.
+ */
+export const hasChecksFence = (planText: string): boolean => [...planText.matchAll(FENCE_RE)].length > 0
+
+/** What the park-time preview tells the human about the plan's checks fence. */
+export interface ChecksPreview {
+  /** The check stage that will consume the block (e.g. "verify"). */
+  readonly consumer: string
+  readonly fencePresent: boolean
+  /** How many commands the consumer will actually run. */
+  readonly admitted: number
+  /** Parse issues + admission refusals, each naming its reason. */
+  readonly issues: readonly string[]
+}
+
+/**
+ * A PURE preview of what `resolveStageChecks` will decide at the consuming
+ * stage's fire time — computed at PLAN park so the refusals surface on the
+ * gate the human is already reading, not one gate too late in a `log("warn")`
+ * nobody watches. Deliberately NOT probing binaries (`resolvableChecks`): the
+ * park must never slow or fail on shell probes, and the park-time environment
+ * is the main tree while the checks will run in a not-yet-created worktree —
+ * a probe result here would be a lie about the consumer's environment.
+ *
+ * `null` when the preview has nothing to say: no discovering check stage, or
+ * config/manifest checks preempt discovery entirely (then the fence is
+ * irrelevant and a warning about it would be noise). The admission arguments
+ * are kept textually adjacent to `resolveStageChecks` below so the two cannot
+ * drift. Pure.
+ */
+export const previewDiscoveredChecks = (manifest: WorkflowManifest, config: Config, plan: string): ChecksPreview | null => {
+  // Tolerant of a partial manifest for the same reason runPark's stage lookup
+  // is (`stages?.find` there): a park must always reach its claim release,
+  // never crash out of runTerminal on a manifest/state mismatch.
+  if (!Array.isArray(manifest.stages)) return null
+  const consumer = discoveringStage(manifest, config)
+  if (!consumer) return null
+  const def = manifest.stages.find((s) => s.name === consumer)
+  if (!def) return null
+  if (configuredChecks(config, manifest.kind, def) || def.checks.length) return null
+  if (!hasChecksFence(plan)) return { consumer, fencePresent: false, admitted: 0, issues: [] }
+  const { defs, issues } = parseDiscoveredChecks(plan)
+  // Same allowlist + timeout arguments `resolveStageChecks` passes at fire time.
+  const { accepted, rejected } = admissibleChecks(
+    defs,
+    [...effectiveAllowlist(def, platformFor(config, manifest.kind)), ...bashAllowlistExtras(config)],
+    def.timeoutMinutes ?? config.stageTimeoutMinutes,
+  )
+  return {
+    consumer,
+    fencePresent: true,
+    admitted: accepted.length,
+    issues: [...issues, ...rejected.map((r) => `discovered check "${r.name}" refused: ${r.reason}`)],
+  }
 }
 
 /** Where a stage's check commands came from. */

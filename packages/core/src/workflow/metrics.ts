@@ -94,6 +94,15 @@ export interface StageSample {
   readonly criteria?: readonly SampleCriterion[]
   /** Per-axis findings from the pass's VerdictRecord (check stages only), redacted. */
   readonly axes?: readonly SampleAxis[]
+  /**
+   * Where this check stage's commands came from (`ChecksSource`) — check
+   * stages only. `resolveStageChecks` computed this all along and both hosts
+   * dropped it, which made "the plan declared checks and VERIFY silently ran
+   * none" indistinguishable on disk from "no checks were ever declared".
+   */
+  readonly checksSource?: string
+  /** How many declared checks were refused/dropped at resolution (warnings count). */
+  readonly checksRefused?: number
   /** Proof-of-work citations backing a PASS (check stages only), redacted. */
   readonly evidence?: readonly SampleEvidence[]
 }

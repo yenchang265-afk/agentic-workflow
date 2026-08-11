@@ -177,17 +177,26 @@ few. Every decision belongs in the plan, not in the build.
 ## Implementation Plan
 
 **Problem** — the concrete thing being fixed or built.
-**Non-goals** — what this deliberately does not touch.
 **Assumptions** — what you took as true without confirming.
 
 ### Steps
 1. `path/to/file.ts` — the change.
 2. …
 
-**Acceptance criteria** — mirroring or refining the task's own bullets.
+### Verification
+- <acceptance criterion> — the exact terminating command or observable check that proves it.
+
+### Out of Scope
+- What this deliberately does not touch, naming the nearest adjacent thing left alone.
+
 **Reuse** — `file:line` for each existing thing the steps build on.
 **Risks** — what could make this fail, and the early signal for each.
 ```
+
+The `### Verification` and `### Out of Scope` names are the loop's plan-contract
+vocabulary (the park gate refuses a plan without a `### Verification` heading) —
+use them verbatim, not synonyms like "Non-goals" or a freestanding "Acceptance
+criteria" section, so an in-loop plan and an ad-hoc one carry the same sections.
 
 Trim any part that would be a mere restatement. If the task cannot be planned as
 stated, say so plainly in the plan rather than inventing a scope that fits.
@@ -199,8 +208,9 @@ stated, say so plainly in the plan rather than inventing a scope that fits.
 
 - [ ] Every step names the files it touches and the change in each
 - [ ] Every acceptance criterion traces to at least one step
+- [ ] `### Verification` maps each acceptance criterion to a check that terminates with an exit code
 - [ ] Every reuse claim carries a `file:line`
-- [ ] Non-goals name what was deliberately left out
+- [ ] `### Out of Scope` names what was deliberately left out
 - [ ] On a replan, the plan states what the prior one got wrong
 - [ ] Nothing in the plan requires the builder to make a design decision
 

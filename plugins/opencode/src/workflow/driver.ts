@@ -114,7 +114,7 @@ import {
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
-import { resolveStageChecks } from "@agentic-workflow/core/workflow/discovered-checks"
+import { hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   EXPERIMENTAL_KINDS,
   concurrencyFor,
@@ -986,9 +986,9 @@ const runStageChecks = async (
   loaded: LoadedManifest,
   state: WorkflowState,
   stage: Stage,
-): Promise<WorkflowState> => {
+): Promise<{ state: WorkflowState; source: ChecksSource; ran: number; refused: number; detail: string }> => {
   const dir = workTree(deps, state)
-  const { defs, warnings } = await resolveStageChecks({
+  const { defs, source, warnings } = await resolveStageChecks({
     $: deps.$,
     config,
     kind: loaded.manifest.kind,
@@ -1000,9 +1000,13 @@ const runStageChecks = async (
   })
   // Warn, never fail: a dropped or refused discovered check must leave the loop
   // exactly as it was before discovery existed, or a bad plan block becomes a
-  // stalled run.
+  // stalled run. The provenance (`source`, refusal count) is returned so the
+  // drive records it durably — sample fields and, when the outcome would
+  // otherwise be silent, an audit note; the log line alone was invisible.
   for (const w of warnings) await deps.log("warn", `${stage}: ${w}`)
-  if (!defs.length) return state
+  const detail = ((s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s))(warnings.join("; "))
+  const provenance = { source, ran: defs.length, refused: warnings.length, detail }
+  if (!defs.length) return { state, ...provenance }
   // The phase below runs BEFORE this stage's marker write and claim restamp
   // (both sit between this call and the fire), on a claim stamp as old as the
   // previous stage's whole runtime — and sequential checks legally compound
@@ -1024,7 +1028,18 @@ const runStageChecks = async (
     if (r.outcome === "pass") continue
     await deps.log("warn", `${stage} check "${r.name}" exited ${r.exitCode} (${r.command})`)
   }
-  return withCheckResults(state, stage, results)
+  return { state: withCheckResults(state, stage, results), ...provenance }
+}
+
+/**
+ * Check-command provenance per driving session × stage, for the stage's
+ * samples and the once-per-run degradation note. Keyed like `runSamples`
+ * (driving session), plus the stage; cleaned up wherever `runSamples` is.
+ */
+const stageChecksInfo = new Map<string, { source: ChecksSource; ran: number; refused: number; detail: string; noted: boolean }>()
+
+const dropChecksInfo = (sessionID: string): void => {
+  for (const key of stageChecksInfo.keys()) if (key.startsWith(`${sessionID}:`)) stageChecksInfo.delete(key)
 }
 
 /**
@@ -1551,6 +1566,12 @@ export const runStagePasses = async (
         // Structured verdict mirror (redacted) — what a cross-run "top recurring
         // findings" roll-up joins on; the prose keeps living in the run log.
         ...(isCheck ? verdictStructure(passRecord) : {}),
+        // Check-command provenance (`resolveStageChecks` computed it all along;
+        // it was dropped) — what a check-discovery success roll-up joins on.
+        ...(() => {
+          const info = isCheck ? stageChecksInfo.get(`${sessionID}:${stage}`) : undefined
+          return info ? { checksSource: info.source, ...(info.refused ? { checksRefused: info.refused } : {}) } : {}
+        })(),
       })
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
       // terminal event finalizes the sidecar). Under the run lock: the flush is a
@@ -1756,6 +1777,7 @@ const renderMetrics = async (
 ): Promise<void> => {
   const samples = runSamples.get(sessionID) ?? []
   runSamples.delete(sessionID)
+  dropChecksInfo(sessionID) // per-run like the samples it annotates
   driftNoted.delete(sessionID) // the run is over — nothing left to dedupe against
   recordedBlocked.delete(sessionID) // ditto: no blocked signal may outlive its run
   // Under the run lock like every other per-run writer (the AGENTS.md rule):
@@ -1971,8 +1993,36 @@ const driveChain = async (
     // rather than as something it is asked to establish. No-op (and no
     // recompose) when the stage declares none.
     const checked = await runStageChecks(deps, config, loaded, step.state, step.action.stage)
-    if (checked !== step.state) {
-      step = firstStep(loaded, checked, config)
+    if (stageDef(loaded.manifest, step.action.stage).kind === "check") {
+      // Record the provenance for this stage's samples, and — ONCE per run,
+      // only when the outcome would otherwise be silent (the plan carries a
+      // fence but its commands are not what will run) — say so durably on the
+      // task file. A whole inadmissible block used to be indistinguishable, on
+      // disk, from a plan that never declared one.
+      const infoKey = `${sessionID}:${step.action.stage}`
+      const prior = stageChecksInfo.get(infoKey)
+      const info = { source: checked.source, ran: checked.ran, refused: checked.refused, detail: checked.detail, noted: prior?.noted ?? false }
+      stageChecksInfo.set(infoKey, info)
+      const silentDegradation = hasChecksFence(step.state.artifacts.plan ?? "") && (checked.source !== "discovered" || checked.refused > 0)
+      if (!info.noted && step.state.task && silentDegradation) {
+        info.noted = true
+        const cur = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", step.state.task.id)
+        if (cur) {
+          await appendNote(
+            deps.$,
+            cur,
+            auditNote(
+              `Discovered checks at ${step.action.stage.toUpperCase()}: ${checked.ran} ran${checked.detail ? `; ${checked.detail}` : ` (source: ${checked.source})`}`,
+              new Date(),
+              actor,
+            ),
+            deps.log,
+          )
+        }
+      }
+    }
+    if (checked.state !== step.state) {
+      step = firstStep(loaded, checked.state, config)
       if (step.action.kind !== "fire") break // same narrowing as above
     }
     const { stage, arguments: args } = step.action
@@ -2517,6 +2567,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       await teardownIsolation(deps, config, state)
     } else {
       runSamples.delete(sessionID)
+      dropChecksInfo(sessionID)
     }
     clearWorkflow(sessionID)
     await toast(deps.client, `Loop error: ${message}`, "error")

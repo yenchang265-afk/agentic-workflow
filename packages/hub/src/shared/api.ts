@@ -992,8 +992,38 @@ export interface MetricsResponse {
   readonly stoppedFinal: number
   /** Recurring review findings from the sidecars' structured verdicts. */
   readonly findings: FindingsStats
+  /** Plan-quality signals: replan rate and contract refusals. Sidecar population only. */
+  readonly plans: PlanQualityStats
+  /** Check-command provenance across check-stage firings (sidecar samples only). */
+  readonly discovery: DiscoveryStats
   /** Ids listed but unreadable — surfaced so a silent drop is visible in the UI. */
   readonly skippedRuns: readonly string[]
+}
+
+/**
+ * Plan-quality signals, from the sidecars. A run file accumulates one entry
+ * per pass, so "a task whose plan was rejected and re-planned" shows as two
+ * entries with plan-stage samples in one file.
+ */
+export interface PlanQualityStats {
+  /** Run files with at least one plan-stage pass in their sidecar. */
+  readonly runsWithPlanPass: number
+  /** Run files with two or more plan-stage passes — the plan was re-planned at least once. */
+  readonly replannedRuns: number
+  /** replannedRuns / runsWithPlanPass; null when no plan passes were recorded. */
+  readonly replanRate: number | null
+  /** PLAN parks the loop refused (no plan / no ### Verification) — the contract's own strike count. */
+  readonly contractRefusals: number
+}
+
+/** Where check stages' commands came from, across firings (stage × iteration). */
+export interface DiscoveryStats {
+  /** Check-stage firings whose sample carried provenance. */
+  readonly checkStageFirings: number
+  /** Firings per `ChecksSource` (config / manifest / discovered / none). */
+  readonly bySource: Readonly<Record<string, number>>
+  /** Total declared-but-refused/dropped commands across those firings. */
+  readonly refusedTotal: number
 }
 
 /** One monitored repo (from `--dir` / user-scope `hub.repos` resolution). */

@@ -2,7 +2,9 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, extractRunBranch, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, extractPlan, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { redact } from "../task/redact.js"
+import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { requestPlan } from "../task/plan-request.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
@@ -222,6 +224,29 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
       variant: "warning",
     }
   }
+  // Refuse a draft that scans as carrying a secret — the same `redact` screen
+  // the hub's task editor applies on save (routes/tasks.ts), which the
+  // authoring path has no equivalent of: the task-author subagent writes with
+  // the host's raw Write tool. The task gate is the one choke point every
+  // draft passes on its way into the loop, where its body starts riding into
+  // stage prompts, checkpoint commits, and possibly a PR. Gate verbs fail
+  // closed; the fix costs one retask.
+  const scan = redact(`${draft.title}\n${draft.body}`)
+  if (scan.hits.length > 0) {
+    return {
+      ok: false,
+      message: `Can't approve "${id}": the task looks like it contains a secret (${scan.hits.map((h) => h.pattern).join(", ")}) — remove it (retask ${id}), rotate the credential if it was real, then approve.`,
+      variant: "warning",
+    }
+  }
+  // Criteria-less tasks are legal (chores exist), so this is a NOTE, not a
+  // refusal — but an empty list means VERIFY has nothing objective to judge
+  // and the plan contract's `### Verification` has nothing to map, so the
+  // human deciding "approve" is the right person to see it.
+  const acceptanceNote =
+    draft.acceptance.length === 0
+      ? ` Note: it has no acceptance criteria — VERIFY will have nothing objective to check and the plan's ### Verification has nothing to map; use retask to add some if this task should have them.`
+      : ""
   const actor = await gitActor($, directory)
   const moved = await noteThenMove(ctx, draft, "queued", "Task approved — queued for planning", actor)
   if (!moved.ok) return moved.result
@@ -229,9 +254,16 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
   await commitBacklog($, directory, config, `loop(${id}): task approved — queued for planning`)
   return {
     ok: true,
-    message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
+    message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.${acceptanceNote}`,
     path: newPath,
-    data: { approved: true, gate: "task", id, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
+    data: {
+      approved: true,
+      gate: "task",
+      id,
+      path: newPath,
+      ...(acceptanceNote ? { acceptanceMissing: true } : {}),
+      next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage`,
+    },
   }
 }
 
@@ -487,6 +519,24 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
   // OpenCode toast and the Claude tool result), so it names the `replan` verb
   // generically rather than a host-specific command/tool.
   if (!hasPlan(task)) return { ok: false, message: `Task "${id}" has no Implementation Plan — send it back to planning with replan.`, variant: "warning" }
+  // The park gate (`runPark`) is the plan contract's only enforcement point,
+  // and it is bypassable: a plan hand-edited in plan-review/, or a task moved
+  // there by the low-level workflow_move, re-enters here unchecked. WARN, never
+  // refuse — this gate is kind-agnostic (GateCtx carries no manifest, so it
+  // cannot know whether the parked kind even demands a contract), and refusing
+  // would strand the task with no verb better than the replan the human just
+  // decided against. The caveats ride the success message the human is reading
+  // at the exact moment "approve anyway" is still their call.
+  const planText = extractPlan(task) ?? ""
+  const caveats = [
+    !hasVerificationSection(planText)
+      ? "the plan has no ### Verification subsection — the acceptance-criteria map is missing and no discovered checks will run"
+      : undefined,
+    planHeadingCount(task.body) > 1
+      ? "the body carries more than one ## Implementation Plan heading — superseded plan text remains in the task's prose"
+      : undefined,
+  ].filter((c): c is string => !!c)
+  const caveatNote = caveats.length > 0 ? ` Note: ${caveats.join("; ")}.` : ""
   const actor = await gitActor($, directory)
   const moved = await noteThenMove(ctx, task, "in-progress", "Plan approved — parked for execution", actor)
   if (!moved.ok) return moved.result
@@ -494,11 +544,27 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
   await commitBacklog($, directory, config, `loop(${id}): plan approved — parked for execution`)
   return {
     ok: true,
-    message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.`,
+    message: `Plan approved — "${task.title}" parked in ${config.tasksDir}/in-progress/ for execution.${caveatNote}`,
     path: newPath,
-    data: { approved: true, gate: "plan", id, path: newPath, next: `workflow_start with id "${id}", or workflow_claim` },
+    data: {
+      approved: true,
+      gate: "plan",
+      id,
+      path: newPath,
+      ...(caveats.length > 0 ? { caveats } : {}),
+      next: `workflow_start with id "${id}", or workflow_claim`,
+    },
   }
 }
+
+/**
+ * The most a rejection reason may carry onto its audit note. Generous — a
+ * fused hub review plus a prior run's attempt digest fits — but bounded: the
+ * note is ONE line in a file humans read, and no writer upstream bounds it
+ * (the hub joins per-line review comments, the CLI takes free text). This is
+ * the single choke point every writer passes through.
+ */
+export const REPLAN_REASON_MAX = 1200
 
 /**
  * A rejection reason flattened to one audit-note-safe line, or `undefined`.
@@ -506,11 +572,13 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
  * An audit note is a single `> …` line closed by a bracketed stamp; an embedded
  * newline breaks that shape — line 2 loses the `> ` prefix and the stamp
  * detaches — so neither the audit trail nor `extractReplanReason` (which
- * threads the reason into the next PLAN pass's prompt) can read it back. Pure.
+ * threads the reason into the next PLAN pass's prompt) can read it back.
+ * Clamped to `REPLAN_REASON_MAX` with a trailing ellipsis. Pure.
  */
 export const oneLineReason = (reason?: string): string | undefined => {
   const flat = reason?.replace(/\s+/g, " ").trim()
-  return flat || undefined
+  if (!flat) return undefined
+  return flat.length > REPLAN_REASON_MAX ? `${flat.slice(0, REPLAN_REASON_MAX)}…` : flat
 }
 
 /**
@@ -538,9 +606,16 @@ const replanQueued = async (ctx: GateCtx, task: Task, reason?: string): Promise<
   const id = task.id
   const held = await listClaimIds($, directory, config.tasksDir, "queued")
   if (held.includes(id)) {
+    // The typed reason is NOT recorded on this arm (appending to a file the
+    // live plan author is rewriting is a lost update), so echo it back —
+    // otherwise the human's one copy of it dies with this refusal and the
+    // revised plan gets rejected for the same unstated thing all over again.
+    const flat = oneLineReason(reason)
     return {
       ok: false,
-      message: `Task "${id}" is being planned right now — its revised plan will park in ${config.tasksDir}/plan-review/; replan that plan when it lands.`,
+      message:
+        `Task "${id}" is being planned right now — its revised plan will park in ${config.tasksDir}/plan-review/; replan that plan when it lands.` +
+        (flat ? ` Your reason was NOT recorded — re-send it then: ${flat}` : ""),
       variant: "info",
     }
   }
@@ -596,10 +671,20 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
     return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
   }
   const actor = await gitActor($, directory)
+  // A cap-stopped in-progress task carries the stopped run's attempts digest
+  // (`stopContextNote`, written by runStop) — fuse it into the rejection
+  // reason so the next PLAN pass plans against what every attempt kept failing
+  // on. Without this, everything the run learned dies at clearState and the
+  // human's typed reason is the only carrier — the archaeology design 10
+  // eliminated for gate rejections, back again for cap trips. plan-review
+  // tasks have no stopped run, so nothing fuses there.
+  const stopContext = statusFolder(task) === "in-progress" ? extractStopContext(task) : undefined
+  const fused = [oneLineReason(reason), stopContext ? `prior run: ${stopContext}` : undefined].filter(Boolean).join(" — ")
   // One formatter (`planRejectedNote`) for every rejection note — the park
   // gate's contract refusal writes the same shape, and `extractReplanReason`
   // parses it back; a hand-built copy here is how writer and parser drift.
-  const moved = await noteThenMove(ctx, task, "queued", planRejectedNote(oneLineReason(reason)), actor)
+  // Re-flattened so the fused whole respects the one-line clamp.
+  const moved = await noteThenMove(ctx, task, "queued", planRejectedNote(oneLineReason(fused)), actor)
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): plan rejected — re-queued for planning`)

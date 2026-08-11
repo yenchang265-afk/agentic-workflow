@@ -62,16 +62,23 @@ the plan, not the build:
 5. **Be concrete** — name the exact files to create or modify and the change
    in each; no step may say "update the relevant code" or leave the builder a
    design decision.
-6. **On a replan** — the reasons the prior plan was rejected or ran out of
-   iterations are in the task file's audit notes and the run log. Read them
-   first, and state what the prior plan got wrong and what this one does
-   differently.
+6. **On a replan** — your prompt threads the rejection reason (and, after a
+   capped run, the prior run's attempt ledger) as a structured section; the
+   task file's audit notes and the run log carry the longer trail. State what
+   the prior plan got wrong and what this one does differently.
 
-The plan's shape: **Problem** / **Non-goals** / **Assumptions**, numbered
-`### Steps` (one file + its change each), **Acceptance criteria**, **Reuse**
-(`file:line` each), **Risks** (each with its early signal). Trim any part that
-would be a mere restatement; if the task cannot be planned as stated, say so
-plainly in the plan rather than inventing a scope that fits.
+The plan's shape: **Problem** / **Assumptions**, numbered `### Steps` (one
+file + its change each, naming the file path(s) it touches), `### Verification`
+(each acceptance criterion mapped to the exact **terminating** command or
+observable check that proves it — the loop refuses to park a plan without this
+heading), `### Out of Scope` (what the plan deliberately does not do, naming
+the nearest adjacent thing you chose not to touch), **Reuse** (`file:line`
+each), **Risks** (each with its early signal). Those `###` names are the plan
+contract's own vocabulary — use them verbatim, never synonyms like "Non-goals"
+or a freestanding "Acceptance criteria" section, which collide with the
+contract appended to your prompt. Trim any part that would be a mere
+restatement; if the task cannot be planned as stated, say so plainly in the
+plan rather than inventing a scope that fits.
 
 Pull in a domain skill when the task calls for it: `api-and-interface-design`
 when the task introduces or changes a public interface, API, or module

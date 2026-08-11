@@ -6,8 +6,8 @@ import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
-import { contextFor, discoverChecksFor, planVisualizationFor, stagePasses } from "../config.js"
-import { checkDiscoveryBlock } from "./discovered-checks.js"
+import { contextFor, planVisualizationFor, stagePasses } from "../config.js"
+import { checkDiscoveryBlock, discoveringStage } from "./discovered-checks.js"
 import {
   planContractBlock,
   planVisualizationBlock,
@@ -307,21 +307,10 @@ export const promptContext = (
 const passMode = (passes: readonly StagePass[]): "single" | "axis" | "lens" =>
   passes.some((p) => p.mode === "axis") ? "axis" : passes.some((p) => p.mode === "lens") ? "lens" : "single"
 
-/**
- * The check stage that consumes a discovered `agentic-checks` block, if any —
- * which is also what tells the plan-writing stage to emit one.
- *
- * A manifest-level question, not a stage-level one: the flag sits on the
- * CONSUMER (verify) while the block has to be written by the PLAN stage, so
- * `composeStagePrompt` cannot derive it from its `def` the way it derives
- * `mode` and `visualize`. Exported so the hub's creator preview asks the same
- * question of its unsaved manifest — a preview that skipped it would render a
- * plan prompt the loop does not send. `config` optional, and consulted only
- * when given, so a config with nothing set composes byte-identically to none.
- * Pure.
- */
-export const discoveringStage = (manifest: WorkflowManifest, config?: Config): string | undefined =>
-  manifest.stages.find((s) => s.kind === "check" && (config ? discoverChecksFor(config, manifest.kind, s) : s.discoverChecks))?.name
+// Moved to discovered-checks.ts (beside the grammar it belongs to, and so the
+// park-time preview there can use it without a cycle); re-exported to keep
+// every existing import site — the hub's creator preview included — compiling.
+export { discoveringStage }
 
 export const composeStagePrompt = (
   def: StageDef,
