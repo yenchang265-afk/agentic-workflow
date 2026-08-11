@@ -321,6 +321,12 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
       } catch (err) {
         moveError = (err as Error).message
         await log("warn", `loop done but task move failed: ${moveError}`)
+        // Correct the note, the way runPark and gate.ts's noteThenMove do: the
+        // done note above is already on disk asserting a park that never
+        // happened — and it names the branch, which is exactly the line the
+        // ship gate's `extractRunBranch` reads back. Left standing alone, the
+        // backlog claims a completed run for a task still in in-progress/.
+        await appendNote($, cur, auditNote(`Park to in-review/ failed — ${moveError}; still in-progress`, new Date(), actor), log)
         // moveTask releases the claim only on success — release it here or the
         // marker wedges (the orphan sweep refuses bodies carrying a BUILD note,
         // and the body's BUILD note already blocks a redundant auto re-claim).

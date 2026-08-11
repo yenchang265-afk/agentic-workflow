@@ -17,7 +17,7 @@ import type { Client, Log, Shell } from "../host.js"
 import { AUDIT_NOTE_LINE_RE, auditTailIndex, lastMarkerIndex, PLAN_HEADING } from "./plan-section.js"
 import { revokePlanRequestAt, strayPlanRequestIds } from "./plan-request.js"
 import { redact } from "./redact.js"
-import { buildTaskFile, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
+import { buildTaskFile, isEpicType, isPaired, isSafeTaskId, parseTask, serializeTask, SHORT_ID_RE, shortIdOf, type Task, type TaskInput } from "./schema.js"
 
 export { PLAN_HEADING } from "./plan-section.js"
 
@@ -59,7 +59,7 @@ export const selectNext = (tasks: readonly Task[]): Task | null => selectOrder(t
  * Pure.
  */
 export const epicSiblings = (tasks: readonly Task[], epic: string | undefined, exceptId: string): Task[] =>
-  epic ? selectOrder(tasks.filter((t) => t.epic === epic && t.id !== exceptId && t.type !== "epic")) : []
+  epic ? selectOrder(tasks.filter((t) => t.epic === epic && t.id !== exceptId && !isEpicType(t.type))) : []
 
 /**
  * The audited note a host appends to the task file — on the human-visible
@@ -423,7 +423,7 @@ export const summarizeBacklog = (
   const held = new Set(claimedIds)
   return {
     counts,
-    awaitingTask: ids((byStatus["draft"] ?? []).filter((t) => t.type !== "epic")),
+    awaitingTask: ids((byStatus["draft"] ?? []).filter((t) => !isEpicType(t.type))),
     awaitingPlan: ids(byStatus["queued"] ?? []),
     gated: ids((byStatus["plan-review"] ?? []).filter(hasPlan)),
     claimable: ids(inProgress.filter((t) => isClaimable(t) && !held.has(t.id))),
@@ -474,7 +474,11 @@ export const listByStatus = async (
   const tasks: Task[] = []
   for (const node of nodes) {
     if (node.type !== "file" || !isMarkdown(node.name)) continue
-    const read = await client.file.read({ query: { path: node.path, directory } })
+    // Guarded like every other client read in core: a file `mv`d between the
+    // list above and this read — which moveTask produces constantly — REJECTS
+    // on some clients, and unguarded that turned a poll tick or an id-less
+    // approve into a thrown exception instead of the documented skip.
+    const read = await client.file.read({ query: { path: node.path, directory } }).catch(() => ({ data: null }))
     const content = read.data?.content
     if (!content) {
       // Never a SILENT skip: an empty task file is otherwise a perfect ghost —
@@ -647,9 +651,12 @@ export const releaseClaim = ($: Shell, task: FileRef, log?: Log): Promise<void> 
 
 /**
  * Claim a task, atomically sweeping a stale leftover marker first (rename-aside
- * — see `acquireOrSweepMarker`). `minutes: 0` is an unconditional takeover for
- * callers that have already established the holder is dead (e.g. `recover`
- * after the liveness checks). False when the marker is fresh or a rival won.
+ * — see `acquireOrSweepMarker`). Never pass `minutes: 0`: a zero window
+ * degrades the rename-aside's re-judge to a bare existence test, so a rival's
+ * fresh claim created inside the rename window is deleted instead of restored
+ * (see `releaseMarkerIfStale`'s doc). A caller with evidence the holder is
+ * dead wants `claimTaskSweepingDeadWriter`, whose identity judge re-judges
+ * soundly. False when the marker is fresh or a rival won.
  */
 export const claimTaskSweepingStale = ($: Shell, task: FileRef, minutes: number, now: Date = new Date()): Promise<boolean> =>
   acquireOrSweepMarker($, claimMarker(task), minutes, now)

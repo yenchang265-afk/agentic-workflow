@@ -2596,7 +2596,7 @@ server.registerTool(
         return fail(`Task "${id}" is being driven by a live ${liveHost} loop (fresh stage marker) — stop that loop first, or wait out its stage deadline.`)
       }
       // Two independent forms of crash evidence, either of which authorizes an
-      // immediate (`minutes: 0`) takeover:
+      // immediate takeover:
       //
       //  - a DEAD stage marker naming the task — a run reached a stage and its
       //    writer died;
@@ -2613,12 +2613,18 @@ server.registerTool(
       const namedByMarker = await taskNamedByStageMarker(sh, directory, config.tasksDir, id)
       // Skipped when the marker already settled it — the probe costs subprocesses.
       const writer = namedByMarker ? "unknown" : await claimWriterState(sh, t)
-      // The dead-writer arm takes the IDENTITY-judged sweep, not `…Stale(t, 0)`:
-      // a zero age window cannot re-judge what the rename caught (see
-      // `releaseMarkerIfWriterDead`). The stage-marker arm keeps its existing
-      // zero-window path — its evidence is the marker, not the stamp.
+      // Both crash arms take the IDENTITY-judged sweep, never `…Stale(t, 0)`: a
+      // zero age window cannot re-judge what the rename caught (see
+      // `releaseMarkerIfWriterDead`), so it deletes a rival's fresh claim
+      // created inside the rename window — the double-drive the rename-aside
+      // exists to stop. The stage-marker arm's evidence says the OLD run died;
+      // it says nothing about who holds the claim NOW, which is what the
+      // re-judge answers. When the identity judge cannot decide (an unstamped
+      // pre-stamp marker, another machine), fall back to the wall-clock window
+      // rather than an unconditional sweep — the safe direction is a wait, not
+      // a second drive on one feature/<id> branch.
       tookClaim = namedByMarker
-        ? await claimTaskSweepingStale(sh, t, 0)
+        ? (await claimTaskSweepingDeadWriter(sh, t)) || (await claimTaskSweepingStale(sh, t, STALE_CLAIM_MINUTES))
         : writer === "dead"
           ? await claimTaskSweepingDeadWriter(sh, t)
           : await claimTaskSweepingStale(sh, t, STALE_CLAIM_MINUTES)

@@ -179,6 +179,23 @@ test("admissibleChecks refuses a command with no runnable segment — a bare cd 
   assert.equal(admissibleChecks([{ name: "web", command: "cd packages/web && npm test" }], VERIFY_GLOBS, CAP).accepted.length, 1)
 })
 
+test("admissibleChecks refuses a command whose cd climbs out of the work tree", () => {
+  // The same escape the cwd rule below closes, via the command instead:
+  // `commandAllowed` must accept a bare `cd` (the sanctioned compound form),
+  // so without its own screen `cd ../.. && npm test` runs OUTSIDE the tree the
+  // consuming stage's own agent is pinned to — repo-authored commands past the
+  // module's stated trust boundary.
+  for (const command of ["cd ../.. && npm test", "cd .. && npm test", "cd /etc && npm test", "cd ~ && npm test", "cd packages/../.. && npm test", 'cd "../x" && npm test']) {
+    const { accepted, rejected } = admissibleChecks([{ name: "climb", command }], VERIFY_GLOBS, CAP)
+    assert.deepEqual(accepted, [], `${command} must not be admitted`)
+    assert.match(rejected[0]?.reason ?? "", /leave the work tree/, command)
+  }
+  // The forms this rule must NOT catch: in-tree cds, and dots that are not `..`.
+  for (const command of ["cd packages/web && npm test", "cd ./web && npm test", "cd a.b/c.d && npm test"]) {
+    assert.equal(admissibleChecks([{ name: "web", command }], VERIFY_GLOBS, CAP).accepted.length, 1, `${command} is safe`)
+  }
+})
+
 test("admissibleChecks refuses a cwd that escapes the work tree — runChecks joins it naively", () => {
   // `..` is the whole point: `.` is legal in a directory name, so a character
   // class alone matches `..` and the naive join walks out of the work tree.

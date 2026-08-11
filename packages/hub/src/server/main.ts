@@ -189,7 +189,26 @@ const routes: Route[] = [
   { method: "POST", pattern: "/api/plan-request", handler: scoped(postPlanRequest), mutating: true },
   { method: "POST", pattern: "/api/plan-request/cancel", handler: scoped(postPlanRequestCancel), mutating: true },
   { method: "GET", pattern: "/api/config", handler: scoped(getConfig) },
-  { method: "POST", pattern: "/api/config", handler: scoped(saveConfig), mutating: true },
+  {
+    method: "POST",
+    pattern: "/api/config",
+    // Wiring, not logic: saveConfig reloads the repo it was scoped to, but a
+    // USER-layer save merges under EVERY repo's config and the file lives
+    // outside every watched tree — no watcher reloads the siblings or emits the
+    // `config` event that tells clients to refetch. Do both here, where the
+    // registry and the event hub exist.
+    handler: async (req) => {
+      const repo = pickRepo(req)
+      if (!repo) return badRequest(`unknown repo ${req.query.get("repo")}`)
+      const res = await saveConfig(repo.deps, req)
+      if (res.status === 200 && (req.body as { layer?: string } | undefined)?.layer === "user") {
+        for (const r of registry.repos) if (r !== repo) await r.reload()
+        events.broadcast(registry.repos.map((r) => ({ type: "config" as const, repo: r.id })))
+      }
+      return res
+    },
+    mutating: true,
+  },
   { method: "GET", pattern: "/api/doctor", handler: scoped((deps) => getDoctor(deps)) },
   { method: "POST", pattern: "/api/doctor/fix", handler: scoped((deps) => postDoctorFix(deps)), mutating: true },
 ]

@@ -20,18 +20,24 @@ export const defaultProjectsDir = (): string => path.join(os.homedir(), ".claude
 
 // Keyed by transcript path — bounded only by transcript count, which grows for
 // the life of the hub. FIFO-evict past a cap; an evicted hot file just re-parses.
+// Invalidated on size AND mtime: size alone served a rotated/rewritten transcript
+// of identical byte length stale for the life of the process (opencodedb.ts
+// already keys its cache the stronger way).
 const CACHE_CAP = 256
-const cache = new Map<string, { size: number; records: UsageRecord[] }>()
+const cache = new Map<string, { size: number; mtimeMs: number; records: UsageRecord[] }>()
 
 const readFileRecords = async (file: string): Promise<UsageRecord[]> => {
   let size: number
+  let mtimeMs: number
   try {
-    size = (await fsp.stat(file)).size
+    const st = await fsp.stat(file)
+    size = st.size
+    mtimeMs = st.mtimeMs
   } catch {
     return []
   }
   const cached = cache.get(file)
-  if (cached && cached.size === size) return cached.records
+  if (cached && cached.size === size && cached.mtimeMs === mtimeMs) return cached.records
 
   const records: UsageRecord[] = []
   const stream = fs.createReadStream(file, { encoding: "utf8" })
@@ -76,7 +82,7 @@ const readFileRecords = async (file: string): Promise<UsageRecord[]> => {
     const oldest = cache.keys().next().value
     if (oldest !== undefined) cache.delete(oldest)
   }
-  cache.set(file, { size, records })
+  cache.set(file, { size, mtimeMs, records })
   return records
 }
 

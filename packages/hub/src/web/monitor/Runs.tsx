@@ -89,12 +89,15 @@ const runningFor = (startedAt?: string): string => {
 const RunDetail = ({ id }: { id: string }) => {
   const { repoId } = useRepo()
   const { versions } = useEvents()
-  // `versions.tokens` too: live per-stage flushes rewrite the sidecar and emit
-  // `tokens` (deliberately not `run`, which collapses the whole panel) — the
-  // timeline and live strip come from that same sidecar.
+  // `versions.run` AND `versions.tokens`: the detail joins the run LOG
+  // (`runs/<id>.md` → `run` events) and the state snapshot (`active` events)
+  // with the sidecar's stages (per-stage flushes emit `tokens`). It refetched on
+  // tokens alone for a while, so a live run's appended log sections and snapshot
+  // pane went stale between sidecar flushes.
   const { data: detail, error } = useResource<RunDetailResponse>(repoPath(`/api/runs/${encodeURIComponent(id)}`, repoId), [
     id,
     repoId,
+    versions.run,
     versions.tokens,
   ])
 

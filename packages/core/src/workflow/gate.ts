@@ -1,7 +1,7 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
-import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
+import { isEpicType, isSafeTaskId, parseTask, type Task } from "../task/schema.js"
 import { appendNote, auditNote, epicSiblings, extractRunBranch, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { requestPlan } from "../task/plan-request.js"
@@ -287,7 +287,7 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
   }
   // A tracking epic is never approved — it only orders its child slices;
   // queuing it would have the loop plan/build the tracking file itself.
-  if (draft.type === "epic") {
+  if (isEpicType(draft.type)) {
     return {
       ok: false,
       message: `Can't approve "${id}": it is a tracking epic — approve its child slices instead, and close the epic by hand once every child has shipped.`,
@@ -885,7 +885,7 @@ export const resolveGateTask = async (
  */
 export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
-  const pick = await resolveGateTask(ctx, id, tiers, (t) => t.type === "epic")
+  const pick = await resolveGateTask(ctx, id, tiers, (t) => isEpicType(t.type))
   if (!pick.ok) {
     if (pick.kind === "none") return { ok: false, message: "Nothing awaiting approval.", variant: "info" }
     // The ambiguity is the one refusal a host may act on rather than merely

@@ -1,4 +1,4 @@
-import { useSyncExternalStore, type ReactNode } from "react"
+import { useMemo, useSyncExternalStore, type ReactNode } from "react"
 import { parseHash, type Route } from "./route.js"
 
 /**
@@ -22,7 +22,13 @@ const subscribe = (onChange: () => void): (() => void) => {
 
 const snapshot = (): string => window.location.hash
 
-export const useRoute = (): Route => parseHash(useSyncExternalStore(subscribe, snapshot, () => "#/"))
+export const useRoute = (): Route => {
+  const hash = useSyncExternalStore(subscribe, snapshot, () => "#/")
+  // Memoized on the raw hash so the returned Route is referentially stable
+  // across unrelated re-renders — a fresh object per call made every effect
+  // keyed on `route` fire on every render of its component.
+  return useMemo(() => parseHash(hash), [hash])
+}
 
 /**
  * Go to a hash. `replace` rewrites the current entry instead of pushing one —

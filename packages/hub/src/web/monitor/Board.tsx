@@ -1,3 +1,4 @@
+import { isEpicType } from "@agentic-workflow/core/task/schema"
 import type { ActiveResponse, BacklogResponse, KindBoardInfo, StageMarker, TaskCard } from "../../shared/api.js"
 import { useEvents } from "../events.js"
 import { timeAgo } from "../metrics/format.js"
@@ -106,7 +107,7 @@ const TaskCardView = ({
     </div>
     {/* An epic only orders its child slices — approving it would have the loop
         plan the tracking file itself, which core refuses. Don't offer it. */}
-    {task.type !== "epic" && (
+    {!isEpicType(task.type) && (
       <GateActions task={task} status={status} kind={kind} claimed={claimed} planRequested={planRequested} />
     )}
   </Card>
@@ -143,7 +144,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
   // Tracking epics are never approvable (no GateActions render for them, see
   // TaskCardView), so they must not inflate "N awaiting your review".
   const gateCount = data.gateStatuses.reduce(
-    (n, status) => n + (data.tasks[status]?.filter((t) => t.type !== "epic").length ?? 0),
+    (n, status) => n + (data.tasks[status]?.filter((t) => !isEpicType(t.type)).length ?? 0),
     0,
   )
   const claimed = new Set(data.claimedIds)
@@ -193,7 +194,7 @@ export const Board = ({ info }: { info: KindBoardInfo }) => {
                 <TaskCardView
                   key={t.id}
                   task={t}
-                  gated={gate && t.type !== "epic"}
+                  gated={gate && !isEpicType(t.type)}
                   claimed={claimed.has(t.id)}
                   claimedAt={data.claimStamps?.[t.id]}
                   staleMinutes={data.staleClaimMinutes}

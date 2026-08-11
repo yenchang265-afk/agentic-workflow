@@ -31,3 +31,13 @@ test("renderPrompt drops empty sections and joins survivors with a blank line", 
 test("a --- separator must sit on its own line — inline dashes stay literal", () => {
   assert.equal(renderPrompt("a --- b", {}), "a --- b")
 })
+
+test("a block body containing replacement patterns renders verbatim", () => {
+  // The block splice used to go through String.replace with the body as the
+  // replacement STRING, so `$&`/`$'`/`$1` were interpreted: shell in a prompt
+  // (`awk '{print $1}'`) was rewritten, and a body that was pure `$&` made the
+  // replace a no-op whose unchanged markers rode into the composed prompt.
+  assert.equal(renderSection("{{#a}}awk '{print $1}'{{/a}}", { a: "v" }), "awk '{print $1}'")
+  assert.equal(renderSection("{{#a}}$&{{/a}} tail", { a: "v" }), "$& tail")
+  assert.equal(renderSection("{{#a}}$'{{/a}}", { a: "v" }), "$'")
+})
