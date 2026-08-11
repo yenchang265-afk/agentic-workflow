@@ -28,6 +28,11 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml"
  * | `tracker`    | Issue Key + link  | Work Item ID + link    |
  *
  * Everything past `title` is optional, so pre-existing task files still parse.
+ *
+ * `epic` is the one optional field with no tracker twin: it names a LOCAL task
+ * file (the slice set's tracking epic), where `tracker.parent` names an item in
+ * someone else's system. Keep them apart — a gate that resolved siblings through
+ * `tracker.parent` would follow a link off this backlog entirely.
  */
 
 /** The project-management trackers a task can be paired to. */
@@ -93,6 +98,22 @@ export const TaskFrontmatterSchema = z.object({
    */
   type: z.string().min(1).optional(),
   /**
+   * The id of the `type: epic` tracking task this one is a slice of — set on
+   * every child of a slice set, absent on a standalone task.
+   *
+   * It is the only STRUCTURED link between siblings, and the gates need one: an
+   * id-less `approve` labels its candidates with it, and a task gate uses it to
+   * name the next un-approved slice. The body's `Part of epic:` line is the
+   * human-readable half and stays, but nothing may be derived from that — it is
+   * LLM-authored prose and drifts with the prompt that writes it.
+   *
+   * Purely descriptive: it orders nothing and blocks nothing (`priority` and the
+   * human's own approvals do that). A dangling id — the epic abandoned, the
+   * child hand-written — is a normal state, so nothing validates it resolves.
+   * Optional.
+   */
+  epic: z.string().min(1).optional(),
+  /**
    * Selection order — lower runs first. Defaults to 0. This is the loop's own
    * scheduling knob and is a plain integer, not the tracker's named priority
    * (Jira Highest…Lowest, ADO 1–4); map by hand when pairing.
@@ -117,6 +138,8 @@ export interface Task {
   readonly id: string
   readonly title: string
   readonly type?: string
+  /** The tracking epic this task is a slice of, when it is one. */
+  readonly epic?: string
   readonly priority: number
   readonly estimate?: number
   readonly assignee?: string
@@ -251,6 +274,7 @@ export const parseTask = (filename: string, content: string, path: string): Task
     id: taskId(filename),
     title: fm.title,
     type: fm.type,
+    epic: fm.epic,
     priority: fm.priority,
     estimate: fm.estimate,
     assignee: fm.assignee,
@@ -268,6 +292,7 @@ export const parseTask = (filename: string, content: string, path: string): Task
 export interface TaskInput {
   readonly title: string
   readonly type?: string
+  readonly epic?: string
   readonly priority?: number
   readonly estimate?: number
   readonly assignee?: string
@@ -288,6 +313,7 @@ export interface TaskInput {
 export const taskToInput = (task: Task): TaskInput => ({
   title: task.title,
   type: task.type,
+  epic: task.epic,
   priority: task.priority,
   estimate: task.estimate,
   assignee: task.assignee,
@@ -352,6 +378,7 @@ export const serializeTask = (input: TaskInput): string => {
   const fm = TaskFrontmatterSchema.parse({
     title: input.title,
     type: input.type,
+    epic: input.epic,
     priority: input.priority,
     estimate: input.estimate,
     assignee: input.assignee,
@@ -362,6 +389,7 @@ export const serializeTask = (input: TaskInput): string => {
   // Emit title/priority/acceptance always; the rest only when meaningful.
   const out: Record<string, unknown> = { title: fm.title }
   if (fm.type !== undefined) out.type = fm.type
+  if (fm.epic !== undefined) out.epic = fm.epic
   out.priority = fm.priority
   if (fm.estimate !== undefined) out.estimate = fm.estimate
   if (fm.assignee !== undefined) out.assignee = fm.assignee

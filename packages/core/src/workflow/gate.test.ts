@@ -8,10 +8,11 @@ import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejec
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
  * models `cat`/`mv` over a file map (the id-based ops need only those); git
- * commands report "no branch/actor" so ship attempts no PR. The no-id
- * `resolveGateTask` path — tier priority, the draft fallback, and the epic skip
- * — is covered end-to-end by the OpenCode driver tests, which back the fake
- * client's directory listing with a real file map.
+ * commands report "no branch/actor" so ship attempts no PR. The fake client's
+ * directory listing is backed by the SAME map, so the no-id `resolveGateTask`
+ * path — tier priority, the draft fallback, the epic skip and the candidate
+ * payload — is exercised here too; the OpenCode driver tests cover it again
+ * end-to-end through the host seam.
  */
 const makeCtx = (
   files: Record<string, string>,
@@ -70,10 +71,23 @@ const makeCtx = (
     return chain
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
   }) as any
+  // Directory listing over the same map `$` mutates, so a task moved by an
+  // earlier gate op is immediately absent from the folder it left — which is
+  // what makes "the slice just approved is not its own successor" testable.
+  const listDir = (dir: string) =>
+    Object.keys(fs)
+      .filter((p) => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes("/"))
+      .map((p) => ({ type: "file", name: p.slice(dir.length + 1), path: p, absolute: p }))
   const ctx: GateCtx = {
     $,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    client: { file: { list: async () => ({ data: [] }), read: async () => ({ data: null }) }, app: { log: async () => undefined } } as any,
+    client: {
+      file: {
+        list: async ({ query }: { query: { path: string; directory: string } }) => ({ data: listDir(`${query.directory}/${query.path}`) }),
+        read: async ({ query }: { query: { path: string } }) => ({ data: query.path in fs ? { content: fs[query.path] } : null }),
+      },
+      app: { log: async () => undefined },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any,
     log: () => {},
     directory: "/repo",
     config: opts.ignoreBacklog === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, ignoreBacklog: opts.ignoreBacklog },
@@ -340,6 +354,133 @@ test("approveAny with an explicit epic id still reaches the tracking-epic refusa
   assert.equal(r.ok, false)
   assert.match(r.message, /tracking epic/)
   assert.ok("/repo/docs/tasks/draft/epic.md" in fs, "the epic must stay in draft/")
+})
+
+// --- The id-less ambiguity: a choice the host can offer, not a dead end ---
+
+/** A slice set: N children carrying `epic`, plus the tracking epic itself. */
+const sliceSet = (epicId: string, children: { id: string; title: string; priority: number }[], status = "draft") =>
+  Object.fromEntries([
+    ...children.map((c) => [`${status}/${c.id}.md`, serializeTask({ title: c.title, epic: epicId, priority: c.priority, body: `Part of epic: ${epicId}` })]),
+    [`${status}/${epicId}.md`, serializeTask({ title: "The whole feature", type: "epic", body: "children in order…" })],
+  ])
+
+/**
+ * The refusal a slice set produces is what used to dead-end the human: the
+ * message is right, but with nothing machine-readable on it a host can only
+ * reprint it. `candidates` is what lets the hosts ask WHICH — and the invariant
+ * the hosts' continue-the-turn arms rest on is that this refusal MOVED NOTHING.
+ */
+test("an ambiguous id-less approve reports its candidates, in approval order, having moved nothing", async () => {
+  const { ctx, fs, log } = makeCtx(
+    sliceSet("k2p9-epic", [
+      { id: "c3d4-ui", title: "Wire the UI", priority: 1 },
+      { id: "a1b2-api", title: "Add the API layer", priority: 0 },
+    ]),
+  )
+  const r = await approveAny(ctx, "")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /Multiple tasks awaiting/, "the human-facing sentence is unchanged")
+  const candidates = (!r.ok && r.data?.candidates) as { id: string; title: string; from: string; priority: number; epic?: string }[]
+  assert.ok(!r.ok && r.data?.ambiguous === true && r.data?.verb === "approve")
+  assert.deepEqual(
+    candidates.map((c) => c.id),
+    ["a1b2-api", "c3d4-ui"],
+    "lowest priority first — the order a stacked set must be approved in, not readdir order",
+  )
+  assert.deepEqual(candidates[0], { id: "a1b2-api", from: "draft", title: "Add the API layer", priority: 0, epic: "k2p9-epic" })
+  assert.ok(!r.ok && r.data?.gate === undefined, "no gate was crossed, so no `gate` key may claim one")
+  // The whole basis for continuing the turn on this one refusal.
+  assert.ok(!log.some((c) => c.startsWith("mv ") || c.startsWith("printf")), "an ambiguity must not move or annotate anything")
+  assert.ok("/repo/docs/tasks/draft/a1b2-api.md" in fs && "/repo/docs/tasks/draft/c3d4-ui.md" in fs)
+})
+
+test("the tracking epic is not a candidate, so a two-child set is ambiguous rather than three-way", async () => {
+  const { ctx } = makeCtx(
+    sliceSet("k2p9-epic", [
+      { id: "a1b2-api", title: "Add the API layer", priority: 0 },
+      { id: "c3d4-ui", title: "Wire the UI", priority: 1 },
+    ]),
+  )
+  const r = await approveAny(ctx, "")
+  const ids = ((!r.ok && r.data?.candidates) as { id: string }[]).map((c) => c.id)
+  assert.deepEqual(ids, ["a1b2-api", "c3d4-ui"])
+})
+
+test("a lone draft still resolves outright — one candidate is not an ambiguity", async () => {
+  const { ctx } = makeCtx({ "draft/t.md": task("Do it") })
+  const r = await approveAny(ctx, "")
+  assert.ok(r.ok && r.data.gate === "task" && r.data.id === "t")
+  assert.equal(r.data.candidates, undefined)
+})
+
+// --- The slice walk: what a task gate leaves behind ---
+
+/**
+ * `siblings` is what lets a task gate's follow-up name the next slice, so the
+ * human can walk a set without typing an id per child. It is computed AFTER the
+ * move, which is what keeps the just-approved slice out of its own successor
+ * list, and it is scoped by `epic` — never "every draft on the board", because
+ * naming a stranger's draft as the next slice would be a guess.
+ */
+test("a task gate on a slice reports the remaining slices, in order, excluding itself and the epic", async () => {
+  const { ctx } = makeCtx(
+    sliceSet("k2p9-epic", [
+      { id: "a1b2-api", title: "Add the API layer", priority: 0 },
+      { id: "c3d4-ui", title: "Wire the UI", priority: 1 },
+      { id: "e5f6-docs", title: "Document it", priority: 2 },
+    ]),
+  )
+  const r = await approveTask(ctx, "a1b2-api")
+  assert.ok(r.ok && r.data.epic === "k2p9-epic")
+  const siblings = r.ok ? (r.data.siblings as { id: string; title: string }[]) : []
+  assert.deepEqual(
+    siblings.map((s) => s.id),
+    ["c3d4-ui", "e5f6-docs"],
+  )
+  assert.equal(siblings[0]?.title, "Wire the UI", "the title is what makes the next question answerable")
+})
+
+test("a standalone task carries no epic and no siblings — the follow-up renders exactly as it always did", async () => {
+  const { ctx } = makeCtx({ "draft/t.md": task("Do it"), "draft/other.md": task("Unrelated work") })
+  const r = await approveTask(ctx, "t")
+  assert.ok(r.ok && r.data.gate === "task")
+  assert.equal(r.data.epic, undefined)
+  assert.equal(r.data.siblings, undefined, "an unrelated draft is not a slice of anything")
+})
+
+test("the last slice of a set reports its epic but no siblings", async () => {
+  const { ctx } = makeCtx(sliceSet("k2p9-epic", [{ id: "a1b2-api", title: "Add the API layer", priority: 0 }]))
+  const r = await approveTask(ctx, "a1b2-api")
+  assert.ok(r.ok && r.data.epic === "k2p9-epic")
+  assert.equal(r.data.siblings, undefined)
+})
+
+/** The retry arm carries the same contract, or a repeated approve truncates the walk mid-set. */
+test("an alreadyDone retry still reports the epic and the remaining slices", async () => {
+  const { ctx } = makeCtx({
+    ...sliceSet("k2p9-epic", [{ id: "c3d4-ui", title: "Wire the UI", priority: 1 }]),
+    "queued/a1b2-api.md": serializeTask({ title: "Add the API layer", epic: "k2p9-epic", priority: 0, body: "already queued" }),
+  })
+  const r = await approveTask(ctx, "a1b2-api")
+  assert.ok(r.ok && r.data.alreadyDone === true && r.data.gate === "task")
+  assert.deepEqual((r.data.siblings as { id: string }[]).map((s) => s.id), ["c3d4-ui"])
+})
+
+/**
+ * The listing runs after the move is committed, so its failure must cost the
+ * next-slice line and nothing else. An approval that reported failure for work
+ * already on disk would be far worse than a follow-up with no walk in it.
+ */
+test("a failed sibling listing leaves the approval intact, just without its walk", async () => {
+  const { ctx } = makeCtx(sliceSet("k2p9-epic", [{ id: "a1b2-api", title: "Add the API layer", priority: 0 }]))
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(ctx.client as any).file.list = async () => {
+    throw new Error("EIO")
+  }
+  const r = await approveTask(ctx, "a1b2-api")
+  assert.ok(r.ok, "the move already happened — it cannot be undone by a failed listing")
+  assert.equal(r.data.siblings, undefined)
 })
 
 test("approvePlan advances a planned plan-review task to in-progress", async () => {

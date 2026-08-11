@@ -1001,6 +1001,81 @@ test("workflow_plan proceeds once the question has actually been asked", async (
 })
 
 /**
+ * The regression the per-id keying closes. `askArmed` held ONE slot per session,
+ * so gating a second child overwrote the first child's arm — and a slice-set walk
+ * gates several children in one session by design. Planning the first one then
+ * passed unchecked, on a task the human may have just said "not yet" to, and
+ * `workflow_plan` is the point of no return.
+ */
+test("gating a sibling does not disarm the first slice's ask", async () => {
+  resetAskState()
+  const sessionID = "sess-slice-walk"
+  const files = {
+    "docs/tasks/draft/slice-a.md": serializeTask({ title: "Slice A", epic: "k2p9", priority: 0, body: "a" }),
+    "docs/tasks/draft/slice-b.md": serializeTask({ title: "Slice B", epic: "k2p9", priority: 1, body: "b" }),
+  }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  asked(sessionID) // the walk's own "Approve slice-a now?"
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "slice-a", testConfig)
+  await gateFromAgent(deps, sessionID, "slice-b", testConfig)
+  const out = await planFromAgent(deps, sessionID, "slice-a", testConfig)
+
+  assert.match(out, /never asked the human/, `slice-a's ask must survive slice-b being gated — got: ${out}`)
+})
+
+test("each slice's ask is spent on its own, so a sibling still owes its question", async () => {
+  resetAskState()
+  const sessionID = "sess-slice-spend"
+  const files = {
+    "docs/tasks/draft/slice-a.md": serializeTask({ title: "Slice A", epic: "k2p9", priority: 0, body: "a" }),
+    "docs/tasks/draft/slice-b.md": serializeTask({ title: "Slice B", epic: "k2p9", priority: 1, body: "b" }),
+  }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  asked(sessionID)
+  answered(sessionID)
+
+  await gateFromAgent(deps, sessionID, "slice-a", testConfig)
+  await gateFromAgent(deps, sessionID, "slice-b", testConfig)
+  asked(sessionID) // "Plan slice-a now?" — marks both, which is the imprecision we keep
+  answered(sessionID)
+  await planFromAgent(deps, sessionID, "slice-a", testConfig)
+  // Spending A's ask must not resurrect a demand on B, nor delete B's record.
+  const out = await planFromAgent(deps, sessionID, "slice-b", testConfig)
+  assert.doesNotMatch(out, /never asked the human/, `unexpected: ${out}`)
+})
+
+/**
+ * The refusal restates the arming call VERBATIM, walk included — a paraphrase
+ * would leave the model reconciling two texts that disagree about what to do.
+ */
+test("the refusal reproduces the same NEXT STEP the gate emitted, slice walk and all", async () => {
+  resetAskState()
+  const sessionID = "sess-same-words"
+  const files = {
+    "docs/tasks/draft/slice-a.md": serializeTask({ title: "Slice A", epic: "k2p9", priority: 0, body: "a" }),
+    "docs/tasks/draft/slice-b.md": serializeTask({ title: "Slice B", epic: "k2p9", priority: 1, body: "b" }),
+  }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  asked(sessionID)
+  answered(sessionID)
+
+  const gate = await gateFromAgent(deps, sessionID, "slice-a", testConfig)
+  const refusal = await planFromAgent(deps, sessionID, "slice-a", testConfig)
+
+  const tail = (s: string) => s.slice(s.indexOf("NEXT STEP"))
+  assert.equal(tail(refusal), tail(gate), "the two must be the same words, not a paraphrase")
+  assert.match(tail(refusal), /Approve `slice-b` now\?/)
+})
+
+/**
  * The bootstrap that keeps this fail-OPEN. Enforcement applies only to a session
  * where a question has been seen, so against a host that never emits the events
  * the rule goes inert instead of stranding every task behind a question nothing
@@ -1546,7 +1621,7 @@ test("id-less approve skips the never-approve epic and queues the one real draft
   assert.ok(!log.some((cmd) => cmd.includes("epic-a") && cmd.includes("mv")), "the tracking epic is untouched")
 })
 
-test("id-less approve refuses to guess between two drafts", async () => {
+test("id-less approve refuses to guess between two drafts, and asks which instead", async () => {
   const files = {
     "docs/tasks/draft/task-a.md": serializeTask({ title: "A", body: "x" }),
     "docs/tasks/draft/task-b.md": serializeTask({ title: "B", body: "y" }),
@@ -1555,11 +1630,18 @@ test("id-less approve refuses to guess between two drafts", async () => {
   const log: string[] = []
   const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
 
-  await handleApprove(deps, "sess", "", testConfig)
+  const out = await handleApprove(deps, "sess", "", testConfig)
 
   assert.equal(toasts[0]?.variant, "warning")
   assert.match(toasts[0]?.message ?? "", /Multiple tasks awaiting/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when ambiguous")
+  // Refusing to guess is right; dead-ending there is not. The model gets the one
+  // instruction it can act on — put the choice to the human — and `workflow_gate`
+  // is the tool that can then honour the answer.
+  assert.match(out, /NEXT STEP/)
+  assert.match(out, /NOTHING has moved/)
+  assert.match(out, /`task-a` — A \(draft\); `task-b` — B \(draft\)/)
+  assert.match(out, /workflow_gate/)
 })
 
 // The tier-priority regression test: loop gates outrank the authoring gate, so a
@@ -1596,6 +1678,49 @@ test("id-less approve refuses to guess between two wait-gate tasks", async () =>
   assert.match(toasts[0]?.message ?? "", /Multiple tasks awaiting/)
   assert.match(toasts[0]?.message ?? "", /task-a.*task-b/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move when ambiguous")
+})
+
+/**
+ * The dead end this fixes, in its original shape: a slice set left a bare
+ * `approve` with nothing to do but reprint "pass an id", so the human had to
+ * type one per child. The candidates carry each slice's title and epic, which is
+ * what makes the question answerable.
+ */
+test("a slice set's ambiguity offers the slices in approval order, naming their epic", async () => {
+  const files = {
+    "docs/tasks/draft/c3d4-ui.md": serializeTask({ title: "Wire the UI", epic: "k2p9-epic", priority: 1, body: "y" }),
+    "docs/tasks/draft/a1b2-api.md": serializeTask({ title: "Add the API layer", epic: "k2p9-epic", priority: 0, body: "x" }),
+    "docs/tasks/draft/k2p9-epic.md": serializeTask({ title: "The whole feature", type: "epic", body: "children…" }),
+  }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await handleApprove(deps, "sess", "", testConfig)
+
+  assert.match(out, /`a1b2-api` — Add the API layer \(draft, slice of epic `k2p9-epic`\); `c3d4-ui` — Wire the UI/)
+  assert.doesNotMatch(out, /k2p9-epic` — The whole feature/, "the tracking epic is never a candidate")
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")))
+})
+
+test("a task gate on a slice leaves a NEXT STEP naming the next un-approved one", async () => {
+  const files = {
+    "docs/tasks/draft/a1b2-api.md": serializeTask({ title: "Add the API layer", epic: "k2p9-epic", priority: 0, body: "x" }),
+    "docs/tasks/draft/c3d4-ui.md": serializeTask({ title: "Wire the UI", epic: "k2p9-epic", priority: 1, body: "y" }),
+  }
+  const { client } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  const out = await handleApprove(deps, "sess-walk", "a1b2-api", testConfig)
+
+  assert.match(out, /Plan `a1b2-api` now\?/)
+  assert.match(out, /1 slice still un-approved/)
+  assert.match(out, /Approve `c3d4-ui` now\?/)
+  assert.match(out, /Wire the UI/)
+  // Only the "not yet" arm walks: on yes, workflow_plan owns the session and
+  // there is no free model turn left to ask anything in.
+  assert.match(out, /planning owns the rest of this turn/)
 })
 
 test("id-less approve with no candidates says nothing is awaiting approval", async () => {

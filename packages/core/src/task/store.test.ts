@@ -13,6 +13,7 @@ import {
   claimTask,
   claimWriterDead,
   releaseClaim,
+  epicSiblings,
   extractPlan,
   extractRunBranch,
   extractReplanReason,
@@ -863,6 +864,38 @@ test("selectNext equals the head of selectOrder", () => {
   assert.equal(selectNext(tasks)?.id, selectOrder(tasks)[0]?.id)
 })
 
+// --- epicSiblings (the slice walk's "what's left") ---
+
+/** A child slice of `epic`, at the given order. */
+const slice = (id: string, epic: string, priority: number): Task => ({ ...task(id, priority), epic })
+
+test("epicSiblings returns the other slices in approval order, minus the tracker", () => {
+  const tasks = [
+    slice("c-ui", "k2p9", 1),
+    slice("a-api", "k2p9", 0),
+    slice("b-docs", "k2p9", 2),
+    { ...task("k2p9", 0), type: "epic" },
+    slice("x-other", "z8y7", 0), // a different set entirely
+    task("loose", 0), // no epic at all
+  ]
+  assert.deepEqual(
+    epicSiblings(tasks, "k2p9", "a-api").map((t) => t.id),
+    ["c-ui", "b-docs"],
+  )
+})
+
+/**
+ * The guard against the walk naming a stranger's draft as "the next slice". A
+ * task with no epic has no siblings — never "every other draft", which is the
+ * fallback that would turn a helpful question into a guess.
+ */
+test("epicSiblings with no epic is empty, not a fallback to everything", () => {
+  const tasks = [task("a", 0), task("b", 1), slice("c", "k2p9", 0)]
+  assert.deepEqual(epicSiblings(tasks, undefined, "a"), [])
+  assert.deepEqual(epicSiblings(tasks, "", "a"), [])
+  assert.deepEqual(epicSiblings(tasks, "nonexistent-epic", "a"), [])
+})
+
 // --- claim markers: staleness, orphan detection, and the claim walk ---
 
 const planned = (id: string, priority = 0) => task(id, priority, `${PLAN_HEADING}\n\n1. Go.`)
@@ -1469,6 +1502,27 @@ test("taskToInput round-trips a parsed task through serializeTask", () => {
   const parsed = parseTask("f7k3-add-rate-limit.md", original, "/repo/docs/tasks/draft/f7k3-add-rate-limit.md")
   const again = parseTask("f7k3-add-rate-limit.md", serializeTask(taskToInput(parsed)), parsed.path)
   assert.deepEqual(again, parsed)
+})
+
+/**
+ * `epic` has to be a REAL schema field, not a key written into frontmatter: zod
+ * strips what the schema doesn't know, and `unknownFrontmatterKeys` is what the
+ * hub screens an in-place edit with. Off-schema, every child of a slice set would
+ * report as data an edit is about to delete — and `retask` would delete it.
+ */
+test("epic round-trips through the schema and is not reported as an unknown key", () => {
+  const content = serializeTask({ title: "Wire the UI", epic: "k2p9-search-rewrite", priority: 1, body: "Part of epic: k2p9-search-rewrite (slice 2 of 3)" })
+  assert.match(content, /^epic: k2p9-search-rewrite$/m)
+  const parsed = parseTask("c3d4-ui.md", content, "/repo/docs/tasks/draft/c3d4-ui.md")
+  assert.equal(parsed.epic, "k2p9-search-rewrite")
+  assert.deepEqual(unknownFrontmatterKeys(content), [])
+  assert.equal(serializeTask(taskToInput(parsed)), content, "an edit must not drop it")
+})
+
+test("a task without an epic serializes exactly as before — no empty key", () => {
+  const content = serializeTask({ title: "Standalone", priority: 0, body: "Context." })
+  assert.ok(!content.includes("epic"), content)
+  assert.equal(parseTask("t.md", content, "/r/t.md").epic, undefined)
 })
 
 test("unknownFrontmatterKeys names what serializeTask would drop", () => {

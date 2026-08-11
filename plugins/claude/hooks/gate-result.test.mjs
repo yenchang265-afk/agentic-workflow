@@ -69,6 +69,24 @@ test("a GateResult's data rides along on the outcome when the CLI sent one", () 
   })
 })
 
+/**
+ * The fact the whole pick-one arm rests on: `data` is forwarded regardless of
+ * `ok`, so an id-less approve's ambiguity reaches the hook with its candidates
+ * intact and can be turned into a "which one?" question instead of a dead end.
+ * The CLI exits non-zero on a refusal, which must not strip the payload either.
+ */
+test("a REFUSAL's data rides along too — that is what makes the ambiguity askable", () => {
+  const line = JSON.stringify({
+    ok: false,
+    message: "Multiple tasks awaiting: a (draft), b (draft) — pass an id.",
+    data: { ambiguous: true, verb: "approve", candidates: [{ id: "a" }, { id: "b" }] },
+  })
+  const o = decideGateOutcome({ distExists: true, status: 1, stdout: line }, LABEL)
+  assert.equal(o.ok, false)
+  assert.equal(o.data.ambiguous, true)
+  assert.deepEqual(o.data.candidates, [{ id: "a" }, { id: "b" }])
+})
+
 test("a GateResult without data yields no data key at all", () => {
   const o = decideGateOutcome({ distExists: true, status: 0, stdout: JSON.stringify({ ok: true, message: "done" }) }, LABEL)
   assert.ok(!("data" in o), "an absent data must not become an undefined key")

@@ -39,6 +39,7 @@ YAML frontmatter plus a free-form markdown body:
 ---
 title: Add rate limiting to the API     # required
 type: story                             # optional; issue/work-item type
+epic: k2p9-search-rewrite               # optional; the LOCAL tracking epic this is a slice of
 priority: 2                             # optional; lower runs first (default 0)
 estimate: 3                             # optional; story points / effort
 assignee: jdoe@example.com              # optional
@@ -63,6 +64,10 @@ Written by the loop's PLAN stage, right before execution.
 
 - **id** = the filename without `.md` (`add-foo.md` → `add-foo`). Stable and
   human-visible.
+- **`epic`** names a task file in this backlog; `tracker.parent` names an item in
+  someone else's system. Do not confuse them — the gates read `epic` to offer a
+  set's slices as a choice and to walk to the next one, and a link that pointed
+  off this board would resolve to nothing.
 - **`## Implementation Plan`** is the literal heading the plugin greps for.
   Without it `approve` refuses and the loop can never build the task.
 - **acceptance** is what VERIFY checks, so "what tests are needed" folds in
@@ -134,6 +139,11 @@ judgement, not a measured limit.
   a sibling's code cannot see it until that sibling ships — the human approving
   and shipping stacked children one at a time *is* the dependency gate.
   Genuinely independent slices run in any order.
+- Each child carries `epic: <epic-id>` in its frontmatter. That is what makes
+  the set approvable one gate at a time: a bare `approve` offers the slices as a
+  choice rather than refusing "multiple tasks awaiting", and the task gate names
+  the next un-approved slice once one is queued. A child written without it is an
+  orphan — the human has to type every id.
 - The **epic file is never approved.** An un-approved draft is inert, so the
   loop never claims it; it is a human-facing index, closed with `abandon <id>`
   once every child has shipped.

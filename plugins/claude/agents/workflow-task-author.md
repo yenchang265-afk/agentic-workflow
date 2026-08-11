@@ -95,18 +95,30 @@ When your prompt carries a **confirmed slice set** — an epic title plus ordere
 children, each with its own acceptance subset — write one file per child plus
 one epic tracking file, all into `docs/tasks/draft/`:
 
+**Mint every id in the set FIRST** — a distinct 4-char `shortid` per file (as
+above), each free board-wide across every live task folder AND distinct from the
+others in this set; re-roll on any clash. The epic's id has to exist before the
+first child is written, because every child names it.
+
 - **Each child** `docs/tasks/draft/<shortid>-<child-slug>.md` — the schema above,
-  with `priority` set to its order (`0`, `1`, `2`, …) and `acceptance` its own
-  subset. End the body with a prose line `Part of epic: <epic-id> (slice k of
-  N)`. Still **planless** — the PLAN stage plans each child on claim.
+  with `priority` set to its order (`0`, `1`, `2`, …), `acceptance` its own
+  subset, and `epic: <epic-id>` in the frontmatter. End the body with a prose
+  line `Part of epic: <epic-id> (slice k of N)`. Still **planless** — the PLAN
+  stage plans each child on claim.
+  - The `epic:` key is not decoration: it is the only link the gates can read.
+    A bare `approve` uses it to offer the slices as a choice instead of refusing
+    "multiple tasks awaiting", and the task gate uses it to ask about the next
+    slice once one is queued. The body line is for the human; nothing is derived
+    from it. **A child without `epic:` is an orphan slice** — the human gets a
+    dead end and has to type every id.
 - **The epic** `docs/tasks/draft/<shortid>-<epic-slug>.md` — add `type: epic` to
-  the frontmatter (`acceptance` may be empty or a one-line rollup). The body lists
+  the frontmatter (`acceptance` may be empty or a one-line rollup). It does
+  **not** carry an `epic:` key — it is the parent, not a slice. The body lists
   the child ids in order and notes: tracking parent, **never approved**, closed
   by hand once every child ships.
 
-Mint a distinct 4-char `shortid` per file (as above) — free board-wide across
-every live task folder AND distinct from the other files in this set; re-roll on
-any clash. Write the **epic last** so its body can name the children's final ids.
+Write the children first and the **epic last**, so its body can name the
+children's final ids.
 
 ## Steps
 
@@ -115,10 +127,12 @@ Mode `new`:
 1. Read `skills/task-backlog-management/SKILL.md` if you need the lifecycle context.
 2. Take the confirmed title(s), priority, acceptance, and body from your prompt
    — one draft, or a confirmed slice set (children + epic).
-3. Derive each slug; confirm the target path(s) are free.
+3. Derive each slug; confirm the target path(s) are free. For a slice set, mint
+   every id — the epic's included — before writing anything.
 4. Write the draft — frontmatter + body only, exactly in the schema above —
-   and stop. No plan section. For a slice set, write each child then the epic
-   (see "A slice set"); none of them carry a plan section.
+   and stop. No plan section. For a slice set, write each child (each carrying
+   `epic: <epic-id>`) then the epic (see "A slice set"); none of them carry a
+   plan section.
 
 Mode `retask`:
 
@@ -157,7 +171,7 @@ Mode `retask` — return:
 - Mode `retask` overwrites an existing draft in place: keep the id/filename,
   never re-slug from the new title, never create a second file.
 - The frontmatter **must** parse: `title` present and non-empty, `priority` an
-  integer, `acceptance` a YAML list of strings. The only optional key you set
-  is `type: epic` (on an epic file); no other extra keys — in particular,
-  never a `status:` key.
+  integer, `acceptance` a YAML list of strings. The only optional keys you set
+  are `type: epic` (on an epic file) and `epic: <epic-id>` (on each child of a
+  slice set); no other extra keys — in particular, never a `status:` key.
 - Do not edit source code, run the loop, or create tasks beyond the confirmed set.

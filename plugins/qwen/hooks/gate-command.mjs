@@ -9,7 +9,21 @@ import { fileURLToPath } from "node:url";
 
 // plugins/claude/hooks/gate-ask.mjs
 var ASK_GATES = ["task"];
-var taskGateAsk = (id, askTool) => `GATE FOLLOW-UP \u2014 emitted by the agentic-workflow plugin, not by the model. Where this
+var ASK_AMBIGUITY_VERBS = ["approve-any"];
+var MAX_LISTED = 6;
+var idList = (candidates) => candidates.map((c) => `\`${c.id}\``).join(", ");
+var sliceCount = (n) => `${n} ${n === 1 ? "slice" : "slices"}`;
+var optionLine = (c) => `   - \`${c.id}\` \u2014 ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`;
+var walkTail = (siblings, askTool) => {
+  if (!siblings.length) return "";
+  const next = siblings[0];
+  return ` Then CONTINUE THE SLICE WALK \u2014 this set has ${sliceCount(siblings.length)} left
+   un-approved (${idList(siblings)}). Ask ONE more ${askTool}: "Approve \`${next.id}\` now?" (${next.title}),
+   options "Approve" and "Not yet". On approve, call workflow_approve({id: "${next.id}"}) and
+   follow the follow-up it returns. On "not yet", stop \u2014 \`/agentic-workflow:engineering
+   approve\` offers the rest later.`;
+};
+var taskGateAsk = (id, askTool, siblings) => `GATE FOLLOW-UP \u2014 emitted by the agentic-workflow plugin, not by the model. Where this
 disagrees with any description of \`approve\` above, this wins.
 
 The task gate has ALREADY fired for \`${id}\`: the file is in docs/tasks/queued/ and the
@@ -21,15 +35,50 @@ gate tool for it \u2014 that work is done. Do exactly this, and nothing else:
 2. **Yes** \u2192 run the PLAN pass for \`${id}\` now: \`workflow_start({id: "${id}"})\`, spawn
    \`workflow-plan-author\` with the prompt it returns, then \`workflow_advance\`. The plan
    parks in plan-review/ and the PLAN GATE goes live \u2014 ask again with ${askTool}:
-   Approve / Replan (with the user's reason) / Park for later.
-3. **Not yet** \u2192 report that the task is queued, and stop.
+   Approve / Replan (with the user's reason) / Park for later.${siblings.length ? `
+   The walk STOPS there for this turn \u2014 planning owns the rest of it. Tell the user that
+   ${sliceCount(siblings.length)} of this set ${siblings.length === 1 ? "is" : "are"} still un-approved
+   (${idList(siblings)}) and that a later \`/agentic-workflow:engineering approve\` offers them.` : ""}
+3. **Not yet** \u2192 report that the task is queued.${siblings.length ? walkTail(siblings, askTool) : " Stop there."}
 
-Plan, approve or build no OTHER task in this turn.`;
-var gateAsk = (gate, id, askTool) => {
+${siblings.length ? `Build no task in this turn, and plan only \`${id}\`. The ONLY other task you may approve is
+the next slice named in step 3 \u2014 nothing else.` : "Plan, approve or build no OTHER task in this turn."}`;
+var ambiguityAsk = (candidates, askTool) => {
+  const listed = candidates.slice(0, MAX_LISTED);
+  const rest = candidates.slice(MAX_LISTED);
+  return `GATE AMBIGUITY \u2014 emitted by the agentic-workflow plugin, not by the model. Where this
+disagrees with any description of \`approve\` above, this wins.
+
+NOTHING HAS MOVED. A bare \`approve\` found ${candidates.length} tasks waiting, and this plugin
+never guesses which one the human meant: approving is their decision, and a stacked slice
+must NOT be approved ahead of its turn. Do exactly this, and nothing else:
+
+1. Ask the user with ${askTool} \u2014 header "Approve which", question "Which task should
+   \`approve\` advance?", one option per candidate, in this order:
+${listed.map(optionLine).join("\n")}${rest.length ? `
+   \u2026and name the remaining ${rest.length} in the question text so they can be picked by id: ${idList(rest)}.` : ""}
+   Add a final option "None \u2014 leave them all".
+2. On a pick \u2192 call workflow_approve with that exact id (\`{id: "<what they picked>"}\`), then
+   follow the \`next\` field of whatever it returns.
+3. On "None" \u2192 report that nothing moved, and stop.
+
+Approve nothing the user did not just pick, and move no OTHER task in this turn.`;
+};
+var usableCandidates = (value, min) => {
+  if (!Array.isArray(value) || value.length < min) return [];
+  const shaped = (c) => !!c && typeof c === "object" && typeof c.id === "string" && !!c.id && typeof c.title === "string" && typeof c.from === "string" && !!c.from;
+  return value.every(shaped) ? value : [];
+};
+var gateAsk = (gate, id, askTool, data) => {
   if (!ASK_GATES.includes(gate)) return null;
   if (typeof id !== "string" || !id) return null;
   if (typeof askTool !== "string" || !askTool) return null;
-  return taskGateAsk(id, askTool);
+  return taskGateAsk(id, askTool, usableCandidates(data?.siblings, 1));
+};
+var gateAmbiguityAsk = (candidates, askTool) => {
+  if (typeof askTool !== "string" || !askTool) return null;
+  const list = usableCandidates(candidates, 2);
+  return list.length ? ambiguityAsk(list, askTool) : null;
 };
 
 // plugins/claude/hooks/gate-parse.mjs
@@ -52,7 +101,7 @@ var gateArgsFor = (prompt) => {
   const approve = prompt.match(APPROVE);
   if (approve) {
     const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
-    return { argv: ["gate", "approve-any", ...id ? [id] : []], continueOnGate: ASK_GATES };
+    return { argv: ["gate", "approve-any", ...id ? [id] : []], continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS };
   }
   const replan = prompt.match(REPLAN);
   if (replan) {
@@ -301,7 +350,17 @@ var main = async () => {
 
 ${context}` : message);
   }
-  const ask = outcome.ok && dispatch.continueOnGate?.includes(outcome.data?.gate) ? gateAsk(outcome.data.gate, outcome.data.id, dialectFor(hostFor())?.askTool) : null;
+  const ask = outcome.ok ? dispatch.continueOnGate?.includes(outcome.data?.gate) ? gateAsk(outcome.data.gate, outcome.data.id, dialectFor(hostFor())?.askTool, outcome.data) : null : (
+    // The one arm that continues on a REFUSAL, and it is sound for a reason no
+    // other refusal shares: NOTHING MOVED. An id-less approve that found
+    // several candidates never reached a move — `resolveGateTask` only lists —
+    // so the double-move this hook blocks to prevent cannot exist here, and the
+    // follow-up asks for a FIRST approve on an id the human picks. Keep it
+    // pinned to the verbs the parser declared: a blanket "continue on refusal"
+    // would hand the turn back on wrong-folder and not-found too, where there
+    // is nothing to choose between and nothing to say.
+    dispatch.continueOnAmbiguity?.includes(args[1]) ? gateAmbiguityAsk(outcome.data?.candidates, dialectFor(hostFor())?.askTool) : null
+  );
   if (ask) {
     const context = verbContext(pluginRoot, verbFor(prompt));
     return augment([message, context, ask].filter(Boolean).join("\n\n"));

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { ASK_GATES } from "./gate-ask.mjs"
+import { ASK_AMBIGUITY_VERBS, ASK_GATES } from "./gate-ask.mjs"
 import { gateArgsFor, verbFor } from "./gate-parse.mjs"
+
+/** The two conditional-continue policies every approve dispatch carries. */
+const APPROVE_CONTINUE = { continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS }
 
 /**
  * The gate hook's prompt classifier. Gate verbs of /agentic-workflow:engineering
@@ -11,12 +14,12 @@ import { gateArgsFor, verbFor } from "./gate-parse.mjs"
  */
 
 test("approve with an id routes to approve-any (namespaced and bare command forms)", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"], continueOnGate: ASK_GATES })
-  assert.deepEqual(gateArgsFor("/engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"], continueOnGate: ASK_GATES })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"], ...APPROVE_CONTINUE })
+  assert.deepEqual(gateArgsFor("/engineering approve my-task"), { argv: ["gate", "approve-any", "my-task"], ...APPROVE_CONTINUE })
 })
 
 test("bare approve routes to approve-any with no id (auto-resolve)", () => {
-  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve"), { argv: ["gate", "approve-any"], continueOnGate: ASK_GATES })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve"), { argv: ["gate", "approve-any"], ...APPROVE_CONTINUE })
 })
 
 /**
@@ -36,10 +39,28 @@ test("approve continues the turn conditionally, never unconditionally", () => {
   assert.deepEqual(d.continueOnGate, ASK_GATES)
 })
 
+/**
+ * The ambiguity arm is the ONE place a refusal may continue the turn, and it is
+ * sound only because that particular refusal moved nothing. Pinning it to the
+ * parser's declared verb list is what stops it generalizing to wrong-folder and
+ * not-found, where there is nothing to choose between.
+ */
+test("only approve may continue on an ambiguous refusal", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve").continueOnAmbiguity, ASK_AMBIGUITY_VERBS)
+  for (const prompt of [
+    "/agentic-workflow:engineering replan f7k3 too big",
+    "/agentic-workflow:engineering retask f7k3",
+    "/agentic-workflow:engineering abandon f7k3",
+    "/agentic-workflow:engineering remove f7k3 --force",
+  ]) {
+    assert.ok(!gateArgsFor(prompt).continueOnAmbiguity, `${prompt} must not continue on a refusal`)
+  }
+})
+
 test("the verbs that finish deterministically carry neither continue flag", () => {
   for (const prompt of ["/agentic-workflow:engineering abandon f7k3", "/agentic-workflow:engineering remove f7k3 --force"]) {
     const d = gateArgsFor(prompt)
-    assert.ok(!d.continueTurn && !d.continueOnGate, `${prompt} has nothing left for the model to do`)
+    assert.ok(!d.continueTurn && !d.continueOnGate && !d.continueOnAmbiguity, `${prompt} has nothing left for the model to do`)
   }
 })
 
@@ -201,7 +222,7 @@ test("the typed command still dispatches when a payload follows on later lines",
   // of its own line, and anything below is context the model would have seen.
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task\nthanks!"), {
     argv: ["gate", "approve-any", "my-task"],
-    continueOnGate: ASK_GATES,
+    ...APPROVE_CONTINUE,
   })
   assert.deepEqual(gateArgsFor("  /engineering remove my-task --force\n\ncleaning up"), {
     argv: ["gate", "remove", "my-task", "--force"],
@@ -259,7 +280,7 @@ test("wrapping quotes and trailing punctuation never change which verb runs", ()
 test("gate ids arrive unquoted — a quoted id must not fail isSafeTaskId and block the turn", () => {
   assert.deepEqual(gateArgsFor('/agentic-workflow:engineering approve "my-task"'), {
     argv: ["gate", "approve-any", "my-task"],
-    continueOnGate: ASK_GATES,
+    ...APPROVE_CONTINUE,
   })
   assert.deepEqual(gateArgsFor("/agentic-workflow:engineering retask 'f7k3'"), { argv: ["gate", "retask", "f7k3"], continueTurn: true })
   assert.deepEqual(gateArgsFor('/agentic-workflow:engineering abandon "f7k3" wrong scope'), {

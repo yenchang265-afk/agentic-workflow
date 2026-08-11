@@ -44,6 +44,24 @@ export const selectOrder = (tasks: readonly Task[]): Task[] =>
 export const selectNext = (tasks: readonly Task[]): Task | null => selectOrder(tasks)[0] ?? null
 
 /**
+ * The other slices of `epic` still sitting in `tasks`, in the order a human is
+ * meant to approve them — `selectOrder`, the same order a claim would take them
+ * in, so the walk never suggests a slice out of sequence.
+ *
+ * Excludes `exceptId` (typically the slice just approved) and every `type: epic`
+ * tracker, which is never approvable.
+ *
+ * An absent or empty `epic` yields `[]`, and that is the whole point: this never
+ * falls back to "every draft on the board". Naming a stranger's draft as "the
+ * next slice of this set" is a guess, and the gates do not guess — a caller with
+ * no epic to go on must render no next-slice line at all.
+ *
+ * Pure.
+ */
+export const epicSiblings = (tasks: readonly Task[], epic: string | undefined, exceptId: string): Task[] =>
+  epic ? selectOrder(tasks.filter((t) => t.epic === epic && t.id !== exceptId && t.type !== "epic")) : []
+
+/**
  * The audited note a host appends to the task file — on the human-visible
  * branch, BEFORE cutting the isolation branch — the moment a claim wins.
  * Isolation commits everything else (BUILD notes, run logs, the done-path

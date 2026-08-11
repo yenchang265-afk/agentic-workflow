@@ -39,7 +39,7 @@
 // and gate-ask.mjs writes them. Splitting the two lists is how a gate ends up
 // continuing the turn with nothing to say — the hook would hand back a turn whose
 // only instruction is the outcome message.
-import { ASK_GATES } from "./gate-ask.mjs"
+import { ASK_AMBIGUITY_VERBS, ASK_GATES } from "./gate-ask.mjs"
 
 // The gate verbs of /agentic-workflow:engineering — subcommands, NOT top-level
 // words (so they never collide with a reserved `/approve`). The id is optional
@@ -123,6 +123,9 @@ const unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "")
  * `continueOnGate` is its conditional form, for a verb whose success only
  * SOMETIMES leaves work: it lists the `data.gate` values that hand the turn
  * back, and the CLI's result decides which one actually fired.
+ * `continueOnAmbiguity` is the same idea one step further: it lists the CLI verbs
+ * whose id-less REFUSAL may hand the turn back, so the model can ask which task
+ * was meant. Sound only because that refusal moved nothing — see gate-command.mjs.
  * `usage` marks an id-less form of a verb that requires one: deterministic
  * refusal — the hook blocks the turn with that message, no spawn, no model.
  */
@@ -140,7 +143,7 @@ export const gateArgsFor = (prompt) => {
     // pure parser while the CLI's `data.gate` supplies the evidence. A blanket
     // `continueTurn: true` would be wrong — it hands the turn back on refusals
     // and on the terminal ship gate, where there is nothing left to ask.
-    return { argv: ["gate", "approve-any", ...(id ? [id] : [])], continueOnGate: ASK_GATES }
+    return { argv: ["gate", "approve-any", ...(id ? [id] : [])], continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS }
   }
   const replan = prompt.match(REPLAN)
   if (replan) {

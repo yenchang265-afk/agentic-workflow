@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
 import { isSafeTaskId, parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, extractRunBranch, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, epicSiblings, extractRunBranch, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { requestPlan } from "../task/plan-request.js"
 import { commitPaths, ensureExcluded, gitActor } from "./git.js"
@@ -70,10 +70,42 @@ export type GateVariant = "info" | "warning"
  * `data` is deliberately open (`Record<string, unknown>`) so verbs can add their
  * own keys — but these two are the shared vocabulary, matching the `gate: {kind,
  * id}` descriptor the MCP server already emits at its plan and ship gates.
+ *
+ * A REFUSAL may carry `data` too, and exactly one does today: the id-less
+ * ambiguity below, whose `candidates` let a host ask which task was meant instead
+ * of dead-ending. Such a payload deliberately carries NO `gate` key — `gate`
+ * means "this gate was crossed", and putting one on a move that never happened is
+ * how a host's continue-the-turn arm starts firing on refusals.
  */
 export type GateResult =
   | { readonly ok: true; readonly message: string; readonly path: string; readonly data: Record<string, unknown>; readonly variant?: GateVariant }
-  | { readonly ok: false; readonly message: string; readonly variant?: GateVariant }
+  | { readonly ok: false; readonly message: string; readonly variant?: GateVariant; readonly data?: Record<string, unknown> }
+
+/**
+ * One task an id-less gate verb could have meant — the machine-readable half of
+ * the "Multiple tasks awaiting" refusal, and of the slices a task gate leaves
+ * behind. One shape for both, so a host validates one thing rather than two.
+ *
+ * `title` is what makes a choice answerable: an id alone is four random
+ * characters and a slug, which is not something a human can pick between.
+ */
+export interface GateCandidate {
+  readonly id: string
+  readonly from: TaskStatus
+  readonly title: string
+  readonly priority: number
+  /** The tracking epic this task is a slice of, when its frontmatter names one. */
+  readonly epic?: string
+}
+
+/** Project a task to the candidate shape, omitting `epic` when it has none. */
+const toCandidate = (task: Task, from: TaskStatus): GateCandidate => ({
+  id: task.id,
+  from,
+  title: task.title,
+  priority: task.priority,
+  ...(task.epic ? { epic: task.epic } : {}),
+})
 
 /**
  * Commit the backlog move, unless `config.ignoreBacklog` (the default) says to
@@ -185,6 +217,34 @@ const noteThenMove = async (
   }
 }
 
+/**
+ * The slices of `task`'s epic still waiting in `draft/` — what a task gate's
+ * follow-up names so the human can keep walking a slice set without typing a
+ * second command.
+ *
+ * Best-effort on purpose. It runs AFTER the approval is committed, so a failed
+ * listing must cost the next-slice line and never the move: the alternative is an
+ * approval that reports failure for work that is already on disk. An empty result
+ * (no epic, no siblings left, or a listing that threw) renders as no line at all,
+ * which is exactly the pre-slice-set behaviour.
+ */
+const remainingSlices = async (ctx: GateCtx, task: Task, exceptId: string): Promise<GateCandidate[]> => {
+  if (!task.epic) return []
+  try {
+    const drafts = await listByStatus(ctx.client, ctx.directory, ctx.config.tasksDir, "draft", ctx.log)
+    return epicSiblings(drafts, task.epic, exceptId).map((t) => toCandidate(t, "draft"))
+  } catch (err) {
+    void ctx.log("warn", `could not list the remaining slices of epic "${task.epic}" — the approval stands, but its follow-up will not name the next one (${(err as Error).message})`)
+    return []
+  }
+}
+
+/** The `epic`/`siblings` half of a task gate's `data`, both omitted when empty. */
+const sliceData = (task: Task, siblings: readonly GateCandidate[]): Record<string, unknown> => ({
+  ...(task.epic ? { epic: task.epic } : {}),
+  ...(siblings.length ? { siblings } : {}),
+})
+
 /** approve: a reviewed draft/ task → queued/ (audited note + commit). */
 export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult> => {
   const { $, directory, config } = ctx
@@ -199,11 +259,23 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
     // harness gate hook) lands here with the task already at the transition's
     // target — report success instead of an error so retries stay harmless.
     if (where === "queued") {
+      // The retry carries the slice data too: `alreadyDone` is documented as
+      // carrying the same contract as the move arm, and a repeated approve
+      // mid-walk must not silently truncate the set the human is working through.
+      const siblings = await remainingSlices(ctx, elsewhere!, id)
       return {
         ok: true,
         message: `Task "${elsewhere!.title}" is already queued in ${config.tasksDir}/queued/ — nothing to do.`,
         path: elsewhere!.path,
-        data: { approved: true, alreadyDone: true, gate: "task", id, path: elsewhere!.path, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
+        data: {
+          approved: true,
+          alreadyDone: true,
+          gate: "task",
+          id,
+          path: elsewhere!.path,
+          next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage`,
+          ...sliceData(elsewhere!, siblings),
+        },
       }
     }
     return {
@@ -227,11 +299,21 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): task approved — queued for planning`)
+  // After the move, so the just-approved slice is out of draft/ and cannot list
+  // itself as its own successor.
+  const siblings = await remainingSlices(ctx, draft, id)
   return {
     ok: true,
     message: `Task approved — "${draft.title}" queued in ${config.tasksDir}/queued/ for planning.`,
     path: newPath,
-    data: { approved: true, gate: "task", id, path: newPath, next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage` },
+    data: {
+      approved: true,
+      gate: "task",
+      id,
+      path: newPath,
+      next: `workflow_start with id "${id}" (or workflow_claim) runs its PLAN stage`,
+      ...sliceData(draft, siblings),
+    },
   }
 }
 
@@ -716,7 +798,19 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
 export type GatePick =
   | { readonly ok: true; readonly id: string; readonly from: TaskStatus }
   | { readonly ok: false; readonly kind: "none" }
-  | { readonly ok: false; readonly kind: "message"; readonly message: string; readonly variant: GateVariant }
+  | {
+      readonly ok: false
+      readonly kind: "message"
+      readonly message: string
+      readonly variant: GateVariant
+      /**
+       * The tasks that made an id-less scan ambiguous — present ONLY on that arm,
+       * and ≥2 by construction. A caller turns them into a "which one?" question;
+       * absent means there is nothing to choose between and the message stands
+       * alone.
+       */
+      readonly candidates?: readonly GateCandidate[]
+    }
 
 /** Statuses "ahead" of every gate — a task there has already advanced, so a gate no-op is informational, not an error. */
 const FORWARD_STATUSES: readonly TaskStatus[] = ["queued", "in-progress", "completed"]
@@ -758,16 +852,22 @@ export const resolveGateTask = async (
     return { ok: false, kind: "message", message, variant }
   }
   for (const tier of tiers) {
-    const found: { id: string; from: TaskStatus }[] = []
+    const found: GateCandidate[] = []
     for (const from of tier) {
       for (const t of await listByStatus(client, directory, config.tasksDir, from, log)) {
-        if (!skip?.(t)) found.push({ id: t.id, from })
+        if (!skip?.(t)) found.push(toCandidate(t, from))
       }
     }
-    if (found.length === 1) return { ok: true, ...found[0]! }
+    if (found.length === 1) return { ok: true, id: found[0]!.id, from: found[0]!.from }
     if (found.length > 1) {
-      const list = found.map((f) => `${f.id} (${f.from})`).join(", ")
-      return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id.`, variant: "warning" }
+      // Ordered the way a human must approve a stacked slice set — lowest
+      // `priority` first, ties by id — so a host rendering these as options
+      // presents them in sequence rather than in readdir order.
+      const candidates = [...found].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+      const list = candidates.map((c) => `${c.id} (${c.from})`).join(", ")
+      // The message is pinned by tests and by both hosts' toasts. Widen `data`,
+      // never this sentence.
+      return { ok: false, kind: "message", message: `Multiple tasks awaiting: ${list} — pass an id.`, variant: "warning", candidates }
     }
   }
   return { ok: false, kind: "none" }
@@ -787,9 +887,18 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering")
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
   const pick = await resolveGateTask(ctx, id, tiers, (t) => t.type === "epic")
   if (!pick.ok) {
-    return pick.kind === "none"
-      ? { ok: false, message: "Nothing awaiting approval.", variant: "info" }
-      : { ok: false, message: pick.message, variant: pick.variant }
+    if (pick.kind === "none") return { ok: false, message: "Nothing awaiting approval.", variant: "info" }
+    // The ambiguity is the one refusal a host may act on rather than merely
+    // report: NOTHING moved here (`resolveGateTask` only lists), so handing the
+    // turn back to ask which task was meant cannot double-move anything, and the
+    // answer is a FIRST approve on an id the human picked. `ambiguous`/`verb`
+    // name the situation so a host branches on the payload, never on the prose.
+    return {
+      ok: false,
+      message: pick.message,
+      variant: pick.variant,
+      ...(pick.candidates ? { data: { ambiguous: true, verb: "approve", candidates: pick.candidates } } : {}),
+    }
   }
   if (pick.from === "draft") return approveTask(ctx, pick.id)
   if (pick.from === "plan-review") return approvePlan(ctx, pick.id)
