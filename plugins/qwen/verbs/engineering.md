@@ -60,9 +60,12 @@
        un-approved draft is inert, so the loop never claims it. Close it by
        hand with `abandon <id>` (or `workflow_move` to
        `completed/`) once every child has shipped.
-  5. **Task gate — ask, don't require a command.** For each non-epic drafted
-     child (skip the epic tracking file — never approve it), ask with
-     **`ask_user_question`**: "Approve `<id>` now?"
+  5. **Task gate — ask, don't require a command.** Walk the non-epic children in
+     `priority` order, ONE at a time (skip the epic tracking file — never approve
+     it). After each child's answer, come back here for the next one; the
+     plugin's own follow-up names it, and **that follow-up outranks this prose**
+     wherever the two differ. For each child, ask with **`ask_user_question`**: "Approve
+     `<id>` now?"
      - **Approve** → call `mcp__agentic-workflow__workflow_approve({id})` directly
        (task gate: `draft/` → `queued/`) — the user does not need to type
        `/agentic-workflow:engineering approve <id>`. Then ask a second
@@ -71,12 +74,18 @@
          spawn `workflow-plan-author` (`agent` tool) with the
          returned prompt, then
          `workflow_advance` — the task parks in `plan-review/` and the plan gate
-         goes live (offer Approve / Replan / Park, per the
-         `workflow-orchestration` skill).
-       - **No** → stop; `/agentic-workflow:engineering plan <id>` plans it later,
-         as does the next `claim` with no build-ready work left.
-     - **Not yet** → leave it in `draft/`; `/agentic-workflow:engineering approve
-       <id>` (or `retask <id>`) resumes it later.
+         goes live. That ask is not left to this prose either: the park is
+         followed by a **`PLAN GATE`** block the harness emits beside the result
+         — obey it.
+         **The walk stops here for this turn** — planning owns the rest of it.
+         Name the slices still un-approved and say a later
+         `/agentic-workflow:engineering approve` offers them as a choice.
+       - **No** → move straight to the next child in the walk;
+         `/agentic-workflow:engineering plan <id>` plans this one later, as does
+         the next `claim` with no build-ready work left.
+     - **Not yet** → leave it in `draft/` and move straight to the next child;
+       `/agentic-workflow:engineering approve <id>` (or `retask <id>`) resumes it
+       later.
   - **Project-management pairing** — when `.agentic-workflow.json` has a
     `projectManagement` section, pre-fill the draft's `tracker` block so the
     task is ready to pair with the team's tracker: set `tracker.system` to the
@@ -134,9 +143,14 @@
     speaking, not prose to weigh: obey it. It has you ask, with **`ask_user_question`**,
     whether to plan the task now, and run the PLAN pass below if the answer is
     yes. A blocked turn could never ask that, which is why this one is handed
-    back.
-  - **Plan gate, ship gate, or any refusal** — the hook blocks the turn and
-    reports the outcome itself, so you never see this verb at all.
+    back. When the task is a slice of a set, that block also names the next
+    un-approved slice to offer — walk it exactly as written.
+  - **Several tasks waiting and no id given** — the hook hands the turn back
+    with a **`GATE AMBIGUITY`** block instead. **Nothing moved.** The plugin
+    never guesses which task the human meant, so that block has you ask which
+    one and then approve exactly what they picked — nothing else.
+  - **Plan gate, ship gate, or any other refusal** — the hook blocks the turn
+    and reports the outcome itself, so you never see this verb at all.
   **Spawn nothing of your own** beyond what the follow-up asks for. (Fallback,
   when no hook ran: `mcp__agentic-workflow__workflow_approve({id})`, id
   optional — then ask the same question yourself.) Within an interactive

@@ -87,7 +87,7 @@ import {
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { clearState, loadState, saveState } from "@agentic-workflow/core/workflow/persist"
-import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
+import { abandonTask, approveAny, rejectAny, removeTask, retaskTask, type GateCandidate, type GateCtx, type GateResult } from "@agentic-workflow/core/workflow/gate"
 import { runTerminal, type TerminalCtx } from "@agentic-workflow/core/workflow/terminal"
 import { type Outcome, renderRunSummary, type StageSample, type StageTokens, type StageToolUsage, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
@@ -382,8 +382,11 @@ const openQuestion = (sessionID: string, token: string): void => {
   const open = questionOpen.get(sessionID)
   if (open) open.add(token)
   else questionOpen.set(sessionID, new Set([token]))
-  const armed = askArmed.get(sessionID)
-  if (armed) armed.asked = true
+  // Marks EVERY ask armed on this session, not just the newest. A window carries
+  // no task id, so which armed ask a question answers is genuinely unknowable
+  // here — and pretending otherwise would be worse than this imprecision, which
+  // is the one the single-slot map already had.
+  for (const armed of askArmed.get(sessionID)?.values() ?? []) armed.asked = true
 }
 
 /**
@@ -400,8 +403,9 @@ const settleQuestion = (sessionID: string, token: string | null): void => {
   if (open.size === 0) questionOpen.delete(sessionID)
 }
 /**
- * The one-shot "plan it now?" ask a TASK gate armed on a session, and whether it
- * has since been put to the human.
+ * The one-shot "plan it now?" asks a TASK gate armed on a session — keyed by
+ * session, then by TASK ID — with whether each has since been put to the human
+ * and the remaining slices its follow-up named.
  *
  * The ask itself is prose (`gateNextStep`) because only the model can open a
  * question window — but prose is exactly what the orchestrator does not reliably
@@ -410,8 +414,16 @@ const settleQuestion = (sessionID: string, token: string | null): void => {
  * `refuseIfDriven` and the absence of a free model turn mean nothing can ask the
  * human anything until the chain unwinds. So the prose gets a mechanism behind
  * it: `planFromAgent` refuses until a question was actually opened.
+ *
+ * Keyed per id rather than one slot per session because a slice-set walk gates
+ * several children in ONE session by design. A single slot made arming B
+ * *disarm* A, so planning A afterwards passed unchecked — the exact failure this
+ * exists to prevent, on a task the human may have just said "not yet" to. The
+ * entries are cheap and cannot wedge anything: unlike a `questionOpen` token,
+ * nothing here holds `onIdle` off, so a leftover costs at most one question the
+ * model must put before retrying.
  */
-const askArmed = new Map<string, { readonly id: string; asked: boolean }>()
+const askArmed = new Map<string, Map<string, { readonly siblings: readonly GateCandidate[]; asked: boolean }>>()
 
 /**
  * A window the model opened with the `question` tool, and the same window
@@ -2736,7 +2748,9 @@ export const handleApprove = async (deps: Deps, sessionID: string, args: string,
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
     // question window — the plugin can only observe one, never originate it.
-    return report(client, r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : r.message, gateVariant(r))
+    // A refusal gets one too, but only the ambiguous one: it moved nothing, so
+    // asking which task was meant is a first move, not a retry of a done one.
+    return report(client, r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : `${r.message}${gatePickNextStep(r.data)}`, gateVariant(r))
   } catch (err) {
     return report(client, `Approve failed${id ? ` for "${id}"` : ""}: ${(err as Error).message}`, "error")
   }
@@ -2763,10 +2777,65 @@ const taskGateId = (data: Record<string, unknown>): string | null =>
  * re-doing the plugin's deterministic work, not to forbid the one thing only the
  * model can do.
  */
-const gateNextStep = (id: string): string =>
+const gateNextStep = (id: string, siblings: readonly GateCandidate[] = []): string =>
   `\n\nNEXT STEP — ask the user with the \`question\` tool: "Plan \`${id}\` now?" (options: yes / not yet). ` +
   `On yes, call the \`workflow_plan\` tool with id "${id}" — do NOT type or suggest a command, and do NOT approve anything else. ` +
-  `On no, stop: the task waits in queued/.`
+  (siblings.length
+    ? // Only the "no" arm walks. On yes, `workflow_plan` hands this session to a
+      // PLAN drive at concurrency 1, after which there is no free model turn to
+      // ask anything in — so the remaining slices are reported, not offered.
+      `On no: the task waits in queued/, and this slice set has ${sliceCount(siblings.length)} still un-approved ` +
+      `(${siblings.map((c) => `"${c.id}"`).join(", ")}). Ask ONE more \`question\`: "Approve \`${siblings[0]!.id}\` now?" ` +
+      `(${siblings[0]!.title}) — on approve, call the \`workflow_gate\` tool with id "${siblings[0]!.id}" and follow ` +
+      `the NEXT STEP it returns; on "not yet", stop. On yes to planning, name the remaining slices and stop — planning owns the rest of this turn.`
+    : `On no, stop: the task waits in queued/.`)
+
+/** "1 slice" / "2 slices" — these strings land in a human-read transcript too. */
+const sliceCount = (n: number): string => `${n} ${n === 1 ? "slice" : "slices"}`
+
+/**
+ * The candidates on a gate result's `data`, or [] when the list is unusable — a
+ * non-array, or an entry missing a field the prose interpolates.
+ *
+ * One malformed entry discards the WHOLE list rather than being filtered out: a
+ * partial list would silently hide the very task the human meant, while the plain
+ * message it falls back to still says everything core knows. The Claude hooks'
+ * `usableCandidates` is the same predicate — the two hosts must not disagree
+ * about which payloads are renderable.
+ */
+const gateCandidates = (value: unknown): GateCandidate[] => {
+  if (!Array.isArray(value) || !value.length) return []
+  const shaped = (c: unknown): c is GateCandidate => {
+    const o = c as Record<string, unknown> | null
+    return !!o && typeof o === "object" && typeof o.id === "string" && !!o.id && typeof o.title === "string" && typeof o.from === "string" && !!o.from
+  }
+  return value.every(shaped) ? (value as GateCandidate[]) : []
+}
+
+/**
+ * The pick-one follow-up an ambiguous id-less approve leaves behind, or "" when
+ * there is nothing to choose between.
+ *
+ * Prose and ONLY prose, deliberately — unlike the task gate's ask there is no
+ * point of no return behind this one. A model that ignores it just reports
+ * "Multiple tasks awaiting … pass an id", which is exactly today's behaviour, so
+ * a mechanism would buy nothing and add a second thing to keep armed.
+ *
+ * `NEXT STEP` is the label impl.ts's command-prompt override exempts from its
+ * "report the result and stop" rule, which is what gets this past a refusal.
+ */
+const gatePickNextStep = (data: Record<string, unknown> | undefined): string => {
+  if (!data?.ambiguous) return ""
+  const candidates = gateCandidates(data.candidates)
+  if (candidates.length < 2) return ""
+  const options = candidates.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
+  return (
+    `\n\nNEXT STEP — NOTHING has moved, and this plugin never guesses which task the human meant. ` +
+    `Ask the user with the \`question\` tool: "Which task should \`approve\` advance?" — one option per candidate, in this order: ` +
+    `${options}; plus "none — leave them all". On a pick, call the \`workflow_gate\` tool with that exact id — do NOT type or ` +
+    `suggest a command, and approve nothing else. On "none", stop: everything stays where it is.`
+  )
+}
 
 /**
  * The plan gate's question, sent as its own turn after a human-requested PLAN
@@ -2794,10 +2863,13 @@ const planParkNextStep = (id: string): string =>
  * disagree about which gates ask — the failure that would either strand a plan
  * behind a question nobody wants, or leave the refusal below unreachable.
  *
- * One armed ask per session (the most recent task gate). A slice set re-arms per
- * child, which is the order the command's prose walks them in; the narrow miss —
- * gating A, gating B, then planning A — is left, because this is a backstop
- * against a skipped question, not a proof that every child was asked about.
+ * One armed ask PER TASK, so a slice-set walk that gates several children in one
+ * session arms one each instead of overwriting. It was one slot per session
+ * once, and the shape a slice set makes normal — gate A, gate B, then plan A —
+ * slipped straight through: arming B disarmed A, so A was planned with no
+ * question ever put. It remains a backstop against a SKIPPED question, not proof
+ * that the right one was asked; `openQuestion` cannot tell which task a window
+ * was about.
  *
  * The `data.gate`-less arm is the loud one, and it has to be: `data.gate`/`data.id`
  * live in CORE, which resolves to `packages/core/dist` — gitignored and rebuilt
@@ -2822,8 +2894,11 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>,
     }
     return ""
   }
-  askArmed.set(sessionID, { id, asked: false })
-  return gateNextStep(id)
+  const siblings = gateCandidates(data.siblings)
+  const armed = askArmed.get(sessionID) ?? new Map()
+  armed.set(id, { siblings, asked: false })
+  askArmed.set(sessionID, armed)
+  return gateNextStep(id, siblings)
 }
 
 /**
@@ -2831,9 +2906,10 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>,
  * naming the exact call that unblocks it — or null when there is nothing to
  * enforce.
  *
- * Three ways to pass, all deliberate: no gate armed an ask here (a plain
- * `workflow_plan` on some older queued task is none of this rule's business), the
- * armed id is not the one being planned, or a question HAS been opened since.
+ * Three ways to pass, all deliberate: no gate armed an ask here for THIS id (a
+ * plain `workflow_plan` on some older queued task is none of this rule's
+ * business), a sibling's ask is armed but this task's is not, or a question HAS
+ * been opened since.
  * And one bootstrap: a session where no question has ever been seen is never
  * refused, so against a host that shows us neither the tool call nor the
  * `question.*` events this degrades to the old behaviour instead of wedging
@@ -2841,8 +2917,8 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>,
  * human said yes" and "we could not tell", and the two used to look identical.
  */
 const askUnanswered = (sessionID: string, id: string, log: Log): string | null => {
-  const armed = askArmed.get(sessionID)
-  if (!armed || armed.asked || armed.id !== id) return null
+  const armed = askArmed.get(sessionID)?.get(id)
+  if (!armed || armed.asked) return null
   if (!questionsObservable.has(sessionID)) {
     void log(
       "warn",
@@ -2854,7 +2930,10 @@ const askUnanswered = (sessionID: string, id: string, log: Log): string | null =
   return (
     `Not yet — you approved "${id}" but never asked the human whether to plan it. ` +
     `Planning claims the task and hands THIS session to the PLAN stage, after which nothing can ask them anything until it finishes, ` +
-    `so the question has to come first.${gateNextStep(id)}`
+    // Rebuilt from the ARMED record, so the refusal restates the arming call
+    // word for word — including its slice walk. A paraphrase here would leave the
+    // model reconciling two texts that disagree about what to do next.
+    `so the question has to come first.${gateNextStep(id, armed.siblings)}`
   )
 }
 
@@ -2902,7 +2981,10 @@ export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, c
     const r = await approveAny(gateCtx(deps, config), target)
     void deps.log("info", `workflow_gate: "${target}" → ${r.ok ? "moved" : "refused"} (${r.message})`)
     void toast(deps.client, r.message, gateVariant(r))
-    return r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : r.message
+    // The ambiguous refusal carries its own follow-up: an id-less call from the
+    // model lands here too, and a dead end there is what leaves a slice set
+    // unapprovable without a typed command.
+    return r.ok ? `${r.message}${armTaskGateAsk(sessionID, r.data, deps.log)}` : `${r.message}${gatePickNextStep(r.data)}`
   } catch (err) {
     return `Approve failed${target ? ` for "${target}"` : ""}: ${(err as Error).message}`
   }
@@ -2926,8 +3008,9 @@ export const planFromAgent = async (deps: Deps, sessionID: string, id: string, c
   if (unasked) return unasked
   // Spend the ask whatever startPlanById makes of it: a refusal there (busy
   // session, lost claim race) is reported to the model, and re-demanding the
-  // question on the retry would just teach it to ask twice.
-  askArmed.delete(sessionID)
+  // question on the retry would just teach it to ask twice. Only THIS task's ask
+  // is spent — a sibling's still has its own question owed.
+  askArmed.get(sessionID)?.delete(target)
   // startPlanById reports through the toast and can return undefined; a tool must
   // answer the model in words, or it reads as an empty success.
   return (await startPlanById(deps, sessionID, target, config)) ?? `Planning "${target}" — it will park in plan-review/ for the human's gate.`

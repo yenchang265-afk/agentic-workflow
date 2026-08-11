@@ -40,7 +40,7 @@ import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { gateAsk } from "./gate-ask.mjs"
+import { gateAmbiguityAsk, gateAsk } from "./gate-ask.mjs"
 import { gateArgsFor, verbFor } from "./gate-parse.mjs"
 import { decideGateOutcome } from "./gate-result.mjs"
 import { dialectFor, hostFor } from "./src/dialect.mjs"
@@ -157,18 +157,34 @@ const main = async () => {
     return augment(context ? `${message}\n\n${context}` : message)
   }
 
-  // The CONDITIONAL hybrid (approve). Which gate a folder-driven verb crossed is
-  // only knowable from the result, so the continue decision is made here rather
-  // than in the parser: a task gate hands the turn back so the model can ask
-  // "plan it now?" — a question a blocked turn could never reach — while the
-  // terminal ship gate and every refusal still block, exactly as before.
+  // The CONDITIONAL hybrid (approve), in two arms. Which gate a folder-driven
+  // verb crossed is only knowable from the result, so the continue decision is
+  // made here rather than in the parser: a task gate hands the turn back so the
+  // model can ask "plan it now?" — a question a blocked turn could never reach —
+  // while the terminal ship gate still blocks, exactly as before. The second arm
+  // does the same for the id-less ambiguity, which is a refusal but not a move
+  // (see below).
   //
   // Every uncertainty falls through to the block below: an unrecognized gate, a
-  // missing id, an older mcp-server/dist that emits no `data` at all. That is
-  // deliberate — a false block only restores the previous behaviour, whereas
-  // handing the turn back on a gate nobody armed invites the double-move the
-  // block exists to prevent.
-  const ask = outcome.ok && dispatch.continueOnGate?.includes(outcome.data?.gate) ? gateAsk(outcome.data.gate, outcome.data.id, dialectFor(hostFor())?.askTool) : null
+  // missing id, an unusable candidate list, an older mcp-server/dist that emits
+  // no `data` at all. That is deliberate — a false block only restores the
+  // previous behaviour, whereas handing the turn back on a gate nobody armed
+  // invites the double-move the block exists to prevent.
+  const ask = outcome.ok
+    ? dispatch.continueOnGate?.includes(outcome.data?.gate)
+      ? gateAsk(outcome.data.gate, outcome.data.id, dialectFor(hostFor())?.askTool, outcome.data)
+      : null
+    : // The one arm that continues on a REFUSAL, and it is sound for a reason no
+      // other refusal shares: NOTHING MOVED. An id-less approve that found
+      // several candidates never reached a move — `resolveGateTask` only lists —
+      // so the double-move this hook blocks to prevent cannot exist here, and the
+      // follow-up asks for a FIRST approve on an id the human picks. Keep it
+      // pinned to the verbs the parser declared: a blanket "continue on refusal"
+      // would hand the turn back on wrong-folder and not-found too, where there
+      // is nothing to choose between and nothing to say.
+      dispatch.continueOnAmbiguity?.includes(args[1])
+      ? gateAmbiguityAsk(outcome.data?.candidates, dialectFor(hostFor())?.askTool)
+      : null
   if (ask) {
     const context = verbContext(pluginRoot, verbFor(prompt))
     // The ask goes LAST: it is the instruction for this turn, and the verb block

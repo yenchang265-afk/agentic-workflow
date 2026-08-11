@@ -2299,6 +2299,32 @@ const abandonTask = (id: string, reason: string | undefined, liveTaskId: string 
   coreAbandonTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 
 /**
+ * The candidates on a gate result's `data` (an ambiguity's choices, or a task
+ * gate's remaining slices), or [] when the list is unusable — a non-array, or an
+ * entry missing a field the prose interpolates.
+ *
+ * One malformed entry discards the WHOLE list rather than being filtered out: a
+ * partial list would silently hide the very task the human meant, while the plain
+ * message it falls back to still says everything core knows. Mirrors
+ * `usableCandidates` in hooks/gate-ask.mjs — the two paths must not disagree
+ * about which payloads are renderable.
+ */
+interface GateCandidateLike {
+  readonly id: string
+  readonly title: string
+  readonly from: string
+  readonly epic?: string
+}
+const gateCandidates = (value: unknown): GateCandidateLike[] => {
+  if (!Array.isArray(value) || !value.length) return []
+  const shaped = (c: unknown): c is GateCandidateLike => {
+    const o = c as Record<string, unknown> | null
+    return !!o && typeof o === "object" && typeof o.id === "string" && !!o.id && typeof o.title === "string" && typeof o.from === "string" && !!o.from
+  }
+  return value.every(shaped) ? (value as GateCandidateLike[]) : []
+}
+
+/**
  * The gate ask, for the path where the model called the tool instead of typing
  * the verb.
  *
@@ -2315,11 +2341,21 @@ const abandonTask = (id: string, reason: string | undefined, liveTaskId: string 
 const gateNext = (data: Record<string, unknown>): string | undefined => {
   const id = typeof data.id === "string" ? data.id : null
   if (!id) return undefined
-  if (data.gate === "task")
+  if (data.gate === "task") {
+    // The slice walk, when core reported one. Only the "no" arm continues it: on
+    // "yes" the PLAN pass owns the rest of the turn, so the remaining slices are
+    // reported rather than offered.
+    const rest = gateCandidates(data.siblings)
+    const walk = rest.length
+      ? ` This is a slice set with ${rest.length === 1 ? "1 slice" : `${rest.length} slices`} still un-approved ` +
+        `(${rest.map((c) => `"${c.id}"`).join(", ")}) — on no, ask ONE more ${dialect.askTool}: "Approve \`${rest[0]!.id}\` now?" ` +
+        `(${rest[0]!.title}), and on approve call workflow_approve({id: "${rest[0]!.id}"}) and follow its own next; on yes, name the remaining slices and stop.`
+      : ""
     return (
       `task gate: the task is queued. Ask the user with ${dialect.askTool} — "Plan \`${id}\` now?" — and on yes run the PLAN pass ` +
-      `(workflow_start("${id}"), spawn workflow-plan-author with the prompt it returns, then workflow_advance); on no, stop and report it queued.`
+      `(workflow_start("${id}"), spawn workflow-plan-author with the prompt it returns, then workflow_advance); on no, stop and report it queued.${walk}`
     )
+  }
   if (data.gate === "plan")
     return (
       `plan gate: the plan is approved and the task is build-ready. Ask the user with ${dialect.askTool} — "Build \`${id}\` now?" — ` +
@@ -2328,9 +2364,33 @@ const gateNext = (data: Record<string, unknown>): string | undefined => {
   return undefined
 }
 
-/** Fold the gate ask into a successful gate result, leaving refusals untouched. */
+/**
+ * The pick-one ask for an id-less approve that found several candidates — the
+ * tool-path twin of hooks/gate-ask.mjs's `GATE AMBIGUITY` block.
+ *
+ * Nothing moved (core's `resolveGateTask` only lists), so inviting the model to
+ * ask and then approve is a FIRST move on an id the human picked, not a retry of
+ * one already made. Returns undefined for every other refusal, which is what
+ * keeps this from becoming "invite a retry on any failure".
+ */
+const gatePickText = (data: Record<string, unknown> | undefined): string | undefined => {
+  if (!data?.ambiguous) return undefined
+  const candidates = gateCandidates(data.candidates)
+  if (candidates.length < 2) return undefined
+  const options = candidates.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
+  return (
+    `NOTHING HAS MOVED, and this plugin never guesses which task was meant. Ask the user with ${dialect.askTool} — ` +
+    `"Which task should \`approve\` advance?" — with one option per candidate, in this order: ${options}; plus "None — leave them all". ` +
+    `On a pick, call workflow_approve with that exact id and follow the \`next\` it returns. On "None", report that nothing moved and stop.`
+  )
+}
+
+/** Fold the gate ask into a gate result — the follow-up on a success, the pick-one on an ambiguity. */
 const okGate = (r: GateResult) => {
-  if (!r.ok) return fail(r.message)
+  if (!r.ok) {
+    const pick = gatePickText(r.data)
+    return fail(pick ? `${r.message}\n\n${pick}` : r.message)
+  }
   const next = gateNext(r.data)
   return ok(next ? { ...r.data, next } : r.data)
 }

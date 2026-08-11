@@ -456,12 +456,23 @@ drift), and `gate-command.mjs` hands the turn back only when the CLI's
 `data.gate` agrees. Three things must not be "simplified":
 
 - **Never widen it to a blanket `continueTurn: true`.** That continues on
-  refusals and on the terminal ship gate — the double-move the block exists to
-  prevent.
+  refusals generally and on the terminal ship gate — the double-move the block
+  exists to prevent.
 - **The continue path requires `ok` + a known `data.gate` + a string
   `data.id`.** Every uncertainty (an older `mcp-server/dist` emitting no `data`)
   falls through to the block, i.e. to the old behaviour. A false block costs one
   typed command; a false continue re-opens the double-move.
+- **The one refusal that may continue is the id-less AMBIGUITY, and only because
+  NOTHING MOVED.** `resolveGateTask` merely lists, so a bare `approve` over
+  several candidates never reached `approveTask`/`approvePlan`/`shipTask` — there
+  is no move to double, and the follow-up asks for a FIRST approve on an id the
+  human picks. Hence it is pinned to `continueOnAmbiguity`
+  (`ASK_AMBIGUITY_VERBS`, the same one-source-of-truth arrangement as
+  `ASK_GATES`) rather than expressed as "continue on a refusal": wrong-folder and
+  not-found have nothing to choose between, and continuing there is the old bug
+  back. Before this, a slice set made the id-less form useless — the turn blocked
+  with "Multiple tasks awaiting" and no way to ask which, so the human had to
+  type an id per child.
 - **The follow-up is emitted by the harness, never asked for in prose** — same
   reason `stageModels` is bound by a hook. Prose may describe the ask; the
   imperative with the id and the host's `askTool` already substituted is what
@@ -595,6 +606,34 @@ adds only context — never a `decision` — because a false silence costs the
 reminder while a false reminder gates a task that never parked. **Never reach it
 by adding `"plan"` to `ASK_GATES`**: that list is `continueOnGate`, i.e. which
 gate VERB crossings hand the turn back, and the park is not a verb.
+
+### A slice set's link is `epic:`, and it has to be in the schema
+
+`new` splits a heavy idea into sibling child drafts plus a `type: epic` tracker,
+so the gates routinely face N tasks where they were designed for one. Two things
+they need from a set — which slices to offer when a bare `approve` is ambiguous,
+and which slice to name next once one is queued — are answerable only from a
+STRUCTURED link, so each child carries `epic: <epic-id>`.
+
+- **Not the body's `Part of epic:` line.** That is LLM-authored prose that drifts
+  with the prompt writing it; deriving the walk from it is `message`-derivation
+  by another name, the thing `taskGateId` exists to refuse. The line stays as the
+  human-readable half, and nothing reads it.
+- **Not "every un-approved draft" either.** A stranger's draft named as "the next
+  slice of this set" is a guess, and the gates do not guess. `epicSiblings`
+  returns `[]` for a task with no epic; a caller with nothing to go on renders no
+  next-slice line at all — which is exactly the pre-slice-set behaviour, and why
+  every `epic`/`siblings` key is OMITTED rather than empty.
+- **A frontmatter key outside `TaskFrontmatterSchema` is destructive, not
+  merely ignored.** zod strips what it does not know, so `serializeTask` deletes
+  it; `unknownFrontmatterKeys` is what the hub screens an in-place edit with, and
+  `rewriteTask` refuses over it. Off-schema, every child would report as data an
+  edit is about to lose, and a `retask` would lose it. There is no "just add the
+  key" middle path — it is schema-or-nothing.
+
+`siblings` is computed AFTER the move (so the approved slice is not its own
+successor) and is best-effort: the approval is already committed, so a failed
+listing costs the walk's next line and never the move.
 
 ### A stage subagent must not be able to ask
 

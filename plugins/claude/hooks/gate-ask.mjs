@@ -45,7 +45,51 @@
  */
 export const ASK_GATES = ["task"]
 
-const taskGateAsk = (id, askTool) =>
+/**
+ * The gate CLI verbs whose id-less AMBIGUITY may hand the turn back for a
+ * pick-one ask, in the same one-source-of-truth arrangement as `ASK_GATES`: this
+ * file declares the policy, gate-parse.mjs imports it, and the CLI's `data`
+ * supplies the evidence.
+ *
+ * Only `approve-any` is here — it is the one verb that resolves without an id,
+ * and a slice set is what dead-ends it. `reject-any` resolves id-lessly too but
+ * needs a REASON the human types, so a pick-one there would collect half an
+ * answer.
+ */
+export const ASK_AMBIGUITY_VERBS = ["approve-any"]
+
+/** Ids the follow-up may name inline before it stops enumerating and defers to the message. */
+const MAX_LISTED = 6
+
+/** ``[`a`, `b`]`` — ids in backticks, comma-joined. */
+const idList = (candidates) => candidates.map((c) => `\`${c.id}\``).join(", ")
+
+/** "1 slice" / "2 slices" — these strings land in a human-read transcript too. */
+const sliceCount = (n) => `${n} ${n === 1 ? "slice" : "slices"}`
+
+/**
+ * One candidate as an option line: the id, its title (what actually makes the
+ * choice answerable), its folder, and its slice-set membership when it has one.
+ */
+const optionLine = (c) => `   - \`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`
+
+/**
+ * The tail that keeps a slice-set walk going after a child is queued, or "" when
+ * this task is not part of one. Only the "not yet" arm gets it: the plan arm
+ * hands the session to a PLAN drive on OpenCode, after which nothing can ask the
+ * human anything until it unwinds.
+ */
+const walkTail = (siblings, askTool) => {
+  if (!siblings.length) return ""
+  const next = siblings[0]
+  return ` Then CONTINUE THE SLICE WALK — this set has ${sliceCount(siblings.length)} left
+   un-approved (${idList(siblings)}). Ask ONE more ${askTool}: "Approve \`${next.id}\` now?" (${next.title}),
+   options "Approve" and "Not yet". On approve, call workflow_approve({id: "${next.id}"}) and
+   follow the follow-up it returns. On "not yet", stop — \`/agentic-workflow:engineering
+   approve\` offers the rest later.`
+}
+
+const taskGateAsk = (id, askTool, siblings) =>
   `GATE FOLLOW-UP — emitted by the agentic-workflow plugin, not by the model. Where this
 disagrees with any description of \`approve\` above, this wins.
 
@@ -58,22 +102,92 @@ gate tool for it — that work is done. Do exactly this, and nothing else:
 2. **Yes** → run the PLAN pass for \`${id}\` now: \`workflow_start({id: "${id}"})\`, spawn
    \`workflow-plan-author\` with the prompt it returns, then \`workflow_advance\`. The plan
    parks in plan-review/ and the PLAN GATE goes live — ask again with ${askTool}:
-   Approve / Replan (with the user's reason) / Park for later.
-3. **Not yet** → report that the task is queued, and stop.
+   Approve / Replan (with the user's reason) / Park for later.${
+     siblings.length
+       ? `
+   The walk STOPS there for this turn — planning owns the rest of it. Tell the user that
+   ${sliceCount(siblings.length)} of this set ${siblings.length === 1 ? "is" : "are"} still un-approved
+   (${idList(siblings)}) and that a later \`/agentic-workflow:engineering approve\` offers them.`
+       : ""
+   }
+3. **Not yet** → report that the task is queued.${siblings.length ? walkTail(siblings, askTool) : " Stop there."}
 
-Plan, approve or build no OTHER task in this turn.`
+${
+  siblings.length
+    ? `Build no task in this turn, and plan only \`${id}\`. The ONLY other task you may approve is
+the next slice named in step 3 — nothing else.`
+    : "Plan, approve or build no OTHER task in this turn."
+}`
+
+const ambiguityAsk = (candidates, askTool) => {
+  const listed = candidates.slice(0, MAX_LISTED)
+  const rest = candidates.slice(MAX_LISTED)
+  return `GATE AMBIGUITY — emitted by the agentic-workflow plugin, not by the model. Where this
+disagrees with any description of \`approve\` above, this wins.
+
+NOTHING HAS MOVED. A bare \`approve\` found ${candidates.length} tasks waiting, and this plugin
+never guesses which one the human meant: approving is their decision, and a stacked slice
+must NOT be approved ahead of its turn. Do exactly this, and nothing else:
+
+1. Ask the user with ${askTool} — header "Approve which", question "Which task should
+   \`approve\` advance?", one option per candidate, in this order:
+${listed.map(optionLine).join("\n")}${rest.length ? `\n   …and name the remaining ${rest.length} in the question text so they can be picked by id: ${idList(rest)}.` : ""}
+   Add a final option "None — leave them all".
+2. On a pick → call workflow_approve with that exact id (\`{id: "<what they picked>"}\`), then
+   follow the \`next\` field of whatever it returns.
+3. On "None" → report that nothing moved, and stop.
+
+Approve nothing the user did not just pick, and move no OTHER task in this turn.`
+}
+
+/**
+ * The candidate list to render, or [] when anything about it is off — a
+ * non-array, fewer than two entries (not an ambiguity at all), or an entry
+ * missing a field the prose interpolates.
+ *
+ * One malformed entry discards the WHOLE list rather than being filtered out: a
+ * partial pick-one would silently hide the very task the human meant, while
+ * falling back to the plain refusal costs them one typed id.
+ */
+const usableCandidates = (value, min) => {
+  if (!Array.isArray(value) || value.length < min) return []
+  const shaped = (c) =>
+    !!c && typeof c === "object" && typeof c.id === "string" && !!c.id && typeof c.title === "string" && typeof c.from === "string" && !!c.from
+  return value.every(shaped) ? value : []
+}
 
 /**
  * The follow-up for a gate move, or null when there is nothing to ask — an
  * unrecognized/terminal gate, a missing task id, or a host with no question tool.
  * `id` is interpolated into the block, so a missing one must return null rather
  * than emit an instruction naming `undefined`.
+ *
+ * `data` is the whole `GateResult.data`; the slice-set walk reads `siblings` off
+ * it. An absent or unusable list yields exactly the pre-slice-set block, so a
+ * standalone task, a hand-written draft and an older core dist all render the
+ * string this file has always emitted.
  */
-export const gateAsk = (gate, id, askTool) => {
+export const gateAsk = (gate, id, askTool, data) => {
   if (!ASK_GATES.includes(gate)) return null
   if (typeof id !== "string" || !id) return null
   if (typeof askTool !== "string" || !askTool) return null
-  return taskGateAsk(id, askTool)
+  // min 1: one remaining slice is a walk worth continuing, unlike an ambiguity,
+  // which needs two things to choose between.
+  return taskGateAsk(id, askTool, usableCandidates(data?.siblings, 1))
+}
+
+/**
+ * The pick-one follow-up for an id-less gate verb that found several candidates,
+ * or null when there is nothing askable — an unusable list, or a host with no
+ * question tool.
+ *
+ * Fail-safe like `gateAsk`: null means the caller blocks the turn with the
+ * plain "Multiple tasks awaiting" refusal, i.e. exactly the old behaviour.
+ */
+export const gateAmbiguityAsk = (candidates, askTool) => {
+  if (typeof askTool !== "string" || !askTool) return null
+  const list = usableCandidates(candidates, 2)
+  return list.length ? ambiguityAsk(list, askTool) : null
 }
 
 const planParkBlock = (id, askTool) =>
