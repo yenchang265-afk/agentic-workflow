@@ -30,6 +30,20 @@ test("allows non-check stages and missing markers", () => {
   assert.equal(decideVerdictGuard(null, false), "allow")
 })
 
+test("an expired marker never nags — a crashed loop's leftover must not trap an unrelated subagent", () => {
+  // Nothing removes the marker file when the MCP server dies mid-stage, and
+  // writeStageMarker deletes the once-only sentinel on every arm — so a crashed
+  // check stage's marker (check: true, verdictRecorded: false, deadline long
+  // past) nagged the next ANY subagent to stop in the repo to call
+  // workflow_verdict. Past-deadline reads as "this stage is over, live or
+  // crashed" — the same reading spawn-guard gives the field.
+  const dead = { stage: "review", check: true, verdictRecorded: false, deadline: 1_000 }
+  assert.equal(decideVerdictGuard(dead, false, 2_000), "allow")
+  // Inside the window the nag still fires, and a deadline-less older marker is untouched.
+  assert.equal(decideVerdictGuard(dead, false, 500), "nag")
+  assert.equal(decideVerdictGuard({ stage: "review", check: true, verdictRecorded: false }, false, 2_000), "nag")
+})
+
 test("nag message names the tool (both registered forms) and the stage", () => {
   const msg = nagMessage("verify")
   assert.match(msg, /workflow_verdict/)

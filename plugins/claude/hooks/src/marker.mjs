@@ -92,3 +92,26 @@ export const readMarker = (cwd, markerFile) => {
     return null
   }
 }
+
+/**
+ * Whether the marker's writer pid is a live process on this machine. Feeds the
+ * check-stage-guard's deadline starve: a stage past its deadline is starved of
+ * guarded tools only while the loop that armed it is still running — a dead
+ * writer's marker is a crashed run's leftover (nothing removes the file on a
+ * SIGKILL/OOM/sleep), and blocking on it ruled the repo forever.
+ *
+ * `process.kill(pid, 0)` throws ESRCH for a gone pid; EPERM proves the pid
+ * exists, so it counts as alive. No pid on the marker (an older server) or a
+ * non-pid value returns false — fail OPEN, like every other uncertainty in
+ * these hooks: a false "dead" only restores the pre-deadline behaviour, while a
+ * false "alive" keeps the repo starved with nobody to hand control back to.
+ */
+export const markerWriterAlive = (pid) => {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (err) {
+    return err?.code === "EPERM"
+  }
+}

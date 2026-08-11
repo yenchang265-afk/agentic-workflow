@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { backlogRoot, readTasksDir, runsDir } from "./src/marker.mjs"
+import { backlogRoot, markerWriterAlive, readTasksDir, runsDir } from "./src/marker.mjs"
 
 /**
  * The guards must look for the stage marker exactly where the MCP server writes
@@ -94,4 +94,19 @@ test("a malformed config layer reads as absent rather than throwing", () => {
     assert.equal(readTasksDir(repo), "docs/tasks")
   })
   fs.rmSync(repo, { recursive: true, force: true })
+})
+
+test("markerWriterAlive: a live pid reads alive; a gone, absent, or non-pid value reads dead", () => {
+  // Our own pid is the self-validating probe: it must read alive, or the check
+  // proves nothing. 999999999 is beyond every Linux pid_max default, so kill(2)
+  // reports ESRCH. Everything non-pid-shaped (an older marker without the field,
+  // a garbled value) reads dead — which the caller treats as fail OPEN.
+  assert.equal(markerWriterAlive(process.pid), true)
+  assert.equal(markerWriterAlive(999_999_999), false)
+  assert.equal(markerWriterAlive(undefined), false)
+  assert.equal(markerWriterAlive(null), false)
+  assert.equal(markerWriterAlive(0), false)
+  assert.equal(markerWriterAlive(-1), false)
+  assert.equal(markerWriterAlive(1.5), false)
+  assert.equal(markerWriterAlive("123"), false)
 })

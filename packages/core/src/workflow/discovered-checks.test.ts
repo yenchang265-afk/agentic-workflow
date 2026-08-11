@@ -154,7 +154,7 @@ test("admissibleChecks refuses the escapes a glob alone cannot exclude", () => {
     ["chained push", "npm test && git push origin main", /pushes a branch|allowlist/],
     ["command substitution", "npm test $(whoami)", /allowlist/],
     ["redirection", "cat x > /etc/passwd", /allowlist/],
-    ["find -delete", "find . -delete", /allowlist/],
+    ["find -delete", "find . -delete", /mutating action flag/],
     ["off-allowlist runner", "rm -rf build", /allowlist/],
   ]
   for (const [label, command, reason] of vectors) {
@@ -380,6 +380,25 @@ test("bashAllowlistPrefix admits the rewritten form of a check the stage could r
   })
   assert.equal(refused.source, "none", "the prefix re-expresses the boundary, it does not dissolve it")
   assert.match(refused.warnings.join("\n"), /not on this stage's bash allowlist/)
+})
+
+test("a proxied mutating find is refused — the prefix must not blind the write backstop", async () => {
+  // `rtk find . -delete` matched a derived `rtk find *` glob while the raw
+  // segment's tokens[0] read `rtk`, not `find` — so the prefix-blind classifier
+  // never fired and runChecks executed a mutating find named by REPO CONTENT
+  // (the plan document). The driver-run channel now applies chainedFindMutation
+  // with the prefixes, like both agent channels.
+  const config = parseConfig({ bashAllowlistPrefix: ["rtk"] })
+  const refused = await resolveStageChecks({
+    $: makeShell(ALL_PRESENT),
+    config,
+    kind: "engineering",
+    def: stage({ discoverChecks: true }),
+    plan: fence('[{ "name": "cleanup", "command": "rtk find . -delete" }]'),
+    dir: "/wt",
+  })
+  assert.equal(refused.source, "none")
+  assert.match(refused.warnings.join("\n"), /mutating action flag/)
 })
 
 test("resolveStageChecks honors the kind-level config override of the manifest flag", async () => {

@@ -115,7 +115,9 @@
      through **{{askTool}}**, on the same terms as `new` step 1.
   4. Spawn the **`workflow-task-author`** subagent ({{spawnTool}}) in **`retask` mode**
      with the id and the confirmed title/priority/acceptance/body (carry
-     forward the `tracker` block if the draft had one) to rewrite
+     forward the `tracker` block **and the `epic:` frontmatter key** if the
+     draft had them — dropping `epic:` orphans a slice from its set, and the
+     gates read only that key, never the body's prose line) to rewrite
      `docs/tasks/draft/<id>.md` **in place** — the id/filename never changes.
      Still no plan. Then run the task gate inline, exactly as `new` does — ask
      with **{{askTool}}** "Approve `<id>` now?"; on approve call

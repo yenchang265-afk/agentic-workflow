@@ -122,7 +122,7 @@ export const hasShellExpansion = (seg: string): boolean => {
  * by the OpenCode host, whose allowlist (agent frontmatter `permission.bash`)
  * cannot express a flag exclusion.
  */
-const FIND_MUTATING_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"])
+export const FIND_MUTATING_FLAGS = new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"])
 
 /**
  * A `find` segment carrying a mutating action flag. Token equality, not substring:
@@ -167,10 +167,14 @@ export const isBareCd = (seg: string): boolean => /^cd\s+[^;&|<>()`$]+$/.test(se
  * driver runs bypasses the allowlist entirely (`manifest/schema.ts`), so without
  * this the plan document — repo content — would be an unfiltered shell channel.
  */
-export const commandAllowed = (cmd: string, globs: readonly string[]): boolean => {
+export const commandAllowed = (cmd: string, globs: readonly string[], prefixes: readonly string[] = []): boolean => {
   const segments = splitSegments(cmd)
   if (segments.some(hasShellExpansion)) return false
-  if (segments.some(isFindMutation)) return false
+  // Raw AND one-hop-stripped, like the chained classifiers below: with a
+  // `bashAllowlistPrefix` configured the globs carry derived `<prefix> find *`
+  // twins, so `rtk find . -delete` matches a glob while the raw segment's
+  // `tokens[0]` is `rtk`, not `find` — prefix-blind, the classifier never fires.
+  if (segments.some((s) => isFindMutation(s) || (prefixes.length > 0 && isFindMutation(stripCommandPrefix(s, prefixes))))) return false
   return segments.length > 0 && segments.every((s) => isBareCd(s) || matchesAny(s, globs))
 }
 

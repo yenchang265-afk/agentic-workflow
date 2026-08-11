@@ -57,7 +57,7 @@ import {
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
-import { backlogRoot, readMarker, readTasksDir, runsDir } from "./marker.mjs"
+import { backlogRoot, markerWriterAlive, readMarker, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
 
 // The PreToolUse envelope (allow / block / rewriteInput) lives in
@@ -177,8 +177,15 @@ const main = async () => {
   }
 
   // (0) stage deadline — a stage past stageTimeoutMinutes is starved of guarded
-  // tools so it returns control; workflow_advance then stops the loop.
-  if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
+  // tools so it returns control; workflow_advance then stops the loop. Gated on
+  // the marker's WRITER still being alive: nothing removes the marker file when
+  // the MCP server dies mid-stage (SIGKILL, OOM, laptop sleep), and blocking
+  // unconditionally ruled the repo forever — every future session's Bash and
+  // writes denied behind a loop nobody could see, with `rm` on the marker the
+  // only way out. A dead or unknowable writer is a crashed run's leftover — the
+  // same reading spawn-guard gives an expired marker — so fall through (fail
+  // open, like every other uncertainty in these hooks).
+  if (typeof marker.deadline === "number" && Date.now() > marker.deadline && markerWriterAlive(marker.pid)) {
     if (isBash || isWrite) {
       return block(
         `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline — ` +
