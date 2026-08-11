@@ -222,3 +222,19 @@ test("isAdoMcpToolOutOfStageScope holds a call to the stage's own manifest budge
   assert.equal(isAdoMcpToolOutOfStageScope("mcp__azure-devops__repo_get_pull_request_by_id", []), true)
   assert.equal(isAdoMcpToolOutOfStageScope("Bash", []), false)
 })
+
+test("commandAllowed itself sees through one proxy prefix for find mutations", () => {
+  // With a prefix configured the globs carry derived `rtk find *` twins, which
+  // legitimately match `rtk find . -delete` — while the raw segment's tokens[0]
+  // is `rtk`, not `find`, so a prefix-blind isFindMutation never fired and the
+  // discovery admission (the driver-run channel) accepted a mutating find both
+  // agent channels reject. commandAllowed must classify raw AND one-hop-stripped,
+  // like the chained classifiers.
+  const globs = withCommandPrefixes(["find *"], ["rtk"])
+  assert.equal(commandAllowed("rtk find . -delete", globs, ["rtk"]), false)
+  assert.equal(commandAllowed("rtk find . -exec rm {} +", globs, ["rtk"]), false)
+  assert.equal(commandAllowed("rtk find . -name '*.ts'", globs, ["rtk"]), true)
+  // The bare forms keep their existing verdicts under the same call shape.
+  assert.equal(commandAllowed("find . -delete", globs, ["rtk"]), false)
+  assert.equal(commandAllowed("find . -name '*.ts'", globs, ["rtk"]), true)
+})

@@ -1,6 +1,6 @@
 import path from "node:path"
 import { STATUSES } from "./statuses.js"
-import { hasShellExpansion, splitSegments } from "./write-backstop.js"
+import { FIND_MUTATING_FLAGS, hasShellExpansion, splitSegments } from "./write-backstop.js"
 
 /**
  * Backlog-mutation guard: classifies a tool call an *agent* is about to make
@@ -107,8 +107,12 @@ const READ_ONLY = [
   "git -C * blame*",
 ]
 
-// Tokens that turn an otherwise read-only command into a mutation (find -exec/-delete).
-const MUTATING_TOKENS = [" -exec", " -execdir", " -delete", " -ok "]
+// Tokens that turn an otherwise read-only command into a mutation. Derived from
+// the write-backstop's canonical flag set rather than hand-copied: the copies
+// drifted to a four-entry subset, and `find docs/tasks -fls <status-folder>/x.md`
+// walked straight through the guard and ghosted the folder with an unparseable
+// file. Space-prefixed so a flag mid-argv matches but `find`'s own name never does.
+const MUTATING_TOKENS = [...FIND_MUTATING_FLAGS].map((f) => ` ${f}`)
 
 const toRe = (glob: string): RegExp =>
   new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")

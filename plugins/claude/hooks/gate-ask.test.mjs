@@ -170,6 +170,9 @@ test("a candidate outside a slice set renders without an epic clause", () => {
   )
   assert.match(ask, /`a1b2` — A parked plan \(plan-review\)/)
   assert.doesNotMatch(ask, /slice of epic/)
+  // An in-review option is a SHIP — the line must say so: the human is choosing
+  // from one flat list where every other pick is reversible.
+  assert.match(ask, /`c3d4` — A finished branch \(in-review — picking it SHIPS the task: completed\/, push, PR\)/)
 })
 
 test("a Qwen ambiguity ask names Qwen's tool and never Claude's", () => {

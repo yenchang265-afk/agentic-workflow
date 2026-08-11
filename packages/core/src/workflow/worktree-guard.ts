@@ -1,6 +1,6 @@
 import path from "node:path"
 import type { GuardVerdict } from "../task/guard.js"
-import { splitSegments } from "../task/write-backstop.js"
+import { FIND_MUTATING_FLAGS, splitSegments } from "../task/write-backstop.js"
 
 /**
  * Worktree pin: keeps a worktree-isolated stage agent's shell commands and file
@@ -60,10 +60,12 @@ const READ_ONLY = [
   "git -C * blame*",
 ]
 
-// Tokens that turn a read-only shape into a mutation (find -exec/-delete), plus
-// `>` redirection — splitSegments does not split on `>`, and an unpinned
-// redirect writes a file relative to the session cwd: the main tree.
-const MUTATING_TOKENS = [" -exec", " -execdir", " -delete", " -ok "]
+// Tokens that turn a read-only shape into a mutation, plus `>` redirection —
+// splitSegments does not split on `>`, and an unpinned redirect writes a file
+// relative to the session cwd: the main tree. Derived from the write-backstop's
+// canonical flag set rather than hand-copied: the copies drifted to a four-entry
+// subset, and `find . -fprint /outside/x` read as read-only, escaping the pin.
+const MUTATING_TOKENS = [...FIND_MUTATING_FLAGS].map((f) => ` ${f}`)
 
 const toRe = (glob: string): RegExp =>
   new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s")

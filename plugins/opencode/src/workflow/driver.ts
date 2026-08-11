@@ -2615,7 +2615,10 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
       dropChecksInfo(sessionID)
     }
     clearWorkflow(sessionID)
-    await toast(deps.client, `Loop error: ${message}`, "error")
+    // Fire-and-forget like every other toast: this one sits ahead of the
+    // `finally` that releases `driving`, so a TUI call that never settles would
+    // otherwise strand the session — onIdle returns on `driving.has` forever.
+    void toast(deps.client, `Loop error: ${message}`, "error")
   } finally {
     driving.delete(sessionID)
     interrupted.delete(sessionID) // consumed by this drive; a fresh drive re-arms via onInterrupt
@@ -2909,7 +2912,9 @@ const gatePickNextStep = (data: Record<string, unknown> | undefined): string => 
   if (candidates.length < 2) return ""
   const listed = candidates.slice(0, MAX_LISTED_CANDIDATES)
   const rest = candidates.slice(MAX_LISTED_CANDIDATES)
-  const options = listed.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
+  // An `in-review` option is a SHIP: the option text must say so, because the
+  // human is choosing from one flat list where every other pick is reversible.
+  const options = listed.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.from === "in-review" ? " — picking it SHIPS the task: completed/, push, PR" : ""}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
   const overflow = rest.length
     ? ` …and name the remaining ${rest.length} in the question text so they can be picked by id: ${rest.map((c) => `\`${c.id}\``).join(", ")}.`
     : ""

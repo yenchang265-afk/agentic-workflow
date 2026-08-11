@@ -170,6 +170,33 @@ test("a refusal still blocks, whatever gate it names", () => {
   assert.equal(out?.decision, "block")
 })
 
+/** The id-less form — the only one whose ambiguity may hand the turn back. */
+const approveIdless = (result) => {
+  const root = fakeRoot(result)
+  return run("/agentic-workflow:engineering approve", {
+    CLAUDE_PLUGIN_ROOT: root,
+    AGENTIC_WORKFLOW_PLUGIN_ROOT: root,
+    AGENTIC_WORKFLOW_SERVER_JS: path.join(root, "mcp-server", "dist", "server.js"),
+  })
+}
+
+test("an ambiguous id-less approve continues only on the `ambiguous` discriminant", () => {
+  const candidates = [
+    { id: "a1b2", from: "draft", title: "One", priority: 0 },
+    { id: "c3d4", from: "draft", title: "Two", priority: 1 },
+  ]
+  const message = "Multiple tasks awaiting: a1b2 (draft), c3d4 (draft) — pass an id."
+  // With the discriminant: the turn comes back with the pick-one ask.
+  const out = approveIdless({ ok: false, message, data: { ambiguous: true, verb: "approve", candidates } })
+  assert.notEqual(out?.decision, "block")
+  assert.match(out?.hookSpecificOutput?.additionalContext ?? "", /GATE AMBIGUITY/)
+  // Without it, the same candidate list blocks: the three hosts share one
+  // predicate, and this hook must not rest on core never attaching `candidates`
+  // to some other refusal.
+  const blockedOut = approveIdless({ ok: false, message, data: { verb: "approve", candidates } })
+  assert.equal(blockedOut?.decision, "block")
+})
+
 // Fail-safe: an mcp-server/dist older than the `data.gate` discriminator, or one
 // that names a gate without a task id, must degrade to exactly the old behaviour
 // rather than hand back a turn with a follow-up naming `undefined`.

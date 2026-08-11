@@ -240,3 +240,15 @@ test("classifyMutation allows unknown tools and missing args", () => {
   assert.equal(classifyMutation("Bash", {}, ctx).allow, true)
   assert.equal(classifyMutation("Write", {}, ctx).allow, true)
 })
+
+test("classifyBash blocks the full find mutating-flag set — the hand copy drifted to four", () => {
+  // The token list is now derived from the write-backstop's canonical
+  // FIND_MUTATING_FLAGS. The hand-written subset missed the file-writing flags:
+  // `-fls docs/tasks/queued/x.md` has no `>`, no -exec, and matched the
+  // read-only `find *` glob — writing an unparseable file into a status folder
+  // the duplicate guard then defends forever (the "ghost" failure).
+  assert.equal(classifyBash("find docs/tasks -name '*.md' -fls docs/tasks/queued/x.md", ctx).allow, false)
+  assert.equal(classifyBash("find docs/tasks -name '*.md' -fprint docs/tasks/queued/x.md", ctx).allow, false)
+  assert.equal(classifyBash("find docs/tasks -name '*.md' -fprintf docs/tasks/queued/x.md '%p'", ctx).allow, false)
+  assert.equal(classifyBash("find docs/tasks -name '*.md' -okdir rm {} ;", ctx).allow, false)
+})
