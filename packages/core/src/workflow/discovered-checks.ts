@@ -42,7 +42,7 @@
  */
 
 import { CheckDefSchema, effectiveAllowlist, type CheckDef, type StageDef } from "../manifest/schema.js"
-import { commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isBareCd, splitSegments } from "../task/write-backstop.js"
+import { commandAllowed, chainedFindMutation, chainedGithubPrMutation, chainedGitPushViolation, isBareCd, splitSegments } from "../task/write-backstop.js"
 import { bashAllowlistExtras, bashAllowlistPrefixes, checksFor, configuredChecks, discoverChecksFor, platformFor, withCommandPrefixes } from "../config.js"
 import type { Config } from "./state.js"
 import type { Shell } from "../host.js"
@@ -266,7 +266,16 @@ export const admissibleChecks = (
       rejected.push({ name: def.name, reason: "the command mutates a pull request or pushes a branch" })
       continue
     }
-    if (!commandAllowed(def.command, globs)) {
+    if (chainedFindMutation(def.command, prefixes)) {
+      // `commandAllowed` screens this too, but prefix-blind it is not enough on
+      // its own: the chained classifier is the one that sees `rtk find . -delete`
+      // both raw and with the configured prefix hop stripped, same as the PR and
+      // push backstops one line up — the driver-run channel must not be weaker
+      // than the agent channels, which both apply it.
+      rejected.push({ name: def.name, reason: "the command runs `find` with a mutating action flag" })
+      continue
+    }
+    if (!commandAllowed(def.command, globs, prefixes)) {
       rejected.push({ name: def.name, reason: `"${def.command}" is not on this stage's bash allowlist` })
       continue
     }

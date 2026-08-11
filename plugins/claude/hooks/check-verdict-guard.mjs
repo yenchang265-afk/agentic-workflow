@@ -115,8 +115,9 @@ var runsDir = (cwd) => {
 };
 
 // plugins/claude/hooks/src/verdict-guard.mjs
-var decideVerdictGuard = (marker, nagAlreadyFired) => {
+var decideVerdictGuard = (marker, nagAlreadyFired, now = Date.now()) => {
   if (!marker || marker.check !== true) return "allow";
+  if (typeof marker.deadline === "number" && now > marker.deadline) return "allow";
   if (marker.verdictRecorded === true) return "allow";
   return nagAlreadyFired ? "allow" : "nag";
 };

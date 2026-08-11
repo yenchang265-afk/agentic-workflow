@@ -860,10 +860,14 @@ export const resolveGateTask = async (
     }
     if (found.length === 1) return { ok: true, id: found[0]!.id, from: found[0]!.from }
     if (found.length > 1) {
-      // Ordered the way a human must approve a stacked slice set — lowest
-      // `priority` first, ties by id — so a host rendering these as options
-      // presents them in sequence rather than in readdir order.
-      const candidates = [...found].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+      // Ordered by FOLDER first, then the way a human must approve a stacked
+      // slice set — lowest `priority` first, ties by id. The folder rank matters
+      // because the first tier mixes two different gates: a priority-only sort
+      // let a low-numbered `in-review` task — whose approval SHIPS it (push +
+      // PR) — sort ahead of a `plan-review` plan and become the first option a
+      // host offers. Priority sequences slices within a gate; it must never
+      // reorder a ship gate ahead of a plan gate.
+      const candidates = [...found].sort((a, b) => tier.indexOf(a.from) - tier.indexOf(b.from) || a.priority - b.priority || a.id.localeCompare(b.id))
       const list = candidates.map((c) => `${c.id} (${c.from})`).join(", ")
       // The message is pinned by tests and by both hosts' toasts. Widen `data`,
       // never this sentence.

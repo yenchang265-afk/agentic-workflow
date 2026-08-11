@@ -141,7 +141,12 @@ Mode `retask`:
 2. Confirm `docs/tasks/draft/<id>.md` exists; if not, return an error naming it
    (the plugin has already moved a previously-approved `queued/` task back here,
    so an absent file means the id is wrong, not that it sits elsewhere).
-3. Overwrite that file in place — frontmatter + body only, exactly in the schema
+3. Read the existing file's frontmatter first and carry `epic: <epic-id>`
+   forward **unchanged** if it is there (keep the body's `Part of epic:` line
+   too). That key is the only link the gates can read — a retask that drops it
+   orphans the slice: the set walk stops naming this task and a bare `approve`
+   lists it as a stranger. A retask reshapes the goal, never the set membership.
+4. Overwrite that file in place — frontmatter + body only, exactly in the schema
    above, keeping the filename/id — and stop. No plan section.
 
 ## Output
@@ -173,5 +178,6 @@ Mode `retask` — return:
 - The frontmatter **must** parse: `title` present and non-empty, `priority` an
   integer, `acceptance` a YAML list of strings. The only optional keys you set
   are `type: epic` (on an epic file) and `epic: <epic-id>` (on each child of a
-  slice set); no other extra keys — in particular, never a `status:` key.
+  slice set — including a `retask` of one, where the existing key is carried
+  forward unchanged); no other extra keys — in particular, never a `status:` key.
 - Do not edit source code, run the loop, or create tasks beyond the confirmed set.

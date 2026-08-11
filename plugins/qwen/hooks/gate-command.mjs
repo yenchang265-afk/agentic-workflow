@@ -13,7 +13,7 @@ var ASK_AMBIGUITY_VERBS = ["approve-any"];
 var MAX_LISTED = 6;
 var idList = (candidates) => candidates.map((c) => `\`${c.id}\``).join(", ");
 var sliceCount = (n) => `${n} ${n === 1 ? "slice" : "slices"}`;
-var optionLine = (c) => `   - \`${c.id}\` \u2014 ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`;
+var optionLine = (c) => `   - \`${c.id}\` \u2014 ${c.title} (${c.from}${c.from === "in-review" ? " \u2014 picking it SHIPS the task: completed/, push, PR" : ""}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`;
 var walkTail = (siblings, askTool) => {
   if (!siblings.length) return "";
   const next = siblings[0];
@@ -359,7 +359,12 @@ ${context}` : message);
     // pinned to the verbs the parser declared: a blanket "continue on refusal"
     // would hand the turn back on wrong-folder and not-found too, where there
     // is nothing to choose between and nothing to say.
-    dispatch.continueOnAmbiguity?.includes(args[1]) ? gateAmbiguityAsk(outcome.data?.candidates, dialectFor(hostFor())?.askTool) : null
+    // `data.ambiguous` is required, same as the OpenCode driver's
+    // `gatePickNextStep` and the MCP server's `gatePickText`: the three
+    // predicates must agree, and without the discriminant this arm's safety
+    // rests on core never attaching `candidates` to any OTHER refusal — a
+    // coupling nothing enforces. A refusal that is not the ambiguity blocks.
+    dispatch.continueOnAmbiguity?.includes(args[1]) && outcome.data?.ambiguous === true ? gateAmbiguityAsk(outcome.data?.candidates, dialectFor(hostFor())?.askTool) : null
   );
   if (ask) {
     const context = verbContext(pluginRoot, verbFor(prompt));

@@ -119,6 +119,7 @@ var hasShellExpansion = (seg) => {
   }
   return false;
 };
+var FIND_MUTATING_FLAGS = /* @__PURE__ */ new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"]);
 
 // packages/core/dist/task/guard.js
 var ALLOW = { allow: true };
@@ -166,7 +167,7 @@ var READ_ONLY = [
   "git -C * show*",
   "git -C * blame*"
 ];
-var MUTATING_TOKENS = [" -exec", " -execdir", " -delete", " -ok "];
+var MUTATING_TOKENS = [...FIND_MUTATING_FLAGS].map((f) => ` ${f}`);
 var toRe = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s");
 var matchesAny = (cmd, globs) => globs.some((g) => toRe(g).test(cmd.trim()));
 var PROTECTED_SUBDIRS = [...STATUSES, "runs"];
@@ -241,7 +242,7 @@ var READ_ONLY2 = [
   "git -C * show*",
   "git -C * blame*"
 ];
-var MUTATING_TOKENS2 = [" -exec", " -execdir", " -delete", " -ok "];
+var MUTATING_TOKENS2 = [...FIND_MUTATING_FLAGS].map((f) => ` ${f}`);
 var toRe2 = (glob) => new RegExp("^" + glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "s");
 var matchesAny2 = (cmd, globs) => globs.some((g) => toRe2(g).test(cmd.trim()));
 var isReadOnlySegment = (segment) => matchesAny2(segment, READ_ONLY2) && !/>/.test(segment) && !MUTATING_TOKENS2.some((t) => segment.includes(t));
@@ -536,11 +537,11 @@ var hasShellExpansion2 = (seg) => {
   }
   return false;
 };
-var FIND_MUTATING_FLAGS = /* @__PURE__ */ new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"]);
+var FIND_MUTATING_FLAGS2 = /* @__PURE__ */ new Set(["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprintf", "-fprint0", "-fls"]);
 var isFindMutation = (seg) => {
   const tokens = seg.trim().split(/\s+/);
   if (tokens[0] !== "find") return false;
-  return tokens.some((t) => FIND_MUTATING_FLAGS.has(t));
+  return tokens.some((t) => FIND_MUTATING_FLAGS2.has(t));
 };
 var commandAllowed = (cmd, globs, prefixes = []) => {
   const segments = splitSegments2(cmd);
@@ -688,6 +689,15 @@ var readMarker = (cwd, markerFile) => {
     return null;
   }
 };
+var markerWriterAlive = (pid) => {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err?.code === "EPERM";
+  }
+};
 
 // plugins/claude/hooks/src/evidence.mjs
 import fs2 from "node:fs";
@@ -773,7 +783,7 @@ var main = async () => {
       `agentic-workflow: the loop must never push a branch other than its own head, force-push, or delete \u2014 this git push is blocked. Push only your own feature/* (or <kind>/*) branch fast-forward with no ':dst' refspec, no --force, no --delete; the watched and default branches stay a human call.`
     );
   }
-  if (typeof marker.deadline === "number" && Date.now() > marker.deadline) {
+  if (typeof marker.deadline === "number" && Date.now() > marker.deadline && markerWriterAlive(marker.pid)) {
     if (isBash || isWrite) {
       return block2(
         `agentic-workflow: the ${String(marker.stage).toUpperCase()} stage exceeded its stageTimeoutMinutes deadline \u2014 stop working, summarize what you have, and return control so the loop can stop cleanly.`

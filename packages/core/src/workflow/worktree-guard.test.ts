@@ -255,6 +255,16 @@ test("a ~-prefixed path is refused rather than turned into a literal ~ directory
   assert.match((v as { reason: string }).reason, /do not expand/)
 })
 
+test("a find writing via -fprint/-fls is a mutation, not a read — the pin sees it", () => {
+  // The token list is derived from the write-backstop's canonical
+  // FIND_MUTATING_FLAGS now; the hand-written subset missed the file-writing
+  // flags, so `find src -fprint /outside/x` read as read-only and ran unpinned
+  // in the main tree, writing outside the worktree.
+  assert.match(blocked("find src -fprint /tmp/outside.txt"), /outside/)
+  assert.equal(rewritten("find src -fls listing.txt"), `cd ${WT} && find src -fls listing.txt`)
+  assert.equal(rewritten("find src -name '*.md' -fprintf out.txt '%p'"), `cd ${WT} && find src -name '*.md' -fprintf out.txt '%p'`)
+})
+
 // --- isUnderTasksDir ---
 
 test("isUnderTasksDir matches only paths under the worktree's tasksDir copy", () => {

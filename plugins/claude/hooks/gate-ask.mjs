@@ -70,8 +70,10 @@ const sliceCount = (n) => `${n} ${n === 1 ? "slice" : "slices"}`
 /**
  * One candidate as an option line: the id, its title (what actually makes the
  * choice answerable), its folder, and its slice-set membership when it has one.
+ * An `in-review` option is a SHIP — the line must say so, because the human is
+ * choosing from one flat list where every other pick is reversible.
  */
-const optionLine = (c) => `   - \`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`
+const optionLine = (c) => `   - \`${c.id}\` — ${c.title} (${c.from}${c.from === "in-review" ? " — picking it SHIPS the task: completed/, push, PR" : ""}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`
 
 /**
  * The tail that keeps a slice-set walk going after a child is queued, or "" when

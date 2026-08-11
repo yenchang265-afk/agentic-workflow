@@ -419,6 +419,24 @@ test("the tracking epic is not a candidate, so a two-child set is ambiguous rath
   assert.deepEqual(ids, ["a1b2-api", "c3d4-ui"])
 })
 
+test("a mixed-tier ambiguity lists the plan gate before the ship gate, whatever the priorities say", async () => {
+  // The first tier mixes two different gates, and a priority-only sort let a
+  // low-numbered in-review task — whose approval SHIPS it — become the first
+  // option a host offers. Folder rank outranks priority; priority still
+  // sequences slices within one folder.
+  const { ctx } = makeCtx({
+    "in-review/s1-ship.md": serializeTask({ title: "Finished branch", priority: 0, body: "done…" }),
+    "plan-review/p1-plan.md": serializeTask({ title: "Parked plan", priority: 1, body: "plan…" }),
+  })
+  const r = await approveAny(ctx, "")
+  assert.equal(r.ok, false)
+  const candidates = (!r.ok && r.data?.candidates) as { id: string; from: string }[]
+  assert.deepEqual(
+    candidates.map((c) => `${c.id} (${c.from})`),
+    ["p1-plan (plan-review)", "s1-ship (in-review)"],
+  )
+})
+
 test("a lone draft still resolves outright — one candidate is not an ambiguity", async () => {
   const { ctx } = makeCtx({ "draft/t.md": task("Do it") })
   const r = await approveAny(ctx, "")

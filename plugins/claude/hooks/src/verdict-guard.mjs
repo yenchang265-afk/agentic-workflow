@@ -12,9 +12,20 @@
  * MCP server's no-verdict retry then takes over.
  */
 
-/** What the guard should do: "allow", or "nag" (block once and write the sentinel). */
-export const decideVerdictGuard = (marker, nagAlreadyFired) => {
+/**
+ * What the guard should do: "allow", or "nag" (block once and write the sentinel).
+ *
+ * An EXPIRED marker never nags: nothing removes the marker file when the MCP
+ * server dies mid-stage (SIGKILL, OOM, sleep), and `writeStageMarker` deletes
+ * the once-only sentinel on every arm — so a crashed check stage's leftover
+ * (`check: true, verdictRecorded: false`, deadline long past) would nag the
+ * next UNRELATED subagent to stop in the repo. Past-deadline means "this stage
+ * is over, live or crashed" — the same reading spawn-guard gives the field —
+ * and the MCP server's own no-verdict retry covers the live-overrun case.
+ */
+export const decideVerdictGuard = (marker, nagAlreadyFired, now = Date.now()) => {
   if (!marker || marker.check !== true) return "allow" // no loop / not a check stage
+  if (typeof marker.deadline === "number" && now > marker.deadline) return "allow" // a dead loop's leftover
   if (marker.verdictRecorded === true) return "allow" // workflow_verdict already landed
   return nagAlreadyFired ? "allow" : "nag"
 }

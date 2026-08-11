@@ -2377,7 +2377,9 @@ const gatePickText = (data: Record<string, unknown> | undefined): string | undef
   if (!data?.ambiguous) return undefined
   const candidates = gateCandidates(data.candidates)
   if (candidates.length < 2) return undefined
-  const options = candidates.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
+  // An `in-review` option is a SHIP: the option text must say so, because the
+  // human is choosing from one flat list where every other pick is reversible.
+  const options = candidates.map((c) => `\`${c.id}\` — ${c.title} (${c.from}${c.from === "in-review" ? " — picking it SHIPS the task: completed/, push, PR" : ""}${c.epic ? `, slice of epic \`${c.epic}\`` : ""})`).join("; ")
   return (
     `NOTHING HAS MOVED, and this plugin never guesses which task was meant. Ask the user with ${dialect.askTool} — ` +
     `"Which task should \`approve\` advance?" — with one option per candidate, in this order: ${options}; plus "None — leave them all". ` +
