@@ -3207,6 +3207,74 @@ export const handleReplan = async (deps: Deps, sessionID: string, args: string, 
 }
 
 /**
+ * Why a chained re-plan did not fire. Every arm used to fall back SILENTLY to
+ * core's plan-next message — "the chain ran" and "the chain could not run"
+ * produced the same transcript, the exact defect class the question-window
+ * rules document ("the human said yes" vs "we could not tell"). So each skip
+ * carries its log level and whether the fallback answer should name the tool
+ * that re-plans NOW: `nextStep` is true only on the arms where this session is
+ * free, because on the busy/raced arms `workflow_plan` would just hit the same
+ * guard and core's plan-next promise is the right answer.
+ */
+type ChainSkip = { readonly why: string; readonly level: "warn" | "info"; readonly nextStep: boolean }
+
+const CHAIN_SKIPS = {
+  staleDist: {
+    why:
+      "core reported no `requeued`/`id` gate data — the @agentic-workflow/core dist predates the gate contract. " +
+      "Run `npm install` at the agentic-workflow repo root and restart opencode.",
+    level: "warn",
+    nextStep: true,
+  },
+  busy: {
+    why: "this session is mid-loop or the task is already driven — the plan-next marker means the next claim/watch re-plans it first",
+    level: "info",
+    nextStep: false,
+  },
+  gone: { why: "the re-queued task was not found in queued/ after the move", level: "warn", nextStep: true },
+  raced: { why: "a watcher claimed the task first — it re-plans the task there", level: "info", nextStep: false },
+} as const satisfies Record<string, ChainSkip>
+
+/**
+ * Classify core's rejection outcome for the chain: the id to chain on, a skip
+ * (the rejection LANDED but the chain cannot run), or null (the rejection
+ * itself failed — core's refusal message is the whole answer, nothing to log).
+ * Pure, and exported because the stale-dist arm is exactly the shape the real
+ * core in this tree can never emit — only a unit test can reach it.
+ */
+export const classifyReplanChain = (r: GateResult): { readonly id: string } | ChainSkip | null => {
+  if (!r.ok) return null
+  // `?.` defensively: the type says `data` always rides an ok result, but the
+  // stale dist this arm exists for is precisely a runtime that predates that —
+  // a bare `.requeued` would turn a SUCCEEDED move into a thrown "Replan failed".
+  const id = r.data?.requeued && typeof r.data.id === "string" ? r.data.id : null
+  return id ? { id } : CHAIN_SKIPS.staleDist
+}
+
+/**
+ * The host-correct next step for a fallback answer, `planParkNextStep` style:
+ * it names `workflow_plan` — a tool that EXISTS on this host — because core's
+ * `data.next` names the Claude host's `workflow_start` and is not surfaced
+ * here anyway. Without this the model's best remaining idea is hand-editing
+ * the plan under the backlog, which the edit guard rightly blocks.
+ */
+const replanNextStep = (id: string | null): string =>
+  ` NEXT STEP — to re-plan now, call the \`workflow_plan\` tool with ${id ? `id "${id}"` : "the task's id"} ` +
+  `(the human can also run ${ECMD} plan ${id ?? "<id>"}). Do NOT edit the plan by hand — writes under the backlog are guarded.`
+
+/** Report a skipped chain: log the arm (the transcript tell) and answer with
+ *  core's message, plus the executable next step on the arms that earn one. */
+const chainSkipped = (
+  deps: Deps,
+  r: GateResult,
+  id: string | null,
+  skip: ChainSkip,
+): { readonly message: string; readonly variant: "info" | "success" | "warning" | "error" } => {
+  void deps.log(skip.level, `replan(${id ?? "?"}): chain skipped — ${skip.why}`)
+  return { message: skip.nextStep ? `${r.message}${replanNextStep(id)}` : r.message, variant: gateVariant(r) }
+}
+
+/**
  * The rejection + chained re-plan itself, shared by the `replan` VERB and the
  * `workflow_replan` tool so the two can never drift about what a rejection does.
  * Presentation is the caller's (the verb replaces the rendered markdown; the tool
@@ -3219,17 +3287,18 @@ const replanAndChain = async (
   config: Config,
 ): Promise<{ readonly message: string; readonly variant: "info" | "success" | "warning" | "error" }> => {
   const r = await rejectAny(gateCtx(deps, config), args.trim())
-  const id = r.ok && r.data.requeued && typeof r.data.id === "string" ? r.data.id : null
-  if (!id) return { message: r.message, variant: gateVariant(r) }
+  const chain = classifyReplanChain(r)
+  if (chain === null) return { message: r.message, variant: gateVariant(r) }
+  if (!("id" in chain)) return chainSkipped(deps, r, null, chain)
+  const { id } = chain
   // Chain the re-plan unless this session is mid-loop or the task is taken —
   // the same guards `plan <id>` runs, minus the resolution core already did.
   if (driving.has(sessionID) || getWorkflow(sessionID) || findSessionDriving(id)) {
-    return { message: r.message, variant: gateVariant(r) }
+    return chainSkipped(deps, r, id, CHAIN_SKIPS.busy)
   }
   const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
-  if (!queued || !(await claimForPlan(deps, sessionID, queued, config))) {
-    return { message: r.message, variant: gateVariant(r) } // raced by a watcher — it re-plans the task there
-  }
+  if (!queued) return chainSkipped(deps, r, id, CHAIN_SKIPS.gone)
+  if (!(await claimForPlan(deps, sessionID, queued, config))) return chainSkipped(deps, r, id, CHAIN_SKIPS.raced)
   return {
     message: `Plan rejected for "${queued.title}" — re-planning now… (a revised plan will park in plan-review/ for your gate)`,
     variant: "info",
