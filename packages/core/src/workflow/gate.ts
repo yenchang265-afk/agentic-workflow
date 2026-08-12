@@ -1,8 +1,9 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config } from "./state.js"
-import { isEpicType, isSafeTaskId, parseTask, type Task } from "../task/schema.js"
-import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, STATUSES } from "../task/store.js"
+import { isEpicType, isSafeTaskId, parseTask, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
+import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, STATUSES } from "../task/store.js"
+import { withoutPlanSections } from "../task/plan-section.js"
 import { redact } from "../task/redact.js"
 import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
@@ -344,18 +345,58 @@ export const approveTask = async (ctx: GateCtx, id: string): Promise<GateResult>
 }
 
 /**
+ * Discard a queued task's superseded plan section before it goes back to
+ * `draft/`. Reports whether it stripped, or why it deliberately did not.
+ *
+ * Best-effort by construction: the retask MOVE is what the human asked for, and
+ * a plan left in the body is a degraded outcome, not a failed one — so every
+ * failure arm warns and lets the move proceed. Never throws.
+ *
+ * The `unknownFrontmatterKeys` screen is the one arm that is a refusal rather
+ * than an error: `rewriteTask` serializes through the schema, and zod STRIPS what
+ * it does not know, so rewriting a file a human or a tracker sync put extra
+ * frontmatter on would DELETE those keys. The hub screens its in-place edits the
+ * same way for the same reason. Keeping a stale plan is recoverable; silently
+ * dropping a task's off-schema fields is not.
+ */
+const stripSupersededPlan = async (ctx: GateCtx, task: Task): Promise<{ readonly stripped: boolean; readonly warn?: string }> => {
+  if (!hasPlan(task)) return { stripped: false }
+  try {
+    const raw = await ctx.$`cat ${task.path}`.quiet().nothrow()
+    if (raw.exitCode !== 0) return { stripped: false, warn: "its superseded plan was left in place — the task file could not be read" }
+    const unknown = unknownFrontmatterKeys(raw.stdout.toString())
+    if (unknown.length > 0) {
+      return {
+        stripped: false,
+        warn: `its superseded plan was left in place — the file carries off-schema frontmatter (${unknown.join(", ")}) that a rewrite would delete; remove the plan section by hand`,
+      }
+    }
+    await rewriteTask(ctx.$, { id: task.id, path: task.path }, { ...taskToInput(task), body: withoutPlanSections(task.body) }, ctx.log)
+    return { stripped: true }
+  } catch (err) {
+    const why = (err as Error).message
+    await ctx.log("warn", `loop(${task.id}): could not remove the superseded plan before re-shaping: ${why}`)
+    return { stripped: false, warn: `its superseded plan was left in place — ${why}` }
+  }
+}
+
+/**
  * retask: prepare a task for re-shaping by the authoring interview.
  *
  * A `draft/` task is already in the right place, so this is a no-op that reports
- * success. An approved `queued/` task is sent BACK to `draft/` first: it is
- * planless, so nothing downstream breaks, but reshaping the goal invalidates the
- * task-gate approval, which must be re-taken. Moving it also keeps the authoring
- * agent honest — it only ever writes `draft/*.md`, so by the time it looks, the
- * file is where it expects, and it can never author a second copy under a live
- * task's id (the duplicate this used to risk).
+ * success. An approved `queued/` task is sent BACK to `draft/` first: reshaping
+ * the goal invalidates the task-gate approval, which must be re-taken. Moving it
+ * also keeps the authoring agent honest — it only ever writes `draft/*.md`, so by
+ * the time it looks, the file is where it expects, and it can never author a
+ * second copy under a live task's id (the duplicate this used to risk).
  *
- * From `plan-review/` onward a plan exists, so `replan` is the right verb and
- * this refuses.
+ * The task is planless, or is MADE planless here: `replanTask` re-queues a
+ * rejected task with its plan intact, so `queued/` is not the planless folder the
+ * contract once assumed (`stripSupersededPlan`, and `TASK_RESHAPED_MARKER` for
+ * the rejection that came with it).
+ *
+ * From `plan-review/` onward a plan is under an active gate or a live build, so
+ * `replan` is the right verb and this refuses.
  */
 export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Promise<GateResult> => {
   const { $, directory, config } = ctx
@@ -394,18 +435,43 @@ export const retaskTask = async (ctx: GateCtx, id: string, reason?: string): Pro
     return { ok: false, message: `Task "${id}" holds a claim marker — release it first (/agentic-workflow:engineering doctor fix).`, variant: "warning" }
   }
   const actor = await gitActor($, directory)
-  // Same shape as replan's: the reason is why the goal was wrong, and the task
-  // file is the only place the next authoring pass will look for it.
-  const why = reason ? ` — ${reason}` : ""
-  const moved = await noteThenMove(ctx, queued, "draft", `Sent back to draft for re-shaping — approval withdrawn${why}`, actor)
+  // A queued task is USUALLY planless, but not always: `replanTask` re-queues a
+  // rejected task with its plan intact, so the retry path routinely parks a
+  // planful task in the one folder this verb accepts. Discard that plan here —
+  // it was written against the goal the interview is about to rewrite, and left
+  // in the body it rides back into the next PLAN pass as `priorPlan` (and into
+  // the plan gate's stacked-heading caveat). See `stripSupersededPlan`.
+  const strip = await stripSupersededPlan(ctx, queued)
+  // The note leads with `TASK_RESHAPED_MARKER` (`Sent back to draft`), which is
+  // what retires a pending plan rejection — keep that prefix if this text is
+  // reworded, or `pendingPlanRejection` will thread the old plan's critique into
+  // the re-planned task.
+  const why = oneLineReason(reason)
+  const moved = await noteThenMove(
+    ctx,
+    queued,
+    "draft",
+    `Sent back to draft for re-shaping — approval withdrawn${strip.stripped ? "; superseded plan removed" : ""}${why ? ` — ${why}` : ""}`,
+    actor,
+  )
   if (!moved.ok) return moved.result
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): sent back to draft for re-shaping`)
   return {
     ok: true,
-    message: `"${queued.title}" sent back to ${config.tasksDir}/draft/ — reshape it, then approve it again.`,
+    message:
+      `"${queued.title}" sent back to ${config.tasksDir}/draft/ — reshape it, then approve it again.` +
+      (strip.stripped ? " Its superseded plan was removed." : "") +
+      (strip.warn ? ` Note: ${strip.warn}` : ""),
     path: newPath,
-    data: { retask: true, path: newPath, id, next: `/agentic-workflow:engineering approve ${id} re-queues it once reshaped` },
+    data: {
+      retask: true,
+      path: newPath,
+      id,
+      ...(strip.stripped ? { planRemoved: true } : {}),
+      ...(strip.warn ? { planKept: strip.warn } : {}),
+      next: `/agentic-workflow:engineering approve ${id} re-queues it once reshaped`,
+    },
   }
 }
 
@@ -536,7 +602,7 @@ export const abandonTask = async (ctx: GateCtx, id: string, reason?: string): Pr
   if (held.includes(id)) {
     return { ok: false, message: `Task "${id}" holds a claim marker — a loop may be driving it; stop it or run /agentic-workflow:engineering doctor fix first.`, variant: "warning" }
   }
-  const why = reason?.trim()
+  const why = oneLineReason(reason)
   const moved = await noteThenMove(
     ctx,
     { id, path: task.path },
@@ -634,7 +700,7 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
 }
 
 /**
- * The most a rejection reason may carry onto its audit note. Generous — a
+ * The most a gate reason may carry onto its audit note. Generous — a
  * fused hub review plus a prior run's attempt digest fits — but bounded: the
  * note is ONE line in a file humans read, and no writer upstream bounds it
  * (the hub joins per-line review comments, the CLI takes free text). This is
@@ -643,12 +709,23 @@ export const approvePlan = async (ctx: GateCtx, id: string): Promise<GateResult>
 export const REPLAN_REASON_MAX = 1200
 
 /**
- * A rejection reason flattened to one audit-note-safe line, or `undefined`.
+ * A gate reason (rejection, re-shape, cancellation) flattened to one
+ * audit-note-safe line, or `undefined`.
  *
  * An audit note is a single `> …` line closed by a bracketed stamp; an embedded
  * newline breaks that shape — line 2 loses the `> ` prefix and the stamp
- * detaches — so neither the audit trail nor `extractReplanReason` (which
- * threads the reason into the next PLAN pass's prompt) can read it back.
+ * detaches — so neither the audit trail nor the note parsers
+ * (`extractReplanReason`, which threads the reason into the next PLAN pass's
+ * prompt, `extractRunBranch`, `extractStopContext`) can read the tail back, and
+ * the orphaned lines read as PROSE: `auditTailIndex` stops seeing the boundary,
+ * so they ride into every later `{{goal}}`.
+ *
+ * EVERY reason writer goes through here — `replanTask`/`replanQueued`,
+ * `retaskTask`, `abandonTask` — because the hazard is the shape of the note, not
+ * the identity of the verb. retask and abandon interpolated raw reasons for a
+ * while, which the hub's `<textarea>` (`z.string().trim()` does not touch
+ * interior newlines) reached directly.
+ *
  * Clamped to `REPLAN_REASON_MAX` with a trailing ellipsis. Pure.
  */
 export const oneLineReason = (reason?: string): string | undefined => {
@@ -999,10 +1076,30 @@ export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering"): P
 }
 
 /**
+ * The folders whose task `rejectAny`'s leading token may name, in the order they
+ * are tried. `plan-review` and `in-progress` are what `replan` acts on;
+ * `queued` reaches `replanQueued`, the retry arm — a task rejected once is
+ * already back in `queued/`, and it is the single likeliest thing a human names
+ * a second time.
+ *
+ * Every other folder is here to REFUSE rather than to act: `replanTask` names
+ * the wrong folder, which is the whole point. Before this, a token that resolved
+ * in none of the two rejectable folders fell through to the id-less pick, so
+ * `replan <queued-id> <why>` rejected an UNRELATED parked plan and folded the
+ * id the human typed into its reason — silently, with every message naming the
+ * task they had not asked about, and on OpenCode with an immediate re-plan of it.
+ * Same defect as the short-hash bug the test at gate.test.ts:753 pins, one
+ * folder over; the fix is the same rule taken to its end — a token that names a
+ * real task is an id, never a reason word.
+ */
+const REJECT_ID_FOLDERS: readonly TaskStatus[] = ["plan-review", "in-progress", "queued", "draft", "in-review", "completed", "abandoned"]
+
+/**
  * reject shortcut: send a parked plan back to queued/ for re-planning. Auto-targets
  * the single plan-review/ task; an explicit leading id may also name a cap-tripped
- * in-progress/ task, with the rest of `arg` as the reason. When no leading token
- * names a rejectable task, the whole `arg` is the reason.
+ * in-progress/ task or an already-queued one (the retry arm), with the rest of
+ * `arg` as the reason. When no leading token names a task AT ALL, the whole `arg`
+ * is the reason.
  */
 export const rejectAny = async (ctx: GateCtx, arg: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
@@ -1011,8 +1108,15 @@ export const rejectAny = async (ctx: GateCtx, arg: string): Promise<GateResult> 
     // Resolve the leading token as a task id the same way `approve` does — so the
     // short-hash handle the UIs surface (`f7k3`) targets the task instead of being
     // silently folded into the rejection reason. A hash that matches several tasks
-    // in a rejectable folder is an ambiguity to surface, not a reason word.
-    for (const from of ["plan-review", "in-progress"] as const) {
+    // in one folder is an ambiguity to surface, not a reason word.
+    //
+    // The cost of the wider scan is that a reason word which happens to prefix a
+    // real task id is now claimed as an id in more folders. That trade is already
+    // made for two folders, and it fails LOUDLY (a wrong-folder refusal naming the
+    // task it matched, or a rejection of the task the human addressed) where the
+    // fall-through failed silently on a different task. The id-less form —
+    // `replan <reason…>` with no token matching anything — is untouched.
+    for (const from of REJECT_ID_FOLDERS) {
       const r = await resolveTaskIdIn($, directory, config.tasksDir, from, first, log)
       if (r && "id" in r) return replanTask(ctx, r.id, restParts.join(" ").trim() || undefined)
       if (r && "ambiguous" in r) {

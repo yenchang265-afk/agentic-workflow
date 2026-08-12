@@ -242,6 +242,36 @@ test("saving a queued task rewrites it AND sends it back to draft with the reaso
   cleanup(dir)
 })
 
+test("a multi-line reason still yields single-line audit notes", async () => {
+  // The reason field is a <textarea> and the route schema is `z.string().trim()`,
+  // which leaves interior newlines alone. An audit note is one `> …` line closed
+  // by a bracketed stamp: a raw paragraph put line 2 in the file with no `> `
+  // prefix and the stamp detached, so the note stopped matching core's
+  // AUDIT_NOTE_LINE_RE — the orphaned lines then read as PROSE (they ride into
+  // every later {{goal}}) and the "last note" parsers went blind.
+  const dir = makeRepo()
+  place(dir, "queued", "ccc3-thing", TASK("approved under a wrong goal"))
+  const deps = depsFor(dir)
+  const d = await detail(deps, "queued", "ccc3-thing")
+
+  const res = await save(deps, "queued", "ccc3-thing", bodyFrom(d, { title: "the real goal", reason: "wrong screen\n\nsee the mock in #12" }))
+  assert.equal(res.status, 200)
+  const file = read(dir, "draft", "ccc3-thing")
+  const stamped = /^> .*\[[^\]\n]+\]\s*$/ // core's AUDIT_NOTE_LINE_RE
+  const notes = file.split("\n").filter((l) => l.startsWith("> "))
+  assert.equal(notes.length, 2, "the edit note and the retask note, one line each")
+  for (const note of notes) assert.match(note, stamped, `note keeps its stamp on its own line: ${note}`)
+  assert.ok(
+    notes.every((n) => n.includes("wrong screen see the mock in #12")),
+    "and both carry the whole reason, flattened",
+  )
+  assert.ok(
+    !file.split("\n").some((l) => l.includes("see the mock in #12") && !l.startsWith("> ")),
+    "no fragment of the reason escaped into the prose",
+  )
+  cleanup(dir)
+})
+
 // --- refusals: the file must be untouched every time ---
 
 test("a claimed task is refused and its file is left exactly as it was", async () => {

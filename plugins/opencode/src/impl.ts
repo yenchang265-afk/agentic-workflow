@@ -268,6 +268,18 @@ const LOG_TIMEOUT_MS = 5_000
 const RECONCILE_TIMEOUT_MS = 30_000
 
 /**
+ * Whether this verb's task-file move runs BEFORE the startup reconcile rather
+ * than after it — see the call site for why the order is load-bearing.
+ *
+ * Exported as a predicate rather than left inline because the membership IS the
+ * rule: a verb that moves a task deterministically and does not depend on the
+ * sweep belongs here, and one dropped from the list fails the way the original
+ * bug did — the move lands after opencode's command-hook window, so on the first
+ * command of a session the model reads pre-move state and a retry "fixes" it.
+ */
+export const gateMovesFirst = (kind: string, verb: string): boolean => kind === "engineering" && ["approve", "replan", "retask"].includes(verb)
+
+/**
  * Reject with a timeout error when `promise` takes longer than `ms`; settle
  * with it otherwise. Never cancels: the abandoned promise finishes in the
  * background (its handlers are attached here, so a late rejection is not an
@@ -738,17 +750,25 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           overrideCommandPrompt(output, refusalPrompt(`the workflow kind "${kind}" is not enabled.`, remedy))
           return
         }
-        // The engineering gate verbs (approve / replan) put their task-file move
-        // first, with no dependency on reconciliation — run the move, THEN
-        // reconcile. On the first-ever command reconcileOnce() does heavy git/fs
-        // work (claim sweeps, worktree prune, backlog audit); doing it before the
-        // move delayed the move past opencode's command-hook window, so the model
-        // read the task as "still in draft" until a retry (reconcile is guarded
-        // to run once, so later attempts were fast — the "works after a few
-        // tries" symptom). Move first keeps the gate deterministic on attempt 1.
+        // The engineering verbs whose task-file move is deterministic (approve /
+        // replan / retask) put that move first, with no dependency on
+        // reconciliation — run the move, THEN reconcile. On the first-ever command
+        // reconcileOnce() does heavy git/fs work (claim sweeps, worktree prune,
+        // backlog audit); doing it before the move delayed the move past
+        // opencode's command-hook window, so the model read the task as "still in
+        // draft" until a retry (reconcile is guarded to run once, so later
+        // attempts were fast — the "works after a few tries" symptom). Move first
+        // keeps the gate deterministic on attempt 1.
         // (replan additionally chains a re-plan claim after its move — cheap fs
         // ops, and the fresh claim survives the sweep, which frees stale markers
         // only.)
+        //
+        // `retask` belongs here for a sharper version of the same reason: its
+        // markdown PASSES THROUGH to the model on success, and that markdown says
+        // to resolve the id in `draft/` only and to declare the id wrong if it is
+        // not there. A move that lands after the window therefore does not merely
+        // read as stale — the model authoritatively tells the user a valid id does
+        // not exist.
         verb = splitVerb(input.arguments).verb
         // Trim the rendered body to the invoked verb BEFORE dispatching. The
         // template describes every verb, but the ones whose template survives
@@ -782,7 +802,7 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         // hung or failed sweep degrades to a toast instead of reaching the
         // catch — which would discard a gate move that already succeeded and
         // report the verb as failed.
-        const gateFirst = kind === "engineering" && ["approve", "replan"].includes(verb)
+        const gateFirst = gateMovesFirst(kind, verb)
         if (!gateFirst) await reconcileTimely()
         const outcome = await driver.handleCommand(deps, input.sessionID, input.arguments, config, kind)
         if (gateFirst) await reconcileTimely()

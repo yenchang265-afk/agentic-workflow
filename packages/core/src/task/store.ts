@@ -108,6 +108,22 @@ export const PLAN_REJECTED_MARKER = "> Plan rejected"
 export const PLAN_WRITTEN_MARKER = "> Plan written"
 
 /**
+ * The audit note `retaskTask` appends when a planless task is sent back to
+ * `draft/` for re-shaping. The SECOND retirement anchor for
+ * `pendingPlanRejection`, and it earns that for a different reason than
+ * `PLAN_WRITTEN_MARKER`: that one means "the rejection was addressed by a new
+ * plan", this one means "the plan it rejected is gone, and so is the goal it was
+ * written against".
+ *
+ * Without it a task rejected and then re-shaped kept its rejection PENDING, so
+ * the next PLAN pass — planning a goal the human had just rewritten — received
+ * `{{#replan}}` explaining why a plan that no longer exists was refused. The
+ * human's retask note is the carrier of why the GOAL was wrong; a stale plan
+ * critique on top of it is noise the planner cannot act on.
+ */
+export const TASK_RESHAPED_MARKER = "> Sent back to draft"
+
+/**
  * The one formatter for a plan-rejection audit note. `extractReplanReason`
  * parses this exact shape back (marker + reason prefix); a second hand-built
  * copy of the string is how a writer and the parser drift apart — the plan
@@ -222,8 +238,10 @@ export const extractRunBranch = (task: Task): string | undefined => {
  * park refusal recorded), or `undefined`. Pure.
  *
  * Reads the LAST `PLAN_REJECTED_MARKER` line, and only honors it when it comes
- * AFTER the rejection was last ADDRESSED — the later of the last `PLAN_HEADING`
- * and the last `PLAN_WRITTEN_MARKER` note. The heading alone was the old
+ * AFTER the rejection was last ADDRESSED — the latest of the last `PLAN_HEADING`,
+ * the last `PLAN_WRITTEN_MARKER` note, and the last `TASK_RESHAPED_MARKER` note
+ * (a re-shape discards the plan and the goal it was written against). The
+ * heading alone was the old
  * anchor, and it silently broke when plan.md started demanding REPLACE-in-place
  * (the heading's offset never moves past the note, so every reason stayed
  * pending and leaked into unrelated later PLAN passes). A successful park
@@ -248,7 +266,15 @@ export const extractReplanReason = (task: Task): string | undefined => pendingPl
  */
 export const pendingPlanRejection = (task: Task): { readonly reason?: string } | undefined => {
   const idx = lastMarkerIndex(task.body, PLAN_REJECTED_MARKER)
-  const addressed = Math.max(lastMarkerIndex(task.body, PLAN_HEADING), lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER))
+  const addressed = Math.max(
+    lastMarkerIndex(task.body, PLAN_HEADING),
+    lastMarkerIndex(task.body, PLAN_WRITTEN_MARKER),
+    // A re-shape retires the rejection too — see TASK_RESHAPED_MARKER. Note that
+    // `retaskTask` also strips the plan section, which removes the PLAN_HEADING
+    // anchor: without this third term the rejection would go from retired (older
+    // than the heading) back to pending purely as a side effect of the strip.
+    lastMarkerIndex(task.body, TASK_RESHAPED_MARKER),
+  )
   if (idx === -1 || idx < addressed) return undefined
   const end = task.body.indexOf("\n", idx)
   const line = task.body.slice(idx, end === -1 ? task.body.length : end)

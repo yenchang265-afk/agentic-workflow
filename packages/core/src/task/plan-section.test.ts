@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { PLAN_HEADING, stripPlanAndAuditTail } from "./plan-section.js"
+import { PLAN_HEADING, stripPlanAndAuditTail, withoutPlanSections } from "./plan-section.js"
 import { extractPlan } from "./store.js"
 import type { Task } from "./schema.js"
 
@@ -69,4 +69,48 @@ test("round-trip: what the goal loses is exactly what artifacts.plan carries —
   assert.ok(goal.includes("Requirements prose."))
   assert.ok(!goal.includes("step one"), "the plan text appears only in the artifact")
   assert.ok(!goal.includes("CLAIMED"), "audit notes appear in neither")
+})
+
+// --- withoutPlanSections: the PERSISTED strip, which must keep the audit trail ---
+
+const REJECTED = "> Plan rejected — sent back to queued for re-planning — too broad [2026-07-05T14:00:00.000Z]"
+const WRITTEN = "> Plan written [2026-07-05T13:59:00.000Z]"
+
+test("withoutPlanSections is identity for a body with no plan", () => {
+  const body = "goal prose\n\nmore context\n"
+  assert.equal(withoutPlanSections(body), body)
+  assert.equal(withoutPlanSections(""), "")
+})
+
+test("withoutPlanSections drops the plan and KEEPS every audit note", () => {
+  const body = `goal prose\n\n${PLAN_HEADING}\n\n1. do the thing\n\n### Verification\n\n- test: npm test\n\n${WRITTEN}\n${REJECTED}\n`
+  const out = withoutPlanSections(body)
+  assert.ok(!out.includes("do the thing"), "the plan text is gone")
+  assert.ok(!out.includes(PLAN_HEADING), "and so is its heading")
+  assert.ok(!out.includes("### Verification"), "including the plan's own subsections")
+  assert.ok(out.includes("goal prose"), "the goal survives")
+  assert.ok(out.includes(WRITTEN) && out.includes(REJECTED), "the audit trail is the record a human has — it survives")
+})
+
+test("withoutPlanSections handles the interleaving a replan cycle produces", () => {
+  // appendPlan appends at END of file, so a second PLAN pass lands AFTER the
+  // notes of the first. Cutting one span from the first heading to EOF — what
+  // stripPlanAndAuditTail may do for a prompt — would delete those notes.
+  const body = `goal\n\n${PLAN_HEADING}\n\nfirst plan\n\n${WRITTEN}\n${REJECTED}\n\n${PLAN_HEADING}\n\nsecond plan\n\n${WRITTEN}\n`
+  const out = withoutPlanSections(body)
+  assert.ok(!out.includes("first plan") && !out.includes("second plan"), "both plans go")
+  assert.equal(out.match(/> Plan written/g)?.length, 2, "both park notes stay")
+  assert.ok(out.includes(REJECTED), "and the rejection between them")
+})
+
+test("withoutPlanSections leaves prose blank lines alone and does not accrete them at the seams", () => {
+  const body = `intro\n\n\nstill the goal\n\n${PLAN_HEADING}\n\nplan\n\n${WRITTEN}\n`
+  const out = withoutPlanSections(body)
+  assert.ok(out.includes("intro\n\n\nstill the goal"), "interior blank runs are the human's prose")
+  assert.equal(out, `intro\n\n\nstill the goal\n\n${WRITTEN}\n`)
+  assert.equal(withoutPlanSections(out), out, "idempotent")
+})
+
+test("withoutPlanSections keeps a body that is nothing but a plan from becoming whitespace", () => {
+  assert.equal(withoutPlanSections(`${PLAN_HEADING}\n\nonly a plan\n`), "")
 })

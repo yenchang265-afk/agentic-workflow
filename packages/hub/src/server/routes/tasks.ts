@@ -13,7 +13,7 @@ import {
 } from "@agentic-workflow/core/task/store"
 import { taskToInput, unknownFrontmatterKeys, type Task } from "@agentic-workflow/core/task/schema"
 import { redact } from "@agentic-workflow/core/task/redact"
-import { commitBacklog, retaskTask } from "@agentic-workflow/core/workflow/gate"
+import { commitBacklog, oneLineReason, retaskTask } from "@agentic-workflow/core/workflow/gate"
 import { gitActor } from "@agentic-workflow/core/workflow/git"
 import type { TaskStatus } from "@agentic-workflow/core/task/statuses"
 import type { SaveTaskRequest, SaveTaskResponse, TaskDetailResponse } from "../../shared/api.js"
@@ -236,7 +236,12 @@ export const postTaskSave = async (deps: HubDeps, req: ParsedRequest): Promise<J
     }
 
     const actor = await gitActor(deps.sh, deps.directory)
-    const why = body.reason ? ` — ${body.reason}` : ""
+    // Through core's choke point, not `body.reason` raw: the reason comes from a
+    // <textarea>, and `z.string().trim()` leaves interior newlines alone — an
+    // audit note is one line closed by a stamp, so a pasted paragraph breaks the
+    // shape every note parser and the audit-tail boundary depend on.
+    const reason = oneLineReason(body.reason)
+    const why = reason ? ` — ${reason}` : ""
     await appendNote(
       deps.sh,
       { id: task.id, path },

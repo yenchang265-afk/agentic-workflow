@@ -72,9 +72,12 @@ skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要�
 - `/agentic-workflow:engineering new <idea>` —— 主 agent **一律會訪談你**
   （至少會重述並確認一次），以釐清目標和可測試的驗收標準，然後把一份
   **無計畫的草稿**寫進 `docs/tasks/draft/`。
-- `/agentic-workflow:engineering retask <id> [note]` —— 在你核准之前重塑
-  一份 `draft/` 任務：主 agent 會重新訪談你（由選填的 note 作為引子），
-  並就地重寫同一份草稿——id 不變，沒有計畫。只適用於草稿。
+- `/agentic-workflow:engineering retask <id> [note]` —— 在任務被建置之前，重塑
+  一份目標寫錯的任務：主 agent 會重新訪談你（由選填的 note 作為引子），
+  並就地重寫同一份草稿——id 不變，沒有計畫。適用於 `draft/` 任務，也適用於
+  `queued/` 任務（核准會被撤銷、檔案先移回 `draft/`；先前 `replan` 留下的
+  舊計畫會一併移除——它是針對你正要改寫的舊目標寫的）。一旦計畫進入
+  `plan-review/` 之後，就改用 `replan`。
 - `/agentic-workflow:engineering approve [id]` —— *唯一*的把關動詞，統一且
   由資料夾驅動（在 agent 的回合開始前，由一個 hook 確定性地處理）。帶上
   明確的 `<id>` 時：一份已審查的 `draft/` → `queued/`（任務把關——依
