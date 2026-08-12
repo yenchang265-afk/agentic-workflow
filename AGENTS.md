@@ -729,6 +729,31 @@ passes overlap: `appendRunLog` (append) and `flushMetrics` (read-modify-write)
 both go through `withLock(runLocks, …)`. Adding another per-run writer means
 adding it there too.
 
+### A halt needs a durable REASON, not a cleared workflow (OpenCode)
+
+`clearWorkflow` cannot halt a drive, because the chain re-registers the session
+with `setWorkflow` at **every** transition — so a `stop` landing between the
+post-stage halt check and that call (a window spanning a checkpoint commit and
+two audit notes) was undone: "Loop stopped." to the user, next stage fired
+anyway. The halt is `haltReason`, armed **synchronously ahead of the verb's first
+await** — the pass aborts the verb itself issues are only swallowed by
+`runStagePasses` once `halted` says so, and arming after them turned a stop into
+a "Loop error" with the crash snapshot left for `recover` to resurrect.
+
+Three things it has to keep:
+
+- **A reason map, not a flag.** ESC is a PAUSE (snapshot kept, `recover <id>`
+  resumes at that stage); `stop` is an END (snapshot dropped). `armHalt` never
+  lets `"interrupted"` overwrite `"stopped"`, because the stop's own aborts come
+  back through `onInterrupt` on that very session.
+- **Both boundaries, not one.** `haltIfAsked` runs before a fire as well as after
+  one. The post-stage check alone still burns a whole stage, and only the
+  pre-fire one covers the pre-`setWorkflow` window where `ensureIsolation` can
+  run for minutes.
+- **`driving.has || getWorkflow` is the busy test**, matching claim/plan/recover.
+  `getWorkflow` alone made `stop` report "No active loop to stop." for a drive
+  that was very much in flight.
+
 ### An OpenCode hook that rejects or hangs kills the turn silently
 
 opencode's `Plugin.trigger` awaits `command.execute.before` / `event` hooks
