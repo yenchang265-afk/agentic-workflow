@@ -297,16 +297,16 @@ var escapeReason = (segment, worktree, pinnedDir) => {
   }
   return null;
 };
-var isUnresolvableCd = (target) => target === "-" || target.startsWith("~") || /[$`]/.test(target);
+var isUnresolvableCd = (target) => target === "" || target === "-" || target.startsWith("~") || /[$`]/.test(target);
 var ALLOW_PIN = { action: "allow" };
 var rewrite = (value) => ({ action: "rewrite", value });
 var blockPin = (reason) => ({ action: "block", reason });
 var walk = (command, worktree, initialPin) => {
   let pinnedDir = initialPin;
   for (const segment of splitSegments(command)) {
-    const cdMatch = /^cd\s+(.+)$/.exec(segment.trim());
+    const cdMatch = /^cd(?:\s+(.+))?$/.exec(segment.trim());
     if (cdMatch) {
-      const target = unquote(cdMatch[1].trim());
+      const target = unquote((cdMatch[1] ?? "").trim());
       const escapeMsg = `agentic-workflow: this loop is isolated to its worktree ${worktree} \u2014 "${segment.trim()}" leaves it, so the rest of the command would run outside the worktree. Only \`cd\` into a literal directory under ${worktree}.`;
       if (isUnresolvableCd(target))
         return { ok: false, reason: escapeMsg };

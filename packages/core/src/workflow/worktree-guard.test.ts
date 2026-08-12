@@ -164,6 +164,17 @@ test("cd targets that are not literal paths are refused, never resolved", () => 
   blocked(`cd ${WT} && cd ~/elsewhere && ls`)
 })
 
+test("a bare `cd` is an escape, not a no-op — the guard must never rewrite around it", () => {
+  // Argument-less `cd` is `cd $HOME`. It used to miss the cd branch entirely (the
+  // match required an argument), fall through to the generic branch, and be waved
+  // through by the truthy pin — so the guard REWROTE `cd && rm -rf build` into
+  // `cd <wt> && cd && rm -rf build`, running the rm in $HOME.
+  blocked("cd && rm -rf build")
+  blocked(`cd ${WT} && cd && rm -rf build`)
+  // Trailing whitespace is still a bare cd.
+  blocked("cd  && rm -rf build")
+})
+
 test("a RELATIVE git -C escape is caught, pinned or not", () => {
   blocked(`cd ${WT} && git -C ../.. add -A`)
   blocked("git -C ../.. add -A")

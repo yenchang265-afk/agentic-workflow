@@ -288,11 +288,40 @@ const driving = new Set<string>()
 /** Sessions in `watch` mode — a standing flag, not a one-shot `Pending`,
  *  since it must survive many no-op idle ticks between claims. */
 const watching = new Set<string>()
-/** Sessions the user interrupted (ESC) mid-drive. Trips drive's stop guard after
- *  the current stage settles, so the loop halts without prematurely nulling
- *  `getWorkflow` (which `onIdle`'s catch still needs on a reject-on-abort). Cleared
- *  when the drive unwinds. */
-const interrupted = new Set<string>()
+/**
+ * Why a drive must halt, per driving session. Trips the chain's halt guard
+ * without prematurely nulling `getWorkflow` (which `onIdle`'s catch still needs
+ * on a reject-on-abort). Cleared when the drive unwinds.
+ *
+ * The two reasons are NOT interchangeable, which is why this is a reason map and
+ * not a flag: `"interrupted"` (ESC) is a PAUSE — the snapshot is kept so
+ * `recover <id>` resumes at that exact stage — while `"stopped"` (the verb) is an
+ * END, and drops it. `stop` used to carry no flag at all and halt purely by
+ * `clearWorkflow`, which the chain undoes at every transition (`setWorkflow`),
+ * so a stop landing in the checkpoint/notes/advance window said "Loop stopped."
+ * and then fired the next stage anyway.
+ */
+type HaltReason = "stopped" | "interrupted"
+const haltReason = new Map<string, HaltReason>()
+/**
+ * Arm the halt, returning whether anything was armed.
+ *
+ * A deliberate `stop` WINS and is never downgraded: the stop verb aborts the
+ * in-flight pass sessions, each abort surfaces as the `MessageAbortedError` a
+ * human ESC does, and `onInterrupt` hops `passOf` back to this very session — so
+ * without this precedence a stop with a fan-out in flight would re-label itself
+ * an interrupt and KEEP the snapshot it exists to drop.
+ */
+const armHalt = (sessionID: string, reason: HaltReason): void => {
+  if (reason === "interrupted" && haltReason.has(sessionID)) return
+  haltReason.set(sessionID, reason)
+}
+/**
+ * The reason this drive must halt, or undefined to continue. An externally
+ * cleared workflow with no armed reason counts as a stop — what that case has
+ * always rendered as.
+ */
+const haltedReason = (sessionID: string): HaltReason | undefined => haltReason.get(sessionID) ?? (getWorkflow(sessionID) ? undefined : "stopped")
 /**
  * Sessions whose in-flight `session.abort` was issued by the DRIVER (a stage
  * timeout), mapped to a wall-clock expiry. In OpenCode a driver abort surfaces
@@ -318,12 +347,15 @@ const driverAborts = new Map<string, number>()
  */
 const passSessions = new Map<string, Set<string>>()
 /**
- * Should this session stop firing agent turns? Either a `stop` cleared the loop,
- * or the user pressed ESC. Both must be tested: `onInterrupt` deliberately keeps
- * `getWorkflow` set, so a `getWorkflow`-only check silently keeps working after an
- * interrupt (firing the remaining review lenses and the verdict retry).
+ * Should this session stop firing agent turns? Either the loop was cleared, or a
+ * halt is armed (`stop` verb or ESC). Both must be tested: `onInterrupt`
+ * deliberately keeps `getWorkflow` set, so a `getWorkflow`-only check silently
+ * keeps working after an interrupt (firing the remaining review lenses and the
+ * verdict retry) — and the `stop` verb arms its reason BEFORE it clears the
+ * workflow, so its own pass aborts are swallowed here rather than thrown as a
+ * loop error.
  */
-const halted = (sessionID: string): boolean => !getWorkflow(sessionID) || interrupted.has(sessionID)
+const halted = (sessionID: string): boolean => !getWorkflow(sessionID) || haltReason.has(sessionID)
 /** Per-watching-session trigger timers (poll/cron/idle strategies) and modes. */
 const watchTimers = new Map<string, WatchTimerHandle>()
 const watchTriggerMode = new Map<string, TriggerMode>()
@@ -2003,6 +2035,45 @@ const driveChain = async (
     )
   }
   const actor = await gitActor(deps.$, deps.directory)
+  /**
+   * The chain's halt path — the `stop` verb, an ESC, or an externally cleared
+   * workflow — preserving whatever the stage did as a checkpoint on the branch.
+   * Returns null when the drive may continue.
+   *
+   * Called at BOTH halt boundaries, and the pre-fire one is not redundant: the
+   * chain re-registers the session with `setWorkflow` at every transition, and
+   * the window between the post-stage check and that call spans a checkpoint
+   * commit and two audit notes. A stop landing there used to be undone —
+   * "Loop stopped." to the user, and the next stage fired anyway. The same call
+   * covers the pre-`setWorkflow` window at the top of a drive, where
+   * `ensureIsolation` (worktree add, `npm ci`) can run for minutes.
+   */
+  const haltIfAsked = async (state: WorkflowState, stage: string): Promise<TerminalOutcome | null> => {
+    const how = haltedReason(sessionID)
+    if (!how) return null
+    // Mirrors the `retryable: true` on this path's TerminalOutcome below.
+    await renderMetrics(deps, sessionID, config, state, "stopped", `${how} during ${stage}`, true)
+    await checkpoint(deps, config, state, `loop(${workflowId(state)}): incomplete — ${how} during ${stage}`)
+    await teardownIsolation(deps, config, state)
+    // The drive is over — release the claim marker (any stage). This guard
+    // bypasses `runTerminal`, so without it an ESC/stop during PLAN left the
+    // queued/ claim held: `plan <id>` then lied "just claimed by another
+    // watcher" and only the 75-minute stale sweep freed it. A held marker
+    // means "a loop is driving"; an interrupted (paused) run isn't — recover
+    // re-claims when it resumes, and the CLAIMED note keeps watchers away.
+    if (state.task) await releaseClaim(deps.$, state.task)
+    // A deliberate stop ends the run — drop the snapshot so recover can't
+    // resurrect stale state. An ESC interrupt is a pause: KEEP the snapshot so
+    // recover <id> resumes at THIS stage (recover-state), not a BUILD
+    // restart. A reject-on-abort already keeps it (onIdle's catch never clears state),
+    // so both interrupt paths converge on exact-stage resume.
+    if (state.task && how !== "interrupted") await clearState(deps.$, deps.directory, config.tasksDir, state.task.id)
+    clearWorkflow(sessionID) // self-contained — no-op no-harm when stop already cleared it
+    // A mid-drive interrupt / human ESC (or an externally-cleared loop) is not a
+    // genuine exhaustion — mark it retryable so the work source keeps the item
+    // claimable for the next poll rather than suppressing it forever (C2).
+    return { kind: "stop", message: `${how} during ${stage}`, retryable: true }
+  }
   let step = first
   while (step.action.kind === "fire") {
     // Every code-writing stage runs isolated: its own worktree (worktree mode)
@@ -2084,6 +2155,12 @@ const driveChain = async (
     // `refreshWorkClaim`, not `refreshClaimStamp`: a task-less sitter drive
     // restamps its own marker (state.claimMarkerDir) through the same seam.
     await refreshWorkClaim(deps.$, step.state)
+    // Pre-fire boundary: a halt armed while the previous iteration was doing its
+    // bookkeeping, or while this one was isolating, must not burn a whole stage.
+    // Ahead of the BUILD-started note, so the audit trail never claims a stage
+    // that never ran.
+    const preFire = await haltIfAsked(step.state, step.action.stage)
+    if (preFire) return preFire
     const { task, iteration } = step.state
     const trackBuild = stage === "build" && task
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD started (iteration ${iteration + 1})`, new Date(), actor), deps.log)
@@ -2110,37 +2187,11 @@ const driveChain = async (
       step.action.kind === "fire" ? step.action.promptElided : undefined,
     )
     if (trackBuild) await appendNote(deps.$, task, auditNote(`BUILD finished (iteration ${iteration + 1})`, new Date(), actor), deps.log)
-    // Halt the chain when either a `stop` cleared this session's loop
-    // while the stage ran, or the user interrupted (ESC) mid-drive — preserving
-    // whatever the stage did as a checkpoint on the branch. The interrupt path
-    // leaves `getWorkflow` set (so `onIdle`'s catch stays intact on a reject-on-abort),
-    // so this block clears it itself.
-    const wasInterrupted = interrupted.has(sessionID)
-    if (!getWorkflow(sessionID) || wasInterrupted) {
-      const how = wasInterrupted ? "interrupted" : "stopped"
-      // Mirrors the `retryable: true` on this path's TerminalOutcome below.
-      await renderMetrics(deps, sessionID, config, step.state, "stopped", `${how} during ${stage}`, true)
-      await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): incomplete — ${how} during ${stage}`)
-      await teardownIsolation(deps, config, step.state)
-      // The drive is over — release the claim marker (any stage). This guard
-      // bypasses `runTerminal`, so without it an ESC/stop during PLAN left the
-      // queued/ claim held: `plan <id>` then lied "just claimed by another
-      // watcher" and only the 75-minute stale sweep freed it. A held marker
-      // means "a loop is driving"; an interrupted (paused) run isn't — recover
-      // re-claims when it resumes, and the CLAIMED note keeps watchers away.
-      if (step.state.task) await releaseClaim(deps.$, step.state.task)
-      // A deliberate stop ends the run — drop the snapshot so recover can't
-      // resurrect stale state. An ESC interrupt is a pause: KEEP the snapshot so
-      // recover <id> resumes at THIS stage (recover-state), not a BUILD
-      // restart. A reject-on-abort already keeps it (onIdle's catch never clears state),
-      // so both interrupt paths converge on exact-stage resume.
-      if (step.state.task && !wasInterrupted) await clearState(deps.$, deps.directory, config.tasksDir, step.state.task.id)
-      clearWorkflow(sessionID) // self-contained — no-op no-harm when stop already cleared it
-      // A mid-drive interrupt / human ESC (or an externally-cleared loop) is not a
-      // genuine exhaustion — mark it retryable so the work source keeps the item
-      // claimable for the next poll rather than suppressing it forever (C2).
-      return { kind: "stop", message: `${how} during ${stage}`, retryable: true }
-    }
+    // Post-stage boundary: the loop was cleared or a halt armed while the stage
+    // ran. The interrupt path leaves `getWorkflow` set (so `onIdle`'s catch stays
+    // intact on a reject-on-abort), so the closure clears it itself.
+    const postStage = await haltIfAsked(step.state, stage)
+    if (postStage) return postStage
     // Checkpoint after any isolated code-writing (`work`) stage, not just the
     // engineering `build` — pr-sitter's `fix` stage writes code too and otherwise
     // gets no driver-side commit backstop if its agent forgets to commit.
@@ -2475,7 +2526,11 @@ export const onInterrupt = async (deps: Deps, sessionID: string): Promise<void> 
   // (no drive to consume it in onIdle's finally) and wrongly halt this session's
   // NEXT loop. A running stage always has getWorkflow set (drive's setWorkflow), so the
   // interruptable moment is covered.
-  if (hadWorkflow) interrupted.add(sessionID)
+  //
+  // `armHalt`, so an already-armed `stop` is never downgraded to a pause: the
+  // stop verb's own pass aborts land right here, and an interrupt reading over
+  // them would keep the crash snapshot the stop exists to drop.
+  if (hadWorkflow) armHalt(sessionID, "interrupted")
   const wasWatching = forgetWatching(sessionID) // synchronous half; lease released below
   // Stop the passes the user cannot see. They run in their own
   // sessions, so ESC on the driving session never reached them — without this
@@ -2601,36 +2656,47 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
   } catch (err) {
     const message = (err as Error).message
     const state = getWorkflow(sessionID)
-    if (state?.task) {
-      await appendNote(
-        deps.$,
-        state.task,
-        auditNote(`Loop error: ${message}`, new Date(), await gitActor(deps.$, deps.directory)),
-        deps.log,
-      )
-    }
     // The drive died — release its claim marker unconditionally, whatever the
     // body says. The old gate (`isClaimable`) was always false once the CLAIMED
     // note landed, so every release was a silent no-op and the marker wedged
     // (the exact bug backlog.ts's `release` fixed with `isReleasableClaim`).
     // A held marker means "a loop is driving"; an errored one isn't — recover
     // re-claims, and the CLAIMED note keeps watchers away after release.
+    //
+    // FIRST, ahead of the audit note it used to follow: the note is best-effort
+    // bookkeeping over a shell, and a rejection there (a `/mnt/c` hiccup, a
+    // vanished task file) skipped the release, the teardown and `clearWorkflow`
+    // outright — leaving a task every gate verb then refused as "a loop is
+    // driving this NOW" until the 75-minute stale sweep. Nothing below may be
+    // able to strand it again, so the rest is boxed too.
     const errored =
       work?.kind === "start-task" || work?.kind === "recover" || work?.kind === "start-plan"
         ? work.task
         : work?.kind === "recover-state"
           ? work.state.task
           : undefined
-    if (errored) await releaseClaim(deps.$, errored)
-    // Preserve whatever the failed run left behind and put the tree back.
-    if (state) {
-      await renderMetrics(deps, sessionID, config, state, "error", message)
-      if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
-      await checkpoint(deps, config, state, `loop(${workflowId(state)}): incomplete — loop error`)
-      await teardownIsolation(deps, config, state)
-    } else {
-      runSamples.delete(sessionID)
-      dropChecksInfo(sessionID)
+    if (errored) await releaseClaim(deps.$, errored).catch((e: unknown) => deps.log("warn", `claim release failed after a loop error: ${(e as Error).message}`))
+    try {
+      if (state?.task) {
+        await appendNote(
+          deps.$,
+          state.task,
+          auditNote(`Loop error: ${message}`, new Date(), await gitActor(deps.$, deps.directory)),
+          deps.log,
+        )
+      }
+      // Preserve whatever the failed run left behind and put the tree back.
+      if (state) {
+        await renderMetrics(deps, sessionID, config, state, "error", message)
+        if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
+        await checkpoint(deps, config, state, `loop(${workflowId(state)}): incomplete — loop error`)
+        await teardownIsolation(deps, config, state)
+      } else {
+        runSamples.delete(sessionID)
+        dropChecksInfo(sessionID)
+      }
+    } catch (cleanupErr) {
+      await deps.log("warn", `loop-error cleanup failed after "${message}": ${(cleanupErr as Error).message}`)
     }
     clearWorkflow(sessionID)
     // Fire-and-forget like every other toast: this one sits ahead of the
@@ -2639,7 +2705,7 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
     void toast(deps.client, `Loop error: ${message}`, "error")
   } finally {
     driving.delete(sessionID)
-    interrupted.delete(sessionID) // consumed by this drive; a fresh drive re-arms via onInterrupt
+    haltReason.delete(sessionID) // consumed by this drive; a fresh drive re-arms via onInterrupt / the stop verb
     if (serialize) executingDirs.delete(deps.directory)
   }
   // The plan gate. A parked plan is the one loop outcome with an obvious next
@@ -2990,12 +3056,19 @@ const planParkNextStep = (id: string): string =>
  * `NEXT STEP` reaches the model, and nothing is armed for `askUnanswered` to
  * enforce, so `workflow_plan` claims the human's session without ever asking.
  */
-export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>, log: Log): string => {
-  const id = taskGateId(data)
+export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown> | undefined, log: Log): string => {
+  // `data` is OPTIONAL at runtime even though the ok result's type says
+  // otherwise — an old core dist is exactly a runtime that predates that
+  // contract, and it is the case this whole arm exists for. Dereferencing it
+  // blind threw out of `handleApprove`, which reported `Approve failed` for a
+  // move that had already succeeded, on every retry, with the `npm install`
+  // warning below never reached. Same guard, same reason, as
+  // `classifyReplanChain`'s.
+  const id = data ? taskGateId(data) : null
   if (!id) {
     // The plan and ship gates legitimately do not ask; only a MISSING gate is a
     // defect worth reporting.
-    if (data.gate === undefined) {
+    if (data?.gate === undefined) {
       void log(
         "warn",
         "gate succeeded but reported no `gate`/`id` — the @agentic-workflow/core dist predates the gate contract, so the " +
@@ -3005,7 +3078,7 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>,
     }
     return ""
   }
-  const siblings = gateCandidates(data.siblings)
+  const siblings = gateCandidates(data?.siblings)
   const armed = askArmed.get(sessionID) ?? new Map()
   armed.set(id, { siblings, asked: false })
   askArmed.set(sessionID, armed)
@@ -3596,13 +3669,27 @@ export const handleCommand = async (
   }
 
   if ((verb === "stop" || verb === "abort") && !rest) {
-    const wasWatching = await stopWatching(deps, sessionID)
-    claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
+    // EVERY mutation ahead of EVERY await, exactly as `onInterrupt` orders its
+    // own. The stage may settle inside any of the awaits below, so the halt has
+    // to be visible before the first one — and the pass aborts further down
+    // dispatch abort errors that `runStagePasses` only swallows once `halted`
+    // says so. Arming after them is what turned a stop into "Loop error", with
+    // the crash snapshot left behind for `recover` to resurrect.
+    //
+    // `driving` as well as `getWorkflow`, matching claim/plan/recover's busy
+    // test: the chain does not call `setWorkflow` until after `ensureIsolation`
+    // (worktree add, `npm ci`), and a stop typed in that window used to report
+    // "No active loop to stop." and halt nothing at all.
+    const state = getWorkflow(sessionID)
+    const existed = driving.has(sessionID) || state !== undefined
+    if (existed) armHalt(sessionID, "stopped")
     // A window whose settlement never arrived would otherwise keep `onIdle`
     // returning here for the life of the process — and `stop` is the verb a user
     // reaches for precisely when a session has gone quiet on them, so it must be
     // able to clear it. Same reason as the ESC path in `onInterrupt`.
     clearQuestionState(sessionID)
+    claimRequested.delete(sessionID) // a queued one-shot claim dies with the stop
+    const wasWatching = await stopWatching(deps, sessionID)
     await dropPending(deps, sessionID) // release any queued-but-undriven claim marker
     // Stop the fanned-out passes the user cannot see, exactly as onInterrupt
     // does: they run in their own sessions, so clearing the workflow alone
@@ -3611,7 +3698,6 @@ export const handleCommand = async (
     for (const id of passSessions.get(sessionID) ?? []) {
       await client.session.abort({ path: { id } }).catch(() => {})
     }
-    const state = getWorkflow(sessionID)
     if (state?.task) {
       await appendNote(
         deps.$,
@@ -3624,7 +3710,10 @@ export const handleCommand = async (
         deps.log,
       )
     }
-    const existed = clearWorkflow(sessionID)
+    // Still cleared, so every `getWorkflow` consumer sees no live loop — but the
+    // armed reason above, not this, is what halts the chain: it re-registers the
+    // session at every transition.
+    clearWorkflow(sessionID)
     const message = existed ? "Loop stopped." : wasWatching ? "Stopped watching." : "No active loop to stop."
     return report(client, message, "info")
   }

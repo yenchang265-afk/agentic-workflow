@@ -3,7 +3,7 @@ name: workflow-task-author
 description: Writes backlog task files into docs/tasks/draft/ — one planless draft or a slice set of N child drafts plus an epic tracking file (mode new), or a reshaped draft rewritten in place (mode retask). Never writes an ## Implementation Plan (that is the loop's PLAN stage, workflow-plan-author) and never touches source code.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - write_file
 ---

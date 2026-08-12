@@ -378,8 +378,19 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       void client.tui.showToast({ body: { message, variant: "error" } }).catch(() => {})
       config = lastGood ?? DEFAULT_CONFIG
     }
-    await warnIgnoredUserConfigOnce()
-    await reportAgentModelsOnce(config)
+    // Both are best-effort REPORTING, and both do filesystem work and client
+    // calls — so neither may decide whether this function resolves. They sat
+    // outside the try, and `getConfig` caches the promise: one rejection here
+    // (an EACCES resolving the user-scope path, say) was cached for the life of
+    // the process, and `tool.execute.before` awaits it for EVERY tool in EVERY
+    // session — so every read, bash and edit in the whole instance was denied
+    // with a config-read error until restart.
+    try {
+      await warnIgnoredUserConfigOnce()
+      await reportAgentModelsOnce(config)
+    } catch (err) {
+      await log("warn", `agentic-workflow: config reporting failed (the config itself is fine): ${(err as Error).message}`)
+    }
     return config
   }
 
@@ -449,7 +460,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       })
       .catch(() => {})
   }
-  const getConfig = (): Promise<Config> => (configPromise ??= readConfig())
+  // The cache holds a PROMISE, so a rejected one would be cached too — and the
+  // tool guard awaits it unconditionally for every tool in every session, loop
+  // or not. Drop it on rejection so the next call re-reads instead of denying
+  // the whole instance's tooling until opencode restarts.
+  const getConfig = (): Promise<Config> =>
+    (configPromise ??= readConfig().catch((err: unknown) => {
+      configPromise = undefined
+      throw err
+    }))
 
   // Re-read the config for a user-typed command. The cache above lives for the
   // whole opencode instance and nothing invalidates it, so enabling a workflow

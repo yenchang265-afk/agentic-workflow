@@ -3,7 +3,7 @@ name: workflow-verify
 description: Verifier for the VERIFY stage of the agentic loop. Runs tests and checks the build against the plan's acceptance criteria, then records the verdict via the workflow_verdict MCP tool. Runs read/test commands (constrained by a PreToolUse allowlist) but never edits files.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
   - mcp__agentic-workflow__workflow_verdict

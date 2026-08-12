@@ -1441,6 +1441,15 @@ test("a gate result with no gate says so, instead of dropping the ask silently",
   // train the operator to ignore the one that matters.
   assert.equal(armTaskGateAsk(sessionID, { approved: true, gate: "plan", id: "my-task" }, log), "")
   assert.equal(warnings.length, 1, "a gate that simply does not ask is not a defect")
+
+  // The same stale dist one step further back: `data` itself absent. The ok
+  // result's TYPE says it always rides along, which is exactly the contract that
+  // runtime predates — and dereferencing it blind threw out of handleApprove,
+  // reporting `Approve failed` for a move that had already succeeded, on every
+  // retry, with this warning never reached.
+  assert.equal(armTaskGateAsk(sessionID, undefined, log), "")
+  assert.equal(warnings.length, 2, "an absent `data` is the same defect as an absent `gate`")
+  assert.match(warnings[1]!, /npm install/)
 })
 
 /**
@@ -2270,6 +2279,182 @@ test("drive interprets a pr-sitter loop with the pr-sitter manifest, not enginee
 
   assert.equal(outcome?.kind, "done")
   assert.match(outcome?.message ?? "", /nothing actionable/i)
+})
+
+/**
+ * `stop` used to halt purely by `clearWorkflow`, which the chain undoes at every
+ * transition (`setWorkflow`) — so a stop landing anywhere between the post-stage
+ * halt check and that call was silently reverted: the user was told "Loop
+ * stopped." and the next stage fired anyway. The window is not narrow; it spans a
+ * checkpoint commit and two audit notes.
+ *
+ * The fix is a durable reason (`stop` arms it synchronously, ahead of its own
+ * first await) plus a SECOND halt boundary before each fire. Both halves are
+ * pinned here: only the post-stage check existed before, and it alone still lets
+ * the whole next stage run.
+ */
+test("a stop landing after the halt check does not let the next stage fire", async () => {
+  const sessionID = "sess-stop-after-guard"
+  const log: string[] = []
+  const commands: string[] = []
+  const files = { "docs/tasks/in-progress/t.md": serializeTask({ title: "Fix the PR", body: "goal" }) }
+  const { client: base } = makeClientFS(files)
+  const client = {
+    ...base,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        recordVerdict(sessionID, "triage", { verdict: "PASS", reason: "actionable" })
+        return { data: { parts: [{ type: "text", text: "triaged" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const shell = makeShellFS(files, log)
+  let fired = false
+  const deps: Deps = {
+    client,
+    // Fire the stop on the post-guard verdict note — past the halt check the
+    // stage just cleared, and before `advance`/`setWorkflow` re-register it.
+    $: ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
+      const r = (shell as unknown as (s: TemplateStringsArray, ...e: unknown[]) => unknown)(strings, ...exprs)
+      if (!fired && /TRIAGE verdict:/.test(log[log.length - 1] ?? "")) {
+        fired = true
+        void handleCommand(deps, sessionID, "stop", testConfig, "pr-sitter").catch(() => {})
+      }
+      return r
+    }) as unknown as Deps["$"],
+    directory: "/repo",
+    log: () => {},
+  }
+  const state: WorkflowState = {
+    kind: "pr-sitter",
+    goal: "Sit on PR #1",
+    stage: "triage",
+    iteration: 0,
+    artifacts: {},
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+  }
+
+  const outcome = await drive(deps, sessionID, testConfig, firstStep(manifestFor("pr-sitter"), state))
+
+  assert.ok(fired, "the test never reached the window it exists to cover")
+  assert.deepEqual(commands, ["pr-triage"], "the stop must halt the chain before `fix` fires")
+  assert.equal(outcome?.kind, "stop")
+  assert.match(outcome?.message ?? "", /stopped during fix/)
+  clearWorkflow(sessionID)
+})
+
+/**
+ * A stop is an END, an ESC is a PAUSE — and the stop's own bookkeeping aborts the
+ * in-flight pass sessions, each abort surfacing as the same `MessageAbortedError`
+ * a human ESC does. Without a precedence rule that interrupt re-labels the stop,
+ * which keeps the crash snapshot the stop exists to drop, and `recover <id>` then
+ * resurrects a run the user deliberately killed.
+ */
+test("a stop is never downgraded to an interrupt by the aborts it issues", async () => {
+  const sessionID = "sess-stop-then-esc"
+  const log: string[] = []
+  const files = { "docs/tasks/in-progress/t.md": serializeTask({ title: "Fix the PR", body: "goal" }) }
+  const { client: base } = makeClientFS(files)
+  const client = {
+    ...base,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async () => {
+        recordVerdict(sessionID, "triage", { verdict: "PASS", reason: "actionable" })
+        // The user stops. Not awaited, so the interrupt lands while the stop
+        // handler is still mid-flight and the workflow is still registered —
+        // which is exactly when the abort it issued comes back (onInterrupt hops
+        // passOf to the driving session). Awaiting the stop first would hide the
+        // race: by then `clearWorkflow` has run and onInterrupt no-ops.
+        void handleCommand(deps, sessionID, "stop", testConfig, "pr-sitter").catch(() => {})
+        await onInterrupt(deps, sessionID)
+        return { data: { parts: [{ type: "text", text: "triaged" }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const state: WorkflowState = {
+    kind: "pr-sitter",
+    goal: "Sit on PR #1",
+    stage: "triage",
+    iteration: 0,
+    artifacts: {},
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+  }
+
+  const outcome = await drive(deps, sessionID, testConfig, firstStep(manifestFor("pr-sitter"), state))
+
+  assert.match(outcome?.message ?? "", /^stopped during/, "an ESC arriving after a stop must not re-label it a pause")
+  assert.ok(
+    log.some((cmd) => cmd.includes("t.state.json")),
+    "a stop drops the crash snapshot — only an ESC keeps it for recover",
+  )
+  clearWorkflow(sessionID)
+})
+
+/**
+ * The chain does not call `setWorkflow` until after `ensureIsolation` (a worktree
+ * add and `npm ci` — minutes) and the stage checks. `stop` tested `getWorkflow`
+ * alone, so in exactly that window it reported "No active loop to stop." and
+ * halted nothing; the drive then ran on into the stage. `driving` is the half that
+ * covers it, which is why the busy test here matches claim/plan/recover's.
+ */
+test("a stop before the loop is registered still stops it, and says so", async () => {
+  resetAskState()
+  const sessionID = "sess-stop-pre-register"
+  const files = { "docs/tasks/queued/my-task.md": serializeTask({ title: "Do the thing", body: "goal" }) }
+  const { client: base, toasts } = makeClientFS(files)
+  const commands: string[] = []
+  const client = {
+    ...base,
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        commands.push(body.command)
+        return { data: { parts: [], info: undefined } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const log: string[] = []
+  const shell = makeShellFS(files, log)
+  let armed = false
+  let fired = false
+  const deps: Deps = {
+    client,
+    // On the drive's very first shell call: the chain has not registered the
+    // session yet (that happens past isolation and the stage checks), which is
+    // the whole point — `getWorkflow` is still undefined here, and only
+    // `driving` says a loop is in flight.
+    $: ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
+      const r = (shell as unknown as (s: TemplateStringsArray, ...e: unknown[]) => unknown)(strings, ...exprs)
+      if (armed && !fired) {
+        fired = true
+        void handleCommand(deps, sessionID, "stop", testConfig).catch(() => {})
+      }
+      return r
+    }) as unknown as Deps["$"],
+    directory: "/repo",
+    log: () => {},
+  }
+
+  // The claim runs on the command's own turn, before any drive — arm only once
+  // it is past, so the stop lands inside the drive.
+  await planFromAgent(deps, sessionID, "my-task", testConfig)
+  armed = true
+  await onIdle(deps, sessionID, testConfig)
+
+  assert.ok(fired, "the test never reached the window it exists to cover")
+  assert.ok(
+    toasts.some((t) => t.message === "Loop stopped."),
+    `a stop while a drive is in flight must not report "No active loop to stop." — got ${JSON.stringify(toasts.map((t) => t.message))}`,
+  )
+  assert.deepEqual(commands, [], "nothing may fire after the stop")
+  clearWorkflow(sessionID)
 })
 
 /**

@@ -111,9 +111,10 @@ var gateArgsFor = (prompt) => {
   }
   const retask = prompt.match(RETASK);
   if (retask) {
-    const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
+    const words = (retask[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = unquote(words[0] || "");
     if (!id) return { usage: "Usage: /agentic-workflow:engineering retask <id> [note]." };
-    return { argv: ["gate", "retask", id], continueTurn: true };
+    return { argv: ["gate", "retask", id, ...words.slice(1)], continueTurn: true };
   }
   const abandon = prompt.match(ABANDON);
   if (abandon) {

@@ -2,7 +2,7 @@ name: workflow-review-fetch
 description: Fetch for the review sitter's FETCH stage. Read-only confirmation that a requested review is still wanted, plus diff sizing and a review work order, ending in a verdict via the workflow_verdict MCP tool. Never edits, never comments, never votes.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
   - mcp__agentic-workflow__workflow_verdict

@@ -103,8 +103,17 @@ test("non-gate verbs and prose pass through as null", () => {
 
 test("retask dispatches with continueTurn — the move is deterministic, the reshape is not", () => {
   const d = gateArgsFor("/agentic-workflow:engineering retask my-task tighten acceptance")
-  assert.deepEqual(d.argv, ["gate", "retask", "my-task"])
+  // The note rides along: runGate joins the trailing words into `reason` and core
+  // writes it onto the audit note, which is the only place the next authoring
+  // pass looks for why the goal was wrong. Dropping them left the verb's own
+  // documented promise true only on the MCP fallback path.
+  assert.deepEqual(d.argv, ["gate", "retask", "my-task", "tighten", "acceptance"])
   assert.equal(d.continueTurn, true, "the model must still run the interview")
+})
+
+test("a retask with no note dispatches the id alone", () => {
+  const d = gateArgsFor('/agentic-workflow:engineering retask "my-task"')
+  assert.deepEqual(d.argv, ["gate", "retask", "my-task"])
 })
 
 test("a bare retask is malformed — blocked deterministically with usage", () => {
