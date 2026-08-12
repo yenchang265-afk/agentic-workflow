@@ -56,15 +56,9 @@ before touching the code.
 
 ## Step 2: Find the signals
 
-Scan for concrete signals rather than vague smells — deep nesting, long
-functions, nested ternaries, boolean parameter flags, repeated conditionals,
-generic or misleading names, comments explaining *what* instead of *why*,
-duplicated logic, dead code, wrappers that add no value, and one-implementation
-"patterns". Each signal and the simplification it calls for is catalogued in
-`references/simplification-patterns.md` → Simplification Signals.
-
-Comments explaining *why* ("Retry because the API is flaky under load") carry
-intent the code can't express — those stay.
+Scan for concrete signals rather than vague smells: work
+`references/simplification-patterns.md` → Simplification Signals row by row —
+each row is one signal and the simplification it calls for.
 
 **Step 2 is done when** every signal you found is either queued for Step 3 or
 has a documented reason to stay — a *why* comment, a proven hot path, or
@@ -93,8 +87,7 @@ this cycle — applied and kept, or reverted.
 
 ## Step 4: Judge the result
 
-Prefer clarity over cleverness: explicit code beats compact code whenever the
-compact version costs a mental pause to parse. Worked before/after pairs live in
+Prefer clarity over cleverness: the rule and its before/after pairs are
 `references/simplification-patterns.md` → Clarity Over Cleverness.
 
 Then check the opposite failure — over-simplification:

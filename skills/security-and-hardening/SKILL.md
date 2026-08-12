@@ -102,8 +102,9 @@ instead:
 - **Errors returned to users are generic.** Stack traces and internal details
   stay in the server log.
 - **Queries are parameterized** and **server-side fetches of user-influenced
-  URLs are allowlisted** (scheme and host allowlist, private/reserved-IP
-  rejection across all resolved records, `redirect: 'error'`).
+  URLs are allowlisted** — what counts as allowlisted, and the TOCTOU gap that
+  survives it, is in `references/security-checklist.md` → Server-Side Request
+  Forgery (SSRF).
 - **Every resource access checks authorization**, not merely authentication —
   ownership or role, on every endpoint.
 
@@ -113,17 +114,18 @@ A feature that calls an LLM inherits a new boundary; map it to the
 [OWASP Top 10 for LLM Applications](https://genai.owasp.org/llm-top-10/):
 
 - **Model output is untrusted input (LLM05).** That "text" can be a SQL
-  statement, a script tag, or a shell command — validate and encode it exactly
-  as you would raw user input. Never into `eval`, SQL, a shell, `innerHTML`, or
-  a file path.
-- **The system prompt is not a security boundary (LLM01).** Untrusted text in
-  the context window carries instructions; enforce permissions in code.
-- **The context window leaks (LLM02/LLM06/LLM07).** Keep secrets and other
-  tenants' data out of it, scope tool permissions to the minimum, and require
-  confirmation for destructive actions.
+  statement, a script tag, or a shell command; a sink it reaches unvalidated is
+  the repro.
+- **The system prompt is not a security boundary (LLM01).** A permission
+  enforced by prompt wording is defeated by untrusted text in the context
+  window — the finding is the missing code-side check.
+- **The context window leaks (LLM02/LLM06/LLM07).** Secrets, another tenant's
+  data, an unscoped tool, and an unconfirmed destructive action are each a
+  finding at this boundary.
 
-Bounded consumption, RAG tenant partitioning, and a worked example are in
-`references/security-checklist.md` → AI / LLM Security.
+The controls that close them — including bounded consumption and RAG tenant
+partitioning — and a worked example are in `references/security-checklist.md` →
+AI / LLM Security.
 
 ## Verification
 

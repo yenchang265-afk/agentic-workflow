@@ -218,6 +218,4 @@ stated, say so plainly in the plan rather than inventing a scope that fits.
 
 ## See Also
 
-Acceptance criteria are per-task and answer "did we build the right thing?". They sit on top of the project-wide Definition of Done, the standing bar every task clears before it counts as done. See `references/definition-of-done.md`.
-
-`plan-router` sits upstream of both branches and reuses this skill's size table and split triggers as its scope vocabulary — unshaped work routes through it before landing here.
+Acceptance criteria are per-task and answer "did we build the right thing?". The standing bar under them is `references/definition-of-done.md` (`using-agent-skills` → Verify, Don't Assume).

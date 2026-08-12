@@ -1,7 +1,5 @@
 # Ideation Frameworks Reference
 
-Use these frameworks selectively. Pick the lens that fits the idea — don't mechanically run every framework. The goal is to unlock thinking, not to follow a checklist.
-
 ## SCAMPER
 
 A structured way to transform an existing idea by applying seven different operations:

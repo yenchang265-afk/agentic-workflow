@@ -110,17 +110,12 @@ Written by the loop's PLAN stage, right before execution.
 | `→ abandoned` | **you** | **`abandon <id> [reason]`** — from any non-terminal status; the file is kept, so it is reversible |
 | task file deleted | **you** | **`remove <id> --force`** — the one destructive verb; a bare `remove` is a dry run. Usually permanent (`ignoreBacklog` defaults to true), so prefer `abandon` |
 
-One verb runs every forward gate: **`approve [id]`** advances by whatever gate
-the task's folder implies, and id-less it resolves the single task waiting at a
-loop wait-gate, falling back to a lone draft only when no loop gate is waiting
-(tracking epics are never candidates). **`replan [id] [reason]`** is the
-matching rejection verb, always back to `queued/`.
+How `approve` picks when several tasks are waiting, and what a `replan` threads
+into the next PLAN pass, are in `workflow-orchestration` → "The gates".
 
-The plan is written **right before execution** rather than at approval time, so
-it cannot rot while a task sits parked. Its `## Implementation Plan` section is
-the durable on-disk record, surviving a `stop` or an opencode restart when
-in-memory loop state does not (snapshots under `runs/` cover exact-stage crash
-recovery).
+The `## Implementation Plan` section is the durable on-disk record, surviving a
+`stop` or an opencode restart when in-memory loop state does not (snapshots
+under `runs/` cover exact-stage crash recovery).
 
 ## Slicing a heavy idea into sibling drafts
 

@@ -18,9 +18,8 @@ Route in order — each step either exits or falls through to the next.
 ## Step 0 — Size triage, before any questions
 
 Judge the ask against the size table and split triggers in
-`planning-and-task-breakdown` → "Size each task". Any trigger firing — two or
-more independent subsystems, "and" in the title, more than 3 acceptance
-bullets, more than one focused session — means **split first**: decompose into
+`planning-and-task-breakdown` → "Size each task". Any of its split triggers
+firing means **split first**: decompose into
 vertical slices (`planning-and-task-breakdown` branch A; inside the loop,
 `task-backlog-management` → "Slicing a heavy idea") and route each slice
 through this rubric separately. Questions asked of an unsplit multi-subsystem
@@ -80,7 +79,7 @@ firing: restate the amended `ROUTE:` line at the divergence, then follow it.
 | Consideration | Effect on the route |
 |---|---|
 | Must something survive the session? | Exploration owes nothing; `interview-me` offers `docs/intent/`; `idea-refine` offers `docs/ideas/`; a spec always survives (version-controlled) |
-| Unattended context — loop stage, CI, scheduled run? | Human-latency routes (`interview-me`, `idea-refine`'s questions) are blockers to report, not gaps to guess at — see `interview-me` → "Loading Constraints". `codebase-exploration` stays legal. |
+| Unattended context — loop stage, CI, scheduled run? | Human-latency routes (`interview-me`, `idea-refine`'s questions) are out — see `interview-me` → "Loading Constraints" for what to report instead. `codebase-exploration` stays legal. |
 
 ## Verification
 

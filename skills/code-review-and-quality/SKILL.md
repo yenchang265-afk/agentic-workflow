@@ -94,27 +94,19 @@ Does the change fit the system's design?
 
 ### 4. Security
 
-Does the change introduce vulnerabilities? Invoke `security-and-hardening` when
-the diff touches auth, input handling, or secrets — it carries the hunting
-lenses and the repro-and-blast-radius rating.
+Does the change introduce vulnerabilities? Name every trust boundary the diff
+crosses and the check that guards it; a boundary crossed with no check is the
+finding. Invoke `security-and-hardening` — it owns the guarantee list every diff
+must meet, the hunting lenses, and the repro-and-blast-radius rating.
 
-- Is user input validated at the system boundary, and are queries parameterized?
-- Are secrets kept out of code, logs, and version control?
-- Is authorization — not merely authentication — checked on every resource access?
-- Are outputs encoded to prevent XSS?
-- Is data from external sources (APIs, logs, user content, config files, model output) treated as untrusted?
 - Does a new dependency earn its place, and is it free of known vulnerabilities? (`references/security-checklist.md` → Dependency Security)
 
 ### 5. Performance
 
-Does the change introduce unbounded work? Invoke `performance-optimization` when
-the diff touches hot paths, loops over unbounded data, or queries — it carries
-the bound lens.
-
-- Any N+1 query patterns, or missing pagination on list endpoints?
-- Any loop, fetch, cache, or allocation with no bound on how far it grows?
-- Any synchronous operation on a hot path that should be async or batched?
-- Any unnecessary re-renders, or memoization added without a profile behind it?
+Does the change introduce unbounded work? Every loop, query, fetch, cache,
+allocation, and render the diff touches needs a named bound, and work with no
+bound is the finding. Invoke `performance-optimization` for where the bound goes
+missing and where the severity line sits — it owns the bound lens.
 
 ## Structural Remedies
 

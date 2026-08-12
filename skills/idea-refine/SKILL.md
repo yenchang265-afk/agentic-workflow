@@ -10,8 +10,8 @@ idea nobody said out loud, **converge** to kill all but the strongest, then
 **sharpen** into a one-pager someone can act on. Stop there.
 
 You are a thinking partner here, not a facilitator: direct, specific, and
-willing to say an idea is weak. A yes-machine produces confident nonsense, and
-the user came here to find out which of their ideas that is.
+willing to say an idea is weak (`using-agent-skills` → Push Back When
+Warranted).
 
 Upstream, `plan-router` dispatches here when intent is confirmed but the shape
 must still be invented, and `interview-me` extracts what the user wants when
@@ -24,6 +24,10 @@ Standing convictions that shape every phase: push toward the simplest version
 that still solves the real problem; start from the user's experience and work
 back to technology; "how it's usually done" is not a reason; focus comes from
 saying no to good ideas, not from having no bad ones.
+
+**Unsure of the rhythm — how hard to push back, how much a variation must
+carry?** A full session, vague concept to one-pager:
+[`examples.md`](examples.md).
 
 ## Phase 1 — Understand and expand
 
@@ -51,7 +55,9 @@ existing architecture, patterns, and prior art, and ground the variations in
 what is actually there, citing files. The architecture is both a constraint and
 an opportunity, and ignoring it produces variations that cannot be built.
 
-**Done when** the user has reacted — resonance, pushback, or new context.
+**Done when** the "How Might We" line, the answers to who-it-is-for and what
+success looks like, and 5–8 reasoned variations are all written — and the user
+has reacted to them: resonance, pushback, or new context.
 
 ## Phase 2 — Evaluate and converge
 
@@ -65,8 +71,10 @@ an opportunity, and ignoring it produces variations that cannot be built.
 
 3. **Name the hidden assumptions** for each direction: what you are betting is
    true but have not validated, what would kill it, and what you are choosing
-   to ignore for now and why. This is the step ideation usually skips and the
-   one that decides whether the idea survives contact.
+   to ignore for now and why. Sorting them into dealbreaker / important /
+   nice-to-have: [`refinement-criteria.md`](refinement-criteria.md) →
+   "Assumption Audit". This is the step ideation usually skips and the one that
+   decides whether the idea survives contact.
 
 **Done when** each surviving direction has its value, cost, and hidden
 assumptions written down.
@@ -86,7 +94,8 @@ assumptions written down.
 - [ ] [assumption — and how to test it]
 
 ## MVP Scope
-[the minimum version that tests the core assumption: what is in, what is out]
+[the minimum version that tests the core assumption: what is in, what is out —
+ scoping principles: `refinement-criteria.md` → "MVP Scoping Principles"]
 
 ## Not Doing (and Why)
 - [thing] — [reason]
@@ -99,10 +108,8 @@ assumptions written down.
 build; the trade-offs only become real when the good ideas being dropped are
 named alongside their reasons.
 
-Offer to save it to `docs/ideas/[idea-name].md`. Save only on an explicit yes —
-writing the file implies a decision the user may not have made yet.
-
-What a strong session actually reads like: [`examples.md`](examples.md).
+Offer to save it to `docs/ideas/[idea-name].md`, on an explicit yes only
+(`using-agent-skills` → Ask Before Writing to Disk).
 
 ## Verification
 

@@ -5,8 +5,8 @@ description: Drives development with a failing test first; bugs get a reproducti
 
 # Test-Driven Development
 
-Write a failing test before the code that makes it pass. Tests are **proof** —
-"seems right" is not done.
+Write a failing test before the code that makes it pass. Tests are **proof**
+(`using-agent-skills` → Verify, Don't Assume).
 
 Pure configuration, documentation, and static-content changes have no behavior
 to prove; skip them. For browser-based changes, pair this skill with

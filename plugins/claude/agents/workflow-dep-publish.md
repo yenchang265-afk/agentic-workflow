@@ -16,16 +16,10 @@ The goal (package + target), scan's work order, and verify's result.
 
 1. `git push origin <branch>` — a `feature/` branch; never `--force` (if the
    push is rejected, report it — a human moved the branch).
-2. Open a DRAFT pull request. GitHub: `gh pr create --draft --title … --body
-   …` — the body names the advisory closed, the semver impact, the fallout
-   fixed, and the verification result. If a PR for this branch already
-   exists (`gh pr list --head <branch>`), comment the update on it instead.
-   Azure DevOps (`ado`): the `azure-devops` MCP tool
-   `repo_create_pull_request` with `isDraft` true; if a PR for this branch
-   already exists (`repo_list_pull_requests_by_repo_or_project` filtered by
-   `sourceRefName`),
-   searchCriteria.status=active`), post a thread comment with the update
-   instead.
+2. Open a DRAFT pull request, or comment the update on this branch's existing
+   PR when one is already open. Your stage prompt names the exact command or
+   MCP tool for this PR's platform, the arguments, and the title and body they
+   must carry.
 3. Report the PR URL.
 
 ## Rules

@@ -102,8 +102,6 @@ alongside the rules file, the spec, and the ADRs, and stop re-deciding settled
 questions because of them. More forms and examples:
 `references/documentation-patterns.md`.
 
-Commented-out code is not documentation. Delete it; git remembers.
-
 ## Verification
 
 **When a decision has been made:**

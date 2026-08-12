@@ -56,9 +56,7 @@ Copy-ready HTML/ARIA patterns live in `references/accessibility-checklist.md`:
 Colocate a component's implementation, tests, stories, hook, and types in one
 directory. Prefer composition (`<Card><CardHeader>…`) over configuration
 (`<Card title= headerVariant= bodyPadding=`), keep each component doing one
-thing under ~200 lines, and separate data fetching from presentation — a
-container resolves loading/error/empty, a presentation component renders the
-data it is handed.
+thing under ~200 lines, and separate data fetching from presentation.
 
 Place state at the lowest level that works: local, then lifted, then URL state
 for anything shareable, then a server-state cache for remote data, then a global

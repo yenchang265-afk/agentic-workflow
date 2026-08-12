@@ -82,7 +82,7 @@ agent needs the material:
    `references/*.md`).
 
 Push too little down and the top bloats; push too much and you hide material the
-agent actually needs. That tension is the whole decision.
+agent actually needs.
 
 **Progressive disclosure** is the move down the ladder — out of the main file
 and behind a pointer — so the top stays legible. Not primarily a token
@@ -169,9 +169,8 @@ passage begging to collapse into a single token:
 - "a loop you believe in" → _red_ — a fuzzy gate becomes a binary observable
   state (the loop goes _red_ on the bug, or it doesn't).
 
-You win twice: fewer tokens, and a sharper hook for the agent to hang its
-thinking on. Assume every document is carrying restatements that leading words
-retire — go find them.
+Assume every document is carrying restatements that leading words retire — go
+find them.
 
 **Negation** is the failure mode beside this lever: steering by prohibition
 drags the forbidden behaviour into context and makes it _more_ available, not

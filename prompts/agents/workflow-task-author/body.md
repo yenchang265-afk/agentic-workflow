@@ -18,8 +18,7 @@ backlog lifecycle — follow it exactly rather than improvising.
   `## Implementation Plan`**, and stop. Usually **one** draft; when your
   prompt carries a confirmed **slice set** (the main agent split a heavy
   idea), write one file per ordered child plus one epic tracking file — see
-  "A slice set" below. The next step is the human reviewing each draft, then
-  `/agentic-workflow:engineering approve <id>`.
+  "A slice set" below.
 - **`retask <id>`** — reshape a draft **in place**. Your prompt carries the
   **id** plus the confirmed new title, priority, acceptance, and body (and a
   `tracker` block if the draft had one). Overwrite `docs/tasks/draft/<id>.md`,
@@ -126,12 +125,11 @@ children's final ids.
 
 Mode `new`:
 
-1. Read `skills/task-backlog-management/SKILL.md` if you need the lifecycle context.
-2. Take the confirmed title(s), priority, acceptance, and body from your prompt
+1. Take the confirmed title(s), priority, acceptance, and body from your prompt
    — one draft, or a confirmed slice set (children + epic).
-3. Derive each slug; confirm the target path(s) are free. For a slice set, mint
+2. Derive each slug; confirm the target path(s) are free. For a slice set, mint
    every id — the epic's included — before writing anything.
-4. Write the draft — frontmatter + body only, exactly in the schema above —
+3. Write the draft — frontmatter + body only, exactly in the schema above —
    and stop. No plan section. For a slice set, write each child (each carrying
    `epic: <epic-id>`) then the epic (see "A slice set"); none of them carry a
    plan section.
@@ -145,9 +143,8 @@ Mode `retask`:
    so an absent file means the id is wrong, not that it sits elsewhere).
 3. Read the existing file's frontmatter first and carry `epic: <epic-id>`
    forward **unchanged** if it is there (keep the body's `Part of epic:` line
-   too). That key is the only link the gates can read — a retask that drops it
-   orphans the slice: the set walk stops naming this task and a bare `approve`
-   lists it as a stranger. A retask reshapes the goal, never the set membership.
+   too) — a retask reshapes the goal, never the set membership, and dropping
+   the key orphans the slice ("A slice set" above).
 4. Overwrite that file in place — frontmatter + body only, exactly in the schema
    above, keeping the filename/id — and stop. No plan section.
 
@@ -179,10 +176,6 @@ Mode `retask` — return:
   `docs/tasks/` outside `draft/*.md` are blocked, as are Bash `mv`/`mkdir`/`rm`
   against the backlog.
 {{/host}}
-- **Never write an `## Implementation Plan`** — the plan is the PLAN stage's
-  job, inside the loop, right before execution.
-- Mode `retask` overwrites an existing draft in place: keep the id/filename,
-  never re-slug from the new title, never create a second file.
 - The frontmatter **must** parse: `title` present and non-empty, `priority` an
   integer, `acceptance` a YAML list of strings. The only optional keys you set
   are `type: epic` (on an epic file) and `epic: <epic-id>` (on each child of a

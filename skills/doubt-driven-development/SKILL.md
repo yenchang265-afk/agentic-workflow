@@ -72,8 +72,9 @@ The reviewer needs the **artifact** and the **contract**, never the journey.
 Strip your reasoning out. Hand over conclusions and you get back a validation
 of your conclusions.
 
-**Done when** the unit is small enough to hold in mind in one read. A 500-line
-PR isn't; decompose first.
+**Done when** ARTIFACT and CONTRACT are both written out, and the artifact is
+one of the three units above — one diff or function, a 3–5 sentence proposal,
+or a claim plus its evidence. A 500-line PR isn't; decompose first.
 
 ## Step 3: DOUBT — brief the reviewer to disprove
 
@@ -122,26 +123,10 @@ The user decides whether the cost is worth it; the agent's job is that the
 choice is visible. A skip is fine and gets acknowledged in the output
 (*"proceeding with single-model findings only"*). A silent skip is not.
 
-If the user picks a CLI: check it is on PATH, run it once to confirm the binary
-works, and confirm the exact invocation — flags, auth, env vars — with the user
-**before every run**. One authorization covers one invocation; the artifact and
-the flags change between calls.
-
-**Write the prompt to a file and pipe it through stdin.** Artifacts routinely
-contain backticks, `$(...)`, and quotes that will truncate an inline `-p "…"`
-argument or execute inside it. Run the CLI read-only, so an artifact carrying
-injected instructions cannot act on your workspace:
-
-```bash
-# Codex:
-codex exec --sandbox read-only -C <repo-path> - < /tmp/doubt-prompt.md
-
-# Gemini ('--approval-mode plan' is read-only; -p "" reads the prompt from stdin):
-gemini --approval-mode plan -p "" < /tmp/doubt-prompt.md
-```
-
-Verify flags against the installed version — implementations differ. When the
-CLI is missing or fails, say so and offer manual review, another tool, or skip.
+**If the user picks a CLI**, run it per [`cross-model-cli.md`](cross-model-cli.md)
+— PATH check, working-binary test, per-run authorization, prompt piped through
+stdin, sandboxed read-only. When the CLI is missing or fails, say so and offer
+manual review, another tool, or skip.
 
 In a **non-interactive** context — CI, `/agentic-workflow:engineering`,
 autonomous or scheduled runs — cross-model is skipped and the skip is announced
@@ -163,8 +148,7 @@ wins**:
 4. **Noise** — correct under context the reviewer lacked. Note it, and ask
    whether that context belonged in the contract.
 
-Rubber-stamping the reviewer is the same failure as ignoring it. Disagreement
-is information; deferring to it because it came from elsewhere is not analysis.
+Rubber-stamping the reviewer is the same failure as ignoring it.
 
 **Done when** every finding carries a class justified against the artifact text.
 

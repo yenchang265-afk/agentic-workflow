@@ -21,15 +21,11 @@ workflow(s). The red head is checked out on this loop's pinned branch.
    one's content (`pipelines_get_build_log_by_id`, bounding the line range) —
    "CI is red" is not a finding.
 2. When the culprit isn't obvious from the error plus `git log --oneline -20`,
-   bisect: `git bisect start <bad> <good>` with the failing command. Identify
-   the culprit commit and, when it came from a PR, the PR — GitHub:
-   `gh pr list --search <sha>`; Azure DevOps:
-   `repo_list_pull_requests_by_commits`. Leave bisect
-   clean (`git bisect reset`) before you finish.
-3. Classify and emit the remedy work order: fixable-forward (name the fix),
-   revert-worthy (name the commit(s) to revert and why forward-fixing is
-   worse), or infra-flake (with evidence: passes locally, or a later green
-   rerun of the same head).
+   bisect with the failing command, identify the culprit commit and the PR it
+   came from, and leave bisect clean before you finish — your stage prompt
+   names the commands and MCP tools for this platform.
+3. Classify and emit the remedy work order: fixable-forward, revert-worthy, or
+   infra-flake.
 4. Record the verdict via the `workflow_verdict` tool with `stage: "diagnose"`:
    - **PASS** — a code remedy is warranted; your work order feeds the remedy stage.
    - **FAIL** — a flake, or the branch already recovered.

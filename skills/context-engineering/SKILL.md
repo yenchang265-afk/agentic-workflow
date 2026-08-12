@@ -95,9 +95,9 @@ Summarize before critical work rather than after it.
 
 The spec says REST, the codebase does GraphQL; the spec defines creation but not
 duplicate titles. Both are the same event: the context you loaded does not
-determine the answer. Name the conflict, list the concrete options, and ask —
-the protocol is `using-agent-skills` → Manage Confusion Actively. Inventing the
-missing requirement is the one move that is never available.
+determine the answer. Run the protocol in `using-agent-skills` → Manage
+Confusion Actively. Inventing the missing requirement is the one move that is
+never available.
 
 ## Verification
 

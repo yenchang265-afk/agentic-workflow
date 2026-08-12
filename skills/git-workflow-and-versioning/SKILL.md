@@ -9,18 +9,14 @@ A commit is a **save point**: the last state you can return to when the next
 change goes wrong. Everything below follows from wanting that point to be close
 behind you and to mean something when you land on it.
 
-Agents generate code faster than anyone reviews it, so the discipline is not
-ceremony — it is what keeps a run reversible.
-
 ## Commit each increment
 
 ```
 Implement slice → test → verify → commit → next slice
 ```
 
-Not: implement everything, hope, one giant commit. A save point you never made
-cannot catch you, and a five-hour diff cannot be reviewed, bisected, or
-reverted.
+A save point you never made cannot catch you, and a five-hour diff cannot be
+reviewed, bisected, or reverted.
 
 **One logical thing per commit.** `Add task creation endpoint with validation`
 is a commit; `Add task feature, fix sidebar, update deps, refactor utils` is

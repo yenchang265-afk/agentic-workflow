@@ -13,23 +13,13 @@ for Maven/Gradle — the ecosystem's confirm/verify commands.
 
 ## Your job
 
-1. Confirm the work order is still real by re-running the report command its
-   ecosystem names — npm: `npm audit --json` (or `npm outdated --json` for a
-   stale version); Maven/Gradle: `osv-scanner --format json -L
-   <pom.xml|gradle.lockfile>`. The advisory must still be present, the target
-   version must exist (npm: `npm view <pkg> versions --json`; JVM: the fixed
-   version in the OSV report), and the bump must stay within the stated
-   semver impact.
-   When the work order instead says the advisory and target are **established
-   fact** — this site configured its own scanner, which ran before you were
-   invoked and is not on your allowlist — do NOT hunt for a scanner to run.
-   Confirm what you can: the build files still declare the package at the
-   stated current version, the target version exists, and the bump stays
-   within the stated impact.
-2. Emit the upgrade work order: the exact package and target version, the
-   build file(s) declaring it, the advisory being closed, and any
-   breaking-change notes from the changelog the upgrade stage must handle.
-3. Record the verdict via the `workflow_verdict` tool with `stage: "scan"`:
+1. Confirm the work order is still real by re-running the report command your
+   stage prompt names for this ecosystem, and checking what it says must still
+   hold. Where the work order instead calls the advisory and target
+   **established fact**, the scanner that produced them is not on your
+   allowlist — confirm the build files and the target version rather than
+   hunting for one to run.
+2. Record the verdict via the `workflow_verdict` tool with `stage: "scan"`:
    - **PASS** — the upgrade is still needed and the target is confirmed; your
      work order feeds the upgrade stage.
    - **FAIL** — already resolved or no longer applies.

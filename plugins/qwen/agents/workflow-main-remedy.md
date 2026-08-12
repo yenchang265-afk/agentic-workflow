@@ -21,9 +21,8 @@ verify's failure feedback.
 
 ## Your job
 
-1. Make the smallest change that turns the failing job green: the forward fix
-   the work order names, or the revert (`git revert <sha>`) when it calls for
-   one — preserving unrelated work either way.
+1. Write the forward fix the work order names, or construct the revert when it
+   calls for one — preserving unrelated work either way.
 2. Run the failing job's command locally until it passes.
 3. Commit locally with clear messages — a revert's message says what broke and
    names the culprit. **Do not push** — publish pushes after verification.

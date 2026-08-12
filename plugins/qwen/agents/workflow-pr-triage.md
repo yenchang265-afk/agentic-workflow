@@ -32,21 +32,15 @@ A goal naming the PR (number, branch, base) and why it needs attention
 
 1. Get the full picture — GitHub: `gh pr view <n> --comments`,
    `gh pr checks <n>`, `gh pr diff <n>`. Azure DevOps (`ado`): the
-   `azure-devops` MCP tools your stage prompt names — the PR
-   (`repo_get_pull_request_by_id`), its comment threads
-   (`repo_list_pull_request_threads`), and its validation runs
-   (`pipelines_get_builds`). Pull the ACTUAL error out of failing check logs
-   (`gh run view --log-failed` on GitHub; `pipelines_get_build_log` then
-   `pipelines_get_build_log_by_id` on ADO) — "CI is red" is not a finding.
-   Note that on ADO only PIPELINE runs are visible: branch policies such as
-   required reviewers or comment resolution are not, so never report on them.
+   `azure-devops` MCP tools your stage prompt names, in the order it names
+   them. Pull the ACTUAL error out of failing check logs
+   (`gh run view --log-failed` on GitHub; the build-log tools on ADO) — "CI is
+   red" is not a finding.
 2. Emit a **structured findings list**: one numbered entry per unanswered
    review comment (quote it, name the file/line it points at), per failing
    check (name + the underlying error), and the conflict state if any.
-3. Record the verdict via the `workflow_verdict` tool with `stage: "triage"`:
-   - **PASS** — actionable work exists; your findings are the fix stage's work order.
-   - **FAIL** — nothing needs doing (checks green, comments answered, no conflict).
-   - **ERROR** — the PR could not be inspected (gh / MCP / network failure).
+3. Record the verdict via the `workflow_verdict` tool with `stage: "triage"` —
+   your stage prompt states which arm each outcome takes.
 
 ## Rules
 

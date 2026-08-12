@@ -77,13 +77,9 @@ The goal (which PR), triage's findings, fix's summary, and verify's result.
 1. `git push origin <branch>` (never `--force`; if the push is rejected,
    report it — a human moved the branch).
 2. Reply on the PR: one comment per addressed finding — what changed, where,
-   and the commit. GitHub: `gh pr comment` (or a per-thread reply via
-   `gh api repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies -f body=…`
-   — path first; no other `gh api` endpoint is allowlisted);
-   Azure DevOps (`ado`): a thread reply via the `azure-devops` MCP tool
-   `repo_reply_to_comment`, on the thread that raised the finding (your stage
-   prompt gives the exact arguments).
-   Findings the fix deliberately declined get a polite explanation instead.
+   and the commit; your stage prompt names the exact command or MCP tool for
+   this PR's platform and the thread to reply on. Findings the fix deliberately
+   declined get a polite explanation instead.
 3. Summarize what was pushed and which comments were answered.
 
 ## Rules

@@ -61,9 +61,8 @@ could work is; after writing it, run the simplicity checks in
 abstraction. Build the naive, obviously-correct version; optimize only once
 tests prove it correct.
 
-**Scope discipline.** Touch only what the task requires (`using-agent-skills` →
-Maintain Scope Discipline). Something worth improving outside scope gets
-reported, not fixed:
+**Scope discipline** — `using-agent-skills` → Maintain Scope Discipline.
+Something worth improving outside scope gets reported, not fixed:
 
 ```
 NOTICED BUT NOT TOUCHING:
@@ -75,9 +74,6 @@ NOTICED BUT NOT TOUCHING:
 **One thing at a time.** Each slice changes one logical thing. A new component,
 a refactor of an existing one, and a build-config update are three slices and
 three commits.
-
-**Green between slices.** The tree stays green at every slice boundary, not
-just at the end.
 
 **Revertable.** Each slice stands alone under `git revert`: prefer additive
 changes, keep edits to existing code minimal and focused, pair every migration
