@@ -701,6 +701,12 @@ body {
   margin-bottom: var(--sp-2);
   background: var(--panel-raised);
   cursor: default;
+  /* Inherited, so this one declaration covers the title button and the badges.
+     A title carrying a long unbroken token (a path, a branch name) painted
+     straight out of the card and over the next column, and — because an
+     unbreakable word raises the card's min-content width — stretched the whole
+     grid track past its 230px minimum and gave the column a scrollbar. */
+  overflow-wrap: anywhere;
   transition:
     transform var(--dur-fast) var(--ease),
     box-shadow var(--dur-fast) var(--ease),
@@ -2196,7 +2202,15 @@ body {
    Abandon rendered `primary`, identical to Approve. */
 
 .gate-overflow {
-  position: relative;
+  /* No `position: relative` — see .gate-overflow__menu. min-width:0 lets this
+     flex item shrink below its content width inside .gate-actions. */
+  min-width: 0;
+}
+/* Open, the panel owns a full row of the card, so it can never be squeezed to
+   share a line with Approve/Replan and spill past the card's right edge.
+   Closed, the "More…" summary still sits inline with them. */
+.gate-overflow[open] {
+  flex-basis: 100%;
 }
 .gate-overflow > summary {
   cursor: pointer;
@@ -2213,22 +2227,36 @@ body {
   color: var(--text);
   background: var(--panel-raised);
 }
+/* In flow, NOT absolute — and it must stay that way. An absolutely positioned
+   menu here has its containing block INSIDE every scroll container GateActions
+   ships in, so both surfaces clipped it:
+
+   - `.column` sets `overflow-y: auto`, and a non-`visible` value on one axis
+     computes the other to `auto`, so it clips on BOTH. A card low in a column
+     had the menu cut off at the column's bottom edge — and being out of flow it
+     added nothing to the scroll height, so scrolling could not reach it either.
+   - `.drawer` sets `overflow: hidden` and renders these buttons in its footer,
+     the very bottom of the dialog. The menu opened downward into nothing:
+     `elementFromPoint` over Abandon returned null, i.e. not merely hidden but
+     unclickable.
+
+   `z-index` escapes a stacking ancestor, never a clipping one, so no value of
+   it ever helped. Don't turn this back into a dropdown. */
 .gate-overflow__menu {
-  position: absolute;
-  z-index: 20;
-  top: 100%;
-  left: 0;
-  min-width: 12rem;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
+  max-width: 100%;
   gap: var(--sp-2);
   margin-top: var(--sp-1);
   padding: var(--sp-2);
   border: 1px solid var(--border-strong);
   border-radius: var(--r-2);
   background: var(--panel-raised);
-  box-shadow: var(--shadow-2);
+}
+/* .btn is inline-flex, so a stretched one would sit left-aligned. */
+.gate-overflow__menu .btn {
+  justify-content: center;
 }
 
 /* A chip that navigates — the gate count is a control, not a caption. */
