@@ -74,6 +74,7 @@
       "command": "verify",
       "agent": "workflow-verify",
       "prompt": "stages/verify.md",
+      "requireEvidence": true,
       "isolation": "worktree",
       "bashAllowlist": [
         "git status*",

@@ -15,7 +15,7 @@ import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import type { AdoGateway } from "@agentic-workflow/core/source/ado-gateway"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { effectiveAllowlist, effectivePlatformTools, stageDef, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
+import { effectiveAllowlist, effectivePlatformTools, stageDef, stageRequiresCriteria, type LoadedManifest, type StageDef } from "@agentic-workflow/core/manifest/schema"
 import { pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
@@ -27,9 +27,10 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
+import { checksProvenanceNote, hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   concurrentStages,
+  discoverChecksFor,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
   fanoutOverriddenByLenses,
@@ -64,6 +65,7 @@ import {
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
+  type CriteriaContext,
   type CriterionResult,
   type RejectedVerdict,
   type StagePass,
@@ -481,17 +483,13 @@ const observedEvidence = (stage: string): ObservedEvidence | null => {
       reads.push(...list((parsed as Record<string, unknown>).reads))
     }
     if (!observed) return null
-    // The driver-run check commands count as observed: THIS process ran them and
-    // holds their exit codes. Without them a stage that correctly trusts the
-    // results instead of re-running them cites work the ledger never saw, and
-    // `evidenceIssue` rejects a PASS on a green suite.
-    //
-    // Merged into an existing ledger only — never used to turn a null ledger
-    // into observations. Null means "this host did not observe", which degrades
-    // to the declared-evidence rule; manufacturing a set here would flip every
-    // repo without the hooks installed into strict matching.
-    const seeded = checkCommands(active?.checks?.[stage] ?? [])
-    return { commands: [...new Set([...commands, ...seeded])], reads: [...new Set(reads)] }
+    // The driver-run check commands are NOT merged in here: they reach
+    // admission as `EvidenceContext.seeded` (built at the workflow_verdict call
+    // site), where they defeat the "did nothing" rejection — trusting them
+    // instead of re-running them is correct — without being able to corroborate
+    // a PASS on their own. Merged into `observed`, a stage that ran and read
+    // nothing itself could cite the pre-run check command and pass the gate.
+    return { commands: [...new Set(commands)], reads: [...new Set(reads)] }
   } catch {
     return null
   }
@@ -1118,20 +1116,24 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
     noted: prior?.noted ?? false,
   }
   checksInfo.set(stage, info)
-  // Once per run, only when the outcome would otherwise be silent: the plan
-  // carries an agentic-checks fence but its commands are not what will run.
-  if (!info.noted && state.task && hasChecksFence(state.artifacts.plan ?? "") && (source !== "discovered" || warnings.length > 0)) {
+  // Once per run, only when the outcome would otherwise be silent.
+  // `checksProvenanceNote` owns the predicate and the phrasing for both hosts:
+  // a fence whose commands are not what ran, and a discovering stage that ran
+  // with no fence and zero commands (the run-time truth beside the park-time
+  // forecast — a plan approved before the forecast shipped reaches this fire
+  // with nothing on disk).
+  const note = checksProvenanceNote({
+    stage,
+    source,
+    ran: defs.length,
+    refused: warnings.length,
+    detail: info.detail,
+    fencePresent: hasChecksFence(state.artifacts.plan ?? ""),
+    discovering: discoverChecksFor(config, activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage)),
+  })
+  if (!info.noted && state.task && note) {
     info.noted = true
-    await appendNote(
-      sh,
-      state.task,
-      auditNote(
-        `Discovered checks at ${stage.toUpperCase()}: ${defs.length} ran${info.detail ? `; ${info.detail}` : ` (source: ${source})`}`,
-        new Date(),
-        await gitActor(sh, directory),
-      ),
-      log,
-    )
+    await appendNote(sh, state.task, auditNote(note, new Date(), await gitActor(sh, directory)), log)
   }
   if (!defs.length) return state
   // The phase below runs BEFORE this call's own marker arming and claim restamp
@@ -1369,8 +1371,22 @@ server.registerTool(
     inputSchema: {
       stage: z.string().min(1).describe("The loop's currently running check stage (engineering: verify/review; pr-sitter: triage/verify)."),
       verdict: z.enum(["PASS", "FAIL", "ERROR"]),
-      reason: z.string().max(500).optional(),
-      criteria: z.array(z.object({ criterion: z.string(), pass: z.boolean() })).optional(),
+      reason: z
+        .string()
+        .max(500)
+        .optional()
+        .describe(
+          "One-sentence summary of why. REQUIRED on FAIL unless a criterion marked not met or a blocking finding " +
+            "names the problem — a FAIL that names nothing to fix is REJECTED.",
+        ),
+      criteria: z
+        .array(z.object({ criterion: z.string(), pass: z.boolean() }))
+        .optional()
+        .describe(
+          "Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt. REQUIRED for a " +
+            "PASS on a stage given acceptance criteria: one entry per criterion, in the order given — a PASS with " +
+            "missing/incomplete criteria, or one marking any criterion not met, is REJECTED (record FAIL instead).",
+        ),
       axes: z
         .array(
           z.object({
@@ -1403,7 +1419,7 @@ server.registerTool(
         )
         .optional()
         .describe(
-          "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. FAIL/ERROR need none.",
+          "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. At least one citation must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. FAIL/ERROR need none.",
         ),
     },
   },
@@ -1434,8 +1450,22 @@ server.registerTool(
     }
     // What the guard saw this attempt do, resolved per call rather than cached:
     // the ledger grows while the stage works, so a verdict recorded late in the
-    // turn must read the ledger as it stands at that moment.
-    const evidenceCtx: EvidenceContext = { stage, required: def.requireEvidence, observed: observedEvidence(stage) }
+    // turn must read the ledger as it stands at that moment. `seeded` carries
+    // the driver-run check commands separately from the ledger: they defeat the
+    // "did nothing" rejection but cannot corroborate a PASS on their own.
+    const evidenceCtx: EvidenceContext = {
+      stage,
+      required: def.requireEvidence,
+      observed: observedEvidence(stage),
+      seeded: checkCommands(active?.checks?.[stage] ?? []),
+    }
+    // Stage-level via the predicate, never `passAxes`: a lens pass owes no
+    // axes, and the criteria gate must not suddenly bind lens passes of an
+    // axis-bearing stage. Empty acceptance (sitter kinds carry no task) leaves
+    // the gate inert.
+    const criteriaCtx: CriteriaContext | undefined = stageRequiresCriteria(def)
+      ? { stage, acceptance: active?.task?.acceptance ?? [] }
+      : undefined
     // The record can only be obtained from the `ok: true` branch, so a rejected
     // verdict CANNOT reach `stampVerdictRecorded` below — which would otherwise
     // mark the stage satisfied for the SubagentStop guard and burn its one-shot
@@ -1446,7 +1476,7 @@ server.registerTool(
     // also fixes a lens pass on this host being rejected for missing four axes
     // it was never asked for. The stage-wide requirement is enforced on the
     // accumulated record in workflow_advance instead.
-    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending, evidenceCtx)
+    const admission = admitVerdict(rec, passAxes(def, currentPass(stage)), pending, evidenceCtx, criteriaCtx)
     if (!admission.ok) {
       // Keep the refused record, not just the fact of a refusal: if the retry
       // below produces nothing admissible either, `rejectedFallback` routes the

@@ -2882,7 +2882,19 @@ test("review: a complete five-axis verdict is accepted", async () => {
 /** Run the review stage as one pass with `checks` already recorded for it. */
 const runReviewWithChecks = async (sessionID: string, checks: CheckResult[], onCall: (deps: Deps) => void) => {
   const { setWorkflow, clearWorkflow } = await import("@agentic-workflow/core/workflow/state")
-  setWorkflow(sessionID, { kind: "engineering", goal: "g", stage: "review", iteration: 0, artifacts: {} })
+  const state: WorkflowState = {
+    kind: "engineering",
+    goal: "g",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    checks: { review: checks },
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+  }
+  // Registered WITH the checks, as the drive does (setWorkflow runs on the
+  // post-runStageChecks state) — recordVerdict derives the seeded commands
+  // from the registered state.
+  setWorkflow(sessionID, state)
   const client = {
     tui: { showToast: async () => ({ data: undefined }) },
     session: {
@@ -2894,24 +2906,7 @@ const runReviewWithChecks = async (sessionID: string, checks: CheckResult[], onC
   } as unknown as Deps["client"]
   const deps: Deps = { client, $: makeShellFS({}, []), directory: "/repo", log: () => {} }
   try {
-    return await runStagePasses(
-      deps,
-      sessionID,
-      testConfig,
-      manifestFor("engineering"),
-      {
-        kind: "engineering",
-        goal: "g",
-        stage: "review",
-        iteration: 0,
-        artifacts: {},
-        checks: { review: checks },
-        task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
-      },
-      "review",
-      "goal args",
-      0,
-    )
+    return await runStagePasses(deps, sessionID, testConfig, manifestFor("engineering"), state, "review", "goal args", 0)
   } finally {
     clearWorkflow(sessionID)
   }
@@ -2955,23 +2950,37 @@ test("checks: all green leaves the recorded verdict exactly as the agent recorde
   assert.equal(result.record?.axes?.length, cleanAxes.length, "no synthetic axis was added to a green run")
 })
 
-test("checks: the driver's commands count as observed evidence for the pass", async () => {
-  // Without the seed this is the regression the feature would otherwise ship: the
-  // prompt tells the stage the results are fact and not to re-run them, so the
-  // stage does nothing observable, `evidenceIssue` rejects its PASS as
-  // unsubstantiated, and a no-verdict stage is recorded as FAIL — on a suite
-  // that was green. Note this pass never calls `noteEvidence` itself.
+test("checks: the driver's commands defeat 'ran nothing' but cannot be a PASS's only corroboration", async () => {
+  // Two halves of the seeded carve-out. The seed keeps the legitimate case
+  // alive — a stage told the results are fact and not to re-run them is not
+  // "doing nothing" — but the commands are the LOOP's work, so a PASS whose
+  // only corroborated citation is a seeded command is refused, with the
+  // refusal telling the retry to cite the pass's own work. Note this pass
+  // never runs the check command itself.
   const sessionID = "sess-checks-evidence"
   const rejections: string[] = []
   const result = await runReviewWithChecks(sessionID, [checkResult()], () => {
-    const r = recordVerdict(sessionID, "review", {
+    const first = recordVerdict(sessionID, "review", {
       verdict: "PASS",
       axes: cleanAxes,
       evidence: [{ kind: "command", ref: "npm test", result: "42 passed" }],
     })
-    if (!r.accepted) rejections.push(r.message)
+    if (!first.accepted) rejections.push(first.message)
+    // The corrected call cites a file the pass actually read, beside the check.
+    noteEvidence(sessionID, { reads: ["/repo/src/limit.ts"] })
+    const second = recordVerdict(sessionID, "review", {
+      verdict: "PASS",
+      axes: cleanAxes,
+      evidence: [
+        { kind: "command", ref: "npm test", result: "42 passed" },
+        { kind: "file", ref: "src/limit.ts", result: "returns 429 over the limit" },
+      ],
+    })
+    if (!second.accepted) rejections.push(second.message)
   })
-  assert.deepEqual(rejections, [], "the citation was corroborated by what the driver ran")
+  assert.equal(rejections.length, 1, "exactly the seeded-only call was refused")
+  assert.match(rejections[0]!, /the loop itself ran for you/)
+  assert.doesNotMatch(rejections[0]!, /ran no commands and read no files, so a PASS is unsupported/)
   assert.equal(result.verdict, "PASS")
 })
 
@@ -3102,6 +3111,119 @@ test("review: a stage that recorded nothing at all keeps the unreachable-channel
   assert.equal(result.verdict, "ERROR")
   assert.match(result.record?.reason ?? "", /channel is unreachable/)
   assert.match(result.record?.reason ?? "", /plugin wiring/)
+})
+
+// --- verify: a FAIL must name its feedback, a PASS its criteria ---
+
+/** Run the verify stage as one pass, with the task carrying acceptance criteria. */
+const runVerifyPass = async (sessionID: string, acceptance: string[], onCall: (call: number) => void, warns: string[] = []) => {
+  const state: WorkflowState = {
+    kind: "engineering",
+    goal: "g",
+    stage: "verify",
+    iteration: 0,
+    artifacts: {},
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance },
+  }
+  setWorkflow(sessionID, state)
+  const fired: string[] = []
+  let calls = 0
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      command: async (req: { body: { arguments: string } }) => {
+        calls++
+        fired.push(req.body.arguments)
+        onCall(calls)
+        return { data: { parts: [{ type: "text", text: `verify pass ${calls}` }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = {
+    client,
+    $: makeShellFS({}, []),
+    directory: "/repo",
+    log: (level, msg) => {
+      if (level === "warn") warns.push(msg)
+    },
+  }
+  try {
+    const result = await runStagePasses(deps, sessionID, testConfig, manifestFor("engineering"), state, "verify", "goal args", 0)
+    return { result, fired }
+  } finally {
+    clearWorkflow(sessionID)
+  }
+}
+
+test("verify: a FAIL naming nothing is refused, and the twice-refused FAIL still lands as FAIL", async () => {
+  // Before failFeedbackIssue a bare {verdict: "FAIL"} was admissible on the
+  // axis-less verify stage, and its feedback block rendered EMPTY — the next
+  // BUILD was told to fix "something". Now the refusal message itself becomes
+  // the feedback when the stage insists.
+  const sessionID = "sess-verify-empty-fail"
+  const { result, fired } = await runVerifyPass(sessionID, [], () => {
+    recordVerdict(sessionID, "verify", { verdict: "FAIL" })
+  })
+  assert.equal(fired.length, 2, "the refusal costs the one retry")
+  assert.match(fired[1]!, /must name what has to change/, "the retry quotes the refusal")
+  assert.equal(result.verdict, "FAIL", "recorded as declared — onFail re-fires BUILD, not an ERROR stop")
+  assert.match(result.record?.reason ?? "", /rejected twice/)
+})
+
+test("verify: a FAIL with a reason is admitted exactly as before", async () => {
+  const sessionID = "sess-verify-reasoned-fail"
+  const { fired, result } = await runVerifyPass(sessionID, [], () => {
+    const r = recordVerdict(sessionID, "verify", { verdict: "FAIL", reason: "limit.test.ts asserts 429, handler returns 500" })
+    assert.ok(r.accepted)
+  })
+  assert.equal(fired.length, 1)
+  assert.equal(result.verdict, "FAIL")
+})
+
+test("verify: a PASS omitting the acceptance criteria is refused in ONE message together with missing evidence", async () => {
+  const sessionID = "sess-verify-criteria-missing"
+  const rejections: string[] = []
+  await runVerifyPass(sessionID, ["Returns 429 over limit", "Configurable per route"], () => {
+    const r = recordVerdict(sessionID, "verify", { verdict: "PASS" })
+    if (!r.accepted) rejections.push(r.message)
+  })
+  assert.ok(rejections.length)
+  assert.match(rejections[0]!, /given 2 acceptance criteria/)
+  assert.match(rejections[0]!, /ALSO:/, "criteria and evidence faults arrive in one rejection — one retry must fix both")
+})
+
+test("verify: a PASS marking a criterion not met is refused as a contradiction", async () => {
+  const sessionID = "sess-verify-criteria-contradiction"
+  const rejections: string[] = []
+  await runVerifyPass(sessionID, ["Returns 429 over limit"], () => {
+    const r = recordVerdict(
+      sessionID,
+      "verify",
+      worked(sessionID, { verdict: "PASS", criteria: [{ criterion: "Returns 429 over limit", pass: false }] }),
+    )
+    if (!r.accepted) rejections.push(r.message)
+  })
+  assert.ok(rejections.length)
+  assert.match(rejections[0]!, /record FAIL|verdict FAIL/)
+})
+
+test("verify: a complete PASS covering the criteria with evidence is admitted", async () => {
+  const sessionID = "sess-verify-criteria-complete"
+  const { result } = await runVerifyPass(sessionID, ["Returns 429 over limit", "Configurable per route"], () => {
+    const r = recordVerdict(
+      sessionID,
+      "verify",
+      worked(sessionID, {
+        verdict: "PASS",
+        criteria: [
+          { criterion: "Returns 429 over limit", pass: true },
+          { criterion: "Configurable per route", pass: true },
+        ],
+      }),
+    )
+    assert.ok(r.accepted, "a complete verdict lands first try")
+  })
+  assert.equal(result.verdict, "PASS")
 })
 
 test("lens mode suppresses axis enforcement — a lens pass records its own focus only", async () => {

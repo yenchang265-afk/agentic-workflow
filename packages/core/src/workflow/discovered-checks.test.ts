@@ -7,8 +7,10 @@ import {
   admissibleChecks,
   backgroundsItself,
   checkDiscoveryBlock,
+  checksProvenanceNote,
   commandBinaries,
   hasChecksFence,
+  noMachineChecksBlock,
   parseDiscoveredChecks,
   previewDiscoveredChecks,
   resolvableChecks,
@@ -581,4 +583,54 @@ test("previewDiscoveredChecks is null when nothing will consume the fence", () =
   assert.equal(previewDiscoveredChecks(manifestWith(stage({ discoverChecks: true, checks: [{ name: "shipped", command: "npm test" }] })), CONFIG, plan), null)
   // A partial manifest (no stages array) must not crash a park.
   assert.equal(previewDiscoveredChecks({} as unknown as WorkflowManifest, CONFIG, plan), null)
+})
+
+// --- checksProvenanceNote: the once-per-run durable note both hosts share ---
+
+const note = (over: Partial<Parameters<typeof checksProvenanceNote>[0]> = {}) =>
+  checksProvenanceNote({
+    stage: "verify",
+    source: "discovered",
+    ran: 2,
+    refused: 0,
+    detail: "",
+    fencePresent: true,
+    discovering: true,
+    ...over,
+  })
+
+test("checksProvenanceNote is silent for the healthy discovered case", () => {
+  assert.equal(note(), null)
+})
+
+test("checksProvenanceNote keeps the pre-existing wording for a degraded fence", () => {
+  // Refusals under a fence.
+  assert.equal(
+    note({ ran: 1, refused: 1, detail: 'discovered check "lint" refused: x' }),
+    'Discovered checks at VERIFY: 1 ran; discovered check "lint" refused: x',
+  )
+  // A fence preempted by config/manifest checks.
+  assert.equal(note({ source: "config", ran: 3 }), "Discovered checks at VERIFY: 3 ran (source: config)")
+})
+
+test("checksProvenanceNote speaks when a discovering stage runs fence-less with zero checks", () => {
+  const text = note({ fencePresent: false, source: "none", ran: 0 })
+  assert.match(text ?? "", /No machine-run checks at VERIFY/)
+  assert.match(text ?? "", new RegExp(CHECKS_FENCE))
+  assert.match(text ?? "", /only proof of work/)
+})
+
+test("checksProvenanceNote stays silent where check-less is the norm", () => {
+  // A stage that never discovers (sitter verify, config-suppressed channel).
+  assert.equal(note({ fencePresent: false, source: "none", ran: 0, discovering: false }), null)
+  // Config/manifest checks with no fence: nothing degraded, nothing to say.
+  assert.equal(note({ fencePresent: false, source: "config", ran: 3 }), null)
+  assert.equal(note({ fencePresent: false, source: "manifest", ran: 3 }), null)
+})
+
+test("noMachineChecksBlock names the fence and pins the burden of proof on the stage", () => {
+  const block = noMachineChecksBlock("verify")
+  assert.match(block, /MACHINE-RUN CHECKS: none ran/)
+  assert.match(block, new RegExp(CHECKS_FENCE))
+  assert.match(block, /commands you ran yourself/)
 })

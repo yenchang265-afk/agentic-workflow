@@ -22,6 +22,14 @@
  * catches the *wholly* unsubstantiated PASS — the fabrication mode that matters
  * — and does not pretend to catch a real command padded with an invented one.
  *
+ * Driver-run check commands are a third input (`seeded`), deliberately weaker
+ * than both: the DRIVER ran them, so they prove the stage attempt had real
+ * work to trust — citing one is legitimate and they defeat the "did nothing"
+ * rejection — but they are not the AGENT's work, so they cannot corroborate a
+ * PASS on their own. Before they were split out they were merged straight into
+ * `observed`, and a stage that ran nothing and read nothing could cite the
+ * pre-run check command and pass the gate having observed nothing itself.
+ *
  * Pure and dependency-free: hosts collect the observations, this decides.
  */
 
@@ -72,6 +80,15 @@ export interface EvidenceContext {
   readonly required: boolean
   /** What the host observed this stage attempt do, or null when it does not record. */
   readonly observed: ObservedEvidence | null
+  /**
+   * Commands the DRIVER ran for this stage (`checkCommands`), established fact
+   * the agent may cite but did not do. They defeat the "did nothing" rejection —
+   * trusting them instead of re-running them is correct behavior — yet cannot
+   * corroborate a PASS by themselves (`seededOnlyMessage`). Ignored when
+   * `observed` is null: a host that does not record stays on the declared-only
+   * rule rather than flipping into strict matching.
+   */
+  readonly seeded?: readonly string[]
 }
 
 /** Whether the host saw the stage do anything at all. Pure. */
@@ -216,6 +233,29 @@ export const noActivityMessage = (stage: string): string =>
   "Actually run the checks (or read the diff and the files it touches), then call workflow_verdict again with an " +
   "`evidence` array citing them. If the check genuinely cannot run here, record ERROR with a reason naming what is missing — " +
   "ERROR stops the loop for a human instead of shipping an unverified change."
+
+/**
+ * The rejection when a PASS's only corroborated citations are the check
+ * commands the DRIVER ran. Samples up to three things the host DID see the
+ * stage do, so the retry can cite real work instead of guessing — the same
+ * make-the-retry-land principle as `axisCoverageIssue`.
+ */
+export const seededOnlyMessage = (stage: string, observed: ObservedEvidence): string => {
+  const sample = [
+    ...observed.reads.map((r) => `file "${r}"`),
+    ...observed.commands.map((c) => `command "${c}"`),
+  ].slice(0, 3)
+  const own = sample.length
+    ? `This pass's own recorded work includes: ${sample.join(", ")} — cite from it.`
+    : "This pass ran no commands and read no files of its own — read the code you judged (or run a check yourself), then cite that."
+  return (
+    `Verdict NOT recorded — the only citations corroborated for this ${stage.toUpperCase()} PASS are the check ` +
+    "commands the loop itself ran for you. Those are already established fact, not your proof of work: a PASS must " +
+    "cite at least one thing YOU did this pass — a file you read, a command you ran. " +
+    own +
+    " Keep the check-command citations if you relied on them (never re-run them), add your own, and call workflow_verdict again."
+  )
+}
 
 /** The rejection when nothing the PASS cited matches what the host observed. */
 export const unobservedMessage = (stage: string, unobserved: readonly EvidenceItem[]): string =>

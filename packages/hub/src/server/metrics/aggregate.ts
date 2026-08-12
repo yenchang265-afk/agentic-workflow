@@ -231,6 +231,7 @@ const planStats = (inputs: readonly RunMetricsInput[]): PlanQualityStats => {
 const discoveryStats = (inputs: readonly RunMetricsInput[]): DiscoveryStats => {
   let checkStageFirings = 0
   const bySource: Record<string, number> = {}
+  const byStage: Record<string, Record<string, number>> = {}
   let refusedTotal = 0
   for (const input of inputs) {
     for (const [entryIdx, entry] of (input.sidecar?.runs ?? []).entries()) {
@@ -242,11 +243,13 @@ const discoveryStats = (inputs: readonly RunMetricsInput[]): DiscoveryStats => {
         seen.add(key)
         checkStageFirings++
         bySource[sample.checksSource] = (bySource[sample.checksSource] ?? 0) + 1
+        const stageTally = (byStage[sample.stage] ??= {})
+        stageTally[sample.checksSource] = (stageTally[sample.checksSource] ?? 0) + 1
         refusedTotal += sample.checksRefused ?? 0
       }
     }
   }
-  return { checkStageFirings, bySource, refusedTotal }
+  return { checkStageFirings, bySource, byStage, refusedTotal }
 }
 
 /**

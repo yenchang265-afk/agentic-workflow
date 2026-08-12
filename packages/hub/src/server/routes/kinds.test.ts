@@ -96,8 +96,9 @@ test("preview appends the verdict contract to check stages only", async () => {
   // verify is a check stage, build is a work stage.
   // verify declares `requireEvidence`, so the preview must render the proof-of-work
   // half too — the creator's preview is what a kind author reads to see what the
-  // stage will actually be told.
-  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, "single", true)), "check stages carry the contract")
+  // stage will actually be told. The sample task carries ONE acceptance
+  // criterion, so the acceptance-criteria half renders with that count.
+  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, "single", true, 1)), "check stages carry the contract")
   assert.doesNotMatch(build.rendered, /MANDATORY VERDICT/)
 })
 

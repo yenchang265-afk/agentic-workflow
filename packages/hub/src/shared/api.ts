@@ -1022,6 +1022,8 @@ export interface DiscoveryStats {
   readonly checkStageFirings: number
   /** Firings per `ChecksSource` (config / manifest / discovered / none). */
   readonly bySource: Readonly<Record<string, number>>
+  /** Firings per stage per `ChecksSource` — surfaces "verify ran with source none" per stage. */
+  readonly byStage: Readonly<Record<string, Readonly<Record<string, number>>>>
   /** Total declared-but-refused/dropped commands across those firings. */
   readonly refusedTotal: number
 }

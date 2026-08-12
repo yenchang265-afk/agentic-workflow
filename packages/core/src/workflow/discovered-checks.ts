@@ -571,3 +571,61 @@ export const resolveStageChecks = async (args: {
     return { ...NO_CHECKS, warnings: [`check discovery failed: ${e instanceof Error ? e.message : String(e)}`] }
   }
 }
+
+/**
+ * The once-per-run durable audit note about a check stage's command provenance,
+ * or null when the outcome needs no note. One helper for both hosts so the
+ * predicate and the phrasing cannot drift between them (the hosts keep their
+ * own once-per-run bookkeeping).
+ *
+ * Two cases speak, both "the outcome would otherwise be silent on disk":
+ *  1. The plan carries a fence but its commands are not what ran (refusals, or
+ *     config/manifest preempted it) — the pre-existing note, wording preserved.
+ *  2. A DISCOVERING stage ran with no fence at all and zero commands. The park
+ *     forecast covers this for plans parked after it shipped, but a plan
+ *     approved before it — or a config changed between park and run — reaches
+ *     the fire with nothing, and "VERIFY ran no machine checks" is a fact the
+ *     ship gate must be able to see on the task file.
+ *
+ * `discovering` (`discoverChecksFor`) gates case 2: a stage that never
+ * discovers (a sitter's verify, a config-suppressed channel) runs check-less as
+ * its NORM, and noting that norm on every run would be noise. Pure.
+ */
+export const checksProvenanceNote = (args: {
+  readonly stage: string
+  readonly source: ChecksSource
+  readonly ran: number
+  readonly refused: number
+  /** Clamped warning summary, "" when none. */
+  readonly detail: string
+  readonly fencePresent: boolean
+  readonly discovering: boolean
+}): string | null => {
+  const { stage, source, ran, refused, detail, fencePresent, discovering } = args
+  if (fencePresent && (source !== "discovered" || refused > 0)) {
+    return `Discovered checks at ${stage.toUpperCase()}: ${ran} ran${detail ? `; ${detail}` : ` (source: ${source})`}`
+  }
+  if (discovering && !fencePresent && source === "none") {
+    return (
+      `No machine-run checks at ${stage.toUpperCase()}: the plan declares no ${CHECKS_FENCE} block, so 0 commands ran — ` +
+      `the ${stage.toUpperCase()} agent's own citations are the only proof of work this run has.`
+    )
+  }
+  return null
+}
+
+/**
+ * The prompt block a DISCOVERING check stage gets when zero commands ran — the
+ * in-band half of `checksProvenanceNote`'s case 2. Without it the stage's
+ * prompt simply lacks a `{{#checks}}` section and nothing tells the agent that
+ * nothing is established: an agent used to green pre-run checks may treat the
+ * silence as "nothing to re-check" instead of "everything is mine to prove".
+ * Appended by `composeStagePrompt`, so both hosts and the hub's preview render
+ * it identically. Pure.
+ */
+export const noMachineChecksBlock = (stage: string): string =>
+  [
+    `MACHINE-RUN CHECKS: none ran for this stage — the plan declared no ${CHECKS_FENCE} block (or none of its commands was admitted).`,
+    "Nothing is established for you: every proof — tests, build, lint — is yours to run in this pass,",
+    `and your PASS evidence must cite the commands you ran yourself.`,
+  ].join(" ")

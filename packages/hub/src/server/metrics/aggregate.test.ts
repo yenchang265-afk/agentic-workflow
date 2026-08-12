@@ -208,5 +208,8 @@ test("discoveryStats counts one firing per stage×iteration and sums refusals on
 
   assert.equal(m.discovery.checkStageFirings, 3)
   assert.deepEqual(m.discovery.bySource, { discovered: 2, none: 1 })
+  // Per-stage split: "review ran with source none" is invisible in the flat
+  // bySource tally once another stage discovers.
+  assert.deepEqual(m.discovery.byStage, { verify: { discovered: 2 }, review: { none: 1 } })
   assert.equal(m.discovery.refusedTotal, 2)
 })
