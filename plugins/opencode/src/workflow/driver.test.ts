@@ -1441,6 +1441,15 @@ test("a gate result with no gate says so, instead of dropping the ask silently",
   // train the operator to ignore the one that matters.
   assert.equal(armTaskGateAsk(sessionID, { approved: true, gate: "plan", id: "my-task" }, log), "")
   assert.equal(warnings.length, 1, "a gate that simply does not ask is not a defect")
+
+  // The same stale dist one step further back: `data` itself absent. The ok
+  // result's TYPE says it always rides along, which is exactly the contract that
+  // runtime predates — and dereferencing it blind threw out of handleApprove,
+  // reporting `Approve failed` for a move that had already succeeded, on every
+  // retry, with this warning never reached.
+  assert.equal(armTaskGateAsk(sessionID, undefined, log), "")
+  assert.equal(warnings.length, 2, "an absent `data` is the same defect as an absent `gate`")
+  assert.match(warnings[1]!, /npm install/)
 })
 
 /**

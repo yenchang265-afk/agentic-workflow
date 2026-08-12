@@ -3056,12 +3056,19 @@ const planParkNextStep = (id: string): string =>
  * `NEXT STEP` reaches the model, and nothing is armed for `askUnanswered` to
  * enforce, so `workflow_plan` claims the human's session without ever asking.
  */
-export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>, log: Log): string => {
-  const id = taskGateId(data)
+export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown> | undefined, log: Log): string => {
+  // `data` is OPTIONAL at runtime even though the ok result's type says
+  // otherwise — an old core dist is exactly a runtime that predates that
+  // contract, and it is the case this whole arm exists for. Dereferencing it
+  // blind threw out of `handleApprove`, which reported `Approve failed` for a
+  // move that had already succeeded, on every retry, with the `npm install`
+  // warning below never reached. Same guard, same reason, as
+  // `classifyReplanChain`'s.
+  const id = data ? taskGateId(data) : null
   if (!id) {
     // The plan and ship gates legitimately do not ask; only a MISSING gate is a
     // defect worth reporting.
-    if (data.gate === undefined) {
+    if (data?.gate === undefined) {
       void log(
         "warn",
         "gate succeeded but reported no `gate`/`id` — the @agentic-workflow/core dist predates the gate contract, so the " +
@@ -3071,7 +3078,7 @@ export const armTaskGateAsk = (sessionID: string, data: Record<string, unknown>,
     }
     return ""
   }
-  const siblings = gateCandidates(data.siblings)
+  const siblings = gateCandidates(data?.siblings)
   const armed = askArmed.get(sessionID) ?? new Map()
   armed.set(id, { siblings, asked: false })
   askArmed.set(sessionID, armed)
