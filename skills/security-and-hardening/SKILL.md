@@ -1,6 +1,6 @@
 ---
 name: security-and-hardening
-description: Hunts exploitable findings — each with a repro and a blast radius. Use when a diff touches auth, input handling, or secrets; also when building those surfaces.
+description: Hunts exploitable findings — each with a repro and a blast radius. Use when a diff touches auth, input handling, secrets, money or state-machine flows, data export, or LLM output; also when building those surfaces.
 ---
 
 # Security and Hardening

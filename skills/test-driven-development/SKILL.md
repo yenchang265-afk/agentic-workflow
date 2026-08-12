@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: Drives development with a failing test first; bugs get a reproduction test before any fix. Use when implementing or changing behavior, or fixing a bug.
+description: Drives development with a failing test first; bugs get a reproduction test before any fix. Use when implementing or changing behavior, fixing a bug, or adding tests to code that already exists.
 ---
 
 # Test-Driven Development

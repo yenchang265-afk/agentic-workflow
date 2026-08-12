@@ -1,6 +1,6 @@
 ---
 name: git-workflow-and-versioning
-description: Structures history as save points — atomic commits, short-lived branches, reviewable diffs. Use when committing, branching, sizing a change, or running parallel work streams in worktrees.
+description: Structures history as save points — atomic commits, short-lived branches, reviewable diffs. Use when committing, branching, sizing a change, running parallel work streams in worktrees, or reporting what a change touched and deliberately left alone.
 ---
 
 # Git Workflow and Versioning

@@ -1,6 +1,6 @@
 ---
 name: observability-and-instrumentation
-description: Instruments code so production behavior is diagnosable from telemetry. Use when adding logging, metrics, tracing, or alerting, or when shipping a feature whose health needs evidence.
+description: Instruments code so production behavior is diagnosable from telemetry. Use when adding logging, metrics, tracing, or alerting, when shipping a feature whose health needs evidence, or when reviewing a diff for missing or unqueryable telemetry.
 ---
 
 # Observability and Instrumentation

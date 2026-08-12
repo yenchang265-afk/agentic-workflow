@@ -1,6 +1,6 @@
 ---
 name: browser-testing-with-devtools
-description: Replaces guesses about runtime behavior with evidence read from a live browser — DOM, console, network, traces. Use when building or debugging anything that renders in a browser. Requires the chrome-devtools MCP server.
+description: Replaces guesses about runtime behavior with evidence read from a live browser — DOM, console, network, traces. Use when building or debugging anything that renders in a browser, or when a rendered page's accessibility or performance must be measured rather than reasoned about. Requires the chrome-devtools MCP server.
 ---
 
 # Browser Testing with DevTools

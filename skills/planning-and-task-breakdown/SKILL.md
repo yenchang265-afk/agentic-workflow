@@ -1,6 +1,6 @@
 ---
 name: planning-and-task-breakdown
-description: Plans work before it is built — decomposing a goal into ordered, verifiable tasks, or writing the executable plan for one already-scoped task. Use when a spec needs breaking down, or when a scoped task needs its plan before execution.
+description: Plans work before it is built — ordered verifiable tasks, or one task's executable plan. Use when a goal or spec needs breaking down, when an already-scoped task needs its plan before execution, or when a rejected plan needs redoing against the rejection.
 ---
 
 # Planning and Task Breakdown

@@ -1,6 +1,6 @@
 ---
 name: idea-refine
-description: Opens a raw idea up with variations, then converges it to one direction with its assumptions named. Use when an idea's shape is still unsettled and needs stress-testing before a spec or plan, or when the user says "ideate", "refine this idea", or "stress-test my plan".
+description: Opens a raw idea up with variations, then converges it to one direction with its assumptions named. Use when an idea's shape is still unsettled and needs stress-testing before a spec or plan, or when the user says "ideate".
 ---
 
 # Idea Refine

@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: Explains the automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need to know how the loop plans, builds, parks at a gate, schedules another kind, or terminates.
+description: The automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need to know how the loop plans, builds, parks at a gate, claims and isolates work, recovers an interrupted run, schedules another kind, or terminates.
 ---
 
 # The agentic loop

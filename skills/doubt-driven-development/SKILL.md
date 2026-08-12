@@ -1,6 +1,6 @@
 ---
 name: doubt-driven-development
-description: Cross-examines a non-trivial decision with a fresh-context reviewer briefed to disprove it, before it stands. Use when correctness beats speed — unfamiliar code, production- or security-sensitive logic, irreversible operations.
+description: Cross-examines a non-trivial decision with a fresh-context reviewer briefed to disprove it, before it stands. Use when correctness beats speed — unfamiliar code, security-sensitive logic, irreversible operations, or an assertion the compiler cannot check like thread safety, idempotence, or ordering.
 ---
 
 # Doubt-Driven Development

@@ -1,6 +1,6 @@
 ---
 name: performance-optimization
-description: Finds unbounded work in a diff, and optimizes only what measurement proves matters. Use when a change touches a hot path, a query, or a loop over unbounded data; also when a regression is suspected or Core Web Vitals need work.
+description: Finds unbounded work in a diff, and optimizes only what measurement proves matters. Use when a change touches a hot path, a query, a loop over unbounded data, or a cache that only grows; also when a running system is measurably slow, Core Web Vitals included.
 ---
 
 # Performance Optimization

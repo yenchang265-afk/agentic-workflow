@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: The protocol for driving the agentic loop inside Claude Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agentic-workflow:engineering verbs (new, retask, the unified folder-driven approve, replan).
+description: The protocol for driving the agentic loop inside Claude Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and workflow-* subagent spawns, the PLAN park-at-gate flow, the plan and ship gates it drives, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and plan rejection are /agentic-workflow:engineering verbs (new, retask, replan).
 ---
 
 # Driving the agentic loop (Claude Code)

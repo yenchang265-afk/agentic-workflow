@@ -1,6 +1,6 @@
 ---
 name: spec-driven-development
-description: Writes the spec that a build is judged against, before any code exists. Use when starting a feature or project with no written requirements, or when what "done" means is still ambiguous.
+description: Writes the spec that a build is judged against, before any code exists. Use when starting a feature or project with no written requirements, when what "done" means is still ambiguous, or when a change spans several modules or settles an architectural decision.
 ---
 
 # Spec-Driven Development

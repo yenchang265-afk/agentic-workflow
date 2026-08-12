@@ -1,6 +1,6 @@
 ---
 name: documentation-and-adrs
-description: Records the why behind a decision, in the form that outlives the code — chiefly the ADR. Use when making an architectural decision, changing a public API, or shipping behavior a future engineer has to understand.
+description: Records the why behind a decision, in the form that outlives the code — chiefly the ADR. Use when making or superseding an architectural decision, changing a public API, or writing an inline comment or gotcha.
 ---
 
 # Documentation and ADRs

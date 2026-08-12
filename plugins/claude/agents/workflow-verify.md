@@ -29,12 +29,10 @@ checkout, not the repo root. Read and test **there**: run test commands as
    stage's verdict, and no amount of reasoning in your transcript can lift it
    (the escape hatch is a human editing the plan's `agentic-checks` block or
    pinning `stageChecks` in config, not disputing it here).
-   Cite them in your evidence **alongside at least one thing you observed
-   yourself** — those commands are the loop's work, not yours, and a PASS whose
-   only citations are them is rejected; the files you read to judge the
-   acceptance criteria are your evidence. Spend your run on the parts a command
-   cannot decide: the criteria, and the tests themselves. Run something yourself
-   only for what the block does not cover.
+   Cite them, then spend your run on the parts a command cannot decide: the
+   criteria, and the tests themselves. Run something yourself for whatever the
+   block does not cover — that first-hand work is what a PASS rests on, and the
+   evidence rules below say why.
 2. **Check each acceptance criterion** — map each one to evidence (a passing test,
    observed behavior, a command's output). Mark it met or not met.
 
@@ -94,11 +92,11 @@ evidence: [
 
 This session's real tool calls are recorded independently of you, so a PASS
 citing nothing — or nothing that matches what you actually ran — is **rejected**
-and you must call again. At least one citation must be work you did in this
-pass: the check commands the loop pre-ran are established fact, not your proof
-of work (cite them additionally if you rely on them — never re-run them). Run
-the checks and read the code *before* you record; never reconstruct citations
-from memory. FAIL and ERROR need no evidence: a check that could not run is an
+and you must call again. The loop's pre-ran check commands are **hearsay**: cite
+them, but they cannot carry a PASS by themselves, so at least one citation must
+be **first-hand** — work you did in this pass, typically the files you read to
+judge the criteria. Run the checks and read the code *before* you record; never
+reconstruct citations from memory. FAIL and ERROR need no evidence: a check that could not run is an
 ERROR whose reason names what is missing.
 
 Above the verdict, give:

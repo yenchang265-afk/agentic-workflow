@@ -1,6 +1,6 @@
 ---
 name: writing-for-agents
-description: Writing documents for agents. Use when creating or editing anything under skills/, a skill description, a stage prompt, or AGENTS.md.
+description: Writing a document an agent consumes — a skill, an agent persona, a command or verb, a stage prompt, a references/ checklist, AGENTS.md. Use when creating or editing one.
 ---
 
 # Writing for Agents
@@ -9,7 +9,8 @@ description: Writing documents for agents. Use when creating or editing anything
 
 Reference for writing any document an agent consumes — a skill, this repo's
 `AGENTS.md` / `CLAUDE.md`, a stage prompt under
-`packages/core/workflows/<kind>/stages/`, a checklist under `references/`. The
+`packages/core/workflows/<kind>/stages/`, an agent persona under
+`prompts/agents/`, a command or verb body, a checklist under `references/`. The
 packaging differs; the writing does not: the same levers make each one
 **predictable** — the agent taking the same _process_ every run, not producing
 the same output.

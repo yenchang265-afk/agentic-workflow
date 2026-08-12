@@ -1,6 +1,6 @@
 ---
 name: interview-me
-description: Extracts what the user actually wants via a one-question-at-a-time interview to ~95% confidence. Use when an ask is underspecified, when you catch yourself silently filling in requirements, or when the user says "interview me" or "grill me".
+description: Interviews the user one question at a time to a confirmed statement of intent. Use when an ask is underspecified or conventional, when you catch yourself filling in requirements, when two reasonable values are in tension with no stated winner, when reshaping an existing draft or task against a new note, or when the user says "interview me".
 ---
 
 # Interview Me
