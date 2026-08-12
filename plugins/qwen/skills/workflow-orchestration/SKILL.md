@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: The protocol for driving the agentic loop inside Qwen Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and loop-* subagent spawns, the PLAN park-at-gate flow, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and the human gates are /agentic-workflow:engineering verbs (new, retask, the unified folder-driven approve, replan).
+description: The protocol for driving the agentic loop inside Qwen Code — declarative workflow kinds under packages/core/workflows/<kind>/, with the engineering kind (plan → build → verify → review) as the default. Use when running /agentic-workflow:engineering — it tells the main agent the exact sequence of agentic-workflow MCP tool calls and workflow-* subagent spawns, the PLAN park-at-gate flow, the plan and ship gates it drives, the workflow_verdict contract, workflow kinds (e.g. pr-sitter), and how the loop terminates. Task authoring and plan rejection are /agentic-workflow:engineering verbs (new, retask, replan).
 ---
 
 # Driving the agentic loop (Qwen Code)
@@ -249,30 +249,13 @@ regardless of kind. Engineering is on by default; enable others via
 `{"workflows": {"pr-sitter": {"enabled": true, "query": "is:open author:@me"}}}`.
 
 Every kind drives with the same sequence and the same rule that the `agent`
-field names the subagent — so what you need per kind is its stage order and the
-boundary it must not cross:
-
-- **pr-sitter** — `triage (check) → fix (work) → verify (check) → publish
-  (work)` over open PRs matching the query, kept green until a human merges.
-  Triage's PASS means actionable and FAIL means nothing to do → done; fix
-  commits on the PR's existing branch and never pushes; publish pushes and
-  replies per addressed finding, and **never merges, closes, or approves**.
-- **review-sitter** — `fetch (check) → assess (work) → publish (work)` over PRs
-  whose review is requested from you. **Comment-only**: ONE comment, never an
-  approval, a vote, a push, or a merge.
-- **dep-sitter** — `scan (check) → upgrade (work) → verify (check) → publish
-  (work)` over dependency advisories. Publishes a DRAFT PR on a `feature/*`
-  branch; majors and undeclared JVM transitives are never claimed.
-- **main-sitter** — `diagnose (check) → remedy (work) → verify (check) →
-  publish (work)` over red CI on the watched branch's newest head. Publishes a
-  DRAFT fix-or-revert PR on a `main-sitter/*` branch; **the watched branch is
-  never pushed.**
-
-Scanners, queries, dedup ledgers, and per-platform detail are in
-`references/workflow-kinds.md`. Every kind reaches its platform per
-`codePlatform` — `github` (`gh`) or `ado` (Azure DevOps REST API, PAT in
-`AZURE_DEVOPS_EXT_PAT`) — with identical stage behavior either way; only the
-inspect and reply tools differ, and the stage prompt says which to use.
+field names the subagent. Each kind's stage order, the boundary it must not
+cross, and its scanners, queries, dedup ledgers and per-platform detail are in
+`references/workflow-kinds.md` — read it before driving a sitter. Every kind
+reaches its platform per `codePlatform` — `github` (`gh`) or `ado` (Azure
+DevOps REST API, PAT in `AZURE_DEVOPS_EXT_PAT`) — with identical stage behavior
+either way; only the inspect and reply tools differ, and the stage prompt says
+which to use.
 
 ## What is different from the OpenCode version
 
@@ -287,8 +270,6 @@ inspect and reply tools differ, and the stage prompt says which to use.
   that interview into sibling drafts (vertical, independently shippable slices
   ordered by `priority`) plus one `type: epic` tracking draft that is never
   approved — see `task-backlog-management` → "Slicing a heavy idea".
-- Verdicts and all deterministic operations go through the `agentic-workflow` MCP
-  tools, not in-process plugin hooks.
 - **Per-stage models are static here.** OpenCode passes the configured model at
   spawn time and Claude Code passes it to the Task tool; Qwen's `agent` tool has
   no model parameter, so `workflows.<kind>.stageModels` is baked into each
@@ -300,19 +281,10 @@ inspect and reply tools differ, and the stage prompt says which to use.
 - Building a task whose plan never went through the plan gate
   (`/agentic-workflow:engineering approve <id>` on the parked plan) — impossible via the
   tools (BUILD entry only reads `in-progress/`); never work around it.
-- Continuing into BUILD after a `{kind:"park"}` without the user's explicit
-  Approve answer, or without a separate explicit "build now?" answer — the
-  plan gate sits between PLAN and BUILD, and approving a plan is not by
-  itself authorization to build it. The ONLY path through it is
-  `workflow_plan_approve` (on an explicit Approve) followed by `workflow_start` (on
-  a separate explicit "build now" answer) — inline via `ask_user_question`, or
-  later via `/agentic-workflow:engineering approve` then `claim`.
+- Continuing into BUILD after a `{kind:"park"}` without both explicit user
+  answers — step 2's Approve branch is the only path through the gate.
 - Spawning a stage subagent without first calling `workflow_stage` — the
   allowlist and deadline won't be armed, and BUILD's audit note won't exist.
-- Treating a stage's prose "PASS"/"FAIL" as the verdict — only the `workflow_verdict`
-  tool call counts. Corollary: never call `workflow_verdict` yourself to "transcribe"
-  a check subagent's prose verdict — if the subagent didn't record it, follow the
-  check-retry path `workflow_advance` returns.
 - Editing `docs/tasks/**` yourself — the MCP tools own the backlog; use them.
   That includes Bash: never `mv`, `mkdir`, `rm`, `touch`, or redirect into a
   status folder — the folder a task file lives in IS its state, and the

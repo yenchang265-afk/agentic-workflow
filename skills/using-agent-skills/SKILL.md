@@ -102,6 +102,12 @@ someone approves deleting it, and a feature nobody asked for stays unwritten.
 Report what you noticed instead — surgical precision, not unsolicited
 renovation.
 
+### Ask Before Writing to Disk
+
+A thinking skill's deliverable is the conversation. Offer the file and name the
+path, then write it only on an explicit yes — the document implies a decision
+the user may not have made yet.
+
 ### Verify, Don't Assume
 
 "Seems right" is never done: there is passing output, or there is no claim.

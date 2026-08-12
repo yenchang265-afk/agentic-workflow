@@ -1,6 +1,6 @@
 ---
 name: performance-optimization
-description: Finds unbounded work in a diff, and optimizes only what measurement proves matters. Use when a change touches a hot path, a query, or a loop over unbounded data; also when a regression is suspected or Core Web Vitals need work.
+description: Finds unbounded work in a diff, and optimizes only what measurement proves matters. Use when a change touches a hot path, a query, a loop over unbounded data, or a cache that only grows; also when a running system is measurably slow, Core Web Vitals included.
 ---
 
 # Performance Optimization
@@ -75,8 +75,9 @@ premature optimization buys complexity with no evidence it bought speed:
 
 Your machine is not the user's, so profile on representative hardware and
 networks. Core Web Vitals targets, the symptom-to-measurement tree, bottleneck
-tables, measurement commands, budgets, and worked fixes all live in
-`references/performance-checklist.md`.
+tables, measurement commands, and budgets all live in
+`references/performance-checklist.md`; the worked before/after fixes are in
+`references/performance-implementation-examples.md`.
 
 ## Verification
 

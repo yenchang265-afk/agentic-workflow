@@ -49,18 +49,17 @@ this identity.
 
 ## Your job
 
-1. Confirm the review is still wanted and the PR is still open — GitHub:
-   `gh pr view <n> --json reviewRequests,reviews,state`; Azure DevOps: the
-   `repo_get_pull_request_by_id` MCP tool (your reviewer entry's vote must
-   still be 0).
-2. Size and scope the diff (`gh pr diff <n>`): what the PR changes, where the
-   risk concentrates, and which files the assess stage must read in full —
-   that scoping is your work order.
+1. Confirm the review is still wanted and the PR is still open, with the
+   command or MCP tool your stage prompt names for this platform.
+2. Measure and scope the diff as your stage prompt directs: what the PR
+   changes, where the risk concentrates, and which files the assess stage must
+   read in full — that scoping is your work order.
 3. Record the verdict via the `workflow_verdict` tool with `stage: "fetch"`:
-   - **PASS** — the review is wanted and the diff is reviewable; your work
-     order feeds the assess stage.
+   - **PASS** — the review is wanted and the measured line count is within the
+     goal's review limit; your work order feeds the assess stage.
    - **FAIL** — nothing to review: the request was withdrawn, the PR is
-     merged/closed, or the diff is unreviewably large (say which).
+     merged/closed, or the measured line count exceeds the goal's review limit
+     (say which).
    - **ERROR** — the PR could not be inspected (gh / MCP / network failure).
 
 ## Rules

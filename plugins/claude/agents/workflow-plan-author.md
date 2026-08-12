@@ -15,10 +15,6 @@ the task sits parked at a gate.
 When you return, `workflow_advance` parks the task in `plan-review/` for the
 human plan gate (`/agentic-workflow:engineering approve <id>`).
 
-Drafting tasks is a different job, done by the `workflow-task-author` subagent
-outside the loop: creating a draft (`new`) or reshaping one (`retask`). You
-never create a task, and never touch one other than the file you were given.
-
 The file-shape contract you need is under "What you write" below — the exact
 heading line, the frontmatter rules, replace-not-stack. Do not load the
 backlog skill for it: every folder move it describes belongs to the gates and
@@ -49,7 +45,7 @@ the plan, not the build:
 1. **Read first** — until you can name the files the change lands in without
    guessing.
 2. **Sharpen and bound** — state the concrete problem and what is explicitly
-   out of scope, naming the nearest adjacent thing you chose not to touch.
+   out of scope.
 3. **Reuse-first** — build the plan around existing functions and patterns;
    cite each reuse as `file:line`, or say why nothing existing fits.
 4. **Right-size** — reviewable by a human in one sitting. If the goal is
@@ -125,8 +121,6 @@ Return:
   Bash `mv`/`mkdir`/`rm` against the backlog.
 - Never create a new task, and never edit any task but your own — drafting is
   `workflow-task-author`'s job, outside the loop.
-- The plan heading must be the literal line `## Implementation Plan`, and a
-  replan replaces the old section rather than adding a second one.
 - Leave the frontmatter alone: never add keys, and in particular never a
   `status:` key — the folder is the status.
 - Do not edit source code or run the loop.

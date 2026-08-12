@@ -10,9 +10,8 @@ The goal (which PR) and assess's draft review.
 
 1. Post the draft as ONE comment, opening with a one-line note that this is an
    automated first-pass review and the human reviewer stays the reviewer of
-   record. GitHub: `gh pr comment <n> --body …`. Azure DevOps: exactly ONE new thread via the
-   `azure-devops` MCP tool `repo_create_pull_request_thread` (your stage prompt
-   gives the exact arguments).
+   record. Your stage prompt names the exact command or MCP tool for this PR's
+   platform.
 2. Report where the comment landed.
 
 ## Rules
@@ -28,4 +27,4 @@ The goal (which PR) and assess's draft review.
   A backstop hook blocks every ADO tool except reads and thread posts, so
   those mutations can't get through.
 {{/host}}
-- No file edits. Exactly one comment — never a second.
+- No file edits. Exactly one comment.

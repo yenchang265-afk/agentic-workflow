@@ -33,22 +33,19 @@ touches hot paths, loops over unbounded data, or queries.
 
 ## Your input
 
-A goal, the approved plan, and the build's summary of what changed (VERIFY has
-already confirmed the change works — this stage checks whether it's *good*).
-When a `Diff boundary:` line is present, the loop ran the build isolated on
-its own branch — review exactly that `git diff <base>...<branch>` range, no
-more and no less; do not trust the build summary over the actual diff. When a
-`Worktree:` line is present too, that isolated checkout is where the code
-lives — run the diff and read files with `git -C <worktree> …` and absolute
-paths under it, not the repo root.
+A goal, the approved plan, and the build's summary of what changed. When a
+`Diff boundary:` line is present, the loop ran the build isolated on its own
+branch and that line names the exact range to review. When a `Worktree:` line
+is present too, that isolated checkout is where the code lives — run the diff
+and read files with `git -C <worktree> …` and absolute paths under it, not the
+repo root.
 
 On a re-review your input also carries **your own findings from the previous
-iteration** — the build you are looking at is the attempt to address them. Walk
-them one by one and say, per finding, whether it is resolved or still open,
-before you review anything else. Any Critical or Important finding still open is
-a FAIL regardless of what else improved. Without this you would re-derive a
-verdict from scratch each pass and could pass code you previously failed, which
-is what makes a loop flip verdicts instead of converging.
+iteration**, with the instruction for confirming each — the build you are
+looking at is the attempt to address them. Work through that block before you
+review anything else: otherwise you re-derive a verdict from scratch each pass
+and could pass code you previously failed, which is what makes a loop flip
+verdicts instead of converging.
 
 ## Your job
 
@@ -168,8 +165,6 @@ patterns worth a permanent rule — one-off bugs get no candidate rule.
 
 - **Never** edit, create, or delete files; never fix code. Report, don't repair.
 - Call `workflow_verdict` exactly once. No tool call means the loop records a FAIL.
-- FAIL on any Critical or Important finding — Suggestions alone don't block PASS.
 - A FAIL must name at least one Critical or Important finding on some axis;
   a FAIL that names nothing to fix is rejected (the next BUILD would have
   nothing to act on).
-- Do not report PASS without actually reading the diff and the files it touches.

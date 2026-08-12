@@ -1,6 +1,6 @@
 ---
 name: spec-driven-development
-description: Writes the spec that a build is judged against, before any code exists. Use when starting a feature or project with no written requirements, or when what "done" means is still ambiguous.
+description: Writes the spec that a build is judged against, before any code exists. Use when starting a feature or project with no written requirements, when what "done" means is still ambiguous, or when a change spans several modules or settles an architectural decision.
 ---
 
 # Spec-Driven Development
@@ -9,10 +9,8 @@ A spec is the shared source of truth between you and the human: what is being
 built, why, and how anyone will know it is done. Code written without one is a
 guess whose wrongness surfaces at review instead of at the cheapest moment.
 
-Also write one when the change spans several modules or touches an
-architectural decision. Skip it for single-line fixes and changes whose
-requirements are unambiguous and self-contained — those need acceptance
-criteria, not a document.
+Skip it for single-line fixes and changes whose requirements are unambiguous
+and self-contained — those need acceptance criteria, not a document.
 
 ## The gate
 
@@ -33,11 +31,9 @@ than the whole document.
 **Surface your assumptions before writing a line of it**
 (`using-agent-skills` → Surface Assumptions). The spec exists to catch
 misunderstandings before code does, and an unstated assumption is the form
-those take. Then ask clarifying questions until the requirements are concrete —
-when the ask is underspecified enough that you'd be guessing, `interview-me`
-is the tool for extracting it; when the missing information lives in the code
-rather than the human, `codebase-exploration` gathers it. `plan-router` owns
-that dispatch.
+those take. Then ask clarifying questions until the requirements are concrete
+— and when they will not come concrete, `plan-router` dispatches to
+`interview-me` or `codebase-exploration` by who holds the missing information.
 
 Six areas, each of which leaks into every downstream task when missing:
 

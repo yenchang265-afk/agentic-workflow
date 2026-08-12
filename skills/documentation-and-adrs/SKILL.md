@@ -1,6 +1,6 @@
 ---
 name: documentation-and-adrs
-description: Records the why behind a decision, in the form that outlives the code — chiefly the ADR. Use when making an architectural decision, changing a public API, or shipping behavior a future engineer has to understand.
+description: Records the why behind a decision, in the form that outlives the code — chiefly the ADR. Use when making or superseding an architectural decision, changing a public API, or writing an inline comment or gotcha.
 ---
 
 # Documentation and ADRs
@@ -101,8 +101,6 @@ otherwise fall into — anchored to the line that has it. Agents read these too,
 alongside the rules file, the spec, and the ADRs, and stop re-deciding settled
 questions because of them. More forms and examples:
 `references/documentation-patterns.md`.
-
-Commented-out code is not documentation. Delete it; git remembers.
 
 ## Verification
 

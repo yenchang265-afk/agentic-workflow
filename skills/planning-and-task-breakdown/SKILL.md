@@ -1,6 +1,6 @@
 ---
 name: planning-and-task-breakdown
-description: Plans work before it is built — decomposing a goal into ordered, verifiable tasks, or writing the executable plan for one already-scoped task. Use when a spec needs breaking down, or when a scoped task needs its plan before execution.
+description: Plans work before it is built — ordered verifiable tasks, or one task's executable plan. Use when a goal or spec needs breaking down, when an already-scoped task needs its plan before execution, or when a rejected plan needs redoing against the rejection.
 ---
 
 # Planning and Task Breakdown
@@ -218,6 +218,4 @@ stated, say so plainly in the plan rather than inventing a scope that fits.
 
 ## See Also
 
-Acceptance criteria are per-task and answer "did we build the right thing?". They sit on top of the project-wide Definition of Done, the standing bar every task clears before it counts as done. See `references/definition-of-done.md`.
-
-`plan-router` sits upstream of both branches and reuses this skill's size table and split triggers as its scope vocabulary — unshaped work routes through it before landing here.
+Acceptance criteria are per-task and answer "did we build the right thing?". The standing bar under them is `references/definition-of-done.md` (`using-agent-skills` → Verify, Don't Assume).

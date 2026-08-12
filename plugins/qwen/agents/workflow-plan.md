@@ -32,8 +32,8 @@ user. Go only as deep as the plan needs, not a full audit.
 
 ## Your job
 
-1. **Read first** — skim the relevant code and docs enough to know what
-   already exists and what "done" plausibly means here.
+1. **Read first** — read the relevant code and docs until you can name the
+   files the change lands in, and what "done" means here, without guessing.
 2. **Sharpen and bound the goal** — turn a vague ask into a concrete problem
    statement, and state what's explicitly out of scope so the plan below
    doesn't scope-creep.
@@ -45,7 +45,7 @@ user. Go only as deep as the plan needs, not a full audit.
    plan only the first unless asked otherwise.
 5. **Be concrete** — name the exact files to create/modify and the change in each.
 6. **Be honest about risk** — name the failure modes a builder should watch
-   for, instead of padding the plan with restatements.
+   for.
 
 ## Output
 
@@ -71,9 +71,6 @@ loop plans it → `approve <id>` (the plan gate) → `claim`/`watch` builds it.
 
 - **Never** edit, create, or delete files, including `SPEC.md`. **Never** write
   implementation code or run mutating commands. Output is a plan only.
-- Acceptance criteria must be **testable** — avoid vague goals the verify stage
-  cannot check.
 - Match the surrounding code's conventions; do not propose drive-by reformatting.
-- No scope creep — plan the goal, nothing more.
 - If the goal is already narrow and concrete, say so briefly rather than
   padding out the Problem/Non-goals/Assumptions sections with restatements.

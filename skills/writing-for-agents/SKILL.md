@@ -1,6 +1,6 @@
 ---
 name: writing-for-agents
-description: Writing documents for agents. Use when creating or editing anything under skills/, a skill description, a stage prompt, or AGENTS.md.
+description: Writing a document an agent consumes — a skill, an agent persona, a command or verb, a stage prompt, a references/ checklist, AGENTS.md. Use when creating or editing one.
 ---
 
 # Writing for Agents
@@ -9,7 +9,8 @@ description: Writing documents for agents. Use when creating or editing anything
 
 Reference for writing any document an agent consumes — a skill, this repo's
 `AGENTS.md` / `CLAUDE.md`, a stage prompt under
-`packages/core/workflows/<kind>/stages/`, a checklist under `references/`. The
+`packages/core/workflows/<kind>/stages/`, an agent persona under
+`prompts/agents/`, a command or verb body, a checklist under `references/`. The
 packaging differs; the writing does not: the same levers make each one
 **predictable** — the agent taking the same _process_ every run, not producing
 the same output.
@@ -17,6 +18,10 @@ the same output.
 When the document you're writing is a skill, read
 [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md) for frontmatter, the invocation
 choice, and router skills.
+
+When the document is a new persona, or a command that coordinates several of
+them, the patterns this repo endorses — and the persona-calls-persona
+anti-patterns it forbids — are in `references/orchestration-patterns.md`.
 
 ## Context pointers
 
@@ -81,7 +86,7 @@ agent needs the material:
    `references/*.md`).
 
 Push too little down and the top bloats; push too much and you hide material the
-agent actually needs. That tension is the whole decision.
+agent actually needs.
 
 **Progressive disclosure** is the move down the ladder — out of the main file
 and behind a pointer — so the top stays legible. Not primarily a token
@@ -168,9 +173,8 @@ passage begging to collapse into a single token:
 - "a loop you believe in" → _red_ — a fuzzy gate becomes a binary observable
   state (the loop goes _red_ on the bug, or it doesn't).
 
-You win twice: fewer tokens, and a sharper hook for the agent to hang its
-thinking on. Assume every document is carrying restatements that leading words
-retire — go find them.
+Assume every document is carrying restatements that leading words retire — go
+find them.
 
 **Negation** is the failure mode beside this lever: steering by prohibition
 drags the forbidden behaviour into context and makes it _more_ available, not

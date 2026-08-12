@@ -1,6 +1,6 @@
 ---
 name: deprecation-and-migration
-description: Decides whether to retire a system and how its users get moved — the decision, the pattern, and the phase this change lands. Use when removing an API, feature, or system, or weighing maintaining legacy code against replacing it.
+description: Decides whether to retire a system and how its users get moved — the decision, the pattern, and the phase this change lands. Use when removing an API, feature, or system, weighing maintaining legacy code against replacing it, or moving consumers onto a replacement.
 ---
 
 # Deprecation and Migration

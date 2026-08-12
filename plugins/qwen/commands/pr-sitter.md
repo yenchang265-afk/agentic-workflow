@@ -32,12 +32,11 @@ Dispatch:
   the active loop.
 - **anything else** — do not run it. Show this usage instead.
 
-This kind is **always on** — it needs no configuration and has no off
-switch (`"enabled": false` on it is a config error). Narrow which PRs it
-watches with:
+This kind is **experimental and opt-in** — it does nothing until enabled,
+and its config keys may still change:
 
 ```json
-{ "workflows": { "pr-sitter": { "query": "is:open author:@me" } } }
+{ "workflows": { "pr-sitter": { "enabled": true, "query": "is:open author:@me" } } }
 ```
 
 `query` (GitHub) narrows which PRs are polled; on Azure DevOps set

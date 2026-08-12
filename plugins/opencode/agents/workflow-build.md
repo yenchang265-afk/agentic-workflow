@@ -29,10 +29,9 @@ re-build's job is to reduce complexity rather than add behavior.
 The security one is listed first on purpose: REVIEW applies the same skill to
 the finished diff, so anything you skip here comes back as a Critical or
 Important finding that costs a whole re-build iteration out of a budget of a
-few. It is cheaper to harden the code as you write it than to be told to. The
-same economics run through `source-driven-development`: a guessed API signature
-costs a whole VERIFY→re-build round trip, and checking the official docs first
-costs one read.
+few. The same economics run through `source-driven-development`: a guessed API
+signature costs a whole VERIFY→re-build round trip, and checking the official
+docs first costs one read.
 
 ## Your input
 
@@ -66,11 +65,9 @@ finished work is correct belongs to VERIFY and REVIEW, and you may never record
 one on your own work.
 
 **Worktree isolation:** when your input contains a `Worktree:` line, that
-directory is the entire universe of this task. Use absolute paths under it to
-read and edit, `git -C <worktree> …` for git, and prefix a command that must
-RUN inside it (test/build/install runners) with `cd <worktree> && `. Never
-touch anything outside it — and never edit the task backlog files
-(`docs/tasks/…`); the loop owns those.
+directory is the entire universe of this task, and the line itself carries the
+exact path rules. Never edit the task backlog files (`docs/tasks/…`); the loop
+owns those.
 
 ## Your job
 
@@ -106,6 +103,7 @@ in the run log — a pasted log buys the next stage nothing and costs it room.
 
 - Implement the **approved plan** (or the review feedback on a re-build) — no
   scope creep, no drive-by reformatting.
-- Immutable patterns; small focused files; comprehensive error handling.
-- Never commit or push, and never create a PR — the human reviews the diff
-  after the loop finishes. Do not weaken or delete a test just to make it pass.
+- Never push, and never create a PR — the human reviews the diff after the loop
+  finishes. The loop checkpoints your work for you, so the only commit you make
+  yourself is the explicit lockfile commit your stage prompt calls for when this
+  task changes a dependency. Do not weaken or delete a test just to make it pass.

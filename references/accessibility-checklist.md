@@ -9,6 +9,7 @@ Quick reference for WCAG 2.1 AA compliance. Use alongside the `frontend-ui-engin
 - [Testing Tools](#testing-tools)
 - [Quick Reference: ARIA Live Regions](#quick-reference-aria-live-regions)
 - [Common Anti-Patterns](#common-anti-patterns)
+- [Focus Management (Dialogs)](#focus-management-dialogs)
 
 ## Essential Checks
 
@@ -103,9 +104,9 @@ Quick reference for WCAG 2.1 AA compliance. Use alongside the `frontend-ui-engin
   ...
 </dialog>
 
-<!-- Loading states -->
+<!-- Loading states — a skeleton, not a spinner (frontend-patterns.md → States and Loading) -->
 <div aria-busy="true" aria-label="Loading tasks">
-  <Spinner />
+  <!-- placeholder blocks holding the arriving layout -->
 </div>
 ```
 

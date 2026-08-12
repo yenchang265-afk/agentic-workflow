@@ -10,19 +10,12 @@ The goal (which branch/head was red), the diagnosis, and verify's result.
 
 1. `git push origin <branch>` — a `main-sitter/` remedy branch; never
    `--force`.
-2. Open a DRAFT pull request onto the watched branch. GitHub:
-   `gh pr create --draft --base <watched>` — the body carries the diagnosis,
-   the failing workflow(s), and the verification result. If a PR for this
-   branch already exists (`gh pr list --head <branch>`), comment the update on
-   it instead. Azure DevOps (`ado`): the `azure-devops` MCP tool
-   `repo_create_pull_request` with `isDraft` true; if a PR for this branch
-   already exists (`repo_list_pull_requests_by_repo_or_project` filtered by
-   `sourceRefName`),
-   searchCriteria.status=active`), post a thread comment with the update
-   instead.
+2. Open a DRAFT pull request onto the watched branch, or comment the update on
+   this branch's existing PR when one is already open. Your stage prompt names
+   the exact command or MCP tool for this PR's platform, the arguments, and the
+   body they must carry.
 3. When the diagnosis identifies the culprit PR, post ONE comment on it
-   linking the remedy PR — informational, not an assignment. GitHub:
-   `gh pr comment`. Azure DevOps: `repo_create_pull_request_thread`.
+   linking the remedy PR — informational, not an assignment.
 4. Report the PR URL.
 
 ## Rules

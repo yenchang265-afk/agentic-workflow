@@ -1,6 +1,6 @@
 ---
 name: workflow-orchestration
-description: Explains the automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need to know how the loop plans, builds, parks at a gate, schedules another kind, or terminates.
+description: The automatic agentic loop behind /agentic-workflow:engineering — the declarative workflow kinds, the stages, the human gates, and the workflow_verdict contract. Use when you need to know how the loop plans, builds, parks at a gate, claims and isolates work, recovers an interrupted run, schedules another kind, or terminates.
 ---
 
 # The agentic loop
@@ -87,8 +87,7 @@ from `in-progress/`. There is no path that builds an ungated task.
 already carries a clear goal and testable criteria, a full `interview-me` run
 when it does not. The interview happens in the calling agent's own turn because
 subagents cannot converse; only after your confirmation does it hand the intent
-to the `workflow-task-author` subagent to write the draft. `retask <id>`
-re-interviews and reshapes a planless task in place.
+to the `workflow-task-author` subagent to write the draft.
 
 **A session claims work only when a human runs `watch` in it — never because it
 merely goes idle.** That session then drives work until `unwatch` or `stop`.
@@ -118,10 +117,7 @@ ones spin up. Within the backlog it takes the lowest-`priority` claimable task
 the `> BUILD started` note is the human-readable audit record, the marker
 directory is the lock. Every gate verb refuses on a held marker for that
 reason. A queued claim orphaned by a crashed PLAN is always safe to release
-once stale — PLAN writes no code. The marker also stamps the pid and machine
-that took it, so "the claimer died" can be answered outright instead of waited
-out; that judgement fails **closed**, because a wrong "dead" starts a second
-loop on one branch.
+once stale — PLAN writes no code.
 
 In **worktree mode** (the default, `worktreesDir`) each loop owns its own
 worktree, so several `watch` sessions drive different tasks concurrently in one
@@ -276,10 +272,6 @@ that already failed. It is absent on the first iteration.
 - A stage exceeding `stageTimeoutMinutes` fails the loop, with partial work
   checkpointed on the branch, rather than wedging the driver.
 
-**Every way a drive ends releases the claim marker** — a held marker asserts a
-live loop, and a marker left behind by a stopped run wedges the task where no
-verb can free it.
-
 ## Audit trail
 
 Every lifecycle event — task approved, plan written and parked, plan approved
@@ -318,32 +310,19 @@ full set is `docs/configuration.md`.
 
 **Worktree isolation** keeps the human's tree untouched and lets several watch
 sessions drive concurrently. Stage prompts carry a `Worktree:` line pinning all
-reads, edits, and tests there; a worktree stage's allowlist grants every glob in
-both shapes — bare, and with the `cd <worktree> && ` prefix — so
-`git -C <worktree> …` and `cd <worktree> && git diff` are equally accepted. The backlog stays
-canonical in the main tree, committed there per terminal event. A task's
+reads, edits, and tests there. The backlog stays canonical in the main tree,
+committed there per terminal event. A task's
 worktree is created on its first BUILD and removed only when the task
 **ships** — a run ending for any reason keeps it, so a retry, a `recover`, or a
 `replan` bounce out of `in-review/` resumes on top of the previous iteration's
 work and its `worktreeSetup` output.
 
-**Multi-lens review** (`reviewLenses`) runs REVIEW once per lens and takes the
-**worst** verdict, so a single prompt-injected reviewer cannot wave a change
-through (threat model T1), at ~N× review time. A lens is not an axis, so
-**per-pass** axis-coverage enforcement is off; each pass is asked for per-axis
-results only for the axes its lens actually bears on, and must leave out an axis
-it did not examine rather than record a clean PASS the merge would turn into the
-whole stage's verdict for it. The **accumulated** check still applies when the
-configured lenses between them name every required axis; when they don't, the
-loop warns which axes go unreviewed.
-
-**Per-axis fan-out** (`workflows.<kind>.stageFanout: {"review": "axis"}`) is
-the stronger form: one pass per entry in the stage's `requiredAxes`, each told
-to review exactly one axis, merged worst-wins — keeping the T1 mitigation and
-enforcing coverage **per pass**, which free-text lenses cannot, plus the same
-union check. Same cost, off by default. `reviewLenses` wins over it on the
-`review` stage (and the loop says so), so an existing lens setup is never
-reinterpreted.
+**Multi-pass review.** `reviewLenses` (free-text lenses) and
+`workflows.<kind>.stageFanout: {"review": "axis"}` (one pass per required axis)
+both run REVIEW several times and take the **worst** verdict, so a single
+prompt-injected reviewer cannot wave a change through (threat model T1), at ~N×
+review time. Which of the two enforces axis coverage per pass, how they
+interact, and the unreviewed-axis warning are in `docs/configuration.md`.
 
 (`gateBeforeBuild` and `interviewBeforePlan` no longer exist. Old config files
 carrying them still parse; the keys are ignored.)

@@ -26,8 +26,7 @@ verify's failure feedback.
    Gradle: bump the entry in `gradle/libs.versions.toml` (version catalog) or
    the dependency string in `build.gradle(.kts)`, then refresh the lockfile
    with `./gradlew dependencies --write-locks`.
-2. Fix the fallout the bump causes — type errors, renamed APIs, failing tests
-   — and nothing else. Never touch versions the work order doesn't name.
+2. Fix the fallout the bump causes — type errors, renamed APIs, failing tests.
 3. Run the tests; commit locally with clear messages. **Do not push** —
    publish pushes after verification. Never merge.
 4. Summarize the bump and each fallout fix — verify checks your summary

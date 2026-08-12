@@ -1,6 +1,6 @@
 ---
 name: observability-and-instrumentation
-description: Instruments code so production behavior is diagnosable from telemetry. Use when adding logging, metrics, tracing, or alerting, or when shipping a feature whose health needs evidence.
+description: Instruments code so production behavior is diagnosable from telemetry. Use when adding logging, metrics, tracing, or alerting, when shipping a feature whose health needs evidence, or when reviewing a diff for missing or unqueryable telemetry.
 ---
 
 # Observability and Instrumentation
@@ -62,9 +62,7 @@ Structured Logging has the before/after).
 
 **Correlation IDs are mandatory.** Generate (or accept) a request ID at the
 system boundary and attach it to every log line, span, and outbound call —
-without it you cannot reconstruct a single request from interleaved logs. A
-child logger bound per request makes this automatic rather than something every
-call site must remember.
+without it you cannot reconstruct a single request from interleaved logs.
 
 **Never log secrets, tokens, passwords, or full PII.** This is a hard rule from
 `security-and-hardening` — telemetry pipelines are a classic data-leak path.
@@ -72,10 +70,9 @@ Allowlist fields; don't log whole request bodies.
 
 ## 4. Metrics
 
-For request-driven services, instrument **RED** on every endpoint and every
-external dependency: **R**ate (requests/sec), **E**rrors (failure rate),
-**D**uration (latency histogram, not average). For resources (queues, pools,
-hosts), use **USE**: **U**tilization, **S**aturation, **E**rrors.
+Which series to instrument is fixed rather than a judgement call: **RED** per
+endpoint and per external dependency, **USE** per resource, both expanded and
+enumerated in `references/observability-checklist.md` → Metrics.
 
 **Cardinality is the failure mode.** Every unique label combination is a
 separate time series, so labels come from small, fixed sets — route template,
@@ -90,10 +87,10 @@ having a terrible time. Use histograms and read p50/p95/p99.
 Use OpenTelemetry: it is the vendor-neutral standard, and auto-instrumentation
 covers HTTP, gRPC, and common DB clients with near-zero code. Add manual spans
 only around meaningful internal units of work (`applyDiscounts`,
-`chargeProvider`) and attach the attributes on-call will filter by. Propagate
-context across every async boundary — HTTP headers, queue message metadata — or
-the trace dies at the gap. Sample head-based at a low rate by default; keep 100%
-of errors if your backend supports tail sampling.
+`chargeProvider`) and attach the attributes on-call will filter by. A trace dies
+at the first async boundary its context does not cross, so take the propagation
+and sampling settings from `references/observability-checklist.md` →
+Distributed Tracing.
 
 ## 6. Alerting
 
@@ -108,19 +105,14 @@ queue age > 10 min               disk at 70%
 
 Cause-based alerts fire when nothing is wrong and miss failures you didn't
 predict. Symptom-based alerts fire exactly when users are hurt, whatever the
-cause.
+cause. The causes still need a home that answers the step-1 questions — the
+panels are in `references/observability-checklist.md` → Dashboards.
 
-Rules for every alert you create:
-
-1. **It must be actionable.** If the response is "ignore it, it self-heals",
-   delete the alert.
-2. **It links to a runbook** — even three lines: what it means, first query to
-   run, escalation path.
-3. **It has a threshold and duration** justified by the SLO or by historical
-   data, not by a guess.
-4. Use two severities only: **page** (user-facing, act now) and **ticket**
-   (degradation, act this week). A third tier becomes noise that trains people
-   to ignore everything.
+Every alert then has to survive four rules — actionable, runbook-linked,
+threshold and duration justified by an SLO or by history, and filed as **page**
+(user-facing, act now) or **ticket** (degradation, act this week), because a
+third tier becomes noise that trains people to ignore everything. Each is a
+checkbox in `references/observability-checklist.md` → Alerting.
 
 ## 7. Verify the telemetry itself
 

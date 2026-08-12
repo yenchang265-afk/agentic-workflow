@@ -12,9 +12,10 @@ worth doing" is a legal outcome, and the conversation itself is the
 deliverable — write nothing to disk unless asked.
 
 **Boundary:** a failure you can reproduce belongs to
-`debugging-and-error-recovery` — it owns triage and repair. This skill takes
-the earlier moment: something feels off, nothing is red yet, or the question
-is "which way should we build this?" rather than "why is this broken?".
+`debugging-and-error-recovery` — it owns triage and repair, at any point it
+emerges. This skill takes the earlier moment: something feels off, nothing is
+red yet, or the question is "which way should we build this?" rather than
+"why is this broken?".
 
 ## The Process
 
@@ -68,18 +69,15 @@ successor skill is invoked (a bail ends the route; nothing follows).
 
 ## Facts and decisions
 
-Facts are looked up here — that is this skill's whole job. A genuine
-**decision** surfaced mid-exploration (two options survive contact with the
-code and the trade-off is the user's to make) goes to the user; several of
-them at once means `interview-me` takes over with your discovered facts as
-its `GUESS:` lines.
+A genuine **decision** surfaced mid-exploration (two options survive contact
+with the code and the trade-off is the user's to make) goes to the user;
+several of them at once means `interview-me` takes over with your discovered
+facts as its `GUESS:` lines.
 
 ## Interaction with Other Skills
 
 - **`plan-router`** — upstream dispatcher: routes here when the missing
   information lives in the codebase.
-- **`debugging-and-error-recovery`** — a reproducible failure goes there, at
-  any point it emerges.
 - **`doubt-driven-development`** — post-decision cross-examination; this skill
   is pre-decision. A draft or decision in hand means doubt, a problem in hand
   means explore.

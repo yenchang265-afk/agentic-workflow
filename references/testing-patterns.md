@@ -14,6 +14,7 @@ Quick reference for common testing patterns across the stack. Use alongside the 
 - [API / Integration Testing](#api--integration-testing)
 - [E2E Testing (Playwright)](#e2e-testing-playwright)
 - [Test Anti-Patterns](#test-anti-patterns)
+- [State-Based vs Interaction-Based, and DAMP](#state-based-vs-interaction-based-and-damp)
 
 ## The RED/GREEN Cycle
 
@@ -332,7 +333,7 @@ it('calls db.query with ORDER BY created_at DESC', async () => {
 
 ### DAMP Over DRY in Tests
 
-In production code, DRY (Don't Repeat Yourself) is usually right. In tests, **DAMP (Descriptive And Meaningful Phrases)** is better. A test should read like a specification — each test should tell a complete story without requiring the reader to trace through shared helpers.
+**DAMP** is Descriptive And Meaningful Phrases. The worked form of the rule in `test-driven-development` → What to write.
 
 ```typescript
 // DAMP: Each test is self-contained and readable
@@ -350,6 +351,4 @@ it('trims whitespace from titles', () => {
 // Over-DRY: Shared setup obscures what each test actually verifies
 // (Don't do this just to avoid repeating the input shape)
 ```
-
-Duplication in tests is acceptable when it makes each test independently understandable.
 

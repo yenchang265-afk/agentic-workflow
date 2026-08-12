@@ -25,10 +25,8 @@ interface, not when deciding it.
 Undocumented quirks, error message text, timing, and ordering all become de
 facto contract once anyone depends on them. So:
 
-- **Expose deliberately.** Every observable behavior is a commitment you did
-  not necessarily mean to make.
-- **Keep implementation details unobservable.** What users can see, they will
-  depend on.
+- **Keep implementation details unobservable.** Every observable behavior is a
+  commitment you did not necessarily mean to make.
 - **Contract tests are not enough.** They pin the promised contract; Hyrum's
   Law is about the unpromised one, which is why a "safe" change still breaks
   real users.

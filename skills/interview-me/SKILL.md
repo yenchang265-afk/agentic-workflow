@@ -1,6 +1,6 @@
 ---
 name: interview-me
-description: Extracts what the user actually wants via a one-question-at-a-time interview to ~95% confidence. Use when an ask is underspecified, when you catch yourself silently filling in requirements, or when the user says "interview me" or "grill me".
+description: Interviews the user one question at a time to a confirmed statement of intent. Use when an ask is underspecified or conventional, when you catch yourself filling in requirements, when two reasonable values are in tension with no stated winner, when reshaping an existing draft or task against a new note, or when the user says "interview me".
 ---
 
 # Interview Me
@@ -16,9 +16,6 @@ Every other Define-phase skill assumes you already roughly know what you want. T
 Apply this skill when:
 
 - The ask is missing at least one of: **who** the user is, **why** they want it, what **success** looks like, what the binding **constraint** is
-- The request is conventional rather than specific ("build me X", "make it faster") and you can't unpack the convention without guessing
-- You're tempted to start with assumptions you haven't surfaced
-- The user hasn't said which value they're optimizing for when two reasonable ones are in tension (simplicity vs. flexibility, cost vs. speed)
 - The user explicitly invokes: "interview me", "grill me", "before we start, are we sure?", "stress-test my thinking"
 
 **When NOT to use:**
@@ -62,7 +59,7 @@ The number forces honesty. If you wrote a high number but can't predict the user
 
 ### Facts are looked up, decisions are asked
 
-Before sending any question, check whether its answer already lives in the environment — the repo, its docs, its git history. A question whose answer is greppable is legwork you skipped, not an interview question: `Glob`/`Grep`/`Read` it yourself and spend the user's turn on a genuine decision, preference, or piece of intent. When the codebase holds most of what's missing, `codebase-exploration` does that lookup wholesale, and its findings arrive here as your `GUESS:` lines.
+Before sending any question, check whether its answer already lives in the environment — the repo, its docs, its git history. A question whose answer is greppable is legwork you skipped, not an interview question: `Glob`/`Grep`/`Read` it yourself and spend the user's turn on a genuine decision, preference, or piece of intent.
 
 ### Step 2: Ask guess-first, one question at a time
 
@@ -167,7 +164,7 @@ It's checkable rather than a vibe, and it has a budget. A typical interview is 3
 
 The deliverable is a **confirmed statement of intent**: the Step 4 restate with an explicit yes behind it, not a **hollow yes**. Specs, plans, and task lists are downstream; they consume this.
 
-Inside `new` and `retask`, that confirmed intent — the goal plus its 2–5 acceptance criteria — is what the calling agent hands to the `workflow-task-author` subagent. Elsewhere, if the user wants the intent to survive the session or travel to another collaborator, offer to save it to `docs/intent/[topic].md`. Save only after they confirm: the doc itself implies a yes.
+Inside `new` and `retask`, that confirmed intent — the goal plus its 2–5 acceptance criteria — is what the calling agent hands to the `workflow-task-author` subagent. Elsewhere, if the user wants the intent to survive the session or travel to another collaborator, offer to save it to `docs/intent/[topic].md`. Save only on an explicit yes (`using-agent-skills` → Ask Before Writing to Disk).
 
 ## Example
 
@@ -201,12 +198,7 @@ The ask was never a dashboard. It was a list — different artifact, different s
 - **`spec-driven-development`** — downstream. Concrete confirmed intent hands off here to be written down.
 - **`doubt-driven-development`** — the far end of the same timeline. This skill is pre-decision intent extraction; doubt-driven is post-decision artifact review. Picking the wrong one wastes a round: nothing drafted yet → interview; a draft exists → doubt.
 
-## Two moves that look wrong and aren't
-
-**Attaching your guess is not leading the witness.** Reacting beats generating
-from scratch, and a guess you can be visibly wrong about is what exposes your
-assumptions. The real risk is the opposite one — sycophancy — so guess in
-directions you expect pushback on.
+## Moves that look wrong and aren't
 
 **Listing options is not the opening move.** Options work when the user knows
 what they want and is choosing between trade-offs; here they don't yet, so a
