@@ -89,6 +89,17 @@ export interface EvidenceContext {
    * rule rather than flipping into strict matching.
    */
   readonly seeded?: readonly string[]
+  /**
+   * The diff this stage reviews (manifest `requireDiffEvidence`): the changed
+   * files and the diff command itself. Computed by the host at stage arming
+   * (`git diff --name-only <base>...<branch>`); ABSENT when the stage does not
+   * opt in or the host could not compute it (a git failure, no `state.git`) —
+   * the gate is then inert, the same honest degradation as `observed: null`.
+   */
+  readonly boundary?: {
+    readonly files: readonly string[]
+    readonly diffCmd: string
+  }
 }
 
 /** Whether the host saw the stage do anything at all. Pure. */
@@ -217,6 +228,43 @@ export const mergeEvidence = (
     out.push(item)
   }
   return out
+}
+
+/**
+ * Reject a PASS whose citations never touch the diff under review, or null.
+ *
+ * `requireEvidence` alone proves the stage did SOMETHING; on a diff-reviewing
+ * stage that is not enough — one citation of any observed read satisfies
+ * `substantiated`, so a PASS could cite a single unrelated file and clear the
+ * gate. This narrows it: at least one citation must (a) name a changed file,
+ * (b) be a command whose arguments name one, or (c) be the diff command itself
+ * — a reviewer whose reading was `git diff` HAS reviewed the boundary, and
+ * rejecting that trades a fabricated PASS for a deadlocked loop, the trade
+ * `substantiated`'s doc refuses. Fires only on an effective-PASS record with a
+ * boundary present (the caller gates on the manifest flag); FAIL and ERROR
+ * stay ungated for the same reason as `evidenceIssue`. The rejection samples
+ * changed files to cite, the `seededOnlyMessage` make-the-retry-land
+ * principle. Pure — the effective-verdict check lives in the caller
+ * (`admitVerdict`), matching `criteriaIssue`/`evidenceIssue`'s shape.
+ */
+export const boundaryIssue = (
+  declared: readonly EvidenceItem[],
+  boundary: { readonly files: readonly string[]; readonly diffCmd: string },
+  stage: string,
+): string | null => {
+  const touches = declared.some(
+    (item) =>
+      (item.kind === "command" && commandMatches(item.ref, boundary.diffCmd)) ||
+      (item.kind === "command" && boundary.files.some((f) => commandNamesPath(f, item.ref))) ||
+      (item.kind === "file" && boundary.files.some((f) => pathMatches(item.ref, f))),
+  )
+  if (touches) return null
+  const sample = boundary.files.slice(0, 3).map((f) => `"${f}"`)
+  return (
+    `Verdict NOT recorded — none of the evidence cited for this ${stage.toUpperCase()} PASS touches the diff under review. ` +
+    `A PASS here must cite at least one changed file you read (e.g. ${sample.join(", ")}${boundary.files.length > sample.length ? ", …" : ""}) ` +
+    `or the diff itself (\`${boundary.diffCmd}\`). Read the change, then call workflow_verdict again citing it.`
+  )
 }
 
 /** The rejection when a PASS cites nothing. */

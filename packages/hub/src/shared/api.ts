@@ -891,6 +891,13 @@ export interface StageFanout {
    * Null when no arming carried prompt sizes.
    */
   readonly meanArmingPromptChars: number | null
+  /**
+   * Armings whose samples carried `unreviewedAxes` — lens runs whose lenses do
+   * not span the stage's required axes, so axis coverage went unenforced.
+   */
+  readonly downgradedArmings: number
+  /** Union of the axis names those armings left unreviewed. */
+  readonly unreviewedAxes: readonly string[]
 }
 
 export interface FanoutStats {

@@ -4,11 +4,15 @@ import path from "node:path"
 import { test } from "node:test"
 
 /**
- * The REVIEW stage tells its agent to invoke a skill, and the agent then calls
- * `workflow_verdict` with whatever severity that skill taught it. The tool
- * accepts exactly three (`Severity` in packages/core/src/workflow/verdict.ts),
- * and a call carrying a fourth is rejected whole — which the loop records as a
- * FAIL on a diff that may be clean.
+ * The REVIEW persona's severity ladder is distilled from
+ * `skills/code-review-and-quality/SKILL.md` (its `## Severity` table is the
+ * SSOT), and the specialist skills it still invokes conditionally
+ * (`security-and-hardening`, `performance-optimization`) can each teach a
+ * severity of their own — which the agent then feeds to `workflow_verdict`.
+ * The tool accepts exactly three (`Severity` in
+ * packages/core/src/workflow/verdict.ts), and a call carrying a fourth is
+ * rejected whole — which the loop records as a FAIL on a diff that may be
+ * clean.
  *
  * So a skill naming its own severity scale is not a style question, it is a
  * live break. These tests hold the vocabulary to one word list and keep its

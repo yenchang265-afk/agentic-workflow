@@ -77,6 +77,7 @@ import {
   commitAll,
   commitPaths,
   currentBranch,
+  diffBoundary,
   ensureExcluded,
   gitActor,
   isDirty,
@@ -93,6 +94,7 @@ import { type Outcome, renderRunSummary, type StageSample, type StageTokens, typ
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import {
   admitVerdict,
+  droppedFindingsNote,
   effectiveVerdict,
   mergeAxes,
   mergeRejected,
@@ -104,6 +106,7 @@ import {
   rejectedFallback,
   stageDriftNote,
   uncoveredAxes,
+  verdictAuditDetail,
   withCoverageGap,
   type AxisResult,
   type CriteriaContext,
@@ -124,6 +127,7 @@ import {
   enforcesAxisCoverage,
   fanoutOverriddenByLenses,
   ignoredUserConfigPaths,
+  lensDowngradeNote,
   modelFor,
   passAxes,
   resolveUserConfigPath,
@@ -716,6 +720,14 @@ const axisRequirement = new Map<string, readonly string[]>()
  */
 const observedEvidence = new Map<string, ObservedEvidence>()
 
+/**
+ * The diff boundary each check pass's PASS evidence must touch
+ * (`requireDiffEvidence`), keyed by pass session like every other per-pass
+ * table. Set at pass arming from a once-per-stage `diffBoundary` computation;
+ * absent (stage not opted in, git failed) ⇒ the gate is inert (fail open).
+ */
+const diffBoundaries = new Map<string, { readonly files: readonly string[]; readonly diffCmd: string }>()
+
 /** Most commands/reads kept per pass; see the Claude ledger's cap for why entries past it are dropped, not rotated. */
 const OBSERVED_MAX = 200
 
@@ -829,6 +841,8 @@ export const recordVerdict = (
     required: def.requireEvidence,
     observed: observedEvidence.get(sessionID) ?? NO_OBSERVATIONS,
     seeded: checkCommands(state.checks?.[stage] ?? []),
+    // The diff-evidence narrowing (`requireDiffEvidence`); absent ⇒ inert.
+    ...(diffBoundaries.get(sessionID) ? { boundary: diffBoundaries.get(sessionID) } : {}),
   }
   // Stage-level via the predicate, never the per-pass `axisRequirement` map: a
   // lens pass clears that map, and the criteria gate must not suddenly bind
@@ -1410,6 +1424,12 @@ export const runStagePasses = async (
   // for a channel that answered twice.
   const rejections: (RejectedVerdict | null)[] = new Array(passes.length).fill(null)
   const { client } = deps
+  // Changed-file boundary for the diff-evidence gate (`requireDiffEvidence`),
+  // computed ONCE per stage arming — every pass reviews the same diff. A git
+  // failure or missing `state.git` leaves it undefined and the gate inert
+  // (fail open): a boundary that cannot be computed weakens the gate, never
+  // stalls the run.
+  const boundary = isCheck && def.requireDiffEvidence && state.git ? await diffBoundary(deps.$, deps.directory, state.git) : undefined
   const runKey = workflowId(state)
 
   /**
@@ -1464,6 +1484,7 @@ export const runStagePasses = async (
     recordedBlocked.delete(passSessionID)
     observedEvidence.delete(passSessionID)
     axisRequirement.delete(passSessionID)
+    diffBoundaries.delete(passSessionID)
     driftNoted.delete(passSessionID)
   }
 
@@ -1491,6 +1512,10 @@ export const runStagePasses = async (
     const required = isCheck ? passAxes(def, pass) : undefined
     if (required?.length) axisRequirement.set(passSessionID, required)
     else axisRequirement.delete(passSessionID)
+    // Same per-pass publication for the diff boundary: recordVerdict reads it
+    // when workflow_verdict lands on this pass's session.
+    if (boundary) diffBoundaries.set(passSessionID, boundary)
+    else diffBoundaries.delete(passSessionID)
     const focusBlock = passFocusBlock(pass, i, passes.length)
     const args = focusBlock ? `${baseArgs}\n\n${focusBlock}` : baseArgs
     // One pass, plus at most one retry when a check stage ends with no
@@ -1608,6 +1633,14 @@ export const runStagePasses = async (
         ...(() => {
           const info = isCheck ? stageChecksInfo.get(`${sessionID}:${stage}`) : undefined
           return info ? { checksSource: info.source, ...(info.refused ? { checksRefused: info.refused } : {}) } : {}
+        })(),
+        // Structured twin of the lens-downgrade audit note: which required
+        // axes no lens covers, so the hub can count downgraded runs without
+        // parsing prose. Lens passes only — an axis/single pass enforces its
+        // coverage and the field would be noise.
+        ...(() => {
+          const unreviewed = pass.mode === "lens" ? unreviewedAxes(config, def) : []
+          return unreviewed.length ? { unreviewedAxes: unreviewed } : {}
         })(),
       })
       // Publish samples-so-far live (awaited: no flush I/O may be in flight when a
@@ -2003,6 +2036,19 @@ const driveChain = async (
     )
   }
   const actor = await gitActor(deps.$, deps.directory)
+  // The lens warning above dies with this session's log; the downgraded
+  // guarantee is a fact about THIS run's verdicts, read at the ship gate from
+  // the task file — so it lands there too, once per run per affected stage.
+  // Gated on the stage actually running lens passes: `unreviewedAxes` alone is
+  // non-empty for ANY axis-bearing stage while lenses are configured, but only
+  // the stage `stagePasses` gives lens passes to has its coverage downgraded.
+  if (first.state.task) {
+    for (const def of loaded.manifest.stages) {
+      if (!stagePasses(config, loaded.manifest.kind, def).some((p) => p.mode === "lens")) continue
+      const note = lensDowngradeNote(def.name, unreviewedAxes(config, def))
+      if (note) await appendNote(deps.$, first.state.task, auditNote(note, new Date(), actor), deps.log)
+    }
+  }
   let step = first
   while (step.action.kind === "fire") {
     // Every code-writing stage runs isolated: its own worktree (worktree mode)
@@ -2148,14 +2194,21 @@ const driveChain = async (
       await checkpoint(deps, config, step.state, `loop(${workflowId(step.state)}): ${stage} iteration ${iteration + 1}`)
     }
     if (stageDef(loaded.manifest, stage).kind === "check" && task) {
-      const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0
       const detail = record?.reason ? ` — ${record.reason}` : ""
-      const criteriaNote = failed ? ` (${failed} criteria unmet)` : ""
+      // Shared with the Claude host (`verdictAuditDetail`): the axes/unassessed
+      // halves used to exist only there, so an all-axes-unassessed PASS left no
+      // trace in the audit trail the ship gate reads on this host.
+      const structured = verdictAuditDetail(record)
+      const structuredNote = structured ? ` (${structured})` : ""
+      // A PASS that stops mentioning a prior blocking finding leaves a durable
+      // trace for the ship gate (nothing gates on it — the matching is fuzzy).
+      const dropped = droppedFindingsNote(step.state.priorFindings, record, output)
+      if (dropped) await appendNote(deps.$, task, auditNote(`${stage.toUpperCase()} ${dropped}`, new Date(), actor), deps.log)
       await appendNote(
         deps.$,
         task,
         auditNote(
-          `${stage.toUpperCase()} verdict: ${verdict ?? "none recorded → FAIL"}${criteriaNote}${detail} (iteration ${iteration + 1})`,
+          `${stage.toUpperCase()} verdict: ${verdict ?? "none recorded → FAIL"}${structuredNote}${detail} (iteration ${iteration + 1})`,
           new Date(),
           actor,
         ),

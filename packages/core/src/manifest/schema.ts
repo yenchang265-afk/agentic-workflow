@@ -153,6 +153,22 @@ export const StageDefSchema = z.object({
    */
   requireEvidence: z.boolean().default(false),
   /**
+   * Whether a PASS on this `check` stage must additionally cite work that
+   * TOUCHES the diff under review — a changed file it read, a command naming
+   * one, or the diff command itself (`workflow/evidence.ts` `boundaryIssue`).
+   * Closes the gap `requireEvidence` alone leaves on a diff-reviewing stage:
+   * one citation of any observed read satisfies it, so a PASS could cite a
+   * single unrelated file and clear the gate.
+   *
+   * Opt-in per stage and requires `requireEvidence` (superRefine below). Off
+   * for VERIFY on purpose: its legitimate evidence is test commands that name
+   * no changed file, so the gate would false-reject sound PASSes. Fail-open at
+   * run time — a host that cannot compute the changed-file list simply passes
+   * no boundary and the gate is inert. Default `false` leaves every existing
+   * kind byte-identical.
+   */
+  requireDiffEvidence: z.boolean().default(false),
+  /**
    * Whether this `check` stage's commands are DISCOVERED from the approved plan
    * when neither config `stageChecks` nor `checks` supplies any
    * (`workflow/discovered-checks.ts`).
@@ -467,6 +483,15 @@ export const WorkflowManifestSchema = z
         // Only a verdict carries evidence, and only check stages record one.
         ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requireEvidence (no verdict to carry it)` })
       }
+      if (stage.requireDiffEvidence && !stage.requireEvidence) {
+        // The boundary rule narrows WHICH evidence satisfies the gate; without
+        // the gate itself there is nothing for it to narrow, and the flag
+        // would read as on while enforcing nothing.
+        ctx.addIssue({ code: "custom", message: `stage "${stage.name}" sets requireDiffEvidence without requireEvidence (there is no evidence gate to narrow)` })
+      }
+      if (stage.kind === "work" && stage.requireDiffEvidence) {
+        ctx.addIssue({ code: "custom", message: `work stage "${stage.name}" cannot set requireDiffEvidence (no verdict to carry evidence)` })
+      }
       if (stage.kind === "check" && stage.planContract) {
         // The contract governs a WRITTEN plan; a check stage writes none, so the
         // flag would append a demand nothing can satisfy.
@@ -539,7 +564,12 @@ export const stageDef = (manifest: WorkflowManifest, name: string): StageDef => 
  * needs `requiredAxes`), so the contract composed once per stage cannot
  * contradict a focused pass's suffix. The requirement still gates nothing when
  * the task carries no acceptance (`CriteriaContext.acceptance` empty — every
- * sitter kind). Pure.
+ * sitter kind).
+ *
+ * This gates only the count-based COMPLETENESS half of the criteria contract.
+ * The contradiction half — a PASS carrying a criterion marked not met — needs
+ * no context and holds on every check stage regardless of this predicate
+ * (`criteriaContradictionIssue`, run unconditionally by `admitVerdict`). Pure.
  */
 export const stageRequiresCriteria = (def: StageDef): boolean => def.kind === "check" && !def.requiredAxes?.length
 

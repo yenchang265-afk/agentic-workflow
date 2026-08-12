@@ -2,7 +2,7 @@ import type { LoadedManifest, StageDef, WorkflowManifest } from "../manifest/sch
 import { stageDef, stageRequiresCriteria } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
-import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
+import type { Action, AttemptRecord, Config, PriorFinding, WorkflowState } from "./state.js"
 import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
@@ -131,6 +131,40 @@ const withAttempt = (state: WorkflowState, stage: string, verdict: Verdict, reco
   return { ...state, attempts: [...(state.attempts ?? []), entry].slice(-ATTEMPTS_KEPT) }
 }
 
+/** A record's critical/important axis findings, flattened for `priorFindings`. Pure. */
+const blockingPriorFindings = (record: VerdictRecord | null): PriorFinding[] =>
+  (record?.axes ?? []).flatMap((a) =>
+    (a.findings ?? [])
+      .filter((f): f is typeof f & { severity: "critical" | "important" } => f.severity === "critical" || f.severity === "important")
+      .map((f) => ({ axis: a.axis, severity: f.severity, detail: f.detail, ...(f.location ? { location: f.location } : {}) })),
+  )
+
+/**
+ * Track the blocking findings a failed axis-bearing check stage must see again
+ * on its next run (`WorkflowState.priorFindings`): set on FAIL, cleared on
+ * PASS, untouched otherwise. Scoped to axis stages — an axis-less check stage
+ * (VERIFY) carries no findings, and letting its FAIL through here would wipe
+ * the list the next REVIEW is owed. A FAIL whose record somehow carries no
+ * blocking finding (a salvaged rejected declaration) keeps the previous list:
+ * stale-but-present asks the reviewer to re-verify, absent asks nothing. Pure.
+ */
+const withPriorFindings = (
+  state: WorkflowState,
+  def: StageDef,
+  verdict: Verdict | null,
+  record: VerdictRecord | null,
+): WorkflowState => {
+  if (def.kind !== "check" || !def.requiredAxes?.length) return state
+  if (verdict === "PASS") {
+    if (!state.priorFindings) return state
+    const { priorFindings: _, ...rest } = state
+    return rest
+  }
+  if (verdict !== "FAIL" && verdict !== null) return state
+  const found = blockingPriorFindings(record)
+  return found.length ? { ...state, priorFindings: found } : state
+}
+
 /**
  * The iteration cap in force for a run of this manifest — the ONE resolution
  * both the stop decision in `advance` and the prompt's iteration-budget section
@@ -239,6 +273,16 @@ export const promptContextWithStats = (
       ? {
           lines: state.attempts
             .map((a) => `- iteration ${a.iteration + 1} (${a.stage} ${a.verdict})${a.reason ? `: ${a.reason}` : ""}`)
+            .join("\n"),
+        }
+      : undefined,
+    // Blocking findings of the last failed axis-bearing check run (numbered so
+    // a reviewer can address them by ordinal). Undefined when none, so every
+    // other stage and iteration renders byte-identically.
+    priorFindings: state.priorFindings?.length
+      ? {
+          lines: state.priorFindings
+            .map((f, i) => `${i + 1}. [${f.severity}] (${f.axis}) ${f.detail}${f.location ? ` — ${f.location}` : ""}`)
             .join("\n"),
         }
       : undefined,
@@ -351,7 +395,10 @@ export const composeStagePrompt = (
   // names the consuming stage otherwise, so only that stage can render it.
   const noChecks = def.kind === "check" && discover === def.name && !ctx.checks ? `\n\n${noMachineChecksBlock(def.name)}` : ""
   return def.kind === "check"
-    ? `${rendered}${noChecks}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence, criteriaCount)}`
+    ? // `discover === def.name` is the same predicate as `noChecks` above: only
+      // the discovering-consumer stage is ever handed pre-run check commands,
+      // so only its contract may describe them.
+      `${rendered}${noChecks}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence, criteriaCount, discover === def.name, def.requireDiffEvidence)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}${
         visualize ? `\n\n${planVisualizationBlock(def.name)}` : ""
       }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover)}` : ""}`
@@ -445,8 +492,14 @@ export const advance = (
   // Fuse the machine-recorded failure reasons ahead of the stage's prose so the
   // next iteration leads with what actually failed. Owned here, not by each host,
   // so the seam between the two is recorded and the budget can spare the block.
-  const s = withArtifact(state, state.stage, output, verdictFeedbackBlock(record))
-  const def = stageDef(manifest, s.stage)
+  const fused = withArtifact(state, state.stage, output, verdictFeedbackBlock(record))
+  const def = stageDef(manifest, fused.stage)
+  // Carry a failed axis-bearing check stage's blocking findings into its next
+  // run as `priorFindings` (rendered as an explicit resolved-or-open checklist),
+  // and clear them once that stage PASSes. Scoped to axis stages — they are the
+  // only ones whose record carries findings, and scoping keeps an intervening
+  // VERIFY fail from wiping what the next REVIEW must re-verify.
+  const s = withPriorFindings(fused, def, verdict, record)
   const t = manifest.transitions[s.stage]
   const effect =
     def.kind === "work"

@@ -792,6 +792,21 @@ export const unreviewedAxes = (config: Config, def: StageDef): string[] => {
 }
 
 /**
+ * The task-file audit note for a run whose lens config leaves `unreviewedAxes`
+ * non-empty — the durable half of the warning above. The host log line dies
+ * with the session, but the downgraded guarantee is a fact about THIS run's
+ * verdict that the ship gate reads the task file to judge; without it a PASS
+ * reads as the full five-axis review the manifest promises. Core owns the text
+ * so the two hosts cannot drift (same reasoning as `verdictFeedbackBlock`).
+ * "" when nothing goes unreviewed — the caller skips the note. Pure.
+ */
+export const lensDowngradeNote = (stage: string, unreviewed: readonly string[]): string =>
+  unreviewed.length
+    ? `${stage.toUpperCase()} ran under reviewLenses with axis coverage NOT enforced — no lens covers ` +
+      `${unreviewed.join(", ")}; ${unreviewed.length === 1 ? "that axis goes" : "those axes go"} unreviewed this run`
+    : ""
+
+/**
  * The fan-out strategy a stage runs under: config
  * `workflows.<kind>.stageFanout.<stage>`, else the manifest stage's `fanout`,
  * else none. `"none"` in config turns a manifest-declared fan-out off. Pure.

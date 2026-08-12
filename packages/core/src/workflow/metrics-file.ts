@@ -86,6 +86,10 @@ const MetricsSampleSchema = z.object({
   // what a check-discovery success-rate roll-up joins on.
   checksSource: z.string().optional(),
   checksRefused: z.number().int().min(0).optional(),
+  // Lens-downgrade twin (lens passes only): the stage's required axes no
+  // configured lens covers. Must be listed — zod strips unknown keys, so an
+  // undeclared field would be silently dropped on every sidecar read.
+  unreviewedAxes: z.array(z.string()).readonly().optional(),
 })
 
 const RunEntrySchema = z.object({

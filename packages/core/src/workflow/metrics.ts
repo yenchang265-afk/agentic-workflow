@@ -103,6 +103,12 @@ export interface StageSample {
   readonly checksSource?: string
   /** How many declared checks were refused/dropped at resolution (warnings count). */
   readonly checksRefused?: number
+  /**
+   * The stage's required axes no configured review lens covers (check stages
+   * running lens passes only) — the structured twin of the lens-downgrade
+   * audit note, so the hub can count downgraded runs without parsing prose.
+   */
+  readonly unreviewedAxes?: readonly string[]
   /** Proof-of-work citations backing a PASS (check stages only), redacted. */
   readonly evidence?: readonly SampleEvidence[]
 }

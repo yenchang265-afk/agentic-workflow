@@ -45,6 +45,7 @@ import {
   unknownStageConcurrencyKeys,
   unknownStageContextKeys,
   unknownStageFanoutKeys,
+  lensDowngradeNote,
   taskBranchPrefix,
   unknownStageModelKeys,
   unreviewedAxes,
@@ -52,8 +53,7 @@ import {
 } from "@agentic-workflow/core/config"
 import {
   admitVerdict,
-  axisUnassessed,
-  axisVerdict,
+  droppedFindingsNote,
   effectiveVerdict,
   mergeRejected,
   noAdmissibleVerdictReason,
@@ -63,6 +63,7 @@ import {
   stageDriftAdvice,
   stageDriftNote,
   uncoveredAxes,
+  verdictAuditDetail,
   withCoverageGap,
   type AxisResult,
   type CriteriaContext,
@@ -76,7 +77,7 @@ import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-w
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
 import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
-import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
+import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, diffBoundary, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
   approveAny as coreApproveAny,
@@ -248,6 +249,8 @@ const resetLoopScratch = (): void => {
   buildNoteFor = null
   armedPass = null
   fanoutStage = null
+  lensNotedFor.clear() // per-run like the warning it makes durable
+  stageBoundary = null // a boundary belongs to the run whose diff it named
 }
 let buildNoteFor: string | null = null // `<taskId>:<iteration>` the "BUILD started" note was appended for — a same-stage re-fire must not duplicate it
 let samples: StageSample[] = [] // per-run metrics
@@ -255,6 +258,14 @@ let samples: StageSample[] = [] // per-run metrics
 // the stage's verdict sample and the once-per-run degradation note. Twin of
 // the OpenCode driver's `stageChecksInfo`.
 const checksInfo = new Map<string, { source: ChecksSource; ran: number; refused: number; detail: string; noted: boolean }>()
+// Stages whose lens-downgrade note has been appended this run — the config
+// warning (`stageModelWarnings`) has no task to write to, so the durable half
+// lands at stage fire, once per run per stage.
+const lensNotedFor = new Set<string>()
+// The armed check stage's diff boundary (`requireDiffEvidence`), computed once
+// per fresh arming in workflow_stage. Null ⇒ the gate is inert (fail open).
+// Module-level like `armedPass` — this host runs one loop at a time.
+let stageBoundary: { readonly files: readonly string[]; readonly diffCmd: string } | null = null
 let lastFireAt = Date.now()
 /**
  * Size of the prompt this server last handed out for a REAL fire, and how much a
@@ -1135,6 +1146,20 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
     info.noted = true
     await appendNote(sh, state.task, auditNote(note, new Date(), await gitActor(sh, directory)), log)
   }
+  // The lens-downgrade warning (`stageModelWarnings`) dies with the session log
+  // and has no task to write to; the downgraded guarantee is a fact about THIS
+  // run's verdicts, read at the ship gate from the task file — so it lands
+  // there at the stage's first fire, once per run. Gated on the stage actually
+  // running lens passes: `unreviewedAxes` alone is non-empty for ANY
+  // axis-bearing stage while lenses are configured.
+  const defHere = stageDef(activeManifest().manifest, stage)
+  if (!lensNotedFor.has(stage) && state.task && stagePasses(config, activeManifest().manifest.kind, defHere).some((p) => p.mode === "lens")) {
+    const lensNote = lensDowngradeNote(stage, unreviewedAxes(config, defHere))
+    if (lensNote) {
+      lensNotedFor.add(stage)
+      await appendNote(sh, state.task, auditNote(lensNote, new Date(), await gitActor(sh, directory)), log)
+    }
+  }
   if (!defs.length) return state
   // The phase below runs BEFORE this call's own marker arming and claim restamp
   // (both follow in workflow_stage), on a claim stamp as old as the previous
@@ -1385,7 +1410,8 @@ server.registerTool(
         .describe(
           "Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt. REQUIRED for a " +
             "PASS on a stage given acceptance criteria: one entry per criterion, in the order given — a PASS with " +
-            "missing/incomplete criteria, or one marking any criterion not met, is REJECTED (record FAIL instead).",
+            "missing/incomplete criteria, or one marking any criterion not met, is REJECTED (record FAIL instead). " +
+            "The not-met rule holds on EVERY check stage, even one whose criteria entries are otherwise optional.",
         ),
       axes: z
         .array(
@@ -1419,7 +1445,7 @@ server.registerTool(
         )
         .optional()
         .describe(
-          "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. At least one citation must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. FAIL/ERROR need none.",
+          "Proof of work. REQUIRED for a PASS on a stage that declares requireEvidence (engineering verify/review): this session's real commands and file reads are recorded independently, and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. At least one citation must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. On a diff-reviewing stage (requireDiffEvidence), at least one citation must also touch the changed files or the diff command itself. FAIL/ERROR need none.",
         ),
     },
   },
@@ -1458,6 +1484,8 @@ server.registerTool(
       required: def.requireEvidence,
       observed: observedEvidence(stage),
       seeded: checkCommands(active?.checks?.[stage] ?? []),
+      // The diff-evidence narrowing (`requireDiffEvidence`); absent ⇒ inert.
+      ...(stageBoundary ? { boundary: stageBoundary } : {}),
     }
     // Stage-level via the predicate, never `passAxes`: a lens pass owes no
     // axes, and the criteria gate must not suddenly bind lens passes of an
@@ -1623,6 +1651,15 @@ server.registerTool(
       } catch (err) {
         return fail(`Could not run the check commands for "${stage}" — ${(err as Error).message}`)
       }
+      // Changed-file boundary for the diff-evidence gate (`requireDiffEvidence`),
+      // computed once per fresh arming — every pass reviews the same diff. A git
+      // failure or missing `active.git` leaves it null and the gate inert (fail
+      // open): a boundary that cannot be computed weakens the gate, never stalls
+      // the run.
+      stageBoundary =
+        stageDefinition.kind === "check" && stageDefinition.requireDiffEvidence && active.git
+          ? ((await diffBoundary(sh, directory, active.git)) ?? null)
+          : null
     }
     // Re-armed per pass, so every pass gets its own deadline and
     // verdictRecorded:false. The marker IS the guard's only input: if it could
@@ -1786,6 +1823,15 @@ server.registerTool(
             ...(() => {
               const info = checksInfo.get(stage)
               return info ? { checksSource: info.source, ...(info.refused ? { checksRefused: info.refused } : {}) } : {}
+            })(),
+            // Structured twin of the lens-downgrade audit note (lens passes
+            // only) — which required axes no lens covers.
+            ...(() => {
+              const unreviewed =
+                armedPass?.stage === stage && armedPass.pass.mode === "lens"
+                  ? unreviewedAxes(config, stageDef(activeManifest().manifest, stage))
+                  : []
+              return unreviewed.length ? { unreviewedAxes: unreviewed } : {}
             })(),
           }
         : {}),
@@ -1980,14 +2026,11 @@ server.registerTool(
       }
     }
     if (stageDef(activeManifest().manifest, stage).kind === "check" && active.task) {
-      const failed = pending?.criteria?.filter((c) => !c.pass).length ?? 0
-      const failedAxes = (pending?.axes ?? []).filter((a) => !axisUnassessed(a) && axisVerdict(a) !== "PASS").map((a) => a.axis)
-      const unassessed = (pending?.axes ?? []).filter(axisUnassessed).map((a) => a.axis)
-      const detail = [
-        failed ? `${failed} criteria unmet` : "",
-        failedAxes.length ? `axes: ${failedAxes.join(", ")}` : "",
-        unassessed.length ? `unassessed: ${unassessed.join(", ")}` : "",
-      ].filter(Boolean).join("; ")
+      // A PASS that stops mentioning a prior blocking finding leaves a durable
+      // trace for the ship gate (nothing gates on it — the matching is fuzzy).
+      const dropped = droppedFindingsNote(active.priorFindings, pending, stageOutput)
+      if (dropped) await appendNote(sh, active.task, auditNote(`${stage.toUpperCase()} ${dropped}`, new Date(), actor), log)
+      const detail = verdictAuditDetail(pending)
       await appendNote(sh, active.task, auditNote(`${stage.toUpperCase()} verdict: ${pending ? effectiveVerdict(pending) : "none → FAIL"}${detail ? ` (${detail})` : ""} (iteration ${active.iteration + 1})`, new Date(), actor), log)
     }
     // A work stage that called `workflow_blocked`: hand `advance` an ERROR so it

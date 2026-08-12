@@ -50,6 +50,34 @@ export const headSha = async ($: Shell, cwd: string): Promise<string | null> => 
 }
 
 /**
+ * The changed files of a loop's diff boundary (`git diff --name-only
+ * <base>...<branch>`) plus the diff command the stage is told to review — the
+ * host-side input to the diff-evidence gate (`requireDiffEvidence`,
+ * `evidence.ts` `boundaryIssue`). Undefined on any git failure or an empty
+ * diff: the gate then stays inert (fail open), the same degradation as every
+ * other helper here — a boundary that cannot be computed must weaken the gate,
+ * never stall the run. The `diffCmd` mirrors the one the composed prompt
+ * renders (`promptContextWithStats`), so the rejection message and the prompt
+ * name the same command.
+ */
+export const diffBoundary = async (
+  $: Shell,
+  directory: string,
+  git: { readonly base: string; readonly branch: string; readonly worktree?: string },
+): Promise<{ files: string[]; diffCmd: string } | undefined> => {
+  const cwd = git.worktree ?? directory
+  const { ok, stdout } = await run($, cwd, ["diff", "--name-only", `${git.base}...${git.branch}`])
+  if (!ok) return undefined
+  const files = stdout
+    .split("\n")
+    .map((f) => f.trim())
+    .filter(Boolean)
+  if (!files.length) return undefined
+  const diffCmd = git.worktree ? `git -C ${git.worktree} diff ${git.base}...${git.branch}` : `git diff ${git.base}...${git.branch}`
+  return { files, diffCmd }
+}
+
+/**
  * The repo's default branch, resolved LOCALLY: `origin/HEAD` (set by clone, or
  * by `git remote set-head`), else `init.defaultBranch`, else null.
  *

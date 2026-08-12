@@ -81,3 +81,33 @@ test("lens passes without prompt sizes still count armings, with a null bill", (
 test("fanoutStats tolerates a run with no sidecar", () => {
   assert.deepEqual(fanoutStats([runInput("a", "")]), { stages: [] })
 })
+
+test("an arming whose samples carry unreviewedAxes counts as downgraded, with the axis union", () => {
+  const result = fanoutStats([
+    runInput(
+      "a",
+      "",
+      sidecarOf([
+        // downgraded arming: two lens passes, both stamped with the gap
+        sample("review", { iteration: 0, lens: "security", unreviewedAxes: ["correctness", "performance"] }),
+        sample("review", { iteration: 0, lens: "test-adequacy", unreviewedAxes: ["correctness", "performance"] }),
+        // covered arming: a later run whose lenses span the axes
+        sample("review", { iteration: 1, lens: "correctness" }),
+        sample("review", { iteration: 1, lens: "security" }),
+      ]),
+    ),
+  ])
+  const review = result.stages[0]
+  assert.equal(review?.armings, 2)
+  assert.equal(review?.downgradedArmings, 1)
+  assert.deepEqual(review?.unreviewedAxes, ["correctness", "performance"])
+})
+
+test("armings without the field report zero downgrades and no axes", () => {
+  const result = fanoutStats([
+    runInput("a", "", sidecarOf([sample("review", { lens: "correctness" }), sample("review", { lens: "security" })])),
+  ])
+  const review = result.stages[0]
+  assert.equal(review?.downgradedArmings, 0)
+  assert.deepEqual(review?.unreviewedAxes, [])
+})

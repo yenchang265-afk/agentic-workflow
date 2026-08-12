@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import {
+  boundaryIssue,
   itemObserved,
   mergeEvidence,
   NO_OBSERVATIONS,
@@ -129,4 +130,35 @@ test("mergeEvidence keeps a command and a file of the same name apart", () => {
 test("mergeEvidence treats undefined sides as empty", () => {
   assert.deepEqual(mergeEvidence(undefined, undefined), [])
   assert.equal(mergeEvidence(undefined, [cmd("npm test")]).length, 1)
+})
+
+// --- boundaryIssue: the diff-evidence narrowing (`requireDiffEvidence`) ---
+
+const boundary = {
+  files: ["src/db/query.ts", "src/api/limit.ts", "README.md"],
+  diffCmd: "git -C /wt diff abc123...feature/t1",
+}
+
+test("a citation of a changed file admits the PASS — path or path:line, relative or worktree-absolute", () => {
+  assert.equal(boundaryIssue([file("src/db/query.ts:41")], boundary, "review"), null)
+  assert.equal(boundaryIssue([file("/wt/src/api/limit.ts")], boundary, "review"), null)
+})
+
+test("a command naming a changed file admits the PASS", () => {
+  assert.equal(boundaryIssue([cmd("cat src/db/query.ts")], boundary, "review"), null)
+  assert.equal(boundaryIssue([cmd("git -C /wt blame src/api/limit.ts")], boundary, "review"), null)
+})
+
+test("citing the diff command itself IS reviewing the boundary", () => {
+  // A reviewer whose reading was `git diff` has reviewed the change; rejecting
+  // that trades a fabricated PASS for a deadlocked loop.
+  assert.equal(boundaryIssue([cmd("git -C /wt diff abc123...feature/t1")], boundary, "review"), null)
+})
+
+test("a PASS citing only unrelated work is rejected, and the rejection samples changed files to cite", () => {
+  const issue = boundaryIssue([file("docs/other.md"), cmd("ls -la")], boundary, "review")
+  assert.ok(issue)
+  assert.match(issue ?? "", /touches the diff under review/)
+  assert.match(issue ?? "", /src\/db\/query\.ts/)
+  assert.match(issue ?? "", /git -C \/wt diff abc123\.\.\.feature\/t1/)
 })

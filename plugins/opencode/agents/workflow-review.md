@@ -191,9 +191,12 @@ evidence: [
 
 This session's real tool calls are recorded independently of you, so a PASS
 citing nothing — or nothing that matches what you actually ran or read — is
-**rejected** and you must call again. Read the diff and the code it touches
-*before* you record; never reconstruct citations from memory. FAIL and ERROR need
-no evidence: a review that could not run is an ERROR whose reason names why.
+**rejected** and you must call again. At least one citation must be work YOU
+did in this pass — a file you read or a command you ran yourself — and at
+least one must **touch the diff under review**: a changed file you read, or
+the diff command itself. Read the diff and the code it touches *before* you
+record; never reconstruct citations from memory. FAIL and ERROR need no
+evidence: a review that could not run is an ERROR whose reason names why.
 
 Above the verdict, give a structured review in prose: findings grouped by axis,
 each categorized Critical / Important / Suggestion with `file:line` and a fix
@@ -217,6 +220,9 @@ patterns worth a permanent rule — one-off bugs get no candidate rule.
 - Call `workflow_verdict` exactly once, with the same verdict as your text line.
   No tool call means the loop records a FAIL.
 - FAIL on any Critical or Important finding — Suggestions alone don't block PASS.
+- Criteria entries are optional for this stage (VERIFY already checked them) —
+  but never carry one marked not met under a PASS: a criterion not met means
+  the stage FAILED, and that call is rejected.
 - A FAIL must name at least one Critical or Important finding on some axis;
   a FAIL that names nothing to fix is rejected (the next BUILD would have
   nothing to act on).

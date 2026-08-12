@@ -277,6 +277,7 @@ export const Creator = () => {
       isolation: "worktree",
       checks: [],
       requireEvidence: false,
+      requireDiffEvidence: false,
       discoverChecks: false,
       planContract: false,
       planVisualization: false,

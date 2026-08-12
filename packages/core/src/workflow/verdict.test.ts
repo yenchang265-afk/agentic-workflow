@@ -5,7 +5,9 @@ import {
   allAxesUnassessedReason,
   axisCoverageIssue,
   axisUnassessed,
+  criteriaContradictionIssue,
   criteriaIssue,
+  droppedFindingsNote,
   failFeedbackIssue,
   noAdmissibleVerdictReason,
   rejectedFallback,
@@ -24,6 +26,7 @@ import {
   stageDriftAdvice,
   stageDriftNote,
   uncoveredAxes,
+  verdictAuditDetail,
   verdictContractBlock,
   verdictFeedbackBlock,
   withCoverageGap,
@@ -1075,6 +1078,131 @@ test("noAdmissibleVerdictReason carries the host's pass tag and the untrusted pr
   const reason = noAdmissibleVerdictReason({ detail: " (axes: security)", prose: "PASS" })
   assert.match(reason, /retry \(axes: security\) —/)
   assert.match(reason, /prose claimed PASS, ignored/)
+})
+
+// --- verdictAuditDetail: one audit-note detail, two hosts ---
+
+test("verdictAuditDetail renders criteria, failing axes, and unassessed axes in one detail", () => {
+  const detail = verdictAuditDetail({
+    verdict: "FAIL",
+    criteria: [
+      { criterion: "a", pass: false },
+      { criterion: "b", pass: false },
+      { criterion: "c", pass: true },
+    ],
+    axes: [
+      { axis: "security", verdict: "FAIL", findings: [{ severity: "critical", detail: "x" }] },
+      { axis: "performance", verdict: "ERROR" },
+      { axis: "correctness", verdict: "PASS" },
+    ],
+  })
+  assert.equal(detail, "2 criteria unmet; axes: security; unassessed: performance")
+})
+
+test("verdictAuditDetail is empty for a clean record and for no record at all", () => {
+  assert.equal(verdictAuditDetail(null), "")
+  assert.equal(verdictAuditDetail(undefined), "")
+  assert.equal(verdictAuditDetail({ verdict: "PASS", axes: fiveAxes() }), "")
+})
+
+// --- criteriaContradictionIssue: the context-free half of the criteria gate ---
+
+test("a PASS carrying a criterion marked not met is rejected on an AXIS stage — no criteria context needed", () => {
+  // Before the split, REVIEW's criteriaCtx was undefined and this PASS was
+  // ADMITTED — verdictFeedbackBlock then rendered "Failed criteria" under a
+  // PASS that ships.
+  const res = admitVerdict(
+    { verdict: "PASS", axes: fiveAxes(), criteria: [{ criterion: "rate limit returns 429", pass: false }] },
+    AXES,
+    null,
+  )
+  assert.equal(res.ok, false)
+  if (!res.ok) {
+    assert.match(res.message, /marks a criterion/)
+    assert.match(res.message, /rate limit returns 429/)
+    assert.match(res.message, /FAILED/)
+  }
+})
+
+test("criteriaContradictionIssue: null on FAIL, on met criteria, and on no criteria at all", () => {
+  assert.equal(criteriaContradictionIssue({ verdict: "FAIL", reason: "r", criteria: [{ criterion: "a", pass: false }] }), null)
+  assert.equal(criteriaContradictionIssue({ verdict: "PASS", criteria: [{ criterion: "a", pass: true }] }), null)
+  assert.equal(criteriaContradictionIssue({ verdict: "PASS" }), null)
+})
+
+test("criteriaIssue's own wording is unchanged — the contradiction half fires first with the stage name", () => {
+  const issue = criteriaIssue(
+    { verdict: "PASS", criteria: [{ criterion: "a", pass: false }] },
+    { stage: "verify", acceptance: ["a"] },
+  )
+  assert.ok(issue)
+  assert.match(issue ?? "", /this VERIFY PASS marks a criterion/)
+})
+
+// --- droppedFindingsNote: the durable trace of a vanished blocking finding ---
+
+const priorSecurity = [
+  { axis: "security", severity: "critical" as const, detail: "user id interpolated into SQL", location: "src/db/query.ts:41" },
+]
+
+test("droppedFindingsNote fires when a PASS no longer mentions a prior blocking finding", () => {
+  const note = droppedFindingsNote(priorSecurity, { verdict: "PASS", axes: fiveAxes() }, "all clean now")
+  assert.ok(note)
+  assert.match(note ?? "", /no longer reports a prior blocking finding/)
+  assert.match(note ?? "", /user id interpolated/)
+  assert.match(note ?? "", /ship gate/)
+})
+
+test("droppedFindingsNote stays silent when the finding is mentioned — prose, findings, or location path", () => {
+  // in the pass's prose
+  assert.equal(
+    droppedFindingsNote(
+      priorSecurity,
+      { verdict: "PASS", axes: fiveAxes() },
+      "Prior finding resolved: user id interpolated into SQL now parameterized",
+    ),
+    null,
+  )
+  // by location path in the record's own citations
+  assert.equal(
+    droppedFindingsNote(priorSecurity, {
+      verdict: "PASS",
+      axes: fiveAxes(),
+      evidence: [{ kind: "file", ref: "src/db/query.ts:41", result: "parameterized" }],
+    }),
+    null,
+  )
+})
+
+test("droppedFindingsNote never fires on FAIL/ERROR or with nothing prior", () => {
+  assert.equal(droppedFindingsNote(priorSecurity, { verdict: "FAIL", reason: "r" }, ""), null)
+  assert.equal(droppedFindingsNote([], { verdict: "PASS", axes: fiveAxes() }, ""), null)
+  assert.equal(droppedFindingsNote(undefined, { verdict: "PASS", axes: fiveAxes() }, ""), null)
+  assert.equal(droppedFindingsNote(priorSecurity, null, ""), null)
+})
+
+// --- the contract's conditional sentences ---
+
+test("the seeded-checks sentences render only for the discovering-consumer stage's contract", () => {
+  const seeded = verdictContractBlock("verify", undefined, "single", true, undefined, true)
+  const unseeded = verdictContractBlock("review", AXES, "single", true, undefined, false)
+  assert.match(seeded, /check commands the loop pre-ran/)
+  assert.doesNotMatch(unseeded, /check commands the loop pre-ran/)
+  // the own-work floor stays in both
+  assert.match(seeded, /work YOU did in this pass/)
+  assert.match(unseeded, /work YOU did in this pass/)
+})
+
+test("the diff-boundary sentence renders only when the stage requires diff evidence", () => {
+  const bounded = verdictContractBlock("review", AXES, "single", true, undefined, false, true)
+  const unbounded = verdictContractBlock("review", AXES, "single", true, undefined, false, false)
+  assert.match(bounded, /TOUCH the diff under review/)
+  assert.doesNotMatch(unbounded, /TOUCH the diff under review/)
+})
+
+test("every check stage's contract carries the PASS-with-unmet-criteria rejection rule", () => {
+  assert.match(verdictContractBlock("verify"), /A PASS that carries a criteria entry marked not met is REJECTED/)
+  assert.match(verdictContractBlock("review", AXES), /A PASS that carries a criteria entry marked not met is REJECTED/)
 })
 
 test("planContractBlock demands checks that terminate, and forbids a criterion only a running server proves", () => {
