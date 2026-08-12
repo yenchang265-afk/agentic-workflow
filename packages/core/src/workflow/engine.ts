@@ -1,5 +1,5 @@
 import type { LoadedManifest, StageDef, WorkflowManifest } from "../manifest/schema.js"
-import { stageDef } from "../manifest/schema.js"
+import { stageDef, stageRequiresCriteria } from "../manifest/schema.js"
 import { renderPrompt, type TemplateContext } from "../manifest/template.js"
 import { resolveComposeHook } from "../manifest/registry.js"
 import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
@@ -7,7 +7,7 @@ import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
 import { contextFor, planVisualizationFor, stagePasses } from "../config.js"
-import { checkDiscoveryBlock, discoveringStage } from "./discovered-checks.js"
+import { checkDiscoveryBlock, discoveringStage, noMachineChecksBlock } from "./discovered-checks.js"
 import {
   planContractBlock,
   planVisualizationBlock,
@@ -333,8 +333,25 @@ export const composeStagePrompt = (
   discover?: string,
 ): string => {
   const rendered = renderPrompt(tpl, ctx)
+  // How many acceptance criteria the prompt itself lists, derived from the SAME
+  // `ctx.acceptance` the template renders — so the contract's count and the
+  // admission gate (`criteriaIssue`, fed from `state.task.acceptance`) cannot
+  // disagree about what the stage was given. Undefined (no acceptance, or a
+  // stage whose completeness gate is axis coverage) keeps the contract
+  // byte-identical.
+  const bullets = ctx.acceptance && typeof ctx.acceptance === "object" ? ctx.acceptance["bullets"] : undefined
+  const criteriaCount =
+    stageRequiresCriteria(def) && typeof bullets === "string" && bullets.length
+      ? bullets.split("\n").length
+      : undefined
+  // The in-band "nothing ran" signal for a DISCOVERING check stage with no
+  // checks on the state: without it the prompt merely lacks a checks section,
+  // and silence reads as "nothing to re-check" rather than "everything is
+  // yours to prove". `discover` is undefined for a config-less caller and
+  // names the consuming stage otherwise, so only that stage can render it.
+  const noChecks = def.kind === "check" && discover === def.name && !ctx.checks ? `\n\n${noMachineChecksBlock(def.name)}` : ""
   return def.kind === "check"
-    ? `${rendered}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence)}`
+    ? `${rendered}${noChecks}\n\n${verdictContractBlock(def.name, def.requiredAxes, mode, def.requireEvidence, criteriaCount)}`
     : `${rendered}\n\n${workScopeBlock(def.name)}${def.planContract ? `\n\n${planContractBlock(def.name)}` : ""}${
         visualize ? `\n\n${planVisualizationBlock(def.name)}` : ""
       }${def.planContract && discover ? `\n\n${checkDiscoveryBlock(def.name, discover)}` : ""}`

@@ -20,6 +20,7 @@ import {
   noActivityMessage,
   noEvidenceMessage,
   observedNothing,
+  seededOnlyMessage,
   substantiated,
   unobservedItems,
   unobservedMessage,
@@ -335,24 +336,117 @@ export const blockingFindingsIssue = (
 }
 
 /**
+ * Reject an effective FAIL that names NOTHING to fix, or null when it names
+ * anything (or is not a FAIL). Applies to every check stage: `reason`, a
+ * criterion marked not met, or a blocking axis finding each satisfy it.
+ *
+ * Without this, a bare `{verdict: "FAIL"}` was admissible on an axis-less stage
+ * (`blockingFindingsIssue` is gated on `requiredAxes`, and the tool schema's
+ * `reason` is optional) — its `verdictFeedbackBlock` rendered empty, so the
+ * next BUILD iteration was told to fix "something". Ordered AFTER
+ * `blockingFindingsIssue`, whose message is the more specific one on stages
+ * that require axes. Brick-proof by construction: a FAIL this rejects twice is
+ * still recorded as declared (`rejectedFallback`), now carrying the rejection
+ * message in `reason` — strictly more feedback than the empty block. Pure.
+ */
+export const failFeedbackIssue = (record: VerdictRecord): string | null => {
+  if (effectiveVerdict(record) !== "FAIL") return null
+  if (record.reason?.trim()) return null
+  if ((record.criteria ?? []).some((c) => !c.pass && c.criterion.trim())) return null
+  if ((record.axes ?? []).some(hasBlockingFinding)) return null
+  return (
+    "Verdict NOT recorded — a FAIL must name what has to change. Call workflow_verdict again with any of: " +
+    "a one-line `reason`, a criteria entry { criterion, pass: false } naming the unmet acceptance criterion, " +
+    "or a blocking axis finding. If nothing actually blocks, record PASS instead — " +
+    "an unexplained FAIL sends the next build iteration off to fix \"something\"."
+  )
+}
+
+/**
+ * What `criteriaIssue` needs: the acceptance criteria the stage was given —
+ * the same `state.task.acceptance` its prompt's `{{acceptance.bullets}}`
+ * renders, threaded by the host so contract and admission read one source.
+ * Empty ⇒ no requirement (sitter kinds carry no task and are untouched).
+ */
+export interface CriteriaContext {
+  /** The check stage being admitted, for the rejection wording. */
+  readonly stage: string
+  /** Acceptance bullets the stage was given; empty ⇒ no requirement. */
+  readonly acceptance: readonly string[]
+}
+
+/** How many acceptance bullets a rejection message names before eliding. */
+const CRITERIA_MESSAGE_MAX = 8
+
+/**
+ * Reject a PASS that does not account for the stage's acceptance criteria, or
+ * null when it does (and null when the stage was given none — every other
+ * stage and kind is untouched).
+ *
+ * Two rules:
+ *  1. A PASS carrying any criterion marked not met is a contradiction — the
+ *     persona's own gate is "PASS only if every criterion is met", enforced
+ *     mechanically here instead of trusted.
+ *  2. Coverage is COUNT-based: at least one non-empty entry per acceptance
+ *     bullet. Deliberately no text matching against the bullets — like
+ *     `requiredAxes` this is a completeness check, not an honesty check, and
+ *     text-matching a paraphrasing model rejects sound PASSes whose retry
+ *     budget ends in an ERROR stop (`rejectedFallback` never salvages a PASS).
+ *
+ * Only PASS is gated, the same asymmetry as `evidenceIssue`: the dangerous
+ * direction is the unearned PASS, and a FAIL already has `failFeedbackIssue`.
+ * Pure.
+ */
+export const criteriaIssue = (record: VerdictRecord, ctx: CriteriaContext | undefined): string | null => {
+  if (!ctx?.acceptance.length) return null
+  if (effectiveVerdict(record) !== "PASS") return null
+  const criteria = (record.criteria ?? []).filter((c) => c.criterion.trim())
+  const unmet = criteria.filter((c) => !c.pass)
+  if (unmet.length) {
+    return (
+      `Verdict NOT recorded — this ${ctx.stage.toUpperCase()} PASS marks ${unmet.length === 1 ? "a criterion" : `${unmet.length} criteria`} ` +
+      `as not met (${unmet.map((c) => `"${c.criterion}"`).join(", ")}). A criterion not met means the stage FAILED: ` +
+      "call workflow_verdict again with verdict FAIL and a reason, or — if the criterion IS actually met — correct its `pass` flag."
+    )
+  }
+  if (criteria.length >= ctx.acceptance.length) return null
+  const shown = ctx.acceptance.slice(0, CRITERIA_MESSAGE_MAX)
+  const elided = ctx.acceptance.length - shown.length
+  return (
+    `Verdict NOT recorded — this ${ctx.stage.toUpperCase()} stage was given ${ctx.acceptance.length} acceptance ` +
+    `${ctx.acceptance.length === 1 ? "criterion" : "criteria"} and your call carried ${criteria.length} criteria ` +
+    `${criteria.length === 1 ? "entry" : "entries"}. A PASS must account for each one. Call workflow_verdict again with a ` +
+    "`criteria` array holding one { criterion, pass } entry per criterion, in the order given" +
+    `: ${shown.map((c) => `"${c}"`).join("; ")}${elided > 0 ? `; …and ${elided} more (see the Acceptance criteria section of your prompt)` : ""}. ` +
+    "Mark a criterion you could not verify as { pass: false } and record FAIL instead of PASS."
+  )
+}
+
+/**
  * Reject a PASS that is not backed by work, or null when it is (and null when
  * the stage does not require evidence — every kind that doesn't opt in is
- * untouched). Three rules, in the order that produces the most useful retry
+ * untouched). The rules, in the order that produces the most useful retry
  * message:
  *
  *  1. A PASS citing nothing is rejected. That is rule A: cheap, and it makes
  *     the claim explicit and auditable rather than implicit.
  *  2. A PASS from a pass the host saw run NOTHING is rejected, whatever it
- *     cited. That is the fabrication this exists to close.
- *  3. A PASS whose every citation is uncorroborated is rejected. Deliberately
- *     "every" and not "any" — see `substantiated` for why a stricter rule
- *     trades a fabricated PASS for a deadlocked loop.
+ *     cited — unless the driver ran checks for this stage (`seeded`), which are
+ *     real work the stage may legitimately trust without re-running.
+ *  3. A PASS corroborated by the agent's OWN observed work is admitted.
+ *     Deliberately "at least one item" and not "every" — see `substantiated`
+ *     for why a stricter rule trades a fabricated PASS for a deadlocked loop.
+ *  4. A PASS whose only corroborated citations are the SEEDED check commands is
+ *     rejected (`seededOnlyMessage`): established fact is not the agent's proof
+ *     of work, and merging the seed into `observed` let a stage that did
+ *     nothing itself cite the pre-run command and pass the gate.
+ *  5. Otherwise nothing cited matches anything observed — rejected.
  *
  * Only PASS is gated, on purpose. A FAIL already has to name what to fix
- * (`blockingFindingsIssue`) and an ERROR means the check could not run — demanding
- * evidence of a stage that just reported a broken test runner would trap it in a
- * rejection loop with nothing it could truthfully say. The dangerous direction
- * is the unearned PASS. Pure.
+ * (`failFeedbackIssue`/`blockingFindingsIssue`) and an ERROR means the check
+ * could not run — demanding evidence of a stage that just reported a broken
+ * test runner would trap it in a rejection loop with nothing it could
+ * truthfully say. The dangerous direction is the unearned PASS. Pure.
  */
 export const evidenceIssue = (record: VerdictRecord, ctx: EvidenceContext | undefined): string | null => {
   if (!ctx?.required) return null
@@ -360,8 +454,12 @@ export const evidenceIssue = (record: VerdictRecord, ctx: EvidenceContext | unde
   const declared = record.evidence ?? []
   if (!declared.length) return noEvidenceMessage(ctx.stage)
   if (!ctx.observed) return null // this host does not observe — the declared rule stands alone
-  if (observedNothing(ctx.observed)) return noActivityMessage(ctx.stage)
+  const seeded = ctx.seeded ?? []
+  if (observedNothing(ctx.observed) && !seeded.length) return noActivityMessage(ctx.stage)
   if (substantiated(declared, ctx.observed)) return null
+  if (seeded.length && substantiated(declared, { commands: seeded, reads: [] })) {
+    return seededOnlyMessage(ctx.stage, ctx.observed)
+  }
   return unobservedMessage(ctx.stage, unobservedItems(declared, ctx.observed))
 }
 
@@ -396,15 +494,26 @@ export const admitVerdict = (
   // so a host that cannot observe tool calls can still pass the declared-only
   // context instead of being forced to fake an observation set.
   evidence?: EvidenceContext,
+  // Optional for the same reason: a caller that predates the criteria gate —
+  // or a kind whose stage carries no acceptance — is byte-identical.
+  criteriaCtx?: CriteriaContext,
 ): VerdictAdmission => {
   // Gated on the INCOMING record, not the merge: each call must justify its own
   // PASS. Merging first would let a second, evidence-free PASS ride in on the
   // first one's citations.
-  const issue =
+  const gate =
     axisCoverageIssue(incoming, requiredAxes) ??
     blockingFindingsIssue(incoming, requiredAxes) ??
-    evidenceIssue(incoming, evidence)
-  if (issue) return { ok: false, message: issue }
+    failFeedbackIssue(incoming)
+  if (gate) return { ok: false, message: gate }
+  // The PASS-side gates are COLLECTED, not short-circuited: the retry budget is
+  // one, so a PASS missing both its criteria and its evidence must learn both
+  // faults from one rejection — serially it would fix one, be rejected for the
+  // other, and ERROR-stop the run.
+  const passIssues = [criteriaIssue(incoming, criteriaCtx), evidenceIssue(incoming, evidence)].filter(
+    (i): i is string => i !== null,
+  )
+  if (passIssues.length) return { ok: false, message: passIssues.join("\nALSO: ") }
   if (!pending) return { ok: true, record: incoming }
   const reasons = [pending.reason, incoming.reason].filter(Boolean)
   const criteria = [...(pending.criteria ?? []), ...(incoming.criteria ?? [])]
@@ -598,13 +707,21 @@ export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"
  * description: a stage that first learns of the requirement from a rejection has
  * already finished its work, and re-citing commands from memory is exactly the
  * fabrication the gate exists to catch. Default `false` keeps every existing
- * rendering byte-identical. Pure.
+ * rendering byte-identical.
+ *
+ * `criteriaCount` (how many acceptance criteria the stage's prompt carries, from
+ * the same `state.task.acceptance` the admission gate reads — see
+ * `criteriaIssue`) adds the per-criterion contract, for the same reason
+ * `requireEvidence` is here: the requirement must reach the stage BEFORE it
+ * works, not first as a rejection. Omitted/zero keeps the rendering
+ * byte-identical. Pure.
  */
 export const verdictContractBlock = (
   stage: string,
   requiredAxes?: readonly string[],
   mode: "single" | "axis" | "lens" = "single",
   requireEvidence = false,
+  criteriaCount?: number,
 ): string =>
   [
     "MANDATORY VERDICT: before you finish, record your verdict by calling the `workflow_verdict` tool",
@@ -612,7 +729,16 @@ export const verdictContractBlock = (
     "`mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict`)",
     `exactly once, with stage: "${stage}", verdict: "PASS" | "FAIL" | "ERROR", and a one-line reason on FAIL/ERROR.`,
     "A verdict written only in prose is IGNORED and the loop records this stage as a failure.",
+    "A FAIL that names nothing to fix — no reason, no criterion marked not met, no blocking finding — is REJECTED and you must call again.",
     "If the workflow_verdict tool is not in your tool list, state that explicitly in your final message and finish.",
+    ...(criteriaCount
+      ? [
+          `ACCEPTANCE CRITERIA: this stage was given ${criteriaCount} acceptance ${criteriaCount === 1 ? "criterion" : "criteria"} (listed in this prompt).`,
+          "The same call MUST carry a `criteria` array with one { criterion, pass } entry per criterion, in the order given.",
+          "A PASS whose criteria are missing or incomplete, or that marks any criterion not met, is REJECTED —",
+          "record FAIL when a criterion is not met.",
+        ]
+      : []),
     ...(requiredAxes?.length
       ? mode === "lens"
         ? [
@@ -660,6 +786,9 @@ export const verdictContractBlock = (
           '{ kind: "file", ref: "<path or path:line you read>", result: "<what you saw there>" }].',
           "Cite them as you issued them: this session's real commands and paths are recorded independently, and",
           "a PASS citing nothing — or nothing that matches what you actually ran — is REJECTED, not recorded.",
+          "At least one citation must be work YOU did in this pass: check commands the loop pre-ran for you are",
+          "established fact, not your proof of work — cite them additionally if you rely on them (never re-run them),",
+          "alongside at least one file you read or command you ran yourself.",
           "So run the checks and read the code BEFORE you record, not after.",
           "FAIL and ERROR need no evidence: if the check could not run, record ERROR with a reason naming what is missing.",
         ]

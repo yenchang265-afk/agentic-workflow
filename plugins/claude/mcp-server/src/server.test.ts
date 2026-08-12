@@ -288,8 +288,37 @@ test("workflow_advance routes a twice-rejected verdict on what the stage declare
 // predates fan-out.
 test("workflow_verdict admits a pass against that pass's own axes, not the stage's", () => {
   const body = toolBody(code(source()), "workflow_verdict")
-  assert.match(body, /admitVerdict\(rec, passAxes\(def, currentPass\(stage\)\), pending, evidenceCtx\)/)
+  assert.match(body, /admitVerdict\(rec, passAxes\(def, currentPass\(stage\)\), pending, evidenceCtx, criteriaCtx\)/)
   assert.doesNotMatch(body, /admitVerdict\(rec, def\.requiredAxes/, "the stage-wide requirement belongs on the accumulated record")
+})
+
+// The criteria gate is STAGE-level (an axis-less check stage), never per-pass:
+// keying it on `passAxes` would bind lens passes of an axis-bearing stage. And
+// the seeded check commands must reach admission as their own channel — merged
+// into the observed ledger they could corroborate a PASS from a stage that did
+// nothing itself.
+test("workflow_verdict derives the criteria context from the stage def and the task, and seeds evidence separately", () => {
+  const body = flat(toolBody(code(source()), "workflow_verdict"))
+  assert.match(body, /stageRequiresCriteria\(def\)/)
+  assert.match(body, /acceptance: active\?\.task\?\.acceptance \?\? \[\]/)
+  assert.match(body, /seeded: checkCommands\(active\?\.checks\?\.\[stage\] \?\? \[\]\)/)
+})
+
+test("observedEvidence folds the ledger only — the seeded commands are no longer merged into it", () => {
+  const body = code(source())
+  const fn = body.slice(body.indexOf("const observedEvidence = "), body.indexOf("const agentRef = "))
+  assert.doesNotMatch(fn, /checkCommands/, "seeding is derivation at the admission call, not mutation of the observation set")
+})
+
+// The run-time half of the zero-checks signal: the park forecast covers plans
+// parked after it shipped; a plan approved before it (or a config changed since)
+// reaches the fire with nothing on disk. One core helper owns predicate and
+// phrasing for both hosts.
+test("runStageChecks notes provenance through the shared helper, discovery-gated", () => {
+  const body = flat(code(source()))
+  assert.match(body, /const note = checksProvenanceNote\(\{/)
+  assert.match(body, /discovering: discoverChecksFor\(config, activeManifest\(\)\.manifest\.kind, stageDef\(activeManifest\(\)\.manifest, stage\)\)/)
+  assert.doesNotMatch(body, /source !== "discovered" \|\| warnings\.length > 0/, "the inline predicate must not survive beside the helper")
 })
 
 // Narrowing admission per pass gives up the stage-wide guarantee, so it has to

@@ -112,7 +112,19 @@ export const MetricsTab = () => {
             </Chip>
           )}
           {data.discovery.checkStageFirings > 0 && (
-            <Chip title="check-stage firings by command provenance (discovered = from the plan's agentic-checks block)">
+            <Chip
+              title={
+                "check-stage firings by command provenance (discovered = from the plan's agentic-checks block)" +
+                Object.entries(data.discovery.byStage ?? {})
+                  .map(
+                    ([stage, sources]) =>
+                      `\n${stage}: ${Object.entries(sources)
+                        .map(([source, n]) => `${source} ${n}`)
+                        .join(" · ")}`,
+                  )
+                  .join("")
+              }
+            >
               checks{" "}
               {Object.entries(data.discovery.bySource)
                 .map(([source, n]) => `${source} ${n}`)

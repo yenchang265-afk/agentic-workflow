@@ -529,6 +529,21 @@ export const stageDef = (manifest: WorkflowManifest, name: string): StageDef => 
 }
 
 /**
+ * Whether a stage's verdict must account for the task's acceptance criteria
+ * (`criteriaIssue`): a check stage with no `requiredAxes`. An axis-bearing
+ * stage (engineering REVIEW) grades the CODE per axis — its completeness gate
+ * is axis coverage, and demanding per-criterion entries from every focused
+ * fan-out pass would reject passes that legitimately saw only their own axis.
+ * A stage this predicate matches is also always pass-mode "single"
+ * (`stagePasses`: lenses are `review`-only and review has axes; axis fan-out
+ * needs `requiredAxes`), so the contract composed once per stage cannot
+ * contradict a focused pass's suffix. The requirement still gates nothing when
+ * the task carries no acceptance (`CriteriaContext.acceptance` empty — every
+ * sitter kind). Pure.
+ */
+export const stageRequiresCriteria = (def: StageDef): boolean => def.kind === "check" && !def.requiredAxes?.length
+
+/**
  * The statuses a kind holds work at for a human: every `park`/`done` effect's
  * `toStatus` across the transition table, plus a backlog kind's declared
  * `humanGates` (gates nothing transitions *into* — see that field's doc). These

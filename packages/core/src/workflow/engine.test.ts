@@ -20,7 +20,7 @@ import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
 import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
-import { checkDiscoveryBlock } from "./discovered-checks.js"
+import { checkDiscoveryBlock, noMachineChecksBlock } from "./discovered-checks.js"
 
 /**
  * Parity suite: the manifest-interpreted engine must reproduce the original
@@ -224,8 +224,16 @@ const withoutArtifact = (state: WorkflowState, stage: string): WorkflowState => 
 const oracleCompose = (state: WorkflowState, stage: string): string => {
   const base = oracleComposeArgs(state, stage)
   const def = stageDef(eng.manifest, stage)
+  // Post-freeze additive semantics, hand-written like the discovery block below:
+  // the DISCOVERING check stage ("verify", spelled out) says so in-band when
+  // zero checks ran, and an axis-less check stage's contract counts the task's
+  // acceptance criteria (criteriaIssue's prompt half).
+  const noChecks =
+    def.kind === "check" && stage === "verify" && !state.checks?.[stage]?.length ? `\n\n${noMachineChecksBlock(stage)}` : ""
+  const criteriaCount =
+    def.kind === "check" && !def.requiredAxes?.length && state.task?.acceptance.length ? state.task.acceptance.length : undefined
   return def.kind === "check"
-    ? `${base}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence)}`
+    ? `${base}${noChecks}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence, criteriaCount)}`
     : `${base}\n\n${workScopeBlock(stage)}${def.planContract ? `\n\n${planContractBlock(stage)}` : ""}${
         // "verify" spelled out, not read from the manifest: this oracle is a
         // hand-written twin, and deriving it would make it agree with the code
@@ -383,6 +391,31 @@ test("composePrompt appends the verdict contract to check stages only", () => {
   for (const stage of ["plan", "build"]) {
     assert.doesNotMatch(composePrompt(eng, { ...state, stage }, stage), /MANDATORY VERDICT/, `${stage} has no contract`)
   }
+})
+
+test("composePrompt counts the acceptance criteria into the axis-less check stage's contract only", () => {
+  const withAcceptance = { id: "t", path: "/p", acceptance: ["Returns 429 over limit", "Configurable per route"] }
+  const state = resumeAtBuild("g", withAcceptance, "PLAN BODY")
+  // VERIFY (check, no axes): the contract names the count the admission gate enforces.
+  assert.match(composePrompt(eng, { ...state, stage: "verify" }, "verify"), /given 2 acceptance criteria/)
+  // REVIEW (axes): completeness is axis coverage — no criteria clause.
+  assert.doesNotMatch(composePrompt(eng, { ...state, stage: "review" }, "review"), /ACCEPTANCE CRITERIA:/)
+  // No acceptance ⇒ byte-identical contract (the empty-acceptance TaskRef).
+  const bare = resumeAtBuild("g", task, "PLAN BODY")
+  assert.doesNotMatch(composePrompt(eng, { ...bare, stage: "verify" }, "verify"), /ACCEPTANCE CRITERIA:/)
+})
+
+test("composePrompt tells a check-less DISCOVERING verify that nothing is established — and only then", () => {
+  const state = resumeAtBuild("g", task, "PLAN BODY")
+  // Zero checks on the state: the block renders.
+  assert.match(composePrompt(eng, { ...state, stage: "verify" }, "verify"), /MACHINE-RUN CHECKS: none ran/)
+  // Checks ran: the checks section renders instead, block gone.
+  const ran = withCheckResults({ ...state, stage: "verify" }, "verify", [PASSED_CHECK])
+  const prompt = composePrompt(eng, ran, "verify")
+  assert.doesNotMatch(prompt, /MACHINE-RUN CHECKS: none ran/)
+  assert.match(prompt, /Check commands the loop already ran/)
+  // REVIEW is not the discovering stage — never the block.
+  assert.doesNotMatch(composePrompt(eng, { ...state, stage: "review" }, "review"), /MACHINE-RUN CHECKS: none ran/)
 })
 
 test("composePrompt appends the plan contract to the flagged PLAN stage only", () => {

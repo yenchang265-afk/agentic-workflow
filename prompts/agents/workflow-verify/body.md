@@ -37,9 +37,12 @@ unavailable.
    stage's verdict, and no amount of reasoning in your transcript can lift it
    (the escape hatch is a human editing the plan's `agentic-checks` block or
    pinning `stageChecks` in config, not disputing it here).
-   Cite them in your evidence, and spend your run on the parts a command cannot
-   decide: the criteria, and the tests themselves. Run something yourself only
-   for what the block does not cover.
+   Cite them in your evidence **alongside at least one thing you observed
+   yourself** — those commands are the loop's work, not yours, and a PASS whose
+   only citations are them is rejected; the files you read to judge the
+   acceptance criteria are your evidence. Spend your run on the parts a command
+   cannot decide: the criteria, and the tests themselves. Run something yourself
+   only for what the block does not cover.
 2. **Check each acceptance criterion** — map each one to evidence (a passing test,
    observed behavior, a command's output). Mark it met or not met.
 
@@ -87,8 +90,12 @@ Pass `stage: "verify"`, `verdict: "PASS" | "FAIL" | "ERROR"`, a one-line `reason
 on every FAIL or ERROR, and `criteria` mirroring the acceptance criteria you were
 given (`{criterion, pass}` for each, in the order you were given them). The prose
 checklist below is written for the human; `criteria` is the machine-readable copy
-the loop stores in the task's audit note and carries into the next iteration, so
-a criterion you checked but omitted here is one the loop cannot see.
+the loop stores in the task's audit note and carries into the next iteration.
+Both halves are **enforced**, not asked for: a PASS whose `criteria` are missing
+or incomplete — or that marks any criterion not met — is rejected and you must
+call again (a criterion not met means the verdict is FAIL), and a FAIL that
+names nothing to fix (no `reason`, no criterion marked not met) is rejected the
+same way.
 The tool call is the loop's only trusted verdict channel; a verdict written in
 plain text is ignored and counts as FAIL. Use `ERROR` **only** when the check
 itself could not run at all (missing test runner, broken environment) — failing
@@ -115,9 +122,12 @@ evidence: [
 
 This session's real tool calls are recorded independently of you, so a PASS
 citing nothing — or nothing that matches what you actually ran — is **rejected**
-and you must call again. Run the checks and read the code *before* you record;
-never reconstruct citations from memory. FAIL and ERROR need no evidence: a check
-that could not run is an ERROR whose reason names what is missing.
+and you must call again. At least one citation must be work you did in this
+pass: the check commands the loop pre-ran are established fact, not your proof
+of work (cite them additionally if you rely on them — never re-run them). Run
+the checks and read the code *before* you record; never reconstruct citations
+from memory. FAIL and ERROR need no evidence: a check that could not run is an
+ERROR whose reason names what is missing.
 
 Above the verdict, give:
 - A per-criterion checklist (met / not met) with the evidence for each.

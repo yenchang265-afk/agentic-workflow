@@ -14,7 +14,7 @@ import {
 } from "@agentic-workflow/core/workflow/stage-marker"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
 import { defaultWorkflowsDir } from "@agentic-workflow/core/manifest/dir"
-import { stageDef, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
+import { stageDef, stageRequiresCriteria, type LoadedManifest } from "@agentic-workflow/core/manifest/schema"
 import { combineSkips, pollOnce } from "@agentic-workflow/core/scheduler/scheduler"
 import { appendSchedulerEvents, skipSetKey, type SchedulerEvent } from "@agentic-workflow/core/scheduler/events-log"
 import {
@@ -106,6 +106,7 @@ import {
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
+  type CriteriaContext,
   type RejectedVerdict,
   type StagePass,
   type Verdict,
@@ -114,10 +115,11 @@ import {
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
-import { hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
+import { checksProvenanceNote, hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   EXPERIMENTAL_KINDS,
   concurrencyFor,
+  discoverChecksFor,
   enabledWorkflowKinds,
   enforcesAxisCoverage,
   fanoutOverriddenByLenses,
@@ -819,12 +821,29 @@ export const recordVerdict = (
   // `observed` is whatever this pass has accumulated so far — never null on this
   // host, because the guard that fills it runs in this process: an empty set here
   // genuinely means the pass did nothing, which is exactly what should reject a PASS.
+  // `seeded` carries the driver-run check commands SEPARATELY: they defeat the
+  // "did nothing" rejection (this process ran them, trusting them is correct)
+  // but cannot corroborate a PASS on their own (`seededOnlyMessage`).
   const evidence: EvidenceContext = {
     stage,
     required: def.requireEvidence,
     observed: observedEvidence.get(sessionID) ?? NO_OBSERVATIONS,
+    seeded: checkCommands(state.checks?.[stage] ?? []),
   }
-  const admission = admitVerdict(record, axisRequirement.get(sessionID), prev?.stage === stage ? prev.record : null, evidence)
+  // Stage-level via the predicate, never the per-pass `axisRequirement` map: a
+  // lens pass clears that map, and the criteria gate must not suddenly bind
+  // lens passes of an axis-bearing stage. Empty acceptance (sitter kinds carry
+  // no task) leaves the gate inert.
+  const criteria: CriteriaContext | undefined = stageRequiresCriteria(def)
+    ? { stage, acceptance: state.task?.acceptance ?? [] }
+    : undefined
+  const admission = admitVerdict(
+    record,
+    axisRequirement.get(sessionID),
+    prev?.stage === stage ? prev.record : null,
+    evidence,
+    criteria,
+  )
   if (!admission.ok) {
     // Keep the refused record, not just the fact of a refusal: a stage that
     // reported twice and was refused twice is routed on what it DECLARED rather
@@ -1500,13 +1519,11 @@ export const runStagePasses = async (
       recordedVerdicts.delete(passSessionID) // no stale verdict may leak into this pass
       recordedBlocked.delete(passSessionID) // nor a stale "blocked" from an earlier stage
       observedEvidence.delete(passSessionID) // ...nor a previous pass's work corroborate this one's PASS
-      // Seed the driver-run checks as observed work. They ARE observed — this
-      // process ran them and holds their exit codes — and without the seed a
-      // stage that correctly trusts the results instead of re-running them can
-      // be observed doing nothing, have its PASS rejected by `evidenceIssue`,
-      // and record a FAIL on a green suite. Re-seeded per attempt because the
-      // clear above is per attempt.
-      for (const command of checkCommands(state.checks?.[stage] ?? [])) noteEvidence(passSessionID, { command })
+      // The driver-run checks are NOT seeded into the observed set: they reach
+      // admission as `EvidenceContext.seeded` (built in `recordVerdict` from the
+      // state), where they defeat the "did nothing" rejection without being able
+      // to corroborate a PASS on their own. Derivation, not mutation — so the
+      // per-attempt clear above needs no re-seed.
       driftNoted.delete(passSessionID) // one drift note per stage attempt, not per run
       // Each ATTEMPT gets a full stage timeout, so the advertised deadline and
       // the claim stamp are refreshed here, not once per stage: a fan-out
@@ -2015,29 +2032,30 @@ const driveChain = async (
     const checked = await runStageChecks(deps, config, loaded, step.state, step.action.stage)
     if (stageDef(loaded.manifest, step.action.stage).kind === "check") {
       // Record the provenance for this stage's samples, and — ONCE per run,
-      // only when the outcome would otherwise be silent (the plan carries a
-      // fence but its commands are not what will run) — say so durably on the
-      // task file. A whole inadmissible block used to be indistinguishable, on
-      // disk, from a plan that never declared one.
+      // only when the outcome would otherwise be silent — say so durably on the
+      // task file. `checksProvenanceNote` owns the predicate and the phrasing
+      // for both hosts: a fence whose commands are not what ran, and a
+      // discovering stage that ran with no fence and zero commands (the run-time
+      // truth beside the park-time forecast — a plan approved before the
+      // forecast shipped reaches this fire with nothing on disk).
       const infoKey = `${sessionID}:${step.action.stage}`
       const prior = stageChecksInfo.get(infoKey)
       const info = { source: checked.source, ran: checked.ran, refused: checked.refused, detail: checked.detail, noted: prior?.noted ?? false }
       stageChecksInfo.set(infoKey, info)
-      const silentDegradation = hasChecksFence(step.state.artifacts.plan ?? "") && (checked.source !== "discovered" || checked.refused > 0)
-      if (!info.noted && step.state.task && silentDegradation) {
+      const note = checksProvenanceNote({
+        stage: step.action.stage,
+        source: checked.source,
+        ran: checked.ran,
+        refused: checked.refused,
+        detail: checked.detail,
+        fencePresent: hasChecksFence(step.state.artifacts.plan ?? ""),
+        discovering: discoverChecksFor(config, loaded.manifest.kind, stageDef(loaded.manifest, step.action.stage)),
+      })
+      if (!info.noted && step.state.task && note) {
         info.noted = true
         const cur = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", step.state.task.id)
         if (cur) {
-          await appendNote(
-            deps.$,
-            cur,
-            auditNote(
-              `Discovered checks at ${step.action.stage.toUpperCase()}: ${checked.ran} ran${checked.detail ? `; ${checked.detail}` : ` (source: ${checked.source})`}`,
-              new Date(),
-              actor,
-            ),
-            deps.log,
-          )
+          await appendNote(deps.$, cur, auditNote(note, new Date(), actor), deps.log)
         }
       }
     }

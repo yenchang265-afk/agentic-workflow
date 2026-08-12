@@ -133,7 +133,8 @@ every required axis; when they don't, those axes go unreviewed and both hosts wa
 which ones.
 
 A check stage may also declare `requireEvidence: true` (engineering's `verify`
-and `review` do). A **PASS** on such a stage must then carry an `evidence` array
+and `review` do, and so does each sitter kind's `verify`). A **PASS** on such a
+stage must then carry an `evidence` array
 citing what it observed — `{ kind: "command" | "file", ref, result? }` — and the
 host cross-checks those citations against the commands and file reads it recorded
 independently while the stage ran. A PASS citing nothing, a PASS from a pass that
@@ -151,6 +152,15 @@ falsifiable, not true. A host that does not record tool calls falls back to the
 declared-evidence rule alone — the gate weakens, it never silently vanishes.
 `requireEvidence` on a `work` stage is a manifest error (there is no verdict to
 carry it).
+
+Commands the **driver** ran for the stage (declared or discovered checks) are a
+carve-out with less weight than the stage's own work: citing them is legitimate
+(the stage is told to trust their exit codes, never re-run them) and they defeat
+the "ran nothing" rejection, but they cannot corroborate a PASS **by
+themselves** — at least one corroborated citation must be something the stage
+did itself (typically the files it read to judge the acceptance criteria).
+Before the carve-out they were merged straight into the observed set, and a
+stage that did nothing could cite the pre-run check command and pass the gate.
 
 A **work** stage may declare `planContract: true` (engineering's `plan` does).
 Its composed prompt then carries the plan-structure contract after the scope

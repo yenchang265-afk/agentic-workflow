@@ -5,6 +5,8 @@ import {
   allAxesUnassessedReason,
   axisCoverageIssue,
   axisUnassessed,
+  criteriaIssue,
+  failFeedbackIssue,
   noAdmissibleVerdictReason,
   rejectedFallback,
   evidenceIssue,
@@ -760,6 +762,208 @@ test("the contract paragraph carries the proof-of-work half only when the stage 
   // Byte-identical to the axis-less, evidence-less form is what every other
   // check stage across every kind renders.
   assert.equal(verdictContractBlock("verify"), verdictContractBlock("verify", undefined, "single", false))
+})
+
+// --- a FAIL must name what has to change (every check stage) ---
+
+test("failFeedbackIssue rejects an effective FAIL that names nothing", () => {
+  const issue = failFeedbackIssue({ verdict: "FAIL" })
+  assert.match(issue ?? "", /must name what has to change/)
+  assert.match(issue ?? "", /reason/)
+})
+
+test("failFeedbackIssue is satisfied by a reason, a failed criterion, or a blocking finding — any one", () => {
+  assert.equal(failFeedbackIssue({ verdict: "FAIL", reason: "tests red" }), null)
+  assert.equal(failFeedbackIssue({ verdict: "FAIL", criteria: [{ criterion: "returns 429", pass: false }] }), null)
+  assert.equal(
+    failFeedbackIssue({
+      verdict: "FAIL",
+      axes: [{ axis: "checks", verdict: "FAIL", findings: [{ severity: "critical", detail: "npm test exited 1" }] }],
+    }),
+    null,
+  )
+})
+
+test("failFeedbackIssue is not satisfied by whitespace, met criteria, or suggestion findings", () => {
+  assert.notEqual(failFeedbackIssue({ verdict: "FAIL", reason: "  " }), null)
+  assert.notEqual(failFeedbackIssue({ verdict: "FAIL", criteria: [{ criterion: "returns 429", pass: true }] }), null)
+  assert.notEqual(
+    failFeedbackIssue({
+      verdict: "FAIL",
+      axes: [{ axis: "checks", verdict: "FAIL", findings: [{ severity: "suggestion", detail: "rename it" }] }],
+    }),
+    null,
+  )
+})
+
+test("failFeedbackIssue gates the EFFECTIVE FAIL: a declared PASS worsened by a blocking finding already names it", () => {
+  // The worsening finding IS the feedback, so the record passes.
+  const record: VerdictRecord = {
+    verdict: "PASS",
+    axes: [{ axis: "security", verdict: "PASS", findings: [{ severity: "critical", detail: "hole" }] }],
+  }
+  assert.equal(effectiveVerdict(record), "FAIL")
+  assert.equal(failFeedbackIssue(record), null)
+})
+
+test("failFeedbackIssue leaves PASS and ERROR alone", () => {
+  assert.equal(failFeedbackIssue({ verdict: "PASS" }), null)
+  assert.equal(failFeedbackIssue({ verdict: "ERROR" }), null)
+})
+
+test("admitVerdict refuses a bare FAIL, and on an axes stage the axis message wins", () => {
+  const bare = admitVerdict({ verdict: "FAIL" }, undefined, null)
+  assert.equal(bare.ok, false)
+  assert.match(bare.ok ? "" : bare.message, /must name what has to change/)
+  // Axes stage: a finding-less FAIL still draws blockingFindingsIssue's more
+  // specific message, not failFeedbackIssue's.
+  const axes = admitVerdict({ verdict: "FAIL", reason: "bad", axes: fiveAxes() }, AXES, null)
+  assert.equal(axes.ok, false)
+  assert.match(axes.ok ? "" : axes.message, /severity "critical" or "important"/)
+})
+
+// --- a PASS must account for the acceptance criteria (axis-less check stages) ---
+
+const criteriaCtx = (acceptance: string[] = ["returns 429 over limit", "configurable per route"]) => ({
+  stage: "verify",
+  acceptance,
+})
+
+test("criteriaIssue is inert with no context, empty acceptance, or a non-PASS verdict", () => {
+  assert.equal(criteriaIssue({ verdict: "PASS" }, undefined), null)
+  assert.equal(criteriaIssue({ verdict: "PASS" }, criteriaCtx([])), null)
+  assert.equal(criteriaIssue({ verdict: "FAIL", reason: "r" }, criteriaCtx()), null)
+  assert.equal(criteriaIssue({ verdict: "ERROR", reason: "r" }, criteriaCtx()), null)
+})
+
+test("criteriaIssue rejects a PASS with missing or incomplete criteria, naming the bullets", () => {
+  const missing = criteriaIssue({ verdict: "PASS" }, criteriaCtx())
+  assert.match(missing ?? "", /given 2 acceptance criteria/)
+  assert.match(missing ?? "", /returns 429 over limit/)
+  assert.match(missing ?? "", /\{ criterion, pass \}/)
+  const partial = criteriaIssue({ verdict: "PASS", criteria: [{ criterion: "returns 429 over limit", pass: true }] }, criteriaCtx())
+  assert.match(partial ?? "", /carried 1 criteria entry/)
+})
+
+test("criteriaIssue admits a PASS covering every bullet, and ignores blank entries", () => {
+  const record: VerdictRecord = {
+    verdict: "PASS",
+    criteria: [
+      { criterion: "returns 429 over limit", pass: true },
+      { criterion: "configurable per route", pass: true },
+    ],
+  }
+  assert.equal(criteriaIssue(record, criteriaCtx()), null)
+  // Blank entries do not count toward coverage.
+  const blank: VerdictRecord = { verdict: "PASS", criteria: [{ criterion: "  ", pass: true }, { criterion: "x", pass: true }] }
+  assert.notEqual(criteriaIssue(blank, criteriaCtx()), null)
+})
+
+test("criteriaIssue rejects the contradiction: a PASS marking a criterion not met", () => {
+  const record: VerdictRecord = {
+    verdict: "PASS",
+    criteria: [
+      { criterion: "returns 429 over limit", pass: true },
+      { criterion: "configurable per route", pass: false },
+    ],
+  }
+  const issue = criteriaIssue(record, criteriaCtx())
+  assert.match(issue ?? "", /not met/)
+  assert.match(issue ?? "", /verdict FAIL/)
+  assert.match(issue ?? "", /configurable per route/)
+})
+
+test("criteriaIssue clamps a long bullet list in the rejection message", () => {
+  const many = Array.from({ length: 12 }, (_, i) => `criterion ${i + 1}`)
+  const issue = criteriaIssue({ verdict: "PASS" }, criteriaCtx(many))
+  assert.match(issue ?? "", /criterion 8/)
+  assert.doesNotMatch(issue ?? "", /"criterion 9"/)
+  assert.match(issue ?? "", /and 4 more/)
+})
+
+test("admitVerdict joins the criteria and evidence rejections into ONE message", () => {
+  // One retry must be able to fix both faults; serial rejections would burn it.
+  const admission = admitVerdict({ verdict: "PASS" }, undefined, null, ctx(), criteriaCtx())
+  assert.equal(admission.ok, false)
+  const message = admission.ok ? "" : admission.message
+  assert.match(message, /acceptance criteria/)
+  assert.match(message, /ALSO:/)
+  assert.match(message, /must cite what you actually observed/)
+})
+
+test("admitVerdict with a criteria context admits a complete, met PASS", () => {
+  const admission = admitVerdict(
+    {
+      verdict: "PASS",
+      criteria: [
+        { criterion: "returns 429 over limit", pass: true },
+        { criterion: "configurable per route", pass: true },
+      ],
+      evidence: [NPM_TEST],
+    },
+    undefined,
+    null,
+    ctx(),
+    criteriaCtx(),
+  )
+  assert.ok(admission.ok)
+})
+
+test("the contract paragraph carries the acceptance-criteria half only when given a count", () => {
+  assert.doesNotMatch(verdictContractBlock("verify"), /ACCEPTANCE CRITERIA/)
+  assert.match(verdictContractBlock("verify", undefined, "single", true, 2), /given 2 acceptance criteria/)
+  assert.match(verdictContractBlock("verify", undefined, "single", true, 1), /given 1 acceptance criterion/)
+  // Omitted or zero ⇒ byte-identical to today's rendering.
+  assert.equal(verdictContractBlock("verify", undefined, "single", true), verdictContractBlock("verify", undefined, "single", true, 0))
+})
+
+// --- seeded check commands: activity, but never a PASS's only corroboration ---
+
+test("a PASS citing only the seeded check command is rejected, with the pass's own work sampled", () => {
+  const issue = evidenceIssue(
+    { verdict: "PASS", evidence: [NPM_TEST] },
+    ctx({ observed: { commands: [], reads: ["/wt/src/limit.ts"] }, seeded: ["cd /wt && npm test"] }),
+  )
+  assert.match(issue ?? "", /the loop itself ran for you/)
+  assert.match(issue ?? "", /src\/limit\.ts/)
+})
+
+test("a seeded set defeats the ran-nothing rejection but not the seeded-only one", () => {
+  // Empty observed + seeded: not "did nothing" (the driver ran real checks),
+  // but a PASS citing only those checks is still rejected.
+  const issue = evidenceIssue(
+    { verdict: "PASS", evidence: [NPM_TEST] },
+    ctx({ observed: { commands: [], reads: [] }, seeded: ["cd /wt && npm test"] }),
+  )
+  assert.doesNotMatch(issue ?? "", /ran no commands and read no files, so a PASS is unsupported/)
+  assert.match(issue ?? "", /the loop itself ran for you/)
+  assert.match(issue ?? "", /no commands and read no files of its own/)
+})
+
+test("a PASS citing the seeded command plus its own observed work is admitted", () => {
+  assert.equal(
+    evidenceIssue(
+      { verdict: "PASS", evidence: [NPM_TEST, { kind: "file", ref: "src/limit.ts:88" }] },
+      ctx({ observed: { commands: [], reads: ["/wt/src/limit.ts"] }, seeded: ["cd /wt && npm test"] }),
+    ),
+    null,
+  )
+})
+
+test("a citation matching neither observed nor seeded still draws the unobserved message", () => {
+  const issue = evidenceIssue(
+    { verdict: "PASS", evidence: [{ kind: "command", ref: "cargo test" }] },
+    ctx({ observed: { commands: ["git status"], reads: [] }, seeded: ["cd /wt && npm test"] }),
+  )
+  assert.match(issue ?? "", /none of the evidence cited/)
+})
+
+test("a null observation set ignores the seed entirely — the declared-only rule stands", () => {
+  // A hook-less host must not flip into strict matching because checks ran.
+  assert.equal(
+    evidenceIssue({ verdict: "PASS", evidence: [{ kind: "command", ref: "anything" }] }, ctx({ observed: null, seeded: ["npm test"] })),
+    null,
+  )
 })
 
 // --- a twice-rejected verdict: the loop acts on what the stage declared ---

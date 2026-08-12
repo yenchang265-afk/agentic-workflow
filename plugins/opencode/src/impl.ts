@@ -1064,7 +1064,10 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             .string()
             .max(500)
             .optional()
-            .describe("One-sentence summary of why. Give it on every FAIL or ERROR so the next iteration knows what to fix."),
+            .describe(
+              "One-sentence summary of why. REQUIRED on FAIL unless a criterion marked not met or a blocking finding " +
+                "names the problem — a FAIL that names nothing to fix is REJECTED.",
+            ),
           criteria: tool.schema
             .array(
               tool.schema.object({
@@ -1073,7 +1076,11 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
               }),
             )
             .optional()
-            .describe("Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt."),
+            .describe(
+              "Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt. REQUIRED for a " +
+                "PASS on a stage given acceptance criteria: one entry per criterion, in the order given — a PASS with " +
+                "missing/incomplete criteria, or one marking any criterion not met, is REJECTED (record FAIL instead).",
+            ),
           axes: tool.schema
             .array(
               tool.schema.object({
@@ -1120,7 +1127,9 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             .describe(
               "Proof of work. REQUIRED for a PASS on a stage whose prompt carries the PROOF OF WORK contract " +
                 "(engineering verify/review): this session's real commands and file reads are recorded independently, " +
-                "and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. FAIL/ERROR need none.",
+                "and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. At least one citation " +
+                "must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. " +
+                "FAIL/ERROR need none.",
             ),
         },
         execute: async (args, ctx) => {
