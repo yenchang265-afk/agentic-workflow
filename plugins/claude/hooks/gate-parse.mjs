@@ -156,9 +156,17 @@ export const gateArgsFor = (prompt) => {
     // retask always names its target; a bare one is malformed — refused
     // deterministically with usage rather than guessing which task to
     // un-approve or spending a model turn to say so.
-    const id = unquote((retask[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "")
+    //
+    // The trailing words are the `[note]` and MUST be forwarded, exactly as
+    // `abandon`/`replan` forward theirs: `runGate` joins them into `reason`, and
+    // core writes ` — ${reason}` onto the audit note. Dropping them made the
+    // shipped verb prose ("why the goal was wrong survives in the task file, not
+    // just in this turn's context") false on the hook path — i.e. on every typed
+    // command, since the hook is what a typed retask dispatches through.
+    const words = (retask[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = unquote(words[0] || "")
     if (!id) return { usage: "Usage: /agentic-workflow:engineering retask <id> [note]." }
-    return { argv: ["gate", "retask", id], continueTurn: true }
+    return { argv: ["gate", "retask", id, ...words.slice(1)], continueTurn: true }
   }
   const abandon = prompt.match(ABANDON)
   if (abandon) {
