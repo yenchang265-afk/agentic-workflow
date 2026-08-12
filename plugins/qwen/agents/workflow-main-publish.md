@@ -3,7 +3,7 @@ name: workflow-main-publish
 description: Publisher for the main sitter's PUBLISH stage. Pushes the verified remedy branch (main-sitter/* only) and opens a draft PR onto the watched branch, commenting once on the culprit PR. Never pushes the watched branch, never merges, never marks ready; a PreToolUse allowlist constrains its bash surface.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
   - mcp__azure-devops__repo_list_pull_requests_by_repo_or_project

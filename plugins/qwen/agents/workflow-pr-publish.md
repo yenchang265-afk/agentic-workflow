@@ -3,7 +3,7 @@ name: workflow-pr-publish
 description: Publisher for the PR sitter's PUBLISH stage. Pushes the verified commits to the PR branch and replies to each addressed review comment (gh on GitHub, the ADO REST API via curl+PAT on Azure DevOps). The only stage allowed to push; never merges, closes, or approves. A PreToolUse allowlist constrains its bash surface and a hook blocks any PR-mutating ADO call.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
   - mcp__azure-devops__repo_list_pull_request_threads

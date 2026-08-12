@@ -3,7 +3,7 @@ name: workflow-dep-publish
 description: Publisher for the dep sitter's PUBLISH stage. Pushes the verified upgrade branch (feature/* only) and opens a draft PR naming the advisory, impact, and verification result. Never merges, never marks ready, never pushes the default branch; a PreToolUse allowlist constrains its bash surface.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
   - mcp__azure-devops__repo_list_pull_requests_by_repo_or_project

@@ -3,7 +3,7 @@ name: workflow-review-assess
 description: Assessor for the review sitter's ASSESS stage. Reads a PR's diff in the context of the surrounding code (optionally running the tests) and drafts one structured review comment. Never edits files, never pushes, never posts.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
 ---

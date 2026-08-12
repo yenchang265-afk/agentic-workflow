@@ -2,6 +2,6 @@ name: workflow-plan-author
 description: Writes the ## Implementation Plan onto one already-queued task, in place — the loop's PLAN stage. Reads the code first so the plan is written right before execution. Never creates or reshapes a task (that is workflow-task-author) and never touches source code.
 tools:
   - read_file
-  - grep_search
+  - search_file_content
   - glob
   - write_file

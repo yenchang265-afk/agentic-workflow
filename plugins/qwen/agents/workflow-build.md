@@ -6,7 +6,7 @@ tools:
   - edit
   - write_file
   - run_shell_command
-  - grep_search
+  - search_file_content
   - glob
   - mcp__agentic-workflow__workflow_blocked
 ---

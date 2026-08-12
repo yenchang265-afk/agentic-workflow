@@ -5,7 +5,7 @@ tools:
   - read_file
   - edit
   - write_file
-  - grep_search
+  - search_file_content
   - glob
   - run_shell_command
 ---
