@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { clearWorkflow, setWorkflow, type WorkflowState } from "@agentic-workflow/core/workflow/state"
 import { parseConfig } from "@agentic-workflow/core/config"
 import type { Config } from "./config.ts"
-import { agentModelPatch, applyAgentModels, applyBashAllowlistConfig, draftModelNote, makeAgenticWorkflow } from "./impl.ts"
+import { agentModelPatch, applyAgentModels, applyBashAllowlistConfig, draftModelNote, gateMovesFirst, makeAgenticWorkflow } from "./impl.ts"
 import { isQuestionOpen, resetAskState } from "./workflow/driver.ts"
 
 /**
@@ -518,6 +518,30 @@ const runFailingCommand = async (args: string): Promise<string> => {
   await hooks["command.execute.before"]({ command: "agentic-workflow:engineering", sessionID: "ses_f", arguments: args }, output)
   return output.parts[0]!.text!
 }
+
+test("every verb whose move is deterministic moves BEFORE the reconcile sweep", () => {
+  // The swallowed-move class: reconcileOnce does heavy git/fs work on the first
+  // command of a session, and doing it first pushed the task-file move past
+  // opencode's command-hook window — the model then read pre-move state and a
+  // retry "worked" (the sweep is one-shot, so attempt 2 was fast).
+  for (const verb of ["approve", "replan", "retask"]) {
+    assert.equal(gateMovesFirst("engineering", verb), true, `${verb} moves a task deterministically`)
+  }
+  // `retask` is the sharpest case and the one that was missing: its markdown
+  // PASSES THROUGH to the model on success, and that prose says to resolve the id
+  // in draft/ only and to declare it wrong if absent — so a late move does not
+  // merely read as stale, the model tells the user a valid id does not exist.
+  assert.equal(gateMovesFirst("engineering", "retask"), true)
+  // Everything else reconciles first. `abandon`/`remove` do move a file, but they
+  // are report-and-stop: the plugin's own outcome REPLACES the rendered body, so
+  // there is no arm on which the model reads the backlog itself and can be misled
+  // by a late move — which is what earns a verb the reordering.
+  for (const verb of ["new", "claim", "watch", "status", "doctor", "plan", "recover", "abandon", "remove", "stop"]) {
+    assert.equal(gateMovesFirst("engineering", verb), false, `${verb} reconciles first`)
+  }
+  // Sitter kinds have no folder gates at all.
+  assert.equal(gateMovesFirst("pr-sitter", "approve"), false)
+})
 
 test("a throw in the deterministic half overrides the body instead of leaving it as instructions", async () => {
   const text = await runFailingCommand("recover t1")

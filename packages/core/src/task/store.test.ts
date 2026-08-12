@@ -20,6 +20,7 @@ import {
   extractStopContext,
   NO_REASON_FALLBACK,
   pendingPlanRejection,
+  TASK_RESHAPED_MARKER,
   replanFor,
   unaddressedRejectionCount,
   findByIdIn,
@@ -278,6 +279,30 @@ test("pendingPlanRejection retires with the same anchors as the reason extractor
   // A quoted, stamp-less rejection line is not lifecycle state.
   const unstamped = `${PLAN_HEADING}\n\nOld.\n> Plan rejected — sent back to queued for re-planning\n`
   assert.equal(pendingPlanRejection(task("a", 0, unstamped)), undefined)
+})
+
+test("a re-shape retires the rejection — the plan it critiqued and its goal are both gone", () => {
+  // The retask path: plan rejected → task re-queued → human re-shapes the GOAL.
+  // `retaskTask` also strips the plan section, so the PLAN_HEADING anchor is not
+  // there to retire the rejection; without TASK_RESHAPED_MARKER the next PLAN
+  // pass would be handed a critique of a plan that no longer exists, written
+  // against a goal that has since changed.
+  const body =
+    "Reshaped goal.\n" +
+    rejectionNote("the plan indexed the wrong table") +
+    `\n> ${TASK_RESHAPED_MARKER.slice(2)} for re-shaping — approval withdrawn; superseded plan removed — wrong screen [2026-01-04T00:00:00.000Z by dev]\n`
+  assert.equal(pendingPlanRejection(task("a", 0, body)), undefined)
+  assert.equal(extractReplanReason(task("a", 0, body)), undefined)
+})
+
+test("a re-shape does NOT retire a rejection recorded after it", () => {
+  // Order is the whole rule: re-shape, re-approve, re-plan, reject again — that
+  // newest rejection is pending and must reach the next PLAN pass.
+  const body =
+    "Reshaped goal.\n" +
+    `\n> ${TASK_RESHAPED_MARKER.slice(2)} for re-shaping — approval withdrawn [2026-01-04T00:00:00.000Z by dev]\n` +
+    rejectionNote("still the wrong table")
+  assert.deepEqual(pendingPlanRejection(task("a", 0, body)), { reason: "still the wrong table" })
 })
 
 // The exact note shape `runStop` writes for a non-transient stop with attempts

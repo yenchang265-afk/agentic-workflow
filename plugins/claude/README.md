@@ -76,11 +76,14 @@ Authoring + gates (`/agentic-workflow:engineering`):
   criteria, then writes a **planless draft** into `docs/tasks/draft/`. Each
   question comes through `AskUserQuestion`, one at a time, with the agent's
   guess as the first choice and "Other" still open for a free-text answer.
-- `/agentic-workflow:engineering retask <id> [note]` — reshape a **planless** task before
-  it is planned: the main agent re-interviews you (seeded by the optional note)
-  and rewrites the task in place — same id, no plan. Takes a `draft/` task, or
-  a `queued/` one (its approval is withdrawn and it moves back to `draft/`
-  first). Once a plan exists, `replan` is the verb instead.
+- `/agentic-workflow:engineering retask <id> [note]` — reshape a task whose goal came
+  out wrong, before it is built: the main agent re-interviews you (seeded by the
+  optional note) and rewrites the task in place — same id, no plan. Takes a
+  `draft/` task, or a `queued/` one (its approval is withdrawn and it moves back
+  to `draft/` first; a superseded plan an earlier `replan` left behind is
+  removed, since it was written against the goal you are rewriting). Once a plan
+  is under a gate or a build — `plan-review/` onward — `replan` is the verb
+  instead.
 - `/agentic-workflow:engineering approve [id]` — THE gate verb, unified and folder-driven
   (handled deterministically by a hook before the agent's turn). Which move
   happens depends on which folder the task is in (draft → queued, plan-review

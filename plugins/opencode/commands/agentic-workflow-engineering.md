@@ -88,10 +88,10 @@ Dispatch:
      the plugin's.
 <!-- /aw:verb new -->
 <!-- aw:verb retask -->
-- **`retask <id> [note]`** — reshape a planless task when the drafted goal or
+- **`retask <id> [note]`** — reshape an unplanned task when the drafted goal or
   acceptance came out wrong: one still in `draft/`, or one already approved
-  into `queued/` but not yet planned. YOU (the current agent) run the
-  interview, same as `new`:
+  into `queued/` (including one a `replan` sent back there). YOU (the current
+  agent) run the interview, same as `new`:
   1. The plugin has already run the deterministic half before your turn: a
      `queued/` task was moved **back to `draft/`** (its approval withdrawn — the
      reshaped goal has to be re-approved, and the toast says so). A refusal
@@ -103,7 +103,11 @@ Dispatch:
      with the fix (`npm install` at the agentic-workflow repo root, then
      restart opencode), and stop. The `[note]` is also written onto that audit
      note, so why the goal was wrong survives in the task file, not just in
-     this turn's context.
+     this turn's context. A superseded `## Implementation Plan` a prior
+     `replan` left on the task is removed by the same move — it was written
+     against the goal you are about to rewrite. If the toast says it was KEPT
+     (off-schema frontmatter blocks the rewrite), relay that; do not delete the
+     section yourself.
   2. Read the existing draft and show its current title, priority, acceptance,
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with

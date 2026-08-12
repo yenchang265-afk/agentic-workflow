@@ -27,6 +27,7 @@ const makeCtx = (
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
   const log: string[] = []
+  const raw: string[] = []
   const $ = ((strings: TemplateStringsArray, ...exprs: unknown[]) => {
     let cmd = ""
     strings.forEach((s, i) => {
@@ -35,6 +36,10 @@ const makeCtx = (
     })
     const norm = cmd.trim().replace(/\s+/g, " ")
     log.push(norm)
+    // `log` collapses whitespace, which makes it blind to exactly the defect the
+    // one-line-reason rule exists for: a note containing a newline normalizes to
+    // the same string as a flattened one. `raw` keeps the command verbatim.
+    raw.push(cmd.trim())
     const parts = norm.split(" ")
     let out = { exitCode: 0, stdout: "" }
     if (parts[0] === "cat") out = parts[1]! in fs ? { exitCode: 0, stdout: fs[parts[1]!]! } : { exitCode: 1, stdout: "" }
@@ -54,6 +59,18 @@ const makeCtx = (
     } else if (parts[0] === "rm") {
       // rm [-f] <path…> — drop any listed paths (missing is fine under -f).
       for (const p of parts.slice(1)) if (p !== "-f" && p in fs) delete fs[p]
+    } else if (parts[0] === "printf") {
+      // `writeFileAtomic` (printf > tmp, then mv) and `appendFileChunked`
+      // (printf >> file) are how every durable write lands, so a fake that
+      // ignored them made a rewrite look like it succeeded while the file map
+      // never changed. Matched against the RAW command: the payload carries
+      // newlines and runs of spaces that `norm` would destroy.
+      const write = /^printf '%s' ([\s\S]*) (>>|>) (\S+)$/.exec(cmd.trim())
+      if (!write) out = { exitCode: 1, stdout: "" }
+      else {
+        const [, content = "", mode, dest = ""] = write
+        fs[dest] = mode === ">>" ? `${fs[dest] ?? ""}${content}` : content
+      }
     } else if (parts[0] === "ls") {
       const dir = parts.slice(1).find((p) => !p.startsWith("-"))! // skip flags like `-1`
       const names = Object.keys(fs)
@@ -93,10 +110,26 @@ const makeCtx = (
     config: opts.ignoreBacklog === undefined ? DEFAULT_CONFIG : { ...DEFAULT_CONFIG, ignoreBacklog: opts.ignoreBacklog },
     isDriving: (id) => id === opts.driving,
   }
-  return { ctx, fs, log }
+  return { ctx, fs, log, raw }
 }
 
 const task = (title: string, body = "context") => serializeTask({ title, body })
+
+/**
+ * The appended note text for the `printf '%s' <payload> >> <file>` command whose
+ * payload contains `marker` — as the LINES the file will actually gain.
+ *
+ * `appendNote` writes `\n> <text>\n`, so a well-formed note yields exactly one
+ * non-empty line. Anything more means the text carried a newline, which is the
+ * defect: line 2 has no `> ` prefix and the closing stamp is no longer on the
+ * marker's line, so `AUDIT_NOTE_LINE_RE` stops matching the note.
+ */
+const notePayload = (raw: readonly string[], marker: string): string[] => {
+  const cmd = raw.find((c) => c.startsWith("printf '%s' ") && c.includes(marker) && c.includes(" >> "))
+  assert.ok(cmd, `no append carried ${JSON.stringify(marker)}`)
+  const payload = cmd!.slice("printf '%s' ".length, cmd!.lastIndexOf(" >> "))
+  return payload.split("\n").filter((l) => l.length > 0)
+}
 
 // --- retaskTask: place a planless task where the authoring interview can reshape it ---
 
@@ -162,6 +195,81 @@ test("retaskTask records the reason on its audit note", async () => {
   assert.ok(
     log.some((c) => c.includes("approval withdrawn — acceptance described the wrong screen")),
     "the reason is appended to the note",
+  )
+})
+
+test("retaskTask flattens and clamps its reason — an audit note is ONE line", async () => {
+  // The hub's reason is a <textarea> and `z.string().trim()` leaves interior
+  // newlines alone, so a pasted paragraph reached this note raw: line 2 lost its
+  // `> ` prefix, the stamp detached, and the note stopped matching
+  // AUDIT_NOTE_LINE_RE — after which the orphaned lines read as PROSE and every
+  // "read the last note" parser went blind.
+  const { ctx, raw } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await retaskTask(ctx, "t", `the acceptance names\nthe wrong screen\n\nand ${"x".repeat(REPLAN_REASON_MAX)}`)
+  assert.equal(r.ok, true)
+  const lines = notePayload(raw, "approval withdrawn")
+  assert.equal(lines.length, 1, "exactly one line lands in the file")
+  assert.match(lines[0]!, /^> Sent back to draft/, "the marker opens it — pendingPlanRejection retires on this")
+  assert.match(lines[0]!, /\[[^\]\n]+\]$/, "and the closing stamp is still on it")
+  assert.ok(lines[0]!.includes("the acceptance names the wrong screen"), "the reason survives, flattened")
+  assert.ok(lines[0]!.includes("…"), "and is clamped at REPLAN_REASON_MAX")
+})
+
+test("abandonTask flattens its reason for the same reason", async () => {
+  const { ctx, raw } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await abandonTask(ctx, "t", "duplicate of f7k3\nsee that task")
+  assert.equal(r.ok, true)
+  const lines = notePayload(raw, "Abandoned from")
+  assert.equal(lines.length, 1, "one line")
+  assert.ok(lines[0]!.includes("duplicate of f7k3 see that task"))
+})
+
+test("retaskTask strips the superseded plan a replan left on a queued task", async () => {
+  // `queued/` is NOT the planless folder the contract assumed: replanTask
+  // re-queues a rejected task with its plan intact. Left in the body, that plan
+  // rides into the next PLAN pass as `priorPlan` — a plan for the goal the
+  // interview is about to rewrite.
+  const planful = task("Do it", `Goal prose.\n\n${PLAN_HEADING}\n\n1. index the wrong table\n\n> Plan written [2026-01-01T00:00:00.000Z]\n`)
+  const { ctx, fs } = makeCtx({ "queued/t.md": planful })
+  const r = await retaskTask(ctx, "t")
+  assert.ok(r.ok && r.data.planRemoved === true)
+  assert.match(r.message, /superseded plan was removed/)
+  const moved = fs["/repo/docs/tasks/draft/t.md"]!
+  assert.ok(!moved.includes("index the wrong table"), "the plan text is gone from the file")
+  assert.ok(!moved.includes(PLAN_HEADING), "and so is its heading")
+  assert.ok(moved.includes("Goal prose."), "the goal survives for the interview to reshape")
+  assert.ok(moved.includes("> Plan written"), "the audit trail survives")
+  assert.ok(moved.includes("superseded plan removed"), "and the move's own note says what it did")
+})
+
+test("retaskTask keeps the plan rather than destroy off-schema frontmatter", async () => {
+  // rewriteTask serializes through the schema and zod STRIPS unknown keys, so a
+  // rewrite here would silently delete a field a tracker sync or a human added.
+  // A stale plan is recoverable; that is not — so the strip declines and says so.
+  const withExtra = task("Do it", `${PLAN_HEADING}\n\n1. step\n`).replace("---\n\n", "---\n").replace(/^---\n/, "---\nsyncedFrom: jira-123\n")
+  const { ctx, fs } = makeCtx({ "queued/t.md": withExtra })
+  const r = await retaskTask(ctx, "t")
+  assert.ok(r.ok, "the move the human asked for still happens")
+  assert.ok(r.ok && r.data.planRemoved === undefined && typeof r.data.planKept === "string")
+  assert.match(r.message, /off-schema frontmatter \(syncedFrom\)/)
+  const moved = fs["/repo/docs/tasks/draft/t.md"]!
+  assert.ok(moved.includes("syncedFrom: jira-123"), "the off-schema key is intact")
+  assert.ok(moved.includes(PLAN_HEADING), "the plan stayed, as reported")
+})
+
+test("retaskTask leaves a planless queued task's body byte-identical", async () => {
+  // The overwhelmingly common case: no plan, so no rewrite at all.
+  const { ctx, fs, log } = makeCtx({ "queued/t.md": task("Do it") })
+  const before = fs["/repo/docs/tasks/queued/t.md"]!
+  const r = await retaskTask(ctx, "t")
+  assert.ok(r.ok && r.data.planRemoved === undefined && r.data.planKept === undefined)
+  assert.ok(!/superseded/.test(r.message), "and nothing is said about a plan")
+  assert.equal(fs["/repo/docs/tasks/draft/t.md"]!.replace(/\n> Sent back[^\n]*\n/, ""), before)
+  // No rewrite of the TASK file. (`.tmp-` alone would also catch the atomic
+  // write commitBacklog's `.git/info/exclude` re-assertion makes.)
+  assert.ok(
+    !log.some((c) => c.includes("/repo/docs/tasks/queued/t.md.tmp-")),
+    "no atomic rewrite of the task was attempted",
   )
 })
 
@@ -759,6 +867,36 @@ test("rejectAny replans the short-hash-named task, not the sole plan-review task
   assert.ok(r.ok && r.data.requeued === true)
   assert.ok("/repo/docs/tasks/queued/a1b2-do-thing.md" in fs, "the task addressed by its short hash moved to queued")
   assert.ok("/repo/docs/tasks/plan-review/f7k3-fix-bar.md" in fs, "the unrelated parked plan is untouched")
+})
+
+// The same defect one folder over: a task already back in `queued/` — the retry
+// arm `replanQueued` exists for — resolved in NEITHER rejectable folder, so the
+// id fell into the reason and the sole plan-review task was rejected instead.
+// Both hosts route the typed `replan` verb through here, so `replanQueued` was
+// unreachable from the verb entirely, and the wrong task got re-planned.
+test("rejectAny records a fresh reason on the QUEUED task it names, not the parked plan", async () => {
+  const { ctx, fs, raw } = makeCtx({
+    "queued/a1b2-do-thing.md": task("Do thing"),
+    "plan-review/f7k3-fix-bar.md": task("Fix bar", `${PLAN_HEADING}\n\n1. step`),
+  })
+  const r = await rejectAny(ctx, "a1b2 the goal changed")
+  assert.ok(r.ok && r.data.requeued === true && r.data.alreadyDone === true, "the queued retry arm ran")
+  assert.equal(r.ok && r.data.id, "a1b2-do-thing")
+  assert.ok("/repo/docs/tasks/plan-review/f7k3-fix-bar.md" in fs, "the unrelated parked plan is untouched")
+  const lines = notePayload(raw, "Plan rejected")
+  assert.ok(lines[0]!.includes("the goal changed"), "the reason is recorded")
+  assert.ok(!lines[0]!.includes("a1b2"), "and the id is not folded into it")
+})
+
+test("rejectAny refuses a leading id from a non-rejectable folder instead of hitting another task", async () => {
+  const { ctx, fs } = makeCtx({
+    "draft/a1b2-do-thing.md": task("Do thing"),
+    "plan-review/f7k3-fix-bar.md": task("Fix bar", `${PLAN_HEADING}\n\n1. step`),
+  })
+  const r = await rejectAny(ctx, "a1b2 wrong approach")
+  assert.equal(r.ok, false)
+  assert.match(!r.ok ? r.message : "", /it's in draft/)
+  assert.ok("/repo/docs/tasks/plan-review/f7k3-fix-bar.md" in fs, "nothing else was rejected in its place")
 })
 
 test("rejectAny surfaces an ambiguous short hash instead of folding it into the reason", async () => {

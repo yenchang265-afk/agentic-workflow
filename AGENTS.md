@@ -635,6 +635,64 @@ STRUCTURED link, so each child carries `epic: <epic-id>`.
 successor) and is best-effort: the approval is already committed, so a failed
 listing costs the walk's next line and never the move.
 
+### A leading token that names a real task is an ID, never a reason word
+
+`rejectAny` takes `<id?> <reason…>` as one string, so the id is recovered by
+RESOLVING the first token — and it must be resolved against every status folder
+(`REJECT_ID_FOLDERS`), not only the ones `replan` acts on. Twice now the narrow
+scan has produced the same silent wrong-target: a short-hash handle resolved by
+exact filename only, then an id whose task had already moved to `queued/` (the
+`replanQueued` retry arm, which is where a rejected task LIVES). Both fell
+through to the id-less pick, which rejects the single `plan-review/` task — a
+different task, its id folded into the reason, every message naming the task the
+human did not ask about, and on OpenCode an immediate re-plan of it.
+
+- **A token resolving in a NON-rejectable folder must refuse**, not fall through.
+  `replanTask`'s wrong-folder message names the task it matched, so the failure is
+  legible; falling through is what makes it invisible.
+- **Fall through only when the token resolves NOWHERE** — that is the real
+  "the whole argument is the reason" case.
+- The cost is that a reason word prefixing a real id is claimed as an id. That
+  trade was already made; it fails loudly, and the id-less form still exists.
+- Both hosts route the typed `replan` verb through `rejectAny`, and OpenCode's
+  `workflow_replan` too — so a folder unreachable here is unreachable from the
+  verb entirely, however well core implements it.
+
+### Every gate reason goes through `oneLineReason`
+
+An audit note is ONE `> …` line closed by a bracketed stamp. A reason with a
+newline in it puts line 2 in the file with no `> ` prefix and the stamp detached,
+so `AUDIT_NOTE_LINE_RE` stops matching: the orphaned lines then read as PROSE
+(`auditTailIndex` loses the boundary, and they ride into every later `{{goal}}`)
+and the last-note parsers — `extractReplanReason`, `extractRunBranch`,
+`extractStopContext` — go blind. `replan` flattened; `retask` and `abandon`
+interpolated raw, and the hub's `<textarea>` reaches them directly
+(`z.string().trim()` does not touch interior newlines). The hazard is the SHAPE
+OF THE NOTE, not the identity of the verb, so a new reason-writing verb belongs
+in that choke point too.
+
+### `queued/` is not the planless folder
+
+`replanTask` re-queues a rejected task **with its plan intact**, so anything
+reasoning "a queued task is planless" is wrong on the retry path — which is the
+common path. `retaskTask` therefore MAKES it planless (`withoutPlanSections` +
+`TASK_RESHAPED_MARKER`) rather than assuming it: a plan written against the goal
+an interview is about to rewrite would otherwise ride into the next PLAN pass as
+`priorPlan`, and its rejection would still be pending, handing that pass a
+critique of a plan that no longer exists.
+
+- **`withoutPlanSections` is not `stripPlanAndAuditTail`.** The persisted strip
+  must KEEP every audit note; `appendPlan` appends at end of file, so plans and
+  notes interleave and a first-heading-to-EOF cut deletes the trail.
+- **The strip declines over off-schema frontmatter.** `rewriteTask` serializes
+  through the schema and zod strips unknown keys, so the rewrite would delete
+  them; a stale plan is recoverable, that is not. It warns and moves anyway — the
+  MOVE is what the human asked for.
+- **`TASK_RESHAPED_MARKER` must stay the note's prefix.** The strip removes the
+  `PLAN_HEADING` anchor, so without that marker in `pendingPlanRejection`'s
+  `addressed` set the rejection would go from retired back to pending purely as a
+  side effect of the strip.
+
 ### A stage subagent must not be able to ask
 
 The mirror of the section above: the plugin cannot originate a question, and no

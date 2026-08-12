@@ -101,3 +101,44 @@ export const stripPlanAndAuditTail = (text: string): string => {
   if (planIdx === -1 && !sawNote) return text
   return lines.slice(0, end).join("\n").trimEnd()
 }
+
+/**
+ * A body with every persisted plan SECTION removed and every audit note KEPT —
+ * what a task file must become when its plan is discarded rather than merely
+ * hidden from a prompt. Pure; identity for a body carrying no plan.
+ *
+ * The distinction from `stripPlanAndAuditTail` is the whole reason this exists,
+ * and it is not stylistic: that one renders a prompt, so it drops the audit tail
+ * too and may slice from the first heading to the end. This one is PERSISTED, so
+ * the audit trail — the only record a human has of what the loop did — has to
+ * survive intact. `appendPlan` appends at end of file, so a replanned task
+ * INTERLEAVES plans and notes (`plan → Plan written → Plan rejected → plan …`);
+ * cutting one span from the first heading onward would delete the notes between
+ * them. Hence the per-section walk: each `## Implementation Plan` run ends at the
+ * next audit-note line (`auditTailIndex`), which is exactly the boundary
+ * `extractPlan` reads a plan up to, so writer and reader agree on what a section
+ * is.
+ *
+ * The surviving spans are re-joined on exactly one blank line, so a task
+ * re-shaped twice does not accrete vertical whitespace at the seams. Only the
+ * seams are touched — blank lines INSIDE a surviving span are the human's prose
+ * and are left alone.
+ */
+export const withoutPlanSections = (body: string): string => {
+  if (firstMarkerIndex(body, PLAN_HEADING) === -1) return body
+  const spans: string[] = []
+  let idx = 0
+  for (;;) {
+    const rel = firstMarkerIndex(body.slice(idx), PLAN_HEADING)
+    if (rel === -1) {
+      spans.push(body.slice(idx))
+      break
+    }
+    const start = idx + rel
+    spans.push(body.slice(idx, start))
+    idx = auditTailIndex(body, start)
+    if (idx >= body.length) break
+  }
+  const kept = spans.map((s) => s.replace(/^\n+/, "").trimEnd()).filter((s) => s.length > 0)
+  return kept.length > 0 ? `${kept.join("\n\n")}\n` : ""
+}
