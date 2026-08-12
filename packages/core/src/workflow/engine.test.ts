@@ -19,7 +19,7 @@ import {
 import type { CheckResult } from "./checks.js"
 import type { Action, Config, WorkflowState, TaskRef } from "./state.js"
 import { resumeAtBuild, startAtPlan } from "./state.js"
-import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict } from "./verdict.js"
+import { planContractBlock, planVisualizationBlock, verdictContractBlock, verdictFeedbackBlock, workScopeBlock, type Verdict, type VerdictRecord } from "./verdict.js"
 import { checkDiscoveryBlock, noMachineChecksBlock } from "./discovered-checks.js"
 
 /**
@@ -233,7 +233,10 @@ const oracleCompose = (state: WorkflowState, stage: string): string => {
   const criteriaCount =
     def.kind === "check" && !def.requiredAxes?.length && state.task?.acceptance.length ? state.task.acceptance.length : undefined
   return def.kind === "check"
-    ? `${base}${noChecks}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence, criteriaCount)}`
+    ? // "verify" spelled out again for the seeded-evidence flag: only the
+      // discovering-consumer stage's contract may describe pre-run checks.
+      // `requireDiffEvidence` threads the review-only diff-boundary sentence.
+      `${base}${noChecks}\n\n${verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence, criteriaCount, stage === "verify", def.requireDiffEvidence)}`
     : `${base}\n\n${workScopeBlock(stage)}${def.planContract ? `\n\n${planContractBlock(stage)}` : ""}${
         // "verify" spelled out, not read from the manifest: this oracle is a
         // hand-written twin, and deriving it would make it agree with the code
@@ -379,7 +382,17 @@ test("composePrompt appends the verdict contract to check stages only", () => {
     const def = stageDef(eng.manifest, stage)
     const prompt = composePrompt(eng, { ...state, stage }, stage)
     assert.ok(
-      prompt.endsWith(verdictContractBlock(stage, def.requiredAxes, def.fanout === "axis" ? "axis" : "single", def.requireEvidence)),
+      prompt.endsWith(
+        verdictContractBlock(
+          stage,
+          def.requiredAxes,
+          def.fanout === "axis" ? "axis" : "single",
+          def.requireEvidence,
+          undefined,
+          stage === "verify",
+          def.requireDiffEvidence,
+        ),
+      ),
       `${stage} carries the contract`,
     )
     assert.match(prompt, /workflow_verdict/)
@@ -1340,6 +1353,38 @@ test("a VERIFY FAIL keeps REVIEW's prior findings — no verdict flip through an
   assert.equal(verifyFailed.artifacts.review, reviewFailed.artifacts.review, "the findings survive the intervening VERIFY FAIL")
 })
 
+test("a REVIEW FAIL records priorFindings, an intervening VERIFY FAIL keeps them, and a REVIEW PASS clears them", () => {
+  const record: VerdictRecord = {
+    verdict: "FAIL",
+    reason: "auth bypass",
+    axes: [
+      { axis: "security", verdict: "FAIL", findings: [{ severity: "critical", detail: "auth bypass", location: "src/auth.ts:10" }] },
+      { axis: "readability", verdict: "PASS", findings: [{ severity: "suggestion", detail: "rename x" }] },
+    ],
+  }
+  const failed = advance(eng, { ...mk("g"), stage: "review", artifacts: { plan: "P" } }, config, "prose", "FAIL", record).state
+  // Blocking findings only — the suggestion never rides along.
+  assert.deepEqual(failed.priorFindings, [{ axis: "security", severity: "critical", detail: "auth bypass", location: "src/auth.ts:10" }])
+  // The next REVIEW's prompt walks them as an explicit checklist.
+  const built = advance(eng, failed, config, "build output").state
+  const verified = advance(eng, built, config, "verify prose", "PASS", { verdict: "PASS" })
+  const reviewPrompt = verified.action.kind === "fire" ? verified.action.arguments : ""
+  assert.match(reviewPrompt, /Blocking findings from your previous review/)
+  assert.match(reviewPrompt, /1\. \[critical\] \(security\) auth bypass — src\/auth\.ts:10/)
+  // An intervening VERIFY FAIL (axis-less) must not wipe what the next REVIEW is owed.
+  const verifyFailed = advance(eng, { ...failed, stage: "verify" }, config, "flaky", "FAIL", { verdict: "FAIL" }).state
+  assert.deepEqual(verifyFailed.priorFindings, failed.priorFindings)
+  // A REVIEW PASS clears the list — nothing is owed after a clean review.
+  const passed = advance(eng, { ...failed, stage: "review" }, config, "clean", "PASS", { verdict: "PASS", axes: [] }).state
+  assert.equal(passed.priorFindings, undefined)
+})
+
+test("a first-iteration REVIEW prompt renders no prior-findings section and no attempts ledger", () => {
+  const prompt = composePrompt(eng, { ...resumeAtBuild("g", task, "P"), stage: "review" }, "review")
+  assert.doesNotMatch(prompt, /Blocking findings from your previous review/)
+  assert.doesNotMatch(prompt, /Previous attempts on this task/)
+})
+
 test("a clean VERIFY PASS clears the previous iteration's seam — REVIEW is never served a stale FAIL as fact", () => {
   // VERIFY FAIL → BUILD → VERIFY PASS is the common retry path, and
   // verify.onFail drops no artifacts. A PASS needs no reason, so its block is
@@ -1356,7 +1401,15 @@ test("a clean VERIFY PASS clears the previous iteration's seam — REVIEW is nev
   assert.equal(passed.state.feedback?.verify, undefined, "the stale FAIL seam outlived the PASS")
   const review = passed.action.kind === "fire" ? passed.action.arguments : ""
   assert.doesNotMatch(review, /What VERIFY established/)
-  assert.doesNotMatch(review, /missing test/, "REVIEW was served the previous iteration's failure text")
+  // The failure text may reach REVIEW through exactly one channel: the attempts
+  // ledger, which presents it as history ("a recurring failure is signal") —
+  // never as the current VERIFY's established fact.
+  const mentions = review.split("\n").filter((l) => l.includes("missing test"))
+  assert.deepEqual(
+    mentions,
+    ["- iteration 1 (verify FAIL): missing test"],
+    "REVIEW was served the previous iteration's failure text outside the attempts ledger",
+  )
 })
 
 test("an artifact whose seam no longer matches is clamped whole — fails safe", () => {

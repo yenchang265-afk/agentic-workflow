@@ -222,6 +222,7 @@
       "isolation": "worktree",
       "requiredAxes": ["correctness", "readability", "architecture", "security", "performance"],
       "requireEvidence": true,
+      "requireDiffEvidence": true,
       "bashAllowlist": [
         "git status*",
         "git diff*",

@@ -291,6 +291,7 @@ export const FanoutTable = ({ fanout }: { fanout: FanoutStats }) => {
           <th title="distinct focuses per arming — retries of one focus don't inflate this">passes / arming</th>
           <th>max</th>
           <th title="mean per-arming sum of prompt sizes — what one fanned-out firing costs">prompt / arming</th>
+          <th title="lens armings whose lenses don't span the stage's required axes — axis coverage was not enforced">downgraded</th>
         </tr>
       </thead>
       <tbody>
@@ -301,6 +302,9 @@ export const FanoutTable = ({ fanout }: { fanout: FanoutStats }) => {
             <td>{s.meanPasses.toFixed(1)}</td>
             <td>{s.maxPasses}</td>
             <td>{s.meanArmingPromptChars === null ? "—" : formatChars(s.meanArmingPromptChars)}</td>
+            <td>
+              {s.downgradedArmings === 0 ? "—" : `${s.downgradedArmings} (unreviewed: ${s.unreviewedAxes.join(", ")})`}
+            </td>
           </tr>
         ))}
       </tbody>

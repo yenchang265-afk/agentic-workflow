@@ -120,6 +120,23 @@ const WorkflowStateSchema = z.object({
    */
   isolated: z.boolean().optional(),
   isolationWarning: z.string().optional(),
+  /**
+   * Blocking findings of the last failed REVIEW, threaded into the next
+   * REVIEW's prompt as an explicit resolved-or-open checklist. Must be listed
+   * because zod STRIPS unknown keys; optional for the fail-closed reason
+   * `feedback` gives — a pre-upgrade snapshot resumes with no memory of prior
+   * findings, which is exactly the pre-upgrade behaviour.
+   */
+  priorFindings: z
+    .array(
+      z.object({
+        axis: z.string().min(1),
+        severity: z.enum(["critical", "important"]),
+        detail: z.string(),
+        location: z.string().optional(),
+      }),
+    )
+    .optional(),
   /** Code platform stamped by the claiming work source; absent (old snapshots) ⇒ github. */
   platform: z.enum(CODE_PLATFORMS).optional(),
   /**

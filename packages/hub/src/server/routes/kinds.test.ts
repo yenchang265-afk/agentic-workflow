@@ -98,7 +98,9 @@ test("preview appends the verdict contract to check stages only", async () => {
   // half too — the creator's preview is what a kind author reads to see what the
   // stage will actually be told. The sample task carries ONE acceptance
   // criterion, so the acceptance-criteria half renders with that count.
-  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, "single", true, 1)), "check stages carry the contract")
+  // verify is the discovering-consumer stage, so its contract carries the
+  // seeded-checks sentences (`seededChecks: true`).
+  assert.ok(verify.rendered.endsWith(verdictContractBlock("verify", undefined, "single", true, 1, true)), "check stages carry the contract")
   assert.doesNotMatch(build.rendered, /MANDATORY VERDICT/)
 })
 

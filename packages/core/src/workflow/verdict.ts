@@ -16,6 +16,7 @@
  */
 
 import {
+  boundaryIssue,
   mergeEvidence,
   noActivityMessage,
   noEvidenceMessage,
@@ -379,14 +380,41 @@ export interface CriteriaContext {
 const CRITERIA_MESSAGE_MAX = 8
 
 /**
+ * Reject a PASS carrying any criterion marked not met — a contradiction: the
+ * persona's own gate is "PASS only if every criterion is met", enforced
+ * mechanically here instead of trusted. Or null.
+ *
+ * Split out of `criteriaIssue` because unlike the count-based half it needs no
+ * context: the contradiction is internal to the record, so it holds on every
+ * check stage of every kind — including the axis stages `stageRequiresCriteria`
+ * deliberately excludes from the completeness gate. Before the split, a REVIEW
+ * PASS carrying `{ criterion, pass: false }` was ADMITTED (its `criteriaCtx` is
+ * `undefined` and `effectiveVerdict` ignores criteria), and
+ * `verdictFeedbackBlock` then rendered "Failed criteria" under a PASS that
+ * ships. `stage` is for the rejection wording only; unknown, the message stays
+ * generic. Pure.
+ */
+export const criteriaContradictionIssue = (record: VerdictRecord, stage?: string): string | null => {
+  if (effectiveVerdict(record) !== "PASS") return null
+  const unmet = (record.criteria ?? []).filter((c) => c.criterion.trim() && !c.pass)
+  if (!unmet.length) return null
+  return (
+    `Verdict NOT recorded — this ${stage ? `${stage.toUpperCase()} ` : ""}PASS marks ${unmet.length === 1 ? "a criterion" : `${unmet.length} criteria`} ` +
+    `as not met (${unmet.map((c) => `"${c.criterion}"`).join(", ")}). A criterion not met means the stage FAILED: ` +
+    "call workflow_verdict again with verdict FAIL and a reason, or — if the criterion IS actually met — correct its `pass` flag."
+  )
+}
+
+/**
  * Reject a PASS that does not account for the stage's acceptance criteria, or
  * null when it does (and null when the stage was given none — every other
  * stage and kind is untouched).
  *
  * Two rules:
- *  1. A PASS carrying any criterion marked not met is a contradiction — the
- *     persona's own gate is "PASS only if every criterion is met", enforced
- *     mechanically here instead of trusted.
+ *  1. A PASS carrying any criterion marked not met is a contradiction —
+ *     `criteriaContradictionIssue`, checked first so the wording (with the
+ *     stage name) is unchanged for criteria-bearing stages. It also runs
+ *     context-free in `admitVerdict` for every other stage.
  *  2. Coverage is COUNT-based: at least one non-empty entry per acceptance
  *     bullet. Deliberately no text matching against the bullets — like
  *     `requiredAxes` this is a completeness check, not an honesty check, and
@@ -401,14 +429,8 @@ export const criteriaIssue = (record: VerdictRecord, ctx: CriteriaContext | unde
   if (!ctx?.acceptance.length) return null
   if (effectiveVerdict(record) !== "PASS") return null
   const criteria = (record.criteria ?? []).filter((c) => c.criterion.trim())
-  const unmet = criteria.filter((c) => !c.pass)
-  if (unmet.length) {
-    return (
-      `Verdict NOT recorded — this ${ctx.stage.toUpperCase()} PASS marks ${unmet.length === 1 ? "a criterion" : `${unmet.length} criteria`} ` +
-      `as not met (${unmet.map((c) => `"${c.criterion}"`).join(", ")}). A criterion not met means the stage FAILED: ` +
-      "call workflow_verdict again with verdict FAIL and a reason, or — if the criterion IS actually met — correct its `pass` flag."
-    )
-  }
+  const contradiction = criteriaContradictionIssue(record, ctx.stage)
+  if (contradiction) return contradiction
   if (criteria.length >= ctx.acceptance.length) return null
   const shown = ctx.acceptance.slice(0, CRITERIA_MESSAGE_MAX)
   const elided = ctx.acceptance.length - shown.length
@@ -464,6 +486,21 @@ export const evidenceIssue = (record: VerdictRecord, ctx: EvidenceContext | unde
 }
 
 /**
+ * The diff-boundary narrowing of `evidenceIssue`, gated the same way and only
+ * meaningful when the host computed a boundary (`EvidenceContext.boundary` —
+ * absent means inert, the fail-open degradation). Skipped when the PASS cites
+ * nothing at all: `evidenceIssue`'s `noEvidenceMessage` already owns that
+ * fault, and the two would say overlapping things in one rejection. Pure.
+ */
+const boundaryEvidenceIssue = (record: VerdictRecord, ctx: EvidenceContext | undefined): string | null => {
+  if (!ctx?.required || !ctx.boundary) return null
+  if (effectiveVerdict(record) !== "PASS") return null
+  const declared = record.evidence ?? []
+  if (!declared.length) return null
+  return boundaryIssue(declared, ctx.boundary, ctx.stage)
+}
+
+/**
  * The outcome of offering a verdict to the loop: either a rejection to hand
  * back to the calling agent, or the record the host should store.
  */
@@ -510,9 +547,17 @@ export const admitVerdict = (
   // one, so a PASS missing both its criteria and its evidence must learn both
   // faults from one rejection — serially it would fix one, be rejected for the
   // other, and ERROR-stop the run.
-  const passIssues = [criteriaIssue(incoming, criteriaCtx), evidenceIssue(incoming, evidence)].filter(
-    (i): i is string => i !== null,
-  )
+  const passIssues = [
+    criteriaIssue(incoming, criteriaCtx),
+    // The context-free half of the criteria gate, for every stage the
+    // completeness gate does not cover (axis stages, sitter kinds): a PASS
+    // whose own payload marks a criterion not met is a contradiction whatever
+    // the stage was given. Skipped when `criteriaIssue` ran — it checks the
+    // same rule first, with the stage name in the wording.
+    ...(criteriaCtx?.acceptance.length ? [] : [criteriaContradictionIssue(incoming, evidence?.stage)]),
+    evidenceIssue(incoming, evidence),
+    boundaryEvidenceIssue(incoming, evidence),
+  ].filter((i): i is string => i !== null)
   if (passIssues.length) return { ok: false, message: passIssues.join("\nALSO: ") }
   if (!pending) return { ok: true, record: incoming }
   const reasons = [pending.reason, incoming.reason].filter(Boolean)
@@ -665,6 +710,87 @@ export const verdictFeedbackBlock = (record: VerdictRecord | null): string => {
   return lines.join("\n")
 }
 
+/**
+ * The parenthesised detail for a check stage's task-file audit note:
+ * "N criteria unmet; axes: a, b; unassessed: c", or "" when there is nothing
+ * to say.
+ *
+ * One function, two hosts, same reason as `verdictFeedbackBlock` above: the
+ * Claude host wrote this line inline and the OpenCode host wrote only the
+ * criteria half — so a REVIEW that PASSed with four of five axes unassessed
+ * left no axis trace in the audit trail the ship gate reads on one host and a
+ * full one on the other. Extracting the text is stronger than keeping two
+ * copies in lockstep. Pure.
+ */
+export const verdictAuditDetail = (record: VerdictRecord | null | undefined): string => {
+  const failed = record?.criteria?.filter((c) => !c.pass).length ?? 0
+  const failedAxes = (record?.axes ?? []).filter((a) => !axisUnassessed(a) && axisVerdict(a) !== "PASS").map((a) => a.axis)
+  const unassessed = (record?.axes ?? []).filter(axisUnassessed).map((a) => a.axis)
+  return [
+    failed ? `${failed} criteria unmet` : "",
+    failedAxes.length ? `axes: ${failedAxes.join(", ")}` : "",
+    unassessed.length ? `unassessed: ${unassessed.join(", ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("; ")
+}
+
+/** How many dropped findings the note names before eliding. */
+const DROPPED_FINDINGS_MAX = 3
+
+/** The path half of a `file:line` location, normalized for containment tests. Pure. */
+const findingPath = (location: string | undefined): string | null => {
+  const path = location?.split(":")[0]?.trim().replace(/^\.\//, "").toLowerCase()
+  return path || null
+}
+
+/**
+ * The audit note for a check-stage PASS that no longer mentions a prior
+ * blocking finding — or null when every prior finding is accounted for (or
+ * there is nothing to compare).
+ *
+ * The complement of `WorkflowState.priorFindings`: the prompt asks the stage to
+ * walk the prior list and state resolved-or-open per finding, and this is the
+ * durable trace for the one that vanishes instead. Matching is deliberately
+ * FUZZY (a location's path, or a prefix of the finding text, anywhere in the
+ * new record or the pass's prose) and the note is deliberately NEUTRAL —
+ * "resolved or dropped without mention" — because nothing gates on it: a
+ * mechanical per-finding gate would need finding identity across iterations,
+ * and a false rejection there ERROR-stops a run on a possibly-clean diff, the
+ * exact trade `criteriaIssue`'s docstring refuses. A false note costs a human
+ * one glance at the ship gate. Pure.
+ */
+export const droppedFindingsNote = (
+  prior: readonly { readonly axis: string; readonly severity: string; readonly detail: string; readonly location?: string }[] | undefined,
+  record: VerdictRecord | null,
+  /** The pass's prose output — where an honest resolved-or-open walk lives. */
+  prose = "",
+): string | null => {
+  if (!prior?.length || !record) return null
+  if (effectiveVerdict(record) !== "PASS") return null
+  const haystack = [
+    prose,
+    record.reason ?? "",
+    ...(record.axes ?? []).flatMap((a) => (a.findings ?? []).map((f) => `${f.detail} ${f.location ?? ""}`)),
+    ...(record.evidence ?? []).map((e) => `${e.ref} ${e.result ?? ""}`),
+  ]
+    .join("\n")
+    .toLowerCase()
+  const dropped = prior.filter((f) => {
+    const path = findingPath(f.location)
+    if (path && haystack.includes(path)) return false
+    const prefix = f.detail.trim().toLowerCase().slice(0, 40)
+    return !(prefix && haystack.includes(prefix))
+  })
+  if (!dropped.length) return null
+  const named = dropped.slice(0, DROPPED_FINDINGS_MAX).map((f) => `[${f.severity}] "${f.detail.slice(0, 80)}"${f.location ? ` (${f.location})` : ""}`)
+  const more = dropped.length - named.length
+  return (
+    `PASS no longer reports ${dropped.length === 1 ? "a prior blocking finding" : `${dropped.length} prior blocking findings`}: ` +
+    `${named.join(", ")}${more > 0 ? ` and ${more} more` : ""} — resolved or dropped without mention; judge at the ship gate`
+  )
+}
+
 /** The verdict tags emitted by the loop's check stages. */
 export const WORKFLOW_VERIFY_TAG = "WORKFLOW_VERIFY"
 export const WORKFLOW_REVIEW_TAG = "WORKFLOW_REVIEW"
@@ -722,6 +848,18 @@ export const verdictContractBlock = (
   mode: "single" | "axis" | "lens" = "single",
   requireEvidence = false,
   criteriaCount?: number,
+  // Whether the loop pre-runs check commands for this stage (only the
+  // discovering-consumer stage — engineering VERIFY — ever has them). The
+  // seeded-evidence sentences describe a situation that cannot occur anywhere
+  // else, and a contract describing work the stage will never be handed is the
+  // same class of contradiction as the lens/single mismatch above, in
+  // miniature. Default `false` is the safe direction: it only drops the
+  // inapplicable sentences.
+  seededChecks = false,
+  // Whether a PASS's evidence must also touch the diff under review (manifest
+  // `requireDiffEvidence` — engineering REVIEW). One sentence in the PROOF OF
+  // WORK clause; default `false` keeps every other stage byte-identical.
+  diffEvidence = false,
 ): string =>
   [
     "MANDATORY VERDICT: before you finish, record your verdict by calling the `workflow_verdict` tool",
@@ -730,6 +868,7 @@ export const verdictContractBlock = (
     `exactly once, with stage: "${stage}", verdict: "PASS" | "FAIL" | "ERROR", and a one-line reason on FAIL/ERROR.`,
     "A verdict written only in prose is IGNORED and the loop records this stage as a failure.",
     "A FAIL that names nothing to fix — no reason, no criterion marked not met, no blocking finding — is REJECTED and you must call again.",
+    "A PASS that carries a criteria entry marked not met is REJECTED — a criterion not met means the stage FAILED; record FAIL instead.",
     "If the workflow_verdict tool is not in your tool list, state that explicitly in your final message and finish.",
     ...(criteriaCount
       ? [
@@ -786,9 +925,16 @@ export const verdictContractBlock = (
           '{ kind: "file", ref: "<path or path:line you read>", result: "<what you saw there>" }].',
           "Cite them as you issued them: this session's real commands and paths are recorded independently, and",
           "a PASS citing nothing — or nothing that matches what you actually ran — is REJECTED, not recorded.",
-          "At least one citation must be work YOU did in this pass: check commands the loop pre-ran for you are",
-          "established fact, not your proof of work — cite them additionally if you rely on them (never re-run them),",
-          "alongside at least one file you read or command you ran yourself.",
+          ...(seededChecks
+            ? [
+                "At least one citation must be work YOU did in this pass: check commands the loop pre-ran for you are",
+                "established fact, not your proof of work — cite them additionally if you rely on them (never re-run them),",
+                "alongside at least one file you read or command you ran yourself.",
+              ]
+            : ["At least one citation must be work YOU did in this pass — a file you read or a command you ran yourself."]),
+          ...(diffEvidence
+            ? ["At least one citation must also TOUCH the diff under review — a changed file you read, or the diff command itself."]
+            : []),
           "So run the checks and read the code BEFORE you record, not after.",
           "FAIL and ERROR need no evidence: if the check could not run, record ERROR with a reason naming what is missing.",
         ]

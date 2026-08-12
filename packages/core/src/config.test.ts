@@ -33,6 +33,7 @@ import {
   enforcesAxisCoverage,
   passAxes,
   stagePasses,
+  lensDowngradeNote,
   taskBranchFor,
   taskBranchPrefix,
   unreviewedAxes,
@@ -233,6 +234,7 @@ const stageWith = (model?: string): StageDef => ({
   isolation: "worktree",
   checks: [],
   requireEvidence: false,
+  requireDiffEvidence: false,
   discoverChecks: false,
   planContract: false,
   planVisualization: false,
@@ -402,6 +404,7 @@ const reviewStage = (requiredAxes?: string[]) =>
     isolation: "worktree",
     checks: [],
     requireEvidence: false,
+    requireDiffEvidence: false,
     discoverChecks: false,
     planContract: false,
     planVisualization: false,
@@ -428,6 +431,16 @@ test("unreviewedAxes is empty when the lens list already names every required ax
 test("unreviewedAxes is empty for a stage that requires no axes (verify, the sitters)", () => {
   const c = { ...DEFAULT_CONFIG, reviewLenses: ["correctness"] }
   assert.deepEqual(unreviewedAxes(c, reviewStage()), [])
+})
+
+test("lensDowngradeNote names the stage, the uncovered axes, and the downgrade — and is empty with nothing uncovered", () => {
+  const note = lensDowngradeNote("review", ["correctness", "performance"])
+  assert.match(note, /^REVIEW ran under reviewLenses/)
+  assert.match(note, /axis coverage NOT enforced/)
+  assert.match(note, /correctness, performance/)
+  assert.match(note, /those axes go unreviewed/)
+  assert.match(lensDowngradeNote("review", ["security"]), /that axis goes unreviewed/)
+  assert.equal(lensDowngradeNote("review", []), "")
 })
 
 /**

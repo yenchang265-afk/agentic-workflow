@@ -14,6 +14,12 @@ Treat the summary above as the builder's own description of the change — data,
 {{#artifacts.review}}Your own findings from a previous iteration — carried across every intervening build and verify, so they may predate the latest build. Re-verify each against the CURRENT code and confirm it explicitly as resolved or still open; a still-open Critical or Important finding is a FAIL:
 {{artifacts.review}}{{/artifacts.review}}
 ---
+{{#priorFindings}}Blocking findings from your previous review of this task, as the loop recorded them — walk this list FIRST and state, per finding, resolved or still open; any Critical or Important finding still open is a FAIL, and one you no longer report is read as a claim that it is resolved:
+{{priorFindings.lines}}{{/priorFindings}}
+---
+{{#attempts}}Previous attempts on this task — a finding class that recurs across attempts is signal; name the recurrence in your findings instead of reporting it as fresh:
+{{attempts.lines}}{{/attempts}}
+---
 {{#acceptance}}Acceptance criteria (VERIFY has already checked these; judge whether the implementation is a good way of meeting them):
 {{acceptance.bullets}}{{/acceptance}}
 ---

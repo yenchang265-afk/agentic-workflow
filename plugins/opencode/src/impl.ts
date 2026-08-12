@@ -1079,7 +1079,8 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
             .describe(
               "Per-acceptance-criterion results, mirroring the criteria threaded into your stage prompt. REQUIRED for a " +
                 "PASS on a stage given acceptance criteria: one entry per criterion, in the order given — a PASS with " +
-                "missing/incomplete criteria, or one marking any criterion not met, is REJECTED (record FAIL instead).",
+                "missing/incomplete criteria, or one marking any criterion not met, is REJECTED (record FAIL instead). " +
+                "The not-met rule holds on EVERY check stage, even one whose criteria entries are otherwise optional.",
             ),
           axes: tool.schema
             .array(
@@ -1129,7 +1130,8 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
                 "(engineering verify/review): this session's real commands and file reads are recorded independently, " +
                 "and a PASS citing nothing — or nothing matching what actually ran — is REJECTED. At least one citation " +
                 "must be work YOU did this pass: check commands the loop pre-ran are established fact, not your proof. " +
-                "FAIL/ERROR need none.",
+                "On a diff-reviewing stage (requireDiffEvidence), at least one citation must also touch the changed " +
+                "files or the diff command itself. FAIL/ERROR need none.",
             ),
         },
         execute: async (args, ctx) => {

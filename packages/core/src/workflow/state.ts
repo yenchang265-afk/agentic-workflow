@@ -89,6 +89,17 @@ export interface AttemptRecord {
   readonly reason?: string
 }
 
+/**
+ * One blocking finding carried from a failed check stage into the next run of
+ * that stage (see `WorkflowState.priorFindings`).
+ */
+export interface PriorFinding {
+  readonly axis: string
+  readonly severity: "critical" | "important"
+  readonly detail: string
+  readonly location?: string
+}
+
 export interface WorkflowState {
   /** The workflow kind driving this state (a manifest's `kind`); absent ⇒ `engineering`. */
   readonly kind?: string
@@ -123,6 +134,16 @@ export interface WorkflowState {
    * transcript the budgets take out.
    */
   readonly attempts?: readonly AttemptRecord[]
+  /**
+   * Blocking (critical/important) findings of the last FAILED review stage,
+   * recorded by `advance` on its fail arm and cleared on its pass/terminal
+   * arms. Threaded into the next review pass's prompt as an explicit
+   * resolved-or-open checklist — the "confirm each prior finding" rule used to
+   * be prose only, and a finding could silently vanish between iterations.
+   * Nothing GATES on it (fuzzy finding identity cannot afford a false
+   * rejection); `droppedFindingsNote` writes the durable trace instead.
+   */
+  readonly priorFindings?: readonly PriorFinding[]
   /**
    * The human's pending rejection reason from the plan gate, re-derived from the
    * task file at claim time (`extractReplanReason`) — never persisted, since a
