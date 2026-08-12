@@ -14,6 +14,7 @@ Quick reference for common testing patterns across the stack. Use alongside the 
 - [API / Integration Testing](#api--integration-testing)
 - [E2E Testing (Playwright)](#e2e-testing-playwright)
 - [Test Anti-Patterns](#test-anti-patterns)
+- [State-Based vs Interaction-Based, and DAMP](#state-based-vs-interaction-based-and-damp)
 
 ## The RED/GREEN Cycle
 

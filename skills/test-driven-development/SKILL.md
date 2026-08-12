@@ -73,6 +73,10 @@ and easy to debug when they fail.
 | **Medium** | Multi-process OK, localhost only, no external services | Seconds | The behavior crosses a boundary — API, database, file system |
 | **Large** | Multi-machine OK, external services allowed | Minutes | A critical user flow must work end-to-end; limit these to critical paths |
 
+Worked forms for the Medium and Large rows — component tests against the
+accessibility tree, supertest API tests, Playwright end-to-end flows — are in
+`references/testing-patterns.md`.
+
 Rules for each test, with worked examples in `references/testing-patterns.md`:
 
 - **Test state, not interactions.** Assert on the outcome of an operation, never

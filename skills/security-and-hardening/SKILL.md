@@ -13,7 +13,8 @@ reporting. Everything below is this branch.
 **Building the surface** — the controls to put in place while writing code:
 always-do rules, OWASP prevention patterns, input validation, rate limiting,
 secrets layout, dependency review, and the changes to raise with a human first.
-All of it lives in `references/security-checklist.md`.
+The checkboxes are `references/security-checklist.md`; the copy-ready code
+behind them is `references/security-implementation-patterns.md`.
 
 ## Trust boundaries
 
@@ -103,8 +104,8 @@ instead:
   stay in the server log.
 - **Queries are parameterized** and **server-side fetches of user-influenced
   URLs are allowlisted** — what counts as allowlisted, and the TOCTOU gap that
-  survives it, is in `references/security-checklist.md` → Server-Side Request
-  Forgery (SSRF).
+  survives it, is in `references/security-implementation-patterns.md` →
+  Server-Side Request Forgery (SSRF).
 - **Every resource access checks authorization**, not merely authentication —
   ownership or role, on every endpoint.
 
@@ -125,7 +126,8 @@ A feature that calls an LLM inherits a new boundary; map it to the
 
 The controls that close them — including bounded consumption and RAG tenant
 partitioning — and a worked example are in `references/security-checklist.md` →
-AI / LLM Security.
+AI / LLM Security; the copy-ready code for every other control is
+`references/security-implementation-patterns.md`.
 
 ## Verification
 

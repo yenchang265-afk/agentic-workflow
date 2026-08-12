@@ -19,6 +19,10 @@ When the document you're writing is a skill, read
 [`SKILL-MECHANICS.md`](SKILL-MECHANICS.md) for frontmatter, the invocation
 choice, and router skills.
 
+When the document is a new persona, or a command that coordinates several of
+them, the patterns this repo endorses — and the persona-calls-persona
+anti-patterns it forbids — are in `references/orchestration-patterns.md`.
+
 ## Context pointers
 
 A **context pointer** is a reference held in the agent's context that names some

@@ -155,10 +155,7 @@
     and reports the outcome itself, so you never see this verb at all.
   **Spawn nothing of your own** beyond what the follow-up asks for. (Fallback,
   when no hook ran: `mcp__agentic-workflow__workflow_approve({id})`, id
-  optional — then ask the same question yourself.) Within an interactive
-  `new`/`retask` turn, call `mcp__agentic-workflow__workflow_approve({id})`
-  directly instead of routing through this hook — see `new` step 5, which
-  asks inline and follows up with a "plan it now?" question.
+  optional — then ask the same question yourself.)
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the
@@ -294,17 +291,10 @@ human reviews the plan → approve (asked inline, or `replan <why>`) → build i
 (asked inline as a separate question, or `claim` later) → `in-review/` →
 `approve` ships it.
 <!-- /aw:verb approve|new|retask|plan|claim|recover|replan -->
-<!-- aw:verb plan|claim|replan -->
-On a VERIFY or REVIEW FAIL the loop re-**builds** with the feedback threaded
-in, within the iteration cap; when the cap trips, the plan itself is suspect
-— a human sends it back with `/agentic-workflow:engineering replan <id> <why>`,
-which immediately re-runs PLAN with the failure threaded in.
-<!-- /aw:verb plan|claim|replan -->
 <!-- aw:verb approve|new|retask|plan|claim -->
 When a loop you are driving hits a gate live (a draft just written, a plan
 just parked, or a build just finished), offer the gate choices inline via
-`ask_user_question` instead of making the user type a command — see `new` step 5
-above for the task gate, and the `workflow-orchestration` skill for the plan and
-ship gates. The command verbs above are the deferred path for gates hit
-while you were away.
+`ask_user_question` instead of making the user type a command — the
+`workflow-orchestration` skill covers the plan and ship gates. The command
+verbs above are the deferred path for gates hit while you were away.
 <!-- /aw:verb approve|new|retask|plan|claim -->

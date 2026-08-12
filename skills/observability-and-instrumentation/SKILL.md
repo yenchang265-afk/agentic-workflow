@@ -105,7 +105,8 @@ queue age > 10 min               disk at 70%
 
 Cause-based alerts fire when nothing is wrong and miss failures you didn't
 predict. Symptom-based alerts fire exactly when users are hurt, whatever the
-cause.
+cause. The causes still need a home that answers the step-1 questions — the
+panels are in `references/observability-checklist.md` → Dashboards.
 
 Every alert then has to survive four rules — actionable, runbook-linked,
 threshold and duration justified by an SLO or by history, and filed as **page**

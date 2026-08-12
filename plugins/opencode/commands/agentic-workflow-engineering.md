@@ -291,9 +291,7 @@ Dispatch:
   claim markers, stray plan-request markers). With `fix`, applies the
   unambiguous repairs: rescues strays to `draft/`, removes emptied stray
   folders, releases stale claim markers, and drops stray plan requests.
-  Duplicates are always left for you. Never repair the backlog by
-  hand — the folder a task lives in IS its state, and the plugin blocks raw
-  `mv`/`mkdir`/`rm`/writes against `docs/tasks/`.
+  Duplicates are always left for you.
 <!-- /aw:verb doctor -->
 
 ## The pipeline

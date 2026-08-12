@@ -82,6 +82,10 @@ fixes — a PR that refactors *and* adds a feature is two PRs.
 automation — a codemod, a script, an AST transform. Manual edits at that scale
 are error-prone and exhausting to review.
 
+Per-language before/after forms for the common simplifications — TypeScript,
+Python, React — are in `references/simplification-patterns.md` → Language
+Patterns.
+
 **Step 3 is done when** every simplification queued in Step 2 has been through
 this cycle — applied and kept, or reverted.
 

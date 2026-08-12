@@ -79,6 +79,9 @@ action that resolves it, and give every error state a retry. See
 Design mobile-first: the smallest layout is the base, breakpoints add to it.
 Verify at 320px, 768px, 1024px, and 1440px.
 
+Images, fonts, bundles, and the rendering rules that hold INP and CLS inside
+their targets are in `references/performance-checklist.md` → Frontend Checklist.
+
 ## Verification
 
 - [ ] Component renders with no console errors

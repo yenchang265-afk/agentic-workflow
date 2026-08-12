@@ -43,6 +43,10 @@ error-specific triage trees (test, build, runtime) are in
 `references/debugging-patterns.md`. When reading the code cannot get you there
 and you hold fix authority, instrument (same reference).
 
+When several mutually-exclusive theories fit the symptoms and one agent will
+stop at the first, the competing-hypothesis setup is in
+`references/agent-teams-example.md`.
+
 **Done when** you can point at the file and line — or, for a regression, the
 commit — where the failure originates, and explain why the code there produces
 what you observed. "Somewhere in the auth flow" is a search area, not a location.
