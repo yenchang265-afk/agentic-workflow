@@ -173,8 +173,15 @@ const escapeReason = (segment: string, worktree: string, pinnedDir: string | nul
  * been there), `cd ~`/`cd ~user` to a home directory, and anything with `$` or a
  * backtick is assembled at runtime. Resolving these literally made
  * `path.resolve(worktree, "-")` look like an in-bounds subdirectory.
+ *
+ * An EMPTY target is the argument-less `cd`, which is `cd $HOME` — the same
+ * escape as `cd ~` and the reason the match below tolerates a missing argument
+ * at all. A bare `cd` used to miss this predicate entirely and fall through to
+ * the generic-segment branch, where a truthy `pinnedDir` waved it through: the
+ * command was then REWRITTEN to `cd <wt> && cd && …`, i.e. the guard itself
+ * built the escape it exists to refuse.
  */
-const isUnresolvableCd = (target: string): boolean => target === "-" || target.startsWith("~") || /[$`]/.test(target)
+const isUnresolvableCd = (target: string): boolean => target === "" || target === "-" || target.startsWith("~") || /[$`]/.test(target)
 
 /** Three-way pin verdict: run as-is, run a corrected value, or refuse. */
 export type PinVerdict =
@@ -197,9 +204,11 @@ const walk = (command: string, worktree: string, initialPin: string | null): Wal
   let pinnedDir = initialPin
   for (const segment of splitSegments(command)) {
     // `.+` not `\S+`: real worktree paths can contain spaces (quoted), e.g. under "Claude Code/".
-    const cdMatch = /^cd\s+(.+)$/.exec(segment.trim())
+    // The argument is OPTIONAL so a bare `cd` is judged here rather than reaching
+    // the generic branch below — it is `cd $HOME`, an escape, not a no-op.
+    const cdMatch = /^cd(?:\s+(.+))?$/.exec(segment.trim())
     if (cdMatch) {
-      const target = unquote(cdMatch[1]!.trim())
+      const target = unquote((cdMatch[1] ?? "").trim())
       const escapeMsg =
         `agentic-workflow: this loop is isolated to its worktree ${worktree} — "${segment.trim()}" leaves it, so the rest of ` +
         `the command would run outside the worktree. Only \`cd\` into a literal directory under ${worktree}.`
