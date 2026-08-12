@@ -12,6 +12,7 @@ import {
   abortedSessionID,
   armTaskGateAsk,
   claimSkipReason,
+  classifyReplanChain,
   configSources,
   deriveActivity,
   drive,
@@ -805,7 +806,13 @@ test("replan while this session is driving falls back to plan-next — rejection
     const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
     const { client, toasts } = makeClient()
     const log: string[] = []
-    const deps: Deps = { client, $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log), directory: "/repo", log: () => {} }
+    const logged: string[] = []
+    const deps: Deps = {
+      client,
+      $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log),
+      directory: "/repo",
+      log: async (_level, msg) => void logged.push(msg),
+    }
 
     await handleReplan(deps, sessionID, "my-task wrong approach", testConfig)
 
@@ -816,6 +823,15 @@ test("replan while this session is driving falls back to plan-next — rejection
       !log.some((cmd) => cmd.startsWith("mkdir /repo/docs/tasks/queued/.claims/my-task")),
       "no chain claim under a busy session",
     )
+    // A silent skip is indistinguishable from a chain that ran — the arm logs.
+    assert.ok(
+      logged.some((m) => m.includes("chain skipped") && m.includes("mid-loop")),
+      `busy skip must log, got: ${logged.join(" | ")}`,
+    )
+    assert.ok(
+      !(toasts[0]?.message ?? "").includes("workflow_plan"),
+      "no workflow_plan next step on the busy arm — it would hit the same guard",
+    )
   } finally {
     clearWorkflow(sessionID)
   }
@@ -825,6 +841,7 @@ test("replan falls back to plan-next when another watcher wins the requeued task
   const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
   const { client, toasts } = makeClient()
   const log: string[] = []
+  const logged: string[] = []
   const deps: Deps = {
     client,
     // The chain's `mkdir <queued>/.claims/my-task` loses the race — modelled as
@@ -833,7 +850,7 @@ test("replan falls back to plan-next when another watcher wins the requeued task
       { cmd: "mkdir /repo/docs/tasks/queued/.claims/my-task", result: { exitCode: 1 } },
     ]),
     directory: "/repo",
-    log: () => {},
+    log: async (_level, msg) => void logged.push(msg),
   }
 
   await handleReplan(deps, "sess-replan-race", "my-task wrong approach", testConfig)
@@ -841,6 +858,55 @@ test("replan falls back to plan-next when another watcher wins the requeued task
   assert.equal(toasts[0]?.variant, "success")
   assert.match(toasts[0]?.message ?? "", /plan-next/, "the raced chain reports core's outcome — the winner re-plans it")
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the rejection move still lands")
+  assert.ok(
+    logged.some((m) => m.includes("chain skipped") && m.includes("watcher claimed")),
+    `raced skip must log, got: ${logged.join(" | ")}`,
+  )
+  assert.ok(!(toasts[0]?.message ?? "").includes("workflow_plan"), "no next step — the claim winner is already re-planning it")
+})
+
+test("replan appends the workflow_plan next step when the requeued task cannot be found for the chain", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const logged: string[] = []
+  const deps: Deps = {
+    client,
+    // The chain's re-read of the moved task misses (modelled as the queued cat
+    // failing) — the session is free, so the answer must name the tool that
+    // re-plans NOW instead of leaving the model to hand-edit the plan.
+    $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log, [
+      { cmd: "cat /repo/docs/tasks/queued/my-task.md", result: { exitCode: 1 } },
+    ]),
+    directory: "/repo",
+    log: async (_level, msg) => void logged.push(msg),
+  }
+
+  await handleReplan(deps, "sess-replan-gone", "my-task wrong approach", testConfig)
+
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the rejection move still lands")
+  assert.ok(logged.some((m) => m.includes("chain skipped")), `gone skip must log, got: ${logged.join(" | ")}`)
+  const message = toasts[0]?.message ?? ""
+  assert.match(message, /NEXT STEP/, `fallback answer carries the next step, got: ${message}`)
+  assert.match(message, /workflow_plan/, "names a tool that exists on THIS host, not core's Claude-only workflow_start")
+  assert.match(message, /plan my-task/, "and the human-typable verb")
+})
+
+test("classifyReplanChain: id to chain, stale-dist skip, or null on a refusal", () => {
+  const ok = { ok: true as const, message: "m", path: "p", data: { requeued: true, id: "t1" } }
+  assert.deepEqual(classifyReplanChain(ok), { id: "t1" })
+
+  // A stale @agentic-workflow/core dist emits ok with no gate data — the shape
+  // the real core in this tree can never produce, which is why this is a unit
+  // test. It must warn toward `npm install` and still offer the next step.
+  const stale = { ok: true as const, message: "m", path: "p", data: undefined as unknown as Record<string, unknown> }
+  const skip = classifyReplanChain(stale)
+  assert.ok(skip && "why" in skip, "stale dist classifies as a skip")
+  assert.equal(skip.level, "warn")
+  assert.equal(skip.nextStep, true)
+  assert.match(skip.why, /npm install/)
+
+  assert.equal(classifyReplanChain({ ok: false, message: "no" }), null)
 })
 
 /**
