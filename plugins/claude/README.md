@@ -90,7 +90,9 @@ Authoring + gates (`/agentic-workflow:engineering`):
   → in-progress, in-review → completed) — see the gate lifecycle diagram in
   the root [`AGENTS.md`](../../AGENTS.md#gate-lifecycle) for the full state
   machine, including the `replan` rejection edges. `in-review/` → `completed/`
-  (ship) only after you review the branch diff. Each move is audited +
+  (ship) only after you review the branch diff, and only what `shipPublish`
+  says leaves your machine — `approve <id> --pr`/`--push`/`--local` overrides
+  it per ship. Each move is audited +
   committed; a task lives in exactly one folder, so the gate is never
   ambiguous. Without an id it advances the single task at a loop wait-gate
   (`plan-review/` or `in-review/`), falling back to a lone `draft/` task only

@@ -75,7 +75,9 @@ Authoring + gates (`/agentic-workflow:engineering`):
   implies: a reviewed `draft/` → `queued/` (the task gate; the loop plans it
   on claim), a parked `plan-review/` plan → `in-progress/` (the plan gate,
   `## Implementation Plan` required), or a finished `in-review/` task →
-  `completed/` (ship — only after you review the branch diff). Every move is
+  `completed/` (ship — only after you review the branch diff, and only what
+  `shipPublish` says leaves your machine: `--pr`/`--push`/`--local` on the
+  command overrides it per ship). Every move is
   audited + committed, and the toast names which move happened; a task lives
   in exactly one folder, so the gate is never ambiguous. Without an id it
   advances the single task at a loop wait-gate (`plan-review/` or

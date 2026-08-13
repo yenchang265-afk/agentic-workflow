@@ -63,10 +63,12 @@ git worktree by default (`.workflow-worktrees`, so your tree is never touched
 branch you already have checked out), verdicts are only trusted
 through a plugin tool, every transition is audited, and the loop itself never
 pushes or opens a PR — you review the diff and run
-`/agentic-workflow:engineering approve`, which pushes the branch and opens (or
-reuses) a **draft** PR (GitHub or Azure DevOps, per `codePlatform`) as part of
-shipping. Full execution model (watch mode, iteration caps, recovery):
-[docs/opencode.md](docs/opencode.md).
+`/agentic-workflow:engineering approve`, which ships per `shipPublish`
+(default `"pr"`: pushes the branch and opens or reuses a **draft** PR — GitHub
+or Azure DevOps, per `codePlatform`; `"push"` pushes with no PR; `"local"`
+ships nothing off your machine). Override per ship with `approve <id> --pr`
+(or `--push` / `--local`). Full execution model (watch mode, iteration caps,
+recovery): [docs/opencode.md](docs/opencode.md).
 
 ## The sitters
 
