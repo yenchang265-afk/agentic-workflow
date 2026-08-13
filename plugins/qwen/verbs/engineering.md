@@ -39,7 +39,9 @@
      should be, invoke the `idea-refine` skill before splitting — it generates
      scoped variants against the now-explicit intent, so you judge slices
      against a shape the user picked instead of one you assumed.
-  3. Show what you'll write and get an explicit "looks right" from the user:
+  3. Show what you'll write, then ask for the "looks right" with **`ask_user_question`**
+     — the skill's Step 4 owns that window's shape ("Yes, that's it" first, free
+     text open). Nothing is written until that answer lands:
      - **One draft** — title, priority, acceptance, body.
      - **A slice set** — the epic (parent) title, and the ordered children,
        each with its own acceptance subset. Prefer **independent** slices;
@@ -115,8 +117,9 @@
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
      the optional `note` and the current draft. Re-confirm the goal and 2–5
-     testable acceptance criteria, then get an explicit "looks right". Ask
-     through **`ask_user_question`**, on the same terms as `new` step 1.
+     testable acceptance criteria, then get an explicit "looks right". Every ask
+     goes through **`ask_user_question`** on the same terms as `new` steps 1 and 3 — the
+     closing "looks right" included, not only the interview questions.
   4. Spawn the **`workflow-task-author`** subagent (`agent` tool) in **`retask` mode**
      with the id and the confirmed title/priority/acceptance/body (carry
      forward the `tracker` block **and the `epic:` frontmatter key** if the

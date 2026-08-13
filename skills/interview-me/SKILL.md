@@ -129,9 +129,21 @@ Here's what I now think you want:
 - Acceptance:   <2–5 checks, each one observably pass/fail>
 - Constraint:   <one line — the binding limit>
 - Out of scope: <one line — what we're explicitly not doing>
-
-Yes / no / refine?
 ```
+
+**Send the confirm through the host's question tool**, on the Step 2 *Delivery*
+terms: one call, free text open. The restate stays prose above the window —
+seven lines don't fit an option label — and the window carries the ask alone:
+
+- **first option — `Yes, that's it`**, the guess one last time.
+- `Refine one part` — the open answer names which.
+- `Start over` — the restate has the wrong shape.
+
+This is the ask everything downstream hangs off — inside `new` and `retask` it
+is what releases the confirmed intent to `workflow-task-author` and gets a task
+file written — so it is the one answer that must not arrive as a chat line the
+next turn has to re-read. The prose `Yes / no / refine?` form is the fallback
+for a host with no question tool, matching Step 2.
 
 `Success` and `Acceptance` are different artifacts and both stay: `Success` is the human win in a sentence, `Acceptance` is the set of checks a later build or verify stage can actually run. Inside `new` and `retask`, `Acceptance` is what you hand to `workflow-task-author` as the task's acceptance criteria — so keep it to 2–5 lines and keep every line testable. For a pure ad-hoc interview with no downstream task file, it's optional.
 
@@ -143,10 +155,14 @@ A **hollow yes** is agreement that isn't confirmation. Four kinds, each with its
 
 | The user says | What it means | Counter-move |
 |---|---|---|
-| "Whatever you think is best." | Delegation — they don't have 95% confidence either | Re-ask as a choice between two concrete options — the question tool's own shape, so send it that way |
+| "Whatever you think is best." | Delegation — they don't have 95% confidence either | Re-ask as a choice between two concrete options |
 | "Sounds good." / "Sure, let's go." | Politeness, possibly a polite exit | Ask "anything you'd refine?" — silence isn't confirmation |
 | Silence, then "okay let's start." | They've given up on the interview, not converged | Stop and ask what you've missed |
 | A yes on a vague restate | The restate committed to nothing falsifiable | Restate in the Step 4 shape and re-confirm |
+
+Every counter-move goes back out through the question tool, same as the ask it
+is repairing: a re-ask typed into the chat is the channel that produced the
+hollow yes in the first place.
 
 Fold every correction in and restate. Loop until the yes lands on a concrete restate.
 
