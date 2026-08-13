@@ -23,6 +23,7 @@ import {
   planVisualizationBlock,
   stageDriftAdvice,
   stageDriftNote,
+  stageDriftRefusal,
   uncoveredAxes,
   verdictContractBlock,
   verdictFeedbackBlock,
@@ -346,6 +347,35 @@ test("stageDriftAdvice works without a verdict value", () => {
   const advice = stageDriftAdvice("verify", "review", null)
   assert.match(advice, /REVIEW/)
   assert.doesNotMatch(advice, /\(\)/) // no empty parenthetical where the verdict would be
+})
+
+// --- stageDriftRefusal (the same drift, addressed to the refused caller) ---
+
+test("stageDriftRefusal keeps the fact, then says what to do instead of retrying", () => {
+  // The reported failure: a REVIEW subagent's verdict refused while the machine
+  // sat at VERIFY, and a refusal the caller cannot act on is one it retries
+  // until the stage's budget is gone.
+  const refusal = stageDriftRefusal("verify", "review", { orchestrated: true })
+  assert.match(refusal, /The loop is at verify, not review — verdict ignored/)
+  assert.match(refusal, /do not retry/i)
+  assert.match(refusal, /workflow_advance|workflow_stage/)
+  assert.match(refusal, /stage drift/i)
+})
+
+test("stageDriftRefusal forbids re-filing under the stage the loop IS at", () => {
+  // The nag that closes a subagent names the marker's stage, so the tempting
+  // "fix" is to re-file as VERIFY — which fabricates a verdict nothing earned.
+  const refusal = stageDriftRefusal("verify", "review", { orchestrated: false })
+  assert.match(refusal, /do not re-file it as a verify verdict/i)
+  assert.match(refusal, /nothing earned/i)
+})
+
+test("stageDriftRefusal's driver flavour names no tool the driver host lacks", () => {
+  const refusal = stageDriftRefusal("verify", "review", { orchestrated: false })
+  assert.match(refusal, /the driver runs review again/i)
+  // OpenCode has no workflow_advance/workflow_stage — advice the caller cannot
+  // execute is worse than none.
+  assert.doesNotMatch(refusal, /workflow_advance|workflow_stage/)
 })
 
 // --- worstOf (multi-lens review combination) ---

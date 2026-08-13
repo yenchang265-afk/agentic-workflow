@@ -968,7 +968,44 @@ export const stageDriftAdvice = (activeStage: string, requested: string, verdict
   `${activeStage.toUpperCase()} stage ran a later stage's work inside its own turn — treat its claims about ` +
   `that work as unverified.`
 
-export const parseVerdict = (text: string, tag: string): Verdict | null => {
+/**
+ * The same drift once more, addressed to the THIRD audience: the agent whose
+ * `workflow_verdict` call was just refused.
+ *
+ * `stageDriftNote` writes the audit trail and `stageDriftAdvice` reaches the
+ * orchestrator on its next action — neither reaches the caller, which got a bare
+ * statement of fact. That reader can do nothing about it: a stage subagent cannot
+ * move the machine on either host, so it retried a call that can never succeed
+ * until the stage's whole budget was gone. Hence a refusal that names what to do
+ * instead, and the two things it must NOT do:
+ *
+ *  - not retry — the refusal means the channel worked and the loop is elsewhere;
+ *  - not re-file under `activeStage` — the SubagentStop nag names the marker's
+ *    stage, so a drifted REVIEW "helpfully" re-filing as VERIFY turns lost
+ *    coverage into a FABRICATED verdict, which is strictly worse than none.
+ *
+ * `orchestrated` picks the remedy, because only one of the two hosts has a
+ * caller that could act on it: on Claude Code/Qwen a model owns
+ * `workflow_advance`/`workflow_stage` and can be told which call was skipped; on
+ * OpenCode the driver owns transitions and those tools do not exist, so naming
+ * them there is advice the host cannot execute. Pure.
+ */
+export const stageDriftRefusal = (
+  activeStage: string,
+  requested: string,
+  opts: { readonly orchestrated: boolean },
+): string =>
+  `The loop is at ${activeStage}, not ${requested} — verdict ignored. Only the running check stage may record ` +
+  `its own verdict: a ${requested.toUpperCase()} verdict admitted here would grade work that ran under ` +
+  `${activeStage.toUpperCase()}'s bash allowlist and evidence ledger. Do not retry this call, and do not re-file ` +
+  `it as a ${activeStage} verdict — that would record a ${activeStage.toUpperCase()} verdict nothing earned. ` +
+  `Nothing you did was recorded. Stop now and say in your final output that this is stage drift` +
+  (opts.orchestrated
+    ? `: a workflow_advance or workflow_stage call was skipped before you were spawned, so the orchestrator has to ` +
+      `advance the loop to ${requested} and run this stage again.`
+    : `; the driver runs ${requested} again when the loop reaches it.`)
+
+export const parseVerdict =(text: string, tag: string): Verdict | null => {
   if (!text) return null
   const re = new RegExp(`${tag}:\\s*(PASS|FAIL|ERROR)`, "gi")
   let last: Verdict | null = null

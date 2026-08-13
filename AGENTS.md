@@ -812,6 +812,35 @@ Three things it has to keep:
   `getWorkflow` alone made `stop` report "No active loop to stop." for a drive
   that was very much in flight.
 
+### A transition is published to the store and the snapshot together (OpenCode)
+
+`driveChain` publishes a transition to the session store the moment `advance`
+returns, because `recordVerdict` judges a verdict against
+`getWorkflow(sessionID).stage`. The **snapshot is the same fact on disk** and has
+to travel with it: it is `recover`'s only oracle (`loadState` resumes at
+`snap.stage`, and an ESC deliberately KEEPS it), and its only write used to be
+the one at the TOP of the next iteration — behind `ensureIsolation` and
+`runStageChecks`, minutes of shelling out. Through that window the file still
+named the stage the loop had already left, so a resume re-entered at it: a run
+that had reached REVIEW came back at VERIFY, the live REVIEW subagent's verdict
+was refused as stage drift ("the loop is at verify, not review"), and the whole
+stage was retried and thrown away.
+
+Both writes stay. The one at the transition publishes the STAGE promptly; the one
+at the top of the iteration is the only one carrying the POST-isolation
+`git`/worktree fields. The source lint in `driver.test.ts` pins the order:
+nothing awaited between `advance` and `setWorkflow`, the snapshot immediately
+after.
+
+The refusal this produced has to be ACTIONABLE too — `stageDriftRefusal`, beside
+`stageDriftNote` (the audit trail) and `stageDriftAdvice` (the orchestrator).
+Its reader is the refused agent, which can move the machine on neither host, so
+it retried a call that can never succeed until the stage's budget was gone. It
+must never invite a re-file under the stage the loop IS at: the SubagentStop nag
+names that stage, and a drifted REVIEW re-filing as VERIFY turns lost coverage
+into a fabricated verdict. And never relax the stage check itself to make the
+retry succeed.
+
 ### An OpenCode hook that rejects or hangs kills the turn silently
 
 opencode's `Plugin.trigger` awaits `command.execute.before` / `event` hooks

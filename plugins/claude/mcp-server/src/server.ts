@@ -62,6 +62,7 @@ import {
   rejectedFallback,
   stageDriftAdvice,
   stageDriftNote,
+  stageDriftRefusal,
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
@@ -1435,7 +1436,7 @@ server.registerTool(
           await appendNote(sh, active.task, auditNote(stageDriftNote(active.stage, stage, verdict), new Date(), await gitActor(sh, directory)), log)
         }
       }
-      return fail(`The loop is at ${active.stage}, not ${stage} — verdict ignored.`)
+      return fail(stageDriftRefusal(active.stage, stage, { orchestrated: true }))
     }
     const def = activeManifest().manifest.stages.find((d) => d.name === stage)
     if (def?.kind !== "check") {

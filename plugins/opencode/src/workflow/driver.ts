@@ -103,6 +103,7 @@ import {
   passFocusBlock,
   rejectedFallback,
   stageDriftNote,
+  stageDriftRefusal,
   uncoveredAxes,
   withCoverageGap,
   type AxisResult,
@@ -839,7 +840,7 @@ export const recordVerdict = (
         /* best-effort audit — never break the tool call */
       })
     }
-    return reject(`The loop is at ${state.stage}, not ${stage} — verdict ignored. Only the running check stage may record its own verdict.`)
+    return reject(stageDriftRefusal(state.stage, stage, { orchestrated: false }))
   }
   const def = manifestFor(state.kind ?? "engineering").manifest.stages.find((d) => d.name === stage)
   if (def?.kind !== "check") {
@@ -2250,6 +2251,22 @@ const driveChain = async (
     // call up there stays: `step.state` is legitimately replaced by the isolation
     // and check-command recomposition above it, and this one cannot know that yet.
     setWorkflow(sessionID, step.state)
+    // And publish it to DISK at the same point, for the same reason. The
+    // snapshot is `recover`'s only oracle (`loadState` resumes at `snap.stage`,
+    // and an ESC deliberately KEEPS it), but the only write used to be the one
+    // at the top of the next iteration — on the far side of `ensureIsolation`
+    // and `runStageChecks`. Through that window the file still named the stage
+    // the loop had already left, so a recover/ESC resume re-entered at it: a run
+    // that had reached REVIEW came back at VERIFY, and the live REVIEW subagent's
+    // verdict was then refused as drift, retried, and thrown away.
+    // Only for a `fire` of an isolated stage, mirroring the top-of-loop
+    // predicate: PLAN never snapshots (see persist.ts), and a terminal action's
+    // snapshot is `runTerminal`/`haltIfAsked`'s to keep or drop. The write up
+    // there stays — it is the only one that captures the POST-isolation
+    // `git`/worktree fields; this one publishes the stage promptly.
+    if (step.action.kind === "fire" && stageDef(loaded.manifest, step.action.stage).isolation !== "none") {
+      await snapshot(deps, config, step.state)
+    }
   }
 
   const { state, action } = step
