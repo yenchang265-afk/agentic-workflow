@@ -47,7 +47,10 @@ Dispatch:
      **touches more than one subsystem/layer**. Otherwise keep it as one draft.
      There is no token metering — "fits the context window" is a scope
      judgement (one reviewable slice), not a measured limit.
-  3. Show what you'll write and get an explicit "looks right" from the user:
+  3. Show what you'll write, then ask for the "looks right" with the
+     **`question`** tool — the skill's Step 4 owns that window's shape ("Yes,
+     that's it" first, free text open). Nothing is written until that answer
+     lands:
      - **One draft** — title, priority, acceptance, body.
      - **A slice set** — the epic (parent) title, and the ordered children,
        each with its own acceptance subset. Prefer **independent** slices;
@@ -112,8 +115,9 @@ Dispatch:
      body (and any `tracker` block) to the user.
   3. **Always** invoke the `interview-me` skill to reshape it, seeding it with
      the optional `note` and the current draft. Re-confirm the goal and 2–5
-     testable acceptance criteria, then get an explicit "looks right". Ask
-     through the **`question`** tool, on the same terms as `new` step 1.
+     testable acceptance criteria, then get an explicit "looks right". Every ask
+     goes through the **`question`** tool on the same terms as `new` steps 1 and
+     3 — the closing "looks right" included, not only the interview questions.
   4. Invoke the **`workflow-task-author`** subagent in **`retask` mode** with the
      id and the confirmed title/priority/acceptance/body (carry forward the
      `tracker` block if the draft had one) to rewrite `docs/tasks/draft/<id>.md`
