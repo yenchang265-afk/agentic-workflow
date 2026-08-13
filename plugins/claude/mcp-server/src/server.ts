@@ -8,8 +8,8 @@ import { fsClient, sh } from "./shim.js"
 import { stageOrderError } from "./stage-guard.js"
 import { sharedAdoGateway } from "@agentic-workflow/ado-mcp/gateway"
 import { STALE_CLAIM_MINUTES, staleClaimMinutes } from "@agentic-workflow/core/claim-marker"
-import { DEFAULT_CONFIG, bashAllowlistExtras, bashAllowlistPrefixes, withCommandPrefixes, loadConfig } from "@agentic-workflow/core/config"
-import { type Action, type Config, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
+import { DEFAULT_CONFIG, bashAllowlistExtras, bashAllowlistPrefixes, parsePublishFlags, withCommandPrefixes, loadConfig } from "@agentic-workflow/core/config"
+import { SHIP_PUBLISH_MODES, type Action, type Config, type ShipPublish, type WorkflowState, type TaskRef } from "@agentic-workflow/core/workflow/state"
 import { advance, composePrompt, composePromptWithStats, firstStep, withCheckResults } from "@agentic-workflow/core/workflow/engine"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
 import { registerEngineeringHooks } from "@agentic-workflow/core/kinds/engineering"
@@ -2062,7 +2062,12 @@ server.registerTool(
             next:
               `ship gate: show the user the loop branch's diff summary, then ask with ${dialect.askTool} — ` +
               `Ship (workflow_ship("${taskId}")), Replan with a reason (workflow_replan("${taskId}", reason)), ` +
-              `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later).`,
+              `or Leave in in-review (stop here; /agentic-workflow:engineering approve ${taskId} ships it later). ` +
+              // The publish choice belongs to THIS ask and no later one: the ship
+              // gate blocks its own turn, so once the task is completed there is
+              // no turn left to ask in.
+              `If they choose Ship, offer the publish choice too — open a draft PR, push the branch only, or keep it local — ` +
+              `and pass it as workflow_ship's publish argument ("pr" | "push" | "local"). Omit publish if they have no preference.`,
           }
         : {}),
     }))
@@ -2352,8 +2357,8 @@ server.registerTool(
  */
 const approveTask = (id: string): Promise<GateResult> => coreApproveTask(gateCtx(), id)
 const approvePlan = (id: string): Promise<GateResult> => coreApprovePlan(gateCtx(), id)
-const approveAny = (id: string): Promise<GateResult> => coreApproveAny(gateCtx(), id)
-const shipAny = (id: string): Promise<GateResult> => coreShipAny(gateCtx(), id)
+const approveAny = (id: string, publish?: ShipPublish): Promise<GateResult> => coreApproveAny(gateCtx(), id, "engineering", publish)
+const shipAny = (id: string, publish?: ShipPublish): Promise<GateResult> => coreShipAny(gateCtx(), id, "engineering", publish)
 const replanTask = (id: string, reason: string | undefined, liveTaskId: string | null): Promise<GateResult> =>
   coreReplanTask({ ...gateCtx(), isDriving: (x) => x === liveTaskId }, id, reason)
 const rejectAny = (arg: string, liveTaskId: string | null): Promise<GateResult> =>
@@ -2549,16 +2554,30 @@ server.registerTool(
   },
 )
 
+/**
+ * The `publish` argument the two ship-capable gate tools share.
+ *
+ * Optional everywhere, and an omitted value is NOT "pr" — it means "whatever the
+ * repo's `shipPublish` says", which `shipPublishFor` resolves in core. Sending a
+ * literal default from here would silently override a repo that configured
+ * something else.
+ */
+const publishArg = z.enum(SHIP_PUBLISH_MODES).optional()
+
+const PUBLISH_DOC =
+  "publish (OPTIONAL) chooses what leaves the machine when the gate ships a task: \"pr\" pushes the branch and opens a draft PR, \"push\" pushes the branch and opens nothing, \"local\" does neither and leaves the branch untouched on this machine. Omit it to use the repo's configured shipPublish (default \"pr\") — do not pass a value the human did not choose. The task is completed either way; only publishing varies, and a push/local ship can be published later by shipping the same id again with publish \"pr\"."
+
 server.registerTool(
   "workflow_approve",
   {
     description:
-      "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved. Prefer this over the specific workflow_task_approve / workflow_plan_approve / workflow_ship tools. The agent writes nothing.",
-    inputSchema: { id: z.string().optional() },
+      "/agentic-workflow:engineering approve [id] — the unified, folder-driven gate. With an explicit id it advances that task by its folder's gate: draft/ → queued (task gate), plan-review/ → in-progress (plan gate, requires an ## Implementation Plan), or in-review/ → completed (ship). An explicit id naming an already-completed/ task re-runs its publish step, which is how a push/local ship opens its PR later. The id is OPTIONAL — omit it to advance the single task at a loop wait-gate (plan-review/ or in-review/), falling back to a lone draft/ task only when neither has anything waiting; tracking epics are never auto-resolved, and the id-less form never picks a completed task. Prefer this over the specific workflow_task_approve / workflow_plan_approve / workflow_ship tools. The agent writes nothing. " +
+      PUBLISH_DOC,
+    inputSchema: { id: z.string().optional(), publish: publishArg },
   },
-  async ({ id }) => {
+  async ({ id, publish }) => {
     await loadCfg()
-    const r = await approveAny((id ?? "").trim())
+    const r = await approveAny((id ?? "").trim(), publish)
     return okGate(r)
   },
 )
@@ -2626,11 +2645,16 @@ server.registerTool(
 
 server.registerTool(
   "workflow_ship",
-  { description: "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. /agentic-workflow:engineering approve (workflow_approve) does the same when the only awaiting task is in in-review/.", inputSchema: { id: z.string().optional() } },
-  async ({ id }) => {
+  {
+    description:
+      "Ship a reviewed task: move it in-review/ → completed/ with an audited note and commit. The final human gate action. The id is OPTIONAL — omit it to ship the single in-review/ task; pass it only to disambiguate. Passing the id of an ALREADY completed/ task re-runs only its publish step — that is the publish-later path for a push/local ship, and a no-op once a PR is on record. /agentic-workflow:engineering approve (workflow_approve) does the same when the only awaiting task is in in-review/. " +
+      PUBLISH_DOC,
+    inputSchema: { id: z.string().optional(), publish: publishArg },
+  },
+  async ({ id, publish }) => {
     await loadCfg()
-    const r = await shipAny((id ?? "").trim())
-    return r.ok ? ok(r.data) : fail(r.message)
+    const r = await shipAny((id ?? "").trim(), publish)
+    return r.ok ? ok({ ...r.data, message: r.message }) : fail(r.message)
   },
 )
 
@@ -2788,14 +2812,24 @@ async function runGate(argv: string[]): Promise<number> {
   const remainder = rest.join(" ").trim()
   const emit = (r: GateResult) => process.stdout.write(`${JSON.stringify(r)}\n`)
   if (!verb) {
-    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan|retask|abandon|remove> [id] [reason]" })
+    emit({ ok: false, message: "Usage: gate <approve-any|reject-any|approve|approve-plan|replan|retask|abandon|remove> [id] [reason|--pr|--push|--local]" })
     return 1
   }
   await loadCfg()
   let result: GateResult
   // Folder-driven shortcuts — id optional (empty remainder → auto-resolve the single awaiting task).
-  if (verb === "approve-any") result = await approveAny(remainder)
-  else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
+  if (verb === "approve-any") {
+    // The id can no longer be "everything after the verb": a publish flag rides
+    // in the same words, and joining it into the id would hand core a task id
+    // like `t-42 --local` that resolves to nothing. Options out, first bare word
+    // in — the shape the `remove` arm below already uses.
+    const flags = parsePublishFlags(rest)
+    if (!flags.ok) {
+      emit({ ok: false, message: flags.message })
+      return 1
+    }
+    result = await approveAny(rest.find((w) => !w.startsWith("-")) ?? "", flags.publish)
+  } else if (verb === "reject-any") result = await rejectAny(remainder, readStageTaskId())
   else {
     // Legacy verbs require an explicit id.
     const [id, ...reasonParts] = rest

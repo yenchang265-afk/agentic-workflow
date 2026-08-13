@@ -241,6 +241,23 @@ export const CODE_PLATFORMS = ["github", "ado"] as const
 export type CodePlatform = (typeof CODE_PLATFORMS)[number]
 
 /**
+ * What a ship gate publishes — the single source of truth for the mode set.
+ *
+ * A ship always moves the task to `completed/` and commits the backlog; this
+ * chooses only what leaves the machine. `pr` is the default and today's
+ * behavior; `push` sends the branch to `origin` and opens nothing; `local`
+ * touches the network not at all, leaving the branch where it is.
+ *
+ * `local` and `push` are complete successes, not degraded ships — see
+ * `publishMissed` in `workflow/gate.ts`, which warns only when the mode that
+ * was ASKED for came up short. Either can be published later: shipping the
+ * same (already `completed/`) task again with `publish: "pr"` lands in
+ * `shipTask`'s idempotent retry arm.
+ */
+export const SHIP_PUBLISH_MODES = ["pr", "push", "local"] as const
+export type ShipPublish = (typeof SHIP_PUBLISH_MODES)[number]
+
+/**
  * The Azure DevOps coordinates a claimed item carries, so `{{ado.project}}` /
  * `{{ado.repository}}` render literally into a stage prompt. Stamped at claim
  * time next to `platform` — a prompt that spells the project out needs no
@@ -386,6 +403,8 @@ export interface Config {
   readonly reviewLenses: readonly string[]
   /** Global code platform for PR-shaped work sources; per-kind override via `workflows.<kind>.codePlatform`. */
   readonly codePlatform?: CodePlatform
+  /** What a ship gate publishes by default; overridable per ship. Unset ⇒ `pr`. */
+  readonly shipPublish?: ShipPublish
   /** Azure DevOps coordinates; required when any effective platform is `ado`. */
   readonly ado?: AdoConfig
   /** Per-workflow-kind sections; engineering is on unless explicitly disabled, other kinds are opt-in. */

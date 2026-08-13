@@ -633,6 +633,14 @@ export interface GateRequest {
   readonly reason?: string
   /** ship only: the workflow kind, for the PR it opens. Defaults to engineering. */
   readonly kind?: string
+  /**
+   * ship only: what to publish — open a draft PR, push the branch only, or keep
+   * it local. Omitted means "use the repo's configured `shipPublish`", which is
+   * why the dialog's selector starts from that value rather than a hard-coded
+   * one: sending a literal `pr` for a repo configured `local` would push work the
+   * human meant to keep on their machine.
+   */
+  readonly publish?: ShipPublish
 }
 
 /**
@@ -659,6 +667,17 @@ export interface PlanRequestRequest {
 /** The code platforms core supports — the one list every platform `<select>` renders from. */
 export const PLATFORMS = ["github", "ado"] as const
 export type Platform = (typeof PLATFORMS)[number]
+
+/**
+ * What a ship publishes — the one list the Ship dialog and the Config tab both
+ * render from.
+ *
+ * Hand-duplicated from core's `SHIP_PUBLISH_MODES`, exactly as `PLATFORMS` is
+ * from `CODE_PLATFORMS`: this module is shared with the browser bundle, which
+ * does not import core. Keep the two in step.
+ */
+export const SHIP_PUBLISH = ["pr", "push", "local"] as const
+export type ShipPublish = (typeof SHIP_PUBLISH)[number]
 
 export interface PreviewSample {
   /** Loop started from a backlog task → `{{#task.id}}` / `{{#acceptance}}` render. */

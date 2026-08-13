@@ -230,8 +230,10 @@ Two consequences worth stating, because they are what keep that line honest:
   answers `GateCtx.isDriving` from the filesystem — a claim marker (a loop
   claims before it drives, so driving implies claimed) or the stage marker —
   rather than from an in-memory session map it doesn't have.
-- **Ship opens a pull request**, which is visible outside the machine. Every
-  hub write is behind a confirm that names its real effect.
+- **Ship can push a branch and open a pull request**, which is visible outside
+  the machine — its dialog carries the publish choice (`pr` / `push` / `local`,
+  defaulting to the repo's `shipPublish`) so the human decides how far it goes.
+  Every hub write is behind a confirm that names its real effect.
 
 It also **edits `.agentic-workflow.json`**, one named layer at a time — never the
 merged view, which would flatten the user-scope layer (and its `ado.pat`) into

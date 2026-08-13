@@ -1,5 +1,5 @@
 import { useState } from "react"
-import type { GateResult, TaskCard, TaskStatus } from "../../shared/api.js"
+import type { GateResult, ShipPublish, TaskCard, TaskStatus } from "../../shared/api.js"
 import { postAction } from "../api.js"
 import { useFeedback } from "../feedback.js"
 import { repoPath, useRepo } from "../repo.js"
@@ -7,7 +7,7 @@ import { Button } from "../ui/Button.js"
 import { Confirm } from "../ui/Confirm.js"
 import { StatusMessage } from "../ui/StatusMessage.js"
 import { gateTone } from "../ui/tone.js"
-import { cancellationMoves, forwardMoves, type Move } from "./gatemoves.js"
+import { PUBLISH_CHOICES, cancellationMoves, forwardMoves, type Move } from "./gatemoves.js"
 
 /**
  * The action buttons on a task card. Most perform a human gate move through
@@ -38,6 +38,18 @@ const GateButton = ({
   const { repoId } = useRepo()
   const { report } = useFeedback()
   const [reason, setReason] = useState("")
+  /**
+   * The ship dialog's publish choice. `""` is not "no answer yet" — it is the
+   * DEFAULT and a real answer: "whatever this repo's `shipPublish` says", sent
+   * as an omitted field so core's `shipPublishFor` resolves it.
+   *
+   * Preselecting a concrete mode instead would be a live hazard rather than a
+   * convenience: the monitor does not load the config (that is the Config tab's
+   * fetch), so the only value it could preselect is a guess — and guessing `pr`
+   * on a repo configured `local` pushes work the human deliberately kept off the
+   * network, with the dialog showing their own "choice" back to them.
+   */
+  const [publish, setPublish] = useState<ShipPublish | "">("")
   const [result, setResult] = useState<GateResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -52,6 +64,7 @@ const GateButton = ({
         expectStatus: status,
         kind,
         ...(move.withReason && reason.trim() ? { reason: reason.trim() } : {}),
+        ...(move.withPublish && publish ? { publish } : {}),
       })
       setResult(res)
       setError(null)
@@ -109,6 +122,23 @@ const GateButton = ({
           <label className="form-field">
             <span>reason (threaded into the next PLAN pass)</span>
             <textarea rows={3} value={reason} onChange={(e) => setReason(e.target.value)} />
+          </label>
+        )}
+        {move.withPublish && (
+          <label className="form-field">
+            <span>publish</span>
+            <select value={publish} onChange={(e) => setPublish(e.target.value as ShipPublish | "")}>
+              <option value="">Use this repo's setting (shipPublish)</option>
+              {PUBLISH_CHOICES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            {/* The consequence, spelled out under the control rather than left
+                to the option label: "push" and "local" differ by whether the
+                work leaves the machine, which is the whole reason to choose. */}
+            <small>{PUBLISH_CHOICES.find((c) => c.value === publish)?.detail ?? "Whatever .agentic-workflow.json configures; the default is to open a draft PR."}</small>
           </label>
         )}
       </Confirm>

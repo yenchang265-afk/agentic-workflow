@@ -1,7 +1,7 @@
 import path from "node:path"
 import { z } from "zod"
 import type { Client } from "./host.js"
-import { CODE_PLATFORMS, type Config, type WorkflowTrigger } from "./workflow/state.js"
+import { CODE_PLATFORMS, SHIP_PUBLISH_MODES, type Config, type ShipPublish, type WorkflowTrigger } from "./workflow/state.js"
 import { CheckDefSchema, type CheckDef, type StageDef } from "./manifest/schema.js"
 import type { StagePass } from "./workflow/verdict.js"
 import { TRACKER_SYSTEMS, type TrackerSystem } from "./task/schema.js"
@@ -65,6 +65,10 @@ export type { KindStages, SpawnAlias } from "./config-layers.js"
 /** Which code-management platform PR-shaped work sources talk to. */
 export const CodePlatformSchema = z.enum(CODE_PLATFORMS)
 export type CodePlatform = z.infer<typeof CodePlatformSchema>
+
+/** What a ship gate publishes: open a draft PR, push the branch only, or nothing. */
+export const ShipPublishSchema = z.enum(SHIP_PUBLISH_MODES)
+export type { ShipPublish }
 
 /**
  * How the repo's project management is set up, so task authoring and the status
@@ -370,6 +374,27 @@ const BaseConfigSchema = z.object({
    */
   codePlatform: CodePlatformSchema.default("github"),
   /**
+   * What the ship gate publishes when a human approves an `in-review/` task:
+   * `pr` (the default — push the branch and open a draft PR), `push` (push the
+   * branch, open nothing), or `local` (touch the network not at all).
+   *
+   * Every mode still moves the task to `completed/` and commits the backlog;
+   * this chooses only what leaves the machine. A `push` or `local` ship is a
+   * complete success, not a degraded one — no warning is raised for doing
+   * exactly what was asked.
+   *
+   * Overridable per ship (`approve <id> --pr|--push|--local`, the hosts'
+   * `publish` tool argument, the hub's Ship dialog), and reversible: shipping
+   * the same task again with `publish: "pr"` finds it in `completed/` and lands
+   * in `shipTask`'s idempotent retry arm, which pushes and opens the PR then.
+   *
+   * Global only — deliberately not overridable per kind. The ship gate is
+   * task-backed and reached by the `engineering` kind alone (no sitter has a
+   * ship gate at all), so a `workflows.<kind>.shipPublish` would be a knob that
+   * can never fire. Same reasoning as `taskBranch` above.
+   */
+  shipPublish: ShipPublishSchema.default("pr"),
+  /**
    * Azure DevOps coordinates; required when any effective platform is `ado`.
    *
    * Deliberately `looseObject`: the removed transport keys (`access`,
@@ -539,6 +564,49 @@ export const unenabledConfiguredKinds = (config: { readonly workflows: Readonly<
 /** The code platform a workflow kind's PR source talks to: per-kind override, else the global default. Pure. */
 export const platformFor = (config: Config, kind: string): CodePlatform =>
   config.workflows[kind]?.codePlatform ?? config.codePlatform ?? "github"
+
+/**
+ * What one ship publishes: the human's explicit per-ship choice, else the
+ * repo's `shipPublish`, else `pr` (the behavior every ship had before the key
+ * existed). Pure.
+ *
+ * The precedence lives here alone so a flag, an MCP tool argument and a hub
+ * radio button cannot each decide it differently — the same reason `platformFor`
+ * exists rather than a `??` chain at every call site.
+ */
+export const shipPublishFor = (config: Config, override?: ShipPublish): ShipPublish => override ?? config.shipPublish ?? "pr"
+
+/** The typed-verb flags that override `shipPublish` for a single ship. */
+export const SHIP_PUBLISH_FLAGS: Readonly<Record<string, ShipPublish>> = { "--pr": "pr", "--push": "push", "--local": "local" }
+
+export type PublishFlagParse = { readonly ok: true; readonly publish?: ShipPublish } | { readonly ok: false; readonly message: string }
+
+/**
+ * The publish override carried by a typed gate verb's words. Pure.
+ *
+ * Every host parses the same three flags through this one function, because a
+ * flag that means `local` on one host and nothing on another is worse than no
+ * flag at all: the ship still happens, so the human reads "completed" and only
+ * finds out later that a branch they meant to keep local was pushed.
+ *
+ * An unrecognized dash-word is a REFUSAL, not something to ignore. The hosts
+ * forward every dash-word here rather than filtering to the three they know, so
+ * a typo (`--localy`, `--push-only`) fails loudly instead of silently shipping
+ * under the configured default — which is exactly the outcome the human was
+ * typing a flag to avoid. Two different modes at once is refused for the same
+ * reason: there is no defensible way to pick one.
+ */
+export const parsePublishFlags = (words: readonly string[]): PublishFlagParse => {
+  let publish: ShipPublish | undefined
+  for (const word of words) {
+    if (!word.startsWith("-")) continue
+    const mode = SHIP_PUBLISH_FLAGS[word]
+    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}.` }
+    if (publish && publish !== mode) return { ok: false, message: `Conflicting publish options: --${publish} and --${mode} — pass one.` }
+    publish = mode
+  }
+  return publish ? { ok: true, publish } : { ok: true }
+}
 
 /**
  * The branch-name prefix a kind's loop cuts with, or null when `taskBranch:

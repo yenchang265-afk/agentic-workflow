@@ -1110,6 +1110,92 @@ test("shipTask retry does nothing when the completed task already recorded a PR"
   assert.ok(!log.some((c) => c.includes("push -u origin")), "no re-push once a PR is on record")
 })
 
+// --- the publish choice ---
+//
+// A repo with a real branch: `git` answers every rev-parse/push, so a ship that
+// declines to publish can only be doing so on purpose.
+const shippable = (files: Record<string, string>) =>
+  makeCtx(files, {
+    git: (cmd) => {
+      if (cmd.includes("rev-parse --verify")) return { exitCode: 0, stdout: "" }
+      if (cmd.includes("push")) return { exitCode: 0, stdout: "" }
+      return undefined
+    },
+  })
+
+test('a "local" ship completes the task and pushes nothing', async () => {
+  const { ctx, log, fs } = shippable({ "in-review/t.md": task("Do it") })
+  const r = await shipTask(ctx, "t", "engineering", "local")
+  assert.ok(r.ok)
+  assert.ok(fs["/repo/docs/tasks/completed/t.md"], "the task is completed — publishing less is not shipping less")
+  assert.ok(!log.some((c) => c.includes("push -u origin")), `nothing was pushed — ran: ${log.join(" | ")}`)
+  assert.equal(r.data.publish, "local")
+})
+
+test('a "local" ship is NOT a warning — it did exactly what was asked', async () => {
+  const { ctx } = shippable({ "in-review/t.md": task("Do it") })
+  const r = await shipTask(ctx, "t", "engineering", "local")
+  assert.equal(r.variant, undefined, "warning here would be shouting at the human for their own choice")
+  assert.match(r.message, /kept local/)
+  assert.doesNotMatch(r.message, /no PR was opened/, "that caveat belongs to a pr-mode shortfall, not to this")
+})
+
+test('a "push" ship pushes the branch and opens no PR, cleanly', async () => {
+  const { ctx, log } = shippable({ "in-review/t.md": task("Do it") })
+  const r = await shipTask(ctx, "t", "engineering", "push")
+  assert.ok(r.ok)
+  assert.equal(r.variant, undefined)
+  assert.ok(log.some((c) => c.includes("push -u origin")), "the branch was pushed")
+  assert.match(r.message, /pushed/)
+  assert.equal(r.data.publish, "push")
+})
+
+test("the configured shipPublish decides when the gate is given no override", async () => {
+  const { ctx, log } = shippable({ "in-review/t.md": task("Do it") })
+  const r = await shipTask({ ...ctx, config: { ...ctx.config, shipPublish: "local" } }, "t")
+  assert.ok(r.ok)
+  assert.equal(r.data.publish, "local")
+  assert.ok(!log.some((c) => c.includes("push -u origin")))
+})
+
+/**
+ * The publish-later path, and the reason the `local`/`push` notes are worded
+ * the way they are: `prAlreadyRecorded` reads the audit trail to decide whether
+ * a PR still needs opening, so a note that used the words "PR opened" would
+ * wedge the task as published forever.
+ */
+test("a local ship can be published afterwards — its note never reads as a recorded PR", async () => {
+  const { ctx, fs, log } = shippable({ "in-review/t.md": task("Do it") })
+  await shipTask(ctx, "t", "engineering", "local")
+  assert.match(fs["/repo/docs/tasks/completed/t.md"] ?? "", /Not published — branch feature\/t kept local/)
+
+  const retry = await shipTask(ctx, "t", "engineering", "pr")
+  assert.ok(retry.ok)
+  assert.equal(retry.data.alreadyDone, true, "the task had already moved; only publishing was left")
+  assert.ok(log.some((c) => c.includes("push -u origin")), "the retry pushed the branch it had kept back")
+  assert.doesNotMatch(retry.message, /Nothing to do/)
+})
+
+test("approveAny publishes an already-completed task only when a publish flag asks it to", async () => {
+  const { ctx, log } = shippable({ "completed/t.md": task("Do it") })
+  const bare = await approveAny(ctx, "t")
+  assert.equal(bare.ok, false, "a bare approve on a finished task still just reports where it is")
+  assert.equal(bare.variant, "info")
+  assert.ok(!log.some((c) => c.includes("push -u origin")), "and acquires no network side effect")
+
+  const asked = await approveAny(ctx, "t", "engineering", "pr")
+  assert.ok(asked.ok, "the flag IS the request to publish")
+  assert.equal(asked.data.alreadyDone, true)
+  assert.ok(log.some((c) => c.includes("push -u origin")))
+})
+
+test("the id-less approve never picks a completed task, flag or no flag", async () => {
+  const { ctx } = shippable({ "completed/t.md": task("Do it") })
+  const r = await approveAny(ctx, "", "engineering", "pr")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /Nothing awaiting approval/, "completed/ is a finished pile, not a gate queue")
+})
+
 // --- a move that throws must not leave a note asserting it happened ---
 
 /**

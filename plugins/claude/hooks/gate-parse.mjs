@@ -132,18 +132,28 @@ const unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "")
 export const gateArgsFor = (prompt) => {
   const approve = prompt.match(APPROVE)
   if (approve) {
-    // approve takes an optional id (first token); extra words are ignored.
+    // approve takes an optional id (first BARE token) and optional publish flags.
     // Ids are unquoted everywhere below: `approve "my-task"` names my-task, and
     // the raw quoted form failed `isSafeTaskId` in the CLI — which BLOCKED the
     // turn with a refusal that never hinted quoting was the problem.
-    const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "")
+    const words = (approve[1] || "").trim().split(/\s+/).filter(Boolean)
+    const id = unquote(words.find((w) => !w.startsWith("-")) || "")
+    // Options are forwarded verbatim — every dash-word, not only the three this
+    // hook could recognize. The CLI owns the flag vocabulary (`parsePublishFlags`
+    // in core), so a typo like `--localy` earns a refusal there instead of being
+    // dropped here and shipping under the configured default: a ship that
+    // publishes MORE than the human asked for cannot be taken back.
+    //
+    // Like `--force` on remove, these must be parsed on the hook path at all:
+    // this hook dispatches and then blocks, so no model turn exists to ask in.
+    const opts = words.filter((w) => w.startsWith("-"))
     // approve is folder-driven: which of the three gates it crosses is only
     // knowable once the CLI has moved the task, so the continue decision cannot
     // be made here. Declaring the ASKING gates instead keeps the policy in the
     // pure parser while the CLI's `data.gate` supplies the evidence. A blanket
     // `continueTurn: true` would be wrong — it hands the turn back on refusals
     // and on the terminal ship gate, where there is nothing left to ask.
-    return { argv: ["gate", "approve-any", ...(id ? [id] : [])], continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS }
+    return { argv: ["gate", "approve-any", ...(id ? [id] : []), ...opts], continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS }
   }
   const replan = prompt.match(REPLAN)
   if (replan) {

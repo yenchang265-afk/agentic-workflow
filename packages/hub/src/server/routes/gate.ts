@@ -31,7 +31,10 @@ const ACTIONS: Readonly<Record<GateAction, { from: TaskStatus; run: (ctx: GateCt
   "approve-task": { from: "draft", run: (ctx, id) => approveTask(ctx, id) },
   "approve-plan": { from: "plan-review", run: (ctx, id) => approvePlan(ctx, id) },
   replan: { from: "plan-review", run: (ctx, id, body) => replanTask(ctx, id, body.reason?.trim() || undefined) },
-  ship: { from: "in-review", run: (ctx, id, body) => shipTask(ctx, id, body.kind ?? "engineering") },
+  // `publish` is passed through undefined-and-all: an omitted choice must reach
+  // core as omitted so `shipPublishFor` applies the repo's `shipPublish`, and a
+  // value substituted here would silently outrank the config.
+  ship: { from: "in-review", run: (ctx, id, body) => shipTask(ctx, id, body.kind ?? "engineering", body.publish) },
   // abandon moves the task to abandoned/ — the reversible cancellation. Like
   // remove its button lives on every non-terminal column, so `from` is nominal
   // and `allowedFrom` carries the real set.

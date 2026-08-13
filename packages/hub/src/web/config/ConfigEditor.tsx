@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import {
   PLATFORMS,
   REDACTED,
+  SHIP_PUBLISH,
   type ConfigEdit,
   type ConfigLayer,
   type ConfigLayerResponse,
@@ -9,6 +10,7 @@ import {
   type KindsResponse,
   type Platform,
   type SaveConfigResponse,
+  type ShipPublish,
 } from "../../shared/api.js"
 import { postJson } from "../api.js"
 import { useEvents } from "../events.js"
@@ -30,6 +32,12 @@ import { useResource } from "../resource.js"
 const PLATFORM_LABEL: Readonly<Record<Platform, string>> = {
   github: "github (gh CLI)",
   ado: "ado (Azure DevOps REST)",
+}
+
+const SHIP_PUBLISH_LABEL: Readonly<Record<ShipPublish, string>> = {
+  pr: "pr — push the branch and open a draft PR",
+  push: "push — push the branch, open no PR",
+  local: "local — publish nothing; the branch stays here",
 }
 
 const PROV_TITLE: Readonly<Record<ConfigProvenance, string>> = {
@@ -257,6 +265,20 @@ export const ConfigEditor = () => {
                 {PLATFORMS.map((p) => (
                   <option key={p} value={p}>
                     {PLATFORM_LABEL[p]}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field
+              label="shipPublish"
+              path="shipPublish"
+              provenance={prov("shipPublish")}
+              hint="what the ship gate publishes when you approve an in-review task. Every mode still completes the task; only what leaves this machine changes. Overridable per ship (approve <id> --pr|--push|--local, or the Ship dialog)."
+            >
+              <select value={str("shipPublish") || "pr"} onChange={(e) => set("shipPublish", e.target.value)}>
+                {SHIP_PUBLISH.map((p) => (
+                  <option key={p} value={p}>
+                    {SHIP_PUBLISH_LABEL[p]}
                   </option>
                 ))}
               </select>

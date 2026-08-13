@@ -1261,9 +1261,15 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
           "Stage agents may not call it: a loop driving your session refuses the move.",
         args: {
           id: tool.schema.string().describe("The task id the user approved. Required — never guess one."),
+          publish: tool.schema
+            .enum(["pr", "push", "local"])
+            .optional()
+            .describe(
+              'Only meaningful when this gate SHIPS an in-review task, and only when the user chose it: "pr" pushes the branch and opens a draft PR, "push" pushes and opens nothing, "local" leaves the branch on this machine. Omit it to use the repo\'s configured shipPublish — never send a value the user did not ask for.',
+            ),
         },
         execute: async (args, ctx) => {
-          const done = await withinDeadline(driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig()), GATE_TOOL_TIMEOUT_MS)
+          const done = await withinDeadline(driver.gateFromAgent(deps, ctx.sessionID, args.id, await getConfig(), args.publish), GATE_TOOL_TIMEOUT_MS)
           if (done !== TIMED_OUT) return done
           await log("warn", `workflow_gate on "${args.id}" exceeded ${GATE_TOOL_TIMEOUT_MS}ms — answering the model; the move may still complete`)
           // Safe to invite a retry: approving a task that already moved takes the

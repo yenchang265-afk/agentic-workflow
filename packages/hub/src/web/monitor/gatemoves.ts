@@ -1,4 +1,4 @@
-import type { GateAction, TaskStatus } from "../../shared/api.js"
+import { SHIP_PUBLISH, type GateAction, type ShipPublish, type TaskStatus } from "../../shared/api.js"
 
 /**
  * Which action buttons a task's column offers, as data.
@@ -24,6 +24,11 @@ export interface Move {
   readonly detail: string
   readonly danger?: boolean
   readonly withReason?: boolean
+  /**
+   * Offers the publish choice (ship only). The sibling of `withReason`: a gate
+   * move that carries one extra field in its request body.
+   */
+  readonly withPublish?: boolean
   /**
    * Offered even while a loop drives the task. Gate moves are refused on a
    * held claim so their buttons pre-disable; a move that core explicitly
@@ -77,12 +82,34 @@ const MOVES: Partial<Record<TaskStatus, readonly Move[]>> = {
       endpoint: "/api/gate/ship",
       label: "Ship",
       title: "Ship this task?",
+      // The copy no longer PROMISES a pull request, because the selector below
+      // it decides that now. Naming an effect the human is about to choose
+      // against is worse than naming none: the dialog would be contradicting
+      // its own control.
       detail:
-        "Moves it to completed/, commits to git, AND opens a pull request. This is visible outside your machine. (The PR is best-effort — if it can't be opened the task still ships, and the reason is reported.)",
+        "Moves it to completed/ and commits to git. What reaches the remote is up to you — choose below. (Whatever you pick is best-effort: if the push or the PR can't be done the task still ships, and the reason is reported.)",
       danger: true,
+      withPublish: true,
     },
   ],
 }
+
+/**
+ * The publish options the Ship dialog offers, in the order it offers them:
+ * most public first, so the network-visible choice is never the one a hurried
+ * click lands on by accident.
+ *
+ * Data, not JSX, for the same reason the move table is: `node --test` can reach
+ * it and there is no DOM harness in this package.
+ */
+export const PUBLISH_CHOICES: readonly { readonly value: ShipPublish; readonly label: string; readonly detail: string }[] = [
+  { value: "pr", label: "Open a draft PR", detail: "Pushes the branch to origin and opens (or reuses) a draft pull request. Visible outside your machine." },
+  { value: "push", label: "Push the branch only", detail: "Pushes the branch to origin and opens nothing. Visible outside your machine." },
+  { value: "local", label: "Keep it local", detail: "Nothing is pushed and no PR is opened. The branch stays on this machine; you can publish it later." },
+]
+
+/** Whether a value off the wire is a publish mode this build knows. */
+export const isShipPublish = (value: unknown): value is ShipPublish => SHIP_PUBLISH.includes(value as ShipPublish)
 
 /**
  * The queued column's pair. They are one control in two states, not two buttons:

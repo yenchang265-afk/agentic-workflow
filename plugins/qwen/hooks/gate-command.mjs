@@ -100,8 +100,10 @@ var unquote = (word) => word.replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 var gateArgsFor = (prompt) => {
   const approve = prompt.match(APPROVE);
   if (approve) {
-    const id = unquote((approve[1] || "").trim().split(/\s+/).filter(Boolean)[0] || "");
-    return { argv: ["gate", "approve-any", ...id ? [id] : []], continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS };
+    const words = (approve[1] || "").trim().split(/\s+/).filter(Boolean);
+    const id = unquote(words.find((w) => !w.startsWith("-")) || "");
+    const opts = words.filter((w) => w.startsWith("-"));
+    return { argv: ["gate", "approve-any", ...id ? [id] : [], ...opts], continueOnGate: ASK_GATES, continueOnAmbiguity: ASK_AMBIGUITY_VERBS };
   }
   const replan = prompt.match(REPLAN);
   if (replan) {

@@ -1,6 +1,6 @@
 import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
-import type { Config } from "./state.js"
+import type { Config, ShipPublish } from "./state.js"
 import { isEpicType, isSafeTaskId, parseTask, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
 import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, STATUSES } from "../task/store.js"
 import { withoutPlanSections } from "../task/plan-section.js"
@@ -853,34 +853,111 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   }
 }
 
+/** The branch a publish outcome names, or a stand-in when `shipPr` could not say. */
+const shipBranch = (pr: ShipPrResult): string => pr.branch ?? "the task branch"
+
 /**
- * The PR half of a ship, rendered onto the `GateResult.message` every surface
- * shows verbatim (opencode toast, the hub card).
+ * The publish half of a ship, rendered onto the `GateResult.message` every
+ * surface shows verbatim (opencode toast, the hub card).
  *
- * An unopened PR is a NOTE, not a failure. Opening one is not a requirement of
- * the ship: `shipPr` never throws, no-ops entirely for a hand-authored task with
- * no `feature/<id>` branch, and several of its reasons — `ado config missing`,
- * `ado.repository not configured` — are plain configuration states where a PR
- * was never possible. By the time it runs, the task is already audited, moved to
- * `completed/`, and committed. So the ship succeeded; this is the caveat.
+ * A ship that published less than a PR is a NOTE, never a failure — for two
+ * quite different reasons that this one function has to keep apart:
+ *
+ *  - `push` and `local` did exactly what the human asked for. The note tells
+ *    them where the branch stands and how to publish it later; it is not an
+ *    apology.
+ *  - In `pr` mode an unopened PR really is a shortfall, but still not a failed
+ *    ship. `shipPr` never throws, no-ops entirely for a hand-authored task with
+ *    no `feature/<id>` branch, and several of its reasons — `ado config
+ *    missing`, `ado.repository not configured` — are plain configuration states
+ *    where a PR was never possible. By the time it runs, the task is already
+ *    audited, moved to `completed/`, and committed.
  *
  * What it must not do is go SILENT, which is what it used to do: the reason went
  * only into an audit note, invisible under the default `ignoreBacklog: true`
  * that never commits it, and the user read an unqualified "completed".
  *
- * Deliberately says nothing about whether the branch was pushed. `attempted`
- * covers two worlds — `git push failed` (not pushed) and a `gh`/ADO create
- * failure (pushed) — and `ShipPrResult` does not distinguish them, so any claim
- * either way is wrong half the time.
+ * It CAN now say whether the branch was pushed, which it once could not:
+ * `attempted` covers two worlds — `git push failed` (not pushed) and a `gh`/ADO
+ * create failure (pushed) — and `ShipPrResult.pushed` is the field that tells
+ * them apart, so the caveat names the half that actually failed.
  */
-const prOutcome = (pr: ShipPrResult): string =>
-  pr.url ? ` PR: ${pr.url}` : pr.attempted ? ` Note: no PR was opened — ${pr.reason ?? "reason unknown"}. The task is completed; open one when you're ready.` : ""
+const publishOutcome = (pr: ShipPrResult): string => {
+  if (!pr.attempted) return ""
+  if (pr.url) return ` PR: ${pr.url}`
+  if (pr.mode === "local") return ` Branch ${shipBranch(pr)} was kept local — nothing was pushed. Ship it again with publish "pr" (or "push") to publish it.`
+  if (pr.mode === "push") {
+    return pr.pushed
+      ? ` Branch ${shipBranch(pr)} pushed; no PR was opened (shipPublish: push). Ship it again with publish "pr" to open one.`
+      : ` Note: ${shipBranch(pr)} was not pushed — ${pr.reason ?? "reason unknown"}. The task is completed; publish it when you're ready.`
+  }
+  const half = pr.pushed ? `the branch was pushed, but no PR was opened` : `the branch was not pushed, so no PR was opened`
+  return ` Note: ${half} — ${pr.reason ?? "reason unknown"}. The task is completed; open one when you're ready.`
+}
 
-/** Whether a ship's PR attempt came up short — the one case that warrants a warning. */
-const prMissed = (pr: ShipPrResult): boolean => pr.attempted && !pr.url
+/**
+ * Whether a ship published LESS than it was asked to — the one case that
+ * warrants a warning.
+ *
+ * Keyed on the mode, not on the absence of a URL: a `local` ship has no URL by
+ * design and a `push` ship opens no PR by design, and warning about either would
+ * be shouting at the human for the choice they just made. Only the shortfall of
+ * the mode that was actually requested counts.
+ */
+const publishMissed = (pr: ShipPrResult): boolean => pr.attempted && (pr.mode === "pr" ? !pr.url : pr.mode === "push" ? !pr.pushed : false)
 
-/** ship: an in-review/ task → completed/ (the final human gate). Opens/links the draft PR. */
-export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
+/**
+ * The audit note recording what a ship published, or null when there was nothing
+ * to publish (no branch — `shipPr` never even tried).
+ *
+ * Every wording here is chosen to stay OUT of `prAlreadyRecorded`'s regex below
+ * except the two that mean "a PR exists". That regex is what lets a `local` or
+ * `push` ship be published later: it must read the trail and conclude no PR was
+ * ever opened, so only an actual PR may speak in those terms.
+ */
+const publishNote = (pr: ShipPrResult): string | null => {
+  if (!pr.attempted) return null
+  if (pr.url) return `${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`
+  if (pr.mode === "local") return `Not published — branch ${shipBranch(pr)} kept local`
+  if (pr.mode === "push") return pr.pushed ? `Branch pushed — ${shipBranch(pr)}` : `Branch not pushed — ${pr.reason ?? "reason unknown"}`
+  return `PR not opened — ${pr.reason ?? "reason unknown"}`
+}
+
+/** The `loop(<id>): …` backlog commit subject paired with `publishNote`. */
+const publishCommitSubject = (pr: ShipPrResult): string =>
+  pr.url ? `PR ${pr.created ? "opened" : "linked"}` : pr.mode === "local" ? "kept local" : pr.mode === "push" ? (pr.pushed ? "branch pushed" : "branch not pushed") : "PR not opened"
+
+/**
+ * Write a ship's publish outcome to the audit trail: one note, one backlog
+ * commit. Shared by the main path and the already-completed retry arm so the two
+ * can never word the same outcome differently — the trail is what
+ * `prAlreadyRecorded` later reads to decide whether a PR still needs opening.
+ */
+const recordPublish = async (ctx: GateCtx, ref: { readonly id: string; readonly path: string }, pr: ShipPrResult): Promise<void> => {
+  const note = publishNote(pr)
+  if (!note) return
+  const { $, directory, config, log } = ctx
+  await appendNote($, ref, auditNote(note, new Date()), log)
+  await commitBacklog($, directory, config, `loop(${ref.id}): ${publishCommitSubject(pr)}`)
+}
+
+/** The `data.pr` descriptor a ship reports — the machine-readable twin of `publishNote`. */
+const publishData = (pr: ShipPrResult): Record<string, unknown> => ({
+  mode: pr.mode,
+  pushed: pr.pushed,
+  ...(pr.branch ? { branch: pr.branch } : {}),
+  ...(pr.url ? { url: pr.url } : { opened: false, ...(pr.reason ? { reason: pr.reason } : {}) }),
+})
+
+/**
+ * ship: an in-review/ task → completed/ (the final human gate).
+ *
+ * `publish` is the human's per-ship override of the repo's `shipPublish`: open
+ * the draft PR (the default), push the branch only, or keep everything local.
+ * The MOVE is unconditional — every mode completes the task — and only what
+ * leaves the machine varies.
+ */
+export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
@@ -890,37 +967,38 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
     const elsewhere = await findAnyStatus(ctx, id)
     const where = elsewhere ? statusFolder(elsewhere) : null
     if (where === "completed") {
+      // Two quite different journeys land here, and one arm serves both.
+      //
       // A crash between the completed/ move and shipPr (a slow network call)
       // leaves the task completed with the branch unpushed and NO PR — and this
-      // retry is the only path back. shipPr is idempotent (push re-runs, an
-      // existing PR is reused), so re-attempt it unless the task file already
-      // records an opened/linked PR; then release the orphaned worktree.
+      // retry is the only path back. It is ALSO the publish-later path: a `push`
+      // or `local` ship deliberately opened no PR, and shipping the task again
+      // with `publish: "pr"` is how the human publishes it afterwards. shipPr is
+      // idempotent (push re-runs, an existing PR is reused), so re-attempt it
+      // unless the task file already records an opened/linked PR — which is why
+      // no note written for `push`/`local` may use those words.
       const done = elsewhere!
       const data: Record<string, unknown> = { completed: done.path, alreadyDone: true, gate: "ship", id }
       let tail = " Nothing to do."
       // Hoisted: `pr` is scoped to the re-attempt below, but the variant is
-      // decided on the return. A retry that STILL can't open the PR warns for
-      // the same reason the main path does.
-      let missedPr = false
+      // decided on the return. A retry that STILL can't publish what was asked
+      // for warns for the same reason the main path does.
+      let missedPublish = false
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
       if (!prAlreadyRecorded) {
-        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, extractRunBranch(done))
-        if (pr.url) {
-          data.pr = { url: pr.url }
-          await appendNote($, { id, path: done.path }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
-          await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
-        } else if (pr.attempted) {
-          data.pr = { opened: false, reason: pr.reason }
-          await appendNote($, { id, path: done.path }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
-          await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
+        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, extractRunBranch(done), publish)
+        data.publish = pr.mode
+        if (pr.attempted) {
+          data.pr = publishData(pr)
+          await recordPublish(ctx, { id, path: done.path }, pr)
+          // Same rule as the main path: a retry that still can't publish must
+          // say so, not report "nothing to do".
+          tail = publishOutcome(pr)
         }
-        // Same rule as the main path: a retry that still can't open the PR must
-        // say so, not report "nothing to do".
-        if (pr.url || pr.attempted) tail = prOutcome(pr)
-        missedPr = prMissed(pr)
+        missedPublish = publishMissed(pr)
       }
       await releaseWorktree($, log, directory, config, id, kind)
-      return { ok: true, message: `"${done.title}" is already completed.${tail}`, path: done.path, data, ...(missedPr ? { variant: "warning" as const } : {}) }
+      return { ok: true, message: `"${done.title}" is already completed.${tail}`, path: done.path, data, ...(missedPublish ? { variant: "warning" as const } : {}) }
     }
     return { ok: false, message: elsewhere ? `Can't ship "${id}": it's in ${where}, not in-review/.` : ((await unparseableAt(ctx, id)) ?? `No in-review task "${id}".`) }
   }
@@ -929,25 +1007,21 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering"): 
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
-  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, extractRunBranch(t))
-  const data: Record<string, unknown> = { completed: newPath, gate: "ship", id }
-  if (pr.url) {
-    data.pr = { url: pr.url }
-    await appendNote($, { id, path: newPath }, auditNote(`${pr.created ? "PR opened" : "PR already open"} — ${pr.url}`, new Date()), log)
-    await commitBacklog($, directory, config, `loop(${id}): PR ${pr.created ? "opened" : "linked"}`)
-  } else if (pr.attempted) {
-    data.pr = { opened: false, reason: pr.reason }
-    await appendNote($, { id, path: newPath }, auditNote(`PR not opened — ${pr.reason}`, new Date()), log)
-    await commitBacklog($, directory, config, `loop(${id}): PR not opened`)
+  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, extractRunBranch(t), publish)
+  const data: Record<string, unknown> = { completed: newPath, gate: "ship", id, publish: pr.mode }
+  if (pr.attempted) {
+    data.pr = publishData(pr)
+    await recordPublish(ctx, { id, path: newPath }, pr)
   }
   // The task is done: its worktree — kept across every earlier run so retries
   // and recoveries build on prior iterations — is finally disposable. The
-  // branch survives, so the PR opened just above is unaffected.
+  // branch survives, so the PR opened just above is unaffected — and so is a
+  // `local` ship's unpushed branch, which is the ONLY copy of that work.
   await releaseWorktree($, log, directory, config, id, kind)
   // A caveated ship is still a ship: `ok` stays true (the CLI exits 0, no host
   // reads it as a refusal) and the variant is what makes the note VISIBLE rather
   // than a green toast the user scrolls past.
-  return { ok: true, message: `"${t.title}" completed.${prOutcome(pr)}`, path: newPath, data, ...(prMissed(pr) ? { variant: "warning" as const } : {}) }
+  return { ok: true, message: `"${t.title}" completed.${publishOutcome(pr)}`, path: newPath, data, ...(publishMissed(pr) ? { variant: "warning" as const } : {}) }
 }
 
 /** Which task a folder-driven gate shortcut should act on. */
@@ -1034,6 +1108,23 @@ export const resolveGateTask = async (
 }
 
 /**
+ * The canonical id behind an explicit query that names an already-`completed/`
+ * task, or null — for anything else, including an empty query.
+ *
+ * Resolves through `resolveGateId` first so a short-hash handle works here
+ * exactly as it does at every other gate; an ambiguous one resolves to nothing
+ * and falls through to the ordinary refusal, which is the one that can explain
+ * itself.
+ */
+const completedTaskFor = async (ctx: GateCtx, id: string): Promise<string | null> => {
+  if (!id) return null
+  const resolved = await resolveGateId(ctx, id)
+  if (!resolved || "error" in resolved) return null
+  const t = await findByIdIn(ctx.$, ctx.directory, ctx.config.tasksDir, "completed", resolved.id)
+  return t ? resolved.id : null
+}
+
+/**
  * approve shortcut — the unified, folder-driven gate. With an explicit `id` it
  * advances that task by the gate its folder implies: draft/ → queued (task gate),
  * plan-review/ → in-progress (plan gate), or in-review/ → completed (ship).
@@ -1043,10 +1134,29 @@ export const resolveGateTask = async (
  * never shadowed by a pile of drafts. Tracking epics are skipped in the id-less
  * scan — they are never approvable, so they must not create a false ambiguity.
  */
-export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
+export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish): Promise<GateResult> => {
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
   const pick = await resolveGateTask(ctx, id, tiers, (t) => isEpicType(t.type))
   if (!pick.ok) {
+    // Publish-later. A `push` or `local` ship completes the task without opening
+    // a PR, and `shipTask`'s already-completed arm is what opens one afterwards.
+    //
+    // Two conditions, and both are load-bearing:
+    //
+    //  - An EXPLICIT id. The id-less form must never look in `completed/`: it is
+    //    a finished pile, not a gate queue, and picking from it would turn a bare
+    //    `approve` — the form a human types when they mean "whatever is waiting"
+    //    — into a re-ship of something they finished weeks ago.
+    //  - An EXPLICIT publish choice. Without one this stays what it has always
+    //    been: a report that the task already moved, which moves nothing. The
+    //    publish step is not free — it pushes a branch — so a bare `approve` on a
+    //    finished task must not acquire a network side effect it never had. The
+    //    flag IS the request, and `workflow_ship`'s own retry arm (crash
+    //    recovery) is unaffected either way.
+    if (publish) {
+      const donePublish = await completedTaskFor(ctx, id)
+      if (donePublish) return shipTask(ctx, donePublish, kind, publish)
+    }
     if (pick.kind === "none") return { ok: false, message: "Nothing awaiting approval.", variant: "info" }
     // The ambiguity is the one refusal a host may act on rather than merely
     // report: NOTHING moved here (`resolveGateTask` only lists), so handing the
@@ -1062,17 +1172,17 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering")
   }
   if (pick.from === "draft") return approveTask(ctx, pick.id)
   if (pick.from === "plan-review") return approvePlan(ctx, pick.id)
-  return shipTask(ctx, pick.id, kind) // in-review
+  return shipTask(ctx, pick.id, kind, publish) // in-review
 }
 
 /** ship shortcut: id optional — ships the single in-review/ task when omitted. */
-export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering"): Promise<GateResult> => {
-  if (id) return shipTask(ctx, id, kind)
+export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish): Promise<GateResult> => {
+  if (id) return shipTask(ctx, id, kind, publish)
   const pick = await resolveGateTask(ctx, "", [["in-review"]])
   if (!pick.ok) {
     return pick.kind === "none" ? { ok: false, message: "Nothing awaiting ship.", variant: "info" } : { ok: false, message: pick.message, variant: pick.variant }
   }
-  return shipTask(ctx, pick.id, kind)
+  return shipTask(ctx, pick.id, kind, publish)
 }
 
 /**

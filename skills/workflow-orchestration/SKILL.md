@@ -55,7 +55,8 @@ with no build work left — so plans cannot rot while tasks sit parked.
 Three human decisions, one verb. **`approve [id]`** advances a task by
 whichever gate its folder implies — draft → `queued/` (scope and acceptance),
 parked plan → `in-progress/` (the sign-off before any code is written), and
-finished review → `completed/` (ship). Id-less, it resolves the single task
+finished review → `completed/` (ship, with `--pr`/`--push`/`--local` choosing
+what the ship publishes). Id-less, it resolves the single task
 waiting at a loop wait-gate, falling back to a lone draft only when no loop
 gate is waiting, so a pile of drafts never shadows a parked plan and
 never-approved epic drafts are skipped. **`replan [id] [why]`** is the sole
@@ -258,8 +259,12 @@ that already failed. It is absent on the first iteration.
 ## Termination
 
 - **REVIEW PASS** → done; the task moves to `in-review/`. Review
-  `git diff <base>...feature/<id>`, push and open the PR, then `approve <id>`.
-  The loop never does those steps for you.
+  `git diff <base>...feature/<id>`, then `approve <id>` — the ship gate, which
+  completes the task and publishes the branch as far as you ask: `--pr` (push
+  and open a draft PR), `--push` (push only), `--local` (publish nothing).
+  Omitted, the repo's `shipPublish` decides; the default is `--pr`. A `--push`
+  or `--local` ship is published later with `approve <id> --pr`, which re-runs
+  only the publish step. The loop never ships for you.
 - **FAIL** with budget remaining → re-build with the failure threaded in. A
   verify-FAIL re-build drops stale review feedback and vice versa: old feedback
   judged an older build.
