@@ -118,7 +118,7 @@ const scriptedGateway = (script: GatewayScript = {}, calls: unknown[] = []): Ado
 test("shipPr is a no-op when there's no feature/<id> branch", async () => {
   const $ = scriptedShell([BRANCH_MISSING])
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
-  assert.deepEqual(result, { attempted: false, created: false })
+  assert.deepEqual(result, { attempted: false, mode: "pr", pushed: false, created: false })
 })
 
 test("shipPr reports a reason when the push fails", async () => {
@@ -126,7 +126,67 @@ test("shipPr reports a reason when the push fails", async () => {
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
   assert.equal(result.attempted, true)
   assert.equal(result.created, false)
+  assert.equal(result.pushed, false, "the caveat may claim nothing landed on the remote")
   assert.equal(result.reason, "git push failed")
+})
+
+// --- publish modes ---
+//
+// The argv log is the assertion that matters here, not the returned object: the
+// whole point of `local` is that nothing runs, and only the log can prove a
+// command's ABSENCE.
+
+test('publish "local" runs no push and no gh at all', async () => {
+  const log: string[] = []
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "local")
+  assert.deepEqual(result, { attempted: true, mode: "local", pushed: false, created: false, branch: "feature/task-1" })
+  assert.ok(!log.some((c) => c.includes("push")), `nothing was pushed — ran: ${log.join(" | ")}`)
+  assert.ok(!log.some((c) => c.startsWith("gh ")), "and no PR was attempted")
+  // The branch check still runs: "there is no branch" and "you asked us not to
+  // publish" are different facts, and only this order can report both.
+  assert.ok(log.some((c) => c.includes("rev-parse --verify")))
+})
+
+test('publish "local" is still a no-op when there is no branch', async () => {
+  const $ = scriptedShell([BRANCH_MISSING])
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "local")
+  assert.deepEqual(result, { attempted: false, mode: "local", pushed: false, created: false })
+})
+
+test('publish "push" pushes the branch and opens no PR', async () => {
+  const log: string[] = []
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "push")
+  assert.deepEqual(result, { attempted: true, mode: "push", pushed: true, created: false, branch: "feature/task-1" })
+  assert.ok(log.includes("git -C /repo push -u origin feature/task-1"), `the branch was pushed — ran: ${log.join(" | ")}`)
+  assert.ok(!log.some((c) => c.startsWith("gh ")), "and gh was never reached")
+})
+
+test('publish "push" reports a failed push rather than claiming the branch landed', async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_FAIL])
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "push")
+  assert.equal(result.mode, "push")
+  assert.equal(result.pushed, false)
+  assert.equal(result.reason, "git push failed")
+})
+
+test("the configured shipPublish applies when no per-ship mode is passed", async () => {
+  const log: string[] = []
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
+  // No `publish` argument at all — the repo's setting is what decides, which is
+  // why every host forwards an omitted choice as omitted rather than as "pr".
+  const result = await shipPr($, noop, "/repo", { ...baseConfig, shipPublish: "local" }, "engineering", "task-1", "Add rate limiting")
+  assert.equal(result.mode, "local")
+  assert.ok(!log.some((c) => c.includes("push")), "the configured local ship pushed nothing")
+})
+
+test("an explicit per-ship mode outranks the configured shipPublish", async () => {
+  const log: string[] = []
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
+  const result = await shipPr($, noop, "/repo", { ...baseConfig, shipPublish: "local" }, "engineering", "task-1", "T", undefined, undefined, "push")
+  assert.equal(result.mode, "push")
+  assert.ok(log.includes("git -C /repo push -u origin feature/task-1"))
 })
 
 test("shipPr (github) reuses an existing PR for the branch", async () => {
@@ -136,7 +196,7 @@ test("shipPr (github) reuses an existing PR for the branch", async () => {
     { cmd: "gh pr view feature/task-1", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/9\n" } },
   ])
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
-  assert.deepEqual(result, { attempted: true, created: false, url: "https://github.com/acme/widgets/pull/9" })
+  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "feature/task-1", created: false, url: "https://github.com/acme/widgets/pull/9" })
 })
 
 test("shipPr (github) opens a new draft PR when none exists", async () => {
@@ -148,7 +208,7 @@ test("shipPr (github) opens a new draft PR when none exists", async () => {
     { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/10\n" } },
   ])
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
-  assert.deepEqual(result, { attempted: true, created: true, url: "https://github.com/acme/widgets/pull/10" })
+  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "feature/task-1", created: true, url: "https://github.com/acme/widgets/pull/10" })
 })
 
 test("shipPr (github) invokes gh pr create with only flags gh accepts", async () => {
@@ -229,6 +289,9 @@ test("shipPr (ado) reuses an existing active PR for the branch", async () => {
   const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", gateway)
   assert.deepEqual(result, {
     attempted: true,
+    mode: "pr",
+    pushed: true,
+    branch: "feature/task-1",
     created: false,
     url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/42",
   })
@@ -241,6 +304,9 @@ test("shipPr (ado) opens a new draft PR when none exists, using the repo's defau
   const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "Add rate limiting", gateway)
   assert.deepEqual(result, {
     attempted: true,
+    mode: "pr",
+    pushed: true,
+    branch: "feature/task-1",
     created: true,
     url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99",
   })
@@ -294,7 +360,7 @@ test("an explicitly recorded branch wins over the configured prefix", async () =
     { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/11\n" } },
   ])
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, "claude/my-feature")
-  assert.deepEqual(result, { attempted: true, created: true, url: "https://github.com/acme/widgets/pull/11" })
+  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "claude/my-feature", created: true, url: "https://github.com/acme/widgets/pull/11" })
 })
 
 test("a configured prefix names the branch when nothing was recorded", async () => {

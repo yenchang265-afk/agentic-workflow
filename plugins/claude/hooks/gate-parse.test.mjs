@@ -23,6 +23,36 @@ test("bare approve routes to approve-any with no id (auto-resolve)", () => {
 })
 
 /**
+ * The publish flags. The id must stay the first BARE word — joining the flag
+ * into it would hand the CLI a task id like `my-task --local`, which resolves to
+ * nothing — and the flag must be forwarded, since this hook blocks the turn and
+ * no model gets to ask what the human meant.
+ */
+test("approve forwards a publish flag and keeps the id clean", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task --local"), {
+    argv: ["gate", "approve-any", "my-task", "--local"],
+    ...APPROVE_CONTINUE,
+  })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve --push my-task"), {
+    argv: ["gate", "approve-any", "my-task", "--push"],
+    ...APPROVE_CONTINUE,
+  })
+})
+
+test("a bare approve may still carry a publish flag", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve --pr"), { argv: ["gate", "approve-any", "--pr"], ...APPROVE_CONTINUE })
+})
+
+test("an unrecognized option is forwarded, not swallowed — the CLI owns the vocabulary", () => {
+  // Dropping it here would ship under the configured default while the human
+  // believed they had chosen otherwise; forwarding earns a refusal downstream.
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task --localy"), {
+    argv: ["gate", "approve-any", "my-task", "--localy"],
+    ...APPROVE_CONTINUE,
+  })
+})
+
+/**
  * `approve` is folder-driven, so WHICH gate it crosses is only knowable after the
  * CLI has moved the task. `continueOnGate` is therefore a conditional: policy
  * (which gates deserve a follow-up question) stays here in the pure parser, and

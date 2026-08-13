@@ -1910,6 +1910,32 @@ test("approve <draft-id> queues the draft — the unified task gate", async () =
   assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("queued")), "the draft moves to queued/")
 })
 
+test("approve <id> --local ships without pushing; the id keeps its flag out", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task --local", testConfig)
+
+  assert.equal(toasts[0]?.variant, "success", "a local ship is a clean ship, not a caveated one")
+  assert.ok(log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")), "the task still completes")
+  assert.ok(!log.some((cmd) => cmd.includes("push -u origin")), `nothing was pushed — ran: ${log.join(" | ")}`)
+})
+
+test("approve refuses a misspelled publish flag instead of shipping under the default", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task --localy", testConfig)
+
+  assert.equal(toasts[0]?.variant, "error")
+  assert.match(toasts[0]?.message ?? "", /Unknown option "--localy"/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "and nothing moved — the human's intent was unclear")
+})
+
 test("/approve <id> on an already-advanced task reports info, not error", async () => {
   const files = { "docs/tasks/completed/my-task.md": serializeTask({ title: "Done", body: "x" }) }
   const { client, toasts } = makeClientFS(files)

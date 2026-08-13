@@ -187,6 +187,55 @@ test("re-shipping a completed task releases the worktree a mid-ship crash left b
   }
 })
 
+/**
+ * The publish choice, against real git rather than a scripted shell.
+ *
+ * A fake `$` can only prove that `git push` was not CALLED. What the human
+ * actually cares about is that nothing reached the remote — and only a real
+ * remote can answer that, which is why this case lives here.
+ */
+test("a local ship publishes nothing, and a later push ship publishes it", async () => {
+  const { repo, taskPath } = await seedRepo()
+  const origin = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentic-workflow-origin-")))
+  try {
+    await git(origin, "init", "-q", "--bare", "-b", "main")
+    await git(repo, "remote", "add", "origin", origin)
+
+    // A real work branch, as a run would leave behind.
+    await git(repo, "branch", "feature/t1")
+    fs.mkdirSync(path.join(repo, config.tasksDir, "in-review"), { recursive: true })
+    await git(repo, "mv", `${config.tasksDir}/in-progress/t1.md`, `${config.tasksDir}/in-review/t1.md`)
+    await git(repo, "commit", "-q", "-m", "park in in-review")
+
+    const gateCtx: GateCtx = {
+      $: sh,
+      client: { file: { list: async () => ({ data: [] }), read: async () => ({ data: null }) }, app: { log: async () => undefined } } as unknown as Client,
+      log: noopLog,
+      directory: repo,
+      config,
+      isDriving: () => false,
+    }
+
+    const local = await shipTask(gateCtx, "t1", "engineering", "local")
+    assert.ok(local.ok, `local ship failed: ${local.message}`)
+    assert.equal(local.variant, undefined, "a local ship did what was asked — no warning")
+    assert.ok(fs.existsSync(path.join(repo, config.tasksDir, "completed", "t1.md")), "the task completed all the same")
+    // The branch is still here — a local ship's unpushed branch is the ONLY copy
+    // of that work, so releasing the worktree must not have touched it.
+    assert.ok(await git(repo, "rev-parse", "--verify", "refs/heads/feature/t1"))
+    assert.equal(await git(repo, "ls-remote", "--heads", "origin", "feature/t1"), "", "nothing reached the remote")
+
+    // …and now publish it, on the same task, from completed/.
+    const pushed = await shipTask(gateCtx, "t1", "engineering", "push")
+    assert.ok(pushed.ok, `publish-later failed: ${pushed.message}`)
+    assert.equal(pushed.data?.alreadyDone, true, "the task had already moved; only publishing was left")
+    assert.match(await git(repo, "ls-remote", "--heads", "origin", "feature/t1"), /refs\/heads\/feature\/t1/)
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true })
+    fs.rmSync(origin, { recursive: true, force: true })
+  }
+})
+
 /** A free-text (task-less) loop's entry state — no `task`, so no ship gate ever runs for it. */
 const freeState = (): WorkflowState => ({
   goal: "Free-text goal",

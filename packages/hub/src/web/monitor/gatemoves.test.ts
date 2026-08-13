@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { cancellationMoves, forwardMoves, type Move } from "./gatemoves.js"
+import { PUBLISH_CHOICES, cancellationMoves, forwardMoves, isShipPublish, type Move } from "./gatemoves.js"
+import { SHIP_PUBLISH } from "../../shared/api.js"
 
 /**
  * The rules about which button appears where. They live in a plain module for
@@ -87,4 +88,30 @@ test("every move carries confirm copy — the <Confirm> contract, as a rule a te
     assert.ok(move.title.trim().length > 0, `${move.action} has no title`)
     assert.ok(move.endpoint.startsWith("/api/"), `${move.action} has no endpoint`)
   }
+})
+
+test("only Ship offers the publish choice, and its copy promises no PR", () => {
+  const ship = forwardMoves("in-review").find((m) => m.action === "ship")
+  assert.ok(ship?.withPublish, "the publish selector belongs to the ship gate alone")
+  // The dialog must not name an effect the selector below it can override — it
+  // would be contradicting its own control.
+  assert.doesNotMatch(ship.detail, /opens a pull request/)
+
+  const others = ["draft", "queued", "plan-review", "in-progress"].flatMap((s) => [...forwardMoves(s), ...cancellationMoves(s)])
+  for (const m of others) assert.ok(!m.withPublish, `${m.action} publishes nothing and must not ask`)
+})
+
+test("the publish options cover every mode core accepts, exactly once", () => {
+  assert.deepEqual(
+    PUBLISH_CHOICES.map((c) => c.value),
+    [...SHIP_PUBLISH],
+    "a mode with no option is unreachable from the hub; an option with no mode is a 400",
+  )
+  for (const c of PUBLISH_CHOICES) {
+    assert.ok(c.label.trim().length > 0, `${c.value} has no label`)
+    assert.ok(c.detail.trim().length > 0, `${c.value} does not say what it does`)
+    assert.ok(isShipPublish(c.value))
+  }
+  assert.ok(!isShipPublish("merge"))
+  assert.ok(!isShipPublish(""), 'the dialog\'s "" means "use the repo setting" — never a mode to send')
 })

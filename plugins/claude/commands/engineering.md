@@ -1,6 +1,6 @@
 ---
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 You are about to work the **engineering agentic loop** (typed as

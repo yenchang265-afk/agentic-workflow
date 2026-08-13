@@ -39,7 +39,9 @@ import {
   worktreesDirFor,
   parseConfig,
   planVisualizationFor,
+  parsePublishFlags,
   platformFor,
+  shipPublishFor,
   resolveUserConfigPath,
   trackerUrl,
   triggerFor,
@@ -613,6 +615,34 @@ test("codePlatform defaults to github and rejects unknown platforms", () => {
   assert.equal(DEFAULT_CONFIG.codePlatform, "github")
   assert.equal(platformFor(DEFAULT_CONFIG, "pr-sitter"), "github")
   assert.throws(() => parseConfig({ codePlatform: "gitlab" }), /Invalid .*codePlatform/)
+})
+
+test("shipPublish defaults to pr and rejects unknown modes", () => {
+  assert.equal(DEFAULT_CONFIG.shipPublish, "pr")
+  assert.equal(shipPublishFor(DEFAULT_CONFIG), "pr")
+  assert.throws(() => parseConfig({ shipPublish: "merge" }), /Invalid .*shipPublish/)
+})
+
+test("an explicit per-ship mode outranks shipPublish, and an absent one does not", () => {
+  const local = parseConfig({ shipPublish: "local" })
+  assert.equal(shipPublishFor(local), "local")
+  assert.equal(shipPublishFor(local, "pr"), "pr")
+  // The distinction the hosts depend on: "no choice" must fall through to the
+  // config, so an omitted argument can never quietly publish a `local` repo.
+  assert.equal(shipPublishFor(local, undefined), "local")
+})
+
+test("publish flags parse, and anything unrecognized refuses rather than being ignored", () => {
+  assert.deepEqual(parsePublishFlags(["t-1"]), { ok: true })
+  assert.deepEqual(parsePublishFlags(["t-1", "--local"]), { ok: true, publish: "local" })
+  assert.deepEqual(parsePublishFlags(["--push", "t-1"]), { ok: true, publish: "push" })
+  // A typo must not ship under the configured default — that is the outcome the
+  // human was typing a flag to avoid, and a push cannot be taken back.
+  const typo = parsePublishFlags(["t-1", "--localy"])
+  assert.equal(typo.ok, false)
+  assert.match(typo.ok === false ? typo.message : "", /Unknown option "--localy"/)
+  const clash = parsePublishFlags(["t-1", "--pr", "--local"])
+  assert.equal(clash.ok, false, "there is no defensible way to pick one of two modes")
 })
 
 test("global codePlatform ado requires the ado section and a selfLogin", () => {

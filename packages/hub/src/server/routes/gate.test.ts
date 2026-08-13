@@ -172,6 +172,26 @@ test("ship completes even when the PR fails, and records the failure rather than
   cleanup(dir)
 })
 
+test("ship threads the dialog's publish choice through to core", async () => {
+  const dir = makeRepo()
+  place(dir, "in-review", "ddd6-thing", true)
+  // Same fixture as the failure case above — a real branch, no remote — so a
+  // `pr` ship would try to push and record "PR not opened". `local` must do
+  // neither, which is what tells the choice apart from the default.
+  git(dir, "branch", "feature/ddd6-thing")
+
+  const res = await gate(depsFor(dir), "ship", { id: "ddd6-thing", expectStatus: "in-review", publish: "local" })
+  assert.equal(res.status, 200)
+  const body = res.body as GateResult
+  assert.equal(body.ok, true)
+  assert.ok(at(dir, "completed", "ddd6-thing"), "publishing less is not shipping less")
+  assert.equal(body.ok && (body.data as { publish?: string }).publish, "local")
+  const file = fs.readFileSync(path.join(dir, "docs", "tasks", "completed", "ddd6-thing.md"), "utf8")
+  assert.match(file, /Not published — branch feature\/ddd6-thing kept local/)
+  assert.doesNotMatch(file, /PR not opened/, "nothing was attempted, so nothing failed")
+  cleanup(dir)
+})
+
 test("a stale board is refused with 409, naming where the task actually is", async () => {
   const dir = makeRepo()
   // The client thinks it's in-review; it has already moved on.

@@ -120,6 +120,7 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `watchIntervalMinutes` | `5` | `/agentic-workflow:engineering watch` 的預設輪詢週期；可透過 `/agentic-workflow:engineering watch <interval>` 依 session 覆寫。**僅限 OpenCode**——這個欄位是 OpenCode 外掛在 `src/config.ts` 中疊加在共用核心結構描述（`packages/core/src/config.ts`）之上的擴充欄位；Claude Code 外掛沒有 watch 計時器。 |
 | `workflows` | `{}` | 各工作流程類型的區段——見下方。 |
 | `codePlatform` | `"github"` | 決定 PR 形狀的工作來源要跟哪個平台對話：`"github"`（`gh` CLI）或 `"ado"`（Azure DevOps——透過 Azure DevOps MCP 伺服器 + 一個 PAT）。可用 `workflows.<kind>.codePlatform` 依類型覆寫。見下方。 |
+| `shipPublish` | `"pr"` | 出貨閘門要發布什麼：`"pr"`（推送分支並開一個 draft PR）、`"push"`（只推送分支，不開 PR）或 `"local"`（什麼都不發布）。三種模式都一樣會把任務標記為完成，改變的只有「有什麼東西離開你的機器」。可以逐次出貨覆寫。見下方。 |
 | `ado` | 未設定 | Azure DevOps 的座標（`organization`、`project`、可選的 `repository`、`selfLogin`、`mcp`）；當任何一個生效平台是 `"ado"` 時**必填**——沒有它設定會快速失敗。`"ado"` 下 `selfLogin` 是**必填**的（PAT 無法解析出 sitter 的身分）。 |
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
 | `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
@@ -637,6 +638,57 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 
 管理面板只會寫入這份檔案。一個已經在執行中的迴圈會在下一個階段時
 讀到新設定；不會在階段執行中途重新讀取。
+
+## 出貨發布（`shipPublish`）
+
+核准一個 `in-review/` 的任務就是出貨閘門：任務被移到 `completed/`，這個移動
+也會被提交。`shipPublish` 決定在那一刻有什麼東西（如果有的話）會離開你的機器。
+
+| 值 | `git push` | pull request |
+| --- | --- | --- |
+| `"pr"`（預設） | 會 | 開一個 draft PR，或重用既有的那個 |
+| `"push"` | 會 | 沒有 |
+| `"local"` | 不會 | 沒有 |
+
+```json
+{ "shipPublish": "local" }
+```
+
+不論哪一種，任務都算完成。`push` 和 `local` **不是**打了折扣的出貨，也不會發出
+警告——只有在你要求的模式沒有做到時才會（`pr` 開不出 PR、`push` 推不上去）。
+
+這是一個全域的鍵，刻意不提供 `workflows.<kind>` 覆寫：出貨閘門以任務為基礎，
+而且只有 `engineering` 類型有這個閘門，所以依類型設定的值永遠不會生效。
+
+### 逐次出貨選擇
+
+設定檔裡的值只是預設值，不是綁死的決定：
+
+| 位置 | 做法 |
+| --- | --- |
+| 指令動詞 | `/agentic-workflow:engineering approve <id> --pr`（或 `--push`、`--local`） |
+| Claude Code / Qwen 工具 | `workflow_ship({id, publish: "local"})`、`workflow_approve({id, publish})` |
+| OpenCode 工具 | `workflow_gate({id, publish})` |
+| 管理面板 | Ship 對話框裡的 **publish** 選單 |
+
+不指定就套用設定檔的值。拼錯的旗標會被拒絕而不是被忽略——發布得比你要求的更多，
+是收不回來的。
+
+### 之後再發布
+
+`push` 或 `local` 的出貨會保留分支；任務本身沒有任何半完成的狀態。要在事後發布
+它，就對同一個任務再出貨一次：
+
+```
+/agentic-workflow:engineering approve <id> --pr
+```
+
+帶著發布旗標時，一個指向已經在 `completed/` 的任務的 id 只會重跑**發布那一步**
+——推送分支並開 PR；如果 PR 已經記錄在案，它什麼也不做。旗標就是那個請求：對一個
+已完成的任務下不帶旗標的 `approve <id>`，仍然只是回報它已經移動過了，不會推送任何
+東西。（不帶 id 的 `approve` 也永遠不會挑到已完成的任務，它只看在閘門前等待的任務。）
+
+在 Claude Code 和 Qwen 上，`workflow_ship({id, publish: "pr"})` 直接做同一件事。
 
 ## 程式碼平台（`codePlatform` / `ado`）
 

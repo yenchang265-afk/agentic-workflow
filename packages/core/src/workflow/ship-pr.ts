@@ -1,32 +1,60 @@
 import { z } from "zod"
 import type { Log, Shell } from "../host.js"
-import { platformFor, taskBranchFor } from "../config.js"
+import { platformFor, shipPublishFor, taskBranchFor } from "../config.js"
 import { adoList } from "../source/ado-shared.js"
 import type { AdoGateway } from "../source/ado-gateway.js"
-import type { Config } from "./state.js"
+import type { Config, ShipPublish } from "./state.js"
 import { branchExists, currentBranch, pushBranch } from "./git.js"
 
 /**
- * Push a ship-gated task's branch and open (or reuse) a draft PR for it —
- * GitHub or Azure DevOps, chosen by `platformFor(config, kind)`. Called only
- * from the ship gate, after the task has already been moved to `completed/`:
- * this never throws, and a failure here must never fail the ship — opening a PR
- * is not a requirement of shipping. It must not be SILENT either: the ship gate
- * renders `reason` onto its `GateResult` as a warning (message + `pr.opened`),
- * not only into the audit note, which is invisible under the default
- * `ignoreBacklog: true` that never commits it.
+ * Publish a ship-gated task's branch, as far as the effective `shipPublish`
+ * mode asks for: push it and open (or reuse) a draft PR (`pr`, the default),
+ * push it and stop (`push`), or do nothing at all (`local`). The PR platform is
+ * GitHub or Azure DevOps, chosen by `platformFor(config, kind)`.
+ *
+ * Called only from the ship gate, after the task has already been moved to
+ * `completed/`: this never throws, and a failure here must never fail the ship
+ * — publishing is not a requirement of shipping. It must not be SILENT either:
+ * the ship gate renders `reason` onto its `GateResult` as a warning (message +
+ * `pr.opened`), not only into the audit note, which is invisible under the
+ * default `ignoreBacklog: true` that never commits it.
  */
 
 export interface ShipPrResult {
   /** False when there's no branch to ship (e.g. a manually authored task) — a silent no-op. */
   readonly attempted: boolean
+  /**
+   * The mode this call was asked for. The caller cannot re-derive it from
+   * config: an explicit per-ship override wins over the config key, and it is
+   * `shipPublishFor` here that resolves the two.
+   */
+  readonly mode: ShipPublish
+  /**
+   * Whether the branch actually reached `origin`.
+   *
+   * Load-bearing, not decoration: without it `attempted` conflates "push failed,
+   * so nothing is on the remote" with "push succeeded, only the PR call failed",
+   * and the ship gate's message had to stay vague about which happened. It is
+   * also what tells `local` (deliberately unpushed) apart from a failed push.
+   */
+  readonly pushed: boolean
   /** True only when a new PR was opened this call; a reused existing PR still carries `url` with `created: false`. */
   readonly created: boolean
   readonly url?: string
   readonly reason?: string
+  /** The branch acted on, so the gate's message and audit note can name it. */
+  readonly branch?: string
 }
 
-const NOT_ATTEMPTED: ShipPrResult = { attempted: false, created: false }
+const notAttempted = (mode: ShipPublish): ShipPrResult => ({ attempted: false, mode, pushed: false, created: false })
+
+/**
+ * What a PR arm reports back. Only the `pr` mode reaches one, and only after a
+ * successful push, so `attempted`/`mode`/`pushed`/`branch` are already decided
+ * by `shipPr` — the arms would have to repeat the same three constants at every
+ * one of their nine returns to say nothing new.
+ */
+type PrAttempt = Pick<ShipPrResult, "created" | "url" | "reason">
 
 // --- GitHub (via `gh`) ---
 
@@ -42,9 +70,9 @@ const ghDefaultBranch = async ($: Shell, cwd: string): Promise<string | null> =>
   return out.exitCode === 0 && name ? name : null
 }
 
-const shipGithub = async ($: Shell, log: Log, directory: string, branch: string, title: string): Promise<ShipPrResult> => {
+const shipGithub = async ($: Shell, log: Log, directory: string, branch: string, title: string): Promise<PrAttempt> => {
   const existing = await ghExistingPrUrl($, directory, branch)
-  if (existing) return { attempted: true, created: false, url: existing }
+  if (existing) return { created: false, url: existing }
   // The `currentBranch` fallback must never equal the head: in current-branch
   // mode (`taskBranch: false`) teardown leaves the tree ON the shipped branch,
   // so the old chain asked for a PR from a branch onto itself and `gh` refused.
@@ -57,10 +85,10 @@ const shipGithub = async ($: Shell, log: Log, directory: string, branch: string,
     .quiet()
     .nothrow()
   const url = out.stdout.toString().trim()
-  if (out.exitCode === 0 && url) return { attempted: true, created: true, url }
+  if (out.exitCode === 0 && url) return { created: true, url }
   const reason = out.stderr.toString().trim() || "gh pr create failed"
   await log("warn", `ship: gh pr create failed for ${branch} — ${reason}`)
-  return { attempted: true, created: false, reason }
+  return { created: false, reason }
 }
 
 // --- Azure DevOps (via the MCP gateway — mirrors source/ado-pr.ts) ---
@@ -114,11 +142,11 @@ const shipAdo = async (
   config: Config,
   branch: string,
   title: string,
-): Promise<ShipPrResult> => {
+): Promise<PrAttempt> => {
   const ado = config.ado
-  if (!ado) return { attempted: true, created: false, reason: "ado config missing" }
-  if (!ado.repository) return { attempted: true, created: false, reason: "ado.repository not configured (required to open a PR)" }
-  if (!gateway) return { attempted: true, created: false, reason: "no Azure DevOps MCP gateway configured" }
+  if (!ado) return { created: false, reason: "ado config missing" }
+  if (!ado.repository) return { created: false, reason: "ado.repository not configured (required to open a PR)" }
+  if (!gateway) return { created: false, reason: "no Azure DevOps MCP gateway configured" }
 
   const org = ado.organization.replace(/\/+$/, "")
   const project = ado.project
@@ -126,7 +154,7 @@ const shipAdo = async (
   const prUrl = (id: number): string => `${org}/${project}/_git/${repository}/pullrequest/${id}`
 
   const existingId = await adoExistingPrId(gateway, project, repository, branch)
-  if (existingId) return { attempted: true, created: false, url: prUrl(existingId) }
+  if (existingId) return { created: false, url: prUrl(existingId) }
 
   // Same head-is-not-base rule as the GitHub arm above.
   const cur = await currentBranch($, directory)
@@ -145,21 +173,24 @@ const shipAdo = async (
   if (!createOut.ok) {
     const reason = `ADO PR create failed — ${createOut.error}`
     await log("warn", `ship: ${reason} (${branch})`)
-    return { attempted: true, created: false, reason }
+    return { created: false, reason }
   }
   try {
     const data = AdoPrRefSchema.parse(createOut.data)
-    if (!data.pullRequestId) return { attempted: true, created: false, reason: "ADO PR create: no pullRequestId in response" }
-    return { attempted: true, created: true, url: prUrl(data.pullRequestId) }
+    if (!data.pullRequestId) return { created: false, reason: "ADO PR create: no pullRequestId in response" }
+    return { created: true, url: prUrl(data.pullRequestId) }
   } catch (err) {
-    return { attempted: true, created: false, reason: `ADO PR create: could not parse response — ${(err as Error).message}` }
+    return { created: false, reason: `ADO PR create: could not parse response — ${(err as Error).message}` }
   }
 }
 
 /**
- * Ship a task's branch: push it and open (or reuse) a draft PR. `kind` resolves
- * the platform via `platformFor` — the `<tasksDir>` file backlog is always the
- * `"engineering"` kind. Never throws.
+ * Publish a task's branch to the extent the effective mode asks for. `kind`
+ * resolves the platform via `platformFor` — the `<tasksDir>` file backlog is
+ * always the `"engineering"` kind. Never throws.
+ *
+ * `publish` is the human's per-ship override; absent, the repo's `shipPublish`
+ * decides, and absent that, `pr` — see `shipPublishFor`.
  *
  * `branch` is the branch the run ACTUALLY built on, read off the task file by
  * `extractRunBranch`. It is the authority when present, because the two
@@ -178,17 +209,31 @@ export const shipPr = async (
   title: string,
   gateway?: AdoGateway,
   branch?: string,
+  publish?: ShipPublish,
 ): Promise<ShipPrResult> => {
+  const mode = shipPublishFor(config, publish)
   try {
+    // Branch resolution runs FIRST for every mode, `local` included. "There is
+    // no branch here" (a hand-authored task) is a different fact from "you asked
+    // for nothing to be published", and only this order can report both: a
+    // `local` short-circuit above it would claim a branch was deliberately kept
+    // back when none ever existed.
     const head = branch ?? taskBranchFor(config, kind, id) ?? (await currentBranch($, directory))
-    if (!head || !(await branchExists($, directory, head))) return NOT_ATTEMPTED
+    if (!head || !(await branchExists($, directory, head))) return notAttempted(mode)
+    const base = { attempted: true, mode, branch: head } as const
+    if (mode === "local") return { ...base, pushed: false, created: false }
     if (!(await pushBranch($, directory, head))) {
       await log("warn", `ship: git push failed for ${head}`)
-      return { attempted: true, created: false, reason: "git push failed" }
+      return { ...base, pushed: false, created: false, reason: "git push failed" }
     }
+    if (mode === "push") return { ...base, pushed: true, created: false }
     const platform = platformFor(config, kind)
-    return platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title) : await shipGithub($, log, directory, head, title)
+    const attempt = platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title) : await shipGithub($, log, directory, head, title)
+    return { ...base, pushed: true, ...attempt }
   } catch (err) {
-    return { attempted: true, created: false, reason: (err as Error).message }
+    // `pushed: false` is the honest answer for a throw: the only awaits that can
+    // reach here either precede the push or ARE it, and `pushBranch` swallows a
+    // failing git rather than throwing, so nothing that threw got past it.
+    return { attempted: true, mode, pushed: false, created: false, reason: (err as Error).message, ...(branch ? { branch } : {}) }
   }
 }

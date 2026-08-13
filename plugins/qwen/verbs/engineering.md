@@ -163,6 +163,18 @@
   **Spawn nothing of your own** beyond what the follow-up asks for. (Fallback,
   when no hook ran: `mcp__agentic-workflow__workflow_approve({id})`, id
   optional — then ask the same question yourself.)
+  - **`--pr` / `--push` / `--local` choose what a SHIP publishes, and the hook
+    parses them — not you.** `--pr` pushes the branch and opens a draft PR,
+    `--push` pushes and opens nothing, `--local` leaves the branch on this
+    machine. Omitted, the repo's `shipPublish` decides (default `--pr`). They
+    are ignored at the task and plan gates, which publish nothing. Never add one
+    the user did not write: the task completes either way, but a push cannot be
+    taken back. On the fallback tool path they are the `publish` argument
+    (`"pr" | "push" | "local"`) — again, only when the user chose it.
+  - A `--push` or `--local` ship can be published afterwards with
+    `approve <id> --pr` — on a task already in `completed/` that re-runs **only**
+    the publish step. The flag is what asks for it: a bare `approve <id>` on a
+    finished task still just reports that it already moved, and pushes nothing.
 <!-- /aw:verb approve -->
 <!-- aw:verb replan -->
 - **`replan [id] [reason]`** — the sole rejection verb, and it chains the

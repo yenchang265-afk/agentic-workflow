@@ -125,6 +125,7 @@ import {
   fanoutOverriddenByLenses,
   ignoredUserConfigPaths,
   modelFor,
+  parsePublishFlags,
   passAxes,
   resolveUserConfigPath,
   stagePasses,
@@ -142,7 +143,7 @@ import { boundedShell } from "../bounded-shell.ts"
 import type { Config } from "../config.ts"
 import { splitVerb } from "../verb.ts"
 import { armCron, armIdle, armPoll, claimsOnIdle, cronError, type TriggerMode, type WatchTimerHandle } from "./trigger.js"
-import type { Action, WorkflowState, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
+import type { Action, WorkflowState, ShipPublish, Stage, TaskRef } from "@agentic-workflow/core/workflow/state"
 import { anyWorkflowActive, clearWorkflow, findSessionDriving, getWorkflow, setWorkflow } from "@agentic-workflow/core/workflow/state"
 
 /**
@@ -2899,9 +2900,18 @@ export const gateCtx = (deps: Deps, config: Config): GateCtx => ({
  */
 export const handleApprove = async (deps: Deps, sessionID: string, args: string, config: Config): Promise<string> => {
   const { client } = deps
-  const id = args.trim().split(/\s+/).filter(Boolean)[0] ?? ""
+  // The id is the first BARE word, not the first word: `approve t-42 --local`
+  // carries a publish override in the same argument string, and taking word 0
+  // blindly would make `approve --local` name a task called "--local".
+  const words = args.trim().split(/\s+/).filter(Boolean)
+  const id = words.find((w) => !w.startsWith("-")) ?? ""
+  const flags = parsePublishFlags(words)
+  // A misspelled flag refuses rather than shipping under the configured default.
+  // Same rule as the Claude/Qwen CLI arm, and the same reason: a ship that
+  // publishes more than the human asked for cannot be taken back.
+  if (!flags.ok) return report(client, flags.message, "error")
   try {
-    const r = await approveAny(gateCtx(deps, config), id)
+    const r = await approveAny(gateCtx(deps, config), id, "engineering", flags.publish)
     // A task gate leaves an obvious next question, and this host DOES get a
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
@@ -3153,7 +3163,7 @@ const refuseIfDriven = async (deps: Deps, sessionID: string): Promise<string | n
  * host has no MCP tools and writes under `docs/tasks/` are guarded, so the model
  * could not act on the answer it just collected.
  */
-export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string> => {
+export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config, publish?: ShipPublish): Promise<string> => {
   const refusal = await refuseIfDriven(deps, sessionID)
   if (refusal) return refusal
   const target = id.trim()
@@ -3169,7 +3179,7 @@ export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, c
     // unknowable: a tool that never returns leaves no transcript, and the last
     // time it happened the answer had to be reconstructed from file mtimes.
     void deps.log("info", `workflow_gate: moving "${target}" through its gate`)
-    const r = await approveAny(gateCtx(deps, config), target)
+    const r = await approveAny(gateCtx(deps, config), target, "engineering", publish)
     void deps.log("info", `workflow_gate: "${target}" → ${r.ok ? "moved" : "refused"} (${r.message})`)
     void toast(deps.client, r.message, gateVariant(r))
     // The ambiguous refusal carries its own follow-up: an id-less call from the
@@ -3530,7 +3540,7 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
-  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] · replan [id] [reason] · ` +
+  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
   "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`

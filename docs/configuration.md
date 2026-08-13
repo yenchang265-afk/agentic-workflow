@@ -133,6 +133,7 @@ hand-edited afterward.
 | `watchIntervalMinutes` | `5` | Default polling cadence for `/agentic-workflow:engineering watch`; overridable per session via `/agentic-workflow:engineering watch <interval>`. **OpenCode-only** — this field is an extension the OpenCode plugin adds in `src/config.ts` on top of the shared core schema (`packages/core/src/config.ts`); the Claude Code plugin has no watch timer. |
 | `workflows` | `{}` | Per-workflow-kind sections — see below. |
 | `codePlatform` | `"github"` | Which platform PR-shaped work sources talk to: `"github"` (the `gh` CLI) or `"ado"` (Azure DevOps — via the Azure DevOps MCP server + a PAT). Overridable per kind with `workflows.<kind>.codePlatform`. See below. |
+| `shipPublish` | `"pr"` | What the ship gate publishes: `"pr"` (push the branch and open a draft PR), `"push"` (push the branch, open no PR), or `"local"` (publish nothing). Every mode still completes the task; only what leaves your machine changes. Overridable per ship. See below. |
 | `ado` | unset | Azure DevOps coordinates (`organization`, `project`, optional `repository`, `selfLogin`, `mcp`); **required** when any effective platform is `"ado"` — the config fails fast without it. `selfLogin` is **required** for `"ado"` (a PAT can't resolve the sitter's identity). |
 | `projectManagement` | unset | The team's task tracker (Jira / Azure DevOps) and how local tasks pair to it. Drives task-authoring defaults and the pairing view in `/agentic-workflow:engineering status`. See below. |
 | `worktreesDir` | `".workflow-worktrees"` | See hardening below. Set to `false` to opt out. |
@@ -688,6 +689,63 @@ are worth knowing, because each exists to prevent a specific way of losing data:
 
 The hub only writes the file. A loop already running picks up the new config at
 its next stage; it is not re-read mid-stage.
+
+## Ship publishing (`shipPublish`)
+
+Approving an `in-review/` task is the ship gate: the task moves to `completed/`
+and the move is committed. `shipPublish` decides what — if anything — leaves
+your machine at that moment.
+
+| value | `git push` | pull request |
+| --- | --- | --- |
+| `"pr"` (default) | yes | draft PR opened, or an existing one reused |
+| `"push"` | yes | none |
+| `"local"` | no | none |
+
+```json
+{ "shipPublish": "local" }
+```
+
+The task is completed either way. `push` and `local` are **not** degraded ships
+and raise no warning — a warning appears only when the mode you asked for came
+up short (a `pr` ship that could not open one, a `push` that could not push).
+
+It is a global key with no `workflows.<kind>` override, deliberately: the ship
+gate is task-backed and only the `engineering` kind has one, so a per-kind
+value could never fire.
+
+### Choosing per ship
+
+The config value is the default, not a decision you are stuck with:
+
+| where | how |
+| --- | --- |
+| typed verb | `/agentic-workflow:engineering approve <id> --pr` (or `--push`, `--local`) |
+| Claude Code / Qwen tools | `workflow_ship({id, publish: "local"})`, `workflow_approve({id, publish})` |
+| OpenCode tool | `workflow_gate({id, publish})` |
+| admin hub | the **publish** selector in the Ship dialog |
+
+Omit it and the configured value applies. A misspelled flag is refused rather
+than ignored — a ship that publishes more than you asked for cannot be undone.
+
+### Publishing later
+
+A `push` or `local` ship keeps its branch; nothing about the task is left
+half-done. To publish it afterwards, ship the same task again:
+
+```
+/agentic-workflow:engineering approve <id> --pr
+```
+
+With a publish flag, an id naming a task already in `completed/` re-runs **only**
+the publish step — it pushes the branch and opens the PR, and does nothing at all
+once a PR is on record. The flag is what asks for it: a bare
+`approve <id>` on a finished task still just reports that it already moved, and
+pushes nothing. (The id-less `approve` never picks a completed task either; it
+looks only at tasks waiting at a gate.)
+
+On Claude Code and Qwen, `workflow_ship({id, publish: "pr"})` does the same
+thing directly.
 
 ## Code platform (`codePlatform` / `ado`)
 
