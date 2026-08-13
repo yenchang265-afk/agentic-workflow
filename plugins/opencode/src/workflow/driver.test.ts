@@ -2484,6 +2484,60 @@ test("a stop before the loop is registered still stops it, and says so", async (
 })
 
 /**
+ * A transition has to reach DISK as promptly as it reaches the session store.
+ * The snapshot is `recover`'s only oracle (and an ESC deliberately keeps it),
+ * but the only write used to be the one at the TOP of the next iteration —
+ * behind `ensureIsolation` and the stage checks, which shell out and can take
+ * minutes. Through that window the file still named the stage the loop had
+ * already left, so a resume re-entered at it: a run that had reached REVIEW came
+ * back at VERIFY, and the live REVIEW subagent's verdict was then refused as
+ * stage drift ("the loop is at verify, not review"), retried, and thrown away.
+ */
+test("drive snapshots a transition before the next stage's isolation runs", async () => {
+  const sessionID = "sess-transition-snapshot"
+  const log: string[] = []
+  const fired: string[] = []
+  const client = {
+    tui: { showToast: async () => ({ data: undefined }) },
+    session: {
+      get: async () => ({ data: { parentID: undefined } }),
+      abort: async () => ({ data: true }),
+      command: async ({ body }: { body: { command: string } }) => {
+        fired.push(body.command)
+        // triage (isolation "none") PASSes, so the chain transitions to `fix` —
+        // the first ISOLATED stage, i.e. the first one whose setup opens the window.
+        if (body.command === "pr-triage") recordVerdict(sessionID, "triage", { verdict: "PASS", reason: "actionable" })
+        return { data: { parts: [{ type: "text", text: `${body.command} done` }] } }
+      },
+    },
+  } as unknown as Deps["client"]
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+  const state: WorkflowState = {
+    kind: "pr-sitter",
+    goal: "Sit on PR #1",
+    stage: "triage",
+    iteration: 0,
+    artifacts: {},
+    task: { id: "t", path: "/repo/docs/tasks/in-progress/t.md", acceptance: [] },
+  }
+
+  await drive(deps, sessionID, testConfig, firstStep(manifestFor("pr-sitter"), state))
+
+  assert.ok(fired.includes("pr-fix"), `the test never reached the transition it exists to cover — fired ${JSON.stringify(fired)}`)
+  const snapAt = log.findIndex((cmd) => cmd.includes("t.state.json") && cmd.includes('"stage": "fix"'))
+  // `ensureIsolation`'s first probe — the head of the setup (worktree add,
+  // branch checkout, dependency install) the old single snapshot sat behind.
+  const isolationAt = log.findIndex((cmd) => /^git -C \S+ rev-parse\b/.test(cmd))
+  assert.ok(snapAt >= 0, "the transition to `fix` must be snapshotted to disk")
+  assert.ok(isolationAt >= 0, `the test needs the isolation work it orders against — log ${JSON.stringify(log)}`)
+  assert.ok(
+    snapAt < isolationAt,
+    `the snapshot naming the new stage must land BEFORE that stage's isolation, not after it (snapshot ${snapAt}, isolation ${isolationAt})`,
+  )
+  clearWorkflow(sessionID)
+})
+
+/**
  * The live-stage advertisement: drive writes `.stage-opencode.json` (the
  * OpenCode sibling of the Claude host's `.stage.json` — see core's
  * stage-marker.ts) before each stage fires, and its finally takes it down on
@@ -4163,7 +4217,25 @@ test("driveChain publishes the advanced state before awaiting anything else", as
   assert.ok(advanceAt > -1, "driveChain's transition moved — re-point this lint")
   // The loop body ends at the next line that closes it; everything the transition
   // is followed by lives in this slice.
+  // The loop body ends at the next line that closes it; everything the transition
+  // is followed by lives in this slice.
   const afterAdvance = src.slice(advanceAt, src.indexOf("\n  }\n", advanceAt))
-  assert.match(afterAdvance, /setWorkflow\(sessionID, step\.state\)/, "the transition must be published before the next await")
-  assert.doesNotMatch(afterAdvance, /await /, "nothing may be awaited between the transition and publishing it")
+  const publishAt = afterAdvance.indexOf("setWorkflow(sessionID, step.state)")
+  assert.ok(publishAt > -1, "the transition must be published before the next await")
+  assert.doesNotMatch(
+    afterAdvance.slice(0, publishAt),
+    /await /,
+    "nothing may be awaited between the transition and publishing it",
+  )
+  // The DISK half, and the reason it is linted here too: the snapshot is
+  // `recover`'s only oracle, and it used to be written only at the top of the
+  // next iteration — behind the same isolation/check work. A resume in that
+  // window re-entered at the stage the loop had already left, and the live
+  // subagent of the stage it HAD reached then had its verdict refused as drift.
+  // It follows the publish (it awaits, so it cannot precede it).
+  assert.match(
+    afterAdvance.slice(publishAt),
+    /await snapshot\(deps, config, step\.state\)/,
+    "the transition must reach the snapshot as promptly as it reaches the store",
+  )
 })
