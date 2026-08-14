@@ -7,12 +7,14 @@ import path from "node:path"
 import {
   clearOpencodeStageMarker,
   hostStageMarkerPath,
+  hostVerdictNagPath,
   opencodeMarkerPath,
   opencodeStageMarker,
   STAGE_MARKER_HOSTS,
   stageMarkerFile,
   taskDrivenByStageMarker,
   taskNamedByStageMarker,
+  verdictNagFile,
   writeOpencodeStageMarker,
 } from "./stage-marker.js"
 import type { WorkflowState } from "./state.js"
@@ -84,6 +86,25 @@ test("the Claude marker keeps its unsuffixed historical filename", () => {
   assert.equal(stageMarkerFile("claude"), ".stage.json")
   assert.equal(stageMarkerFile("opencode"), ".stage-opencode.json")
   assert.equal(stageMarkerFile("qwen"), ".stage-qwen.json")
+})
+
+// Claude and Qwen share this server/hook source, so an unscoped nag path let a
+// stale sentinel from one host's run suppress (or falsely arm) the other
+// host's SubagentStop reminder on the same repo.
+test("every host's verdict-nag sentinel is a distinct file under runs/", () => {
+  const files = STAGE_MARKER_HOSTS.map(verdictNagFile)
+  assert.equal(new Set(files).size, files.length, `two hosts share a verdict-nag file: ${files.join(", ")}`)
+  for (const host of STAGE_MARKER_HOSTS) {
+    assert.equal(hostVerdictNagPath("/repo", "docs/tasks", host), path.join("/repo/docs/tasks/runs", verdictNagFile(host)))
+  }
+})
+
+// Same reason the Claude stage marker stays unsuffixed: it came first and its
+// shipped hook bundle reads this literal path.
+test("the Claude verdict-nag sentinel keeps its unsuffixed historical filename", () => {
+  assert.equal(verdictNagFile("claude"), ".verdict-nag")
+  assert.equal(verdictNagFile("opencode"), ".verdict-nag-opencode")
+  assert.equal(verdictNagFile("qwen"), ".verdict-nag-qwen")
 })
 
 test("opencodeMarkerPath stays a thin wrapper over the generic path", () => {

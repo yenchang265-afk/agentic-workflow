@@ -59,6 +59,15 @@ test("no two hosts share a stage-marker file", () => {
   assert.equal(new Set(files).size, files.length, `two hosts share a marker: ${files.join(", ")}`)
 })
 
+// A stale sentinel from one host's run must not suppress (or falsely arm) the
+// other host's SubagentStop nag on the same repo — same reason the stage
+// marker and evidence ledger are per-host.
+test("no two hosts share a verdict-nag file, and every host declares one", () => {
+  for (const host of KNOWN_HOSTS) assert.ok(dialectFor(host).verdictNagFile, `${host} names no verdict-nag file`)
+  const files = KNOWN_HOSTS.map((h) => dialectFor(h).verdictNagFile)
+  assert.equal(new Set(files).size, files.length, `two hosts share a verdict-nag sentinel: ${files.join(", ")}`)
+})
+
 test("Claude tool names classify", () => {
   const d = dialectFor("claude")
   assert.ok(isBashTool(d, "Bash"))

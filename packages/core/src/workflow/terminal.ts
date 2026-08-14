@@ -1,8 +1,8 @@
 import type { Log, Shell } from "../host.js"
 import type { LoadedManifest } from "../manifest/schema.js"
 import { resolveValidateHook } from "../manifest/registry.js"
-import { appendNote, auditNote, extractPlan, findByIdIn, moveTask, planHeadingCount, planRejectedNote, releaseClaim, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
-import { previewDiscoveredChecks } from "./discovered-checks.js"
+import { appendNote, auditNote, contractRejectedNote, extractPlan, findByIdIn, moveTask, planHeadingCount, releaseClaim, stopContextNote, unaddressedRejectionCount } from "../task/store.js"
+import { clampedChecksDetail, previewDiscoveredChecks } from "./discovered-checks.js"
 import { hasVerificationSection } from "./verdict.js"
 import type { TaskStatus } from "../task/statuses.js"
 import { ensureExcluded } from "./git.js"
@@ -204,15 +204,17 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
     const why = !fresh ? "the task left queued/ mid-plan" : !plan ? PARK_NO_PLAN_WHY : PARK_NO_VERIFICATION_WHY
     await log("warn", `loop(${id}): not parking — ${why}`)
     if (fresh) {
-      // The refusal is recorded as a CANONICAL rejection note (`planRejectedNote`
-      // — the exact shape `extractReplanReason` parses), so the next PLAN pass
-      // receives this reason in its {{#replan}} section. The old free-form
-      // "PLAN stage failed" note matched nothing, and the retry re-planned
-      // blind to the refusal — repeating the same contract mistake every poll
-      // tick. The note only makes sense on a file that is still there —
-      // appending to a stale path would `>>`-recreate a moved task as a
-      // frontmatterless ghost.
-      await appendNote($, fresh, auditNote(planRejectedNote(why), new Date(), actor), log)
+      // The refusal is recorded as a CANONICAL rejection note (`contractRejectedNote`
+      // — the same shape `planRejectedNote` gives a human `replan`, so
+      // `extractReplanReason` still threads it into the next PLAN pass's
+      // {{#replan}} section, but TAGGED so `unaddressedRejectionCount` counts
+      // it separately from a human's deliberate rejection — see its doc. The
+      // old free-form "PLAN stage failed" note matched nothing, and the retry
+      // re-planned blind to the refusal — repeating the same contract mistake
+      // every poll tick. The note only makes sense on a file that is still
+      // there — appending to a stale path would `>>`-recreate a moved task as
+      // a frontmatterless ghost.
+      await appendNote($, fresh, auditNote(contractRejectedNote(why), new Date(), actor), log)
       // Three rejections with no successful park between them mean the planner
       // is looping on the same refusal — each poll tick burns a full PLAN run
       // and appends another note, forever, because the queued pool re-claims
@@ -284,7 +286,7 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
   let checksLine = ""
   if (preview) {
     for (const issue of preview.issues) await log("warn", `loop(${id}): ${issue}`)
-    const clipped = ((s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s))(preview.issues.join("; "))
+    const clipped = clampedChecksDetail(preview.issues)
     checksLine =
       preview.admitted > 0
         ? ` — discovered checks: ${preview.admitted} admitted for ${preview.consumer.toUpperCase()}${preview.issues.length ? `; ${preview.issues.length} dropped (${clipped})` : ""}`

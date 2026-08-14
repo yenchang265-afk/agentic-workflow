@@ -33,6 +33,29 @@ const readJson = (file) => {
   }
 }
 
+const isPlainObject = (v) => typeof v === "object" && v !== null && !Array.isArray(v)
+
+/**
+ * Field-level deep merge of raw config layers (override wins): plain objects
+ * merge per key recursively; arrays, scalars, and null replace wholesale —
+ * duplicated from core's `mergeConfigLayers` rather than imported, same
+ * dependency-free reason as `userConfigPath` below. A plain top-level spread
+ * here let a project config's `workflows.<anyKind>` silently REPLACE (not
+ * merge with) a user config's `workflows.<otherKind>.stageModels`/
+ * `agentModels`, so this installer's model resolution diverged from what the
+ * real runtime config loader (which DOES deep-merge) would have produced.
+ */
+export const mergeConfigLayers = (base, override) => {
+  if (override === undefined) return base
+  if (!isPlainObject(base) || !isPlainObject(override)) return override
+  const out = { ...base }
+  for (const [key, value] of Object.entries(override)) {
+    if (value === undefined) continue
+    out[key] = isPlainObject(value) && isPlainObject(base[key]) ? mergeConfigLayers(base[key], value) : value
+  }
+  return out
+}
+
 /**
  * The user-scope config path, resolved the same way core does — duplicated
  * rather than imported for the dependency-free reason above, exactly as
@@ -142,10 +165,7 @@ const main = () => {
   }
   const cwd = repoDir || process.cwd()
   const userPath = userConfigPath()
-  const config = {
-    ...(userPath ? (readJson(userPath) ?? {}) : {}),
-    ...(readJson(path.join(cwd, ".agentic-workflow.json")) ?? {}),
-  }
+  const config = mergeConfigLayers(userPath ? (readJson(userPath) ?? {}) : {}, readJson(path.join(cwd, ".agentic-workflow.json")) ?? {})
   const { models, conflicts } = resolveAgentModels(config, readManifests())
   for (const c of conflicts) {
     console.warn(`qwen-agents: WARNING conflicting stageModels for ${c} — leaving the model unset for that agent`)

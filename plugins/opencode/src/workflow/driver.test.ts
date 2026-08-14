@@ -470,13 +470,16 @@ test("approve <id> is idempotent when the task is already queued (retry after a 
 
   await handleCommand(deps, "sess", "approve my-task", testConfig)
 
+  // The retry reaches `approveTask`'s own alreadyDone arm — an `ok:true` success
+  // carrying the same `data.gate`/`next` a fresh approval would, not the bare
+  // "nothing to do" `resolveGateTask` would otherwise report.
   assert.equal(toasts.length, 1)
-  assert.equal(toasts[0]?.variant, "info")
-  assert.match(toasts[0]?.message ?? "", /is in queued/)
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(toasts[0]?.message ?? "", /already queued/)
   assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on an idempotent retry")
 })
 
-test("approve <id> on a task at no gate (in-progress) reports info, no move", async () => {
+test("approve <id> on a task at no gate (in-progress) reaches approvePlan's alreadyDone arm, no move", async () => {
   const inProgress = serializeTask({ title: "Do the thing", body: "Some context." })
   const { client, toasts } = makeClient()
   const log: string[] = []
@@ -485,8 +488,9 @@ test("approve <id> on a task at no gate (in-progress) reports info, no move", as
   await handleCommand(deps, "sess", "approve my-task", testConfig)
 
   assert.equal(toasts.length, 1)
-  assert.match(toasts[0]?.message ?? "", /is in in-progress/)
-  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on a refusal")
+  assert.equal(toasts[0]?.variant, "success")
+  assert.match(toasts[0]?.message ?? "", /already approved — parked in .*in-progress/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mv ")), "no move on an idempotent retry")
 })
 
 test("plan <short-id> resolves the short-hash handle and starts planning", async () => {
@@ -4237,5 +4241,20 @@ test("driveChain publishes the advanced state before awaiting anything else", as
     afterAdvance.slice(publishAt),
     /await snapshot\(deps, config, step\.state\)/,
     "the transition must reach the snapshot as promptly as it reaches the store",
+  )
+})
+
+// A source lint for the same reason as the one above: `runStageChecks` is not
+// exported. A zero-defs re-fire used to `return { state, ...provenance }`
+// unchanged — leaving a PRIOR iteration's failing results in `state.checks[stage]`
+// to float forward and floor an otherwise-honest PASS via `finalizeCheckRecord`.
+test("runStageChecks clears a stage's stale check results on a zero-defs re-fire", async () => {
+  const fs = await import("node:fs")
+  const path = await import("node:path")
+  const src = fs.readFileSync(path.join(import.meta.dirname, "driver.ts"), "utf8")
+  assert.match(
+    src,
+    /if \(!defs\.length\) return \{ state: withCheckResults\(state, stage, \[\]\), \.\.\.provenance \}/,
+    "a re-fire with nothing to check must clear any prior iteration's results, not let them float forward",
   )
 })

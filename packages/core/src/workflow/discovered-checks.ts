@@ -591,6 +591,25 @@ export const resolveStageChecks = async (args: {
  * discovers (a sitter's verify, a config-suppressed channel) runs check-less as
  * its NORM, and noting that norm on every run would be noise. Pure.
  */
+/**
+ * A discovered-checks issue/warning summary, flattened to one line and clamped
+ * to a bounded length — for embedding in an audit note or a fire-time note.
+ * `def.name`/`def.cwd`/`def.command` are PLAN-authored free text (the
+ * `agentic-checks` JSON fence), and every `issues`/`rejected` message above
+ * embeds one of them verbatim — unflattened, a literal newline in any of them
+ * breaks the single-`>`-line audit-note invariant and can forge a line that
+ * looks like a later marker (`> BUILD started …`, `> Plan rejected …`). One
+ * function so every caller gets the flattening; a hand-copied clip-only inline
+ * (as this used to be, three times, once per caller) is how one is missed. Pure.
+ */
+export const clampedChecksDetail = (messages: readonly string[]): string => {
+  const joined = messages
+    .join("; ")
+    .replace(/\s+/g, " ")
+    .trim()
+  return joined.length > 300 ? `${joined.slice(0, 300)}…` : joined
+}
+
 export const checksProvenanceNote = (args: {
   readonly stage: string
   readonly source: ChecksSource

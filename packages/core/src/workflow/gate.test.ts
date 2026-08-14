@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DEFAULT_CONFIG } from "../config.js"
 import { PLAN_HEADING } from "../task/store.js"
 import { serializeTask } from "../task/schema.js"
-import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipTask, type GateCtx, type GateResult } from "./gate.js"
+import { abandonTask, approveAny, approvePlan, approveTask, oneLineReason, rejectAny, removeTask, replanTask, REPLAN_REASON_MAX, retaskTask, shipAny, shipTask, type GateCtx, type GateResult } from "./gate.js"
 
 /**
  * The shared gate moves, driven against a tiny in-memory backlog. A fake shell
@@ -692,6 +692,22 @@ for (const [folder, files, gate] of APPROVE_ANY_DISPATCH) {
   })
 }
 
+test("approveAny retried on an already-queued task still reaches the alreadyDone arm", async () => {
+  const { ctx } = makeCtx({ "queued/t.md": task("Do it") })
+  const r = await approveAny(ctx, "t")
+  assert.ok(r.ok, "a retry on a task that already advanced is a success, not a refusal")
+  assert.equal(r.ok && r.data.gate, "task")
+  assert.equal(r.ok && r.data.alreadyDone, true)
+})
+
+test("approveAny retried on an already-in-progress task still reaches the alreadyDone arm", async () => {
+  const { ctx } = makeCtx({ "in-progress/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) })
+  const r = await approveAny(ctx, "t")
+  assert.ok(r.ok, "a retry on a task whose plan already advanced is a success, not a refusal")
+  assert.equal(r.ok && r.data.gate, "plan")
+  assert.equal(r.ok && r.data.alreadyDone, true)
+})
+
 test("replanTask refuses a task a live loop is driving", async () => {
   const { ctx, log } = makeCtx({ "plan-review/t.md": task("Do it", `${PLAN_HEADING}\n\n1. step`) }, { driving: "t" })
   const r = await replanTask(ctx, "t", "changed my mind")
@@ -1174,6 +1190,26 @@ test("a local ship can be published afterwards — its note never reads as a rec
   assert.equal(retry.data.alreadyDone, true, "the task had already moved; only publishing was left")
   assert.ok(log.some((c) => c.includes("push -u origin")), "the retry pushed the branch it had kept back")
   assert.doesNotMatch(retry.message, /Nothing to do/)
+})
+
+test("an unflagged shipTask retry never republishes a recorded local/push outcome", async () => {
+  const { ctx, fs, log } = shippable({ "in-review/t.md": task("Do it") })
+  await shipTask(ctx, "t", "engineering", "local")
+  assert.match(fs["/repo/docs/tasks/completed/t.md"] ?? "", /Not published — branch feature\/t kept local/)
+
+  const bare = await shipTask(ctx, "t")
+  assert.ok(bare.ok)
+  assert.equal(bare.data.alreadyDone, true)
+  assert.ok(!log.some((c) => c.includes("push -u origin")), "a bare workflow_ship retry acquires no network side effect")
+  assert.match(bare.message, /Nothing to do/, "no publish flag was given, so nothing new happened")
+})
+
+test("shipAny inherits the same unflagged-retry guard as shipTask", async () => {
+  const { ctx, log } = shippable({ "in-review/t.md": task("Do it") })
+  await shipAny(ctx, "t", "engineering", "push")
+  const bare = await shipAny(ctx, "t")
+  assert.ok(bare.ok)
+  assert.equal(log.filter((c) => c.includes("push -u origin")).length, 1, "the second, unflagged call pushed nothing further")
 })
 
 test("approveAny publishes an already-completed task only when a publish flag asks it to", async () => {
