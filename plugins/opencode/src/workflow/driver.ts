@@ -363,6 +363,9 @@ const watchTimers = new Map<string, WatchTimerHandle>()
 const watchTriggerMode = new Map<string, TriggerMode>()
 /** Per-watching-session workflow-kind filter (each kind command's `watch [interval]`). */
 const watchKindFilter = new Map<string, string>()
+/** Per-watching-session pinned task id — set only when `watch task <id>` armed this
+ *  session instead of a backlog-wide watch. Absent = ordinary watch. */
+const watchPinnedTask = new Map<string, string>()
 /**
  * One-shot claim requests (`claim`), consumed by the next
  * `onIdle` — the command's own turn must settle before a drive may start, the
@@ -2421,6 +2424,70 @@ const findAnyStatus = async (deps: Deps, config: Config, id: string): Promise<Ta
   return null
 }
 
+/**
+ * One `watch task <id>` tick's claim attempt: resolve the pinned id in
+ * `in-progress/`, and if it's still there and free, atomically claim it and
+ * drive BUILD → VERIFY → REVIEW via the same `start-task` Pending path a
+ * fresh `claim` uses. Never throws — `watchTick` is the only caller, and a
+ * timer callback must never crash.
+ *
+ * Exported for tests: `watchTick`'s idle-status gate around it is exercised
+ * manually against a live opencode, same as `onIdle`.
+ */
+export const tryClaimPinnedTask = async (deps: Deps, sessionID: string, config: Config, id: string): Promise<void> => {
+  const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+  if (!task) {
+    // The common, EXPECTED terminal case, not a rare edge case: a successful
+    // pinned drive's own REVIEW PASS moves the task OUT of in-progress/ into
+    // in-review/ — awaiting the human ship gate, not BUILD-loop-able anymore.
+    // Replan (iteration cap) and abandon also move it out. Auto-unwatch +
+    // report rather than ticking forever against an id that (almost always)
+    // will never come back under in-progress/.
+    const elsewhere = await findAnyStatus(deps, config, id)
+    const was = await stopWatching(deps, sessionID)
+    const detail = elsewhere ? `moved to ${elsewhere}/` : "no longer found in the backlog"
+    const message = `Pinned watch on "${id}" stopped — task ${detail}.`
+    await deps.log("info", `watch: ${message}`)
+    if (was) void toast(deps.client, message, "info")
+    return
+  }
+  // Same friendly-then-authoritative ordering `recover <id>` uses: an
+  // in-process `findSessionDriving` check first (a clearer message — "a live
+  // loop", not just "claimed"), then the atomic on-disk `claimTask` as the
+  // real gate, which also covers a driver in a DIFFERENT process.
+  if (findSessionDriving(id)) {
+    const reason = `Task "${id}" is already being driven by a live loop — waiting.`
+    if (lastSkipReason.get(sessionID) !== reason) {
+      lastSkipReason.set(sessionID, reason)
+      await deps.log("info", `watch: ${reason}`)
+    }
+    return
+  }
+  if (!isClaimable(task)) {
+    // Claimed elsewhere (another process/session), or a started-but-not-
+    // finished run with no valid crash evidence yet. Skip this tick, don't
+    // error — exactly generic watch's behavior on a claim-held task. Crash
+    // recovery is deliberately NOT reimplemented here: that judgment stays
+    // `recover <id>`'s job everywhere else in this codebase (human-invoked,
+    // weighs live-vs-dead claim-writer evidence carefully) — never automated
+    // on an unattended timer.
+    const reason = `Task "${id}" is claimed elsewhere — waiting.`
+    if (lastSkipReason.get(sessionID) !== reason) {
+      lastSkipReason.set(sessionID, reason)
+      await deps.log("info", `watch: ${reason}`)
+    }
+    return
+  }
+  if (!(await claimTask(deps.$, task))) return // lost the atomic-claim race this tick; retry next tick
+  lastSkipReason.delete(sessionID)
+  void toast(deps.client, `Pinned watch: claiming "${task.title}" — build → verify → review…`, "info")
+  // Reuses the existing "start-task" Pending kind — onIdle's start-task
+  // branch already does markClaimedOnHumanBranch + buildEntryState + drive,
+  // unmodified.
+  await setPending(deps, sessionID, { kind: "start-task", task, goal: taskGoal(task) })
+  await onIdle(deps, sessionID, config)
+}
+
 /** Load every status folder and roll it up. One list call per folder. */
 const backlogSummary = async (deps: Deps, config: Config) => {
   const byStatus = {} as Record<TaskStatus, Task[]>
@@ -2457,6 +2524,7 @@ const forgetWatching = (sessionID: string): boolean => {
   stopWatchTimer(sessionID)
   lastSkipReason.delete(sessionID)
   watchKindFilter.delete(sessionID)
+  watchPinnedTask.delete(sessionID)
   return was
 }
 
@@ -2792,8 +2860,8 @@ export type WatchOverride =
  * prefix). Intervals clamp to at least 10 seconds. The kind is no longer an
  * argument — each per-kind command scopes its own watch. Pure.
  */
-export const parseWatchArgs = (spec: string): { trigger?: WatchOverride } | { error: string } => {
-  const s = spec.trim().replace(/^--interval\s+/i, "")
+/** The trigger-override half of `watch`'s grammar, shared by the plain and `task <id>` forms. */
+const parseTriggerSpec = (s: string): { trigger?: WatchOverride } | { error: string } => {
   if (!s) return {}
   if (/^idle$/i.test(s)) return { trigger: { type: "idle" } }
   const cron = /^cron\s+(.+)$/i.exec(s)
@@ -2814,10 +2882,27 @@ export const parseWatchArgs = (spec: string): { trigger?: WatchOverride } | { er
   const parsed = parseIntervalSpec(s)
   if (!parsed) {
     return {
-      error: `Unrecognized watch argument "${spec.trim()}" — use an interval (30s, 5m, 2h), poll [interval], cron <schedule>, or idle.`,
+      error: `Unrecognized watch argument "${s}" — use an interval (30s, 5m, 2h), poll [interval], cron <schedule>, or idle.`,
     }
   }
   return { trigger: { type: "poll", intervalMs: parsed.intervalMs } }
+}
+
+export const parseWatchArgs = (spec: string): { taskId?: string; trigger?: WatchOverride } | { error: string } => {
+  const s = spec.trim().replace(/^--interval\s+/i, "")
+  if (!s) return {}
+  // `task <id>` is a structural prefix, not a positional guess: a bare id
+  // could collide with the interval grammar below (an all-digit short hash
+  // reads as "poll every N minutes"), so pinning requires the literal
+  // keyword rather than sniffing the first token.
+  const pinned = /^task\s+(\S+)(?:\s+(.*))?$/i.exec(s)
+  if (pinned) {
+    const taskId = pinned[1] as string
+    const rest = parseTriggerSpec((pinned[2] ?? "").trim())
+    if ("error" in rest) return rest
+    return { taskId, ...rest }
+  }
+  return parseTriggerSpec(s)
 }
 
 /** Clear one session's watch trigger timer, if any. */
@@ -2832,6 +2917,7 @@ export const disposeWatch = (): void => {
   for (const handle of watchTimers.values()) handle.stop()
   watchTimers.clear()
   watchTriggerMode.clear()
+  watchPinnedTask.clear()
   for (const [dir, entry] of watchLeases) {
     watchLeases.delete(dir)
     clearInterval(entry.heartbeat)
@@ -2854,6 +2940,11 @@ const watchTick = async (deps: Deps, sessionID: string, config: Config): Promise
     const res = await deps.client.session.status().catch(() => null)
     const status = res?.data?.[sessionID]
     if (status && status.type !== "idle") return
+    const pinnedId = watchPinnedTask.get(sessionID)
+    if (pinnedId) {
+      await tryClaimPinnedTask(deps, sessionID, config, pinnedId)
+      return
+    }
     await onIdle(deps, sessionID, config)
   } catch (err) {
     await deps.log("warn", `loop: watch tick failed: ${(err as Error).message}`)
@@ -3554,12 +3645,87 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
 }
 
+/**
+ * Arm `watch task <id> [trigger]`: resolve the id once (accepting the
+ * short-hash handle, same as `plan`/`recover`), require it to already be
+ * `in-progress/` (this pins the BUILD→VERIFY→REVIEW loop, not planning — a
+ * queued or plan-review task belongs to `plan <id>` / the plan gate instead),
+ * then arm the same timer/lease machinery plain `watch` uses, with
+ * `watchPinnedTask` set instead of `watchKindFilter`.
+ */
+const startPinnedWatch = async (
+  deps: Deps,
+  sessionID: string,
+  rawId: string,
+  triggerOverride: WatchOverride | undefined,
+  config: Config,
+  kind: string,
+): Promise<string> => {
+  const { client } = deps
+  const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, rawId, deps.log)
+  if (resolved && "ambiguous" in resolved) {
+    return report(client, `Ambiguous id "${rawId}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning")
+  }
+  const id = resolved ? resolved.id : rawId
+  const task = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+  if (!task) {
+    const elsewhere = await findAnyStatus(deps, config, id)
+    const detail =
+      elsewhere === "plan-review"
+        ? `its plan is parked for review — ${ECMD} approve ${id} first`
+        : elsewhere === "queued"
+          ? `it's approved but not yet planned — ${ECMD} plan ${id} first`
+          : elsewhere === "draft"
+            ? `it's a draft — ${ECMD} approve ${id} first`
+            : elsewhere
+              ? `it's in ${elsewhere}/`
+              : `no task "${id}" found`
+    return report(client, `Can't pin-watch "${id}": ${detail}.`, "warning")
+  }
+  if (!watching.has(sessionID)) {
+    const lease = await acquireWatchLease(deps, config)
+    if (!lease.ok) return report(client, lease.message, "warning")
+  }
+  const configured = triggerFor(config, kind)
+  const trigger = triggerOverride ?? configured
+  const mode: TriggerMode = trigger.type
+  watching.add(sessionID)
+  watchPinnedTask.set(sessionID, id)
+  watchKindFilter.delete(sessionID) // a pin replaces a kind-scoped backlog watch, not layers with it
+  stopWatchTimer(sessionID) // replace any prior timer instead of stacking
+  let handle: WatchTimerHandle
+  if (trigger.type === "cron") {
+    // Unlike a plain backlog watch, a pinned tick never reads `claimRequested`
+    // (it bypasses `onIdle`'s claim-gating entirely — see `watchTick`), so no
+    // one-shot dance is needed around the fire.
+    handle = armCron(trigger.schedule, () => void watchTick(deps, sessionID, config))
+  } else if (trigger.type === "idle") {
+    handle = armIdle()
+  } else {
+    const overrideMs = "intervalMs" in trigger ? trigger.intervalMs : undefined
+    const configuredMin = configured.type === "poll" ? configured.intervalMinutes : undefined
+    const intervalMs = Math.max(overrideMs ?? (configuredMin ?? config.watchIntervalMinutes) * 60_000, MIN_WATCH_INTERVAL_MS)
+    handle = armPoll(intervalMs, () => void watchTick(deps, sessionID, config))
+  }
+  watchTimers.set(sessionID, handle)
+  watchTriggerMode.set(sessionID, mode)
+  lastSkipReason.delete(sessionID)
+  const overrideNote =
+    triggerOverride !== undefined && triggerOverride.type !== configured.type
+      ? ` (this session only — config default is ${configured.type})`
+      : ""
+  const message = `Pinned watch on "${task.title}" (${id}, ${handle.describe})${overrideNote}.`
+  void toast(client, message, "info")
+  if (mode !== "cron") void watchTick(deps, sessionID, config)
+  return message
+}
+
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
-  "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
+  "claim · watch [task <id>] [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /**
@@ -3748,6 +3914,12 @@ export const handleCommand = async (
   if (verb === "watch") {
     const parsed = parseWatchArgs(rest)
     if ("error" in parsed) return report(client, parsed.error, "warning")
+    if (parsed.taskId) {
+      if (!engineering) {
+        return report(client, `Task-pinned watch is engineering-only — /agentic-workflow:${kind} has no task ids.`, "warning")
+      }
+      return startPinnedWatch(deps, sessionID, parsed.taskId, parsed.trigger, config, kind)
+    }
     // The kind's configured trigger (workflows.<kind>.trigger) is the default; any
     // `watch` argument — poll [interval], cron <schedule>, idle, or a bare
     // interval — overrides it for this session only.
@@ -4056,8 +4228,11 @@ export const handleCommand = async (
     const enabled = enabledWorkflowKinds(config)
     const kindsLine = engineering && enabled.length > 1 ? ` · kinds: ${enabled.join(", ")}` : ""
     const cadence = watchTimers.get(sessionID)?.describe
+    const pinnedId = watchPinnedTask.get(sessionID)
     const kindScope = watchKindFilter.get(sessionID)
-    const watchLabel = cadence ? `Watching${kindScope ? ` ${kindScope}` : ""} (${cadence})` : "Watching"
+    const watchLabel = cadence
+      ? `Watching${pinnedId ? ` task ${pinnedId}` : kindScope ? ` ${kindScope}` : ""} (${cadence})`
+      : "Watching"
     if (!state) {
       // Prefer the remembered skip reason over a bare "no claimable task" —
       // it says WHY the watcher isn't picking anything up.

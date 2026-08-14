@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [task <id>] [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -263,6 +263,20 @@ Dispatch:
   process watching the same clone is refused — run it in its own
   clone/worktree, or unwatch the first. A dead watcher's lease is taken over
   automatically once its heartbeat goes stale.
+
+  **`watch task <id> [trigger]`** pins this session to ONE `in-progress/`
+  task instead of scanning the backlog: every tick re-drives that same
+  task's BUILD → VERIFY → REVIEW loop (only when it's still claimable — it
+  will not resume a task another loop or process is already driving, and it
+  will not auto-recover a crashed run; use `recover <id>` for that). The
+  task must already be approved and build-ready (`in-progress/`) when armed
+  — a queued or plan-review task is refused with a pointer at `plan <id>` /
+  `approve <id>`. Stops itself automatically (with a toast) the moment the
+  task leaves `in-progress/` — including the ordinary case where its own
+  drive finishes and the task moves to `in-review/` for your ship gate.
+  Shares the same trigger grammar, on-disk watch lease, and `unwatch` as a
+  plain `watch` — arming a pin replaces whatever this session was
+  previously watching (one watch per session, pinned or not).
 <!-- /aw:verb watch -->
 <!-- aw:verb unwatch -->
 - **`unwatch`** — take this session out of watch mode and stop its polling

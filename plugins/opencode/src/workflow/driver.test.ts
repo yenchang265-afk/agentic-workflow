@@ -35,11 +35,13 @@ import {
   resetAskState,
   parseWatchArgs,
   recordVerdict,
+  disposeWatch,
   findDrivingWorkflow,
   gateCtx,
   gateFromAgent,
   resolveDrivingSession,
   runStagePasses,
+  tryClaimPinnedTask,
   type Deps,
 } from "./driver.ts"
 
@@ -101,6 +103,29 @@ test("watch rejects bad override arguments with usable errors", () => {
   assert.ok("error" in badPoll && /poll interval/i.test(badPoll.error))
   const bare = parseWatchArgs("weekly")
   assert.ok("error" in bare && /poll \[interval\], cron <schedule>, or idle/.test(bare.error))
+})
+
+test("watch task <id> pins the id, with no trigger override", () => {
+  assert.deepEqual(parseWatchArgs("task f7k3"), { taskId: "f7k3" })
+})
+
+test("watch task <id> <trigger> carries both the pin and the parsed trigger", () => {
+  assert.deepEqual(parseWatchArgs("task f7k3 cron */15 * * * *"), {
+    taskId: "f7k3",
+    trigger: { type: "cron", schedule: "*/15 * * * *" },
+  })
+  assert.deepEqual(parseWatchArgs("task f7k3 5m"), { taskId: "f7k3", trigger: { type: "poll", intervalMs: 300_000 } })
+})
+
+test("watch task <id> with a bad trailing trigger is a full error, not a partial success", () => {
+  const parsed = parseWatchArgs("task f7k3 poll nonsense")
+  assert.ok("error" in parsed, `expected an error, got ${JSON.stringify(parsed)}`)
+})
+
+test("plain watch (no task prefix) is unaffected by the task-pin parsing", () => {
+  assert.deepEqual(parseWatchArgs("5m"), { trigger: { type: "poll", intervalMs: 300_000 } })
+  assert.deepEqual(parseWatchArgs("idle"), { trigger: { type: "idle" } })
+  assert.deepEqual(parseWatchArgs("cron */15 * * * *"), { trigger: { type: "cron", schedule: "*/15 * * * *" } })
 })
 
 test("parsePrTarget reads a bare number, a #-prefixed number, and a PR URL", () => {
@@ -351,6 +376,30 @@ const makeShellFS = (files: Record<string, string>, log: string[], overrides: Sh
         then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
       }
       return chain
+    }
+    // `printf '%s' <content> > <dest>` / `>> <dest>` (writeFileAtomic's write-then-rename
+    // primitive) actually persists into `fs` — needed for anything that reads its own
+    // write back within one flow (the watch lease's staged-acquire round-trip). The
+    // redirect operator is found in a literal template segment, never inside an
+    // interpolated expression, so this can't misfire on content that itself contains a
+    // literal '>' (audit notes do, e.g. "> CLAIMED — ...").
+    if (/^printf\b/.test(cmd.trim())) {
+      for (let i = 1; i < strings.length; i++) {
+        const seg = strings[i]!.trim()
+        if (seg !== ">" && seg !== ">>") continue
+        const content = String(exprs[i - 1])
+        const destRaw = String(exprs[i])
+        const dest = destRaw.startsWith("/") ? destRaw : `/repo/${destRaw}`
+        fs[dest] = seg === ">>" ? (fs[dest] ?? "") + content : content
+        const result = { exitCode: 0, stdout: { toString: () => "" }, stderr: { toString: () => "" } }
+        const chain = {
+          quiet: () => chain,
+          nothrow: () => chain,
+          cwd: () => chain,
+          then: (resolve: (v: unknown) => unknown) => Promise.resolve(result).then(resolve),
+        }
+        return chain
+      }
     }
     const parts = norm.split(" ")
     let out = { exitCode: 0, stdout: "", stderr: "" }
@@ -704,6 +753,289 @@ test("recover <id> refuses a dead-pid claim stamped on ANOTHER machine", async (
   assert.equal(toasts.length, 1)
   assert.match(toasts[0]?.message ?? "", /cannot be identified on this machine/, toasts[0]?.message)
   assert.ok(!log.some((c) => c.startsWith("mv /repo/docs/tasks/in-progress/.claims/t ")))
+})
+
+/**
+ * `watch task <id>` — pins a session's watch to one `in-progress/` task
+ * instead of scanning the backlog. The refusal cases below never touch
+ * `watching`/the lease (fail fast, before any mutation, matching
+ * `startPlanById`); the success/teardown cases arm through `cron` triggers to
+ * skip the fire-and-forget immediate tick (`watchTick` only fires
+ * immediately for non-cron modes) and always `unwatch` in a `finally` to
+ * release the on-disk watch lease before the next test claims it.
+ */
+test("watch task <id> refuses when the task is queued (points at plan)", async () => {
+  const queued = serializeTask({ title: "Do the thing", body: "Just a body, no plan yet." })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/queued/my-task.md": queued }, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-pin-queued", "watch task my-task", testConfig)
+
+  assert.equal(toasts.length, 1)
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /plan my-task first/)
+  assert.ok(!log.some((cmd) => cmd.startsWith("mkdir ")), "no claim attempted on a refusal")
+})
+
+test("watch task <id> refuses when the task's plan is parked for review (points at approve)", async () => {
+  const planned = serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/plan-review/my-task.md": planned }, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-pin-review", "watch task my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /approve my-task first/)
+})
+
+test("watch task <id> refuses on a draft (points at approve)", async () => {
+  const draft = serializeTask({ title: "Do the thing", body: "x" })
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({ "docs/tasks/draft/my-task.md": draft }, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-pin-draft", "watch task my-task", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /approve my-task first/)
+})
+
+test("watch task <id> refuses when no task with that id exists anywhere", async () => {
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-pin-ghost", "watch task ghost", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /no task "ghost" found/)
+})
+
+test("watch task <id> refuses an ambiguous short-hash id", async () => {
+  const files = {
+    "docs/tasks/in-progress/f7k3-add-foo.md": serializeTask({ title: "Add foo", body: `${PLAN_HEADING}\n\n1. Step.` }),
+    "docs/tasks/in-progress/f7k3-fix-bar.md": serializeTask({ title: "Fix bar", body: `${PLAN_HEADING}\n\n1. Step.` }),
+  }
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-pin-ambiguous", "watch task f7k3", testConfig)
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /Ambiguous id "f7k3" — matches f7k3-add-foo, f7k3-fix-bar/)
+})
+
+test("watch task <short-id> resolves the short-hash handle and arms a pin", async () => {
+  const files = { "docs/tasks/in-progress/f7k3-do-the-thing.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const sessionID = "sess-pin-short"
+
+  try {
+    await handleCommand(deps, sessionID, "watch task f7k3 cron * * * * *", testConfig)
+
+    assert.equal(toasts[0]?.variant, "info")
+    assert.match(toasts[0]?.message ?? "", /Pinned watch on "Do the thing" \(f7k3-do-the-thing, /, toasts[0]?.message)
+    const status = await handleCommand(deps, sessionID, "status", testConfig)
+    assert.match(status ?? "", /Watching task f7k3-do-the-thing/, status)
+  } finally {
+    await handleCommand(deps, sessionID, "unwatch", testConfig)
+  }
+})
+
+test("watch task <id> on a non-engineering kind is refused as engineering-only", async () => {
+  const { client, toasts } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS({}, log), directory: "/repo", log: () => {} }
+
+  await handleCommand(deps, "sess-pin-sitter", "watch task f7k3", testConfig, "pr-sitter")
+
+  assert.equal(toasts[0]?.variant, "warning")
+  assert.match(toasts[0]?.message ?? "", /engineering-only/)
+})
+
+test("watch task <id> replaces a prior kind-scoped backlog watch on the same session", async () => {
+  const files = { "docs/tasks/in-progress/f7k3-do-the-thing.md": serializeTask({ title: "Do the thing", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const sessionID = "sess-pin-replace"
+
+  try {
+    await handleCommand(deps, sessionID, "watch cron * * * * *", testConfig)
+    let status = await handleCommand(deps, sessionID, "status", testConfig)
+    assert.match(status ?? "", /Watching engineering/, status)
+
+    await handleCommand(deps, sessionID, "watch task f7k3 cron * * * * *", testConfig)
+    status = await handleCommand(deps, sessionID, "status", testConfig)
+    assert.match(status ?? "", /Watching task f7k3-do-the-thing/, status)
+    assert.doesNotMatch(status ?? "", /Watching engineering \(/, status)
+  } finally {
+    await handleCommand(deps, sessionID, "unwatch", testConfig)
+  }
+})
+
+/**
+ * `tryClaimPinnedTask` — the tick handler `watchTick` calls directly (never
+ * throws; called here the same way `onIdle` is called directly elsewhere in
+ * this file, per the header comment: timer plumbing is exercised manually,
+ * the deterministic claim logic is unit-tested).
+ */
+test("tryClaimPinnedTask claims a claimable in-progress task and drives BUILD", async () => {
+  resetAskState()
+  const sessionID = "sess-tick-claim"
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const log: string[] = []
+  const { client, commands } = makePlanClient(files, undefined, log)
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await tryClaimPinnedTask(deps, sessionID, testConfig, "pin-task")
+
+  assert.ok(log.some((cmd) => cmd.startsWith("mkdir") && cmd.includes(".claims/pin-task")), `expected a claim marker attempt: ${JSON.stringify(log)}`)
+  assert.equal(commands[0], "build", `BUILD must have fired first via the start-task Pending path: ${JSON.stringify(commands)}`)
+  clearWorkflow(sessionID)
+})
+
+test("tryClaimPinnedTask auto-unwatches when the task leaves in-progress/ (shipped)", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const armLog: string[] = []
+  const armDeps: Deps = { client: makeClient().client, $: makeShellFS(files, armLog), directory: "/repo", log: () => {} }
+  const sessionID = "sess-tick-shipped"
+  await handleCommand(armDeps, sessionID, "watch task pin-task cron * * * * *", testConfig)
+
+  const { client, toasts } = makeClient()
+  const tickLog: string[] = []
+  const tickDeps: Deps = { client, $: makeShellFS({ "docs/tasks/in-review/pin-task.md": files["docs/tasks/in-progress/pin-task.md"]! }, tickLog), directory: "/repo", log: () => {} }
+
+  await tryClaimPinnedTask(tickDeps, sessionID, testConfig, "pin-task")
+
+  assert.match(toasts[0]?.message ?? "", /Pinned watch on "pin-task" stopped — task moved to in-review\//, toasts[0]?.message)
+  const status = await handleCommand(tickDeps, sessionID, "status", testConfig)
+  assert.doesNotMatch(status ?? "", /Watching/, status)
+})
+
+test("tryClaimPinnedTask auto-unwatches when the task is gone entirely", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const armLog: string[] = []
+  const armDeps: Deps = { client: makeClient().client, $: makeShellFS(files, armLog), directory: "/repo", log: () => {} }
+  const sessionID = "sess-tick-gone"
+  await handleCommand(armDeps, sessionID, "watch task pin-task cron * * * * *", testConfig)
+
+  const { client, toasts } = makeClient()
+  const tickLog: string[] = []
+  const tickDeps: Deps = { client, $: makeShellFS({}, tickLog), directory: "/repo", log: () => {} }
+
+  await tryClaimPinnedTask(tickDeps, sessionID, testConfig, "pin-task")
+
+  assert.match(toasts[0]?.message ?? "", /Pinned watch on "pin-task" stopped — task no longer found in the backlog\./, toasts[0]?.message)
+})
+
+test("tryClaimPinnedTask skips without claiming when a live loop already drives the task", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  setWorkflow("sess-other-driving", {
+    goal: "g",
+    stage: "build",
+    iteration: 0,
+    artifacts: {},
+    task: { id: "pin-task", path: "docs/tasks/in-progress/pin-task.md", acceptance: [] },
+  })
+  try {
+    await tryClaimPinnedTask(deps, "sess-tick-busy", testConfig, "pin-task")
+    assert.ok(!log.some((cmd) => cmd.startsWith("mkdir")), "no claim attempt while another loop drives it")
+  } finally {
+    clearWorkflow("sess-other-driving")
+  }
+})
+
+test("tryClaimPinnedTask skips without claiming when the task is claimed elsewhere", async () => {
+  const files = {
+    "docs/tasks/in-progress/pin-task.md": serializeTask({
+      title: "Pin task",
+      body: `${PLAN_HEADING}\n\n1. Step.\n\n> CLAIMED — loop starting [2026-01-01T00:00:00.000Z]`,
+    }),
+  }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await tryClaimPinnedTask(deps, "sess-tick-claimed", testConfig, "pin-task")
+
+  assert.ok(!log.some((cmd) => cmd.startsWith("mkdir")), "no claim attempt against a claimed task")
+})
+
+test("tryClaimPinnedTask retries next tick when it loses the atomic-claim race", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = {
+    client,
+    $: makeShellFS(files, log, [{ cmd: "mkdir /repo/docs/tasks/in-progress/.claims/pin-task", result: { exitCode: 1 } }]),
+    directory: "/repo",
+    log: () => {},
+  }
+
+  await tryClaimPinnedTask(deps, "sess-tick-race", testConfig, "pin-task")
+
+  assert.ok(
+    log.some((cmd) => cmd.startsWith("mkdir") && cmd.includes(".claims/pin-task")),
+    "a claim attempt was made and lost, not skipped outright",
+  )
+})
+
+test("unwatch clears a task-pinned watch", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const sessionID = "sess-pin-unwatch"
+
+  await handleCommand(deps, sessionID, "watch task pin-task cron * * * * *", testConfig)
+  let status = await handleCommand(deps, sessionID, "status", testConfig)
+  assert.match(status ?? "", /Watching task pin-task/, status)
+
+  await handleCommand(deps, sessionID, "unwatch", testConfig)
+  status = await handleCommand(deps, sessionID, "status", testConfig)
+  assert.doesNotMatch(status ?? "", /Watching/, status)
+})
+
+test("stop tears down a task-pinned watch the same as a backlog watch", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const sessionID = "sess-pin-stop"
+
+  await handleCommand(deps, sessionID, "watch task pin-task cron * * * * *", testConfig)
+  const armed = await handleCommand(deps, sessionID, "status", testConfig)
+  assert.match(armed ?? "", /Watching task pin-task/, armed)
+
+  await handleCommand(deps, sessionID, "stop", testConfig)
+  const status = await handleCommand(deps, sessionID, "status", testConfig)
+  assert.doesNotMatch(status ?? "", /Watching/, status)
+})
+
+test("disposeWatch clears a task-pinned watch's timer and pin", async () => {
+  const files = { "docs/tasks/in-progress/pin-task.md": serializeTask({ title: "Pin task", body: `${PLAN_HEADING}\n\n1. Step.` }) }
+  const { client } = makeClient()
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+  const sessionID = "sess-pin-dispose"
+
+  await handleCommand(deps, sessionID, "watch task pin-task cron * * * * *", testConfig)
+  const armed = await handleCommand(deps, sessionID, "status", testConfig)
+  assert.match(armed ?? "", /Watching task pin-task \(/, armed)
+
+  disposeWatch()
+  const status = await handleCommand(deps, sessionID, "status", testConfig)
+  assert.doesNotMatch(status ?? "", /\(/, status) // no "(<cadence>)" suffix once the timer's gone
 })
 
 test("plan <id> on a plan-review task points at the gate verbs, no move", async () => {
