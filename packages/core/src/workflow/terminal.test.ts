@@ -379,9 +379,11 @@ test("done with a blocked move reports a retryable stop, keeps the snapshot, and
   assert.ok(!log.some((c) => c.includes("t.state.json")), "resume snapshot kept for recover")
 })
 
-test("done on an isolated shared-tree loop checkpoints and tears down BEFORE the backlog move + commit", async () => {
-  // The stranding regression: a backlog write made before teardown would be
-  // committed onto feature/<id> and vanish from the human branch at checkout.
+test("done on an isolated shared-tree loop checkpoints BEFORE the backlog move + commit", async () => {
+  // The checkpoint's `git add -A` would otherwise sweep the backlog write into
+  // the feature commit instead of leaving it its own. (Teardown no longer moves
+  // the tree off the work branch, so there is no checkout to order against —
+  // terminal.git.test.ts covers the branch-level facts against real git.)
   const state: WorkflowState = {
     goal: "Do it",
     stage: "review",
@@ -397,9 +399,9 @@ test("done on an isolated shared-tree loop checkpoints and tears down BEFORE the
   assert.equal(checkpoints.length, 1, "isolated → checkpoint runs")
   assert.equal(commits.length, 1, "the backlog move gets its own commit on the human branch")
   assert.ok(ops[0]!.startsWith("checkpoint:") && ops[1]!.startsWith("commit:"), `checkpoint must precede the backlog commit: ${ops.join(" | ")}`)
-  const checkpointAt = log.findIndex((c) => c.startsWith("git ") && c.includes("checkout")) // teardown's checkout back to base
-  const moveAt = log.findIndex((c) => c.startsWith("mv ") && c.includes("in-review"))
-  assert.ok(checkpointAt !== -1 && moveAt !== -1 && checkpointAt < moveAt, `teardown must precede the task move: ${log.join(" | ")}`)
+  // Teardown must not switch the tree — the human's next act is this branch.
+  assert.ok(!log.some((c) => c.startsWith("git ") && c.includes("checkout")), log.join(" | "))
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-review")), log.join(" | "))
   assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
 })
 
