@@ -2,6 +2,18 @@ English | [繁體中文](migration.zh-TW.md)
 
 # Migrating between layouts
 
+## Shared-tree runs now end on the work branch — nothing to do
+
+Only affects `worktreesDir: false` (worktree mode, the default, never moved your
+tree at all). A finished run used to check your tree back out to the branch it
+started from; it now **leaves you on `feature/<task-id>`**, where the diff you
+are about to review actually is. Nothing to configure, and no way to opt out.
+
+The base a new task is cut from is unaffected: a tree parked on one of the
+loop's own branches is re-based off the repo's default branch before the next
+branch is cut, so tasks never stack. Check out the branch you want first if you
+need a different base.
+
 ## `taskBranch` — nothing to do
 
 A new top-level config key names the branch the engineering loop works on. Its

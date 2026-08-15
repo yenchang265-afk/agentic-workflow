@@ -955,6 +955,15 @@ Impact on the commands:
   will fail in a bare checkout. Audit notes and task moves stay in the main
   tree, subject to `ignoreBacklog` below.
 
+  With `worktreesDir: false`, a finished run **leaves your tree on
+  `feature/<task-id>`** — the branch the work is on, which is where reviewing
+  the diff, amending, and pushing all happen. The next run does not stack on it:
+  a tree parked on one of the loop's own branches is re-based off the repo's
+  default branch before the new branch is cut (`git checkout main` yourself
+  first if you want a different base). One consequence, and only if you also set
+  `ignoreBacklog: false`: task moves and audit notes are committed on the work
+  branch rather than on the branch you started from.
+
   Two things are worth setting up on the **project** side before you run more
   than one watch session, because both fail in a way that is hard to read back
   from a transcript:
@@ -1152,7 +1161,10 @@ project you opened.
   the base is read there **live per claim** (`git rev-parse --abbrev-ref
   HEAD`), so `feature/<id>` branches off the branch you're on. Unset ⇒ the base
   falls back to whatever branch `AGENTIC_WORKFLOW_DIR` has checked out (the prior
-  behavior). A detached base dir is ignored (same fallback).
+  behavior). A detached base dir is ignored (same fallback). One exception in
+  both cases: if the branch read is one of the loop's own (`feature/…`), it is
+  **not** used as a base — the repo's default branch is, so a tree still parked
+  on the last task's branch doesn't stack the next task on top of it.
 
 See `design/threat-model.md` for the security posture and
 `design/improvements/` for the design record behind these features.
