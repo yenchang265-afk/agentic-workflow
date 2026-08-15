@@ -14,13 +14,18 @@ import { commitAll, commitPaths } from "./git.js"
 import { runTerminal, type TerminalCtx } from "./terminal.js"
 
 /**
- * Real-git regression test for the shared-tree stranding bug: `done` used to
- * move the task file while the main tree was still checked out on
- * `feature/<id>`, fold the move into the loop-branch checkpoint, and only then
- * check the tree back out to base — leaving the human branch with the task
- * still in in-progress/ and in-review/ empty. The in-memory terminal tests
- * can't see this (their fake shell has no branches), so this one drives
- * `runTerminal` against an actual repository.
+ * Real-git coverage of what `done` does to a shared tree. Two facts, and the
+ * in-memory terminal tests can see neither (their fake shell has no branches),
+ * so this drives `runTerminal` against an actual repository.
+ *
+ * 1. The tree is LEFT on `feature/<id>`. Teardown used to check it back out to
+ *    base, which put the human one branch away from the work the "done" toast
+ *    had just announced.
+ * 2. The checkpoint still runs FIRST, so the backlog move is its own commit
+ *    rather than being folded into the loop's `git add -A` checkpoint.
+ *
+ * Because (1) holds, the move now lands on the loop branch — the tree it is made
+ * in — and the base branch is untouched by the run.
  */
 
 // A minimal bash-backed Shell (the same surface plugins/claude/mcp-server/src/shim.ts
@@ -65,7 +70,7 @@ const git = async (repo: string, ...args: string[]): Promise<string> => {
   return out.stdout.toString().trim()
 }
 
-test("shared-tree done lands the in-review move on the base branch, not the loop branch", async () => {
+test("shared-tree done leaves the tree on the loop branch and lands the in-review move there", async () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "agentic-workflow-terminal-git-"))
   try {
     await git(repo, "init", "-q", "-b", "main")
@@ -115,17 +120,23 @@ test("shared-tree done lands the in-review move on the base branch, not the loop
     const report = await runTerminal(ctx, done)
     assert.ok(report.kind === "done" && report.moved === true, `expected a moved done report, got ${JSON.stringify(report)}`)
 
-    // Teardown returned the tree to main, and the move is visible + committed THERE.
-    assert.equal(await git(repo, "rev-parse", "--abbrev-ref", "HEAD"), "main")
-    assert.ok(fs.existsSync(path.join(repo, tasksDir, "in-review", "t1.md")), "task file must be in in-review/ on main")
+    // Teardown left the tree where the work is, and the move is visible there.
+    assert.equal(await git(repo, "rev-parse", "--abbrev-ref", "HEAD"), "feature/t1")
+    assert.ok(fs.existsSync(path.join(repo, tasksDir, "in-review", "t1.md")), "task file must be in in-review/")
     assert.ok(!fs.existsSync(taskPath), "task file must have left in-progress/")
-    const committedOnMain = await git(repo, "ls-tree", "-r", "--name-only", "main")
-    assert.ok(committedOnMain.includes(`${tasksDir}/in-review/t1.md`), "the move must be committed on main")
 
-    // The loop branch keeps the build work but NOT the backlog move.
+    // The loop branch carries the build work AND the move — as two commits, which
+    // is what checkpointing before the backlog write buys.
     const onBranch = await git(repo, "ls-tree", "-r", "--name-only", "feature/t1")
     assert.ok(onBranch.includes("built.txt"), "the checkpoint must have committed the build work on the loop branch")
-    assert.ok(!onBranch.includes(`${tasksDir}/in-review/t1.md`), "the loop branch must not carry the in-review move")
+    assert.ok(onBranch.includes(`${tasksDir}/in-review/t1.md`), "the move must be committed on the loop branch")
+    const subjects = await git(repo, "log", "--format=%s", "main..feature/t1")
+    assert.equal(subjects.split("\n").filter(Boolean).length, 2, `checkpoint and backlog move must be separate commits: ${subjects}`)
+
+    // The run never touched the base branch.
+    const committedOnMain = await git(repo, "ls-tree", "-r", "--name-only", "main")
+    assert.ok(!committedOnMain.includes(`${tasksDir}/in-review/t1.md`), "main must not carry the in-review move")
+    assert.ok(!committedOnMain.includes("built.txt"), "main must not carry the build work")
   } finally {
     fs.rmSync(repo, { recursive: true, force: true })
   }

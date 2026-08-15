@@ -123,7 +123,9 @@ once stale — PLAN writes no code.
 In **worktree mode** (the default, `worktreesDir`) each loop owns its own
 worktree, so several `watch` sessions drive different tasks concurrently in one
 instance. In **shared-tree mode** (`worktreesDir: false`) all sessions share one
-checkout and one branch, so a per-directory execution lock serializes drives.
+checkout and one branch, so a per-directory execution lock serializes drives; a
+finished run leaves that checkout on `feature/<id>`, and the next run re-bases
+off the default branch rather than stacking on it.
 Neither covers separate opencode *processes* racing the same clone on
 `index.lock` during backlog commits — run additional watchers in their own
 clones for hard isolation.

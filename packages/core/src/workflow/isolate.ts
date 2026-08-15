@@ -7,6 +7,7 @@ import { slugify } from "../task/schema.js"
 import type { Config, WorkflowState } from "./state.js"
 import {
   addWorktree,
+  branchExists,
   checkoutBranch,
   currentBranch,
   defaultBranchName,
@@ -181,6 +182,59 @@ const assertNotDefaultBranch = async ($: Shell, log: Log, directory: string, bra
       `(\`git add -A\`) would commit onto it. Check out a working branch first (\`git checkout -b my-work\`), ` +
       `or set "taskBranch" to a prefix (e.g. "feature/") so the loop cuts its own.`,
   )
+}
+
+/**
+ * The ref a fresh work branch is cut from — never one of this loop's OWN.
+ *
+ * `teardownIsolation` deliberately leaves a shared tree parked on
+ * `<prefix><prev-id>`, so "cut from whatever is checked out" would stack task N+1
+ * on task N: REVIEW grades `base...branch`, and both that diff and the PR would
+ * carry the earlier task's commits as if this run had written them. Re-basing off
+ * the repo's default branch is what breaks the chain, and it belongs HERE rather
+ * than at teardown because it is also correct for a tree the human parked on a
+ * work branch themselves.
+ *
+ * Only the loop's own namespace is redirected. A human sitting on `my-work` gets
+ * cut from `my-work` — that is a deliberate base, and hijacking it to the default
+ * branch would throw away the very thing they set up.
+ *
+ * Detection is local (`defaultBranchName`, for the reason `assertNotDefaultBranch`
+ * gives), with the same conventional-name fallback that guard uses — `origin/HEAD`
+ * is only set by `git clone`, so a repo that grew a remote later resolves nothing,
+ * and that is exactly the everyday shape this must not stack in.
+ *
+ * Whatever is chosen must EXIST: `init.defaultBranch` names a branch the repo may
+ * never have created, and `checkoutBranch` would then invent it from the parked
+ * branch — the stacking bug wearing the default branch's name. That check is what
+ * makes guessing at `main`/`master` safe rather than reckless. Nothing resolvable
+ * degrades to the parked branch with a warning: a noisy diff is recoverable, and
+ * refusing to start costs the whole run.
+ */
+const baseOffTaskBranch = async (
+  $: Shell,
+  log: Log,
+  directory: string,
+  config: Config,
+  kind: string,
+  resolved: string,
+): Promise<string> => {
+  const prefix = taskBranchPrefix(config, kind)
+  if (!prefix || !resolved.startsWith(prefix)) return resolved
+  const detected = await defaultBranchName($, directory)
+  for (const candidate of detected ? [detected] : ["main", "master"]) {
+    if (!(await branchExists($, directory, candidate))) continue
+    await log(
+      "info",
+      `loop: the tree is parked on ${resolved} from a previous run — cutting from ${candidate} instead${detected ? "" : " (this repo names no default branch; guessed by convention)"}; check out the base you want first to override`,
+    )
+    return candidate
+  }
+  await log(
+    "warn",
+    `loop: the tree is parked on ${resolved} from a previous run and this repo's default branch could not be resolved — cutting from ${resolved}, so this run's diff may carry that task's commits too`,
+  )
+  return resolved
 }
 
 /** Absolute path to a task's dedicated worktree under the configured root. Pure. */
@@ -401,11 +455,15 @@ export const ensureIsolation = async (
   // user's real working tree), overrides the branch `directory` sits on —
   // its checkout is frozen at the main tree, which is usually the default
   // branch. Unset ⇒ today's behavior: cut from `directory`'s current branch.
-  const base = baseBranch ?? (await currentBranch($, directory))
-  if (!base) {
+  const resolved = baseBranch ?? (await currentBranch($, directory))
+  if (!resolved) {
     await log("warn", "loop: detached HEAD — building without branch isolation")
     return { ...state, isolationWarning: "detached HEAD — building without branch isolation" }
   }
+  // A shared tree is left ON the last run's work branch, so what is checked out is
+  // not automatically a legitimate base. Ahead of the `wtDir` split, so worktree
+  // mode's `addWorktree(…, base)` is protected by the same rule.
+  const base = await baseOffTaskBranch($, log, directory, config, kind, resolved)
   // Non-null: `currentBranchMode` is the only way this returns null, and it returned above.
   const branch = taskBranchFor(config, kind, workflowId(state)) as string
 
@@ -442,11 +500,28 @@ export const ensureIsolation = async (
       "loop: working tree dirty at build start — pre-existing changes will land in this loop's checkpoints",
     )
   }
+  // Land on `base` BEFORE cutting: `checkout -b` takes whatever HEAD is, and
+  // teardown leaves this tree on the last run's work branch, so cutting straight
+  // from here is how task N+1 ends up containing task N. `branchExists` gates it
+  // because `checkoutBranch` would CREATE a missing `base` from the parked branch
+  // rather than fail — the same stacking, under the base's name.
+  let cutFrom = base
+  const parked = await currentBranch($, directory)
+  if (parked && parked !== base) {
+    const landed = (await branchExists($, directory, base)) && (await checkoutBranch($, directory, base))
+    if (!landed) {
+      // Never claim a base the branch was not cut from — `base` is REVIEW's diff
+      // boundary, and a fictional one grades the wrong range. Report where we
+      // stand and carry on: a wider diff beats no run at all.
+      await log("warn", `loop: could not check out ${base} — cutting ${branch} from ${parked} instead`)
+      cutFrom = parked
+    }
+  }
   if (!(await checkoutBranch($, directory, branch))) {
     await log("warn", `loop: could not check out ${branch} — building without branch isolation`)
     return { ...state, isolationWarning: `could not check out ${branch} — building without branch isolation` }
   }
-  return { ...state, git: { base, branch }, isolated: true }
+  return { ...state, git: { base: cutFrom, branch }, isolated: true }
 }
 
 /**
@@ -467,8 +542,16 @@ export const ensureIsolation = async (
  * branch, so "returning to base" here would invent a branch named after a commit
  * and strand the human on it.
  *
- * Shared mode is unchanged: return the main tree to the branch it was on before
- * the loop branched off, or the human is left stranded on the work branch.
+ * Shared mode does nothing either — and that is a REVERSAL. It used to check the
+ * main tree back out onto `base`, and the human's next act after a run is always
+ * the work branch: read the diff, amend, push, open the PR. The checkout put them
+ * one branch away from all of it, silently, right after the toast that said the
+ * work was ready. Staying is also the honest report of where the commits are.
+ *
+ * Do NOT restore it "so the next run cuts from a clean base" — that job belongs to
+ * `ensureIsolation`, which pins the base at the START of a run (`baseOffTaskBranch`
+ * + the shared arm's pre-checkout). A checkout here buys that nothing and re-breaks
+ * the ergonomics.
  */
 export const teardownIsolation = async (
   $: Shell,
@@ -487,9 +570,7 @@ export const teardownIsolation = async (
     await log("info", `loop: stayed on ${state.git.branch} — this run's commits are on it, since ${state.git.base.slice(0, 8)}`)
     return
   }
-  if (!(await checkoutBranch($, directory, state.git.base))) {
-    await log("warn", `loop: could not return to ${state.git.base} — still on ${state.git.branch}`)
-  }
+  await log("info", `loop: stayed on ${state.git.branch} — this run's commits are on it, cut from ${state.git.base}`)
 }
 
 /**

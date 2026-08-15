@@ -322,9 +322,11 @@ const runPark = async (ctx: TerminalCtx, action: Extract<Action, { kind: "park" 
 /** done: the loop finished — park the task in in-review/ for human diff review. */
 const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" }>): Promise<TerminalReport> => {
   const { $, directory, config, state, actor, log } = ctx
-  // Checkpoint + teardown FIRST — after this, a shared-tree main tree is back on
-  // the base branch, so the note/move/commit below land where the human (and the
-  // ship gate) will actually look.
+  // Checkpoint FIRST, so the run's own work is committed before the backlog
+  // note/move/commit below — otherwise the checkpoint's `git add -A` sweeps the
+  // backlog write into the feature commit. (Teardown no longer moves a shared
+  // tree off its work branch, so the backlog write lands there; with the default
+  // `ignoreBacklog` nothing is committed at all.)
   await closeIsolation(ctx, `loop(${workflowId(state)}): done — review passed`)
   // A task-less loop (free-text goal, sitter kind) never reaches the ship gate —
   // the only other place a worktree is released — so a done here is its last

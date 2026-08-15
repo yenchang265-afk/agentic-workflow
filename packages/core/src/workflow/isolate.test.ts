@@ -127,6 +127,78 @@ test("shared-tree checkout failure records an isolationWarning", async () => {
 })
 
 /**
+ * Teardown leaves a shared tree ON `feature/<prev-id>`, so "cut from whatever is
+ * checked out" would stack the next task on the last one — its REVIEW diff and PR
+ * carrying commits it never wrote. These three pin the replacement rule: redirect
+ * to the default branch, but only out of the loop's OWN namespace, and only to a
+ * branch that actually exists.
+ *
+ * `parked` is what HEAD reports; `defaultBranch` is what origin/HEAD resolves to
+ * (absent ⇒ unresolvable); `existing` are the refs `rev-parse --verify` accepts.
+ */
+const sharedConfig = { ...DEFAULT_CONFIG, worktreesDir: false as const }
+const sharedHandler =
+  (parked: string, opts: { defaultBranch?: string; existing?: readonly string[] } = {}) =>
+  (cmd: string): FakeResult => {
+    if (cmd.includes("abbrev-ref HEAD")) return { exitCode: 0, stdout: parked }
+    if (cmd.includes("status --porcelain")) return { exitCode: 0, stdout: "" }
+    if (cmd.includes("symbolic-ref refs/remotes/origin/HEAD")) {
+      return opts.defaultBranch ? { exitCode: 0, stdout: `refs/remotes/origin/${opts.defaultBranch}` } : { exitCode: 1 }
+    }
+    if (cmd.includes("init.defaultBranch")) return { exitCode: 1 }
+    if (cmd.includes("rev-parse --verify")) {
+      const known = opts.existing ?? [parked, opts.defaultBranch ?? ""]
+      return { exitCode: known.some((b) => b && cmd.endsWith(`refs/heads/${b}`)) ? 0 : 1 }
+    }
+    return { exitCode: 0 }
+  }
+
+test("a tree parked on a previous run's work branch is re-based off the default branch", async () => {
+  const log: string[] = []
+  const $ = makeShell(sharedHandler("feature/prev", { defaultBranch: "main" }), log)
+  const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, state)
+  assert.equal(next.git?.base, "main")
+  // Landing on base must PRECEDE the cut — `checkout -b` takes whatever HEAD is.
+  const landed = log.findIndex((c) => c.endsWith("checkout main"))
+  const cut = log.findIndex((c) => c.includes("checkout -b feature/add-foo"))
+  assert.ok(landed !== -1 && cut !== -1 && landed < cut, log.join(" | "))
+})
+
+test("an undeclared default branch falls back to a conventional name that exists", async () => {
+  // `origin/HEAD` is only set by `git clone`, so a repo that grew its remote later
+  // resolves nothing — the everyday shape this must not stack in. Safe only because
+  // the candidate must exist: guessing a name into being would re-create the bug.
+  const notes: string[] = []
+  const $ = makeShell(sharedHandler("feature/prev", { existing: ["feature/prev", "master"] }))
+  const next = await ensureIsolation($, (_l, m) => void notes.push(m), "/repo", sharedConfig, state)
+  assert.equal(next.git?.base, "master")
+  assert.ok(notes.some((m) => m.includes("guessed by convention")), notes.join(" | "))
+})
+
+test("an unresolvable default branch degrades to the parked branch, warning about the wider diff", async () => {
+  const notes: string[] = []
+  // Neither origin/HEAD nor a conventional name exists — nothing left to cut from.
+  const $ = makeShell(sharedHandler("feature/prev", { existing: ["feature/prev"] }))
+  const next = await ensureIsolation($, (_l, m) => void notes.push(m), "/repo", sharedConfig, state)
+  // Never a base the branch was not cut from: a noisy diff is recoverable, a
+  // fictional diff boundary grades the wrong range.
+  assert.equal(next.git?.base, "feature/prev")
+  assert.equal(next.isolated, true)
+  assert.ok(notes.some((m) => m.includes("could not be resolved")), notes.join(" | "))
+})
+
+test("a human's own branch is never hijacked to the default branch", async () => {
+  const log: string[] = []
+  const $ = makeShell(sharedHandler("my-work", { defaultBranch: "main" }), log)
+  const next = await ensureIsolation($, noopLog, "/repo", sharedConfig, state)
+  assert.equal(next.git?.base, "my-work")
+  // Outside the loop's namespace the redirect must not even look: `my-work` is a
+  // deliberate base, and re-basing off main would throw away what they set up.
+  assert.ok(!log.some((c) => c.includes("symbolic-ref")), log.join(" | "))
+  assert.ok(!log.some((c) => c.endsWith("checkout main")), log.join(" | "))
+})
+
+/**
  * A PR source (pr-sitter) pre-sets `git:{base,branch}` to name the PR's head to
  * isolate ONTO — with `isolated` still false. `ensureIsolation` must build a real
  * worktree for that EXISTING branch (never switch the human's main tree to it) and
@@ -245,15 +317,20 @@ test("teardown keeps the worktree so the next run resumes in it", async () => {
   assert.ok(!log.some((c) => c.includes("worktree remove")), log.join(" | "))
 })
 
-test("shared-tree teardown still returns the main tree to its base branch", async () => {
+test("shared-tree teardown leaves the main tree ON the work branch", async () => {
+  // The reversal: the human's next act is the branch the loop just built, and a
+  // checkout back to base put them one branch away from it. Correctness for the
+  // NEXT run is `ensureIsolation`'s job — see the base-off-a-work-branch tests.
   const log: string[] = []
   const $ = makeShell(() => ({ exitCode: 0 }), log)
-  await teardownIsolation($, noopLog, "/repo", config, {
+  const notes: string[] = []
+  await teardownIsolation($, (_l, m) => void notes.push(m), "/repo", config, {
     ...state,
     git: { base: "main", branch: "feature/add-foo" },
     isolated: true,
   })
-  assert.ok(log.some((c) => c.includes("checkout main")), log.join(" | "))
+  assert.ok(!log.some((c) => c.includes("checkout")), log.join(" | "))
+  assert.ok(notes.some((m) => m.includes("stayed on feature/add-foo")), notes.join(" | "))
 })
 
 // --- Current-branch mode (`taskBranch: false`) ---

@@ -28,15 +28,30 @@ test("armPoll ticks on its interval and stops cleanly", async () => {
   assert.equal(ticks, at) // no ticks after stop
 })
 
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * Wait for `done`, polling until a generous deadline rather than sleeping a fixed
+ * span. A one-second cron only clears a fixed 1.1s sleep by ~100ms, and a loaded
+ * CI runner starves timers by more than that — which failed the gate on a change
+ * that touched nothing here. Polling keeps the test fast when the box is healthy
+ * and merely slower, never red, when it is not.
+ */
+const waitFor = async (done: () => boolean, deadlineMs = 10_000): Promise<void> => {
+  for (let waited = 0; waited < deadlineMs && !done(); waited += 25) await sleep(25)
+}
+
 test("armCron schedules against the expression and stops cleanly", async () => {
   let fires = 0
   const handle = armCron("* * * * * *", () => fires++) // croner seconds field
   assert.match(handle.describe, /^cron /)
-  await new Promise((r) => setTimeout(r, 1_100))
+  await waitFor(() => fires >= 1)
   handle.stop()
   const at = fires
   assert.ok(at >= 1, `expected >=1 fire, got ${at}`)
-  await new Promise((r) => setTimeout(r, 1_100))
+  // Still a real span, and one wide enough to cross a boundary the cron would
+  // have fired on: this half proves stop() silenced it, so it cannot be polled.
+  await sleep(1_100)
   assert.equal(fires, at) // no fires after stop
 })
 

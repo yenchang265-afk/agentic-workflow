@@ -2711,7 +2711,9 @@ export const onIdle = async (deps: Deps, sessionID: string, config: Config): Pro
           deps.log,
         )
       }
-      // Preserve whatever the failed run left behind and put the tree back.
+      // Preserve whatever the failed run left behind. Teardown leaves the tree on
+      // the work branch — on this path especially, that is where the partial work
+      // is and where `recover` resumes.
       if (state) {
         await renderMetrics(deps, sessionID, config, state, "error", message)
         if (state.task) await commitBacklog(deps, config, state, `loop(${state.task.id}): loop error — ${message}`)
