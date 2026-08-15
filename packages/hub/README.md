@@ -128,7 +128,9 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   or a parked plan, replan, ship — performed through the same
   `@agentic-workflow/core` entry points the hosts call, so a browser approval and a
   slash-command approval are the same audited, committed move. Each one is
-  behind a confirm naming its real effect; **ship also opens a pull request**.
+  behind a confirm naming its real effect; **ship's confirm carries a publish
+  choice** — open a pull request, push the branch with no PR, or ship fully
+  local — defaulting to the repo's `shipPublish` and overridable per ship.
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
 
@@ -203,7 +205,7 @@ happened. It is in-memory and session-scoped; git remains the durable record.
       else clear to move
           API->>Core: same entry point the CLI / slash commands call
           Core->>Git: move task file + audited commit
-          Core-->>API: ok (ship: also opens a draft PR)
+          Core-->>API: ok (ship: publishes per the dialog's choice — PR, push, or local)
           API-->>UI: 200, board updates via SSE
       end
   ```
@@ -328,7 +330,7 @@ The hub's writes, none of which drive a loop:
 | Save a workflow kind (creator) | `packages/core/workflows/<kind>/` | slug + prefix check; 409 without `overwrite` |
 | Scaffold an asset stub (creator) | `prompts/agents/<name>/`, `plugins/opencode/commands/<name>.md`, or `skills/<name>/` — one-shot TODO stubs | `X-Hub-Client`; slug + prefix check; 409 if the target exists (never overwrites); agent-referenced skills must already exist |
 | Run the persona generator (creator checklist) | regenerates the checked-in `plugins/opencode/agents/*` + `plugins/claude/agents/*` files and normalizes opencode command `agent:` frontmatter — exactly what `npm run gen:prompts` does in a terminal | `X-Hub-Client`; a confirm naming the effect; failure is reported with the generator's output, never half-applied routes |
-| A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, a draft pull request | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
+| A human gate move (approve / replan / ship) | the task file under `tasksDir`, plus a git commit — and for **ship**, whatever the dialog's publish choice says (a draft PR, a push, or nothing off your machine) | `X-Hub-Client`; `expectStatus` (a stale board 409s rather than gate the wrong task); refused while a loop is driving the task; a confirm naming the effect |
 | Edit a planless task (drawer) | the task file under `tasksDir` (rewritten in place — same id, filename, folder), plus a git commit; from **`queued/`** also the retask move back to `draft/` | `X-Hub-Client`; planless-only (a plan that appeared 409s); `expectStatus` **and** a content hash (a stale board or drifted prose 409s); frontmatter the schema can't preserve 409s rather than being stripped; the audit tail is rejoined server-side and re-verified; refused while a loop is driving the task or a claim is held; a body that scans as a secret is refused; a confirm naming the effect |
 | Save config | one layer of `.agentic-workflow.json` | `X-Hub-Client`; layer-explicit (never the merged view); raw-JSON writes, so unknown keys survive; `ado.pat` redacted out and refused into a non-gitignored repo file; rejected unless the merged config validates |
 | Request a plan (queued card) | one marker file under `tasksDir/queued/.requests/` — **no file move and no git commit** | `X-Hub-Client`; queued-only; `expectStatus` (a stale board 409s); refused on a task a loop is driving; a confirm naming the effect. Withdrawn by the same button |

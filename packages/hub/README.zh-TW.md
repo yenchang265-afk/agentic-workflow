@@ -122,8 +122,10 @@ localStorage 中），SSE 事件和把關點通知也都會標上儲存庫 id。
   暫存的計畫、replan、ship——這些動作透過與各 host 呼叫的完全相同的
   `@agentic-workflow/core` 進入點執行，因此瀏覽器上的核准動作和斜線指令
   的核准動作是同一個經過稽核、經過提交的動作。每一個動作背後都有
-  一個會明確說出其真實效果的確認步驟；**ship 還會開啟一個 pull
-  request**。管理面板只把關、從不*驅動*：它從不認領工作、從不執行
+  一個會明確說出其真實效果的確認步驟；**ship 的確認步驟還帶有發布
+  選擇**——開一個 pull request、只推送分支不開 PR，或完全只在本機
+  完成——預設依專案的 `shipPublish`，且可每次逐一覆寫。管理面板只
+  把關、從不*驅動*：它從不認領工作、從不執行
   任何階段，並且會拒絕對一個已經有迴圈在驅動的任務做出動作。
 
   `queued/` 卡片還多帶一顆 **Plan**——「下一個規劃這一個」。它是唯一
@@ -229,7 +231,7 @@ slug 篩檢；工作流程類型的寫入被限制在 `packages/core/workflows/<
 | 寫入動作 | 影響範圍 | 防護機制 |
 |---|---|---|
 | 儲存一個工作流程類型（建立器） | `packages/core/workflows/<kind>/` | slug + 前綴檢查；沒有 `overwrite` 就回傳 409 |
-| 一次人工把關動作（approve／replan／ship） | `tasksDir` 下的任務檔案，加上一次 git commit——而 **ship** 還會額外開一個 draft pull request | `X-Hub-Client`；`expectStatus`（過期的看板會回傳 409，而不是把錯的任務放行）；當有迴圈正在驅動該任務時會被拒絕；有一個會明確說出其效果的確認步驟 |
+| 一次人工把關動作（approve／replan／ship） | `tasksDir` 下的任務檔案，加上一次 git commit——而 **ship** 則依對話框的發布選擇而定（draft pull request、只推送，或完全不對外發布） | `X-Hub-Client`；`expectStatus`（過期的看板會回傳 409，而不是把錯的任務放行）；當有迴圈正在驅動該任務時會被拒絕；有一個會明確說出其效果的確認步驟 |
 | 編輯一個尚無計畫的任務（抽屜） | `tasksDir` 下的任務檔案（就地改寫——id、檔名、資料夾都不變），加上一次 git commit；從 **`queued/`** 儲存時還會執行送回 `draft/` 的 retask 移動 | `X-Hub-Client`；僅限尚無計畫的任務（中途出現計畫會回傳 409）；`expectStatus` **加上**內容雜湊（看板過期或內文已漂移會回傳 409）；schema 無法保留的 frontmatter 會回傳 409 而不是被悄悄剝除；稽核軌跡由伺服器端接回並再次驗證；當有迴圈正在驅動該任務或持有認領標記時會被拒絕；掃描疑似含有密鑰的內文會被拒絕；有一個會明確說出其效果的確認步驟 |
 | 儲存設定 | `.agentic-workflow.json` 的其中一層 | `X-Hub-Client`；層級明確（絕不是合併後的檢視）；以原始 JSON 寫入，因此未知的鍵會被保留；`ado.pat` 會被遮蔽，且拒絕寫入未被 gitignore 的儲存庫檔案；除非合併後的設定通過驗證，否則會被拒絕 |
 | 請求規劃（queued 卡片） | `tasksDir/queued/.requests/` 下的一個標記檔案——**不移動檔案，也不產生 git commit** | `X-Hub-Client`；僅限 `queued/`；`expectStatus`（看板過期會回傳 409）；當有迴圈正在驅動該任務時會被拒絕；有一個會明確說出其效果的確認步驟。用同一顆按鈕撤回 |
