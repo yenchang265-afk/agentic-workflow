@@ -78,6 +78,19 @@ export const readTasksDir = (root) => {
   return "docs/tasks"
 }
 
+/**
+ * The configured `recurringDir` for `root` — the recurring-definition registry,
+ * guarded like the backlog so a cycle's stages cannot rewrite the standing work
+ * order that spawned them. Same layer precedence as `readTasksDir`.
+ */
+export const readRecurringDir = (root) => {
+  const repo = layer(path.join(root, ".agentic-workflow.json"))
+  if (typeof repo?.recurringDir === "string" && repo.recurringDir) return repo.recurringDir
+  const user = layer(userConfigPath())
+  if (typeof user?.recurringDir === "string" && user.recurringDir) return user.recurringDir
+  return "docs/recurring"
+}
+
 /** The absolute `runs/` directory the stage marker and verdict sentinel live in. */
 export const runsDir = (cwd) => {
   const root = backlogRoot(cwd)

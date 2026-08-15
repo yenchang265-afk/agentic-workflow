@@ -364,11 +364,28 @@ const CiRunsSourceSchema = z.object({
   workflows: z.array(z.string().min(1)).default([]),
 })
 
+/**
+ * The recurring work source: claimable units of work are human-authored
+ * definitions under `<recurringDir>/` whose own schedule says they are due,
+ * each with a per-definition ledger under `<recurringDir>/.runs/`.
+ *
+ * Unlike every other source, the claimable identity here is FIXED and
+ * re-claimed forever — the ledger records when it last ran so the schedule can
+ * decide when it runs again, rather than making one external occurrence
+ * handled-once. The binding carries no options: what to work on and how often
+ * both live in the definition files, not in the manifest, because there are
+ * many independently-scheduled definitions per kind.
+ */
+const RecurringTaskSourceSchema = z.object({
+  type: z.literal("recurring-task"),
+})
+
 export const WorkSourceBindingSchema = z.discriminatedUnion("type", [
   BacklogSourceSchema,
   PullRequestSourceSchema,
   DependencyScanSourceSchema,
   CiRunsSourceSchema,
+  RecurringTaskSourceSchema,
 ])
 export type WorkSourceBinding = z.infer<typeof WorkSourceBindingSchema>
 

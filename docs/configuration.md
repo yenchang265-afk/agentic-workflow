@@ -127,6 +127,7 @@ hand-edited afterward.
 |-------|---------|--------------|
 | `maxIterations` | `3` | Max loop iterations before stopping on repeated check-stage failures (engineering: VERIFY/REVIEW; a manifest may override per kind). When the engineering cap trips, the plan is suspect — send it back with `/agentic-workflow:engineering replan <id>`. |
 | `tasksDir` | `"docs/tasks"` | Repo-relative root of the task backlog; its subfolders are task statuses. Also hosts the ephemeral `runs/` machine state (snapshots, stage marker, PR-sitter ledgers). |
+| `recurringDir` | `"docs/recurring"` | Repo-relative root of the [recurring-task registry](recurring.md) — a FLAT directory of scheduled work orders, deliberately separate from `tasksDir` (a recurring definition has no status and never terminates). Also hosts its ephemeral `.runs/` machine state (per-definition ledgers, claim markers). Only read when the `recurring` kind is enabled. |
 | `ignoreBacklog` | `true` | See hardening below. Set to `false` to commit every task move as an audit trail (the old behavior). |
 | `stageTimeoutMinutes` | `60` | Wall-clock cap on a single stage; a stage exceeding it fails the loop instead of hanging it. |
 | `checkTimeoutMinutes` | `10` | Wall-clock cap on ONE driver-run check command (`stageChecks` / the plan's discovered checks). Separate from `stageTimeoutMinutes`, which does not cover them: checks run outside the stage cap on both hosts. A check that exceeds it is killed and reported as exit `124` ⇒ stage ERROR. |
@@ -154,9 +155,9 @@ configuration at all:
 
 - **`engineering` runs unless explicitly disabled** with `"enabled": false`.
 
-Every other kind — all four sitters (`pr-sitter`, `review-sitter`,
-`dep-sitter`, `main-sitter`) and any kind you author — is **experimental and
-opt-in** with `"enabled": true`. A knob-only section does not enable a kind:
+Every other kind — the four sitters (`pr-sitter`, `review-sitter`,
+`dep-sitter`, `main-sitter`), [`recurring`](recurring.md), and any kind you
+author — is **experimental and opt-in** with `"enabled": true`. A knob-only section does not enable a kind:
 tuning `query` on a disabled `pr-sitter` leaves it off. Enabled kinds are
 polled in claim-priority order: `engineering`, then the opted-in kinds in
 config order — so a claim that names no kind reaches an enabled sitter too,
@@ -178,17 +179,21 @@ default and says nothing:
 | `ci-runs` | `branch` | string |
 
 (What each knob *means* per sitter is documented canonically in
-[`sitters.md`](sitters.md); the table above is only the read contract.)
+[`sitters.md`](sitters.md); the table above is only the read contract.
+`recurring-task` reads no knobs at all: what a recurring kind works on and how
+often lives in each definition file, not in its config section — see
+[`recurring.md`](recurring.md).)
 
 The admin hub's **Config tab flags exactly these mistakes** — unknown knob (with
 a did-you-mean), wrong type, and a knob on a kind whose work source never reads
 it. The warnings are advisory: they annotate a save, never block it. See
 [the admin hub](#admin-hub-hub--user-scope-only) below.
 
-> **All four sitters are experimental** — their manifests, knobs, and defaults
-> may still change between releases, which is why none of them starts without
-> `"enabled": true`. `engineering` is the one kind whose defaults are settled.
-> The `ado` code platform (below) is experimental on the same terms.
+> **All four sitters and the `recurring` kind are experimental** — their
+> manifests, knobs, and defaults may still change between releases, which is why
+> none of them starts without `"enabled": true`. `engineering` is the one kind
+> whose defaults are settled. The `ado` code platform (below) is experimental on
+> the same terms.
 
 ```json
 {

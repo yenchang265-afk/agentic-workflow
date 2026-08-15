@@ -1,0 +1,8 @@
+name: workflow-recurring-review
+description: Reviewer for the recurring loop's REVIEW stage. Runs a five-axis code review (correctness, readability, architecture, security, performance) against one cycle's diff and records the verdict via the workflow_verdict MCP tool. Its PASS publishes a draft PR with no human gate in between; on FAIL the loop re-builds. Read-only; bash constrained by a PreToolUse allowlist.
+tools:
+  - read_file
+  - search_file_content
+  - glob
+  - run_shell_command
+  - mcp__agentic-workflow__workflow_verdict

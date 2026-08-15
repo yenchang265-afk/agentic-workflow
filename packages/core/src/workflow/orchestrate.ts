@@ -8,6 +8,7 @@ import type { AdoGateway } from "../source/ado-gateway.js"
 import { makeAdoPrSource } from "../source/ado-pr.js"
 import { makeBacklogSource } from "../source/backlog.js"
 import { makeCiRunsSource } from "../source/ci-runs.js"
+import { makeRecurringSource } from "../source/recurring.js"
 import { makeDependencyScanSource } from "../source/dependency-scan.js"
 import { makeGithubPrSource } from "../source/github-pr.js"
 import type { WorkSource } from "../source/types.js"
@@ -184,6 +185,11 @@ export const buildWorkSources = (
           return [makeAdoCiRunsSource({ ...base, ado: config.ado!, gateway: deps.adoGateway, ...branchOverride })]
         }
         return [makeCiRunsSource({ ...base, ...branchOverride })]
+      }
+      if (loaded.manifest.workSource.type === "recurring-task") {
+        // Its registry is a separate root from the backlog (`recurringDir`),
+        // because a definition has no status and never reaches a terminal one.
+        return [makeRecurringSource({ ...base, recurringDir: config.recurringDir, platform: platformFor(config, kind) })]
       }
       return [
         makeBacklogSource({

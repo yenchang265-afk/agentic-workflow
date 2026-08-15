@@ -241,6 +241,48 @@ test("classifyMutation allows unknown tools and missing args", () => {
   assert.equal(classifyMutation("Write", {}, ctx).allow, true)
 })
 
+// --- the recurring-definition registry (`recurringDir`) ---
+
+const recCtx = { tasksDir: "docs/tasks", recurringDir: "docs/recurring" }
+
+test("a recurring definition cannot be edited from inside a cycle — no draft-style carve-out", () => {
+  // The definition is the standing work order that SPAWNED this cycle. A stage
+  // that can rewrite it can change its own schedule, un-pause itself, or delete
+  // the ledger that decides when it next runs — none of which the human who
+  // authored it would see. Unlike the backlog there is no authoring exception:
+  // new/pause/resume/remove are human verbs.
+  assert.equal(classifyEdit("docs/recurring/f7k3-digest.md", recCtx).allow, false)
+  assert.equal(classifyEdit("/repo/docs/recurring/f7k3-digest.md", recCtx).allow, false)
+  assert.equal(classifyEdit("docs/recurring/.runs/f7k3-digest.json", recCtx).allow, false)
+  const verdict = classifyEdit("docs/recurring/x.md", recCtx)
+  assert.equal(verdict.allow, false)
+  assert.match(verdict.allow ? "" : verdict.reason, /recurring verbs/)
+})
+
+test("the recurring guard is off when no recurringDir is configured — the pre-recurring behaviour", () => {
+  // Fail OPEN on an unconfigured registry: a host that has never heard of the
+  // recurring kind must behave exactly as it did before.
+  assert.equal(classifyEdit("docs/recurring/f7k3-digest.md", ctx).allow, true)
+  assert.equal(classifyBash("rm docs/recurring/f7k3-digest.md", ctx).allow, true)
+})
+
+test("a cycle may READ its own work order but never write one", () => {
+  assert.equal(classifyBash("cat docs/recurring/f7k3-digest.md", recCtx).allow, true)
+  assert.equal(classifyBash("ls docs/recurring", recCtx).allow, true)
+  assert.equal(classifyBash("grep -r digest docs/recurring", recCtx).allow, true)
+
+  assert.equal(classifyBash("rm docs/recurring/f7k3-digest.md", recCtx).allow, false)
+  assert.equal(classifyBash("mv docs/recurring/a.md docs/recurring/b.md", recCtx).allow, false)
+  assert.equal(classifyBash("echo paused > docs/recurring/f7k3-digest.md", recCtx).allow, false)
+  assert.equal(classifyBash("rm -rf docs/recurring/.runs", recCtx).allow, false)
+})
+
+test("classifyMutation routes both tool shapes at the recurring registry", () => {
+  assert.equal(classifyMutation("Write", { filePath: "docs/recurring/x.md" }, recCtx).allow, false)
+  assert.equal(classifyMutation("Bash", { command: "rm docs/recurring/x.md" }, recCtx).allow, false)
+  assert.equal(classifyMutation("Bash", { command: "cat docs/recurring/x.md" }, recCtx).allow, true)
+})
+
 test("classifyBash blocks the full find mutating-flag set — the hand copy drifted to four", () => {
   // The token list is now derived from the write-backstop's canonical
   // FIND_MUTATING_FLAGS. The hand-written subset missed the file-writing flags:

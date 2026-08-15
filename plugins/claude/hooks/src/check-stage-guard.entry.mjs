@@ -57,7 +57,7 @@ import {
 } from "./dialect.mjs"
 import { VERIFY_ALLOW, REVIEW_ALLOW, commandAllowed, chainedGithubPrMutation, chainedGitPushViolation, isAdoMcpTool, isAdoMcpToolOutOfStageScope, isAdoMcpWriteViolation } from "./allowlist.mjs"
 import { allow, block, readStdin as read, rewriteInput } from "./pretooluse.mjs"
-import { backlogRoot, markerWriterAlive, readMarker, readTasksDir, runsDir } from "./marker.mjs"
+import { backlogRoot, markerWriterAlive, readMarker, readRecurringDir, readTasksDir, runsDir } from "./marker.mjs"
 import { evidenceEntry, noteEvidence } from "./evidence.mjs"
 
 // The PreToolUse envelope (allow / block / rewriteInput) lives in
@@ -92,6 +92,7 @@ const main = async () => {
   if (host === null) return block(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST))
   const d = dialectFor(host)
   const tasksDir = readTasksDir(backlogRoot(cwd))
+  const recurringDir = readRecurringDir(backlogRoot(cwd))
   const marker = readMarker(cwd, d.stageMarkerFile)
   const tool = input.tool_name
   const ti = input.tool_input || {}
@@ -109,7 +110,7 @@ const main = async () => {
       ...(typeof filePath === "string" ? { filePath } : {}),
       ...(typeof ti.command === "string" ? { command: ti.command } : {}),
     },
-    { tasksDir, planTaskId },
+    { tasksDir, planTaskId, recurringDir },
   )
   if (!backlogVerdict.allow) return block(backlogVerdict.reason)
 

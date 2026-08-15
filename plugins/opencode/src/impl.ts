@@ -894,7 +894,12 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
       // Per-loop precise carve-out when the session resolved to a loop; the store
       // scan only backstops sessions that could not be attributed to any loop.
       const planTaskId = loop ? (loop.stage === "plan" ? (loop.task?.id ?? null) : null) : planStageTaskId()
-      const guardCtx = { tasksDir: config.tasksDir, planTaskId }
+      // `recurringDir` is guarded alongside the backlog: a recurring cycle's
+      // stages must never rewrite the standing work order that spawned them
+      // (its schedule, its paused flag, or the ledger deciding when it next
+      // runs). Unlike the backlog there is no authoring carve-out — the
+      // recurring verbs are the only way in.
+      const guardCtx = { tasksDir: config.tasksDir, planTaskId, recurringDir: config.recurringDir }
       // No stage may ask the human. A drive is unattended between the plan gate
       // and the ship gate — the question dialog opened by a stage subagent
       // stalls it on someone who is not watching, and on a `watch` worker there

@@ -1,0 +1,7 @@
+name: workflow-recurring-plan
+description: Planner for the recurring loop's PLAN stage. Plans ONE cycle of a standing, scheduled work order against the repository as it is now and returns the plan as its reply. Writes no files and never edits the recurring definition registry; BUILD consumes the plan directly with no human gate in between.
+tools:
+  - read_file
+  - search_file_content
+  - glob
+  - run_shell_command

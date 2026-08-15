@@ -1,0 +1,3 @@
+name: workflow-recurring-build
+description: Implementer for the recurring loop's BUILD stage. Executes one cycle's plan test-first with surgical diffs, or applies a VERIFY or REVIEW stage's feedback on a re-build. The only stage in this loop that writes code; never edits the recurring definition registry.
+tools: Read, Edit, Write, Bash, Grep, Glob, mcp__agentic-workflow__workflow_blocked, mcp__plugin_agentic-workflow_agentic-workflow__workflow_blocked

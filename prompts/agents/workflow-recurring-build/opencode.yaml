@@ -1,0 +1,10 @@
+description: Implementer for the recurring loop's BUILD stage. Executes one cycle's plan test-first with surgical diffs, or applies a VERIFY/REVIEW stage's fix requests on a re-build. The only stage in this loop that writes code; never edits the recurring definition registry.
+mode: subagent
+permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
+  edit: allow
+  bash: allow
+tools:
+  question: false

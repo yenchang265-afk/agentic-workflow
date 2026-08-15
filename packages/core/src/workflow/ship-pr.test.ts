@@ -55,6 +55,7 @@ const noop = async () => {}
 const baseConfig: Config = {
   maxIterations: 3,
   tasksDir: "docs/tasks",
+  recurringDir: "docs/recurring",
   stageTimeoutMinutes: 60,
   checkTimeoutMinutes: 10,
   ignoreBacklog: true,

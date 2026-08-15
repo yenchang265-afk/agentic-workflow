@@ -37,6 +37,7 @@ const eng = loadManifest(WORKFLOWS_DIR, "engineering")
 const config: Config = {
   maxIterations: 3,
   tasksDir: "docs/tasks",
+  recurringDir: "docs/recurring",
   stageTimeoutMinutes: 60,
   checkTimeoutMinutes: 10,
   ignoreBacklog: true,

@@ -46,6 +46,17 @@ sections below cover each.
    (never auto-fixes major bumps); `main-sitter` opens a draft remedy PR — a
    verified forward fix or revert — when the default branch's CI goes red. Each
    enabled kind has its own command, with `claim`/`watch` scoped to it.
+   The **`recurring` kind** (also experimental, also opt-in) is not a sitter —
+   it watches no external surface. It repeats a work order a human authored
+   ONCE, on that order's own schedule, forever: definitions live flat in
+   `docs/recurring/` (`recurringDir`), each carrying its own `schedule`
+   (interval or cron) and a `paused` flag, and each due one drives
+   plan → build → verify → review → publish unattended onto its own
+   `recurring/<id>-<run>` branch and opens a draft PR. It is the only kind
+   whose claimable identity is FIXED and re-claimed forever — its per-definition
+   ledger under `docs/recurring/.runs/` records when a cycle last RAN so the
+   schedule can decide when it runs again, the inverse of a sitter ledger's
+   handled-once job. See `docs/recurring.md`.
 2. **Ad-hoc, skill-driven execution** — for a single request that doesn't
    warrant starting a loop, OpenCode still has a **skill-driven execution
    model** powered by the `skill` tool and the `skills/` directory bundled
@@ -146,7 +157,7 @@ admin hub:
 flowchart TD
     subgraph Core["packages/core — @agentic-workflow/core engine"]
         Engine["manifest interpreter, scheduler, work sources"]
-        Workflows["packages/core/workflows/&lt;kind&gt;/<br/>workflow.json manifest + stage prompts<br/>(engineering, pr-sitter, review-sitter, dep-sitter, main-sitter)"]
+        Workflows["packages/core/workflows/&lt;kind&gt;/<br/>workflow.json manifest + stage prompts<br/>(engineering, pr-sitter, review-sitter, dep-sitter, main-sitter, recurring)"]
         Engine --- Workflows
     end
 
@@ -163,7 +174,8 @@ flowchart TD
 
 - `plugins/opencode/src/` — the OpenCode plugin implementation (state machine, driver); task backlog IO lives in `packages/core/src/task/`
 - `packages/core/` — the shared `@agentic-workflow/core` engine (manifest interpreter, scheduler, work sources) used by both the OpenCode plugin and the Claude MCP (Model Context Protocol) server
-- `packages/core/workflows/<kind>/` — declarative workflow-kind manifests (`workflow.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`)
+- `packages/core/workflows/<kind>/` — declarative workflow-kind manifests (`workflow.json`) + stage prompt templates (one dir per kind: `engineering/`, `pr-sitter/`, `review-sitter/`, `dep-sitter/`, `main-sitter/`, `recurring/`)
+- `packages/core/src/recurring/` — the recurring-definition registry: its schema (a parallel, minimal one — a definition has no status and never terminates, so `TaskStatus`/`canTransition` do not apply), the pure due-date math (`schedule.ts`), and flat-directory IO + per-definition ledgers
 - `packages/hub/` — the admin hub (beta): a localhost web app
   (`npm run hub -- --dir <repo>`) with a loop monitor and a visual loop
   creator. The monitor carries the human gate moves (approve/replan/ship), an

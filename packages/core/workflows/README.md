@@ -19,9 +19,12 @@ workflows/
 ├── dep-sitter/           # SCAN → UPGRADE → VERIFY → PUBLISH over npm advisories
 │   ├── workflow.json
 │   └── stages/{scan,upgrade,verify,publish}.md
-└── main-sitter/          # DIAGNOSE → REMEDY → VERIFY → PUBLISH over red default-branch CI
+├── main-sitter/          # DIAGNOSE → REMEDY → VERIFY → PUBLISH over red default-branch CI
+│   ├── workflow.json
+│   └── stages/{diagnose,remedy,verify,publish}.md
+└── recurring/            # PLAN → BUILD → VERIFY → REVIEW → PUBLISH, repeated on each definition's own schedule
     ├── workflow.json
-    └── stages/{diagnose,remedy,verify,publish}.md
+    └── stages/{plan,build,verify,review,publish}.md
 ```
 
 Each kind's usage quickstart (enable snippet, commands, worked examples) lives at

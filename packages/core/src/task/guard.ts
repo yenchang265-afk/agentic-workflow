@@ -25,6 +25,19 @@ export interface GuardContext {
   readonly tasksDir: string
   /** Task id a live PLAN stage may write onto in `queued/`, if one is running. */
   readonly planTaskId?: string | null
+  /**
+   * Repo-relative recurring-definition registry, e.g. "docs/recurring".
+   * Unset ⇒ the registry is not guarded (pre-recurring hosts, and any caller
+   * that has no recurring kind configured), which is exactly the old behaviour.
+   *
+   * Protected MORE strictly than the backlog, with no carve-out: a recurring
+   * cycle's stages have no legitimate reason to touch the registry at all. The
+   * definition is the standing work order that SPAWNED the cycle — a stage that
+   * can rewrite it can rewrite its own schedule, delete the ledger that decides
+   * when it next runs, or silently pause itself, none of which the human who
+   * authored it would see.
+   */
+  readonly recurringDir?: string | null
 }
 
 export type GuardVerdict = { readonly allow: true } | { readonly allow: false; readonly reason: string }
@@ -66,7 +79,14 @@ export const backlogRelPath = (filePath: string, tasksDir: string): string | nul
  * the plan onto its own task in `queued/`. Everything else — status folders,
  * `runs/`, unknown dirs — is blocked.
  */
+const HOW_TO_MUTATE_RECURRING =
+  "a recurring definition is the standing work order a cycle runs FROM — change it only through the recurring verbs " +
+  "(new / pause / resume / remove), never from inside a cycle."
+
 export const classifyEdit = (filePath: string, ctx: GuardContext): GuardVerdict => {
+  if (ctx.recurringDir && backlogRelPath(filePath, ctx.recurringDir) !== null) {
+    return block(`agentic-workflow: edits under ${ctx.recurringDir}/ are blocked — ${HOW_TO_MUTATE_RECURRING}`)
+  }
   const rel = backlogRelPath(filePath, ctx.tasksDir)
   if (rel === null) return ALLOW
   const segments = rel.split("/")
@@ -169,6 +189,22 @@ const isCanonicalMkdir = (segment: string, tasksDir: string): boolean => {
  * construction.
  */
 export const classifyBash = (command: string, ctx: GuardContext): GuardVerdict => {
+  // The recurring registry is checked first and judged by the SAME read-only
+  // rules as the backlog — a cycle may read its own work order (`cat`, `grep`),
+  // it may not write one. Unlike the backlog there is no authoring carve-out:
+  // `new`/`pause`/`remove` are human verbs, never a stage's.
+  if (ctx.recurringDir && referencesBacklog(command, ctx.recurringDir)) {
+    const segments = splitSegments(command)
+    const readOnly =
+      !/>/.test(command) &&
+      !MUTATING_TOKENS.some((t) => command.includes(t)) &&
+      !segments.some(hasShellExpansion) &&
+      segments.every((s) => matchesAny(s, READ_ONLY))
+    if (!readOnly) {
+      return block(`agentic-workflow: this command can mutate ${ctx.recurringDir}/ — ${HOW_TO_MUTATE_RECURRING}`)
+    }
+    return ALLOW
+  }
   if (!referencesBacklog(command, ctx.tasksDir)) return ALLOW
   if (/>/.test(command)) {
     return block(`agentic-workflow: redirecting output while referencing ${ctx.tasksDir}/ is blocked — ${HOW_TO_MUTATE}`)

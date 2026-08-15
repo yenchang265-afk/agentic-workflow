@@ -108,6 +108,14 @@ const BaseConfigSchema = z.object({
   /** Repo-relative root of the task backlog; its subfolders are task statuses. */
   tasksDir: z.string().min(1).default("docs/tasks"),
   /**
+   * Repo-relative root of the recurring-task registry — a FLAT directory of
+   * definitions, deliberately separate from `tasksDir`. A recurring definition
+   * has no status (it is never completed or abandoned; it just runs again), so
+   * it cannot live in a folder-per-status model whose two terminal folders are
+   * enforced dead ends (`canTransition`, task/store.ts).
+   */
+  recurringDir: z.string().min(1).default("docs/recurring"),
+  /**
    * On by default: keep `tasksDir` out of git the same way `worktreesDir`
    * does — an idempotent append to `<git-common-dir>/info/exclude` (a
    * per-clone, untracked list), never the shared, tracked `.gitignore`. The
@@ -504,7 +512,16 @@ export const ConfigSchema = BaseConfigSchema.superRefine((c, ctx) => {
  * or watch actually pulls it, and every terminal call (merge, approve, close)
  * stays human. See docs/design/threat-model.md T7-T11.
  */
-export const EXPERIMENTAL_KINDS: readonly string[] = ["pr-sitter", "review-sitter", "dep-sitter", "main-sitter"]
+export const EXPERIMENTAL_KINDS: readonly string[] = [
+  "pr-sitter",
+  "review-sitter",
+  "dep-sitter",
+  "main-sitter",
+  // Not a sitter: it repeats a human-authored definition on that definition's
+  // own schedule rather than watching an external surface. Experimental for the
+  // same reason the sitters are — it publishes unattended, on a timer.
+  "recurring",
+]
 
 /**
  * Kinds live without any configuration: `engineering` alone, and it may still

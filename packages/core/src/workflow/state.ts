@@ -387,6 +387,8 @@ export interface Config {
   readonly maxIterations: number
   /** Repo-relative root of the task backlog (folders are statuses). */
   readonly tasksDir: string
+  /** Repo-relative root of the recurring-task registry — a FLAT directory (a definition has no status and never terminates). */
+  readonly recurringDir: string
   /** On by default: exclude `tasksDir` via `.git/info/exclude` instead of auto-committing it. `false` ⇒ commit every task move (the old behavior). */
   readonly ignoreBacklog: boolean
   /** Wall-clock cap on a single stage before the loop gives up on it. */

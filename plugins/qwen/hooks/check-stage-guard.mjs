@@ -131,7 +131,11 @@ var backlogRelPath = (filePath, tasksDir) => {
   const m = new RegExp(`(?:^|/)${escapeRe(path.posix.normalize(tasksDir))}/(.+)$`).exec(normalized);
   return m?.[1] ?? null;
 };
+var HOW_TO_MUTATE_RECURRING = "a recurring definition is the standing work order a cycle runs FROM \u2014 change it only through the recurring verbs (new / pause / resume / remove), never from inside a cycle.";
 var classifyEdit = (filePath, ctx) => {
+  if (ctx.recurringDir && backlogRelPath(filePath, ctx.recurringDir) !== null) {
+    return block(`agentic-workflow: edits under ${ctx.recurringDir}/ are blocked \u2014 ${HOW_TO_MUTATE_RECURRING}`);
+  }
   const rel = backlogRelPath(filePath, ctx.tasksDir);
   if (rel === null)
     return ALLOW;
@@ -190,6 +194,14 @@ var isCanonicalMkdir = (segment, tasksDir) => {
   });
 };
 var classifyBash = (command, ctx) => {
+  if (ctx.recurringDir && referencesBacklog(command, ctx.recurringDir)) {
+    const segments2 = splitSegments(command);
+    const readOnly = !/>/.test(command) && !MUTATING_TOKENS.some((t) => command.includes(t)) && !segments2.some(hasShellExpansion) && segments2.every((s) => matchesAny(s, READ_ONLY));
+    if (!readOnly) {
+      return block(`agentic-workflow: this command can mutate ${ctx.recurringDir}/ \u2014 ${HOW_TO_MUTATE_RECURRING}`);
+    }
+    return ALLOW;
+  }
   if (!referencesBacklog(command, ctx.tasksDir))
     return ALLOW;
   if (/>/.test(command)) {
@@ -683,6 +695,13 @@ var readTasksDir = (root) => {
   if (typeof user?.tasksDir === "string" && user.tasksDir) return user.tasksDir;
   return "docs/tasks";
 };
+var readRecurringDir = (root) => {
+  const repo = layer(path3.join(root, ".agentic-workflow.json"));
+  if (typeof repo?.recurringDir === "string" && repo.recurringDir) return repo.recurringDir;
+  const user = layer(userConfigPath());
+  if (typeof user?.recurringDir === "string" && user.recurringDir) return user.recurringDir;
+  return "docs/recurring";
+};
 var runsDir = (cwd) => {
   const root = backlogRoot(cwd);
   return path3.join(root, readTasksDir(root), "runs");
@@ -747,6 +766,7 @@ var main = async () => {
   if (host === null) return block2(unknownHostMessage(process.env.AGENTIC_WORKFLOW_HOST));
   const d = dialectFor(host);
   const tasksDir = readTasksDir(backlogRoot(cwd));
+  const recurringDir = readRecurringDir(backlogRoot(cwd));
   const marker = readMarker(cwd, d.stageMarkerFile);
   const tool = input.tool_name;
   const ti = input.tool_input || {};
@@ -760,7 +780,7 @@ var main = async () => {
       ...typeof filePath === "string" ? { filePath } : {},
       ...typeof ti.command === "string" ? { command: ti.command } : {}
     },
-    { tasksDir, planTaskId }
+    { tasksDir, planTaskId, recurringDir }
   );
   if (!backlogVerdict.allow) return block2(backlogVerdict.reason);
   if (!marker) return allow();

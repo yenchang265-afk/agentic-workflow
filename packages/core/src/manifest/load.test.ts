@@ -28,7 +28,7 @@ const scratchKind = (mutate: (dir: string, manifest: Record<string, unknown>) =>
 
 test("every shipped workflow kind loads with all its stage prompts", () => {
   const kinds = listWorkflowKinds(WORKFLOWS_DIR)
-  assert.deepEqual(kinds, ["dep-sitter", "engineering", "main-sitter", "pr-sitter", "review-sitter"])
+  assert.deepEqual(kinds, ["dep-sitter", "engineering", "main-sitter", "pr-sitter", "recurring", "review-sitter"])
   for (const kind of kinds) {
     const { manifest, prompts } = loadManifest(WORKFLOWS_DIR, kind)
     assert.equal(manifest.kind, kind)

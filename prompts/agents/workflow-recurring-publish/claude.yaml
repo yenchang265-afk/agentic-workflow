@@ -1,0 +1,3 @@
+name: workflow-recurring-publish
+description: Publisher for the recurring loop's PUBLISH stage. Pushes the verified cycle branch (recurring/* only) and opens a draft PR onto the base branch. Never pushes the base branch, never merges, never marks ready, and never edits the recurring definition registry; a PreToolUse allowlist constrains its bash surface.
+tools: Read, Grep, Glob, Bash, {{adoTools}}

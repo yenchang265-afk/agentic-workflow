@@ -1,0 +1,13 @@
+description: Planner for the recurring loop's PLAN stage. Plans ONE cycle of a standing, scheduled work order against the repository as it is now, and returns the plan as its reply. Writes no files (there is no task file) and never edits the recurring definition registry; there is no human gate after it, so the plan goes straight to BUILD.
+mode: subagent
+permission:
+  # Never ask the human mid-drive — see "A stage subagent must not be able to
+  # ask" in AGENTS.md. Also removed from `tools:` (two layers, both silent).
+  question: deny
+  edit: deny
+  webfetch: deny
+  bash:
+    "*": deny
+    # {{allowlist}} — globs generated from the stage's bashAllowlist in workflows/*/workflow.json; edit the manifest, not here
+tools:
+  question: false

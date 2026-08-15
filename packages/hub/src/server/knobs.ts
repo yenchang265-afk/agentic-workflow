@@ -50,6 +50,11 @@ export const BY_SOURCE: Readonly<Record<KindBoardInfo["sourceType"], Readonly<Re
     scannerCommand: { type: "string", site: "orchestrate.ts:129" },
   },
   "ci-runs": { branch: { type: "string", site: "orchestrate.ts:132" } },
+  // Deliberately empty: what a recurring kind works on and how often lives in
+  // each definition file (`<recurringDir>/<id>.md`), not in a per-kind config
+  // section — there are many independently-scheduled definitions per kind, so
+  // there is nothing here for one config block to say about them.
+  "recurring-task": {},
 }
 
 /**

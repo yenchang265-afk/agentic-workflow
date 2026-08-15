@@ -158,8 +158,11 @@ test("unenabledConfiguredKinds names the opt-in sections that can never take eff
   assert.deepEqual(unenabledConfiguredKinds(DEFAULT_CONFIG), [])
 })
 
-test("every sitter kind is listed as experimental", () => {
-  assert.deepEqual([...EXPERIMENTAL_KINDS], ["pr-sitter", "review-sitter", "dep-sitter", "main-sitter"])
+test("every unattended-publishing kind is listed as experimental", () => {
+  // `recurring` is not a sitter (it repeats an authored definition rather than
+  // watching an external surface) but belongs here for the same reason: it
+  // publishes unattended, so it stays opt-in.
+  assert.deepEqual([...EXPERIMENTAL_KINDS], ["pr-sitter", "review-sitter", "dep-sitter", "main-sitter", "recurring"])
   assert.deepEqual([...DEFAULT_ENABLED_KINDS], ["engineering"])
 })
 
