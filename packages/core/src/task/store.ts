@@ -216,43 +216,74 @@ const PLAN_REJECTED_REASON_PREFIX = "— sent back to queued for re-planning —
 /**
  * The audited note `runDone` appends when a run's REVIEW passes and the task
  * parks in `in-review/`, and the fixed prose that carries the branch its work
- * landed on.
+ * landed on and the ref that branch was cut from.
  *
- * The branch has to be recorded on the TASK FILE because nothing else survives
- * to the ship gate: the state snapshot is cleared by `runDone` itself, and
- * `shipTask` runs later, from a fresh process that receives only an id. Deriving
- * the branch from config at ship time is a guess — wrong in current-branch mode
+ * Both have to be recorded on the TASK FILE because nothing else survives to the
+ * ship gate: the state snapshot is cleared by `runDone` itself, and `shipTask`
+ * runs later, from a fresh process that receives only an id. Deriving the branch
+ * from config at ship time is a guess — wrong in current-branch mode
  * (`taskBranch: false`, where no id→branch function can exist) and wrong in any
- * mode if the prefix changed between the run and the ship.
+ * mode if the prefix changed between the run and the ship. The base is worse
+ * still: without it the gate asks the PLATFORM for its default branch, so a task
+ * built on `release/2.4` opens a PR into `main` — against a diff no one reviewed,
+ * since REVIEW graded `git diff <base>...<branch>`.
  */
 export const RUN_DONE_MARKER = "> Loop done"
 const RUN_BRANCH_PREFIX = "— review passed on branch "
+/**
+ * The base clause, appended AFTER the branch clause's comma — never between the
+ * branch and it. `runDoneField` terminates a value at the first comma, so
+ * `on branch <b> onto <base>,` would make the branch read `<b> onto <base>`,
+ * fail the ref check, and silently strand every ship with no branch at all.
+ */
+const RUN_BASE_PREFIX = ", base "
 
 /**
- * The branch the last completed run built on, or `undefined`. Pure.
+ * One comma-delimited field of the LAST `RUN_DONE_MARKER` line, or `undefined`.
+ * Pure.
  *
- * Reads the LAST `RUN_DONE_MARKER` line — a replanned-and-rebuilt task carries
- * one per run and only the newest names the branch that holds the work — and
- * requires `AUDIT_NOTE_LINE_RE`'s closing stamp, so a plan or a comment merely
- * quoting the line cannot inject a branch name into `git push`.
+ * Reads the last such line — a replanned-and-rebuilt task carries one per run
+ * and only the newest describes the work that is about to ship — and requires
+ * `AUDIT_NOTE_LINE_RE`'s closing stamp, so a plan or a comment merely quoting
+ * the line cannot inject a ref into `git push` or `gh pr create`.
+ *
+ * `after` anchors the search past an earlier field, so a later prefix can never
+ * match text belonging to an earlier one.
  */
-export const extractRunBranch = (task: Task): string | undefined => {
+const runDoneField = (task: Task, prefix: string, after?: string): string | undefined => {
   const idx = lastMarkerIndex(task.body, RUN_DONE_MARKER)
   if (idx === -1) return undefined
   const end = task.body.indexOf("\n", idx)
   const line = task.body.slice(idx, end === -1 ? task.body.length : end)
   if (!AUDIT_NOTE_LINE_RE.test(line)) return undefined
-  const from = line.indexOf(RUN_BRANCH_PREFIX)
+  const anchor = after ? line.indexOf(after) : 0
+  if (anchor === -1) return undefined
+  const from = line.indexOf(prefix, anchor)
   if (from === -1) return undefined
-  const branch = line
-    .slice(from + RUN_BRANCH_PREFIX.length)
+  const value = line
+    .slice(from + prefix.length)
     .replace(/\s*\[[^\]\n]+\]\s*$/, "")
     .split(",")[0]
     ?.trim()
-  // A ref name, never free text: this reaches `git push`, and the note's prose
-  // is model-adjacent (an actor string rides on the same line).
-  return branch && /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(branch) ? branch : undefined
+  // A ref name, never free text: these reach `git push` and `gh pr create --base`,
+  // and the note's prose is model-adjacent (an actor string rides on the same line).
+  return value && /^[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(value) ? value : undefined
 }
+
+/** The branch the last completed run built on, or `undefined`. Pure. */
+export const extractRunBranch = (task: Task): string | undefined => runDoneField(task, RUN_BRANCH_PREFIX)
+
+/**
+ * The ref the last completed run was cut FROM — the base a ship should target —
+ * or `undefined`. Pure.
+ *
+ * Absent on every task completed before the clause existed, and deliberately
+ * absent in current-branch mode (`taskBranch: false`), where `state.git.base` is
+ * a commit sha rather than a branch and `--base <sha>` is not a thing. Both cases
+ * fall through to the ship gate's platform-default chain, i.e. to the behavior
+ * that predates this field.
+ */
+export const extractRunBase = (task: Task): string | undefined => runDoneField(task, RUN_BASE_PREFIX, RUN_BRANCH_PREFIX)
 
 /**
  * The PENDING rejection reason a human gave `replan` (or the plan contract's

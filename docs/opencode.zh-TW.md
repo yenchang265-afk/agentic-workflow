@@ -70,7 +70,8 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
   迴圈會在認領時規劃它）、一份暫存的 `plan-review/` 計畫 →
   `in-progress/`（計畫把關，需要有 `## Implementation Plan`），或
   一份完成的 `in-review/` 任務 → `completed/`（ship——只有在你審查
-  過分支 diff 之後，且只依 `shipPublish` 決定的內容對外發布：指令上的
+  過分支 diff 之後，且只依 `shipPublish` 決定的內容對外發布（並開到這次執行
+切出來的那個分支，或 `--base=<分支>`）：指令上的
   `--pr`／`--push`／`--local` 可逐次覆寫）。每一次移動都會被稽核並提交，且提示訊息
   （toast）會指名發生了哪個動作；一個任務永遠只存在於一個資料夾中，
   所以這個把關點永遠不會有歧義。不帶 id 時，它會推進目前唯一停在

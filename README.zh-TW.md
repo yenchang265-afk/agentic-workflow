@@ -62,6 +62,8 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 （預設 `"pr"`：推送分支並開啟或重複使用一個 **draft** PR——GitHub 或 Azure
 DevOps，視 `codePlatform` 而定；`"push"` 只推送、不開 PR；`"local"` 則完全
 不對外發布）。可用 `approve <id> --pr`（或 `--push` / `--local`）逐次覆寫。
+PR 會指向這次執行切出來的那個分支——在 `release/2.4` 上工作，PR 就開在那裡
+——可用 `prBase` 或 `approve <id> --base=<分支>` 覆寫。
 完整的執行模型（watch 模式、疊代上限、還原）：
 [docs/opencode.md](docs/opencode.md)。
 

@@ -192,6 +192,35 @@ test("ship threads the dialog's publish choice through to core", async () => {
   cleanup(dir)
 })
 
+test("a malformed base branch is a 400, not something gh gets to interpret", async () => {
+  // This route has no zod on the wire — the body is a bare cast — and `base`
+  // reaches a `gh pr create --base` interpolation, so it is screened here the way
+  // `id` is.
+  const dir = makeRepo()
+  place(dir, "in-review", "ddd6-thing", true)
+  git(dir, "branch", "feature/ddd6-thing")
+
+  const res = await gate(depsFor(dir), "ship", { id: "ddd6-thing", expectStatus: "in-review", base: "release 2.4" })
+  assert.equal(res.status, 400)
+  assert.ok(at(dir, "in-review", "ddd6-thing"), "a refused request must not have moved the task")
+  cleanup(dir)
+})
+
+test("ship threads the dialog's base branch through to core", async () => {
+  const dir = makeRepo()
+  place(dir, "in-review", "ddd6-thing", true)
+  git(dir, "branch", "feature/ddd6-thing")
+
+  // No remote in this fixture, so the push fails and no PR is attempted — what
+  // is being pinned is that the field reaches core at all, and that a blank one
+  // is omitted rather than sent as an empty string.
+  const res = await gate(depsFor(dir), "ship", { id: "ddd6-thing", expectStatus: "in-review", base: "  ", publish: "local" })
+  assert.equal(res.status, 200)
+  const body = res.body as GateResult
+  assert.equal(body.ok, true, "a blank base is 'use the recorded/config chain', not a refusal")
+  cleanup(dir)
+})
+
 test("a stale board is refused with 409, naming where the task actually is", async () => {
   const dir = makeRepo()
   // The client thinks it's in-review; it has already moved on.

@@ -115,3 +115,14 @@ test("the publish options cover every mode core accepts, exactly once", () => {
   assert.ok(!isShipPublish("merge"))
   assert.ok(!isShipPublish(""), 'the dialog\'s "" means "use the repo setting" — never a mode to send')
 })
+
+test("only Ship offers the base branch field", () => {
+  // Same shape as withPublish, for the same reason: offering a PR target on a
+  // move that opens no PR is a control with no effect, which reads as a promise
+  // the gate cannot keep.
+  const ship = forwardMoves("in-review").find((m) => m.action === "ship")
+  assert.ok(ship?.withBase, "the base field belongs to the ship gate alone")
+
+  const others = ["draft", "queued", "plan-review", "in-progress"].flatMap((s) => [...forwardMoves(s), ...cancellationMoves(s)])
+  for (const m of others) assert.ok(!m.withBase, `${m.action} opens no PR and must not ask for a base`)
+})

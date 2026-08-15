@@ -34,7 +34,7 @@ const ACTIONS: Readonly<Record<GateAction, { from: TaskStatus; run: (ctx: GateCt
   // `publish` is passed through undefined-and-all: an omitted choice must reach
   // core as omitted so `shipPublishFor` applies the repo's `shipPublish`, and a
   // value substituted here would silently outrank the config.
-  ship: { from: "in-review", run: (ctx, id, body) => shipTask(ctx, id, body.kind ?? "engineering", body.publish) },
+  ship: { from: "in-review", run: (ctx, id, body) => shipTask(ctx, id, body.kind ?? "engineering", body.publish, body.base?.trim() || undefined) },
   // abandon moves the task to abandoned/ — the reversible cancellation. Like
   // remove its button lives on every non-terminal column, so `from` is nominal
   // and `allowedFrom` carries the real set.
@@ -117,6 +117,13 @@ export const postGate = async (deps: HubDeps, req: ParsedRequest): Promise<JsonR
   // `id` reaches the filesystem as a path segment via findByIdIn — screen out
   // traversal before it gets there, exactly as the backlog/runs routes do.
   if (!isSafeId(id)) return badRequest(`invalid task id "${id}"`)
+  // The body is a bare cast — this route has no zod on the wire — and `base`
+  // reaches a `gh pr create --base` interpolation, so it is screened here the
+  // way `id` is. Core re-validates too; this is the layer that can answer 400.
+  const base = body.base?.trim()
+  if (base !== undefined && base !== "" && !/^(refs\/heads\/)?[A-Za-z0-9][A-Za-z0-9._\-/]*$/.test(base)) {
+    return badRequest(`invalid base branch "${base}"`)
+  }
 
   const spec = ACTIONS[action]
   const allowed = allowedFrom(action)

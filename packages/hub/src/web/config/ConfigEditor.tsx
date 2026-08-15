@@ -283,6 +283,14 @@ export const ConfigEditor = () => {
                 ))}
               </select>
             </Field>
+            <Field
+              label="prBase"
+              path="prBase"
+              provenance={prov("prBase")}
+              hint="the branch this repo's pull requests TARGET, e.g. release/2.4. Blank does NOT mean main — it means ask the platform for its default branch. Outranked by the base a run was cut from (recorded on the task) and by a per-ship --base=<branch>; overridable per kind via workflows.<kind>.prBase."
+            >
+              <input value={str("prBase")} onChange={(e) => setOrClear("prBase", e.target.value)} placeholder="the platform's default branch" />
+            </Field>
             {["organization", "project", "repository", "selfLogin"].map((k) => (
               <Field key={k} label={`ado.${k}`} path={`ado.${k}`} provenance={prov(`ado.${k}`)}>
                 <input value={str(`ado.${k}`)} onChange={(e) => setOrClear(`ado.${k}`, e.target.value)} />

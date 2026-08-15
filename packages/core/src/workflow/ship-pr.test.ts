@@ -139,7 +139,7 @@ test("shipPr reports a reason when the push fails", async () => {
 test('publish "local" runs no push and no gh at all', async () => {
   const log: string[] = []
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "local")
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, { publish: "local" })
   assert.deepEqual(result, { attempted: true, mode: "local", pushed: false, created: false, branch: "feature/task-1" })
   assert.ok(!log.some((c) => c.includes("push")), `nothing was pushed — ran: ${log.join(" | ")}`)
   assert.ok(!log.some((c) => c.startsWith("gh ")), "and no PR was attempted")
@@ -150,14 +150,14 @@ test('publish "local" runs no push and no gh at all', async () => {
 
 test('publish "local" is still a no-op when there is no branch', async () => {
   const $ = scriptedShell([BRANCH_MISSING])
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "local")
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, { publish: "local" })
   assert.deepEqual(result, { attempted: false, mode: "local", pushed: false, created: false })
 })
 
 test('publish "push" pushes the branch and opens no PR', async () => {
   const log: string[] = []
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "push")
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, { publish: "push" })
   assert.deepEqual(result, { attempted: true, mode: "push", pushed: true, created: false, branch: "feature/task-1" })
   assert.ok(log.includes("git -C /repo push -u origin feature/task-1"), `the branch was pushed — ran: ${log.join(" | ")}`)
   assert.ok(!log.some((c) => c.startsWith("gh ")), "and gh was never reached")
@@ -165,7 +165,7 @@ test('publish "push" pushes the branch and opens no PR', async () => {
 
 test('publish "push" reports a failed push rather than claiming the branch landed', async () => {
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_FAIL])
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, undefined, "push")
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting", undefined, { publish: "push" })
   assert.equal(result.mode, "push")
   assert.equal(result.pushed, false)
   assert.equal(result.reason, "git push failed")
@@ -184,7 +184,7 @@ test("the configured shipPublish applies when no per-ship mode is passed", async
 test("an explicit per-ship mode outranks the configured shipPublish", async () => {
   const log: string[] = []
   const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK], log)
-  const result = await shipPr($, noop, "/repo", { ...baseConfig, shipPublish: "local" }, "engineering", "task-1", "T", undefined, undefined, "push")
+  const result = await shipPr($, noop, "/repo", { ...baseConfig, shipPublish: "local" }, "engineering", "task-1", "T", undefined, { publish: "push" })
   assert.equal(result.mode, "push")
   assert.ok(log.includes("git -C /repo push -u origin feature/task-1"))
 })
@@ -208,7 +208,7 @@ test("shipPr (github) opens a new draft PR when none exists", async () => {
     { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/10\n" } },
   ])
   const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "Add rate limiting")
-  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "feature/task-1", created: true, url: "https://github.com/acme/widgets/pull/10" })
+  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "feature/task-1", created: true, url: "https://github.com/acme/widgets/pull/10", base: "main" })
 })
 
 test("shipPr (github) invokes gh pr create with only flags gh accepts", async () => {
@@ -309,6 +309,7 @@ test("shipPr (ado) opens a new draft PR when none exists, using the repo's defau
     branch: "feature/task-1",
     created: true,
     url: "https://dev.azure.com/acme/Widgets/_git/widgets/pullrequest/99",
+    base: "main",
   })
   // A loop-opened PR is always a draft — never review-ready before a human looks.
   const create = calls.at(-1) as { isDraft?: boolean; targetRefName?: string }
@@ -359,8 +360,8 @@ test("an explicitly recorded branch wins over the configured prefix", async () =
     { cmd: "gh repo view", result: { exitCode: 0, stdout: "main\n" } },
     { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/11\n" } },
   ])
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, "claude/my-feature")
-  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "claude/my-feature", created: true, url: "https://github.com/acme/widgets/pull/11" })
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { branch: "claude/my-feature" })
+  assert.deepEqual(result, { attempted: true, mode: "pr", pushed: true, branch: "claude/my-feature", created: true, url: "https://github.com/acme/widgets/pull/11", base: "main" })
 })
 
 test("a configured prefix names the branch when nothing was recorded", async () => {
@@ -402,8 +403,158 @@ test("the PR base never equals the head when gh repo view fails", async () => {
     ],
     calls,
   )
-  await shipPr($, noop, "/repo", { ...baseConfig, taskBranch: false }, "engineering", "task-1", "T", undefined, "my-work")
+  await shipPr($, noop, "/repo", { ...baseConfig, taskBranch: false }, "engineering", "task-1", "T", undefined, { branch: "my-work" })
   const create = calls.find((c) => c.includes("gh pr create"))
   assert.ok(create?.includes("--head my-work"), create)
   assert.ok(create?.includes("--base main"), create) // the "main" backstop, never --base my-work
+})
+
+
+// --- PR base branch ---
+//
+// The argv log carries the assertions that matter: an explicit base must reach
+// `--base`, and the network default lookup must NOT run — skipping it is half of
+// why an explicit base is worth having.
+
+const LS_REMOTE_HIT: Cmd = {
+  cmd: "git -C /repo ls-remote --heads origin release/2.4",
+  result: { exitCode: 0, stdout: "9f1c0de1c0de1c0de1c0de1c0de1c0de1c0de1c0\trefs/heads/release/2.4\n" },
+}
+
+test("shipPr (github) targets an explicit base and never asks the platform for its default", async () => {
+  const log: string[] = []
+  const $ = scriptedShell(
+    [
+      BRANCH_EXISTS,
+      PUSH_OK,
+      { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+      LS_REMOTE_HIT,
+      { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/13\n" } },
+    ],
+    log,
+  )
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "release/2.4" })
+  assert.equal(result.created, true)
+  assert.equal(result.base, "release/2.4")
+  const create = log.find((c) => c.startsWith("gh pr create"))
+  assert.match(create ?? "", /--head feature\/task-1 --base release\/2.4/)
+  // The point of the short-circuit: an explicit base IS the answer, so asking
+  // the platform for another one is pure latency and one more way to fail.
+  assert.equal(
+    log.find((c) => c.startsWith("gh repo view")),
+    undefined,
+    "an explicit base must skip the default-branch lookup",
+  )
+})
+
+test("shipPr (github) accepts a refs/heads-qualified base without double-prefixing it", async () => {
+  const log: string[] = []
+  const $ = scriptedShell(
+    [
+      BRANCH_EXISTS,
+      PUSH_OK,
+      { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+      LS_REMOTE_HIT,
+      { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/14\n" } },
+    ],
+    log,
+  )
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "refs/heads/release/2.4" })
+  assert.equal(result.base, "release/2.4")
+  assert.match(log.find((c) => c.startsWith("gh pr create")) ?? "", /--base release\/2.4/)
+})
+
+test("shipPr (ado) targets an explicit base and never calls getRepository", async () => {
+  const $ = scriptedShell([BRANCH_EXISTS, PUSH_OK, LS_REMOTE_HIT])
+  const calls: unknown[] = []
+  const gateway = scriptedGateway({ repo: { defaultBranch: "refs/heads/main" }, created: { pullRequestId: 77 } }, calls)
+  const result = await shipPr($, noop, "/repo", adoConfig, "engineering", "task-1", "T", gateway, { base: "release/2.4" })
+  assert.equal(result.base, "release/2.4")
+  const create = calls.find((c) => JSON.stringify(c).includes("targetRefName"))
+  assert.match(JSON.stringify(create), /"targetRefName":"refs\/heads\/release\/2.4"/)
+  // The gateway records ARGUMENTS, not tool names, so the default-branch call is
+  // identified by the only field it sends.
+  assert.equal(
+    calls.some((c) => JSON.stringify(c).includes("repositoryNameOrId")),
+    false,
+    "an explicit base must skip the ADO default-branch lookup",
+  )
+})
+
+test("a base that is not on origin refuses the PR instead of quietly opening it elsewhere", async () => {
+  const log: string[] = []
+  const $ = scriptedShell(
+    [
+      BRANCH_EXISTS,
+      PUSH_OK,
+      { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+      { cmd: "git -C /repo ls-remote --heads origin release/2.4", result: { exitCode: 0, stdout: "" } },
+    ],
+    log,
+  )
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "release/2.4" })
+  assert.equal(result.created, false)
+  // Pushed, deliberately: the branch is safely on origin, which is what makes
+  // `approve <id> --base=<correct>` a cheap retry rather than a redo.
+  assert.equal(result.pushed, true)
+  assert.match(result.reason ?? "", /base branch "release\/2.4" is not on origin/)
+  assert.equal(
+    log.find((c) => c.startsWith("gh pr create")),
+    undefined,
+    "opening the PR onto the platform default is the exact failure this refuses",
+  )
+})
+
+test("ls-remote prefix-matches, so a base is confirmed only by an exact refs/heads line", async () => {
+  // `ls-remote --heads origin release/2.4` happily returns release/2.40. A
+  // substring test would wave through the very typo this check exists to catch.
+  const $ = scriptedShell([
+    BRANCH_EXISTS,
+    PUSH_OK,
+    { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+    {
+      cmd: "git -C /repo ls-remote --heads origin release/2.4",
+      result: { exitCode: 0, stdout: "9f1c0de1c0de1c0de1c0de1c0de1c0de1c0de1c0\trefs/heads/release/2.40\n" },
+    },
+  ])
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "release/2.4" })
+  assert.equal(result.created, false)
+  assert.match(result.reason ?? "", /is not on origin/)
+})
+
+test("an ls-remote that could not run is not proof of absence — the PR is attempted anyway", async () => {
+  // No remote, no auth, offline: the question could not be asked. Refusing here
+  // would block a PR the platform would have accepted.
+  const $ = scriptedShell([
+    BRANCH_EXISTS,
+    PUSH_OK,
+    { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+    { cmd: "git -C /repo ls-remote --heads origin release/2.4", result: { exitCode: 128, stderr: "no such remote" } },
+    { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/15\n" } },
+  ])
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "release/2.4" })
+  assert.equal(result.created, true)
+  assert.equal(result.base, "release/2.4")
+})
+
+test("without an explicit base nothing probes the remote and the old chain is unchanged", async () => {
+  const log: string[] = []
+  const $ = scriptedShell(
+    [
+      BRANCH_EXISTS,
+      PUSH_OK,
+      { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+      { cmd: "gh repo view", result: { exitCode: 0, stdout: "main\n" } },
+      { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/acme/widgets/pull/16\n" } },
+    ],
+    log,
+  )
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T")
+  assert.equal(result.base, "main")
+  assert.match(log.find((c) => c.startsWith("gh pr create")) ?? "", /--base main/)
+  assert.equal(
+    log.find((c) => c.includes("ls-remote")),
+    undefined,
+    "a platform-derived default came from the platform — re-probing it only adds a failure mode",
+  )
 })

@@ -328,7 +328,16 @@ export const isAdoMcpToolOutOfStageScope = (toolName, allowed) => {
  * The `refs/heads/` prefix is normalized so `x:refs/heads/x` (same branch) still passes.
  * Gated on an active loop marker by the caller, so a human's manual push is untouched.
  */
-export const isGitPushViolation = (cmd) => {
+/** The branches no stage may ever push, whatever the config says. */
+export const PROTECTED_BRANCH_FLOOR = ["main", "master", "HEAD"]
+
+/**
+ * `extra` is the repo's `protectedBranches`, carried on the stage marker because a
+ * bundled hook can read neither config nor manifest. Additive only — the floor
+ * stands whatever arrives, so a missing or malformed marker field degrades to
+ * exactly the previous behaviour rather than unprotecting `main`.
+ */
+export const isGitPushViolation = (cmd, extra = []) => {
   const c = cmd.trim()
   if (!/^git\s+(?:-\S+\s+|-C\s+\S+\s+)*push\b/.test(c)) return false
   if (/(?:^|\s)(?:--force(?:-with-lease(?:=\S*)?)?|--delete)(?:\s|$)/.test(c)) return true
@@ -336,7 +345,8 @@ export const isGitPushViolation = (cmd) => {
   // bundled clusters (`-fd`, `-df`) are caught, not just a lone `-f`.
   if (c.split(/\s+/).some((t) => /^-[a-zA-Z]+$/.test(t) && /[fd]/.test(t))) return true
   const bare = (ref) => ref.replace(/^refs\/heads\//, "")
-  const protectedRef = (ref) => ["main", "master", "HEAD"].includes(bare(ref))
+  const guarded = extra.length === 0 ? PROTECTED_BRANCH_FLOOR : [...PROTECTED_BRANCH_FLOOR, ...extra.map(bare)]
+  const protectedRef = (ref) => guarded.includes(bare(ref))
   const tokens = c.split(/\s+/)
   let refspecs = 0
   for (let i = tokens.indexOf("push") + 1; i < tokens.length; i++) {
@@ -369,4 +379,5 @@ export const isGitPushViolation = (cmd) => {
  * `prefixes` closes the same bypass one layer up — see `stripCommandPrefix`.
  */
 export const chainedGithubPrMutation = (cmd, prefixes = []) => splitSegments(cmd).some(eitherForm(isGithubPrMutation, prefixes))
-export const chainedGitPushViolation = (cmd, prefixes = []) => splitSegments(cmd).some(eitherForm(isGitPushViolation, prefixes))
+export const chainedGitPushViolation = (cmd, prefixes = [], extra = []) =>
+  splitSegments(cmd).some(eitherForm((seg) => isGitPushViolation(seg, extra), prefixes))

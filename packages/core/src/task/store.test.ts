@@ -15,6 +15,7 @@ import {
   releaseClaim,
   epicSiblings,
   extractPlan,
+  extractRunBase,
   extractRunBranch,
   extractReplanReason,
   extractStopContext,
@@ -220,8 +221,8 @@ const rejectionNote = (reason?: string, stamp = "2026-01-02T00:00:00.000Z by dev
 // The exact note shape `runDone` writes. The branch is recorded here because
 // nothing else survives to the ship gate — the state snapshot is cleared by
 // `runDone` itself, and `shipTask` runs later from a fresh process.
-const doneNote = (branch?: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string =>
-  `\n> Loop done — review passed${branch ? ` on branch ${branch}` : ""}, awaiting human diff review [${stamp}]\n`
+const doneNote = (branch?: string, stamp = "2026-01-02T00:00:00.000Z by dev", base?: string): string =>
+  `\n> Loop done — review passed${branch ? ` on branch ${branch}` : ""}${base ? `, base ${base}` : ""}, awaiting human diff review [${stamp}]\n`
 
 test("extractRunBranch reads the branch the completed run built on", () => {
   assert.equal(extractRunBranch(task("a", 0, `Body.\n${doneNote("claude/my-feature")}`)), "claude/my-feature")
@@ -245,6 +246,44 @@ test("extractRunBranch ignores an unstamped line and rejects a non-ref branch", 
   const quoted = "\n> Loop done — review passed on branch attacker/branch, awaiting human diff review\n"
   assert.equal(extractRunBranch(task("a", 0, quoted)), undefined)
   assert.equal(extractRunBranch(task("a", 0, doneNote("--upload-pack=evil"))), undefined)
+})
+
+test("extractRunBranch is unchanged by the base clause the note now also carries", () => {
+  // The regression that matters most here. Both fields terminate at the first
+  // comma, so a base written BETWEEN the branch and its comma would make the
+  // branch read "claude/my-feature base release/2.4", fail the ref check, and
+  // silently strand every ship with no branch at all.
+  const body = doneNote("claude/my-feature", "2026-01-02T00:00:00.000Z by dev", "release/2.4")
+  assert.equal(extractRunBranch(task("a", 0, body)), "claude/my-feature")
+})
+
+test("extractRunBase reads the ref the completed run was cut from", () => {
+  const body = doneNote("claude/my-feature", "2026-01-02T00:00:00.000Z by dev", "release/2.4")
+  assert.equal(extractRunBase(task("a", 0, body)), "release/2.4")
+})
+
+test("extractRunBase lets the newest run win, like the branch beside it", () => {
+  const body =
+    doneNote("feature/first", "2026-01-02T00:00:00.000Z by dev", "main") + doneNote("feature/second", "2026-01-03T00:00:00.000Z by dev", "release/2.4")
+  assert.equal(extractRunBase(task("a", 0, body)), "release/2.4")
+})
+
+test("extractRunBase returns undefined for a note written before the clause existed", () => {
+  // Backward compat is the whole story for tasks completed before this shipped:
+  // no clause, no base, and the ship gate falls back to the platform default —
+  // exactly what it did before.
+  assert.equal(extractRunBase(task("a", 0, doneNote("claude/my-feature"))), undefined)
+  assert.equal(extractRunBase(task("a", 0, doneNote())), undefined)
+  assert.equal(extractRunBase(task("a", 0, "Just a description.")), undefined)
+})
+
+test("extractRunBase ignores an unstamped line and rejects a non-ref base", () => {
+  // This value reaches `gh pr create --base`, so the same injection rule the
+  // branch has applies: a plan or comment merely QUOTING the note proves nothing.
+  const quoted = "\n> Loop done — review passed on branch feature/x, base attacker/branch, awaiting human diff review\n"
+  assert.equal(extractRunBase(task("a", 0, quoted)), undefined)
+  assert.equal(extractRunBase(task("a", 0, doneNote("feature/x", "2026-01-02T00:00:00.000Z by dev", "--upload-pack=evil"))), undefined)
+  assert.equal(extractRunBase(task("a", 0, doneNote("feature/x", "2026-01-02T00:00:00.000Z by dev", "$(whoami)"))), undefined)
 })
 
 test("extractReplanReason reads the reason off a pending rejection note", () => {

@@ -2,7 +2,7 @@ import path from "node:path"
 import type { Client, Log, Shell } from "../host.js"
 import type { Config, ShipPublish } from "./state.js"
 import { isEpicType, isSafeTaskId, parseTask, taskToInput, unknownFrontmatterKeys, type Task } from "../task/schema.js"
-import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, STATUSES } from "../task/store.js"
+import { appendNote, auditNote, epicSiblings, extractPlan, extractRunBase, extractRunBranch, extractStopContext, findByIdIn, hasPlan, listByStatus, listClaimIds, moveTask, planHeadingCount, planRejectedNote, removeTaskFile, resolveTaskIdAnywhere, resolveTaskIdIn, rewriteTask, STATUSES } from "../task/store.js"
 import { withoutPlanSections } from "../task/plan-section.js"
 import { redact } from "../task/redact.js"
 import { hasVerificationSection } from "./verdict.js"
@@ -12,6 +12,7 @@ import { commitPaths, ensureExcluded, gitActor } from "./git.js"
 import { releaseWorktree } from "./isolate.js"
 import type { AdoGateway } from "../source/ado-gateway.js"
 import { shipPr, type ShipPrResult } from "./ship-pr.js"
+import { PrBaseSchema, shipBaseFor } from "../config.js"
 
 /**
  * The human gate moves — approve (task), approve-plan, replan, ship — shared by
@@ -887,7 +888,7 @@ const shipBranch = (pr: ShipPrResult): string => pr.branch ?? "the task branch"
  */
 const publishOutcome = (pr: ShipPrResult): string => {
   if (!pr.attempted) return ""
-  if (pr.url) return ` PR: ${pr.url}`
+  if (pr.url) return ` PR: ${pr.url}${pr.base ? ` (onto ${pr.base})` : ""}`
   if (pr.mode === "local") return ` Branch ${shipBranch(pr)} was kept local — nothing was pushed. Ship it again with publish "pr" (or "push") to publish it.`
   if (pr.mode === "push") {
     return pr.pushed
@@ -954,11 +955,26 @@ const recordPublish = async (ctx: GateCtx, ref: { readonly id: string; readonly 
   await commitBacklog($, directory, config, `loop(${ref.id}): ${publishCommitSubject(pr)}`)
 }
 
+/**
+ * A per-ship `--base=<ref>` override, normalized, or a refusal. `undefined` when
+ * none was given — which is not the same as an empty one, and must stay
+ * distinguishable so "no override" falls through to the recorded/config rungs
+ * while a blank string refuses.
+ */
+const baseOverride = (base?: string): { readonly value: string } | { readonly error: GateResult } | undefined => {
+  if (base === undefined) return undefined
+  const parsed = PrBaseSchema.safeParse(base)
+  return parsed.success
+    ? { value: parsed.data }
+    : { error: { ok: false, message: `Invalid base branch "${base}" — ${parsed.error.issues[0]?.message ?? "not a branch name"}.` } }
+}
+
 /** The `data.pr` descriptor a ship reports — the machine-readable twin of `publishNote`. */
 const publishData = (pr: ShipPrResult): Record<string, unknown> => ({
   mode: pr.mode,
   pushed: pr.pushed,
   ...(pr.branch ? { branch: pr.branch } : {}),
+  ...(pr.base ? { base: pr.base } : {}),
   ...(pr.url ? { url: pr.url } : { opened: false, ...(pr.reason ? { reason: pr.reason } : {}) }),
 })
 
@@ -970,8 +986,15 @@ const publishData = (pr: ShipPrResult): Record<string, unknown> => ({
  * The MOVE is unconditional — every mode completes the task — and only what
  * leaves the machine varies.
  */
-export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish): Promise<GateResult> => {
+export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string): Promise<GateResult> => {
   const { $, directory, config, log } = ctx
+  // Refuse a malformed base BEFORE anything moves. `shipPr` runs after the task
+  // is already in completed/, so validating there would leave the human with a
+  // shipped-but-unpublished task and a flag error — the move is not undoable.
+  // Re-validated here rather than trusted from the host: this arrives as a model
+  // tool argument or an unvalidated hub body.
+  const wantedBase = baseOverride(base)
+  if (wantedBase && "error" in wantedBase) return wantedBase.error
   const resolved = await resolveGateId(ctx, id)
   if (resolved && "error" in resolved) return resolved.error
   if (resolved) id = resolved.id
@@ -1000,7 +1023,11 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
       const publishAlreadyRecorded = PUBLISH_RECORDED_RE.test(done.body)
       if (!prAlreadyRecorded && (!publishAlreadyRecorded || publish)) {
-        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, extractRunBranch(done), publish)
+        const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, {
+          branch: extractRunBranch(done),
+          publish,
+          base: shipBaseFor(config, kind, { override: wantedBase?.value, recorded: extractRunBase(done) }),
+        })
         data.publish = pr.mode
         if (pr.attempted) {
           data.pr = publishData(pr)
@@ -1021,7 +1048,11 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
   const newPath = moved.path
   await commitBacklog($, directory, config, `loop(${id}): shipped — completed`)
 
-  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, extractRunBranch(t), publish)
+  const pr = await shipPr($, log, directory, config, kind, id, t.title, ctx.adoGateway, {
+    branch: extractRunBranch(t),
+    publish,
+    base: shipBaseFor(config, kind, { override: wantedBase?.value, recorded: extractRunBase(t) }),
+  })
   const data: Record<string, unknown> = { completed: newPath, gate: "ship", id, publish: pr.mode }
   if (pr.attempted) {
     data.pr = publishData(pr)
@@ -1151,7 +1182,7 @@ const completedTaskFor = (ctx: GateCtx, id: string): Promise<string | null> => r
  * never shadowed by a pile of drafts. Tracking epics are skipped in the id-less
  * scan — they are never approvable, so they must not create a false ambiguity.
  */
-export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish): Promise<GateResult> => {
+export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string): Promise<GateResult> => {
   const tiers: readonly (readonly TaskStatus[])[] = [["plan-review", "in-review"], ["draft"]]
   const pick = await resolveGateTask(ctx, id, tiers, (t) => isEpicType(t.type))
   if (!pick.ok) {
@@ -1172,7 +1203,7 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
     //    recovery) is unaffected either way.
     if (publish) {
       const donePublish = await completedTaskFor(ctx, id)
-      if (donePublish) return shipTask(ctx, donePublish, kind, publish)
+      if (donePublish) return shipTask(ctx, donePublish, kind, publish, base)
     }
     // A retry naming a task that has since moved ONE status past this gate's
     // own tiers still owns a task-specific alreadyDone arm — `approveTask` for
@@ -1200,17 +1231,17 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
   }
   if (pick.from === "draft") return approveTask(ctx, pick.id)
   if (pick.from === "plan-review") return approvePlan(ctx, pick.id)
-  return shipTask(ctx, pick.id, kind, publish) // in-review
+  return shipTask(ctx, pick.id, kind, publish, base) // in-review
 }
 
 /** ship shortcut: id optional — ships the single in-review/ task when omitted. */
-export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish): Promise<GateResult> => {
-  if (id) return shipTask(ctx, id, kind, publish)
+export const shipAny = async (ctx: GateCtx, id: string, kind = "engineering", publish?: ShipPublish, base?: string): Promise<GateResult> => {
+  if (id) return shipTask(ctx, id, kind, publish, base)
   const pick = await resolveGateTask(ctx, "", [["in-review"]])
   if (!pick.ok) {
     return pick.kind === "none" ? { ok: false, message: "Nothing awaiting ship.", variant: "info" } : { ok: false, message: pick.message, variant: pick.variant }
   }
-  return shipTask(ctx, pick.id, kind, publish)
+  return shipTask(ctx, pick.id, kind, publish, base)
 }
 
 /**

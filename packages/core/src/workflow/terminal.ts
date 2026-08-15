@@ -344,8 +344,19 @@ const runDone = async (ctx: TerminalCtx, action: Extract<Action, { kind: "done" 
         // Naming the branch is what lets the ship gate push the right one: it
         // runs from a fresh process long after `clearState` below dropped the
         // snapshot, and `extractRunBranch` reads it back off this line.
+        //
+        // The base rides the SAME line so branch and base pair up per run for
+        // free — `extractRunBase` anchors on the same last-marker index — and it
+        // goes after the branch's comma, which is what keeps `extractRunBranch`
+        // (first comma wins) reading exactly what it read before.
+        //
+        // Only in the branch-cutting modes: `onCurrentBranch` makes `base` a
+        // commit SHA (see `GitRef`), and `gh pr create --base <sha>` is not a
+        // thing, so recording it would turn today's wrong-but-working platform
+        // default into a hard ship failure.
+        const runBase = state.git && !state.git.onCurrentBranch ? `, base ${state.git.base}` : ""
         const doneNote = state.git
-          ? `Loop done — review passed on branch ${state.git.branch}, awaiting human diff review`
+          ? `Loop done — review passed on branch ${state.git.branch}${runBase}, awaiting human diff review`
           : "Loop done — review passed, awaiting human diff review"
         await appendNote($, cur, auditNote(doneNote, new Date(), actor), log)
         await moveTask($, cur, (action.toStatus ?? "in-review") as TaskStatus)

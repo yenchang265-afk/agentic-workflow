@@ -1731,7 +1731,9 @@ test("ship pushes the branch and opens a draft PR when gh succeeds", async () =>
   await handleApprove(deps, "sess", "", testConfig)
 
   assert.equal(toasts[0]?.variant, "success")
-  assert.equal(toasts[0]?.message, `"Ship it" completed. PR: https://github.com/acme/widgets/pull/11`)
+  // The target is named too: the whole point of the base work is that a PR can
+  // land somewhere other than the repo default, so the human must see where.
+  assert.equal(toasts[0]?.message, `"Ship it" completed. PR: https://github.com/acme/widgets/pull/11 (onto main)`)
   assert.ok(log.some((cmd) => cmd.includes("PR opened") && cmd.includes("https://github.com/acme/widgets/pull/11")))
 })
 
@@ -4257,4 +4259,45 @@ test("runStageChecks clears a stage's stale check results on a zero-defs re-fire
     /if \(!defs\.length\) return \{ state: withCheckResults\(state, stage, \[\]\), \.\.\.provenance \}/,
     "a re-fire with nothing to check must clear any prior iteration's results, not let them float forward",
   )
+})
+
+test("approve <id> --base= targets that branch, and the id keeps the flag out", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task --base=release/2.4", testConfig)
+
+  assert.notEqual(toasts[0]?.variant, "error", `the id must not have swallowed the flag — ${toasts[0]?.message}`)
+  assert.ok(
+    log.some((cmd) => cmd.includes("ls-remote --heads origin release/2.4")),
+    `an explicit base is probed on origin before use — ran: ${log.join(" | ")}`,
+  )
+})
+
+test("approve refuses the space-separated --base rather than shipping the wrong task", async () => {
+  // `release/2.4` would otherwise be the first bare word, i.e. the task id.
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task --base release/2.4", testConfig)
+
+  assert.equal(toasts[0]?.variant, "error")
+  assert.match(toasts[0]?.message ?? "", /needs its value inline/)
+  assert.ok(!log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")), "nothing may have shipped")
+})
+
+test("approve refuses a malformed --base= before anything moves", async () => {
+  const files = { "docs/tasks/in-review/my-task.md": serializeTask({ title: "Do the thing", body: "x" }) }
+  const { client, toasts } = makeClientFS(files)
+  const log: string[] = []
+  const deps: Deps = { client, $: makeShellFS(files, log), directory: "/repo", log: () => {} }
+
+  await handleApprove(deps, "sess", "my-task --base=release/", testConfig)
+
+  assert.equal(toasts[0]?.variant, "error")
+  assert.ok(!log.some((cmd) => cmd.includes("mv") && cmd.includes("completed")), "the task must still be in in-review/")
 })

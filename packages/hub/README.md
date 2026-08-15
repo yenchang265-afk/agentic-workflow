@@ -130,7 +130,9 @@ happened. It is in-memory and session-scoped; git remains the durable record.
   slash-command approval are the same audited, committed move. Each one is
   behind a confirm naming its real effect; **ship's confirm carries a publish
   choice** — open a pull request, push the branch with no PR, or ship fully
-  local — defaulting to the repo's `shipPublish` and overridable per ship.
+  local — defaulting to the repo's `shipPublish` and overridable per ship, and
+  a **base branch** field for the pull request's target (blank ⇒ the branch the
+  run was cut from, then the repo's `prBase`, then the platform default).
   The hub gates but never *drives*: it never claims work and never runs a
   stage, and it refuses a move on a task a loop is already driving.
 

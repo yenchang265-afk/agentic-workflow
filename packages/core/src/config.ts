@@ -71,6 +71,34 @@ export const ShipPublishSchema = z.enum(SHIP_PUBLISH_MODES)
 export type { ShipPublish }
 
 /**
+ * A git ref name, enforced HERE rather than surfacing as an opaque git failure
+ * later: these values are concatenated into `git checkout -b`, `git push` and
+ * `gh pr create --base`.
+ *
+ * Shared by `taskBranch` (a PREFIX, which legitimately ends in `/`) and `prBase`
+ * (a whole ref, which must not) — hence the trailing-slash rule lives on the
+ * caller, not here.
+ */
+export const GitRefNameSchema = z
+  .string()
+  .min(1)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._\-/]*$/, "must start with a letter or digit and use only letters, digits, . _ - /")
+  .refine((p) => !p.includes("..") && !p.includes("//") && !p.endsWith(".lock"), {
+    message: "must not contain '..' or '//', or end in '.lock' (git ref-format)",
+  })
+
+/**
+ * A ref a pull request TARGETS. Accepts the `refs/heads/`-qualified form a human
+ * may copy out of a git or ADO UI and normalizes it away, so config values,
+ * `--base=` and the recorded run base all reach `shipPr` bare and no platform arm
+ * can double-prefix.
+ */
+export const PrBaseSchema = z
+  .string()
+  .transform((v) => v.replace(/^refs\/heads\//, ""))
+  .pipe(GitRefNameSchema.refine((p) => !p.endsWith("/"), { message: "must name a branch, not a prefix — drop the trailing '/'" }))
+
+/**
  * How the repo's project management is set up, so task authoring and the status
  * roll-up align with the team's tracker (Jira or Azure DevOps). Optional — unset
  * means the loop is tracker-agnostic (today's behavior; tasks may still carry an
@@ -154,18 +182,7 @@ const BaseConfigSchema = z.object({
    * and `git push`, so ref-format is enforced HERE rather than surfacing as an
    * opaque git failure three stages into a run.
    */
-  taskBranch: z
-    .union([
-      z
-        .string()
-        .min(1)
-        .regex(/^[A-Za-z0-9][A-Za-z0-9._\-/]*$/, "must start with a letter or digit and use only letters, digits, . _ - /")
-        .refine((p) => !p.includes("..") && !p.includes("//") && !p.endsWith(".lock"), {
-          message: "must not contain '..' or '//', or end in '.lock' (git ref-format)",
-        }),
-      z.literal(false),
-    ])
-    .default("feature/"),
+  taskBranch: z.union([GitRefNameSchema, z.literal(false)]).default("feature/"),
   /**
    * Extra REVIEW lenses; each runs the review stage once more focused on that
    * lens, and the loop takes the worst verdict across all passes. Unset/[] →
@@ -191,6 +208,23 @@ const BaseConfigSchema = z.object({
         enabled: z.boolean().optional(),
         /** Per-kind override of the global `codePlatform`. */
         codePlatform: CodePlatformSchema.optional(),
+        /** Per-kind override of the global `prBase` — the branch this kind's PRs target. */
+        prBase: PrBaseSchema.optional(),
+  /**
+   * Extra branches no loop stage may `git push`, on top of the permanent
+   * `main`/`master`/`HEAD` floor — for a team whose integration branch is
+   * `release/2.4` rather than the repo default.
+   *
+   * Additive only: the floor cannot be configured away. A config that could
+   * unprotect `main` is a config that can be wrong about the one branch that
+   * matters, and the failure is silent until something has already been pushed.
+   *
+   * Deliberately separate from `prBase`. "Where PRs target" and "what agents
+   * may not push" are different policies that merely coincide by default — an
+   * integration branch the loop IS allowed to push is a legitimate setup, and
+   * folding the two would make one value mean three things.
+   */
+  protectedBranches: z.array(GitRefNameSchema).default([]),
         /** How a watching host schedules claims for this kind (default: poll). */
         trigger: WorkflowTriggerSchema.optional(),
         /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
@@ -395,6 +429,27 @@ const BaseConfigSchema = z.object({
    */
   shipPublish: ShipPublishSchema.default("pr"),
   /**
+   * The branch a pull request this repo opens should TARGET — set it when your
+   * team integrates somewhere other than the repo's default branch, e.g.
+   * `release/2.4`.
+   *
+   * NOT `ensureIsolation`'s `baseBranch`, which is the opposite half: what a run
+   * cuts FROM, in the host's own tree. The two coincide by default and diverge
+   * the moment either is set, which is why they are not named alike.
+   *
+   * Deliberately undefaulted. Unset does NOT mean `main` — it means "ask the
+   * platform for its default branch", which is right for a `master` or `develop`
+   * repo too. It also sits BELOW the base the run recorded (`extractRunBase`),
+   * because that is the ref REVIEW graded `git diff <base>...<branch>` against:
+   * retargeting a PR away from it shows reviewers a different change than the one
+   * approved at the in-review gate. Use `--base=<ref>` to retarget deliberately.
+   *
+   * Overridable per kind — unlike `shipPublish` — because `dep-sitter` and
+   * `main-sitter` open PRs of their own from their publish stages, and wanting
+   * feature work on `release/2.4` while dependency bumps go to `main` is ordinary.
+   */
+  prBase: PrBaseSchema.optional(),
+  /**
    * Azure DevOps coordinates; required when any effective platform is `ado`.
    *
    * Deliberately `looseObject`: the removed transport keys (`access`,
@@ -576,36 +631,91 @@ export const platformFor = (config: Config, kind: string): CodePlatform =>
  */
 export const shipPublishFor = (config: Config, override?: ShipPublish): ShipPublish => override ?? config.shipPublish ?? "pr"
 
+/** The branch a kind's pull requests target: per-kind override, else the global default. Pure. */
+export const prBaseFor = (config: Config, kind: string): string | undefined => config.workflows[kind]?.prBase ?? config.prBase
+
+/**
+ * The base ref one ship's PR should target, or `undefined` to let the platform
+ * name its own default branch. Pure.
+ *
+ * Highest first: the human's explicit `--base=<ref>`; the base the run itself was
+ * cut from (`extractRunBase`); the configured `prBase`. `undefined` is the
+ * documented hand-off to `shipPr`, which alone can do the I/O the remaining rungs
+ * need (`gh repo view` / the ADO gateway, then the current branch, then `main`).
+ *
+ * The recorded base outranks config because it is the ref REVIEW measured the
+ * diff against — a PR opened onto anything else shows reviewers a change nobody
+ * approved. `--base=` outranks both because retargeting is exactly what it is for.
+ *
+ * The precedence lives here alone so a flag, an MCP tool argument and a hub text
+ * field cannot each decide it differently — the same reason `shipPublishFor` and
+ * `platformFor` exist rather than a `??` chain at every call site.
+ */
+export const shipBaseFor = (config: Config, kind: string, from: { readonly override?: string; readonly recorded?: string } = {}): string | undefined =>
+  from.override ?? from.recorded ?? prBaseFor(config, kind)
+
 /** The typed-verb flags that override `shipPublish` for a single ship. */
 export const SHIP_PUBLISH_FLAGS: Readonly<Record<string, ShipPublish>> = { "--pr": "pr", "--push": "push", "--local": "local" }
 
-export type PublishFlagParse = { readonly ok: true; readonly publish?: ShipPublish } | { readonly ok: false; readonly message: string }
+/** The typed-verb flag that overrides `prBase` for a single ship. Takes its value inline — see `parseGateOptions`. */
+export const SHIP_BASE_FLAG = "--base"
+
+export type GateOptionParse =
+  | { readonly ok: true; readonly publish?: ShipPublish; readonly base?: string; readonly rest: readonly string[] }
+  | { readonly ok: false; readonly message: string }
 
 /**
- * The publish override carried by a typed gate verb's words. Pure.
+ * The overrides carried by a typed gate verb's words, plus the bare words left
+ * over. Pure.
  *
- * Every host parses the same three flags through this one function, because a
- * flag that means `local` on one host and nothing on another is worse than no
- * flag at all: the ship still happens, so the human reads "completed" and only
- * finds out later that a branch they meant to keep local was pushed.
+ * Every host parses the same flags through this one function, because a flag that
+ * means `local` on one host and nothing on another is worse than no flag at all:
+ * the ship still happens, so the human reads "completed" and only finds out later
+ * that a branch they meant to keep local was pushed.
  *
  * An unrecognized dash-word is a REFUSAL, not something to ignore. The hosts
- * forward every dash-word here rather than filtering to the three they know, so
- * a typo (`--localy`, `--push-only`) fails loudly instead of silently shipping
- * under the configured default — which is exactly the outcome the human was
- * typing a flag to avoid. Two different modes at once is refused for the same
- * reason: there is no defensible way to pick one.
+ * forward every dash-word here rather than filtering to the ones they know, so a
+ * typo (`--localy`, `--push-only`) fails loudly instead of silently shipping under
+ * the configured default — which is exactly the outcome the human was typing a
+ * flag to avoid. Two different modes at once is refused for the same reason: there
+ * is no defensible way to pick one.
+ *
+ * `--base` takes its value INLINE (`--base=release/2.4`) and the space-separated
+ * form is refused rather than supported. A value-consuming flag would have to be
+ * taught to four independently-maintained parsers, two of them bundled hooks that
+ * cannot import this file (`plugins/claude/hooks/gate-parse.mjs` and its generated
+ * qwen twin) — and every one of them picks the task id as the first BARE word, so
+ * a missed lesson does not error, it silently ships `release/2.4` as the id. In
+ * the `=` form the whole token starts with `-`, so those parsers forward it
+ * untouched and need no lesson at all.
+ *
+ * `rest` is the id-bearing remainder. Callers MUST take the id from it rather than
+ * re-scanning the raw words, so flag values can never be mistaken for one.
  */
-export const parsePublishFlags = (words: readonly string[]): PublishFlagParse => {
+export const parseGateOptions = (words: readonly string[]): GateOptionParse => {
   let publish: ShipPublish | undefined
+  let base: string | undefined
+  const rest: string[] = []
   for (const word of words) {
-    if (!word.startsWith("-")) continue
+    if (!word.startsWith("-")) {
+      rest.push(word)
+      continue
+    }
+    if (word === SHIP_BASE_FLAG) return { ok: false, message: `"${SHIP_BASE_FLAG}" needs its value inline — pass ${SHIP_BASE_FLAG}=<branch>.` }
+    if (word.startsWith(`${SHIP_BASE_FLAG}=`)) {
+      const raw = word.slice(SHIP_BASE_FLAG.length + 1)
+      const parsed = PrBaseSchema.safeParse(raw)
+      if (!parsed.success) return { ok: false, message: `Invalid ${SHIP_BASE_FLAG}=${raw} — ${parsed.error.issues[0]?.message ?? "not a branch name"}.` }
+      if (base && base !== parsed.data) return { ok: false, message: `Conflicting base branches: ${base} and ${parsed.data} — pass one.` }
+      base = parsed.data
+      continue
+    }
     const mode = SHIP_PUBLISH_FLAGS[word]
-    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}.` }
+    if (!mode) return { ok: false, message: `Unknown option "${word}" — expected ${Object.keys(SHIP_PUBLISH_FLAGS).join(", ")}, ${SHIP_BASE_FLAG}=<branch>.` }
     if (publish && publish !== mode) return { ok: false, message: `Conflicting publish options: --${publish} and --${mode} — pass one.` }
     publish = mode
   }
-  return publish ? { ok: true, publish } : { ok: true }
+  return { ok: true, rest, ...(publish ? { publish } : {}), ...(base ? { base } : {}) }
 }
 
 /**

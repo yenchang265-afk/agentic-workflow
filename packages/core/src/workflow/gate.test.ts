@@ -1332,3 +1332,50 @@ test("a gate verb given a traversing id never reads outside the backlog", async 
     assert.deepEqual(escaped, [], `${verb} touched a path outside the backlog: ${escaped.join(", ")}`)
   }
 })
+
+// --- the PR base branch ---
+
+/** A done note carrying both clauses, exactly as `runDone` writes them. */
+const DONE_WITH_BASE =
+  "context\n\n> Loop done — review passed on branch feature/t, base release/2.4, awaiting human diff review [2026-01-02T00:00:00.000Z by dev]\n"
+/** The same note as written before the base clause existed. */
+const DONE_LEGACY = "context\n\n> Loop done — review passed on branch feature/t, awaiting human diff review [2026-01-02T00:00:00.000Z by dev]\n"
+
+test("a ship forwards the base the run recorded, so a release branch stays the target", async () => {
+  // The whole point: the loop already knew the answer at cut time and wrote it
+  // down; without this the gate re-guesses and asks the platform for its default.
+  const { ctx, log } = shippable({ "in-review/t.md": task("Do it", DONE_WITH_BASE) })
+  const r = await shipTask(ctx, "t")
+  assert.ok(r.ok)
+  assert.ok(
+    log.some((c) => c.includes("ls-remote --heads origin release/2.4")),
+    `an explicit base is probed on origin before use — ran: ${log.join(" | ")}`,
+  )
+})
+
+test("a task completed before the base clause existed ships exactly as it did before", async () => {
+  const { ctx, log } = shippable({ "in-review/t.md": task("Do it", DONE_LEGACY) })
+  const r = await shipTask(ctx, "t")
+  assert.ok(r.ok)
+  assert.ok(!log.some((c) => c.includes("ls-remote")), "no recorded base, no probe — the platform default chain is untouched")
+})
+
+test("a malformed --base refuses BEFORE the task moves, not after", async () => {
+  // shipPr runs once the task is already in completed/, so validating there would
+  // leave the human with a shipped-but-unpublished task and a flag error. The
+  // move is not undoable.
+  const { ctx, fs } = shippable({ "in-review/t.md": task("Do it") })
+  const r = await shipTask(ctx, "t", "engineering", undefined, "release 2.4")
+  assert.equal(r.ok, false)
+  assert.match(r.message, /Invalid base branch/)
+  assert.ok(fs["/repo/docs/tasks/in-review/t.md"], "the task must still be in in-review/")
+  assert.ok(!fs["/repo/docs/tasks/completed/t.md"], "nothing may have moved")
+})
+
+test("an explicit --base outranks the recorded run base", async () => {
+  const { ctx, log } = shippable({ "in-review/t.md": task("Do it", DONE_WITH_BASE) })
+  const r = await shipTask(ctx, "t", "engineering", undefined, "release/3.0")
+  assert.ok(r.ok)
+  assert.ok(log.some((c) => c.includes("ls-remote --heads origin release/3.0")), "retargeting is exactly what the flag is for")
+  assert.ok(!log.some((c) => c.includes("ls-remote --heads origin release/2.4")))
+})

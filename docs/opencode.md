@@ -76,7 +76,8 @@ Authoring + gates (`/agentic-workflow:engineering`):
   on claim), a parked `plan-review/` plan → `in-progress/` (the plan gate,
   `## Implementation Plan` required), or a finished `in-review/` task →
   `completed/` (ship — only after you review the branch diff, and only what
-  `shipPublish` says leaves your machine: `--pr`/`--push`/`--local` on the
+  `shipPublish` says leaves your machine (and onto the base the run was cut
+from, or `--base=<branch>`): `--pr`/`--push`/`--local` on the
   command overrides it per ship). Every move is
   audited + committed, and the toast names which move happened; a task lives
   in exactly one folder, so the gate is never ambiguous. Without an id it

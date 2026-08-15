@@ -50,6 +50,14 @@ const GateButton = ({
    * network, with the dialog showing their own "choice" back to them.
    */
   const [publish, setPublish] = useState<ShipPublish | "">("")
+  /**
+   * The ship dialog's PR base. Blank is the default and the right one: the
+   * gate already knows the ref the run was cut from and the diff REVIEW
+   * graded against it, so typing a branch here deliberately retargets the PR
+   * away from the change that was reviewed. Nothing sensible could be
+   * prefilled — the monitor does not resolve the recorded base.
+   */
+  const [base, setBase] = useState("")
   const [result, setResult] = useState<GateResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -65,6 +73,7 @@ const GateButton = ({
         kind,
         ...(move.withReason && reason.trim() ? { reason: reason.trim() } : {}),
         ...(move.withPublish && publish ? { publish } : {}),
+        ...(move.withBase && base.trim() ? { base: base.trim() } : {}),
       })
       setResult(res)
       setError(null)
@@ -139,6 +148,16 @@ const GateButton = ({
                 to the option label: "push" and "local" differ by whether the
                 work leaves the machine, which is the whole reason to choose. */}
             <small>{PUBLISH_CHOICES.find((c) => c.value === publish)?.detail ?? "Whatever .agentic-workflow.json configures; the default is to open a draft PR."}</small>
+          </label>
+        )}
+        {move.withBase && (
+          <label className="form-field">
+            <span>base branch (optional)</span>
+            <input type="text" value={base} onChange={(e) => setBase(e.target.value)} placeholder="the branch this run was cut from" />
+            {/* Spelled out because blank is NOT "the repo default" here: the
+                recorded run base outranks the configured prBase, and both
+                outrank the platform's default branch. */}
+            <small>Leave blank to target the branch this task was cut from, then this repo&apos;s prBase, then the platform default. A branch that isn&apos;t on origin refuses the PR rather than opening it elsewhere.</small>
           </label>
         )}
       </Confirm>

@@ -236,6 +236,63 @@ test("a local ship publishes nothing, and a later push ship publishes it", async
   }
 })
 
+/**
+ * The base branch, against real git.
+ *
+ * The whole point of the recorded base: a team integrating on `release/2.4`
+ * must not have its PR opened against the repo's default branch. A scripted
+ * shell can only prove which argv was built; only a real remote can prove the
+ * base actually resolves there, and that a typo does not.
+ */
+test("a ship targets the branch the run was cut from, and refuses a base that is not on origin", async () => {
+  const { repo } = await seedRepo()
+  const origin = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "agentic-workflow-origin-")))
+  try {
+    await git(origin, "init", "-q", "--bare", "-b", "main")
+    await git(repo, "remote", "add", "origin", origin)
+    // A real integration branch on the remote, and one that is NOT there.
+    await git(repo, "branch", "release/2.4")
+    await git(repo, "push", "-q", "origin", "release/2.4")
+
+    await git(repo, "branch", "feature/t1")
+    fs.mkdirSync(path.join(repo, config.tasksDir, "in-review"), { recursive: true })
+    await git(repo, "mv", `${config.tasksDir}/in-progress/t1.md`, `${config.tasksDir}/in-review/t1.md`)
+    // The done note as `runDone` writes it, carrying both clauses.
+    const parked = path.join(repo, config.tasksDir, "in-review", "t1.md")
+    fs.appendFileSync(parked, "\n> Loop done — review passed on branch feature/t1, base release/2.4, awaiting human diff review [2026-01-02T00:00:00.000Z by dev]\n")
+    await git(repo, "add", "-A")
+    await git(repo, "commit", "-q", "-m", "park in in-review")
+
+    const gateCtx: GateCtx = {
+      $: sh,
+      client: { file: { list: async () => ({ data: [] }), read: async () => ({ data: null }) }, app: { log: async () => undefined } } as unknown as Client,
+      log: noopLog,
+      directory: repo,
+      config,
+      isDriving: () => false,
+    }
+
+    // A typo'd base is refused rather than silently retargeted to the default —
+    // the exact failure the recorded base exists to prevent.
+    const typo = await shipTask(gateCtx, "t1", "engineering", "pr", "release/2.5")
+    assert.ok(typo.ok, "a publish shortfall is still a ship")
+    assert.equal(typo.variant, "warning")
+    assert.match(typo.message, /is not on origin/)
+    // …and the branch still reached the remote, which is what makes the retry cheap.
+    assert.match(await git(repo, "ls-remote", "--heads", "origin", "feature/t1"), /refs\/heads\/feature\/t1/)
+
+    // The recorded base resolves on origin, so nothing is refused for it. `gh` is
+    // absent in CI, so the PR call itself fails — what is pinned here is that the
+    // base check PASSED, i.e. the reason is not the base.
+    const retry = await shipTask(gateCtx, "t1", "engineering", "pr")
+    assert.ok(retry.ok)
+    assert.doesNotMatch(retry.message, /is not on origin/, "the recorded release/2.4 is a real branch on origin")
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true })
+    fs.rmSync(origin, { recursive: true, force: true })
+  }
+})
+
 /** A free-text (task-less) loop's entry state — no `task`, so no ship gate ever runs for it. */
 const freeState = (): WorkflowState => ({
   goal: "Free-text goal",

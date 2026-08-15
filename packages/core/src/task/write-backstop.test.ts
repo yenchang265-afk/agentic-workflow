@@ -238,3 +238,26 @@ test("commandAllowed itself sees through one proxy prefix for find mutations", (
   assert.equal(commandAllowed("find . -delete", globs, ["rtk"]), false)
   assert.equal(commandAllowed("find . -name '*.ts'", globs, ["rtk"]), true)
 })
+
+test("protectedBranches adds to the floor and can never remove from it", () => {
+  // The point of the key: a team whose integration branch is release/2.4 gets it
+  // guarded like main.
+  assert.equal(isGitPushViolation("git push origin release/2.4", ["release/2.4"]), true)
+  assert.equal(isGitPushViolation("git push origin refs/heads/release/2.4", ["release/2.4"]), true)
+  assert.equal(isGitPushViolation("git push origin x:release/2.4", ["release/2.4"]), true)
+  // The floor stands regardless — including when the config names something else
+  // entirely. A config that could unprotect `main` is a config that can be wrong
+  // about the one branch that matters.
+  assert.equal(isGitPushViolation("git push origin main", ["release/2.4"]), true)
+  assert.equal(isGitPushViolation("git push origin master", []), true)
+  // And it only ever ADDS: an unlisted head branch stays pushable.
+  assert.equal(isGitPushViolation("git push origin feature/x", ["release/2.4"]), false)
+  // Unconfigured is byte-identical to the behaviour before the key existed.
+  assert.equal(isGitPushViolation("git push origin release/2.4"), false)
+})
+
+test("a rewriting proxy cannot launder a push of a configured protected branch", () => {
+  assert.equal(chainedGitPushViolation("rtk git push origin release/2.4", ["rtk"], ["release/2.4"]), true)
+  assert.equal(chainedGitPushViolation("git status && git push origin release/2.4", [], ["release/2.4"]), true)
+  assert.equal(chainedGitPushViolation("rtk git push origin feature/x", ["rtk"], ["release/2.4"]), false)
+})

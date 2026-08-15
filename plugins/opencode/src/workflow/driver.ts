@@ -126,7 +126,7 @@ import {
   fanoutOverriddenByLenses,
   ignoredUserConfigPaths,
   modelFor,
-  parsePublishFlags,
+  parseGateOptions,
   passAxes,
   resolveUserConfigPath,
   stagePasses,
@@ -2929,14 +2929,16 @@ export const handleApprove = async (deps: Deps, sessionID: string, args: string,
   // carries a publish override in the same argument string, and taking word 0
   // blindly would make `approve --local` name a task called "--local".
   const words = args.trim().split(/\s+/).filter(Boolean)
-  const id = words.find((w) => !w.startsWith("-")) ?? ""
-  const flags = parsePublishFlags(words)
+  const opts = parseGateOptions(words)
   // A misspelled flag refuses rather than shipping under the configured default.
   // Same rule as the Claude/Qwen CLI arm, and the same reason: a ship that
   // publishes more than the human asked for cannot be taken back.
-  if (!flags.ok) return report(client, flags.message, "error")
+  if (!opts.ok) return report(client, opts.message, "error")
+  // From the parser's leftovers, never a second scan of `words`: only the
+  // parser knows which bare-looking words it already consumed as flag values.
+  const id = opts.rest[0] ?? ""
   try {
-    const r = await approveAny(gateCtx(deps, config), id, "engineering", flags.publish)
+    const r = await approveAny(gateCtx(deps, config), id, "engineering", opts.publish, opts.base)
     // A task gate leaves an obvious next question, and this host DOES get a
     // model turn after a handled verb (impl.ts overrides the command prompt with
     // this outcome). So the outcome carries the ask: nothing else can open a
@@ -3188,7 +3190,7 @@ const refuseIfDriven = async (deps: Deps, sessionID: string): Promise<string | n
  * host has no MCP tools and writes under `docs/tasks/` are guarded, so the model
  * could not act on the answer it just collected.
  */
-export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config, publish?: ShipPublish): Promise<string> => {
+export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, config: Config, publish?: ShipPublish, base?: string): Promise<string> => {
   const refusal = await refuseIfDriven(deps, sessionID)
   if (refusal) return refusal
   const target = id.trim()
@@ -3204,7 +3206,7 @@ export const gateFromAgent = async (deps: Deps, sessionID: string, id: string, c
     // unknowable: a tool that never returns leaves no transcript, and the last
     // time it happened the answer had to be reconstructed from file mtimes.
     void deps.log("info", `workflow_gate: moving "${target}" through its gate`)
-    const r = await approveAny(gateCtx(deps, config), target, "engineering", publish)
+    const r = await approveAny(gateCtx(deps, config), target, "engineering", publish, base)
     void deps.log("info", `workflow_gate: "${target}" → ${r.ok ? "moved" : "refused"} (${r.message})`)
     void toast(deps.client, r.message, gateVariant(r))
     // The ambiguous refusal carries its own follow-up: an id-less call from the
@@ -3565,7 +3567,7 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
-  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--pr|--push|--local] · replan [id] [reason] · ` +
+  `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
   "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`

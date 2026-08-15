@@ -264,7 +264,10 @@ that already failed. It is absent on the first iteration.
   and open a draft PR), `--push` (push only), `--local` (publish nothing).
   Omitted, the repo's `shipPublish` decides; the default is `--pr`. A `--push`
   or `--local` ship is published later with `approve <id> --pr`, which re-runs
-  only the publish step. The loop never ships for you.
+  only the publish step. `--base=<branch>` chooses what the PR targets;
+  omitted, the gate uses the branch the run was cut from (recorded on the task),
+  then the repo's `prBase`, then the platform default. The loop never ships for
+  you.
 - **FAIL** with budget remaining → re-build with the failure threaded in. A
   verify-FAIL re-build drops stale review feedback and vice versa: old feedback
   judged an older build.

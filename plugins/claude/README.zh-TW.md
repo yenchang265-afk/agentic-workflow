@@ -85,7 +85,8 @@ skill／參考檢查清單符號連結是 git 追蹤的，會保留下來。要�
   （計畫把關，需要 `## Implementation Plan`），或者一份完成的
   `in-review/` 任務 → `completed/`（發布——只有在你審查過分支 diff
   之後，且只依 `shipPublish` 決定的內容對外發布——`approve <id> --pr`／
-  `--push`／`--local` 可逐次覆寫）。每一次搬移都會被稽核並提交（commit）；一項任務永遠只處於
+  `--push`／`--local` 可逐次覆寫；PR 會指向這次執行切出來的那個分支，
+  `prBase` 與 `approve <id> --base=<分支>` 可以覆寫）。每一次搬移都會被稽核並提交（commit）；一項任務永遠只處於
   一個資料夾中，因此這個把關點永不含糊。省略 id 時，它會推進目前
   唯一停在迴圈等待把關點上的任務（`plan-review/` 或
   `in-review/`）——草稿一律需要明確的 id。（也以 `workflow_approve` 這個

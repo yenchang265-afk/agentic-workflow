@@ -366,3 +366,41 @@ test("verbFor ignores prose and other kinds' commands", () => {
   assert.equal(verbFor(""), null)
   assert.equal(verbFor(undefined), null)
 })
+
+/**
+ * The PR base flag. It is spelled `--base=<branch>` and never `--base <branch>`
+ * precisely so THIS hook needs no lesson: the `=` form is one dash-word, which
+ * the existing rules already forward untouched, while a space-separated value
+ * would be a bare word and become the task id.
+ */
+test("approve forwards --base= and the id stays the first bare word", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task --base=release/2.4"), {
+    argv: ["gate", "approve-any", "my-task", "--base=release/2.4"],
+    ...APPROVE_CONTINUE,
+  })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve --base=release/2.4 my-task"), {
+    argv: ["gate", "approve-any", "my-task", "--base=release/2.4"],
+    ...APPROVE_CONTINUE,
+  })
+})
+
+test("--base= combines with a publish flag, and a bare approve may carry it alone", () => {
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve my-task --base=release/2.4 --push"), {
+    argv: ["gate", "approve-any", "my-task", "--base=release/2.4", "--push"],
+    ...APPROVE_CONTINUE,
+  })
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve --base=release/2.4"), {
+    argv: ["gate", "approve-any", "--base=release/2.4"],
+    ...APPROVE_CONTINUE,
+  })
+})
+
+test("the space-separated form is forwarded verbatim so the CLI can refuse it", () => {
+  // The hook must NOT try to be clever here: `release/2.4` is a bare word, so it
+  // lands as the id, and only the CLI's parser can say why that is wrong. What
+  // matters is that the refusal happens at all rather than a silent wrong ship.
+  assert.deepEqual(gateArgsFor("/agentic-workflow:engineering approve --base release/2.4"), {
+    argv: ["gate", "approve-any", "release/2.4", "--base"],
+    ...APPROVE_CONTINUE,
+  })
+})
