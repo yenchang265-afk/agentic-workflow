@@ -200,11 +200,16 @@ const assertNotDefaultBranch = async ($: Shell, log: Log, directory: string, bra
  * branch would throw away the very thing they set up.
  *
  * Detection is local (`defaultBranchName`, for the reason `assertNotDefaultBranch`
- * gives), and the result must EXIST: `init.defaultBranch` names a branch the repo
- * may never have created, and `checkoutBranch` would then invent it from the
- * parked branch — the stacking bug wearing the default branch's name. Anything
- * unresolvable degrades to the parked branch with a warning: a noisy diff is
- * recoverable, and refusing to start costs the whole run.
+ * gives), with the same conventional-name fallback that guard uses — `origin/HEAD`
+ * is only set by `git clone`, so a repo that grew a remote later resolves nothing,
+ * and that is exactly the everyday shape this must not stack in.
+ *
+ * Whatever is chosen must EXIST: `init.defaultBranch` names a branch the repo may
+ * never have created, and `checkoutBranch` would then invent it from the parked
+ * branch — the stacking bug wearing the default branch's name. That check is what
+ * makes guessing at `main`/`master` safe rather than reckless. Nothing resolvable
+ * degrades to the parked branch with a warning: a noisy diff is recoverable, and
+ * refusing to start costs the whole run.
  */
 const baseOffTaskBranch = async (
   $: Shell,
@@ -217,18 +222,19 @@ const baseOffTaskBranch = async (
   const prefix = taskBranchPrefix(config, kind)
   if (!prefix || !resolved.startsWith(prefix)) return resolved
   const detected = await defaultBranchName($, directory)
-  if (!detected || !(await branchExists($, directory, detected))) {
+  for (const candidate of detected ? [detected] : ["main", "master"]) {
+    if (!(await branchExists($, directory, candidate))) continue
     await log(
-      "warn",
-      `loop: the tree is parked on ${resolved} from a previous run and this repo's default branch could not be resolved — cutting from ${resolved}, so this run's diff may carry that task's commits too`,
+      "info",
+      `loop: the tree is parked on ${resolved} from a previous run — cutting from ${candidate} instead${detected ? "" : " (this repo names no default branch; guessed by convention)"}; check out the base you want first to override`,
     )
-    return resolved
+    return candidate
   }
   await log(
-    "info",
-    `loop: the tree is parked on ${resolved} from a previous run — cutting from ${detected} instead; check out the base you want first to override`,
+    "warn",
+    `loop: the tree is parked on ${resolved} from a previous run and this repo's default branch could not be resolved — cutting from ${resolved}, so this run's diff may carry that task's commits too`,
   )
-  return detected
+  return resolved
 }
 
 /** Absolute path to a task's dedicated worktree under the configured root. Pure. */

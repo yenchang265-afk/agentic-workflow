@@ -164,9 +164,21 @@ test("a tree parked on a previous run's work branch is re-based off the default 
   assert.ok(landed !== -1 && cut !== -1 && landed < cut, log.join(" | "))
 })
 
+test("an undeclared default branch falls back to a conventional name that exists", async () => {
+  // `origin/HEAD` is only set by `git clone`, so a repo that grew its remote later
+  // resolves nothing — the everyday shape this must not stack in. Safe only because
+  // the candidate must exist: guessing a name into being would re-create the bug.
+  const notes: string[] = []
+  const $ = makeShell(sharedHandler("feature/prev", { existing: ["feature/prev", "master"] }))
+  const next = await ensureIsolation($, (_l, m) => void notes.push(m), "/repo", sharedConfig, state)
+  assert.equal(next.git?.base, "master")
+  assert.ok(notes.some((m) => m.includes("guessed by convention")), notes.join(" | "))
+})
+
 test("an unresolvable default branch degrades to the parked branch, warning about the wider diff", async () => {
   const notes: string[] = []
-  const $ = makeShell(sharedHandler("feature/prev"))
+  // Neither origin/HEAD nor a conventional name exists — nothing left to cut from.
+  const $ = makeShell(sharedHandler("feature/prev", { existing: ["feature/prev"] }))
   const next = await ensureIsolation($, (_l, m) => void notes.push(m), "/repo", sharedConfig, state)
   // Never a base the branch was not cut from: a noisy diff is recoverable, a
   // fictional diff boundary grades the wrong range.
