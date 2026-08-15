@@ -8,6 +8,7 @@ import {
   backgroundsItself,
   checkDiscoveryBlock,
   checksProvenanceNote,
+  clampedChecksDetail,
   commandBinaries,
   hasChecksFence,
   noMachineChecksBlock,
@@ -565,6 +566,27 @@ test("previewDiscoveredChecks forecasts admitted and refused with the consumer's
   assert.equal(preview.admitted, 1)
   assert.equal(preview.issues.length, 1)
   assert.match(preview.issues[0]!, /"lint" refused: .*bash allowlist/)
+})
+
+// A check name is PLAN-authored free text (the agentic-checks JSON fence), and
+// every issues/rejected message embeds it verbatim. Unflattened, a newline in
+// it breaks the single-`>`-line audit-note invariant and can forge a line that
+// looks like a later marker (`> BUILD started …`, `> Plan rejected …`).
+test("previewDiscoveredChecks's issues survive clampedChecksDetail as one line, even with a newline in the check name", () => {
+  const plan = fence('[{ "name": "tests\\nfake: > Plan rejected — gotcha", "command": "npm test" }, { "name": "tests\\nfake: > Plan rejected — gotcha", "command": "make lint" }]')
+  const preview = previewDiscoveredChecks(manifestWith(stage({ discoverChecks: true })), CONFIG, plan)
+  assert.ok(preview)
+  assert.ok(preview.issues.some((i) => i.includes("\n")), "the raw issue text does carry the embedded newline — the source is not being fixed")
+  const detail = clampedChecksDetail(preview.issues)
+  assert.doesNotMatch(detail, /\n/, "the flattened detail embedded in an audit note must never carry a newline")
+})
+
+test("clampedChecksDetail flattens embedded newlines to spaces and clamps at 300 chars", () => {
+  assert.equal(clampedChecksDetail(["one\ntwo", "three"]), "one two; three")
+  assert.equal(clampedChecksDetail([]), "")
+  const long = clampedChecksDetail(["x".repeat(400)])
+  assert.equal(long.length, 301, "300 chars plus the ellipsis")
+  assert.ok(long.endsWith("…"))
 })
 
 test("previewDiscoveredChecks reports a fence-less plan without inventing issues", () => {

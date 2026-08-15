@@ -54,7 +54,7 @@ const main = async () => {
   } catch {
     return allow()
   }
-  const nagPath = path.join(runs, ".verdict-nag")
+  const nagPath = path.join(runs, d.verdictNagFile)
   const decision = decideVerdictGuard(marker, fs.existsSync(nagPath))
   if (decision !== "nag") return allow()
   try {

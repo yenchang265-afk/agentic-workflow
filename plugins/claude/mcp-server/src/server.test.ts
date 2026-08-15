@@ -321,6 +321,18 @@ test("runStageChecks notes provenance through the shared helper, discovery-gated
   assert.doesNotMatch(body, /source !== "discovered" \|\| warnings\.length > 0/, "the inline predicate must not survive beside the helper")
 })
 
+// A zero-defs re-fire used to `return state` unchanged — leaving a PRIOR
+// iteration's failing results in `state.checks[stage]` to float forward and
+// floor an otherwise-honest PASS via `finalizeCheckRecord`.
+test("runStageChecks clears a stage's stale check results on a zero-defs re-fire", () => {
+  const body = flat(code(source()))
+  assert.match(
+    body,
+    /if \(!defs\.length\) return withCheckResults\(state, stage, \[\]\)/,
+    "a re-fire with nothing to check must clear any prior iteration's results, not let them float forward",
+  )
+})
+
 // Narrowing admission per pass gives up the stage-wide guarantee, so it has to
 // be picked back up somewhere. On this host that somewhere is load-bearing, not
 // defensive: the ORCHESTRATOR owns the pass loop and can simply skip a spawn,
@@ -343,6 +355,43 @@ test("workflow_advance gates a fan-out on the accumulated axis coverage, and a g
   assert.match(flat(body), /enforcesAxisCoverage\(config, activeManifest\(\)\.manifest\.kind, gateDef\)/, "the gate is the shared predicate, not an inline mode test")
   assert.match(flat(body), /passes: gaps/, "the retry must name exactly the passes that recorded nothing")
   assert.match(flat(body), /armedPass = null/, "the retry arms its own pass; the finished one is already sampled")
+})
+
+// A failing marker write used to still set `verdictRetried = true` on its way
+// out (the flag was set FIRST, unconditionally) — burning the one retry the
+// model never actually got. The next call skipped straight to the "retry is
+// spent" fallback, turning a transient infra hiccup into an immediate stage
+// failure. Both retry arms (no-verdict and gap-passes) must write the marker
+// FIRST and only flip the flag on success.
+test("the no-verdict retry only marks itself consumed after the marker write succeeds", () => {
+  const body = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(
+    body,
+    /const refireMarkerError = writeStageMarker\(stage\).*?if \(refireMarkerError\).*?verdictRetried = true/,
+    "the marker write must precede the flag flip, not follow it",
+  )
+})
+
+test("the gap-passes retry only marks itself consumed after the marker write succeeds", () => {
+  const body = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(
+    body,
+    /const gapMarkerError = writeStageMarker\(stage\).*?if \(gapMarkerError\).*?verdictRetried = true/,
+    "the marker write must precede the flag flip, not follow it",
+  )
+})
+
+// `armedPass` tracks what the next metrics sample is attributed to. The
+// no-verdict retry used to leave it stale between the retry response and the
+// model's next workflow_stage call — asymmetric with the sibling gap-passes
+// retry, which already clears it.
+test("the no-verdict retry clears armedPass, same as the gap-passes retry", () => {
+  const body = flat(toolBody(code(source()), "workflow_advance"))
+  assert.match(
+    body,
+    /verdictRetried = true.*?lastFireAt = Date\.now\(\).*?armedPass = null.*?const retryModel/,
+    "the no-verdict retry must null armedPass before arming its own",
+  )
 })
 
 // The no-verdict retry's own instruction has to be followable: on a stage that
@@ -467,6 +516,24 @@ test("an empty AGENTIC_WORKFLOW_HOST is treated as absent and boots the default 
   const { code, stderr } = await boot({ AGENTIC_WORKFLOW_HOST: "" })
   assert.notEqual(code, null, `server was killed after 30s without exiting; stderr:\n${stderr}`)
   assert.match(stderr, /agentic-workflow MCP server ready/)
+})
+
+// A dangling `validateBeforeTransition` ref (an unregistered hook for a
+// custom/user-added kind) throws as core's `runPark` FIRST statement, before
+// core's own `releaseClaim` ever runs. OpenCode is saved by `onIdle`'s
+// catch-all; this host has none, so the call into core must be wrapped and
+// the claim released here, or the queued/ claim marker is held until the
+// ~75-minute stale sweep.
+test("runPark releases the claim before returning, even when core's runTerminal throws", () => {
+  const body = code(source())
+  const start = body.indexOf("const runPark = async")
+  const fn = body.slice(start, body.indexOf("\nserver.registerTool", start))
+  assert.match(fn, /try \{\s*report = await coreRunTerminal\(terminalCtx\(active, actor\), action\)/, "the core call must be inside a try")
+  assert.match(
+    flat(fn),
+    /catch \(err\) \{.*?if \(task\) \{.*?await releaseClaim\(sh, task, log\).*?\}.*?activeClaim = null.*?active = null.*?resetLoopScratch\(\).*?writeStageMarker\(null\).*?return \{ error:/,
+    "the catch must release the claim, reset every loop-scratch field, and return an error — never rethrow",
+  )
 })
 
 // The stage marker is this host's ONLY deterministic enforcement input: the

@@ -833,10 +833,13 @@ export const replanTask = async (ctx: GateCtx, id: string, reason?: string): Pro
   // tasks have no stopped run, so nothing fuses there.
   const stopContext = statusFolder(task) === "in-progress" ? extractStopContext(task) : undefined
   const fused = [oneLineReason(reason), stopContext ? `prior run: ${stopContext}` : undefined].filter(Boolean).join(" — ")
-  // One formatter (`planRejectedNote`) for every rejection note — the park
-  // gate's contract refusal writes the same shape, and `extractReplanReason`
-  // parses it back; a hand-built copy here is how writer and parser drift.
-  // Re-flattened so the fused whole respects the one-line clamp.
+  // One formatter (`planRejectedNote`) for every HUMAN rejection note — the
+  // park gate's own mechanical contract refusal writes the same shape via the
+  // TAGGED sibling `contractRejectedNote`, so `extractReplanReason` parses
+  // both back identically but `unaddressedRejectionCount` counts only the
+  // tagged one toward the 3-strike auto-draft-dump; a hand-built copy here is
+  // how writer and parser drift. Re-flattened so the fused whole respects the
+  // one-line clamp.
   const moved = await noteThenMove(ctx, task, "queued", planRejectedNote(oneLineReason(fused)), actor)
   if (!moved.ok) return moved.result
   const newPath = moved.path
@@ -923,6 +926,16 @@ const publishNote = (pr: ShipPrResult): string | null => {
   return `PR not opened — ${pr.reason ?? "reason unknown"}`
 }
 
+/**
+ * Matches any of `publishNote`'s wordings — not just the PR ones — so the
+ * completed/ retry arm can tell "nothing was ever attempted" (a genuine crash
+ * before `shipPr` ran) from "a publish outcome is already on record" (a
+ * `local`/`push` ship that finished on purpose). Only the former may retry
+ * without an explicit `publish` flag — once ANY outcome is on record, the
+ * flag is what asks for more, same contract `approveAny` already enforces.
+ */
+const PUBLISH_RECORDED_RE = /\b(PR (opened|already open)|Not published|Branch (pushed|not pushed)|PR not opened) — /
+
 /** The `loop(<id>): …` backlog commit subject paired with `publishNote`. */
 const publishCommitSubject = (pr: ShipPrResult): string =>
   pr.url ? `PR ${pr.created ? "opened" : "linked"}` : pr.mode === "local" ? "kept local" : pr.mode === "push" ? (pr.pushed ? "branch pushed" : "branch not pushed") : "PR not opened"
@@ -985,7 +998,8 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
       // for warns for the same reason the main path does.
       let missedPublish = false
       const prAlreadyRecorded = /\bPR (opened|already open) — /.test(done.body)
-      if (!prAlreadyRecorded) {
+      const publishAlreadyRecorded = PUBLISH_RECORDED_RE.test(done.body)
+      if (!prAlreadyRecorded && (!publishAlreadyRecorded || publish)) {
         const pr = await shipPr($, log, directory, config, kind, id, done.title, ctx.adoGateway, extractRunBranch(done), publish)
         data.publish = pr.mode
         if (pr.attempted) {
@@ -1108,21 +1122,24 @@ export const resolveGateTask = async (
 }
 
 /**
- * The canonical id behind an explicit query that names an already-`completed/`
- * task, or null — for anything else, including an empty query.
+ * The canonical id behind an explicit query that names a task already sitting
+ * in `status`, or null — for anything else, including an empty query.
  *
  * Resolves through `resolveGateId` first so a short-hash handle works here
  * exactly as it does at every other gate; an ambiguous one resolves to nothing
  * and falls through to the ordinary refusal, which is the one that can explain
  * itself.
  */
-const completedTaskFor = async (ctx: GateCtx, id: string): Promise<string | null> => {
+const resolvedTaskIn = async (ctx: GateCtx, id: string, status: TaskStatus): Promise<string | null> => {
   if (!id) return null
   const resolved = await resolveGateId(ctx, id)
   if (!resolved || "error" in resolved) return null
-  const t = await findByIdIn(ctx.$, ctx.directory, ctx.config.tasksDir, "completed", resolved.id)
+  const t = await findByIdIn(ctx.$, ctx.directory, ctx.config.tasksDir, status, resolved.id)
   return t ? resolved.id : null
 }
+
+/** The `completed/` instance of {@link resolvedTaskIn} — the publish-later lookup. */
+const completedTaskFor = (ctx: GateCtx, id: string): Promise<string | null> => resolvedTaskIn(ctx, id, "completed")
 
 /**
  * approve shortcut — the unified, folder-driven gate. With an explicit `id` it
@@ -1157,6 +1174,17 @@ export const approveAny = async (ctx: GateCtx, id: string, kind = "engineering",
       const donePublish = await completedTaskFor(ctx, id)
       if (donePublish) return shipTask(ctx, donePublish, kind, publish)
     }
+    // A retry naming a task that has since moved ONE status past this gate's
+    // own tiers still owns a task-specific alreadyDone arm — `approveTask` for
+    // one already `queued/` (approved once), `approvePlan` for one already
+    // `in-progress/` (its plan approved once). Falling through to
+    // `resolveGateTask`'s generic "nothing to do" message here would drop
+    // `data.gate`/`next` and the epic-slice continuation those arms carry, and
+    // report `ok:false` for what is actually a harmless retry.
+    const queuedRetry = await resolvedTaskIn(ctx, id, "queued")
+    if (queuedRetry) return approveTask(ctx, queuedRetry)
+    const inProgressRetry = await resolvedTaskIn(ctx, id, "in-progress")
+    if (inProgressRetry) return approvePlan(ctx, inProgressRetry)
     if (pick.kind === "none") return { ok: false, message: "Nothing awaiting approval.", variant: "info" }
     // The ambiguity is the one refusal a host may act on rather than merely
     // report: NOTHING moved here (`resolveGateTask` only lists), so handing the

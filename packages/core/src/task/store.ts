@@ -135,6 +135,27 @@ export const planRejectedNote = (reason?: string): string => {
   return `Plan rejected — sent back to queued for re-planning${flat ? ` — ${flat}` : ""}`
 }
 
+/**
+ * Marks a rejection note as the park gate's OWN mechanical refusal (a missing
+ * plan / missing `### Verification`), not a human's `replan`. Placed between
+ * `PLAN_REJECTED_MARKER` and the reason prefix, so `lastMarkerIndex` and
+ * `pendingPlanRejection`'s `PLAN_REJECTED_REASON_PREFIX` lookup both still
+ * match unchanged — only `unaddressedRejectionCount` reads it, to decide which
+ * notes count toward the 3-strike auto-draft-dump.
+ */
+export const CONTRACT_REFUSAL_TAG = " [contract]"
+
+/**
+ * The park gate's own contract-refusal variant of `planRejectedNote` — same
+ * shape (so `extractReplanReason` still threads the reason into the next PLAN
+ * pass's `{{#replan}}` section), tagged so `unaddressedRejectionCount` can
+ * count ONLY mechanical park-gate refusals toward the 3-strike auto-draft-dump.
+ * A human's `replan` writes a substantive, deliberate rejection — it must never
+ * share a counter with a machine re-checking the same contract mistake, or two
+ * human replans plus one contract miss silently dump the task to draft/.
+ */
+export const contractRejectedNote = (why: string): string => `Plan rejected${CONTRACT_REFUSAL_TAG} — sent back to queued for re-planning — ${why}`
+
 /** Whether `marker` appears as an audit-note line (see `lastMarkerIndex`). Pure. */
 const hasMarkerLine = (body: string, marker: string): boolean => lastMarkerIndex(body, marker) !== -1
 
@@ -379,12 +400,18 @@ export const planHeadingCount = (body: string): number => {
 }
 
 /**
- * How many stamped `PLAN_REJECTED_MARKER` notes sit after the last successful
- * park (`PLAN_WRITTEN_MARKER`) — i.e. rejections no plan has yet answered.
- * Consecutive counts here mean the planner is looping on the same refusal: the
- * park gate uses it to stop-for-human instead of burning a PLAN run per poll
- * tick forever. Only lines with `AUDIT_NOTE_LINE_RE`'s closing stamp count, so
- * quoted rejection text cannot inflate the tally. Pure.
+ * How many stamped, `CONTRACT_REFUSAL_TAG`-marked `PLAN_REJECTED_MARKER` notes
+ * sit after the last successful park (`PLAN_WRITTEN_MARKER`) — i.e. mechanical
+ * park-gate refusals no plan has yet answered. Consecutive counts here mean the
+ * planner is looping on the same CONTRACT mistake: the park gate uses it to
+ * stop-for-human instead of burning a PLAN run per poll tick forever.
+ *
+ * Untagged rejection notes — a human's `replan` — are deliberately EXCLUDED:
+ * they are substantive feedback, not the planner repeating a mechanical
+ * mistake, and must never share this counter (two human replans plus one
+ * contract miss must not silently dump the task to draft/). Only lines with
+ * `AUDIT_NOTE_LINE_RE`'s closing stamp count, so quoted rejection text cannot
+ * inflate the tally. Pure.
  */
 export const unaddressedRejectionCount = (body: string): number => {
   const addressed = lastMarkerIndex(body, PLAN_WRITTEN_MARKER)
@@ -394,7 +421,7 @@ export const unaddressedRejectionCount = (body: string): number => {
     if (idx < addressed) continue
     const end = body.indexOf("\n", idx)
     const line = body.slice(idx, end === -1 ? body.length : end)
-    if (AUDIT_NOTE_LINE_RE.test(line)) count++
+    if (AUDIT_NOTE_LINE_RE.test(line) && line.includes(CONTRACT_REFUSAL_TAG)) count++
   }
   return count
 }

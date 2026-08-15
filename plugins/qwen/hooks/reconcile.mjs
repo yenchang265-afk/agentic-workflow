@@ -79,6 +79,10 @@ var DIALECTS = {
     // Mirrors core's `stageEvidenceFile(host)`; per host for the same reason the
     // marker is (one host's session must never write into another's ledger).
     evidenceFile: ".stage-evidence.json",
+    // Mirrors core's `verdictNagFile(host)`; per host so a stale sentinel from
+    // one host's run cannot suppress (or falsely arm) the other host's
+    // SubagentStop nag on the same repo.
+    verdictNagFile: ".verdict-nag",
     // Claude Code surfaces plugin MCP tools under a second, plugin-bundled
     // alias; Qwen has only the one registration.
     verdictAliases: "mcp__agentic-workflow__workflow_verdict or, plugin-bundled, mcp__plugin_agentic-workflow_agentic-workflow__workflow_verdict",
@@ -113,6 +117,7 @@ var DIALECTS = {
   qwen: {
     stageMarkerFile: ".stage-qwen.json",
     evidenceFile: ".stage-evidence-qwen.json",
+    verdictNagFile: ".verdict-nag-qwen",
     verdictAliases: "mcp__agentic-workflow__workflow_verdict",
     bash: ["run_shell_command"],
     write: ["write_file", "edit", "replace", "notebook_edit"],

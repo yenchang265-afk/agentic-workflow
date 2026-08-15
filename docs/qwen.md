@@ -110,7 +110,7 @@ them.
 One more consequence worth stating: an agent that backs stages in two kinds with
 *different* configured models cannot be expressed by a static binding —
 `workflow-verify` backs a stage in four kinds today. The installer reports that
-conflict and leaves the first-resolved model in place rather than silently
+conflict and leaves the model UNSET for that agent, rather than silently
 picking whichever manifest loaded last.
 
 ## Known gaps

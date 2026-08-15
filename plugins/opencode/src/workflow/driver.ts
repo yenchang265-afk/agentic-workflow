@@ -116,7 +116,7 @@ import {
 } from "@agentic-workflow/core/workflow/verdict"
 import { NO_OBSERVATIONS, type EvidenceContext, type ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { checkCommands, checksBudgetMs, finalizeCheckRecord, runChecks } from "@agentic-workflow/core/workflow/checks"
-import { checksProvenanceNote, hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
+import { checksProvenanceNote, clampedChecksDetail, hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   EXPERIMENTAL_KINDS,
   concurrencyFor,
@@ -1077,9 +1077,17 @@ const runStageChecks = async (
   // drive records it durably — sample fields and, when the outcome would
   // otherwise be silent, an audit note; the log line alone was invisible.
   for (const w of warnings) await deps.log("warn", `${stage}: ${w}`)
-  const detail = ((s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s))(warnings.join("; "))
+  const detail = clampedChecksDetail(warnings)
   const provenance = { source, ran: defs.length, refused: warnings.length, detail }
-  if (!defs.length) return { state, ...provenance }
+  // A zero-defs iteration must clear any PRIOR iteration's results for this
+  // stage, not merely skip writing new ones — `state` here is the carried-over
+  // WorkflowState, and leaving `state.checks[stage]` untouched lets a stale
+  // FAIL from an earlier run float forward and floor an honest PASS this
+  // iteration never earned. `withCheckResults(state, stage, [])` is identity
+  // for `finalizeCheckRecord` (empty results never floor) and for the composed
+  // prompt (`ran?.length` is falsy either way) — so a task that never had
+  // checks stays byte-identical, only a re-fire's staleness is cleared.
+  if (!defs.length) return { state: withCheckResults(state, stage, []), ...provenance }
   // The phase below runs BEFORE this stage's marker write and claim restamp
   // (both sit between this call and the fire), on a claim stamp as old as the
   // previous stage's whole runtime — and sequential checks legally compound

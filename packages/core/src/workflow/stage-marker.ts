@@ -59,6 +59,33 @@ export const hostStageEvidencePath = (directory: string, tasksDir: string, host:
   path.join(directory, tasksDir, "runs", EVIDENCE_FILE[host])
 
 /**
+ * The one-shot SubagentStop nag sentinel: written once a stage's transcript is
+ * flagged as missing its `workflow_verdict` call, so the reminder fires only
+ * once per stage instead of on every subsequent subagent stop.
+ *
+ * Per host for the same reason the marker and evidence ledger are — Claude and
+ * Qwen share this server/hook source, so an unscoped path let a stale sentinel
+ * from one host's run suppress (or falsely arm) the other host's reminder on
+ * the same repo. Claude keeps the unsuffixed `.verdict-nag` (same reason
+ * `.stage.json` stays unsuffixed — it came first, and its shipped hook
+ * bundles read that literal path); every host added since is suffixed.
+ * OpenCode does not run this hook at all — no SubagentStop nag exists there —
+ * but a value is still declared for parity with the other two per-host maps.
+ */
+const VERDICT_NAG_FILE: Record<StageMarkerHost, string> = {
+  claude: ".verdict-nag",
+  opencode: ".verdict-nag-opencode",
+  qwen: ".verdict-nag-qwen",
+}
+
+/** Basename of a host's verdict-nag sentinel under `<tasksDir>/runs/`. Pure. */
+export const verdictNagFile = (host: StageMarkerHost): string => VERDICT_NAG_FILE[host]
+
+/** Absolute path of a host's verdict-nag sentinel. Pure. */
+export const hostVerdictNagPath = (directory: string, tasksDir: string, host: StageMarkerHost): string =>
+  path.join(directory, tasksDir, "runs", VERDICT_NAG_FILE[host])
+
+/**
  * Every host that writes a marker, in the precedence order an out-of-process
  * observer should read them. At most one loop runs per repo, so precedence only
  * decides a tie that should not happen; the point of the list is that observers

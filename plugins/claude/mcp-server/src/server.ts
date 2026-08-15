@@ -27,7 +27,7 @@ import {
 } from "@agentic-workflow/core/workflow/orchestrate"
 import type { PolledClaim } from "@agentic-workflow/core/scheduler/scheduler"
 import type { WorkSource } from "@agentic-workflow/core/source/types"
-import { checksProvenanceNote, hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
+import { checksProvenanceNote, clampedChecksDetail, hasChecksFence, resolveStageChecks, type ChecksSource } from "@agentic-workflow/core/workflow/discovered-checks"
 import {
   concurrentStages,
   discoverChecksFor,
@@ -76,7 +76,7 @@ import {
 import type { EvidenceContext, EvidenceItem, ObservedEvidence } from "@agentic-workflow/core/workflow/evidence"
 import { renderRunSummary, type Outcome, type StageSample, verdictStructure } from "@agentic-workflow/core/workflow/metrics"
 import { metricsPath, upsertRunMetrics } from "@agentic-workflow/core/workflow/metrics-file"
-import { hostStageEvidencePath, hostStageMarkerPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
+import { hostStageEvidencePath, hostStageMarkerPath, hostVerdictNagPath, taskDrivenByStageMarker, taskNamedByStageMarker } from "@agentic-workflow/core/workflow/stage-marker"
 import { CHECKPOINT_LOCKFILE_EXCLUDES, commitAll, commitPaths, currentBranch, gitActor, listWorktrees, pruneWorktrees } from "@agentic-workflow/core/workflow/git"
 import { ensureIsolation, releaseWorktree, rivalHoldsCurrentBranchLock, workflowId } from "@agentic-workflow/core/workflow/isolate"
 import {
@@ -443,7 +443,7 @@ const HOST_DIALECT: Record<HostName, HostDialect> = {
 const dialect = HOST_DIALECT[HOST]
 
 const stageMarkerPath = () => hostStageMarkerPath(directory, config.tasksDir, HOST)
-const verdictNagPath = () => path.join(directory, config.tasksDir, "runs", ".verdict-nag")
+const verdictNagPath = () => hostVerdictNagPath(directory, config.tasksDir, HOST)
 const stageEvidencePath = () => hostStageEvidencePath(directory, config.tasksDir, HOST)
 
 /**
@@ -1113,7 +1113,7 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
     source,
     ran: defs.length,
     refused: warnings.length,
-    detail: ((s: string) => (s.length > 300 ? `${s.slice(0, 300)}…` : s))(warnings.join("; ")),
+    detail: clampedChecksDetail(warnings),
     noted: prior?.noted ?? false,
   }
   checksInfo.set(stage, info)
@@ -1136,7 +1136,15 @@ const runStageChecks = async (state: WorkflowState, stage: string): Promise<Work
     info.noted = true
     await appendNote(sh, state.task, auditNote(note, new Date(), await gitActor(sh, directory)), log)
   }
-  if (!defs.length) return state
+  // A zero-defs iteration must clear any PRIOR iteration's results for this
+  // stage, not merely skip writing new ones — leaving `state.checks[stage]`
+  // untouched lets a stale FAIL from an earlier run float forward and floor an
+  // honest PASS this iteration never earned. `withCheckResults(state, stage,
+  // [])` is identity for `finalizeCheckRecord` (empty results never floor) and
+  // for the composed prompt (`ran?.length` is falsy either way) — so a task
+  // that never had checks stays byte-identical, only a re-fire's staleness is
+  // cleared.
+  if (!defs.length) return withCheckResults(state, stage, [])
   // The phase below runs BEFORE this call's own marker arming and claim restamp
   // (both follow in workflow_stage), on a claim stamp as old as the previous
   // stage's whole runtime — and sequential checks legally compound past the
@@ -1805,6 +1813,15 @@ server.registerTool(
       // Diagnostic only — free text never flips control flow (verdict.ts).
       const prose = parseVerdict(stageOutput, `WORKFLOW_${stage.toUpperCase()}`)
       if (!verdictRetried) {
+        // The marker write must succeed BEFORE the retry is marked consumed —
+        // a failing write here used to still set `verdictRetried = true`, so a
+        // transient infra hiccup burned the one retry the model never actually
+        // got: the next call skipped straight to the "retry is spent" fallback
+        // below, turning a hiccup into an immediate stage failure. Leaving the
+        // flag false on failure lets a follow-up call re-enter this same arm.
+        const refireMarkerError = writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
+        if (refireMarkerError)
+          return fail(`Could not re-arm the stage marker for "${stage}" — ${refireMarkerError}. The stage is not re-fired — call workflow_stage again to retry.`)
         verdictRetried = true
         if (active.task) {
           const noteActor = await gitActor(sh, directory)
@@ -1821,9 +1838,8 @@ server.registerTool(
             log,
           )
         }
-        const refireMarkerError = writeStageMarker(stage) // fresh deadline + verdictRecorded:false for the re-fire
-    if (refireMarkerError) return fail(`Could not re-arm the stage marker for "${stage}" — ${refireMarkerError}. The stage is not re-fired.`)
         lastFireAt = Date.now()
+        armedPass = null // its sample is already recorded; the retry arms its own — same rule as the gap-passes retry below
         const retryModel = stageModel(activeManifest().manifest.kind, stageDef(activeManifest().manifest, stage))
         // On a stage that runs focused passes, a bare "call workflow_stage"
         // retry is a dead end — workflow_stage refuses an unfocused call on a
@@ -1906,6 +1922,14 @@ server.registerTool(
       const passFoci = new Set(gatePasses.map((p) => p.focus).filter((f): f is string => f !== null))
       const retryableByFocus = gatePasses.some((p) => p.mode === "axis") || (gaps.length > 0 && gaps.every((g) => passFoci.has(g)))
       if (gaps.length && retryableByFocus && !verdictRetried) {
+        // Same rule as every other arm: a re-run the guard cannot scope must not
+        // be handed out as if it were scoped. And the marker write must succeed
+        // BEFORE the retry is marked consumed — a failing write here used to
+        // still set `verdictRetried = true`, burning the one retry the model
+        // never actually got.
+        const gapMarkerError = writeStageMarker(stage)
+        if (gapMarkerError)
+          return fail(`Could not re-arm the stage marker for "${stage}" — ${gapMarkerError}. The gap passes are not re-run — call workflow_stage again to retry.`)
         verdictRetried = true
         if (active.task) {
           await appendNote(
@@ -1919,10 +1943,6 @@ server.registerTool(
             log,
           )
         }
-        // Same rule as every other arm: a re-run the guard cannot scope must not
-        // be handed out as if it were scoped.
-        const gapMarkerError = writeStageMarker(stage)
-        if (gapMarkerError) return fail(`Could not re-arm the stage marker for "${stage}" — ${gapMarkerError}. The gap passes are not re-run.`)
         lastFireAt = Date.now()
         armedPass = null // its sample is already recorded; the retry arms its own
         const gapModel = stageModel(activeManifest().manifest.kind, gateDef)
@@ -2095,7 +2115,31 @@ const runPark = async (
     return { error: "No task-backed loop to park." }
   }
   const actor = await gitActor(sh, directory)
-  const report = await coreRunTerminal(terminalCtx(active, actor), action)
+  const task = active.task
+  let report: TerminalReport
+  try {
+    report = await coreRunTerminal(terminalCtx(active, actor), action)
+  } catch (err) {
+    // A dangling `validateBeforeTransition` ref (an unregistered hook for a
+    // custom/user-added kind) throws as core's `runPark` FIRST statement,
+    // before any `releaseClaim` runs. OpenCode is saved by `onIdle`'s
+    // catch-all (unconditional claim release on any thrown drive error); this
+    // host has no equivalent, so without this the queued/ claim marker is
+    // held until the ~75-minute stale sweep. Best-effort: releasing must not
+    // itself throw and mask the original error.
+    if (task) {
+      try {
+        await releaseClaim(sh, task, log)
+      } catch {
+        // already best-effort; nothing more to do
+      }
+    }
+    activeClaim = null
+    active = null
+    resetLoopScratch()
+    writeStageMarker(null)
+    return { error: `Park failed for "${task?.id ?? "the active loop"}" — ${(err as Error).message}. Its claim has been released.` }
+  }
   // A task-less park and a veto/plan-not-landed both leave nothing to review (a park
   // action never yields done/stop, but narrowing keeps the descriptor's types honest).
   if (report.kind !== "park") {

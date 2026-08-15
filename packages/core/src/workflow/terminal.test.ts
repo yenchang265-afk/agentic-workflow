@@ -250,20 +250,20 @@ test("a contract refusal writes the canonical rejection note the next PLAN pass 
   const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), { manifest: contractManifest("plan") })
   await runTerminal(ctx, park)
   assert.ok(
-    log.some((c) => c.includes("Plan rejected — sent back to queued for re-planning — the plan has no ### Verification subsection")),
-    `refusal note carries planRejectedNote's parseable shape: ${log.filter((c) => c.includes(">>")).join(" | ")}`,
+    log.some((c) => c.includes("Plan rejected [contract] — sent back to queued for re-planning — the plan has no ### Verification subsection")),
+    `refusal note carries contractRejectedNote's parseable, tagged shape: ${log.filter((c) => c.includes(">>")).join(" | ")}`,
   )
 })
 
-test("the third unaddressed refusal returns the task to draft/ for human triage", async () => {
-  // Two stamped, unaddressed rejection notes already on the body + the one this
-  // refusal appends = 3 → the park gate stops re-queueing (the queued pool
-  // re-claims instantly, so each refusal otherwise burns a PLAN run per poll
-  // tick forever) and hands the task back to a human.
+test("the third unaddressed CONTRACT refusal returns the task to draft/ for human triage", async () => {
+  // Two stamped, unaddressed, TAGGED rejection notes already on the body + the
+  // one this refusal appends = 3 → the park gate stops re-queueing (the queued
+  // pool re-claims instantly, so each refusal otherwise burns a PLAN run per
+  // poll tick forever) and hands the task back to a human.
   const stamped = (text: string) => `> ${text} [2026-08-01T00:00:00.000Z by tester]`
   const planned = serializeTask({
     title: "Do it",
-    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected — sent back to queued for re-planning — refusal one")}\n${stamped("Plan rejected — sent back to queued for re-planning — refusal two")}`,
+    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected [contract] — sent back to queued for re-planning — refusal one")}\n${stamped("Plan rejected [contract] — sent back to queued for re-planning — refusal two")}`,
   })
   const { ctx, fs, metrics } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
   const report = await runTerminal(ctx, park)
@@ -274,13 +274,32 @@ test("the third unaddressed refusal returns the task to draft/ for human triage"
   assert.match(metrics[0]?.detail ?? "", /returned to draft after 3 refusals/)
 })
 
+test("two human replans plus one contract miss is NOT three contract strikes", async () => {
+  // A human's `replan` writes the SAME base note shape but untagged
+  // (`planRejectedNote`, no ` [contract]`) — deliberate feedback, not the
+  // planner looping on a mechanical mistake. Two of those plus this refusal
+  // (the first TAGGED one) must be strike ONE, not strike three, or a human
+  // rejecting a plan twice for substantive reasons silently dumps the task to
+  // draft/ on the very next mechanical contract miss.
+  const stamped = (text: string) => `> ${text} [2026-08-01T00:00:00.000Z by tester]`
+  const planned = serializeTask({
+    title: "Do it",
+    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected — sent back to queued for re-planning — I want a different approach")}\n${stamped("Plan rejected — sent back to queued for re-planning — still not it")}`,
+  })
+  const { ctx, fs } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "error")
+  assert.ok("/repo/docs/tasks/queued/t.md" in fs, "strike one: still queued, not drafted")
+  assert.ok(!("/repo/docs/tasks/draft/t.md" in fs), "two human replans never count toward the contract strike limit")
+})
+
 test("a prior successful park retires old rejections — the strike counter never reaches across cycles", async () => {
   // Same two old rejections, but a `Plan written` note after them: they were
   // addressed, so this refusal is strike ONE and the task stays queued.
   const stamped = (text: string) => `> ${text} [2026-08-01T00:00:00.000Z by tester]`
   const planned = serializeTask({
     title: "Do it",
-    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected — sent back to queued for re-planning — refusal one")}\n${stamped("Plan rejected — sent back to queued for re-planning — refusal two")}\n${stamped("Plan written — parked for plan review")}`,
+    body: `${PLAN_HEADING}\n\n1. step\n\n${stamped("Plan rejected [contract] — sent back to queued for re-planning — refusal one")}\n${stamped("Plan rejected [contract] — sent back to queued for re-planning — refusal two")}\n${stamped("Plan written — parked for plan review")}`,
   })
   const { ctx, fs } = makeCtx({ "queued/t.md": planned }, planState(), { manifest: contractManifest("plan") })
   const report = await runTerminal(ctx, park)

@@ -380,19 +380,31 @@ test("a rejection AFTER the last successful park is pending again", () => {
   assert.equal(extractReplanReason(task("a", 0, body)), "verification section is vague")
 })
 
-test("unaddressedRejectionCount counts only stamped rejections since the last successful park", () => {
+const contractRejectionNote = (reason?: string, stamp = "2026-01-02T00:00:00.000Z by dev"): string =>
+  `\n> Plan rejected [contract] — sent back to queued for re-planning${reason ? ` — ${reason}` : ""} [${stamp}]\n`
+
+test("unaddressedRejectionCount counts only stamped, tagged CONTRACT rejections since the last successful park", () => {
   const planWritten = `\n> Plan written — parked for plan review [2026-01-05T00:00:00.000Z by dev]\n`
   const body =
     `${PLAN_HEADING}\n\nApproach.\n` +
-    rejectionNote("one") +
-    rejectionNote("two") +
+    contractRejectionNote("one") +
+    contractRejectionNote("two") +
     planWritten +
-    rejectionNote("three") +
-    rejectionNote("four") +
+    contractRejectionNote("three") +
+    contractRejectionNote("four") +
     // Quoted, stamp-less line — must not inflate the tally.
-    `\n> Plan rejected — sent back to queued for re-planning — fake\n`
+    `\n> Plan rejected [contract] — sent back to queued for re-planning — fake\n`
   assert.equal(unaddressedRejectionCount(body), 2, "one/two were addressed by the park; the quote doesn't count")
   assert.equal(unaddressedRejectionCount(`${PLAN_HEADING}\n\nplan\n`), 0)
+})
+
+test("unaddressedRejectionCount excludes a human's untagged replan — only the park gate's own mistake repeats", () => {
+  const body =
+    `${PLAN_HEADING}\n\nApproach.\n` +
+    rejectionNote("a human's reason, deliberate feedback") +
+    rejectionNote("another human reason") +
+    contractRejectionNote("the mechanical contract miss")
+  assert.equal(unaddressedRejectionCount(body), 1, "the two human replans must not count toward the contract strike limit")
 })
 
 test("extractReplanReason ignores the marker quoted mid-line or without the audit stamp", () => {
