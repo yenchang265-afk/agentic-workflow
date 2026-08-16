@@ -3547,7 +3547,7 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
     const elsewhere = await findAnyStatus(deps, config, id)
     const detail =
       elsewhere === "in-progress"
-        ? `its plan is already approved — it's build-ready; ${ECMD} claim (or watch) builds it`
+        ? `its plan is already approved — it's build-ready; ${ECMD} claim ${id} builds it now (or claim/watch picks it up by priority)`
         : elsewhere === "plan-review"
           ? `its plan is parked for review — ${ECMD} approve ${id} (or ${ECMD} replan ${id} <why>)`
           : elsewhere === "draft"
@@ -3566,12 +3566,84 @@ const startPlanById = async (deps: Deps, sessionID: string, id: string, config: 
   return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
 }
 
+/**
+ * Handle `claim <id>` — run ONE specific task now instead of the priority
+ * walk: a build-ready `in-progress/` task queues a BUILD drive (the
+ * `start-task` pending, whose consumer arm in `onIdle` predates this
+ * producer), an approved `queued/` task queues its PLAN pass exactly as
+ * `plan <id>` does. The by-id twin of the bare `claim`, matching the Claude
+ * host's `workflow_start({id})` — without it, a backlog with several
+ * build-ready tasks had no way to say "build THIS one" (priority order chose
+ * for you), while `plan <id>` refused build-ready ids and pointed back at
+ * the very walk that cannot target them.
+ */
+const startTaskById = async (deps: Deps, sessionID: string, id: string, config: Config): Promise<string | undefined> => {
+  const { client } = deps
+  // Same busy guard as `plan <id>`/`claim`: this session may already be
+  // driving a DIFFERENT task, and the clearWorkflow below would null that
+  // run's state mid-stage. (The claim branch of handleCommand also guards,
+  // but this function must hold on its own for any future caller.)
+  if (driving.has(sessionID) || getWorkflow(sessionID)) {
+    return report(client, `A loop is already driving in this session — ${ECMD} stop it first.`, "warning")
+  }
+  // Accept the short-hash handle (`claim f7k3`), same as `plan <id>` and the
+  // gate verbs.
+  const resolved = await resolveTaskIdAnywhere(deps.$, deps.directory, config.tasksDir, id, deps.log)
+  if (resolved && "ambiguous" in resolved) {
+    return report(client, `Ambiguous id "${id}" — matches ${resolved.ambiguous.join(", ")}. Use more characters.`, "warning")
+  }
+  if (resolved) id = resolved.id
+  if (findSessionDriving(id)) {
+    return report(client, `Task "${id}" is already being driven by a live loop.`, "warning")
+  }
+  const ready = await findByIdIn(deps.$, deps.directory, config.tasksDir, "in-progress", id)
+  if (ready) {
+    if (!isClaimable(ready)) {
+      // Mirror recover's split: a started task resumes, a planless one replans.
+      return report(
+        client,
+        isRecoverable(ready)
+          ? `Task "${id}" has already started — resume it with ${ECMD} recover ${id}.`
+          : `Task "${id}" has no persisted plan — send it back with ${ECMD} replan ${id}.`,
+        "warning",
+      )
+    }
+    if (!(await claimTask(deps.$, ready))) {
+      return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
+    }
+    clearWorkflow(sessionID)
+    await setPending(deps, sessionID, { kind: "start-task", task: ready, goal: taskGoal(ready) })
+    return report(client, `Loop started on "${ready.title}" — building… (BUILD → VERIFY → REVIEW once this turn settles)`, "info")
+  }
+  const queued = await findByIdIn(deps.$, deps.directory, config.tasksDir, "queued", id)
+  if (queued) {
+    if (!(await claimForPlan(deps, sessionID, queued, config))) {
+      return report(client, `Task "${id}" was just claimed by another watcher.`, "warning")
+    }
+    return report(client, `Loop started on "${queued.title}" — planning… (it will park in plan-review/ for your gate)`, "info")
+  }
+  const elsewhere = await findAnyStatus(deps, config, id)
+  const detail =
+    elsewhere === "plan-review"
+      ? `its plan is parked for review — ${ECMD} approve ${id} (or ${ECMD} replan ${id} <why>)`
+      : elsewhere === "draft"
+        ? `it's a draft — approve it first with ${ECMD} approve ${id}`
+        : elsewhere === "in-review"
+          ? `it's finished and waiting for your ship gate — ${ECMD} approve ${id}`
+          : elsewhere === "completed" || elsewhere === "abandoned"
+            ? `it's in ${elsewhere} — nothing to run`
+            : elsewhere
+              ? `it's in ${elsewhere}`
+              : `no task "${id}" found`
+  return report(client, `Can't claim "${id}": ${detail}.`, "warning")
+}
+
 /** Per-kind usage toasts. Engineering carries the full lifecycle; every other
  *  kind gets the minimal watcher verb set. */
 const USAGE =
   `Usage: ${ECMD} new <idea> · retask <id> [note] · approve [id] [--base=<branch>] [--pr|--push|--local] · replan [id] [reason] · ` +
   "abandon <id> [reason] · remove <id> --force · plan <id> · " +
-  "claim · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
+  "claim [id] · watch [interval] · unwatch · recover <id> · kinds · doctor [fix] · stop · status"
 const kindUsage = (kind: string): string => `Usage: /agentic-workflow:${kind} claim · watch [interval] · unwatch · stop · status`
 
 /**
@@ -3690,18 +3762,21 @@ export const handleCommand = async (
       return report(client, `A loop is already driving in this session — /agentic-workflow:${kind} stop it first.`, "warning")
     }
     // `claim <pr>` forces a specific PR on a PR-shaped kind (pr-sitter /
-    // review-sitter), overriding the poller's "what needs attention" heuristic.
+    // review-sitter), overriding the poller's "what needs attention" heuristic;
+    // engineering's `claim <id>` runs one specific TASK now instead of the
+    // priority walk.
     if (rest) {
       const isPrKind = manifestFor(kind).manifest.workSource.type === "pull-request"
-      if (!isPrKind) {
-        return report(client, `/agentic-workflow:${kind} claim takes no argument — a specific PR number only applies to the PR sitters.`, "warning")
+      if (isPrKind) {
+        const target = parsePrTarget(rest)
+        if (target === null) {
+          return report(client, `Could not read "${rest}" as a PR — pass a number (42), #42, or a PR URL.`, "warning")
+        }
+        claimRequested.set(sessionID, { kind, target })
+        return report(client, `Claiming PR #${target} for ${kind} — it starts when this turn settles.`, "info")
       }
-      const target = parsePrTarget(rest)
-      if (target === null) {
-        return report(client, `Could not read "${rest}" as a PR — pass a number (42), #42, or a PR URL.`, "warning")
-      }
-      claimRequested.set(sessionID, { kind, target })
-      return report(client, `Claiming PR #${target} for ${kind} — it starts when this turn settles.`, "info")
+      if (engineering) return startTaskById(deps, sessionID, rest, config)
+      return report(client, `/agentic-workflow:${kind} claim takes no argument — a specific target only applies to the PR sitters (a PR number) and engineering (a task id).`, "warning")
     }
     claimRequested.set(sessionID, { kind })
     return report(client, `Claiming the next ${kind} item — it starts when this turn settles.`, "info")

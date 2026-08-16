@@ -252,16 +252,22 @@
   the park is followed by a **`PLAN GATE`** block the harness emits beside the
   result, carrying the same question with the ids and tool names filled in —
   obey it. If the id is already build-ready
-  (`in-progress/`), don't start it here — `claim` builds it.
+  (`in-progress/`), don't start it here — `claim <id>` builds it now.
 <!-- /aw:verb approve|plan -->
 <!-- aw:verb claim -->
-- **`claim`** — call `mcp__agentic-workflow__workflow_claim` to pick up the next
+- **`claim [id]`** — with an id, run THAT task now: call
+  `mcp__agentic-workflow__workflow_start({id})` (short-hash handles resolve) — a
+  build-ready `in-progress/` task starts at BUILD on `feature/<id>`, an
+  approved `queued/` (planless) task starts at PLAN and parks the plan in
+  `plan-review/` for the gate; any other folder is refused with the verb to
+  use instead — relay that refusal, don't work around it. Without an id, call
+  `mcp__agentic-workflow__workflow_claim` to pick up the next
   engineering item and drive it: build-ready `in-progress/` tasks first, then a
   planless `queued/` task to plan, lowest priority number first within each,
   unless a `queued/` task holds a plan request (the hub's Plan button), which
   claims first. A
   `queued/` claim enters at PLAN and parks the plan for the gate. An `in-progress/`
-  task starts at BUILD on `feature/<id>`; follow the `workflow-orchestration`
+  task starts at BUILD on `feature/<id>`; either way, follow the `workflow-orchestration`
   protocol: `workflow_stage` before spawning each stage subagent (`workflow-build` /
   `workflow-verify` / `workflow-review` via the
   {{spawnTool}}{{modelClause}})

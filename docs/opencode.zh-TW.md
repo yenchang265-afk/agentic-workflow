@@ -86,11 +86,14 @@ FAIL/ERROR 判定，工作階段呼叫 `workflow_blocked`。兩者都會在下�
 
 - `/agentic-workflow:engineering plan <id>`——立刻對一個已核准的
   `queued/` 任務執行 PLAN 階段：把計畫寫進任務檔案，將其暫存到
-  `plan-review/`，然後結束。從 `plan` 無法抵達建置階段——建置由
-  `claim`/`watch` 驅動
-- `/agentic-workflow:engineering claim`——一次性拉取下一個項目，優先數字最小者
-  優先：先取建置就緒的 `in-progress/` 工作，沒有可建置的工作時，再取一個
-  已核准的 `queued/` 任務來規劃
+  `plan-review/`，然後結束。從 `plan` 無法抵達建置階段——`claim <id>`
+  可立刻建置一個；`claim`/`watch` 依優先序驅動建置
+- `/agentic-workflow:engineering claim [id]`——一次性拉取。不帶引數時認領下一個
+  項目，優先數字最小者優先：先取建置就緒的 `in-progress/` 工作，沒有可建置的
+  工作時，再取一個已核准的 `queued/` 任務來規劃。帶任務 id（短雜湊代碼可
+  解析）時，立刻執行那一個任務——建置就緒的任務從 BUILD 開始，已核准的
+  `queued/` 任務執行它的 PLAN 巡查並暫存等你把關；其他資料夾會被拒絕，並
+  告知該用哪個動詞
 - `/agentic-workflow:engineering watch [trigger]`——把這個 session 變成
   一個常駐 worker，**範圍限定於 engineering 類型**；認領順序與 `claim`
   相同。裸 `watch` 使用

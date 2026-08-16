@@ -105,10 +105,14 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering plan <id>` — run the PLAN stage on one approved `queued/`
   task now: it writes the plan onto the task file, parks it in
   `plan-review/`, and exits. Building is not reachable from `plan` —
-  `claim`/`watch` drive builds
-- `/agentic-workflow:engineering claim` — one-shot pull of the next item, lowest
-  priority number first: build-ready `in-progress/` work, then an approved
-  `queued/` task to plan when no build work is left
+  `claim <id>` builds one now; `claim`/`watch` drive builds by priority
+- `/agentic-workflow:engineering claim [id]` — one-shot pull. Bare, it claims the
+  next item, lowest priority number first: build-ready `in-progress/` work,
+  then an approved `queued/` task to plan when no build work is left. With a
+  task id (short-hash handles resolve), it runs exactly that task now — a
+  build-ready task starts at BUILD, an approved `queued/` task runs its PLAN
+  pass and parks for the gate; any other folder is refused with the verb to
+  use instead
 - `/agentic-workflow:engineering watch [trigger]` — turn this session into a standing worker
   **scoped to the engineering kind**; claims in the same order as `claim`. Bare
   `watch` uses `workflows.engineering.trigger` (default poll); the argument is a

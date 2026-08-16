@@ -1,7 +1,7 @@
 ---
 name: agentic-workflow:engineering
 description: The engineering loop — author tasks, gate them, and drive them through plan → build → verify → review
-argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
+argument-hint: new <idea> | retask <id> [note] | approve [id] [--base=<branch>] [--pr|--push|--local] | replan [id] [reason] | abandon <id> [reason] | remove <id> --force | plan <id> | claim [id] | watch [poll [interval] | cron <schedule> | idle | <interval>] | unwatch | recover <id> | kinds | doctor [fix] | stop | status
 ---
 
 The engineering agentic loop — one command for authoring, the human gates,
@@ -230,7 +230,8 @@ Dispatch:
 - **`plan <id>`** — plan one approved task now: claims the `queued/` task and
   runs the PLAN stage (writes the `## Implementation Plan` onto the task
   file, parks it in `plan-review/` for your gate, exits). Building is not
-  reachable from here — `claim`/`watch` drive builds. The PLAN pass finishes in
+  reachable from here — `claim <id>` builds one now; `claim`/`watch` drive
+  builds by priority. The PLAN pass finishes in
   the background driver, after this turn has ended, so the plan gate arrives as
   its OWN turn: once the plan parks, the plugin starts a fresh turn carrying a
   **`NEXT STEP`** line that asks you to put the gate question to the user
@@ -240,11 +241,15 @@ Dispatch:
   alone, because nobody is sitting at it.
 <!-- /aw:verb plan -->
 <!-- aw:verb claim -->
-- **`claim`** — one-shot pull: claim the next task (lowest priority number
-  first, unless a `queued/` task holds a plan request — the hub's Plan
-  button — which claims that one first) and drive it once this turn
-  settles — build-ready `in-progress/` work, then an approved `queued/` task
-  to plan when no build work is left.
+- **`claim [id]`** — one-shot pull. Bare, it claims the next task (lowest
+  priority number first, unless a `queued/` task holds a plan request — the
+  hub's Plan button — which claims that one first) and drives it once this
+  turn settles — build-ready `in-progress/` work, then an approved `queued/`
+  task to plan when no build work is left. With an id (short-hash handles
+  resolve), it runs THAT task now instead of the priority walk: a build-ready
+  `in-progress/` task starts at BUILD on its feature branch, an approved
+  `queued/` task runs its PLAN pass and parks in `plan-review/` for your
+  gate; any other folder is refused with the verb to use instead.
 <!-- /aw:verb claim -->
 <!-- aw:verb watch -->
 - **`watch [trigger]`** — put **this** session into engineering worker mode.

@@ -23,9 +23,10 @@ sections below cover each.
    cancellation (file kept in `abandoned/` — how a tracking epic is closed);
    `remove <id> --force` hard-deletes from any folder (bare `remove` is a dry
    run; both refused while a loop drives the task or a claim is held);
-   `claim`, or a `watch [trigger]` worker session (`unwatch` reverses it),
+   `claim [id]`, or a `watch [trigger]` worker session (`unwatch` reverses it),
    drives BUILD→VERIFY→REVIEW unattended on plan-approved tasks, falling back
-   to planning an approved `queued/` task; `plan <id>` plans one now — either
+   to planning an approved `queued/` task (with an id, `claim` runs exactly
+   that task instead of the priority walk); `plan <id>` plans one now — either
    way PLAN parks the plan in `plan-review/` for your gate and exits;
    `recover <id>` resumes a run that stopped early (crash or ESC); `stop`/`abort`
    ends a run outright; `status`, `kinds`, and `doctor [fix]` report the loop +

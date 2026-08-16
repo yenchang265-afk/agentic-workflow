@@ -191,11 +191,12 @@ npm install
   任務 —— `--force` 才是確認。只有在你設定 `ignoreBacklog: false` 時才能從 git
   還原；預設會把 `docs/tasks/` 完全排除在 git 之外，所以除非你真的要讓檔案消失，
   否則請優先使用 `abandon`
-- `/agentic-workflow:engineering plan <id>` · `claim` · `watch [trigger]`（OpenCode）·
+- `/agentic-workflow:engineering plan <id>` · `claim [id]` · `watch [trigger]`（OpenCode）·
   `unwatch` · `recover <id>` · `stop` · `status` · `doctor [fix]` · `kinds` ——
   `plan` 為一個已排入佇列的任務執行 PLAN 並將其暫存，不必等巡查；
   `claim` 拉取下一個項目——先取可建置的 `in-progress/` 工作，沒有時再取一個
-  已核准的 `queued/` 任務來規劃；`watch` 是一個僅作用於 engineering 類型的常駐
+  已核准的 `queued/` 任務來規劃——或給定任務 id 時，立刻執行那一個任務
+  （建置就緒則進 BUILD，否則執行它的 PLAN 巡查）；`watch` 是一個僅作用於 engineering 類型的常駐
   worker，排程依 `workflows.<kind>.trigger` 決定，除非以參數覆寫
   （`poll [interval]`、像 `5m` 這樣的純間隔、`cron <schedule>` 或 `idle`）
 - `/agentic-workflow:pr-sitter claim [<pr>]` · `watch [trigger]`（OpenCode）· `unwatch` ·

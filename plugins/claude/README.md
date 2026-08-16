@@ -123,11 +123,13 @@ The loop (`/agentic-workflow:engineering`):
 - `/agentic-workflow:engineering plan <id>` — run the PLAN stage on one approved `queued/`
   task now: it writes the plan, parks the task in `plan-review/`, and the
   loop ends there (the driving agent then offers the gate inline via
-  AskUserQuestion). Building is not reachable from `plan` — `claim` drives
-  builds.
-- `/agentic-workflow:engineering claim` — one-shot pull of the next item (lowest
-  priority number first): build-ready `in-progress/` work, then an approved
-  `queued/` task to plan when no build work is left — the pull
+  AskUserQuestion). Building is not reachable from `plan` — `claim <id>`
+  builds one now; bare `claim` drives builds by priority.
+- `/agentic-workflow:engineering claim [id]` — one-shot pull. Bare, it claims the
+  next item (lowest priority number first): build-ready `in-progress/` work,
+  then an approved `queued/` task to plan when no build work is left. With a
+  task id it runs exactly that task now via `workflow_start({id})` — BUILD if
+  build-ready, else its PLAN pass — the pull
   equivalent of the OpenCode `/agentic-workflow:engineering watch`; there is no
   standing watch on this host.
 - `/agentic-workflow:engineering status` — the active loop plus a whole-backlog roll-up
