@@ -139,7 +139,7 @@ export const gateArgsFor = (prompt) => {
     const words = (approve[1] || "").trim().split(/\s+/).filter(Boolean)
     const id = unquote(words.find((w) => !w.startsWith("-")) || "")
     // Options are forwarded verbatim — every dash-word, not only the three this
-    // hook could recognize. The CLI owns the flag vocabulary (`parsePublishFlags`
+    // hook could recognize. The CLI owns the flag vocabulary (`parseGateOptions`
     // in core), so a typo like `--localy` earns a refusal there instead of being
     // dropped here and shipping under the configured default: a ship that
     // publishes MORE than the human asked for cannot be taken back.

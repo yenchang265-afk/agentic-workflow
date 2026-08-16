@@ -151,10 +151,11 @@ export const branchExists = async ($: Shell, cwd: string, branch: string): Promi
  * a PR the platform would have accepted.
  *
  * `ls-remote` exits 0 with empty output when nothing matched, so the exit code
- * alone proves nothing — and it PREFIX-matches, so `--heads origin 2.4` happily
- * returns `refs/heads/release/2.4`. Both are why this parses stdout and demands
- * an exact `refs/heads/<branch>` line: a substring test would wave through the
- * very typo the caller exists to catch.
+ * alone proves nothing — and its pattern matches against the TAIL of a ref path,
+ * so `--heads origin 2.4` happily returns `refs/heads/release/2.4`. Both are why
+ * this parses stdout and demands an exact `refs/heads/<branch>` line: a
+ * substring test would wave through the very typo the caller exists to catch
+ * (`release/2.4` vs `release/2.40` — pinned in ship-pr.test.ts).
  */
 export const remoteBranchExists = async ($: Shell, cwd: string, branch: string): Promise<"present" | "absent" | "unknown"> => {
   const { ok, stdout } = await run($, cwd, ["ls-remote", "--heads", "origin", branch])

@@ -210,21 +210,6 @@ const BaseConfigSchema = z.object({
         codePlatform: CodePlatformSchema.optional(),
         /** Per-kind override of the global `prBase` — the branch this kind's PRs target. */
         prBase: PrBaseSchema.optional(),
-  /**
-   * Extra branches no loop stage may `git push`, on top of the permanent
-   * `main`/`master`/`HEAD` floor — for a team whose integration branch is
-   * `release/2.4` rather than the repo default.
-   *
-   * Additive only: the floor cannot be configured away. A config that could
-   * unprotect `main` is a config that can be wrong about the one branch that
-   * matters, and the failure is silent until something has already been pushed.
-   *
-   * Deliberately separate from `prBase`. "Where PRs target" and "what agents
-   * may not push" are different policies that merely coincide by default — an
-   * integration branch the loop IS allowed to push is a legitimate setup, and
-   * folding the two would make one value mean three things.
-   */
-  protectedBranches: z.array(GitRefNameSchema).default([]),
         /** How a watching host schedules claims for this kind (default: poll). */
         trigger: WorkflowTriggerSchema.optional(),
         /** Stage name → model override for that stage (host-specific string; wins over the manifest's per-stage `model`). */
@@ -449,6 +434,28 @@ const BaseConfigSchema = z.object({
    * feature work on `release/2.4` while dependency bumps go to `main` is ordinary.
    */
   prBase: PrBaseSchema.optional(),
+  /**
+   * Extra branches no loop stage may `git push`, on top of the permanent
+   * `main`/`master`/`HEAD` floor — for a team whose integration branch is
+   * `release/2.4` rather than the repo default.
+   *
+   * Additive only: the floor cannot be configured away. A config that could
+   * unprotect `main` is a config that can be wrong about the one branch that
+   * matters, and the failure is silent until something has already been pushed.
+   *
+   * Deliberately separate from `prBase`. "Where PRs target" and "what agents
+   * may not push" are different policies that merely coincide by default — an
+   * integration branch the loop IS allowed to push is a legitimate setup, and
+   * folding the two would make one value mean three things.
+   *
+   * TOP-LEVEL, and not per kind. It shipped declared one level down, inside the
+   * `workflows.<kind>` record — which parses, so nothing failed, while every
+   * reader (`discovered-checks.ts`, the Claude host's stage marker) asks for the
+   * top-level key and got `undefined` forever. A push protection that silently
+   * protects nothing is worse than one that was never configured, so the shape
+   * the docs describe is the shape the schema now has, in exactly one place.
+   */
+  protectedBranches: z.array(GitRefNameSchema).default([]),
   /**
    * Azure DevOps coordinates; required when any effective platform is `ado`.
    *

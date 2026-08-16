@@ -56,10 +56,14 @@ export const requestPlan = async (
   directory: string,
   tasksDir: string,
   id: string,
-  opts: { readonly by?: string | null; readonly now?: Date; readonly source?: string } = {},
+  opts: { readonly by?: string | null; readonly now?: Date; readonly source?: string; readonly status?: string } = {},
 ): Promise<boolean> => {
   if (!isSafeTaskId(id)) return false
-  const dir = requestsDir(directory, tasksDir)
+  // Status-parameterized like every sibling here. It was the one writer without
+  // it, so a pool whose requests live anywhere but `queued/` could be READ,
+  // CONSUMED and SWEPT in its own folder while the restore-on-release path
+  // (`backlog.ts`) silently wrote the request back into `queued/`.
+  const dir = requestsDir(directory, tasksDir, opts.status ?? REQUESTS_STATUS)
   await $`mkdir -p ${dir}`.quiet().nothrow()
   const stamp = JSON.stringify({
     requestedAt: (opts.now ?? new Date()).toISOString(),

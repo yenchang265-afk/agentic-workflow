@@ -262,7 +262,7 @@ export const makeBacklogSource = (deps: BacklogDeps): WorkSource => {
       // A released claim did no work, so a plan request the claim spent is
       // restored — without this the human's ask silently vanished whenever
       // setup (isolation, checks) threw after the claim consumed it.
-      if (consumedRequest) await requestPlan($, directory, tasksDir, task.id)
+      if (consumedRequest) await requestPlan($, directory, tasksDir, task.id, { status: pool.status })
       const fresh = await findByIdIn($, directory, tasksDir, pool.status, task.id)
       if (!fresh) {
         // The file left the pool (a racing move) or no longer parses — but the

@@ -1368,7 +1368,13 @@ server.registerTool(
   async ({ stage }) => {
     if (!active) return fail("No active loop.")
     try {
-      return ok({ prompt: composePrompt(activeManifest(), active, stage, config) })
+      // Composed for `stage`, so the state handed to core names `stage` too.
+      // `promptContext` keys the check-results section on `state.stage` — which
+      // the fire path always sets to its target first (`fireAt`) and this tool,
+      // taking the stage as a free parameter, did not: previewing REVIEW while
+      // the loop sat at VERIFY rendered VERIFY's check output into REVIEW's
+      // prompt.
+      return ok({ prompt: composePrompt(activeManifest(), { ...active, stage }, stage, config) })
     } catch (err) {
       return fail((err as Error).message)
     }
@@ -2201,7 +2207,35 @@ server.registerTool(
 const runTerminal = async (action: Action): Promise<TerminalReport | null> => {
   if (!active || (action.kind !== "done" && action.kind !== "stop")) return null
   const actor = await gitActor(sh, directory)
-  const report = await coreRunTerminal(terminalCtx(active, actor), action)
+  const task = active.task
+  const claim = activeClaim
+  let report: TerminalReport
+  try {
+    report = await coreRunTerminal(terminalCtx(active, actor), action)
+  } catch (err) {
+    // The same guard `runPark` carries, on the path that needs it MORE: this one
+    // runs `closeIsolation` — a checkpoint commit and a worktree teardown —
+    // where the park path only runs a validate hook. Without it a throw skips
+    // every line below, and each omission wedges something: the stage marker
+    // stays armed (the PreToolUse guard keeps enforcing a dead stage, and the
+    // task reads as driven to every gate), the source's claim marker is never
+    // released, `active`/`activeClaim` stay set so the next claim refuses, and
+    // the fan-out scratch stays armed for the following loop. OpenCode's driver
+    // has had this catch all along.
+    try {
+      if (task) await releaseClaim(sh, task, log)
+      // A task-less (sitter) drive holds its claim through the work source, so
+      // releasing the task ref alone would leave that marker held.
+      if (claim) await claim.source.release?.(claim.item)
+    } catch {
+      // already best-effort; the original failure is what the caller must see
+    }
+    activeClaim = null
+    active = null
+    resetLoopScratch()
+    writeStageMarker(null)
+    throw err
+  }
   writeStageMarker(null)
   if (activeClaim) {
     const detail = report.kind === "done" ? "review passed" : report.message

@@ -455,6 +455,29 @@ test("done on an isolated shared-tree loop checkpoints BEFORE the backlog move +
   assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
 })
 
+test("a failing end-of-run checkpoint still moves the task and releases the claim", async () => {
+  // `closeIsolation` runs FIRST on done/stop, so a throw from the checkpoint (a
+  // git commit — the likeliest thing here to fail) used to abort the whole
+  // terminal path: no audit note, no move, no claim release, no metrics. The
+  // claim then sat held until the ~75-minute stale sweep, over a tree cleanup.
+  // The work is not lost either way — it stays in the tree, uncommitted.
+  const state: WorkflowState = {
+    goal: "Do it",
+    stage: "review",
+    iteration: 0,
+    artifacts: {},
+    task: taskRef("t", "in-progress"),
+    git: { base: "main", branch: "feature/t" },
+    isolated: true,
+  }
+  const { ctx, log, metrics } = makeCtx({ "in-progress/t.md": body(true) }, state)
+  const report = await runTerminal({ ...ctx, checkpoint: async () => { throw new Error("index.lock exists") } }, done)
+  assert.ok(report.kind === "done" && report.moved === true, "the task must still reach in-review/")
+  assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("in-review")), log.join(" | "))
+  assert.ok(log.some((c) => c.startsWith("rm ") || c.includes(".claims")), `the claim must be released: ${log.join(" | ")}`)
+  assert.deepEqual(metrics, [{ outcome: "done", detail: "review passed" }])
+})
+
 test("stop on an isolated shared-tree loop checkpoints and tears down BEFORE the note + backlog commit", async () => {
   const state: WorkflowState = {
     goal: "Do it",

@@ -445,7 +445,14 @@ export const planHeadingCount = (body: string): number => {
  * inflate the tally. Pure.
  */
 export const unaddressedRejectionCount = (body: string): number => {
-  const addressed = lastMarkerIndex(body, PLAN_WRITTEN_MARKER)
+  // A RESHAPE retires the strikes too, not just a written plan. The strikes
+  // count how often the PLAN stage failed the contract on THIS task text; a
+  // `retask` rewrites that text, so carrying them across meant a reshaped task
+  // could be bounced back to draft/ on its first fresh refusal, having been
+  // given one attempt rather than three. `pendingPlanRejection` already treats
+  // the reshape as an anchor — these two parsers read the same audit trail and
+  // must agree about what retires an entry in it.
+  const addressed = Math.max(lastMarkerIndex(body, PLAN_WRITTEN_MARKER), lastMarkerIndex(body, TASK_RESHAPED_MARKER))
   let count = 0
   for (let idx = body.indexOf(PLAN_REJECTED_MARKER); idx !== -1; idx = body.indexOf(PLAN_REJECTED_MARKER, idx + 1)) {
     if (idx !== 0 && body[idx - 1] !== "\n") continue
@@ -1391,10 +1398,24 @@ export const appendRunLog = async (
   await warnLostAppend(out.exitCode, `run log ${id}.md`, log)
 }
 
-/** Append a plan under `PLAN_HEADING` to a task file in place. Secrets redacted. Best-effort. */
+/**
+ * Append a plan under `PLAN_HEADING` to a task file in place. Secrets redacted.
+ * Best-effort.
+ *
+ * Carries `appendNote`'s existence check for the reason spelled out there: `>>`
+ * CREATES its target, so an append to a path the task has since left resurrects
+ * it as a frontmatterless ghost that no lister can see and `moveTask`'s
+ * duplicate guard refuses to move past. A PLAN stage holds its task ref for
+ * minutes, which is exactly the window in which the file moves.
+ */
 export const appendPlan = async ($: Shell, task: FileRef, plan: string, log?: Log): Promise<void> => {
   const { text, hits } = redact(plan)
   warnRedaction(hits, `plan on ${task.id}`, log)
+  const exists = await $`test -f ${task.path}`.quiet().nothrow()
+  if (exists.exitCode !== 0) {
+    await log?.("warn", `plan on ${task.id} never landed: ${task.path} no longer exists — the task moved or was removed`)
+    return
+  }
   // Chunked (fsatomic): a large plan as one printf argument dies with E2BIG.
   const out = await appendFileChunked($, task.path, `\n${PLAN_HEADING}\n\n${text}\n`)
   await warnLostAppend(out.exitCode, `plan on ${task.id}`, log)

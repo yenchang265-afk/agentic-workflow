@@ -358,8 +358,6 @@ export interface WorkflowKindConfig {
   readonly codePlatform?: CodePlatform
   /** Per-kind override of the global `prBase` — the branch this kind's PRs target. */
   readonly prBase?: string
-  /** Extra branches no stage may push, added to the permanent main/master/HEAD floor. */
-  readonly protectedBranches?: readonly string[]
   /** How a watching host schedules claims for this kind (default: poll). */
   readonly trigger?: WorkflowTrigger
   /** Stage name → model that stage runs with (host-specific string); wins over the manifest stage's `model`. */

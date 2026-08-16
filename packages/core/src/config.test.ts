@@ -692,6 +692,21 @@ test("prBase is undefaulted — unset means ask the platform, NOT main", () => {
   assert.equal(parseConfig({}).prBase, undefined)
 })
 
+test("protectedBranches parses at the TOP level and defaults to []", () => {
+  // The round-trip nobody wrote, which is exactly how the key shipped declared
+  // one level down — inside the `workflows.<kind>` record. That parses, so
+  // nothing failed, while every reader (`discovered-checks`, the Claude host's
+  // stage marker) asks `config.protectedBranches` and got `undefined` forever:
+  // a configured protected branch protected nothing on two of three hosts.
+  assert.deepEqual(parseConfig({ protectedBranches: ["release/2.4"] }).protectedBranches, ["release/2.4"])
+  assert.deepEqual(parseConfig({}).protectedBranches, [])
+  // Kept refs/heads-qualified: unlike prBase this is not normalized at parse,
+  // because `isGitPushViolation` strips the prefix on both sides when it compares.
+  assert.deepEqual(parseConfig({ protectedBranches: ["refs/heads/release/2.4"] }).protectedBranches, ["refs/heads/release/2.4"])
+  // Same ref screening as prBase — these names reach a `git push` matcher.
+  assert.throws(() => parseConfig({ protectedBranches: ["--upload-pack=x"] }))
+})
+
 test("prBaseFor prefers the per-kind override, unlike shipPublish", () => {
   // dep-sitter and main-sitter open PRs of their own, so wanting feature work on
   // release/2.4 while dependency bumps go to main is ordinary.
