@@ -55,6 +55,10 @@ diff 之後交付一份已完成的審查（發布）——一個任務永遠只
 階段指向小模型時這一點很重要（見
 [docs/configuration.md](docs/configuration.md)）。
 
+在使用者設定裡設定 `notifyCommand`，即可在計畫停泊、run 抵達出貨閘門或
+迴圈停止時收到推播（`notify-send`、聊天 webhook）——而不是沒人看的
+scrollback 裡的一則 toast。
+
 執行是在 `feature/<id>` git 分支上隔離進行的，且預設會在自己的 git worktree
 （`.workflow-worktrees`）中簽出，因此你的工作樹永遠不會被動到——可設定
 `worktreesDir: false` 退出，或設 `taskBranch: false` 直接在你目前已檢出的

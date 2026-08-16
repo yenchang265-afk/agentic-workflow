@@ -482,15 +482,76 @@ const runStop = async (ctx: TerminalCtx, action: Extract<Action, { kind: "stop" 
  * report. Callers gate on `action.kind` being terminal (a `noop`/`fire` should never
  * reach here); an unexpected kind is a defensive no-op reported as an error.
  */
-export const runTerminal = async (ctx: TerminalCtx, action: Action): Promise<TerminalReport> => {
-  switch (action.kind) {
-    case "park":
-      return runPark(ctx, action)
-    case "done":
-      return runDone(ctx, action)
-    case "stop":
-      return runStop(ctx, action)
-    default:
-      return { kind: "error", message: `runTerminal called with non-terminal action "${action.kind}"` }
+/** Wall-clock cap on one `notifyCommand` invocation. */
+export const NOTIFY_TIMEOUT_MS = 10_000
+
+/** Longest AW_MESSAGE handed to the notifier — flattened to one line first. */
+const NOTIFY_MESSAGE_MAX = 1000
+
+/**
+ * Fire the user's `notifyCommand` for a terminal report — the push that keeps
+ * a gate from going stale in scrollback nobody is watching. One choke point
+ * for every host and every kind, because both route their terminals through
+ * `runTerminal` below.
+ *
+ * Best-effort and BOUNDED, in that order of importance: the notifier runs
+ * after the terminal's own bookkeeping succeeded, a failure logs a warning
+ * and changes nothing, and a hang is abandoned at `NOTIFY_TIMEOUT_MS` (the
+ * spawned command may keep running detached — the loop will not wait on a
+ * webhook). `park-free` fires nothing: a task-less free-text plan has no gate
+ * to announce.
+ *
+ * The command runs as `sh -c <command>` under `env` with the event as
+ * variables (`AW_EVENT`/`AW_KIND`/`AW_TASK`/`AW_MESSAGE`) — every value is an
+ * escaped interpolation, so nothing from a task title or terminal message can
+ * reach the shell as syntax.
+ */
+const notifyTerminal = async (ctx: TerminalCtx, report: TerminalReport): Promise<void> => {
+  const command = ctx.config.notifyCommand
+  if (!command) return
+  if (report.kind === "park-free") return
+  const event = report.kind
+  if (ctx.config.notifyEvents && !ctx.config.notifyEvents.includes(event)) return
+  const id = "taskId" in report ? (report.taskId ?? "") : ""
+  const message = report.message.replace(/\s+/g, " ").trim().slice(0, NOTIFY_MESSAGE_MAX)
+  const kind = ctx.state.kind ?? "engineering"
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    const run = ctx.$`env ${`AW_EVENT=${event}`} ${`AW_KIND=${kind}`} ${`AW_TASK=${id}`} ${`AW_MESSAGE=${message}`} sh -c ${command}`
+      .quiet()
+      .nothrow()
+      .then((out) => out.exitCode)
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), NOTIFY_TIMEOUT_MS)
+    })
+    const outcome = await Promise.race([run, deadline])
+    if (outcome === "timeout") {
+      await ctx.log("warn", `notifyCommand did not finish within ${(NOTIFY_TIMEOUT_MS / 1000).toString()}s for ${event} — abandoned (it may still be running)`)
+    } else if (outcome !== 0) {
+      await ctx.log("warn", `notifyCommand exited ${outcome.toString()} for ${event}${id ? ` (${id})` : ""}`)
+    }
+  } catch (err) {
+    await ctx.log("warn", `notifyCommand failed for ${event}: ${(err as Error).message}`)
+  } finally {
+    clearTimeout(timer)
   }
+}
+
+export const runTerminal = async (ctx: TerminalCtx, action: Action): Promise<TerminalReport> => {
+  const report = await (async (): Promise<TerminalReport> => {
+    switch (action.kind) {
+      case "park":
+        return runPark(ctx, action)
+      case "done":
+        return runDone(ctx, action)
+      case "stop":
+        return runStop(ctx, action)
+      default:
+        return { kind: "error", message: `runTerminal called with non-terminal action "${action.kind}"` }
+    }
+  })()
+  // After the terminal's own bookkeeping — a notifier must never be able to
+  // fail (or stall) a park/done/stop, only to announce one.
+  await notifyTerminal(ctx, report)
+  return report
 }

@@ -20,7 +20,7 @@ import { runTerminal, type TerminalCtx } from "./terminal.js"
 const makeCtx = (
   files: Record<string, string>,
   state: WorkflowState,
-  opts: { validate?: string; manifest?: LoadedManifest } = {},
+  opts: { validate?: string; manifest?: LoadedManifest; config?: Partial<TerminalCtx["config"]> } = {},
 ) => {
   const fs: Record<string, string> = {}
   for (const [k, v] of Object.entries(files)) fs[`/repo/docs/tasks/${k}`] = v
@@ -70,7 +70,7 @@ const makeCtx = (
     directory: "/repo",
     // ignoreBacklog defaults to true; these tests assert the commit STRATEGY
     // itself (ordering vs. checkpoint/teardown), so opt back into committing.
-    config: { ...DEFAULT_CONFIG, ignoreBacklog: false },
+    config: { ...DEFAULT_CONFIG, ignoreBacklog: false, ...opts.config },
     state,
     manifest,
     actor: "tester",
@@ -105,6 +105,44 @@ test("park moves a planned queued task to plan-review and reports the path", asy
   assert.ok(log.some((c) => c.startsWith("mv ") && c.includes("plan-review")))
   assert.deepEqual(commits.length, 1)
   assert.deepEqual(metrics, [{ outcome: "done", detail: "plan parked for review" }])
+})
+
+test("notifyCommand fires on park with the event in env vars, after the move", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), { config: { notifyCommand: "notify-send test" } })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  const notify = log.find((c) => c.startsWith("env AW_EVENT=park"))
+  assert.ok(notify, `the notifier must run: ${log.join(" | ")}`)
+  assert.match(notify, /AW_KIND=engineering/)
+  assert.match(notify, /AW_TASK=t/)
+  assert.match(notify, /AW_MESSAGE=/)
+  assert.match(notify, /sh -c notify-send test$/)
+  assert.ok(log.indexOf(notify) > log.findIndex((c) => c.startsWith("mv ") && c.includes("plan-review")), "announce only after the move landed")
+})
+
+test("notifyEvents filters which terminal events fire the notifier", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState(), {
+    config: { notifyCommand: "notify-send test", notifyEvents: ["done", "stop"] },
+  })
+  const report = await runTerminal(ctx, park)
+  assert.equal(report.kind, "park")
+  assert.ok(!log.some((c) => c.startsWith("env AW_EVENT=")), "park is not in the configured event set")
+})
+
+test("no notifyCommand means no notifier invocation at all", async () => {
+  const { ctx, log } = makeCtx({ "queued/t.md": body(true) }, planState())
+  await runTerminal(ctx, park)
+  assert.ok(!log.some((c) => c.startsWith("env AW_EVENT=")))
+})
+
+test("a park veto still notifies as an error event, and a failing notifier changes nothing", async () => {
+  // The no-plan park degrades to an error report; the notifier hears about it
+  // (that is the "needs attention" case), and its own failure only warns.
+  const warned: string[] = []
+  const { ctx, log } = makeCtx({ "queued/t.md": body(false) }, planState(), { config: { notifyCommand: "exit 1" } })
+  const report = await runTerminal({ ...ctx, log: (_lvl, msg) => void warned.push(msg) }, park)
+  assert.equal(report.kind, "error", "the notifier must not change the outcome")
+  assert.ok(log.some((c) => c.startsWith("env AW_EVENT=error")), "the veto is announced as an error event")
 })
 
 test("park releases the claim and reports an error when the move throws", async () => {

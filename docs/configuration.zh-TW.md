@@ -75,7 +75,7 @@ publish 階段（它們需要一個明確的儲存庫來開 PR），就在 `proj
   `ado.project`、`ado.repository`、`tasksDir`、`workflows`、worktree
   設定。
 
-**含 shell 的鍵是例外，只在「使用者層級」生效**：`worktreeSetup`、
+**含 shell 的鍵是例外，只在「使用者層級」生效**：`worktreeSetup`、`notifyCommand`、
 `workflows.<kind>.scannerCommand` 與 `workflows.<kind>.stageChecks` 都是迴圈
 原樣交給 shell 執行的字串。
 `.agentic-workflow.json` 會跟著任何被複製的儲存庫一起散布，若在該層生效，
@@ -127,6 +127,8 @@ tracker、審查視角和疊代上限），並寫出一份有效的 `.agentic-wo
 | `projectManagement` | 未設定 | 團隊的任務追蹤系統（Jira / Azure DevOps）以及本機任務如何與它配對。驅動任務撰寫預設值和 `/agentic-workflow:engineering status` 中的配對視圖。見下方。 |
 | `worktreesDir` | `".workflow-worktrees"` | 見下方強化項。設成 `false` 可退出此行為。 |
 | `taskBranch` | `"feature/"` | engineering 迴圈用來切出工作分支的分支名稱前綴（`<prefix><id>`）。設成 `false` 就直接在你目前已檢出的分支上建置——見下方強化項。 |
+| `notifyCommand` | 未設定 | 在迴圈終端事件之後觸發的 shell 指令——計畫停泊等待計畫閘門、run 抵達出貨閘門、stop、error——讓閘門不會在沒人看的 scrollback 裡放涼。以 `sh -c <command>` 執行，環境變數帶 `AW_EVENT`（`park`\|`done`\|`stop`\|`error`）、`AW_KIND`、`AW_TASK`、`AW_MESSAGE`；有 10 秒上限且 best-effort——通知器慢或失敗只會記警告，永不改變結果。例如 `notify-send` 或對聊天 webhook 的 `curl`。**含 shell 的鍵——只在使用者層級生效**，見下文。 |
+| `notifyEvents` | 未設定（＝全部） | 哪些終端事件會觸發 `notifyCommand`（`["park","done","stop","error"]` 的子集合）。不含 shell，所以 repo 層可以「收窄」——但永遠不能放寬——貢獻者會被通知的範圍。 |
 | `worktreeSetup` | 未設定 | 在一個剛建立的 worktree 內執行的 shell 指令（例如 `"npm ci"`）。**含 shell——僅限使用者層級**，見下方。 |
 | `reviewLenses` | `[]` | 見下方強化項。最多 5 個視角。 |
 

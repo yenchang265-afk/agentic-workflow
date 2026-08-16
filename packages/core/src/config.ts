@@ -169,6 +169,32 @@ const BaseConfigSchema = z.object({
   /** Optional shell command run inside a freshly created worktree (e.g. "npm ci"). */
   worktreeSetup: z.string().min(1).optional(),
   /**
+   * Shell command fired after a terminal loop event — a plan parking for the
+   * plan gate, a finished run reaching the ship gate, a stop, an error. The
+   * gates go quiet when nobody is watching the terminal: the park lands as a
+   * toast and scrollback, and a `watch` worker accumulates finished work
+   * silently. This is the one knob that turns those into a push — a
+   * `notify-send`, a `curl` to a chat webhook, an `osascript` — without the
+   * hub having to be open.
+   *
+   * Runs as `sh -c <command>` with the event in env vars: `AW_EVENT`
+   * (park | done | stop | error), `AW_KIND` (workflow kind), `AW_TASK` (task
+   * id, may be empty), `AW_MESSAGE` (the one-line terminal message). Bounded
+   * (10s) and best-effort: a slow or failing notifier logs a warning and
+   * never changes the terminal outcome.
+   *
+   * SHELL-BEARING: honored from the USER-scope config ONLY, exactly like
+   * `worktreeSetup` — a cloned repo must not be able to run arbitrary shell
+   * on the first park (`SHELL_BEARING_KEYS`).
+   */
+  notifyCommand: z.string().min(1).optional(),
+  /**
+   * Which terminal events fire `notifyCommand`. Absent ⇒ all of them. Not
+   * shell-bearing (the value space is four literals), so a repo may narrow —
+   * but never widen — what its contributors get pinged about.
+   */
+  notifyEvents: z.array(z.enum(["park", "done", "stop", "error"])).optional(),
+  /**
    * Branch-name PREFIX the engineering loop cuts its work branch with
    * (`<prefix><id>`), or `false` — "cut nothing; run BUILD/VERIFY/REVIEW on the
    * branch the working tree already has checked out", for the human who is

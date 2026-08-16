@@ -60,6 +60,10 @@ already tried; `workflows.<kind>.stageContext` can cap what else a stage's promp
 carries, which matters once you point a stage at a small model
 ([docs/configuration.md](docs/configuration.md)).
 
+Set `notifyCommand` (user config) to get a push — `notify-send`, a chat
+webhook — whenever a plan parks, a run reaches the ship gate, or a loop
+stops, instead of a toast in scrollback nobody is watching.
+
 Execution is isolated on a `feature/<id>` git branch, checked out in its own
 git worktree by default (`.workflow-worktrees`, so your tree is never touched
 — set `worktreesDir: false` to opt out, or `taskBranch: false` to build on the
