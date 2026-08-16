@@ -6,7 +6,7 @@ import type { Action, AttemptRecord, Config, WorkflowState } from "./state.js"
 import { stripPlanAndAuditTail } from "../task/plan-section.js"
 import { clampWithStats } from "./budget.js"
 import { anyFailed, checksBlock, type CheckResult } from "./checks.js"
-import { contextFor, planVisualizationFor, stagePasses } from "../config.js"
+import { contextFor, planVisualizationFor, prBaseFor, stagePasses } from "../config.js"
 import { checkDiscoveryBlock, discoveringStage, noMachineChecksBlock } from "./discovered-checks.js"
 import {
   planContractBlock,
@@ -245,6 +245,12 @@ export const promptContextWithStats = (
     git: state.git
       ? {
           base: state.git.base,
+          // Where a stage that opens its OWN pull request should target it (the
+          // sitters' publish stages). Defaulted to the run's base here so the
+          // key always renders; `composePromptWithStats` overrides it with
+          // `prBase`/`workflows.<kind>.prBase` when it has the config. Never
+          // read as "what this run was cut from" — that is `base` above.
+          prBase: state.git.base,
           branch: state.git.branch,
           worktree: wt ?? "",
           diffCmd,
@@ -381,7 +387,20 @@ export const composePromptWithStats = (
   const budgets = config ? contextFor(config, loaded.manifest.kind, def) : {}
   const { ctx: base, elided } = promptContextWithStats(state, budgets, iterationCap(loaded.manifest, config))
   const hookRef = loaded.manifest.hooks.compose[def.name]
-  const ctx = hookRef ? resolveComposeHook(hookRef)(base, state) : base
+  const hooked = hookRef ? resolveComposeHook(hookRef)(base, state) : base
+  // `git.prBase`: where a stage that opens its own pull request should target it.
+  //
+  // The engineering loop never needs this — its ship gate resolves the base
+  // through `shipBaseFor` — but the sitters open PRs from their own publish
+  // stages, which had only `{{git.base}}` to interpolate. So `prBase` (and its
+  // per-kind override, which the docs promise exists precisely FOR dep-sitter and
+  // main-sitter) reached those PRs nowhere: the config parsed, validated, and did
+  // nothing. Resolved here rather than in `promptContextWithStats` because only
+  // this function has the config, and defaulted to the run's own base so a
+  // template reading it is correct with the knob unset.
+  const git = typeof hooked.git === "object" ? hooked.git : undefined
+  const prBase = config ? prBaseFor(config, loaded.manifest.kind) : undefined
+  const ctx = git && prBase ? { ...hooked, git: { ...git, prBase } } : hooked
   // The EFFECTIVE mode, not the manifest's: a configured `reviewLenses` beats a
   // declared per-axis fan-out, and the contract must describe the passes that
   // will actually run — otherwise a lens pass is told to report one axis it was

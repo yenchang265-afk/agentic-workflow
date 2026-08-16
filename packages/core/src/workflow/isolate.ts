@@ -297,10 +297,15 @@ const prepareWorktree = async ($: Shell, log: Log, config: Config, wtPath: strin
  * An existing branch (e.g. a recovered run's) is reused, never reset.
  *
  * `baseBranch` (optional) is the branch a fresh work branch is cut from; when a
- * host resolves one it wins over the branch `directory` has checked out. Unset
- * ⇒ cut from `currentBranch(directory)` as before. It is deliberately NOT
- * honored in current-branch mode — it names a branch in a different tree, and
- * acting on it would mean the checkout this mode exists to avoid.
+ * host resolves one it is preferred over the branch `directory` has checked out.
+ * Unset ⇒ cut from `currentBranch(directory)` as before. Either way the value
+ * still passes through `baseOffTaskBranch`, which redirects it to the default
+ * branch when it names the loop's own task-branch namespace — a host's resolved
+ * base is routinely a tree parked on `feature/<id>` by a previous run, and
+ * cutting from it stacks that task's commits into this one's diff. It is
+ * deliberately NOT honored in current-branch mode — it names a branch in a
+ * different tree, and acting on it would mean the checkout this mode exists to
+ * avoid.
  */
 export const ensureIsolation = async (
   $: Shell,

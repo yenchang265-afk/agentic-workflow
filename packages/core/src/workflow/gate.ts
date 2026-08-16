@@ -1027,6 +1027,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
           branch: extractRunBranch(done),
           publish,
           base: shipBaseFor(config, kind, { override: wantedBase?.value, recorded: extractRunBase(done) }),
+          ...(wantedBase?.value ? { baseExplicit: true } : {}),
         })
         data.publish = pr.mode
         if (pr.attempted) {
@@ -1052,6 +1053,7 @@ export const shipTask = async (ctx: GateCtx, id: string, kind = "engineering", p
     branch: extractRunBranch(t),
     publish,
     base: shipBaseFor(config, kind, { override: wantedBase?.value, recorded: extractRunBase(t) }),
+    ...(wantedBase?.value ? { baseExplicit: true } : {}),
   })
   const data: Record<string, unknown> = { completed: newPath, gate: "ship", id, publish: pr.mode }
   if (pr.attempted) {

@@ -815,10 +815,17 @@ accepted spaced value would ship a task called `release/2.4`.
 | OpenCode tool | `workflow_gate({id, base})` |
 | admin hub | the **base branch** field in the Ship dialog |
 
-A base that is not on `origin` **refuses the PR** rather than quietly opening it
-against the default branch. The branch is still pushed, so the fix is one
-command — `approve <id> --base=<correct>` re-runs only the publish step.
-`refs/heads/`-qualified values are accepted and normalized.
+A base **you asked for** that is not on `origin` **refuses the PR** rather than
+quietly opening it against the default branch. The branch is still pushed, so the
+fix is one command — `approve <id> --base=<correct>` re-runs only the publish
+step. `refs/heads/`-qualified values are accepted and normalized.
+
+A base nobody asked for on this ship — the branch the run recorded, or `prBase` —
+is treated differently when it is missing from `origin`: the ship warns and lets
+the platform name its own default instead of refusing. A run that had to fall
+back during isolation records whatever the tree was parked on, which is often a
+local-only branch, and a task that reached the ship gate cleanly should not end
+up with no pull request at all over a branch you never chose.
 
 ## Protected branches (`protectedBranches`)
 

@@ -229,7 +229,16 @@ test("workflow_stage hands back a re-composed prompt when the stage ran checks",
 test("workflow_compose reuses recorded check results and never runs a check", () => {
   const body = toolBody(code(source()), "workflow_compose")
   assert.doesNotMatch(body, /runChecks|runStageChecks/, "compose must never run a command")
-  assert.match(body, /composePrompt\(activeManifest\(\), active, stage, config\)/, "it composes from state, which carries the results")
+  // The state handed over names the stage being composed. `promptContext` keys
+  // the check-results section on `state.stage`, and the fire path always sets it
+  // to the target first (`fireAt`); this tool takes the stage as a free
+  // parameter, so previewing REVIEW while the loop sat at VERIFY rendered
+  // VERIFY's check output into REVIEW's prompt.
+  assert.match(
+    body,
+    /composePrompt\(activeManifest\(\), \{ \.\.\.active, stage \}, stage, config\)/,
+    "it composes from state, which carries the results, keyed to the stage asked for",
+  )
 })
 
 // Finalizing (floor + all-unassessed guard, one bundled call) at finalization
@@ -533,6 +542,25 @@ test("runPark releases the claim before returning, even when core's runTerminal 
     flat(fn),
     /catch \(err\) \{.*?if \(task\) \{.*?await releaseClaim\(sh, task, log\).*?\}.*?activeClaim = null.*?active = null.*?resetLoopScratch\(\).*?writeStageMarker\(null\).*?return \{ error:/,
     "the catch must release the claim, reset every loop-scratch field, and return an error — never rethrow",
+  )
+})
+
+// The same guard, on the terminal path — which needs it MORE: `runPark` risks a
+// validate hook, while done/stop runs `closeIsolation` (a checkpoint COMMIT and
+// a worktree teardown). Unguarded, a throw there skipped `writeStageMarker(null)`
+// (the marker stays armed, so the PreToolUse guard keeps enforcing a dead stage
+// and every gate reads the task as driven), the source's `onTerminal` (a
+// sitter's claim marker never released), the `active`/`activeClaim` reset (the
+// next claim refuses) and `resetLoopScratch()`.
+test("runTerminal releases the claim and disarms the marker when core's runTerminal throws", () => {
+  const body = code(source())
+  const start = body.indexOf("const runTerminal = async")
+  const fn = body.slice(start, body.indexOf("\nserver.registerTool", start))
+  assert.match(fn, /try \{\s*report = await coreRunTerminal\(terminalCtx\(active, actor\), action\)/, "the core call must be inside a try")
+  assert.match(
+    flat(fn),
+    /catch \(err\) \{.*?if \(task\) await releaseClaim\(sh, task, log\).*?if \(claim\) await claim\.source\.release\?\.\(claim\.item\).*?activeClaim = null.*?active = null.*?resetLoopScratch\(\).*?writeStageMarker\(null\).*?throw err/,
+    "the catch must release BOTH claim shapes, reset the scratch, disarm the marker, then rethrow",
   )
 })
 

@@ -446,6 +446,22 @@ test("unaddressedRejectionCount excludes a human's untagged replan — only the 
   assert.equal(unaddressedRejectionCount(body), 1, "the two human replans must not count toward the contract strike limit")
 })
 
+test("a reshape retires the contract strikes — the tally is about the task text that failed", () => {
+  // The strikes count how often the park gate refused THIS task's plan. A
+  // `retask` rewrites the text they were earned against, so carrying them over
+  // meant a reshaped task got one attempt instead of three before being bounced
+  // back to draft/. `pendingPlanRejection` already treats the reshape as an
+  // anchor; these two parsers read the same trail and must agree about it.
+  const reshaped = `\n> Sent back to draft for reshaping [2026-01-06T00:00:00.000Z by dev]\n`
+  const body =
+    `${PLAN_HEADING}\n\nApproach.\n` +
+    contractRejectionNote("one") +
+    contractRejectionNote("two") +
+    reshaped +
+    contractRejectionNote("three")
+  assert.equal(unaddressedRejectionCount(body), 1, "only the strike earned after the reshape still stands")
+})
+
 test("extractReplanReason ignores the marker quoted mid-line or without the audit stamp", () => {
   // Mid-line: prose about the system. Line-anchored but stamp-less: a plan's own
   // blockquote. Neither is lifecycle state.

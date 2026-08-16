@@ -13,6 +13,13 @@ docs/tasks/runs/.stage.json
 docs/tasks/runs/.stage-opencode.json
 docs/tasks/runs/.stage-qwen.json
 docs/tasks/runs/.watch-lease/
+# Per-attempt guard state written beside the markers above, and just as ephemeral:
+# the observed-evidence ledger a stage's tool guard appends to, and the one-shot
+# verdict nag sentinel. Both are spent within a single stage attempt, and both were
+# missing here while their sibling markers were listed — so `git add -- docs/tasks`
+# swept them into gate commits.
+docs/tasks/runs/.stage-evidence*.json
+docs/tasks/runs/.verdict-nag*
 # Scheduler diagnostics feed (machine state, rotated at ~256KB — not review material)
 docs/tasks/runs/events*.jsonl
 # Coordination markers, not lifecycle facts: a claim asserts a live loop, a plan

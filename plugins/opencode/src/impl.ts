@@ -674,7 +674,14 @@ export const makeAgenticWorkflow: Plugin = async ({ client, directory, $ }) => {
         // and this hook is the only writer that appends there. See
         // applyBashAllowlistConfig.
         commandPrefixes = bashAllowlistPrefixes(raw)
-        protectedBranches = Array.isArray(raw.protectedBranches) ? (raw.protectedBranches as readonly string[]) : []
+        // Elements screened, not just the array: `raw` is an unvalidated
+        // JSON.parse of the config layers (this hook runs during bootstrap, where
+        // `loadConfig` is a circular wait), and every entry reaches
+        // `isGitPushViolation`'s `extra.map((ref) => ref.replace(…))`. One
+        // non-string in the list threw a TypeError inside `tool.execute.before` —
+        // i.e. on every tool call of the session. The bundled hooks screen the
+        // same field the same way (`check-stage-guard.mjs`).
+        protectedBranches = Array.isArray(raw.protectedBranches) ? raw.protectedBranches.filter((b): b is string => typeof b === "string") : []
         allowlistExtrasBound = applyBashAllowlistConfig(input as AgentModelConfig, bashAllowlistExtras(raw), commandPrefixes)
       } catch {
         /* a convenience binding must never break bootstrap */

@@ -1451,6 +1451,11 @@ export const runStagePasses = async (
   // "the channel is unreachable, fix the plugin wiring" is the wrong diagnosis
   // for a channel that answered twice.
   const rejections: (RejectedVerdict | null)[] = new Array(passes.length).fill(null)
+  // Set when `rejectedFallback` salvaged a FAIL out of a twice-rejected verdict.
+  // The coverage-gap conversion below has to know: converting a salvaged FAIL to
+  // ERROR would undo the salvage the spent retry just bought, and the Claude
+  // host carves out exactly this case (`salvagedFail` in its `workflow_advance`).
+  let salvagedFail = false
   const { client } = deps
   const runKey = workflowId(state)
 
@@ -1619,6 +1624,7 @@ export const runStagePasses = async (
       // LAST attempt so a first-attempt rejection still gets its retry.
       if (isCheck && !passRecord && attempt === 1) {
         passRecord = rejectedFallback(rejectedVerdictFor(passSessionID, stage as CheckStage))
+        if (passRecord && effectiveVerdict(passRecord) === "FAIL") salvagedFail = true
         if (passRecord) {
           await deps.log(
             "warn",
@@ -1764,7 +1770,16 @@ export const runStagePasses = async (
   // axes: there per-pass coverage is not enforced at all, so this is the only
   // thing keeping `requiredAxes` required. See `enforcesAxisCoverage`.
   const gapped = combined && enforcesAxisCoverage(config, loaded.manifest.kind, def) ? uncoveredAxes(combined, def.requiredAxes) : []
-  const gapChecked = combined && gapped.length ? withCoverageGap(combined, gapped) : combined
+  // A salvaged FAIL stays FAIL. `withCoverageGap` worsens to ERROR, which for a
+  // record that only exists BECAUSE its rejection was salvaged would throw away
+  // what the spent retry bought and stop the run for a human, where the same run
+  // on the Claude host re-builds with the findings. Same carve-out, same reason.
+  const gapChecked =
+    combined && gapped.length
+      ? salvagedFail
+        ? { ...combined, reason: [combined.reason, `(coverage gap: no verdict recorded for ${gapped.join(", ")})`].filter(Boolean).join(" ") }
+        : withCoverageGap(combined, gapped)
+      : combined
   // Floor the admitted record with the checks the driver ran, then refuse a
   // declared PASS whose every axis was unassessed. Applied HERE, at
   // finalization, and never inside `admitVerdict`: a pre-seeded check axis would
@@ -1773,7 +1788,10 @@ export const runStagePasses = async (
   // was assessed, so a green run records exactly what the agent recorded.
   const record = finalizeCheckRecord(gapChecked, state.checks?.[stage] ?? [])
   if (gapped.length) {
-    await deps.log("warn", `${stage} fan-out finished with no result for ${gapped.join(", ")} — stopping with ERROR`)
+    await deps.log(
+      "warn",
+      `${stage} fan-out finished with no result for ${gapped.join(", ")} — ${salvagedFail ? "recording the salvaged FAIL with the gap noted" : "stopping with ERROR"}`,
+    )
   }
   // The DERIVED verdict — a pass that declared PASS while flagging a Critical
   // finding on an axis fails the stage (verdict.ts `effectiveVerdict`).

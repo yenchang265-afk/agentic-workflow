@@ -98,6 +98,20 @@ export type TerminalReport =
  * done/stop, before any backlog write — see the module doc's ordering invariant.
  */
 const closeIsolation = async (ctx: TerminalCtx, checkpointMessage: string): Promise<void> => {
+  try {
+    await closeIsolationOrThrow(ctx, checkpointMessage)
+  } catch (err) {
+    // Never fail a drive's END over its tree cleanup. This runs FIRST on
+    // done/stop, so a throw here used to skip everything after it — the audit
+    // note, the move, the claim release, the metrics — and the claim then sat
+    // held until the stale sweep. The work is not lost either way (it stays in
+    // the tree, uncommitted); what a throw cost was the bookkeeping that ends
+    // the run. Warn loudly and let the terminal path finish.
+    await ctx.log("warn", `loop: end-of-run tree cleanup failed (${(err as Error).message}) — this run's uncommitted work stays in the tree; the task's move and claim release continue`)
+  }
+}
+
+const closeIsolationOrThrow = async (ctx: TerminalCtx, checkpointMessage: string): Promise<void> => {
   const { $, directory, config, state, log } = ctx
   // Current-branch mode shares the human's tree, so the ordinary gate is not
   // enough at a drive's END — no stage boundary's re-hold runs in front of this:

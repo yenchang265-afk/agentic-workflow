@@ -481,7 +481,7 @@ test("shipPr (ado) targets an explicit base and never calls getRepository", asyn
   )
 })
 
-test("a base that is not on origin refuses the PR instead of quietly opening it elsewhere", async () => {
+test("an EXPLICIT base that is not on origin refuses the PR instead of quietly opening it elsewhere", async () => {
   const log: string[] = []
   const $ = scriptedShell(
     [
@@ -492,7 +492,10 @@ test("a base that is not on origin refuses the PR instead of quietly opening it 
     ],
     log,
   )
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "release/2.4" })
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, {
+    base: "release/2.4",
+    baseExplicit: true,
+  })
   assert.equal(result.created, false)
   // Pushed, deliberately: the branch is safely on origin, which is what makes
   // `approve <id> --base=<correct>` a cheap retry rather than a redo.
@@ -517,9 +520,37 @@ test("ls-remote prefix-matches, so a base is confirmed only by an exact refs/hea
       result: { exitCode: 0, stdout: "9f1c0de1c0de1c0de1c0de1c0de1c0de1c0de1c0\trefs/heads/release/2.40\n" },
     },
   ])
-  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, { base: "release/2.4" })
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, {
+    base: "release/2.4",
+    baseExplicit: true,
+  })
   assert.equal(result.created, false)
   assert.match(result.reason ?? "", /is not on origin/)
+})
+
+test("a base nobody asked for on this ship falls through to the platform default instead of refusing", async () => {
+  // The base the run RECORDED, or `prBase` — not `--base=`. A shared-tree run
+  // that hit an isolation degrade path records whatever the tree was parked on,
+  // which is routinely local-only; refusing there means a task that reached the
+  // ship gate cleanly opens no PR at all over a branch the human never chose.
+  const log: string[] = []
+  const $ = scriptedShell(
+    [
+      BRANCH_EXISTS,
+      PUSH_OK,
+      { cmd: "gh pr view feature/task-1", result: { exitCode: 1 } },
+      { cmd: "git -C /repo ls-remote --heads origin feature/older-task", result: { exitCode: 0, stdout: "" } },
+      { cmd: "gh pr create", result: { exitCode: 0, stdout: "https://github.com/o/r/pull/7\n" } },
+    ],
+    log,
+  )
+  const result = await shipPr($, noop, "/repo", baseConfig, "engineering", "task-1", "T", undefined, {
+    base: "feature/older-task",
+  })
+  assert.equal(result.created, true)
+  assert.equal(result.url, "https://github.com/o/r/pull/7")
+  const create = log.find((c) => c.startsWith("gh pr create")) ?? ""
+  assert.doesNotMatch(create, /feature\/older-task/, "the branch that is missing from origin must not be the PR's target")
 })
 
 test("an ls-remote that could not run is not proof of absence — the PR is attempted anyway", async () => {

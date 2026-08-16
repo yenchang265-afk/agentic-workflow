@@ -219,6 +219,13 @@ export interface ShipPrOptions {
   readonly publish?: ShipPublish
   /** The PR's target ref, already resolved by `shipBaseFor`. Absent ⇒ ask the platform. */
   readonly base?: string
+  /**
+   * Whether `base` is the human's own `--base=<branch>` for THIS ship, as
+   * opposed to a value resolved for them (the base the run recorded, or
+   * `prBase`). Only the explicit one is refused when it is missing from origin —
+   * see the probe below for why the two must part company there.
+   */
+  readonly baseExplicit?: boolean
 }
 
 export const shipPr = async (
@@ -257,22 +264,39 @@ export const shipPr = async (
     }
     if (mode === "push") return { ...common, pushed: true, created: false }
     // Checked AFTER the push (the work is safely on origin either way) and once
-    // for both platforms. Only an EXPLICIT base is probed: a platform-derived
-    // default came from the platform itself, so re-asking buys nothing.
+    // for both platforms. A platform-derived default is never probed: it came
+    // from the platform itself, so re-asking buys nothing.
     //
-    // A miss REFUSES rather than falling back. Falling back would quietly open
-    // the PR onto the default branch — precisely the wrong-target failure this
-    // whole path exists to prevent — and the recovery is already cheap, because
-    // `publishNote` renders "PR not opened", which `prAlreadyRecorded` does not
-    // match, so `approve <id> --base=<correct>` re-enters the idempotent retry arm.
-    if (wanted && (await remoteBranchExists($, directory, wanted)) === "absent") {
-      const reason = `base branch "${wanted}" is not on origin`
-      await log("warn", `ship: ${reason} — PR not opened for ${head}`)
-      return { ...common, pushed: true, created: false, reason }
+    // What a miss does depends on WHO chose the base, and the two answers are
+    // opposite on purpose:
+    //
+    //  - The human typed `--base=<branch>` and it is not on origin: REFUSE.
+    //    Falling back would quietly open the PR onto the default branch —
+    //    precisely the wrong-target failure this path exists to prevent — and
+    //    recovery is cheap, because `publishNote` renders "PR not opened",
+    //    which `prAlreadyRecorded` does not match, so
+    //    `approve <id> --base=<correct>` re-enters the idempotent retry arm.
+    //  - Nobody typed it — it is the base the run recorded, or `prBase`: fall
+    //    through to the next rung instead. A run that took an isolation degrade
+    //    path records whatever the tree was parked on, which is routinely a
+    //    local-only branch, and refusing there means a task that reached the
+    //    ship gate cleanly opens NO pull request and says only that a branch
+    //    the human never chose is missing from origin. Warn and let the
+    //    platform name its target, which is exactly what this ship did before
+    //    the base was recorded at all.
+    let target = wanted
+    if (target && (await remoteBranchExists($, directory, target)) === "absent") {
+      const reason = `base branch "${target}" is not on origin`
+      if (options.baseExplicit) {
+        await log("warn", `ship: ${reason} — PR not opened for ${head}`)
+        return { ...common, pushed: true, created: false, reason }
+      }
+      await log("warn", `ship: ${reason} — it was not asked for on this ship, so the PR targets the platform's default instead; pass --base=<branch> to choose one`)
+      target = undefined
     }
     const platform = platformFor(config, kind)
     const attempt =
-      platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title, wanted) : await shipGithub($, log, directory, head, title, wanted)
+      platform === "ado" ? await shipAdo($, log, directory, gateway, config, head, title, target) : await shipGithub($, log, directory, head, title, target)
     return { ...common, pushed: true, ...attempt }
   } catch (err) {
     // `pushed: false` is the honest answer for a throw: the only awaits that can

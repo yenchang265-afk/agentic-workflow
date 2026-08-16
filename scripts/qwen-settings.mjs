@@ -42,6 +42,40 @@ const readJson = (file) => {
 }
 
 /**
+ * Read a settings file we do NOT own. Three outcomes, and the middle one is the
+ * entire point: absent (merge into `{}` — a fresh install writes the file),
+ * parsed, or UNPARSEABLE.
+ *
+ * `readJson` collapses the third into "absent", which is fine for our own
+ * bundled fragment and catastrophic here: a settings.json carrying a comment, a
+ * trailing comma, or a half-finished write parsed as `null` → merged into `{}` →
+ * written back containing nothing but our MCP server and hooks. The user's whole
+ * Qwen configuration, replaced, with a success line printed. That is rule 1
+ * above ("merge, never rewrite") failing exactly when the merge base is unknown.
+ * The hub refuses on the same condition for the same reason — see
+ * `packages/hub/src/server/routes/config.ts`.
+ */
+export const readSettings = (file) => {
+  let raw
+  try {
+    raw = fs.readFileSync(file, "utf8")
+  } catch {
+    return { settings: {} } // absent, or unreadable — nothing there to preserve
+  }
+  if (!raw.trim()) return { settings: {} }
+  let parsed
+  try {
+    parsed = JSON.parse(raw)
+  } catch (err) {
+    return { parseError: `not valid JSON (${err.message})` }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { parseError: "top level is not a JSON object" }
+  }
+  return { settings: parsed }
+}
+
+/**
  * Strip every entry this installer owns from a settings object. Pure, and the
  * first half of `merge` too — which is what makes a re-install idempotent
  * instead of appending a second copy of every hook.
@@ -145,7 +179,16 @@ const main = () => {
     process.exit(1)
   }
   const file = path.join(configDir, "settings.json")
-  const existing = readJson(file) ?? {}
+  const read = readSettings(file)
+  if (read.parseError) {
+    console.error(
+      `qwen-settings: refusing to edit ${file} — ${read.parseError}. ` +
+        `Merging into a file we cannot read would replace it with our entries alone. ` +
+        `Fix the file by hand (or move it aside), then re-run the installer.`,
+    )
+    process.exit(1)
+  }
+  const existing = read.settings
 
   if (verb === "remove") {
     if (!fs.existsSync(file)) {

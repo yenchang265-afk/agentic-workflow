@@ -756,9 +756,14 @@ git checkout release/2.4
 | OpenCode 工具 | `workflow_gate({id, base})` |
 | 管理 hub | Ship 對話框中的 **base branch** 欄位 |
 
-`origin` 上不存在的 base 會**拒絕開 PR**，而不是默默開到預設分支上。分支還是會
-被推送，所以修正只要一個指令——`approve <id> --base=<正確的>` 只會重跑發布那一
-步。帶 `refs/heads/` 前綴的值會被接受並正規化。
+**你自己指定**、但 `origin` 上不存在的 base 會**拒絕開 PR**，而不是默默開到預設
+分支上。分支還是會被推送，所以修正只要一個指令——`approve <id> --base=<正確的>`
+只會重跑發布那一步。帶 `refs/heads/` 前綴的值會被接受並正規化。
+
+這次 ship 沒有人指定的 base——執行時記錄下來的分支，或 `prBase`——若在 `origin`
+上不存在，處理方式相反：只發出警告，改由平台決定自己的預設分支，而不是拒絕。
+隔離過程退場的執行會把當時樹上停留的分支記錄下來，那常常只存在於本機；一個乾淨
+走到 ship 閘門的任務，不該因為一個你從未選擇的分支而完全開不出 PR。
 
 ## 受保護分支（`protectedBranches`）
 

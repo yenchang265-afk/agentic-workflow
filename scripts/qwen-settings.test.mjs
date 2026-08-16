@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { test } from "node:test"
-import { mergeOwned, resolveFragment, stripOwned } from "./qwen-settings.mjs"
+import { mergeOwned, readSettings, resolveFragment, stripOwned } from "./qwen-settings.mjs"
 import { bareModel, resolveAgentModels, withModel } from "./qwen-agents.mjs"
 
 /**
@@ -266,6 +266,35 @@ test("an empty config bakes nothing", () => {
   const { models, conflicts } = resolveAgentModels({}, MANIFESTS)
   assert.deepEqual(models, {})
   assert.deepEqual(conflicts, [])
+})
+
+test("an unparseable settings.json is refused, never merged into {}", () => {
+  // The data-loss path this suite exists to prevent, and the one it missed: the
+  // reader collapsed a parse failure into "absent", so a settings.json with a
+  // trailing comma merged into `{}` and was written back holding nothing but
+  // our own MCP server and hooks — the user's whole Qwen config, replaced, with
+  // a success line printed.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "qwen-settings-"))
+  const file = path.join(dir, "settings.json")
+  const original = '{\n  "theme": "dark",\n  "mcpServers": {},\n}\n' // trailing comma
+  fs.writeFileSync(file, original)
+
+  const read = readSettings(file)
+  assert.ok(read.parseError, "a trailing comma must report a parse error, not an empty object")
+  assert.equal(read.settings, undefined, "there is no merge base to hand back")
+  assert.equal(fs.readFileSync(file, "utf8"), original, "reading must not touch the file")
+
+  // Absent and empty are still "nothing to preserve" — a fresh install writes.
+  assert.deepEqual(readSettings(path.join(dir, "nope.json")), { settings: {} })
+  fs.writeFileSync(path.join(dir, "blank.json"), "   \n")
+  assert.deepEqual(readSettings(path.join(dir, "blank.json")), { settings: {} })
+
+  // A top level that parses but is not an object is refused too: merging into an
+  // array would drop every key it holds.
+  fs.writeFileSync(path.join(dir, "arr.json"), "[1,2]")
+  assert.ok(readSettings(path.join(dir, "arr.json")).parseError)
+
+  fs.rmSync(dir, { recursive: true, force: true })
 })
 
 test("temp-dir sanity: the fragment file this suite reads really exists", () => {
